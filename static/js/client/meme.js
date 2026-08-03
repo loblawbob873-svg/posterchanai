@@ -790,8 +790,8 @@
                button beats a pictogram nobody has to guess at. -->
           <button class="btn btn-neon small" id="mb-add-media" title="A photo, a clip, music, a sticker, an effect or a ready-made layout"><svg class="ic b-ic mb-e" aria-hidden="true"><use href="#i-image"></use></svg>Media</button>
           <button class="btn btn-cyan small" id="mb-add-text"><svg class="ic b-ic mb-e" aria-hidden="true"><use href="#i-text"></use></svg>Text</button>
-          <button class="btn btn-cyan small mb-icon" id="mb-undo" title="Undo (Ctrl+Z)" aria-label="Undo" ${_hist.length?'':'disabled'}>↶</button>
-          <button class="btn btn-cyan small mb-icon" id="mb-redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" ${_future.length?'':'disabled'}>↷</button>
+          <button class="btn btn-cyan small mb-icon" id="mb-undo" title="Undo (Ctrl+Z)" aria-label="Undo" ${_hist.length?'':'disabled'}><svg class="ic x-ic" aria-hidden="true"><use href="#i-undo"></use></svg></button>
+          <button class="btn btn-cyan small mb-icon" id="mb-redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" ${_future.length?'':'disabled'}><svg class="ic x-ic" aria-hidden="true"><use href="#i-redo"></use></svg></button>
         </div>
         <span class="muted small mb-status" id="mb-status"></span>
         <div class="mb-barend">
@@ -851,10 +851,10 @@
   function timelinePane(){
     const any = P.layers.some(_isVisual);
     return `${any ? `<div class="mb-tlbar">
-        <button class="btn btn-cyan small" id="mb-arrange" title="Lay every clip back-to-back in its current order">⇄ Arrange</button>
+        <button class="btn btn-cyan small" id="mb-arrange" title="Lay every clip back-to-back in its current order"><svg class="ic b-ic" aria-hidden="true"><use href="#i-swap"></use></svg>Arrange</button>
         ${/* The razor for the WHOLE timeline. The per-layer ✂ lives in the layer panel next to Duplicate;
               this one is here because "cut here" is about the moment, not about a selection. */''}
-        <button class="btn btn-cyan small" id="mb-cutall" title="Cut every layer standing under the playhead in two (Shift+S). Cut twice and delete the middle piece to take a section out of the meme.">✂ Cut here</button>
+        <button class="btn btn-cyan small" id="mb-cutall" title="Cut every layer standing under the playhead in two (Shift+S). Cut twice and delete the middle piece to take a section out of the meme."><svg class="ic b-ic" aria-hidden="true"><use href="#i-scissors"></use></svg>Cut here</button>
         <label class="mb-tlf" title="Dissolve between consecutive clips. ⇄ Arrange overlaps them by this much so there is something to blend.">⇄
           <select class="input" id="mb-xfade">
             ${[0,0.25,0.5,0.75,1,1.5].map(v=>`<option value="${v}" ${Math.abs(_xfade()-v)<0.01?'selected':''}>${v?v+'s':'cut'}</option>`).join('')}
@@ -899,7 +899,7 @@
         </select></label>
       <div class="mb-secttl">This project</div>
       <div class="muted small mb-dbg">${enc(P.name || 'Untitled')} · ${P.layers.length} layer${P.layers.length===1?'':'s'} · ${P.w}×${P.h} · ${projEnd().toFixed(1)}s</div>
-      <button class="btn btn-cyan small full" id="mb-proj">📂 Save, open, rename, start new…</button>`;
+      <button class="btn btn-cyan small full" id="mb-proj"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Save, open, rename, start new…</button>`;
   }
 
 
@@ -1245,13 +1245,13 @@
       <div class="mb-insp-hd">
         <b>🎵 Music layer</b>
         <span class="mb-insp-acts">
-          <button class="btn btn-cyan small" id="mb-split" title="Cut this track in two where the playhead is (S) — the halves are separate tracks you can move, retime or delete on their own">✂ Cut</button>
+          <button class="btn btn-cyan small" id="mb-split" title="Cut this track in two where the playhead is (S) — the halves are separate tracks you can move, retime or delete on their own"><svg class="ic b-ic" aria-hidden="true"><use href="#i-scissors"></use></svg>Cut</button>
           <button class="btn btn-cyan small" id="mb-dup" title="Make a second copy of this track">⧉ Duplicate</button>
           <button class="btn btn-danger small" id="mb-del"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>
         </span>
       </div>
       <div class="muted small mb-dbg">${enc(l.name || srcName(l.src))}</div>
-      <button class="btn btn-cyan small full" id="mb-aud-all" title="Start at 0 and run to the end of the meme">⇔ Span the whole meme</button>
+      <button class="btn btn-cyan small full" id="mb-aud-all" title="Start at 0 and run to the end of the meme"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrows-h"></use></svg>Span the whole meme</button>
       <div class="mb-frow">
         <label class="mb-f"><span>Start (s)</span><input class="input" type="number" id="mb-f-start" min="0" step="0.1" value="${l.start}"></label>
         <label class="mb-f"><span>Length (s)</span><input class="input" type="number" id="mb-f-dur" min="0.1" step="0.1" value="${l.dur}"></label>
@@ -1269,7 +1269,7 @@
       <div class="mb-insp-hd">
         <b>${isText?'Text':(l.type==='video'?'Video':'Image')} layer</b>
         <span class="mb-insp-acts">
-          <button class="btn btn-cyan small" id="mb-split" title="Cut this layer in two where the playhead is (S) — the halves are separate layers, so you can trim, restyle or delete either one. Cut twice and delete the middle to drop a piece out.">✂ Cut</button>
+          <button class="btn btn-cyan small" id="mb-split" title="Cut this layer in two where the playhead is (S) — the halves are separate layers, so you can trim, restyle or delete either one. Cut twice and delete the middle to drop a piece out."><svg class="ic b-ic" aria-hidden="true"><use href="#i-scissors"></use></svg>Cut</button>
           <button class="btn btn-cyan small" id="mb-dup" title="Copy this layer — same clip, size, effect, sound and timing — as a new layer just above it">⧉ Duplicate</button>
           <button class="btn btn-danger small" id="mb-del"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>
         </span>
@@ -1283,13 +1283,13 @@
         </div>` : `
         ${l.type==='video' ? trimWidget(l) + `
         <button class="btn btn-cyan small full" id="mb-prev-clip" title="Play just this clip in the preview above"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg> Preview clip</button>` : ''}
-        <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fit" title="Show the whole photo inside the canvas. Bars appear wherever its shape differs from the canvas — they are the canvas background.">⛶ Whole photo (bars)</button><button class="btn btn-cyan small" id="mb-fill" title="Scale up until the canvas is full and crop the overflow — no bars, but the edges are cut off">✂ Fill &amp; crop</button></div>
+        <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fit" title="Show the whole photo inside the canvas. Bars appear wherever its shape differs from the canvas — they are the canvas background."><svg class="ic b-ic" aria-hidden="true"><use href="#i-fit"></use></svg>Whole photo (bars)</button><button class="btn btn-cyan small" id="mb-fill" title="Scale up until the canvas is full and crop the overflow — no bars, but the edges are cut off"><svg class="ic b-ic" aria-hidden="true"><use href="#i-expand"></use></svg>Fill &amp; crop</button></div>
         ${(l.type!=='image' && l.fxPose) ? `<button class="btn btn-cyan small full" id="mb-talk" title="Make this character say a line in one of your cloned voices. It is animated from the character's own artwork, so the pose stays exactly as it is."><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Make it talk</button>` : ''}
         ${l.type==='image' ? `<button class="btn btn-cyan small full" id="mb-nobg" title="Cut the subject out of this photo and drop the background, so the layers underneath show through. Same cut-out the removebackground command does. Undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-wand"></use></svg>Remove the background</button>
         <button class="btn btn-cyan small full" id="mb-talk" title="The face in this picture says a line in one of your cloned voices, with its mouth animated to the speech. Becomes a video layer; undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Make it talk</button>` : ''}
-        <button class="btn btn-cyan small full" id="mb-erase" title="Rub parts of this layer out with your finger or the mouse. What you erase turns see-through, so the layers underneath show through it.">✂ Erase parts${l.mask?' (erased)':''}</button>
-        ${l.mask ? `<button class="btn btn-cyan small full" id="mb-erase-clear" title="Put every erased part of this layer back">↺ Undo the erase</button>` : ''}
-        ${l.origSrc ? `<button class="btn btn-cyan small full" id="mb-fx-revert" title="Put this layer's original picture back — the effect (or the background cut-out) that replaced it is undone">↺ Undo the effect on this layer</button>` : ''}`}
+        <button class="btn btn-cyan small full" id="mb-erase" title="Rub parts of this layer out with your finger or the mouse. What you erase turns see-through, so the layers underneath show through it."><svg class="ic b-ic" aria-hidden="true"><use href="#i-broom"></use></svg>Erase parts${l.mask?' (erased)':''}</button>
+        ${l.mask ? `<button class="btn btn-cyan small full" id="mb-erase-clear" title="Put every erased part of this layer back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undo the erase</button>` : ''}
+        ${l.origSrc ? `<button class="btn btn-cyan small full" id="mb-fx-revert" title="Put this layer's original picture back — the effect (or the background cut-out) that replaced it is undone"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undo the effect on this layer</button>` : ''}`}
 
       <!-- Stacking order is one of the handful you reach for on EVERY layer, so it belongs up here with
            them, not buried at the bottom of a collapsed group. On a phone it was the only way to reorder
@@ -1302,7 +1302,7 @@
       </div>
 
       ${_sect('place', '📐 Position &amp; size', (isText
-        ? `<button class="btn btn-cyan small full${_alignOf(l)==='center'?' on':''}" id="mb-center">⇔ Centre horizontally</button>
+        ? `<button class="btn btn-cyan small full${_alignOf(l)==='center'?' on':''}" id="mb-center"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrows-h"></use></svg>Centre horizontally</button>
            ${alignGrid()}
            <div class="muted small mb-dbg">x=${Math.round(l.x)} y=${Math.round(l.y)} size=${Math.round(l.size)} align=${_alignOf(l)||"free"} · canvas ${P.w}×${P.h}</div>`
         : `${alignGrid()}
@@ -1310,7 +1310,7 @@
              <label class="mb-f"><span>W</span><input class="input" type="number" id="mb-f-w" value="${Math.round(l.w)}"></label>
              <label class="mb-f"><span>H</span><input class="input" type="number" id="mb-f-h" value="${Math.round(l.h)}"></label>
            </div>
-           <button class="btn btn-cyan small full" id="mb-canvas-match" title="Reshape the CANVAS to this photo — the third option: no bars AND nothing cropped">⇲ Canvas to this photo</button>
+           <button class="btn btn-cyan small full" id="mb-canvas-match" title="Reshape the CANVAS to this photo — the third option: no bars AND nothing cropped"><svg class="ic b-ic" aria-hidden="true"><use href="#i-resize"></use></svg>Canvas to this photo</button>
            <label class="mb-f"><span>Layer name</span><input class="input" id="mb-f-name" maxlength="24" placeholder="${enc(srcName(l.src))}" value="${enc(l.name||'')}"></label>`))}
 
       ${_sect('time', '⏱ Timing', `${l.type==='video'
@@ -1348,7 +1348,7 @@
         </select></label>
         ${l.sound ? `<label class="mb-f"><span>Sound volume</span><input type="range" id="mb-f-sndvol" min="0" max="3" step="0.1" value="${(l.soundVolume==null?1:l.soundVolume)}"></label>` : ''}
         <label class="mb-f"><span>Opacity</span><input type="range" id="mb-f-op" min="0.05" max="1" step="0.05" value="${l.opacity}"></label>
-        <div class="mb-frow"><button class="btn btn-cyan small${l.flipH?' on':''}" id="mb-fliph" title="Mirror left-to-right">⇄ Flip</button><button class="btn btn-cyan small${l.flipV?' on':''}" id="mb-flipv" title="Mirror top-to-bottom">⇅ Flip</button><button class="btn btn-cyan small" id="mb-rot0" title="Back to upright">⌾ 0°</button></div>
+        <div class="mb-frow"><button class="btn btn-cyan small${l.flipH?' on':''}" id="mb-fliph" title="Mirror left-to-right"><svg class="ic b-ic" aria-hidden="true"><use href="#i-flip-h"></use></svg>Flip</button><button class="btn btn-cyan small${l.flipV?' on':''}" id="mb-flipv" title="Mirror top-to-bottom"><svg class="ic b-ic" aria-hidden="true"><use href="#i-flip-v"></use></svg>Flip</button><button class="btn btn-cyan small" id="mb-rot0" title="Back to upright"><svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg>0°</button></div>
         <label class="mb-f"><span>Rotate <b id="mb-rot-val">${Math.round(+l.rotate||0)}°</b></span><input type="range" id="mb-f-rot" min="-180" max="180" step="1" value="${Math.round(+l.rotate||0)}"></label>`)}`;
   }
 
@@ -2127,8 +2127,8 @@
         <label class="mb-f"><span>Mouth width</span>
           <input type="range" id="mm-w" min="3" max="45" step="1" value="12"></label>
         <div class="mb-frow" style="margin-top:6px">
-          <button class="btn btn-cyan small" id="mm-photo">📷 Photo</button>
-          <button class="btn btn-ghost small" id="mm-draw">🎨 Drawing / anime</button>
+          <button class="btn btn-cyan small" id="mm-photo"><svg class="ic b-ic" aria-hidden="true"><use href="#i-camera"></use></svg>Photo</button>
+          <button class="btn btn-ghost small" id="mm-draw"><svg class="ic b-ic" aria-hidden="true"><use href="#i-palette"></use></svg>Drawing / anime</button>
         </div>
         <div class="muted small" id="mm-hint" style="margin-top:6px"></div>
         <div style="display:flex;gap:8px;margin-top:12px">
@@ -2254,9 +2254,9 @@
         <canvas id="er-ov"></canvas>
       </div>
       <div class="mb-er-tools">
-        <button class="btn btn-cyan small on" id="er-rub" title="Rub the picture out">✂ Erase</button>
-        <button class="btn btn-ghost small" id="er-put" title="Paint an erased part back in">↺ Restore</button>
-        <button class="btn btn-ghost small" id="er-undo" disabled title="Undo the last stroke">↶ Undo</button>
+        <button class="btn btn-cyan small on" id="er-rub" title="Rub the picture out"><svg class="ic b-ic" aria-hidden="true"><use href="#i-broom"></use></svg>Erase</button>
+        <button class="btn btn-ghost small" id="er-put" title="Paint an erased part back in"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Restore</button>
+        <button class="btn btn-ghost small" id="er-undo" disabled title="Undo the last stroke"><svg class="ic b-ic" aria-hidden="true"><use href="#i-undo"></use></svg>Undo</button>
         <button class="btn btn-ghost small" id="er-all" title="Put the whole layer back">Clear all</button>
       </div>
       <label class="mb-f"><span>Brush size <b id="er-bv">18%</b></span>
@@ -2642,8 +2642,8 @@
       the music is muted for the take so it isn’t recorded twice. Stop when you’re done — the take is added
       as its own audio track you can slide and trim like any other.</div>
       <div class="mb-rec"><b id="mbr-time">0.0s</b><span class="mb-recdot" id="mbr-dot"></span></div>
-      <button class="btn btn-neon full" id="mbr-go">● Start recording</button>
-      <button class="btn btn-cyan full" id="mbr-stop" disabled>■ Stop &amp; add</button>
+      <button class="btn btn-neon full" id="mbr-go"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg>Start recording</button>
+      <button class="btn btn-cyan full" id="mbr-stop" disabled><svg class="ic b-ic" aria-hidden="true"><use href="#i-stop"></use></svg>Stop &amp; add</button>
       <button class="btn btn-ghost full" id="mbr-cancel">Cancel</button>`, root=>{
       const go=root.querySelector('#mbr-go'), stop=root.querySelector('#mbr-stop');
       const tEl=root.querySelector('#mbr-time'), dot=root.querySelector('#mbr-dot');
@@ -3005,8 +3005,8 @@
         ${replyBtn}
         <button class="btn btn-neon small" id="mb-post"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Post to Nostr</button>
         <button class="btn btn-cyan small" id="mb-copy"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Upload &amp; copy link</button>
-        <button class="btn btn-cyan small" id="mb-again" title="Put this render back on the timeline as a layer, so you can build on top of it">🎞️ Use as a layer</button>
-        <a class="btn btn-neon small" href="${url}" download="${enc((P.name||'meme').replace(/[^\w.-]+/g,'_').slice(0,40))}.${ext}">⬇️ Download</a>
+        <button class="btn btn-cyan small" id="mb-again" title="Put this render back on the timeline as a layer, so you can build on top of it"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>Use as a layer</button>
+        <a class="btn btn-neon small" href="${url}" download="${enc((P.name||'meme').replace(/[^\w.-]+/g,'_').slice(0,40))}.${ext}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</a>
       </div>
       <div class="muted small" id="mb-reslink"></div>
     </div>`;
@@ -3498,9 +3498,9 @@
     PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-folder"></use></svg>${enc(P.name || 'Untitled')}</h3>
       <div class="muted small" style="margin-bottom:10px">${P.layers.length} layer${P.layers.length===1?'':'s'} · ${P.w}×${P.h} · ${projEnd().toFixed(1)}s</div>
       <button class="btn btn-neon full" id="mbp-save"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save to my Blossom drive</button>
-      <button class="btn btn-cyan full" id="mbp-open">📂 Open a saved project…</button>
+      <button class="btn btn-cyan full" id="mbp-open"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Open a saved project…</button>
       <button class="btn btn-cyan full" id="mbp-name"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Rename this project</button>
-      <button class="btn btn-cyan full" id="mbp-new">🆕 Start a new project</button>
+      <button class="btn btn-cyan full" id="mbp-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Start a new project</button>
       <button class="btn btn-danger full" id="mbp-clear"><svg class="ic b-ic" aria-hidden="true"><use href="#i-broom"></use></svg>Remove every layer</button>`, root=>{
       const q = (id) => root.querySelector('#'+id);
       q('mbp-save').onclick = ()=>{ PC.closeModal(); saveProject(); };

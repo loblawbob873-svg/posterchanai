@@ -103,6 +103,35 @@
   <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5.4 21V3.6"/><path d="M5.4 4.6h11.8l-1.8 3.6 1.8 3.6H5.4z"/></symbol>
   <symbol id="i-relay" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.4"/><path d="M7.4 7.4a6.5 6.5 0 000 9.2M16.6 16.6a6.5 6.5 0 000-9.2"/><path d="M4.4 4.4a10.7 10.7 0 000 15.2M19.6 19.6a10.7 10.7 0 000-15.2"/></symbol>
   <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3.2" y="4.4" width="17.6" height="15.2" rx="2.2"/><path d="M3.2 9.6h17.6M10.4 9.6v10"/></symbol>
+  <!-- Transport, editing and direction marks — the second conversion pass (media player, meme
+       builder, streams, find bar). Same rules as everything above: 24x24, currentColor, no fill. -->
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3.4" y="3.4" width="17.2" height="17.2" rx="2.2"/><path d="M3.4 9.2h17.2M3.4 14.8h17.2M9.2 3.4v17.2M14.8 3.4v17.2"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3.4 11.2V4.4a1 1 0 011-1h6.8a2 2 0 011.4.6l7.4 7.4a2 2 0 010 2.8l-6.4 6.4a2 2 0 01-2.8 0L4 12.6a2 2 0 01-.6-1.4z"/><circle cx="8" cy="8" r="1.5"/></symbol>
+  <symbol id="i-branch" viewBox="0 0 24 24"><circle cx="7" cy="5.8" r="2.4"/><circle cx="7" cy="18.2" r="2.4"/><circle cx="17" cy="5.8" r="2.4"/><path d="M7 8.2v7.6"/><path d="M17 8.2c0 4.4-3.6 5.4-7 6.4"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.4" y="6.4" width="11.2" height="11.2" rx="1.8"/></symbol>
+  <symbol id="i-minimize" viewBox="0 0 24 24"><path d="M5.5 17.5h13"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M14.4 3.6h6v6M9.6 20.4h-6v-6"/><path d="M20.4 3.6l-7 7M3.6 20.4l7-7"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="M18.4 5.6v12.8L9.2 12z"/><path d="M6.4 5.4v13.2"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="M5.6 5.6v12.8L14.8 12z"/><path d="M17.6 5.4v13.2"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.6l2.6 5.7 6.2.7-4.6 4.2 1.3 6.1L12 17.2l-5.5 3.1 1.3-6.1-4.6-4.2 6.2-.7z"/></symbol>
+  <symbol id="i-swap" viewBox="0 0 24 24"><path d="M4.4 8.8h13.2M14.4 5.6l3.2 3.2-3.2 3.2"/><path d="M19.6 15.2H6.4M9.6 12l-3.2 3.2 3.2 3.2"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20.2l-7.2-7.1a4.6 4.6 0 116.5-6.5l.7.7.7-.7a4.6 4.6 0 116.5 6.5z"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M4.6 8.6h9.8a5.4 5.4 0 010 10.8H7"/><path d="M8 4.6L4.4 8.6 8 12.6"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24"><path d="M19.4 8.6H9.6a5.4 5.4 0 000 10.8H17"/><path d="M16 4.6l3.4 4-3.4 4"/></symbol>
+  <symbol id="i-scissors" viewBox="0 0 24 24"><circle cx="7" cy="17.8" r="2.6"/><circle cx="17" cy="17.8" r="2.6"/><path d="M15.6 16L6.4 4M8.4 16l9.2-12"/></symbol>
+  <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 4.2v15.6"/><path d="M6 13.8l6 6 6-6"/></symbol>
+  <symbol id="i-chevron-up" viewBox="0 0 24 24"><path d="M6 14.6l6-6 6 6"/></symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="M6 9.4l6 6 6-6"/></symbol>
+  <symbol id="i-arrows-h" viewBox="0 0 24 24"><path d="M3.4 12h17.2"/><path d="M7 8.4L3.4 12 7 15.6"/><path d="M17 8.4l3.6 3.6-3.6 3.6"/></symbol>
+  <symbol id="i-nsfw" viewBox="0 0 24 24"><path d="M3.4 3.4l17.2 17.2"/><path d="M10.6 6.3A9.6 9.6 0 0112 6.2c5 0 9 5.8 9 5.8a17.4 17.4 0 01-3 3.5"/><path d="M6.5 8.2A17.4 17.4 0 003 12s4 5.8 9 5.8a9.4 9.4 0 004-.9"/><path d="M9.9 10.1a3 3 0 004.2 4.2"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 3.6h6l-.8 5.4 3.2 3.2H6.6l3.2-3.2z"/><path d="M12 12.2v8.2"/></symbol>
+  <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="M9.4 6l6 6-6 6"/></symbol>
+  <symbol id="i-restore" viewBox="0 0 24 24"><path d="M4.2 12a7.8 7.8 0 107.8-7.8c-2.6 0-4.9 1.3-6.3 3.2"/><path d="M3.6 4.2v4.6h4.6"/></symbol>
+  <symbol id="i-flip-h" viewBox="0 0 24 24"><path d="M12 3.4v17.2"/><path d="M9 6.6L4 12l5 5.4z"/><path d="M15 6.6l5 5.4-5 5.4z"/></symbol>
+  <symbol id="i-flip-v" viewBox="0 0 24 24"><path d="M3.4 12h17.2"/><path d="M6.6 9L12 4l5.4 5z"/><path d="M6.6 15L12 20l5.4-5z"/></symbol>
+  <symbol id="i-fit" viewBox="0 0 24 24"><rect x="3.4" y="5.4" width="17.2" height="13.2" rx="2"/><path d="M8.6 9.4h6.8v5.2H8.6z"/></symbol>
+  <symbol id="i-resize" viewBox="0 0 24 24"><path d="M20.4 9.6v-6h-6"/><path d="M3.6 14.4v6h6"/><path d="M20.4 3.6l-7.2 7.2M3.6 20.4l7.2-7.2"/></symbol>
+  <symbol id="i-coin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.8"/><path d="M9.6 15.4h4.3a2.1 2.1 0 000-4.3h-3.8a2.1 2.1 0 010-4.3h4.3"/><path d="M12 5.2v13.6"/></symbol>
   <!-- FILLED status glyphs. These render at 11-13px in the sidebar footer, where a 1.7px stroke
        on a 24-grid scales to under a pixel and reads as a grey smudge. They live here so the
        sprite stays the single source of truth, but opt out of the stroke system via CSS

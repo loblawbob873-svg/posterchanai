@@ -71,12 +71,12 @@
         <div id="auth-login" class="auth-pane">
             <div class="auth-sec">
                 <span class="auth-sec-t">Sign in with your signer</span>
-                <button id="btn-nip07" class="btn btn-neon full">⚡ Browser extension (NIP-07)</button>
+                <button id="btn-nip07" class="btn btn-neon full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Browser extension (NIP-07)</button>
                 <!-- NIP-55 (Android app only): signs through a signer installed on THIS phone, no bunker URI
                      and no relay round trip. app.js unhides it only when the OS reports a signer, and relabels
                      it with that signer's own name; in a browser it stays hidden. -->
-                <button id="btn-nip55" class="btn btn-cyan full hidden">📲 Amber on this device</button>
-                <button id="btn-amber" class="btn btn-cyan full">📡 Amber / remote signer</button>
+                <button id="btn-nip55" class="btn btn-cyan full hidden"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Amber on this device</button>
+                <button id="btn-amber" class="btn btn-cyan full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-relay"></use></svg>Amber / remote signer</button>
             </div>
             <!-- Account sign-in. Hidden unless this node has turned a provider on (Admin → Site →
                  "Sign in with an account"); _bindAccountLogins unhides only what's configured. These
@@ -84,9 +84,9 @@
                  below the signers rather than at the top of the card. -->
             <div class="auth-sec hidden" id="auth-accounts">
                 <span class="auth-sec-t">or sign in with an account</span>
-                <button id="btn-google" class="btn btn-cyan full hidden">🔑 Continue with Google</button>
+                <button id="btn-google" class="btn btn-cyan full hidden"><svg class="ic b-ic" aria-hidden="true"><use href="#i-key"></use></svg>Continue with Google</button>
                 <input id="pleroma-instance" class="input hidden" type="url" inputmode="url" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="https://your.instance">
-                <button id="btn-pleroma" class="btn btn-cyan full hidden">🐘 Continue with Pleroma / Mastodon</button>
+                <button id="btn-pleroma" class="btn btn-cyan full hidden"><svg class="ic b-ic" aria-hidden="true"><use href="#i-globe"></use></svg>Continue with Pleroma / Mastodon</button>
                 <!-- These CREATE an identity when the account isn't linked yet, and there is no error to
                      tell you so — you simply land in a new, empty account and it reads as "my posts are
                      gone". Anyone who already has a key has to sign in with it FIRST and link from
@@ -102,7 +102,7 @@
             </details>
             <div class="auth-foot">
                 <span class="muted small">New here?</span>
-                <button id="btn-show-signup" class="btn btn-ghost full">✦ Create a new identity</button>
+                <button id="btn-show-signup" class="btn btn-ghost full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Create a new identity</button>
             </div>
             <div id="auth-error" class="auth-error"></div>
         </div>
@@ -113,15 +113,15 @@
             <button id="btn-amber-connect" class="btn btn-neon full">Connect</button>
             <div class="divider"><span>or</span></div>
             <p class="muted small">No bunker string? Generate a connection link — <b>tap to open in Amber</b> on this phone, or <b>scan the QR</b> with a signer on another device (Amber, nsec.app, Primal…). Your key stays on your phone.</p>
-            <button id="btn-amber-nc" class="btn btn-cyan full">📲 Open in Amber / scan QR</button>
+            <button id="btn-amber-nc" class="btn btn-cyan full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Open in Amber / scan QR</button>
             <div id="amber-nc-box" class="keybox hidden">
-                <a id="amber-nc-open" class="btn btn-neon full" href="#">📲 Tap to open in Amber</a>
+                <a id="amber-nc-open" class="btn btn-neon full" href="#"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Tap to open in Amber</a>
                 <label>…or scan with a signer on another device</label>
                 <img id="amber-nc-qr" class="nc-qr hidden" alt="scan to sign in">
                 <div class="keyrow"><code id="amber-nc-uri"></code><button class="mini" data-copy="amber-nc-uri">copy</button></div>
                 <div class="muted small" id="amber-nc-status">waiting for the signer to approve…</div>
             </div>
-            <button id="btn-amber-back" class="btn btn-ghost full">← back</button>
+            <button id="btn-amber-back" class="btn btn-ghost full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>back</button>
             <div id="amber-error" class="auth-error"></div>
         </div>
 
@@ -134,9 +134,9 @@
                 <label>your secret key (nsec) — SAVE THIS</label>
                 <div class="keyrow"><code id="signup-nsec"></code><button class="mini" data-copy="signup-nsec">copy</button></div>
             </div>
-            <button id="btn-gen-key" class="btn btn-cyan full">⚙ Generate keypair</button>
+            <button id="btn-gen-key" class="btn btn-cyan full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-gear"></use></svg>Generate keypair</button>
             <button id="btn-signup-go" class="btn btn-neon full hidden">I saved it — enter ▶</button>
-            <button id="btn-back-login" class="btn btn-ghost full">← back</button>
+            <button id="btn-back-login" class="btn btn-ghost full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>back</button>
             <div id="signup-status" class="muted small"></div>
         </div>
     </div>
@@ -206,7 +206,7 @@
         <div class="me" id="me-card"></div>
         <div class="conn" id="conn-status"><i class="dot"></i><span>connecting…</span></div>
         <div class="usercount hidden" id="user-count"></div>
-        <button id="btn-install" class="btn btn-cyan small full hidden">📥 Install app</button>
+        <button id="btn-install" class="btn btn-cyan small full hidden"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Install app</button>
         <button id="btn-logout" class="btn btn-neon small">Logout</button>
     </aside>
 
@@ -251,7 +251,7 @@
         <!-- Filing a bug meant Discover → Git → find the repo → New issue, which nobody does. Same modal,
              one tap from anywhere. Sits with the app links because that is where people land when the app
              is the thing that misbehaved. -->
-        <button type="button" class="rb-report" id="rb-report" title="Open an issue on this instance's repo">🐛 <span>Report a bug</span></button>
+        <button type="button" class="rb-report" id="rb-report" title="Open an issue on this instance's repo"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bug"></use></svg><span>Report a bug</span></button>
         <a class="rb-github" href="https://github.com/loblawbob873-svg/posterchanai" target="_blank" rel="noopener">
             <svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
             <span>View on GitHub</span>
@@ -260,7 +260,7 @@
 </div>
 
 <!-- Right-column collapse toggle (≥1180px only): a neon arrow bar on the panel's edge. Persisted. -->
-<button class="rb-toggle" id="rb-toggle" title="Hide panel" aria-label="Toggle right panel">▸</button>
+<button class="rb-toggle" id="rb-toggle" title="Hide panel" aria-label="Toggle right panel"><svg class="ic x-ic" aria-hidden="true"><use href="#i-chevron-right"></use></svg></button>
 <script>
 (function(){ var b=document.getElementById('rb-toggle'); if(!b) return;
   function apply(c){ document.body.classList.toggle('rb-collapsed', c); b.textContent=c?'◂':'▸'; b.title=c?'Show panel':'Hide panel'; }

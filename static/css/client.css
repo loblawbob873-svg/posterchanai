@@ -1111,6 +1111,14 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
    📎 / ⤢ More / Post at a tappable size instead of letting them all squeeze. */
 @media(max-width:380px){ .tl-cmp-status{display:none} }
 .search-section-title{padding:14px 20px 6px;color:var(--muted);font-size:13px;text-transform:uppercase;letter-spacing:1.5px}
+/* Section headers carry a leading icon. They are plain blocks, and `gap` does NOTHING on a non-flex
+   box — an icon dropped in one sits flush against the first letter (the same trap the icon checker
+   guards for on buttons). One shared rule so every header surface inherits the same rhythm. */
+.search-section-title:has(> svg.ic),.fxs-sec:has(> svg.ic),.set-title:has(> svg.ic){
+  display:flex;align-items:center;gap:var(--sp-2)}
+/* the header icon tracks the header's own colour and optical size, never the 20px default */
+.search-section-title > svg.ic,.fxs-sec > svg.ic{width:1.15em;height:1.15em;flex:none;opacity:.9}
+.set-title > svg.ic{width:.9em;height:.9em;flex:none}
 .psearch{display:flex;gap:12px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);cursor:pointer}
 .psearch:hover{background:rgba(var(--accent-rgb),.08)}
 .psearch img{width:42px;height:42px;border-radius:50%;border:1px solid var(--line);flex:none}
