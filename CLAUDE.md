@@ -214,6 +214,29 @@ the admin **Run Logs** button, and the `/logs` command; the interactive call pas
 `deliver_telegram=False` so its return value isn't also pushed (double-send). Nodes come from
 Remote Node Management (+ a synthetic `local`); the `logs_nodes` setting narrows the set.
 
+**The board's FACTS are measured, not retold — never let a model back into that path.** Python owning
+the icons/layout/status was not enough: the numbers still crossed two LLM hops (agent prose → the
+board model), and both invent. Real reports claimed a `[3/3] [UUU]` array was *"degraded (disk 4
+failed)"* (with a 🟢 beside the word "degraded" — status and detail are chosen independently, so they
+can contradict), `2048M` of swap on a host with none, a `/raid` mount that doesn't exist, and *"no
+RAID array"* over a healthy one, while silently dropping a drive from the SMART list. So
+`_HEALTH_SHELL` now runs on **every** node and `_parse_probe` parses df/smartctl/mdstat/zpool/
+systemctl/free/journal in Python; `_render_board(raw, probe)` overrides the model row-for-row. The
+agent still runs — `errors` keeps its wording (naming the noisy source is a real language task) with
+the measured counts appended, and a model `red` there survives, because the probe only counts lines
+and is a **floor** on severity, never a ceiling. Two rows deliberately do NOT override: `raid` when
+the probe found nothing (megaraid/btrfs are invisible to mdstat and zpool, so that means "no
+evidence", not "no array"), and any row the probe couldn't read.
+**The recurring failure mode is a false 🟢, and it is always a command that did not RUN**: `sudo -n
+journalctl` without the sudoers rule exits nonzero having printed nothing — identical to a clean host
+— and `${f:-none failed}` reports healthy systemd when systemctl never reached the bus. Every such
+leg emits an explicit `probe-error:` marker from its **own** exit status (`rc=$?` after a *pipeline*
+reads `head`'s status, i.e. always 0 — `tests/test_logs_scheduler.py` runs the real script with
+stubbed `sudo`/`systemctl` because no parser test can catch that). Do **not** replace the markers
+with output-sniffing for "permission denied": that string is ordinary journal *content*. `head`
+limits are generous for the same reason — mdstat lists arrays newest-first, so a tight cap drops the
+oldest (usually the data) array and reports the rest as clean.
+
 ### Telegram delivery
 
 Module-level singleton `telegram_service` (`app/services/telegram_service.py`); optional local

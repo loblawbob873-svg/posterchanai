@@ -53,16 +53,36 @@ _HEALTH_GOAL = (
     "on this host."
 )
 
-# Fallback for a node that can't run the LLM 'agent' loop (the lightweight standalone agent on
-# router.lan etc. has no local model). It covers the SAME six subsystems as _HEALTH_GOAL in one
-# read-only shell pass — the agent loop is only how a node gathers, so a shell-only node has no
-# reason to report less. Its output is distilled into the identical status board by _to_status_board
-# (the CONTROLLER runs that model, so the worker never needs an LLM); previously this ran a couple of
-# trivia commands and pasted them verbatim, which is why such a node looked nothing like the others.
-# Log/dmesg lines are normalised (timestamps, hex ids and digits blanked) then counted, so thousands
-# of repeats of one nginx error collapse to a single row instead of flooding the board model.
+# The MEASURED half of the report, and the fallback for a node that can't run the LLM 'agent' loop
+# (the lightweight standalone agent on router.lan etc. has no local model). It covers the SAME six
+# subsystems as _HEALTH_GOAL in one read-only shell pass — the agent loop is only how a node gathers,
+# so a shell-only node has no reason to report less. It now runs on EVERY node, because _parse_probe
+# turns this output into the board's facts (see the fact-check block below) rather than trusting the
+# model's retelling of them. Log/dmesg lines are normalised (timestamps, hex ids and digits blanked)
+# then counted, so thousands of repeats of one nginx error collapse to a single row.
+# Two deliberate widenings, both of which the model was papering over with invention:
+#  - disk lists the host's REAL local mounts instead of the fixed `/ /boot /raid` triple, which
+#    reported nothing for a NAS array mounted anywhere else (and left "/raid 63%" to be imagined for
+#    a host with no such mount).
+#  - raid reads `zpool status` as well as /proc/mdstat, so a ZFS host isn't declared array-less.
+# The dmesg leg is 6h-windowed like the journal one (and like _ERROR_SAMPLE_SHELL): unbounded, it
+# counts boot-time warnings forever, which pins the "Errors (6h)" row to a permanent warning and
+# disagrees with the sample lines printed under it. `--since` needs util-linux >= 2.37, hence the
+# fallback to the whole buffer.
+# Every leg that can FAIL says so with an explicit `probe-error:` marker taken from its exit status,
+# because the alternative is a silent false green: `sudo -n journalctl` without the sudoers rule
+# exits nonzero having printed nothing, which is byte-identical to a host with no errors, and
+# `${f:-none failed}` reports a healthy systemd when systemctl couldn't reach the bus at all. Sniffing
+# the output for "permission denied" instead is not an option — that string is ordinary journal
+# CONTENT (an nginx open() failure, a bad sudo password), so it would report a host with thousands of
+# real errors as an unreadable journal. `head` limits are generous rather than tight for the same
+# family of reasons: mdstat lists arrays newest-first, so a low cap drops the OLDEST array — usually
+# the data array — and reports the remaining ones as clean. LC_ALL=C pins the labels the parsers
+# match ('Swap:', 'Use%'), which a localised host would otherwise translate out of existence.
 _HEALTH_SHELL = r"""
-echo '== disk =='; df -hP / /boot /raid 2>/dev/null
+export LC_ALL=C
+echo '== disk =='
+df -hPl -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | head -40
 echo; echo '== smart =='
 s=$(for d in $(lsblk -dn -o NAME 2>/dev/null | grep -Ev '^(loop|ram|zram|sr|dm-)'); do
   o=$(sudo -n smartctl -H /dev/$d 2>&1)
@@ -70,18 +90,31 @@ s=$(for d in $(lsblk -dn -o NAME 2>/dev/null | grep -Ev '^(loop|ram|zram|sr|dm-)
   echo "$d: $(echo "$o" | grep -Ei 'overall-health|SMART Health Status|Unavailable|not found|Permission denied|Operation not permitted' | head -1)"
 done)
 echo "${s:-no drives reported}"
-echo; echo '== raid =='; cat /proc/mdstat 2>/dev/null | head -15
+echo; echo '== raid =='; cat /proc/mdstat 2>/dev/null | head -60
+if command -v zpool >/dev/null 2>&1; then
+  { sudo -n zpool status 2>/dev/null || zpool status 2>/dev/null; } |
+    grep -Ei '^ *(pool|state|status):' | head -20
+fi
 echo; echo '== failed systemd units =='
-f=$(systemctl --failed --no-legend 2>/dev/null | head -20); echo "${f:-none failed}"
+f=$(systemctl --failed --no-legend 2>/dev/null); rc=$?
+if [ $rc -ne 0 ]; then echo "probe-error: systemctl exit $rc"
+else echo "${f:-none failed}" | head -20; fi
 echo; echo '== swap =='; free -h 2>/dev/null | grep -iE '^ *total|swap'
 echo; echo '== journal errors 6h =='
-sudo -n journalctl --since -6h -p err --no-pager -q 2>&1 |
+j=$(sudo -n journalctl --since -6h -p err --no-pager -q 2>/dev/null); rc=$?
+[ $rc -ne 0 ] && echo "probe-error: journalctl exit $rc"
+printf '%s\n' "$j" |
   sed -E 's/^[A-Z][a-z]{2} +[0-9]+ [0-9:]+ [^ ]+ //; s/[0-9a-f:]{4,}//g; s/[0-9]+/#/g' |
-  cut -c1-110 | sort | uniq -c | sort -rn | head -8
-echo "total: $(sudo -n journalctl --since -6h -p err --no-pager -q 2>/dev/null | wc -l) error lines"
+  grep -v '^ *$' | cut -c1-110 | sort | uniq -c | sort -rn | head -8
+echo "total: $(printf '%s' "$j" | grep -c .) error lines"
 echo; echo '== dmesg warn/err =='
-sudo -n dmesg -T --level=err,warn 2>&1 | grep -v 'IN=.*OUT=' |
-  sed -E 's/^\[[^]]*\] //; s/[0-9]+/#/g' | cut -c1-110 | sort | uniq -c | sort -rn | head -6
+d=$({ sudo -n dmesg -T --level=err,warn --since '6 hours ago' 2>/dev/null ||
+      sudo -n dmesg -T --level=err,warn 2>/dev/null; }); rc=$?
+[ $rc -ne 0 ] && echo "probe-error: dmesg exit $rc"
+printf '%s\n' "$d" | grep -v 'IN=.*OUT=' |
+  sed -E 's/^\[[^]]*\] //; s/[0-9]+/#/g' | grep -v '^ *$' |
+  cut -c1-110 | sort | uniq -c | sort -rn | head -6
+true
 """.strip()
 
 # Sample lines behind the "Errors (6h)" row. A bare count ("11 journal + 8 dmesg errors", "10 SMART
@@ -136,9 +169,273 @@ _BOARD_SYS = (
 )
 
 
-def _render_board(raw: str) -> Optional[str]:
-    """Parse the model's 'subsystem|status|detail' lines into the fixed emoji board. Returns None if
-    too few rows parsed (caller falls back to the plain summary)."""
+# --- deterministic fact-check ---------------------------------------------------------------------
+# The board's FACTS are parsed straight out of _HEALTH_SHELL's output here and OVERRIDE the model's
+# row for every subsystem a command can answer outright. Formatting was already deterministic; the
+# numbers were not, and two LLM hops (agent prose → board model) is two chances to invent one. This
+# was not theoretical: a report claimed "RAID 🟢 degraded (disk 4 failed)" on a host whose md0 was
+# `active raid5 [3/3] [UUU]` with no fourth disk, "2048M swap available" on a host with no swap, and
+# "/raid 63%" for a mount that doesn't exist — while a second node reported "no RAID array" over a
+# healthy one. Note the first of those also rendered a GREEN dot beside the word "degraded": the
+# model picks status and detail independently, so they can contradict each other and nothing noticed.
+# Only 'errors' still takes the model's wording (naming the sources is genuinely a language task);
+# even there the probe owns the status and the zero case.
+
+# A host with many ZFS datasets / btrfs subvolumes / LVM volumes has a df row each; listing them all
+# would be an unreadable Telegram line, so the detail shows the fullest few (status still sees all).
+_DISK_DETAIL_MAX = 6
+_PROBE_ERROR = "probe-error:"
+
+
+def _probe_sections(raw: str) -> dict:
+    """Split _HEALTH_SHELL output on its '== name ==' markers into {name: [lines]}."""
+    out: dict[str, list] = {}
+    key = ""
+    for line in (raw or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("==") and stripped.endswith("==") and len(stripped) > 4:
+            key = stripped.strip("= ").strip().lower()
+            out.setdefault(key, [])
+            continue
+        if key:
+            out[key].append(line.rstrip())
+    return out
+
+
+def _to_bytes(size: str) -> Optional[float]:
+    """'0B' / '7.6Gi' / '2048M' → bytes. None when it isn't a size at all."""
+    m = re.fullmatch(r"(\d+(?:[.,]\d+)?)\s*([KMGTPE]?)i?B?", (size or "").strip(), re.I)
+    if not m:
+        return None
+    mult = {"": 1, "K": 1024, "M": 1024 ** 2, "G": 1024 ** 3,
+            "T": 1024 ** 4, "P": 1024 ** 5, "E": 1024 ** 6}[m.group(2).upper()]
+    return float(m.group(1).replace(",", ".")) * mult
+
+
+def _probe_disk(lines: list) -> Optional[tuple]:
+    """df -hP rows → worst use%. The header ends in 'on', so it can't match. The mount point is
+    captured to END OF LINE, not as one \\S+ token: df prints '/media/USB Drive' unescaped, and a
+    token-based capture yields 'Drive', fails the leading-'/' check and drops that filesystem — so a
+    full disk with a space in its name would simply be missing from the row."""
+    used = []
+    for line in lines:
+        m = re.search(r"\s(\d+)%\s+(/.*?)\s*$", line)
+        if m:
+            used.append((m.group(2), int(m.group(1))))
+    if not used:
+        return None
+    worst = max(p for _, p in used)
+    status = "red" if worst >= 90 else "yellow" if worst >= 75 else "green"
+    # Status covers every mount; the DETAIL only has room for a few, so it shows the fullest (which
+    # are the ones the status is about) rather than the first few in df order.
+    shown = used if len(used) <= _DISK_DETAIL_MAX else sorted(used, key=lambda u: -u[1])[:_DISK_DETAIL_MAX]
+    detail = ", ".join(f"{mount} {pct}%" for mount, pct in shown)
+    if len(used) > len(shown):
+        detail += f", +{len(used) - len(shown)} more"
+    return status, detail
+
+
+def _probe_smart(lines: list) -> Optional[tuple]:
+    """'<dev>: SMART overall-health self-assessment test result: PASSED' (or 'SMART Health Status: OK',
+    or a permission/unavailable message) per drive. A drive we couldn't read is a WARNING, never a
+    silent omission — dropping the unreadable one is how a 4-drive host reported 3 drives PASSED."""
+    ok, bad, unknown = [], [], []
+    for line in lines:
+        name, sep, rest = line.strip().partition(":")
+        if not sep or not name or re.search(r"\s", name):
+            continue
+        text = rest.upper()
+        if "FAILED" in text or "FAILING" in text:
+            bad.append(name)
+        elif "PASSED" in text or re.search(r"\bOK\b", text):
+            ok.append(name)
+        else:
+            unknown.append(name)
+    if not (ok or bad or unknown):
+        return None
+    parts = []
+    if bad:
+        parts.append(f"{','.join(bad)} FAILED")
+    if unknown:
+        parts.append(f"{','.join(unknown)} no result")
+    if ok:
+        parts.append(f"{','.join(ok)} PASSED")
+    status = "red" if bad else "yellow" if unknown else "green"
+    return status, "; ".join(parts)
+
+
+def _probe_raid(lines: list) -> Optional[tuple]:
+    """/proc/mdstat + `zpool status`. Degraded is read off the array itself — '[n/m]' with m < n, a
+    '_' in the [UU_] map, an (F)aulty member or a non-active state — never off prose."""
+    arrays, cur = [], None
+    for line in lines:
+        m = re.match(r"^(md\d+)\s*:\s*(\S+)\s*(.*)$", line.strip())
+        if m:
+            level = re.search(r"\braid\d+\b|\blinear\b|\bmultipath\b", m.group(3))
+            cur = {"name": m.group(1), "state": m.group(2).lower(), "faulty": "(F)" in m.group(3),
+                   "level": level.group(0) if level else "", "want": None, "have": None,
+                   "map": "", "rebuild": False}
+            arrays.append(cur)
+            continue
+        if cur is None:
+            continue
+        u = re.search(r"\[(\d+)/(\d+)\]\s*\[([U_]+)\]", line)
+        if u:
+            cur["want"], cur["have"], cur["map"] = int(u.group(1)), int(u.group(2)), u.group(3)
+        if re.search(r"\b(recovery|resync|reshape|check)\s*=", line):
+            cur["rebuild"] = True
+
+    pools, pool = [], None
+    for line in lines:
+        m = re.match(r"^\s*(pool|state|status)\s*:\s*(.+)$", line.strip(), re.I)
+        if not m:
+            continue
+        field, value = m.group(1).lower(), m.group(2).strip()
+        if field == "pool":
+            pool = {"name": value, "state": "", "note": ""}
+            pools.append(pool)
+        elif pool is None:
+            continue
+        elif field == "state":
+            pool["state"] = value.upper()
+        else:
+            # `status:` is printed ONLY when something is wrong, and ZFS reports unrecoverable
+            # errors there while `state:` stays ONLINE — reading state alone calls that pool healthy.
+            pool["note"] = value
+
+    if not arrays and not pools:
+        return "none", "no RAID array"
+
+    status, details = "green", []
+
+    def _raise(level):
+        nonlocal status
+        if level == "red" or (level == "yellow" and status == "green"):
+            status = level
+
+    for a in arrays:
+        degraded = (a["faulty"] or "_" in a["map"]
+                    or (a["want"] is not None and a["have"] is not None and a["have"] < a["want"]))
+        size = f" [{a['want']}/{a['have']}]" if a["want"] is not None else ""
+        label = f"{a['name']} {a['level']}".strip()
+        if degraded:
+            _raise("red")
+            details.append(f"{label} DEGRADED{size}")
+        elif a["state"] != "active":
+            # An 'inactive' md device is usually a stale/foreign superblock left by a removed disk —
+            # it isn't carrying data and isn't at risk, so it's a warning. A DEGRADED array (checked
+            # first, above) is the one that is live and one failure from loss.
+            _raise("yellow")
+            details.append(f"{label} {a['state']}{size}")
+        elif a["rebuild"]:
+            _raise("yellow")
+            details.append(f"{label} rebuilding{size}")
+        else:
+            details.append(f"{label} clean{size}")
+    for p in pools:
+        state = p["state"] or "unknown"
+        if state != "ONLINE":
+            _raise("red")
+        elif p["note"]:
+            _raise("yellow")
+        note = f" ({p['note'][:60]})" if p["note"] else ""
+        details.append(f"{p['name']} {state}{note}")
+    return status, ", ".join(details)
+
+
+def _probe_services(lines: list) -> Optional[tuple]:
+    """`systemctl --failed --no-legend`, or the literal 'none failed' the probe substitutes."""
+    body = [ln.strip() for ln in lines if ln.strip()]
+    if not body:
+        return None
+    if any(ln.startswith(_PROBE_ERROR) for ln in body):
+        return "yellow", "could not query systemd"      # never green off a command that didn't run
+    if len(body) == 1 and body[0].lower() == "none failed":
+        return "green", "none failed"
+    # systemctl prefixes each row with a '●' status bullet — taking split()[0] blind names every
+    # failed unit "●" and counts them all as the same thing.
+    names = [ln.lstrip("●*○◍ \t").split()[0] for ln in body if ln.lstrip("●*○◍ \t")]
+    shown = ", ".join(names[:4]) + ("…" if len(names) > 4 else "")
+    return "red", f"{len(names)} failed: {shown}"
+
+
+def _probe_swap(lines: list) -> Optional[tuple]:
+    """The `free -h` Swap row. Zero total means NO SWAP (⚪), which is a different thing from
+    'swap is fine' — reporting a green figure for a host that has none is pure invention."""
+    for line in lines:
+        m = re.match(r"^\s*swap:\s+(\S+)\s+(\S+)\s+(\S+)", line, re.I)
+        if not m:
+            continue
+        total, used = _to_bytes(m.group(1)), _to_bytes(m.group(2))
+        if total is None or used is None:
+            return None
+        if total <= 0:
+            return "none", "no swap configured"
+        pct = used * 100 / total
+        status = "red" if pct >= 90 else "yellow" if pct >= 50 else "green"
+        return status, f"{m.group(2)} of {m.group(1)} used"
+    return None
+
+
+def _probe_errors(journal: list, dmesg: list) -> Optional[tuple]:
+    """Counts only — the model still gets to NAME the sources when there are any (see _render_board),
+    and the verbatim samples land underneath via _with_error_samples."""
+    def _tally(rows):
+        return sum(int(m.group(1)) for m in
+                   (re.match(r"^\s*(\d+)\s+\S", ln) for ln in rows) if m)
+
+    # A leg that couldn't RUN (no sudoers rule, dmesg_restrict) exits nonzero having printed nothing,
+    # which is indistinguishable from a clean host — so the probe marks it and we refuse to call it
+    # green. Detecting this by searching the output for "permission denied" instead would misfire on
+    # ordinary journal CONTENT: an nginx open() failure and a bad `sudo` password both say exactly
+    # that, and a host with thousands of real errors would be reported as an unreadable journal.
+    unreadable = [ln.split(_PROBE_ERROR, 1)[1].strip()
+                  for ln in journal + dmesg if _PROBE_ERROR in ln]
+    if unreadable:
+        return "yellow", f"logs unreadable ({unreadable[0]})"
+
+    total = None
+    for line in journal:
+        m = re.search(r"total:\s*(\d+)\s+error lines", line)
+        if m:
+            total = int(m.group(1))
+    if total is None:
+        if not journal and not dmesg:
+            return None
+        total = _tally(journal)
+    dm = _tally(dmesg)
+    if total == 0 and dm == 0:
+        return "green", "no errors"
+    return "yellow", f"{total} journal, {dm} dmesg"
+
+
+def _parse_probe(raw: str) -> dict:
+    """_HEALTH_SHELL output → {subsystem: (status, detail)} for everything a command can answer.
+    Rows the probe couldn't read are simply absent, so the model's row survives for those."""
+    s = _probe_sections(raw)
+    # A MISSING section is not a finding. Only 'raid' can legitimately parse to a row from no content
+    # ("no RAID array"), so it — like the rest — is asked only when the probe actually reported it;
+    # otherwise a truncated or failed probe would announce that a host has no array.
+    rows = {}
+    if "raid" in s:
+        rows["raid"] = _probe_raid(s["raid"])
+    if "disk" in s:
+        rows["disk"] = _probe_disk(s["disk"])
+    if "smart" in s:
+        rows["smart"] = _probe_smart(s["smart"])
+    if "failed systemd units" in s:
+        rows["services"] = _probe_services(s["failed systemd units"])
+    if "swap" in s:
+        rows["swap"] = _probe_swap(s["swap"])
+    if "journal errors 6h" in s or "dmesg warn/err" in s:
+        rows["errors"] = _probe_errors(s.get("journal errors 6h", []), s.get("dmesg warn/err", []))
+    return {k: v for k, v in rows.items() if v}
+
+
+def _render_board(raw: str, probe: Optional[dict] = None) -> Optional[str]:
+    """Parse the model's 'subsystem|status|detail' lines into the fixed emoji board, with `probe`'s
+    measured rows overriding the model's. Returns None if too few rows in total (caller falls back to
+    the plain summary)."""
     rows: dict[str, tuple[str, str]] = {}
     for line in (raw or "").splitlines():
         parts = [p.strip() for p in line.split("|")]
@@ -151,7 +448,27 @@ def _render_board(raw: str) -> Optional[str]:
         status = parts[1].lower()
         status = next((s for s in _STATUS_EMOJI if s in status), "green")
         rows[key] = (status, parts[2])
-    if len(rows) < 4:  # model didn't produce a usable board
+    for key, (status, detail) in (probe or {}).items():
+        prior_status, prior_detail = rows.get(key, ("", ""))
+        if key == "errors" and status != "green":
+            # 'errors' is the one row where the model earns its keep: it names WHICH source is noisy.
+            # Keep that wording — but append the MEASURED counts rather than trusting the model's
+            # (invented figures are the whole point of this override), and let a 'red' from the model
+            # stand. The probe caps the row at yellow because it only counts lines; it can't tell a
+            # dying disk from a chatty proxy, so it is a floor on severity, never a ceiling.
+            if prior_detail:
+                detail = f"{prior_detail} ({detail})"
+            if prior_status == "red":
+                status = "red"
+        elif key == "raid" and status == "none" and prior_status and prior_status != "none":
+            # mdstat/zpool found nothing, but the agent reported an array: hardware RAID (megaraid),
+            # btrfs and dm-integrity are invisible to both, so "none" here means "no evidence", not
+            # "no array". Overriding would turn a real DEGRADED controller into a ⚪.
+            continue
+        rows[key] = (status, detail)
+    # The <4 floor is about the MODEL — a half-parsed board is worse than the plain summary. Measured
+    # rows are known-good however few there are, so they're never thrown away on that count.
+    if not rows or (len(rows) < 4 and not probe):
         return None
     lines = []
     for key in _BOARD_ORDER:
@@ -189,6 +506,32 @@ def _parse_error_samples(raw: str) -> list:
     return out[:_ERROR_SAMPLE_MAX]
 
 
+async def _run_probe(db, admin, name: str, target: str, script: str, timeout: int = 45) -> str:
+    """Run a read-only shell script on a node over whichever transport it uses, and return its raw
+    output. The three deterministic legs (uptime, error samples, the health probe) all need exactly
+    this and had each grown their own copy of the nostr-vs-local branch."""
+    if target.startswith("nostr:"):
+        return await node_service.run_agent_over_nostr(target[6:], script, mode="shell") or ""
+    job = await node_service.run_to_completion(db, name, target, script,
+                                               user_id=admin.id, timeout=timeout)
+    return job.output or ""
+
+
+async def _health_probe(db, admin, name: str, target: str) -> tuple:
+    """Measured board rows for a node — the fact-check the agent's summary is corrected against —
+    plus the raw probe output, which the shell-only node path reuses instead of running the same
+    script a second time.
+
+    Best-effort like _error_samples: on any failure it returns ({}, "") and the board is exactly what
+    the model said, which is the old behaviour rather than a broken node."""
+    try:
+        raw = await _run_probe(db, admin, name, target, _HEALTH_SHELL, timeout=90)
+        return _parse_probe(raw), raw
+    except Exception as e:
+        logger.warning(f"health probe failed for {name}: {e}")
+        return {}, ""
+
+
 async def _error_samples(db, admin, name: str, target: str) -> list:
     """Top journal/dmesg error groups for a node, each with one verbatim sample line.
 
@@ -196,13 +539,7 @@ async def _error_samples(db, admin, name: str, target: str) -> list:
     blocked by it) and it runs even when the agent leg errored, which is exactly when raw evidence
     is worth the most."""
     try:
-        if target.startswith("nostr:"):
-            raw = await node_service.run_agent_over_nostr(target[6:], _ERROR_SAMPLE_SHELL, mode="shell") or ""
-        else:
-            job = await node_service.run_to_completion(db, name, target, _ERROR_SAMPLE_SHELL,
-                                                       user_id=admin.id, timeout=45)
-            raw = job.output or ""
-        return _parse_error_samples(raw)
+        return _parse_error_samples(await _run_probe(db, admin, name, target, _ERROR_SAMPLE_SHELL))
     except Exception as e:
         logger.warning(f"error-sample fetch failed for {name}: {e}")
         return []
@@ -230,11 +567,7 @@ async def _node_uptime(db, admin, name: str, target: str) -> str:
     Returns '' on any failure so the header just omits it."""
     try:
         cmd = "uptime -p 2>/dev/null || uptime"
-        if target.startswith("nostr:"):
-            out = (await node_service.run_agent_over_nostr(target[6:], cmd, mode="shell")).strip().splitlines()
-        else:
-            job = await node_service.run_to_completion(db, name, target, cmd, user_id=admin.id, timeout=20)
-            out = (job.output or "").strip().splitlines()
+        out = (await _run_probe(db, admin, name, target, cmd, timeout=20)).strip().splitlines()
         line = out[0].strip() if out else ""
         # "⚠️ …" (transport failure) and a bare "exit N" (command produced no output) are status, not an
         # uptime — showing either as the header's ⏱️ line is worse than omitting it.
@@ -246,19 +579,23 @@ async def _node_uptime(db, admin, name: str, target: str) -> str:
         return ""
 
 
-async def _to_status_board(chat_service, summary: str, fallback: Optional[str] = None) -> str:
+async def _to_status_board(chat_service, summary: str, fallback: Optional[str] = None,
+                           probe: Optional[dict] = None) -> str:
     """Turn the agent's plain-text summary (or a shell probe's raw output) into the deterministic emoji
-    board. On any failure, fall back to `fallback` — or the input itself — so a node is never blank."""
+    board, with `probe`'s measured rows overriding the model's. On any failure, fall back to
+    `fallback` — or the input itself — so a node is never blank. The model still runs even when the
+    probe answered every row: its wording on 'errors' is the one thing the probe can't produce, and
+    the probe's rows are applied on top of whatever it says."""
     fb = (fallback if fallback is not None else summary).strip()
     try:
         raw = await chat_service.chat([
             {"role": "system", "content": _BOARD_SYS},
             {"role": "user", "content": summary},
         ])
-        return _render_board(raw) or fb
+        return _render_board(raw, probe) or fb
     except Exception as e:
         logger.warning(f"status-board formatting failed: {e}")
-        return fb
+        return _render_board("", probe) or fb
 
 
 def get_logs_settings(db=None) -> dict:
@@ -424,15 +761,24 @@ async def build_health_report(db, admin: User, notify=None) -> str:
             except Exception:
                 pass
         fallback = None
+        # Measured first, and independently of the agent: these are the rows the board is corrected
+        # against, and they're also the only rows a node whose agent leg dies still gets.
+        probe, probe_raw = await _health_probe(db, admin, name, target)
         try:
             if _nostr:
                 summary = await node_service.run_agent_over_nostr(target[6:], _HEALTH_GOAL, mode="agent", report=True)
-                # A lightweight standalone worker (no local LLM) can't run agent mode — gather the same
-                # six subsystems with one read-only shell probe instead. The board is still distilled
-                # here on the controller, so such a node reports exactly like a full one; only the raw
-                # probe output (in a code block) is used if that distillation fails.
+                # A lightweight standalone worker (no local LLM) can't run agent mode — the same six
+                # subsystems come from the read-only shell probe instead. That probe has ALREADY run
+                # (it's the fact-check), so reuse its output rather than paying for the whole script
+                # a second time; only the raw text (in a code block) is used if distillation fails.
                 if summary and "no local LLM" in summary:
-                    raw = (await node_service.run_agent_over_nostr(target[6:], _HEALTH_SHELL, mode="shell") or "").strip()
+                    # …but if the probe came back empty (transient transport failure), retry it here
+                    # rather than reporting the node as "(no output)" on the strength of one attempt.
+                    raw = (probe_raw or "").strip()
+                    if not raw:
+                        raw = (await node_service.run_agent_over_nostr(
+                            target[6:], _HEALTH_SHELL, mode="shell") or "").strip()
+                        probe = probe or _parse_probe(raw)
                     summary = raw[:4000]
                     fallback = f"```\n{raw[:2500] or '(no output)'}\n```"
             else:
@@ -442,10 +788,13 @@ async def build_health_report(db, admin: User, notify=None) -> str:
                 )
             # Presentation is deterministic (Python owns emojis/layout) so the agent model's
             # formatting drift never reaches the report.
-            body = await _to_status_board(chat_service, summary or "", fallback=fallback)
+            body = await _to_status_board(chat_service, summary or "", fallback=fallback, probe=probe)
         except Exception as e:
             logger.error(f"Health check failed for node {name}: {e}")
-            body = f"⚠️ agent error: {e}"
+            # The probe is a separate leg, so a dead agent costs the prose, not the whole node: show
+            # the measured board and say the agent failed, rather than an error line by itself.
+            measured = _render_board("", probe)
+            body = f"{measured}\n⚠️ agent error: {e}" if measured else f"⚠️ agent error: {e}"
         # The counts on the errors row are a summary, not evidence — attach the actual top log lines
         # so the row can be acted on without opening a shell on the node.
         body = _with_error_samples(body, await _error_samples(db, admin, name, target))
