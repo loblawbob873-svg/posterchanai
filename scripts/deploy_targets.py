@@ -46,6 +46,14 @@ ALL = (APP, RELAY, WORKER, MEDIA, TOR, PROXY, GIT)
 # cheap: its cursors are durable.
 _OWNED = (
     ("app/routers/", (APP, WORKER)),
+    # The shared command layer (web UI websocket + Telegram), both of which live in the app.
+    # MEASURED the same way app/routers/ was, by importing each role's own modules and checking
+    # sys.modules: relay_main, app.worker, stream/turn (media), tor, http_proxy, git_http and the bot
+    # manager pull in NO command_service module. WORKER is included as the same cheap hedge against a
+    # lazy in-function import that app/routers/ carries. Left unmapped it meant "everything", so
+    # aliasing `syslogs` restarted the relay on both nodes — twice in one session, the second time
+    # after the user had already pointed out that the split exists to prevent exactly this.
+    ("app/services/command_service/", (APP, WORKER)),
     ("app/main.py", (APP,)),
     ("templates/", (APP,)),
     ("relay_main.py", (RELAY,)),

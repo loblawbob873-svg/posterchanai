@@ -96,6 +96,15 @@ class Mapping(unittest.TestCase):
         got = dt.units_for(["docs/GIT.md", "app/services/stream_service.py"])
         self.assertEqual(got, [dt.MEDIA])
 
+    def test_a_command_change_does_not_touch_the_relay(self):
+        """The command layer is the web UI websocket + Telegram, both in the app. Measured: no role
+        module outside the app imports command_service. Unmapped it meant "everything", so adding one
+        command alias restarted the relay and dropped every connected Nostr client."""
+        got = dt.units_for(["app/services/command_service/core.py"])
+        self.assertEqual(sorted(got), sorted([dt.APP, dt.WORKER]))
+        self.assertNotIn(dt.RELAY, got)
+        self.assertNotIn(dt.MEDIA, got)
+
     def test_a_git_hook_change_restarts_nothing(self):
         """install_hooks writes a shim that `exec`s "<python> <checkout>/git_hooks/<f>.py", so
         git-receive-pack spawns a fresh process per push and reads the file off disk every time — a
