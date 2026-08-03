@@ -3021,9 +3021,9 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
    viewport and the sidebar footer (username → connection → Logout) isn't pushed off the bottom; on
    desktop dvh==vh so nothing changes. Bounded to >820px so the mobile layout (≤820px, sidebar hidden)
    is left completely alone; true 4K (>1920px CSS px) gets no zoom. */
-@media (min-width:821px) and (max-width:1920px){ body{ zoom:.77 } .app{ height:calc(100dvh / .77) } .main{ height:100% } }
-@media (min-width:821px) and (max-width:1600px){ body{ zoom:.72 } .app{ height:calc(100dvh / .72) } .main{ height:100% } }
-@media (min-width:821px) and (max-width:1366px){ body{ zoom:.67 } .app{ height:calc(100dvh / .67) } .main{ height:100% } }
+@media (min-width:821px) and (max-width:1920px){ body{ zoom:.77; --zf:.77 } .app{ height:calc(100dvh / .77) } .main{ height:100% } }
+@media (min-width:821px) and (max-width:1600px){ body{ zoom:.72; --zf:.72 } .app{ height:calc(100dvh / .72) } .main{ height:100% } }
+@media (min-width:821px) and (max-width:1366px){ body{ zoom:.67; --zf:.67 } .app{ height:calc(100dvh / .67) } .main{ height:100% } }
 /* 4K / very large screens: native 1.0 (no shrink). */
 @media (min-width:1921px){ body{ zoom:1 } .app{ height:100dvh } .main{ height:100% } }
 /* OS display scaling shrinks a screen's CSS width, so a high-DPI DESKTOP panel (e.g. 1868px CSS at
@@ -4862,68 +4862,135 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
    visible viewport, which pushes the editor's toolbar under the bottom nav (see the mobile rules
    in check_client_mobile.py). The editor also reserves the fixed .mobilenav's ~62px plus the safe
    area, so the last line of a note is never sitting behind it. */
-.nt-wrap{display:grid;grid-template-columns:210px 300px 1fr;gap:0;height:calc(100dvh - 60px);
+/* `/ var(--zf)` for the same reason .app does it: the desktop tiers apply body{zoom}, and viewport
+   units are NOT scaled by zoom — so a plain calc(100dvh - 60px) rendered the whole pane at 67% of
+   the height it needed and left a third of the screen as empty background. */
+.nt-wrap{display:grid;grid-template-columns:210px 300px 1fr;gap:0;
+  height:calc((100dvh - 60px) / var(--zf, 1));
   min-height:0;border-top:1px solid var(--line)}
-.nt-side{border-right:1px solid var(--line);padding:10px;overflow-y:auto;min-height:0;display:flex;flex-direction:column;gap:8px}
-.nt-side-head{display:flex;flex-direction:column;gap:5px}
-/* FULL-WIDTH STACKED, not a row of thirds. The sidebar is 170-210px, so three side-by-side buttons
-   leave about 35px of text each — every label truncated to two or three characters. Nothing about
-   the icon sizes or the padding fixes that; the width simply is not there, and a row of "Fol… Imp…
-   Bac…" is worse than useless. Stacked, each label is fully readable at every width, which costs
-   about 60px of sidebar height in exchange (the folder list below it scrolls anyway). */
-.nt-side-head .btn{width:100%;justify-content:flex-start;gap:8px;white-space:nowrap}
-.nt-side-head .nt-new{justify-content:center}
-.nt-side-actions{display:flex;flex-direction:column;gap:5px}
-.nt-side-actions .btn{padding:7px 11px;font-size:13px}
-.nt-side-actions svg.ic{width:15px;height:15px;flex:none}
-.nt-imp-reset{display:flex;flex-direction:column;gap:4px;margin-top:14px;padding-top:12px;
-  border-top:1px solid var(--line)}
-.nt-imp-reset .btn{align-self:flex-start}
-.nt-search{width:100%}
-.nt-folders{display:flex;flex-direction:column;gap:2px}
+.nt-side{border-right:1px solid var(--line);padding:12px 10px;overflow-y:auto;min-height:0;
+  display:flex;flex-direction:column;gap:9px}
+
+/* Search reads as a search field: the icon sits INSIDE the input rather than a bare box that could
+   be anything. */
+.nt-searchwrap{position:relative;display:flex;align-items:center}
+.nt-searchic{position:absolute;left:9px;width:14px;height:14px;opacity:.45;pointer-events:none}
+.nt-search{width:100%;padding-left:29px;border-radius:9px}
+.nt-search::-webkit-search-cancel-button{filter:grayscale(1);opacity:.5}
+
+.nt-side .nt-new{width:100%;justify-content:center;gap:7px}
+
+/* Section headers, so the sidebar has structure instead of being one undifferentiated column of
+   controls. Small, quiet, and they carry their own action button — "new folder" belongs beside the
+   word Folders, not in a row of equal-weight buttons competing with "New note". */
+.nt-sec{display:flex;align-items:center;justify-content:space-between;gap:6px;
+  margin:6px 0 -2px;padding-left:2px;
+  font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;opacity:.5}
+.nt-icobtn{flex:none;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;
+  border-radius:7px;border:none;background:none;color:inherit;cursor:pointer;opacity:.7}
+.nt-icobtn svg.ic{width:14px;height:14px}
+.nt-icobtn:hover{opacity:1;background:rgba(var(--accent-rgb),.16);color:var(--neon)}
+
+/* Import / Backup are things you do twice a year. They belong at the bottom, quiet, out of the way
+   of the two actions used constantly — not as full-size buttons competing for attention. */
+.nt-side-foot{margin-top:auto;padding-top:10px;border-top:1px solid var(--line);
+  display:flex;flex-direction:column;gap:6px}
+.nt-foot-actions{display:flex;gap:4px}
+.nt-link{flex:1 1 0;display:inline-flex;align-items:center;justify-content:center;gap:5px;
+  padding:7px 6px;border-radius:8px;border:1px solid transparent;background:none;color:inherit;
+  cursor:pointer;font-size:12px;opacity:.65;white-space:nowrap}
+.nt-link svg.ic{width:13px;height:13px;flex:none}
+.nt-link:hover{opacity:1;border-color:var(--line);background:rgba(var(--accent-rgb),.08)}
+.nt-pending{color:var(--amber);font-size:11px}
+
+.nt-folders{display:flex;flex-direction:column;gap:1px}
 .nt-folder{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;
-  padding:7px 9px;border-radius:9px;border:1px solid transparent;background:none;color:inherit;
-  cursor:pointer;text-align:left;font-size:14px}
+  padding:6px 8px;border-radius:8px;border:1px solid transparent;background:none;color:inherit;
+  cursor:pointer;text-align:left;font-size:13.5px}
 .nt-folder span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.nt-folder i{font-style:normal;font-size:11px;opacity:.6;flex:none}
+.nt-folder i{font-style:normal;font-size:10.5px;opacity:.45;flex:none;font-variant-numeric:tabular-nums}
 .nt-folder:hover{background:rgba(var(--accent-rgb),.10)}
-.nt-folder.active{border-color:var(--neon);color:var(--neon)}
-.nt-addfolder{opacity:.75;font-size:13px}
-.nt-tags{display:flex;flex-wrap:wrap;gap:5px;padding-top:6px;border-top:1px solid var(--line)}
-.nt-tag{padding:3px 8px;border-radius:999px;border:1px solid var(--line);background:none;color:inherit;
-  cursor:pointer;font-size:12px}
-.nt-tag.active{border-color:var(--neon);color:var(--neon)}
-.nt-tag i{font-style:normal;opacity:.55;font-size:10px}
-.nt-pending{margin-top:auto;padding-top:8px;color:var(--amber)}
+/* Selected reads as a filled row, not an outline: a 1px border on a 28px row is a rectangle drawn
+   around text, which is what made the old list look like a form. */
+.nt-folder.active{background:rgba(var(--accent-rgb),.18);color:var(--neon);font-weight:600}
+.nt-folder.active i{opacity:.8}
+
+.nt-tags{display:flex;flex-wrap:wrap;gap:4px}
+.nt-tag{padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:none;color:inherit;
+  cursor:pointer;font-size:11.5px;opacity:.8}
+.nt-tag::before{content:"#";opacity:.5;margin-right:1px}
+.nt-tag:hover{opacity:1;border-color:var(--neon)}
+.nt-tag.active{border-color:var(--neon);color:var(--neon);background:rgba(var(--accent-rgb),.14);opacity:1}
+.nt-tag i{font-style:normal;opacity:.5;font-size:10px}
 
 .nt-list{border-right:1px solid var(--line);overflow-y:auto;min-height:0;display:flex;flex-direction:column}
-.nt-list-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;
-  padding:10px 12px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:1}
-.nt-item{display:flex;flex-direction:column;gap:3px;width:100%;padding:10px 12px;border:none;
-  border-bottom:1px solid var(--line);background:none;color:inherit;cursor:pointer;text-align:left}
-.nt-item b{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nt-list-head{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:12px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:1}
+.nt-list-head b{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nt-count{flex:none;font-size:11px;opacity:.5;font-variant-numeric:tabular-nums;
+  padding:2px 8px;border-radius:999px;background:rgba(var(--accent-rgb),.12)}
+.nt-item{display:flex;flex-direction:column;gap:2px;width:100%;padding:11px 14px;border:none;
+  border-bottom:1px solid var(--line);background:none;color:inherit;cursor:pointer;text-align:left;
+  transition:background .12s}
+.nt-item b{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nt-item .nt-snip{opacity:.62;font-size:12.5px}
+.nt-item .nt-meta{opacity:.45;font-size:11px}
 .nt-snip,.nt-meta{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nt-item:hover{background:rgba(var(--accent-rgb),.08)}
-.nt-item.active{background:rgba(var(--accent-rgb),.14);box-shadow:inset 3px 0 0 var(--neon)}
+.nt-item.active{background:rgba(var(--accent-rgb),.15);box-shadow:inset 3px 0 0 var(--neon)}
+.nt-item.active b{color:var(--neon)}
 
 .nt-editor{display:flex;flex-direction:column;min-height:0;overflow:hidden}
 .nt-editor:empty::after{content:"Pick a note, or write a new one.";display:block;padding:28px;opacity:.55;font-size:14px}
-.nt-ed-head{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--line)}
-.nt-ed-head .nt-title{flex:1 1 auto;min-width:0;font-size:16px;font-weight:600}
+.nt-ed-head{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--line)}
+/* The title is the heading of the note, so it looks like one — a boxed <input> at the top of a
+   document reads as a form field you are obliged to fill in. */
+.nt-ed-head .nt-title{flex:1 1 auto;min-width:0;font-size:19px;font-weight:700;letter-spacing:-.01em;
+  border:none;background:none;padding:2px 4px;border-radius:7px}
+.nt-ed-head .nt-title:focus{background:rgba(var(--accent-rgb),.09);outline:none}
 .nt-state{flex:none;min-width:60px;text-align:right}
-.nt-back{display:none;flex:none;background:none;border:none;color:inherit;cursor:pointer;padding:4px}
+/* !important, deliberately: the global icon-button utility at the top of this file
+   (`button:not(.tl-fab):has(> svg.ic.b-ic:only-child)`) matches this button and, thanks to the
+   :has(), carries higher specificity than any sane class selector here. Without the override the
+   phone-only back chevron rendered on DESKTOP too, next to the note title, where there is a whole
+   list pane beside it and nothing to go back to. */
+.nt-ed-head .nt-back{display:none !important;flex:none;background:none;border:none;color:inherit;
+  cursor:pointer;padding:4px;border-radius:7px}
+.nt-ed-head .nt-back:hover{background:rgba(var(--accent-rgb),.14)}
 /* The editor's icon buttons are sized HERE, together, rather than each borrowing whatever .btn
    modifier happened to be typed. Preview was a plain .btn and Delete a .btn.small, so they were
    visibly different heights sitting side by side. Square, identical, and big enough to hit. */
-.nt-ed-head .nt-ico{flex:none;width:38px;height:38px;padding:0;display:inline-flex;
-  align-items:center;justify-content:center}
+.nt-ed-head .nt-ico{flex:none;width:34px;height:34px;padding:0;display:inline-flex;
+  align-items:center;justify-content:center;border-radius:9px;
+  background:none;border:1px solid var(--line);color:inherit;opacity:.75}
+.nt-ed-head .nt-ico:hover{opacity:1;background:rgba(var(--accent-rgb),.12);border-color:var(--neon)}
+/* Delete is destructive but rare: neutral until you reach for it. A permanently red gradient button
+   was the single loudest element on the screen, which is backwards for the action you least often
+   want. */
+.nt-ed-head .nt-del{background:none;border:1px solid var(--line);color:inherit}
+.nt-ed-head .nt-del:hover{background:rgba(255,51,102,.16);border-color:#ff3366;color:#ff6b8a;opacity:1}
 .nt-ed-head .nt-ico svg.ic{width:17px;height:17px}
-.nt-ed-bar{display:flex;gap:6px;padding:8px 10px;border-bottom:1px solid var(--line);flex-wrap:wrap}
-.nt-ed-bar .nt-folder-sel{flex:0 1 150px;min-width:0}
-.nt-ed-bar .nt-tagin{flex:1 1 160px;min-width:0}
+.nt-ed-bar{display:flex;gap:6px;padding:7px 12px;border-bottom:1px solid var(--line);flex-wrap:wrap;
+  align-items:center}
+/* Metadata, not a form: quiet until touched, and the tag field takes what it needs rather than
+   stretching the full width of a 1200px pane. */
+.nt-ed-bar .input{font-size:12.5px;padding:5px 9px;border-radius:8px;background:none;
+  border:1px solid transparent;opacity:.8}
+.nt-ed-bar .input:hover{border-color:var(--line)}
+.nt-ed-bar .input:focus{opacity:1;border-color:var(--neon);background:rgba(var(--accent-rgb),.07)}
+.nt-ed-bar .nt-folder-sel{flex:0 0 auto;width:auto;min-width:110px;max-width:220px}
+.nt-ed-bar .nt-tagin{flex:1 1 180px;max-width:340px}
+.nt-ed-bar .nt-attach{margin-left:auto;flex:none;background:none;border:1px solid var(--line);
+  opacity:.7;padding:5px 10px;border-radius:8px}
+.nt-ed-bar .nt-attach:hover{opacity:1;border-color:var(--neon)}
+
 .nt-body{flex:1 1 auto;min-height:0;width:100%;resize:none;border:none;outline:none;background:none;
-  color:inherit;padding:12px;font:14px/1.6 var(--mono,ui-monospace,SFMono-Regular,Menlo,monospace)}
-.nt-render{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px}
+  color:inherit;padding:16px 18px;font:14px/1.7 var(--mono,ui-monospace,SFMono-Regular,Menlo,monospace)}
+/* Reading measure: prose set across a 1200px pane is unreadable, so the rendered view is capped and
+   centred like an article. */
+.nt-render{flex:1 1 auto;min-height:0;overflow-y:auto;padding:18px 22px;line-height:1.65}
+.nt-render>*{max-width:68ch}
+.nt-render h1,.nt-render h2,.nt-render h3{margin:1.1em 0 .4em;line-height:1.25}
 .nt-render img{max-width:100%;height:auto}
 .nt-res{border-top:1px solid var(--line);padding:8px 10px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .nt-res:empty{display:none}
@@ -4953,10 +5020,13 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
   .nt-wrap.nt-open .nt-side,.nt-wrap.nt-open .nt-list{display:none}
   .nt-wrap.nt-open{grid-template-rows:1fr}
   .nt-wrap.nt-open .nt-editor{display:flex}
-  .nt-back{display:inline-flex}
+  .nt-ed-head .nt-back{display:inline-flex !important;align-items:center}
   /* 16px minimum on every text input: iOS Safari ZOOMS the whole page on focus for anything
      smaller, and the page never zooms back out. */
-  .nt-title,.nt-body,.nt-search,.nt-tagin,.nt-folder-sel{font-size:16px}
+  /* 16px minimum, and specific enough to BEAT `.nt-ed-bar .input` — a two-class desktop rule
+     outranks a one-class rule even inside this media query, which is how the toolbar quietly
+     reintroduced the iOS zoom trap. */
+  .nt-title,.nt-body,.nt-search,.nt-ed-bar .input,.nt-ed-bar .nt-tagin,.nt-ed-bar .nt-folder-sel{font-size:16px}
   .nt-side-head .nt-new{padding:11px 10px}
   .nt-side-actions .btn{padding:10px 12px;font-size:14px}
   /* Touch targets: a 7px-padded row is a ~30px tap target, under the 44px guideline. */

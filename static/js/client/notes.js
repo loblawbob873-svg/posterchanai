@@ -265,11 +265,38 @@
   /* Write one note/folder. Returns {ok, queued}. NEVER throws on a dead relay: offline, the note is
    * saved locally and queued, and the UI says so — losing what someone just typed because the wifi
    * dropped is the one failure a notes app may not have. */
+  /* A note bigger than one relay message cannot be published as one event. The relay caps a message
+   * at 512 KB and NIP-44 + base64 expands the plaintext by about 1.37x, so anything past roughly
+   * 380 KB of JSON is unsendable — and a real notebook has such notes (this was found on an import
+   * carrying an 8.5 MB one). Those notes failed to save with nothing to explain why.
+   *
+   * So an oversized BODY is offloaded to an encrypted Blossom blob and the event keeps a pointer,
+   * exactly the way FilesIdx spills its index past the inline limit. The event still carries the
+   * title, folder, tags and a short snippet, so the list, search-by-title and every folder count
+   * work without fetching anything; the body is pulled when the note is actually opened.
+   * Conservative threshold: the cost of guessing high is an unsendable event, the cost of guessing
+   * low is one extra blob. */
+  const BODY_INLINE_MAX = 250000;
+
   async function save(obj, kind){
     const isFolder = kind === 'folder';
     obj.updated = now();
     const d = (isFolder ? D_FOLDER : D_NOTE) + obj.id;
     const body = Object.assign({}, obj); delete body._at;
+    if(!isFolder && body.body && JSON.stringify(body).length > BODY_INLINE_MAX){
+      const bytes = new TextEncoder().encode(body.body);
+      const f = new File([bytes], (obj.title || 'note') + '.md', { type:'text/markdown' });
+      const sha = await PC.uploadEncFile(f, 'Notes');
+      obj.bodyRef = body.bodyRef = sha;
+      obj.snippet = body.snippet = body.body.slice(0, 400);
+      obj.bodyBytes = body.bodyBytes = bytes.length;
+      body.body = '';        // the in-memory copy KEEPS its text; only the event sheds it
+    } else if(body.bodyRef && body.body){
+      // Edited back under the limit — inline it again and drop the pointer, so a note doesn't keep
+      // a stale blob reference that would win over its own text on the next read.
+      delete body.bodyRef; delete obj.bodyRef;
+      delete body.snippet; delete obj.snippet;
+    }
     const ct = await PC.nip44enc(ME().pubkey, JSON.stringify(body));
     // opts.noQueue: publish()'s own Outbox would refuse a 30078 anyway, but saying so explicitly
     // keeps this from depending on that. {quiet} because we report the outcome ourselves.
@@ -423,15 +450,15 @@
 
     feed.innerHTML = `<div class="nt-wrap${_sel?' nt-open':''}">
       <aside class="nt-side">
-        <div class="nt-side-head">
-          <button class="btn btn-cyan nt-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>New note</button>
-          <div class="nt-side-actions">
-            <button class="btn nt-addfolder" title="Create a folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg><span>Folder</span></button>
-            <button class="btn nt-import" title="Import a Joplin export or a Notes backup"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg><span>Import</span></button>
-            <button class="btn nt-export" title="Save a backup archive of every note"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg><span>Backup</span></button>
-          </div>
+        <div class="nt-searchwrap">
+          <svg class="ic nt-searchic" aria-hidden="true"><use href="#i-search"></use></svg>
+          <input class="input nt-search" type="search" placeholder="Search notes…" value="${enc(_filter.q)}" autocomplete="off">
         </div>
-        <input class="input nt-search" type="search" placeholder="Search notes…" value="${enc(_filter.q)}" autocomplete="off">
+        <button class="btn btn-cyan nt-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>New note</button>
+        <div class="nt-sec">
+          <span>Folders</span>
+          <button class="nt-icobtn nt-addfolder" title="New folder" aria-label="New folder"><svg class="ic" aria-hidden="true"><use href="#i-plus"></use></svg></button>
+        </div>
         <nav class="nt-folders">
           <div class="nt-frow" style="--d:0"><span class="nt-fcaret"></span>
             <button class="nt-folder${_filter.folder===FOLDER_ALL?' active':''}" data-f="${FOLDER_ALL}"><span>All notes</span><i>${total}</i></button></div>
@@ -439,18 +466,25 @@
           <div class="nt-frow" style="--d:0"><span class="nt-fcaret"></span>
             <button class="nt-folder${_filter.folder===FOLDER_NONE?' active':''}" data-f="${FOLDER_NONE}"><span>Unfiled</span><i>${Array.from(_lib.notes.values()).filter(n=>!n.folder||!_lib.folders.has(n.folder)).length}</i></button></div>
         </nav>
-        ${tags.length?`<div class="nt-tags">${tags.slice(0,30).map(([t,c])=>`<button class="nt-tag${_filter.tag===t?' active':''}" data-t="${enc(t)}">#${enc(t)} <i>${c}</i></button>`).join('')}</div>`:''}
-        ${pend?`<div class="nt-pending muted small">${pend} note${pend===1?'':'s'} waiting to sync</div>`:''}
+        ${tags.length?`<div class="nt-sec"><span>Tags</span></div>
+          <div class="nt-tags">${tags.slice(0,30).map(([t,c])=>`<button class="nt-tag${_filter.tag===t?' active':''}" data-t="${enc(t)}">${enc(t)} <i>${c}</i></button>`).join('')}</div>`:''}
+        <div class="nt-side-foot">
+          ${pend?`<div class="nt-pending small">${pend} waiting to sync</div>`:''}
+          <div class="nt-foot-actions">
+            <button class="nt-link nt-import" title="Import a Joplin export or a Notes backup"><svg class="ic" aria-hidden="true"><use href="#i-download"></use></svg>Import</button>
+            <button class="nt-link nt-export" title="Save a backup archive of every note"><svg class="ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Backup</button>
+          </div>
+        </div>
       </aside>
       <section class="nt-list" aria-label="Notes">
         <div class="nt-list-head">
           <b>${enc(folderName(_filter.folder))}</b>
-          <span class="muted small">${notes.length} note${notes.length===1?'':'s'}</span>
+          <span class="nt-count">${notes.length}</span>
         </div>
         ${notes.length ? notes.map(n=>`
           <button class="nt-item${_sel===n.id?' active':''}" data-id="${enc(n.id)}">
             <b>${enc(n.title || 'Untitled')}</b>
-            <span class="nt-snip muted small">${enc((n.body||'').replace(/[#*`>\-\n]+/g,' ').trim().slice(0,90))}</span>
+            <span class="nt-snip muted small">${enc(((n.body||n.snippet||'')).replace(/[#*`>\-\n]+/g,' ').trim().slice(0,90))}</span>
             <span class="nt-meta muted small">${_fmt(n.updated)}${n.res&&n.res.length?` · ${n.res.length} 📎`:''}</span>
           </button>`).join('')
         : `<div class="empty">${total ? 'Nothing matches that.' : 'No notes yet. Write one, or import your Joplin export.'}</div>`}
@@ -615,6 +649,27 @@
     };
     $('.nt-attach', host).onclick = () => attach(n, host);
     renderRes(n, host);
+    // An offloaded body is fetched on OPEN, never during the list load — pulling every large note's
+    // blob just to render a list of titles would be the same mistake as reading the whole .jex.
+    if(n.bodyRef && !n.body){
+      const setBusy = t => { const r=$('.nt-render', host); if(r && readFirst) r.innerHTML = `<p class="muted">${t}</p>`;
+                             body.placeholder = t; };
+      setBusy('loading this note…');
+      (async () => {
+        try{
+          const u = await PC.encFileUrl(n.bodyRef, 'text/markdown');
+          n.body = await (await fetch(u)).text();
+          if(_sel !== n.id) return;                     // navigated away while it loaded
+          body.value = n.body;
+          const r = $('.nt-render', host);
+          if(r && !r.classList.contains('hidden')){ r.innerHTML = renderBody(n, n.body); hydrateRes(r, n); }
+          body.placeholder = 'Write…  (markdown)';
+        }catch(e){
+          setBusy('couldn’t load this note’s text — it is stored separately because of its size, ' +
+                  'and that file could not be read' + (navigator.onLine ? '.' : ' (you are offline).'));
+        }
+      })();
+    }
     if(readFirst){
       const r = $('.nt-render', host);
       r.innerHTML = renderBody(n, n.body);
@@ -624,8 +679,8 @@
   }
 
   function renderSideCounts(){
-    const el = document.querySelector('.nt-list-head span');
-    if(el) el.textContent = `${visibleNotes().length} notes`;
+    const el = document.querySelector('.nt-list-head .nt-count');
+    if(el) el.textContent = String(visibleNotes().length);
   }
 
   /* A note body is UNTRUSTED markdown — most of them arrive from an import file. mdToHtml escapes
@@ -838,11 +893,15 @@
       </div>
       <div id="nt-imp-out"></div>
       <div class="nt-imp-reset">
-        <button class="btn btn-red small" id="nt-imp-reset">Clear this device’s copy</button>
-        <span class="muted small">Deletes the local cache of your notes and re-downloads them from the relay.
-        Use it if this device is showing notes you deleted elsewhere.</span>
+        <button class="btn small" id="nt-imp-reset">Re-download from the relay</button>
+        <span class="muted small">Clears this device’s cached copy and reads your notes back from the relay.
+        It does not delete anything — the relay is the source of truth, so everything still there comes back.</span>
+        <button class="btn btn-red small" id="nt-imp-nuke">Delete ALL notes everywhere</button>
+        <span class="muted small">Deletes every note and folder from the relay AND this device. Permanent.
+        Attachments stay in Files → Blossom → Notes.</span>
       </div>`, root => {
       $('#nt-imp-reset', root).onclick = () => resetLocal(root);
+      $('#nt-imp-nuke', root).onclick = () => deleteEverything(root);
       $('#nt-imp-jex', root).onchange = e => runImport(e.target.files[0], 'jex', root);
       $('#nt-imp-md', root).onchange = e => runImport(Array.from(e.target.files), 'md', root);
       // The sheet closes on a backdrop click like every other modal, which for a job that runs for
@@ -906,6 +965,41 @@
     closeModal();
     _paint();
     toast(`cleared ${n} cached note event(s) — re-read ${_lib ? _lib.notes.size : 0} from the relay`);
+  }
+
+  /* Delete every note and folder, for real. "Clear this device's copy" deliberately does NOT do
+   * this — it re-reads from the relay, so anything still published comes straight back, which is
+   * correct and also exactly what looks like the button not working. This is the other one.
+   *
+   * Typed confirmation rather than a yes/no: it is unrecoverable and it is one tap away from a
+   * button people press to fix a display problem. */
+  async function deleteEverything(root){
+    await load();
+    const n = _lib.notes.size, f = _lib.folders.size;
+    if(!n && !f){ toast('there are no notes to delete'); return; }
+    const typed = await uiPrompt(`Permanently delete ${n} note(s) and ${f} folder(s) from the relay and this device? ` +
+      `This cannot be undone.\n\nType DELETE to confirm.`, {ok:'Delete everything', placeholder:'DELETE'});
+    if((typed||'').trim().toUpperCase() !== 'DELETE'){ toast('not deleted'); return; }
+    const out = $('#nt-imp-out', root);
+    const items = Array.from(_lib.notes.values()).map(o=>[o,'note'])
+      .concat(Array.from(_lib.folders.values()).map(o=>[o,'folder']));
+    let done = 0, failed = 0;
+    for(const [obj, kind] of items){
+      try{ await remove(obj, kind); }catch(_){ failed++; }
+      if(++done % 5 === 0 || done === items.length){
+        out.innerHTML = `<div class="nt-imp-bar"><i style="width:${Math.round(done/items.length*100)}%"></i></div>
+          <div class="muted small">deleting ${done} / ${items.length}${failed?` · ${failed} failed`:''}…</div>`;
+      }
+    }
+    try{ localStorage.removeItem(PENDING_KEY); }catch(_){ }
+    try{ await Store().purge(ev => ev.kind === KIND &&
+      (ev.tags||[]).some(t => t[0]==='d' && typeof t[1]==='string' && t[1].startsWith('pcai:note'))); }catch(_){ }
+    _lib = { notes:new Map(), folders:new Map() }; _sel = null; _filter.folder = FOLDER_ALL;
+    out.innerHTML = `<div class="nt-imp-done"><b>Deleted ${done - failed} item(s).</b>` +
+      (failed ? `<div class="nt-warn small">⚠ ${failed} could not be deleted — run it again.</div>` : '') +
+      `<div class="muted small">Attachments are still in Files → Blossom → Notes.</div></div>`;
+    toast(`deleted ${done - failed} notes and folders`);
+    setTimeout(()=>{ closeModal(); _paint(); }, 1400);
   }
 
   async function runImport(input, mode, root){
