@@ -3805,7 +3805,15 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .aw-card:hover,.aw-card:active{border-color:var(--cyan);transform:translateY(-1px)}
 .aw-card b{font-size:15px}
 .aw-card>span:last-child{color:var(--muted);font-size:12px}
-.awc-ic{font-size:20px;line-height:1.2}
+/* Capability-card icons. These replaced the emoji that used to carry these cards, so they are the
+   card's colour accent, not a grey glyph — the row would otherwise read as 20 identical items.
+   SCOPED TO THE CARD on purpose: `svg.ic{width:20px;height:20px}` is (0,1,1), so a bare `.awc-ic`
+   (0,1,0) loses to it and the size silently does nothing (see the note above `.nav-item .ic`). */
+.aw-card svg.awc-ic,.gen-pick svg.awc-ic{width:24px;height:24px;color:var(--neon);opacity:.95}
+.aw-card:hover svg.awc-ic,.gen-pick:hover svg.awc-ic{opacity:1}
+/* the generator sheet's heading takes the same icon; `gap` needs the box to be flex */
+.fxs-title h3:has(> svg.ic){display:flex;align-items:center;gap:var(--sp-2)}
+.fxs-title h3 > svg.ic{width:1em;height:1em;flex:none;color:var(--neon)}
 .aw-or{margin:16px 0 2px}
 
 /* picker sheet (the ✨ composer button, mid-chat) */

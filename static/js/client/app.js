@@ -14322,9 +14322,9 @@
   const _GEN = {
     // Voice has no prompt sheet — a voice is a saved CLIP, not a description — so it carries only
     // what the picker renders and is routed to its own studio at both call sites.
-    voice: { cmd:'voice', icon:'🎙️', title:'Clone a voice',
+    voice: { cmd:'voice', ic:'mic', title:'Clone a voice',
       blurb:'A few seconds of someone speaking, then it can say anything.' },
-    image: { cmd:'geni', icon:'🎨', title:'Generate an image',
+    image: { cmd:'geni', ic:'palette', title:'Generate an image',
       blurb:'Describe what you want to see. Add a style if you like.',
       ph:'a neon city street in the rain, a lone figure with an umbrella',
       groups:[
@@ -14332,7 +14332,7 @@
         ['Mood',  ['moody lighting','golden hour','neon glow','dark and gritty','soft pastel','high contrast']],
         ['Shot',  ['close-up portrait','wide landscape','top-down','macro detail']],
       ] },
-    music: { cmd:'musicgeni', icon:'🎵', title:'Generate a song',
+    music: { cmd:'musicgeni', ic:'music', title:'Generate a song',
       blurb:'Describe the style. Lyrics are optional — leave them blank and the AI writes them.',
       ph:'dreamy synthwave with a driving bassline, 90 BPM',
       groups:[
@@ -14340,7 +14340,7 @@
         ['Mood',  ['upbeat','melancholic','dreamy','aggressive','chill','epic']],
         ['Vocals',['male vocals','female vocals','choir','no vocals']],
       ] },
-    video: { cmd:'videogeni', icon:'🎬', title:'Generate a short video',
+    video: { cmd:'videogeni', ic:'film', title:'Generate a short video',
       blurb:'Describe the shot. Keep it simple — short clips work best.',
       ph:'a paper plane gliding over a misty forest at sunrise',
       groups:[
@@ -14350,10 +14350,10 @@
     // The rest of the splash actions get the same treatment: one field, the right keyboard, and a
     // preview of the exact command. `single` groups are radio-style (you translate INTO one language);
     // `compose` overrides how the picks attach when appending them as ", a, b" would be wrong.
-    audio: { go:'Download', cmd:'ytdl mp3', icon:'🎧', title:'Download audio as MP3',
+    audio: { go:'Download', cmd:'ytdl mp3', ic:'headphones', title:'Download audio as MP3',
       blurb:'Paste a link — YouTube, TikTok, X, SoundCloud and friends.',
       ph:'https://www.youtube.com/watch?v=…', rows:1, kind:'url' },
-    videodl: { go:'Download', cmd:'ytdl video', icon:'🎬', title:'Download a video',
+    videodl: { go:'Download', cmd:'ytdl video', ic:'download', title:'Download a video',
       blurb:'Paste a YouTube, X, TikTok or Nitter link. Trim or shrink it on the way down.',
       ph:'https://www.youtube.com/watch?v=…', rows:1, kind:'url',
       // ytdl takes `clip <start> <end>` and `compress` as modifiers. They're worth surfacing for a
@@ -14367,54 +14367,54 @@
         if((o.clipfrom||'').trim() && (o.clipto||'').trim()) out+=` clip ${o.clipfrom.trim()} ${o.clipto.trim()}`;
         if(o.compress) out+=' compress';
         return out; } },
-    shot: { go:'Capture', cmd:'screenshot', icon:'📸', title:'Screenshot a web page',
+    shot: { go:'Capture', cmd:'screenshot', ic:'camera', title:'Screenshot a web page',
       blurb:'Paste a page URL and I will capture it.',
       ph:'https://example.com', rows:1, kind:'url' },
-    translate: { go:'Translate', cmd:'translate', icon:'🌐', title:'Translate text',
+    translate: { go:'Translate', cmd:'translate', ic:'translate', title:'Translate text',
       blurb:'Paste the text, then pick a language (English if you skip it).',
       ph:'paste the text to translate…', rows:3,
       groups:[['Into', ['English','Spanish','French','German','Portuguese','Italian','Japanese','Korean','Chinese','Russian','Arabic','Hindi']]],
       single:true,
       compose:(base, picks)=> 'translate ' + base + (picks[0] ? ' to ' + picks[0] : '') },
-    search: { go:'Search', cmd:'search', icon:'🔍', title:'Search the web',
+    search: { go:'Search', cmd:'search', ic:'search', title:'Search the web',
       blurb:'What do you want to look up?',
       ph:'best nostr clients 2026', rows:1 },
     // ---- things you do TO A FILE. Same sheet, but it asks for the file first (and any argument the
     // command needs) instead of a prompt. These were only reachable by attaching something and finding
     // the action bar, so nobody discovered them from an empty chat.
-    compress: { go:'Compress', cmd:'compress', icon:'🗜', title:'Compress a file', file:true,
+    compress: { go:'Compress', cmd:'compress', ic:'compress', title:'Compress a file', file:true,
       accept:'image/*,video/*,application/pdf',
       blurb:'Shrink an image, video or PDF. Attach the file and I will do the rest.' },
-    clip: { go:'Clip', cmd:'clip', icon:'✂️', title:'Clip a video', file:true, accept:'video/*',
+    clip: { go:'Clip', cmd:'clip', ic:'scissors', title:'Clip a video', file:true, accept:'video/*',
       blurb:'Trim a section out of a video. Times look like 0:10 and 0:30.',
       extra:[['start','Start','0:10'],['end','End','0:30']], needExtra:true },
-    convert: { go:'Convert', cmd:'convert', icon:'🔄', title:'Convert a file', file:true,
+    convert: { go:'Convert', cmd:'convert', ic:'refresh', title:'Convert a file', file:true,
       accept:'image/*,application/pdf',
       blurb:'Images become a PDF; a PDF becomes images. Attach it and I will pick the direction.' },
-    extractaudio: { go:'Extract', cmd:'extractaudio', icon:'🎵', title:'Extract the audio', file:true,
+    extractaudio: { go:'Extract', cmd:'extractaudio', ic:'music', title:'Extract the audio', file:true,
       accept:'video/*', blurb:'Pull the soundtrack out of a video as an MP3.' },
-    circlecrop: { go:'Crop', cmd:'circlecrop', icon:'⭕', title:'Circle-crop an image', file:true,
+    circlecrop: { go:'Crop', cmd:'circlecrop', ic:'circle-crop', title:'Circle-crop an image', file:true,
       accept:'image/*', blurb:'Round the image into a circle on a transparent background.' },
-    removebackground: { go:'Remove', cmd:'removebackground', icon:'🪄', title:'Remove the background', file:true,
+    removebackground: { go:'Remove', cmd:'removebackground', ic:'wand', title:'Remove the background', file:true,
       accept:'image/*', blurb:'Cut the subject out onto a transparent background.' },
-    ocr: { go:'Read', cmd:'ocr', icon:'🔤', title:'Read the text in a file', file:true,
+    ocr: { go:'Read', cmd:'ocr', ic:'text', title:'Read the text in a file', file:true,
       accept:'image/*,application/pdf', blurb:'Pull the words out of a photo, screenshot or PDF.' },
-    meme: { go:'Make it', cmd:'meme', icon:'😂', title:'Add meme text', file:true, accept:'image/*',
+    meme: { go:'Make it', cmd:'meme', ic:'smile', title:'Add meme text', file:true, accept:'image/*',
       blurb:'Outlined white caption across the image.',
       extra:[['text','Caption','when the code finally works']], needExtra:true },
     // TWO files: the face and the voice to clone. `multi` is what lets both be picked at once —
     // the command takes the first IMAGE for the face and the first clip WITH AUDIO for the voice,
     // so the order they arrive in doesn't matter.
-    talk: { go:'Say it', cmd:'talk', icon:'🗣️', title:'Make a face talk', file:true, multi:true,
+    talk: { go:'Say it', cmd:'talk', ic:'speech', title:'Make a face talk', file:true, multi:true,
       accept:'image/*,audio/*,video/*',
       blurb:'Pick a photo of a face AND a few seconds of the voice to clone. The face lip-syncs your line in that voice.',
       extra:[['text','What should they say?','I am the president now']], needExtra:true },
-    collage: { go:'Combine', cmd:'collage', icon:'🖼', title:'Make a collage', file:true, multi:true,
+    collage: { go:'Combine', cmd:'collage', ic:'grid', title:'Make a collage', file:true, multi:true,
       accept:'image/*', blurb:'Combine several images into one. Pick two or more.' },
-    flashcards: { go:'Study', cmd:'flashcards', icon:'🎴', title:'Make study flashcards', file:true,
+    flashcards: { go:'Study', cmd:'flashcards', ic:'cards', title:'Make study flashcards', file:true,
       accept:'image/*,application/pdf,.ppt,.pptx,.doc,.docx',
       blurb:'Turn a PDF, slide deck or photo of your notes into a quiz.' },
-    images: { go:'Search', cmd:'images', icon:'🖼️', title:'Search for images',
+    images: { go:'Search', cmd:'images', ic:'image', title:'Search for images',
       blurb:'What are you looking for?',
       ph:'shiba inu puppy', rows:1,
       groups:[['Refine', ['wallpaper','transparent png','black and white','high resolution','vector']]] },
@@ -14434,7 +14434,7 @@
                  ['flashcards','Make study flashcards']];
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Make something</h3>
       <div class="gen-picker">${items.map(([k,label])=>{ const G=_GEN[k];
-        return `<button class="gen-pick" data-gen="${k}"><span class="awc-ic">${G.icon}</span>
+        return `<button class="gen-pick" data-gen="${k}">${ICO(G.ic,'awc-ic')}
           <span><b>${enc(label)}</b><span class="muted small">${enc(G.blurb)}</span></span></button>`; }).join('')}</div>`,
       root=>{ $$('.gen-pick',root).forEach(b=> b.onclick=()=>{ closeModal();
         if(b.dataset.gen==='voice') openVoiceStudio(); else openGenStudio(b.dataset.gen); }); });
@@ -14836,7 +14836,7 @@
     const groups = G.groups || [];
     modal(`<div class="fxs">
       <div class="fxs-hd">
-        <div class="fxs-title"><div><h3>${G.icon} ${enc(G.title)}</h3>
+        <div class="fxs-title"><div><h3>${ICO(G.ic,'b-ic')}${enc(G.title)}</h3>
           <div class="muted small">${enc(G.blurb)}</div></div>
           <button type="button" class="fxs-x" id="gen-x" aria-label="Close"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>
       </div>
@@ -14981,34 +14981,34 @@
       <h3>Welcome to PosterChan AI</h3>
       <p class="muted">Ask me anything — or make something. Tap a card and I'll walk you through it.</p>
       <div class="aw-make">
-        <button class="aw-card" data-gen="image"><span class="awc-ic">🎨</span><b>Make an image</b><span>describe it, pick a style</span></button>
-        <button class="aw-card" data-gen="music"><span class="awc-ic">🎵</span><b>Make a song</b><span>genre, mood, lyrics optional</span></button>
-        <button class="aw-card" id="aw-nodes" data-open="nodes" style="display:none"><span class="awc-ic">🤖</span><b>Agents</b><span>run tasks on your servers</span></button>
-        <button class="aw-card" data-gen="video"><span class="awc-ic">🎬</span><b>Make a video</b><span>a short clip from a prompt</span></button>
-        <button class="aw-card" data-gen="voice"><span class="awc-ic">🎙️</span><b>Clone a voice</b><span>a short clip → say anything</span></button>
+        <button class="aw-card" data-gen="image"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-palette"></use></svg><b>Make an image</b><span>describe it, pick a style</span></button>
+        <button class="aw-card" data-gen="music"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-music"></use></svg><b>Make a song</b><span>genre, mood, lyrics optional</span></button>
+        <button class="aw-card" id="aw-nodes" data-open="nodes" style="display:none"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-robot"></use></svg><b>Agents</b><span>run tasks on your servers</span></button>
+        <button class="aw-card" data-gen="video"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-film"></use></svg><b>Make a video</b><span>a short clip from a prompt</span></button>
+        <button class="aw-card" data-gen="voice"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-mic"></use></svg><b>Clone a voice</b><span>a short clip → say anything</span></button>
       </div>
       <p class="muted small aw-or">…or grab something from the web:</p>
       <div class="aw-make">
-        <button class="aw-card" data-gen="audio"><span class="awc-ic">🎧</span><b>Get the audio</b><span>a link → MP3</span></button>
-        <button class="aw-card" data-gen="videodl"><span class="awc-ic">📥</span><b>Download a video</b><span>YouTube, X, TikTok → file</span></button>
-        <button class="aw-card" data-gen="shot"><span class="awc-ic">📸</span><b>Screenshot a page</b><span>capture any URL</span></button>
-        <button class="aw-card" data-gen="translate"><span class="awc-ic">🌐</span><b>Translate</b><span>text → any language</span></button>
-        <button class="aw-card" data-gen="search"><span class="awc-ic">🔍</span><b>Search the web</b><span>look something up</span></button>
-        <button class="aw-card" data-gen="images"><span class="awc-ic">🖼️</span><b>Find images</b><span>image search</span></button>
+        <button class="aw-card" data-gen="audio"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-headphones"></use></svg><b>Get the audio</b><span>a link → MP3</span></button>
+        <button class="aw-card" data-gen="videodl"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-download"></use></svg><b>Download a video</b><span>YouTube, X, TikTok → file</span></button>
+        <button class="aw-card" data-gen="shot"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-camera"></use></svg><b>Screenshot a page</b><span>capture any URL</span></button>
+        <button class="aw-card" data-gen="translate"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-translate"></use></svg><b>Translate</b><span>text → any language</span></button>
+        <button class="aw-card" data-gen="search"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-search"></use></svg><b>Search the web</b><span>look something up</span></button>
+        <button class="aw-card" data-gen="images"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-image"></use></svg><b>Find images</b><span>image search</span></button>
       </div>
       <p class="muted small aw-or">…or work with a file you already have:</p>
       <div class="aw-make">
-        <button class="aw-card" data-gen="compress"><span class="awc-ic">🗜</span><b>Compress</b><span>image, video or PDF</span></button>
-        <button class="aw-card" data-gen="clip"><span class="awc-ic">✂️</span><b>Clip a video</b><span>trim start → end</span></button>
-        <button class="aw-card" data-gen="extractaudio"><span class="awc-ic">🎵</span><b>Extract audio</b><span>video → MP3</span></button>
-        <button class="aw-card" data-gen="convert"><span class="awc-ic">🔄</span><b>Convert</b><span>images ↔ PDF</span></button>
-        <button class="aw-card" data-gen="removebackground"><span class="awc-ic">🪄</span><b>Remove background</b><span>transparent PNG</span></button>
-        <button class="aw-card" data-gen="circlecrop"><span class="awc-ic">⭕</span><b>Circle crop</b><span>round avatar cut-out</span></button>
-        <button class="aw-card" data-gen="meme"><span class="awc-ic">😂</span><b>Meme text</b><span>caption an image</span></button>
-        <button class="aw-card" data-gen="talk"><span class="awc-ic">🗣️</span><b>Make it talk</b><span>a face lip-syncs, in a cloned voice</span></button>
-        <button class="aw-card" data-gen="collage"><span class="awc-ic">🖼</span><b>Collage</b><span>several images → one</span></button>
-        <button class="aw-card" data-gen="ocr"><span class="awc-ic">🔤</span><b>Read the text</b><span>OCR a photo or PDF</span></button>
-        <button class="aw-card" data-gen="flashcards"><span class="awc-ic">🎴</span><b>Flashcards</b><span>PDF or notes → quiz</span></button>
+        <button class="aw-card" data-gen="compress"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-compress"></use></svg><b>Compress</b><span>image, video or PDF</span></button>
+        <button class="aw-card" data-gen="clip"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-scissors"></use></svg><b>Clip a video</b><span>trim start → end</span></button>
+        <button class="aw-card" data-gen="extractaudio"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-music"></use></svg><b>Extract audio</b><span>video → MP3</span></button>
+        <button class="aw-card" data-gen="convert"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-refresh"></use></svg><b>Convert</b><span>images ↔ PDF</span></button>
+        <button class="aw-card" data-gen="removebackground"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-wand"></use></svg><b>Remove background</b><span>transparent PNG</span></button>
+        <button class="aw-card" data-gen="circlecrop"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-circle-crop"></use></svg><b>Circle crop</b><span>round avatar cut-out</span></button>
+        <button class="aw-card" data-gen="meme"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-smile"></use></svg><b>Meme text</b><span>caption an image</span></button>
+        <button class="aw-card" data-gen="talk"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-speech"></use></svg><b>Make it talk</b><span>a face lip-syncs, in a cloned voice</span></button>
+        <button class="aw-card" data-gen="collage"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-grid"></use></svg><b>Collage</b><span>several images → one</span></button>
+        <button class="aw-card" data-gen="ocr"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-text"></use></svg><b>Read the text</b><span>OCR a photo or PDF</span></button>
+        <button class="aw-card" data-gen="flashcards"><svg class="ic awc-ic" aria-hidden="true"><use href="#i-cards"></use></svg><b>Flashcards</b><span>PDF or notes → quiz</span></button>
       </div>
       <p class="muted small">Tap <button class="ai-cmd" data-cmd="help">help</button> to see everything I can do.</p>
     </div>`;

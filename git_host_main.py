@@ -1320,7 +1320,7 @@ def _write_status(running: bool):
         tmp = p + ".tmp"
         with open(tmp, "w") as f:
             json.dump({"running": running, "pid": os.getpid(),
-                       "port": _CONFIG.get("port"), "ts": int(__import__("time").time())}, f)
+                       "port": _CONFIG.get("port"), "ts": int(time.time())}, f)
         os.replace(tmp, p)
     except OSError:
         pass
@@ -1348,6 +1348,15 @@ def main():
 
     httpd = _Server((bind, port), _Handler)
     _write_status(True)
+    # HEARTBEAT. The status file is how every OTHER process reads our liveness, and git_http_status()
+    # only trusts a `ts` newer than 90s (a stale file otherwise reports a long-dead host as up). Written
+    # once at startup, that timestamp aged out after 90 seconds and the admin UI showed the git host as
+    # DOWN for the entire rest of its life — while it served fine. Refresh well inside the window.
+    def _heartbeat():
+        while True:
+            time.sleep(30)
+            _write_status(True)
+    threading.Thread(target=_heartbeat, name="git-host-status", daemon=True).start()
     log.info("[git-host] serving smart-HTTP on http://%s:%d (repos: %s)", bind, port, _root)
     try:
         httpd.serve_forever(poll_interval=1.0)
