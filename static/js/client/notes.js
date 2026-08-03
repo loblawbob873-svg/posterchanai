@@ -1149,6 +1149,7 @@
     for(const n of _lib.notes.values()) if(n.src && n.src.id) bySrc.set(n.src.id, n);
 
     let done = 0, noteFail = 0, queued = 0;
+    const failedNotes = [];
     for(const jn of parsed.notes){
       if(_cancel) break;
       const key = jn.id || ('md:' + jn.title);
@@ -1172,11 +1173,20 @@
       const seenSha = new Set(fromJoplin.map(x => x.sha));
       rec.res = fromJoplin.concat((rec.res || []).filter(x => x && !seenSha.has(x.sha)));
       _lib.notes.set(rec.id, rec);
-      try{
-        const r = await save(rec, 'note');
-        if(r.queued) queued++;
-        else if(!r.ok) noteFail++;
-      }catch(_){ noteFail++; }
+      // RETRY, like the attachments. A note save can throw or time out under the load the import
+      // itself is generating — the client gives a publish 8 seconds for its OK, and thousands of
+      // uploads on the same socket push past that — and a note counted as "failed" on the first
+      // attempt is a note whose text is on no relay at all. Three tries, then it is named.
+      let saved = false;
+      for(let attempt = 0; attempt < 3 && !saved; attempt++){
+        if(_cancel) break;
+        try{
+          const r = await save(rec, 'note');
+          if(r.ok || r.queued){ if(r.queued) queued++; saved = true; }
+        }catch(_){ }
+        if(!saved) await new Promise(r => setTimeout(r, 500 * (attempt + 1) * (attempt + 1)));
+      }
+      if(!saved){ noteFail++; failedNotes.push(rec.title || 'Untitled'); }
       done++;
       if(done % 5 === 0 || done === parsed.notes.length){
         prog.innerHTML = `<div class="nt-imp-bar"><i style="width:${Math.round(done/parsed.notes.length*100)}%"></i></div>
@@ -1197,7 +1207,9 @@
       ${tooBig.length?`<div class="nt-warn small">⚠ ${tooBig.length} attachment(s) are larger than this server accepts and were skipped:
         ${enc(tooBig.slice(0,5).join(', '))}${tooBig.length>5?' …':''}.
         Raise “Max upload (MB)” in Admin → Media and run the import again — it updates rather than duplicating.</div>`:''}
-      ${noteFail?`<div class="nt-warn small">⚠ ${noteFail} note(s) failed to save. Run the import again — it updates rather than duplicates.</div>`:''}
+      ${noteFail?`<div class="nt-warn small">⚠ ${noteFail} note(s) failed to save after 3 tries:
+        ${enc(failedNotes.slice(0,8).join(', '))}${failedNotes.length>8?' …':''}.
+        Run the import again — it updates rather than duplicating.</div>`:''}
       ${queued?`<div class="muted small">${queued} saved on this device and will sync when you’re back online.</div>`:''}
     </div>`;
     toast(`imported ${done - noteFail} notes`);

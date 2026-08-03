@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mobile + behaviour check for NOTES.
+"""Layout + behaviour check for NOTES, at phone AND desktop widths.
 
 Run BEFORE deploying a Notes change:
 
@@ -19,6 +19,8 @@ Assertions, each corresponding to a way this specific screen breaks on a phone:
   no-way-back          the editor is open with no back control — a dead end on a phone, since there
                        is no second pane to click.
   tiny-tap-target      a row or button under 32px tall.
+  text-truncated       a button label clipped by its own box. Three labelled buttons across a
+                       200px sidebar left ~35px of text each, truncating every one to "Fol…".
   ios-zoom-trap        a text input under 16px: iOS Safari zooms the page on focus and never
                        zooms back out. Applies to the title, the body, search and the tag field.
   editor-under-nav     the editor's bottom is behind the fixed .mobilenav (~62px + safe area), i.e.
@@ -46,7 +48,11 @@ import tempfile
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WIDTHS = [(390, 844), (360, 780)]
+# Phone widths, plus the two DESKTOP widths where the sidebar is at its narrowest. The three-pane
+# layout only exists above 820px, so a phone-only audit never looked at the sidebar as a column at
+# all — which is exactly where three labelled buttons truncated to "Fol… Imp… Bac…". 900px is the
+# 170px-sidebar tier, 1280px the 210px one.
+WIDTHS = [(390, 844, True), (360, 780, True), (900, 800, False), (1280, 860, False)]
 PORT = 9475
 PROFILE = "/tmp/pc-notes-mobile-check"
 
@@ -168,6 +174,19 @@ AUDIT = r"""(() => {
   out.bodyBottom = (body && vis(body)) ? box(body).bottom : 0;
   // Icon buttons that sit side by side must BE the same size. Preview shipped as a plain .btn and
   // Delete as a .btn.small, so they were visibly different heights next to each other.
+  // Text CLIPPED by its own box: scrollWidth beats clientWidth when a label doesn't fit. Three
+  // labelled buttons across a 200px sidebar truncated every one to "Fol…", which no amount of
+  // padding tuning fixes — the width isn't there.
+  out.clipped = [];
+  // Every text-bearing node, not just the buttons: `text-overflow: ellipsis` is almost always set
+  // on an inner <span>, so checking only the button measures a box that never overflows and the
+  // assertion silently passes on a layout that is visibly cut off. (It did exactly that once.)
+  for(const el of document.querySelectorAll('.nt-side-head .btn, .nt-side-head .btn span, .nt-side-actions .btn, .nt-side-actions .btn span, .nt-folder span, .nt-item b, .nt-list-head b')){
+    if(!vis(el)) continue;
+    const t = (el.textContent||'').trim();
+    if(t && el.scrollWidth > el.clientWidth + 2)
+      out.clipped.push({ text:t.slice(0,20), shown:Math.round(el.clientWidth), needs:Math.round(el.scrollWidth) });
+  }
   out.headBtns = Array.from(document.querySelectorAll('.nt-ed-head .btn')).filter(vis)
     .map(el => ({ cls: el.className, w: Math.round(box(el).w), h: Math.round(box(el).h) }));
   return out;
@@ -282,11 +301,13 @@ async def drive(url):
 
             await call("Runtime.enable")
             await call("Page.enable")
-            for w, h in WIDTHS:
+            for w, h, phone in WIDTHS:
                 label = f"{w}px"
                 await call("Emulation.setDeviceMetricsOverride",
-                           {"width": w, "height": h, "deviceScaleFactor": 2, "mobile": True})
-                await call("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 5})
+                           {"width": w, "height": h, "deviceScaleFactor": 2 if phone else 1,
+                            "mobile": phone})
+                await call("Emulation.setTouchEmulationEnabled",
+                           {"enabled": phone, "maxTouchPoints": 5 if phone else 0})
                 await call("Page.navigate", {"url": url})
                 ready = False
                 for _ in range(60):
@@ -309,13 +330,20 @@ async def drive(url):
                     problems.append((label, "horizontal-overflow", "the page scrolls sideways"))
                 if not r["items"]:
                     problems.append((label, "missing-control", "no notes rendered from the seeded library"))
-                for s in r["small"]:
-                    problems.append((label, "tiny-tap-target",
-                                     f"{s['text'] or s['sel']} is {s['h']}px tall"))
-                for z in r["zoomy"]:
-                    problems.append((label, "ios-zoom-trap",
-                                     f"{z['cls']} is {z['fs']}px — iOS zooms the page on focus"))
-                if r["wrapBottom"] > r["navTop"] + 1:
+                for c in (r.get("clipped") or []):
+                    problems.append((label, "text-truncated",
+                                     f"{c['text']!r} is cut off — {c['shown']}px shown, {c['needs']}px needed"))
+                # Tap size is a PHONE question — a 21px row is fine with a mouse, and the desktop
+                # tiers are under body{zoom} anyway, so a measured height there isn't a CSS pixel.
+                if phone:
+                    for s in r["small"]:
+                        problems.append((label, "tiny-tap-target",
+                                         f"{s['text'] or s['sel']} is {s['h']}px tall"))
+                if phone:
+                    for z in r["zoomy"]:
+                        problems.append((label, "ios-zoom-trap",
+                                         f"{z['cls']} is {z['fs']}px — iOS zooms the page on focus"))
+                if phone and r["wrapBottom"] > r["navTop"] + 1:
                     problems.append((label, "editor-under-nav",
                                      f"the pane's bottom ({round(r['wrapBottom'])}px) is under the nav "
                                      f"({round(r['navTop'])}px) — 100vh instead of 100dvh?"))
@@ -326,22 +354,23 @@ async def drive(url):
                     continue
                 await asyncio.sleep(0.4)
                 r2 = await js(AUDIT)
-                if r2["listVisible"] and r2["editorVisible"]:
+                if phone and r2["listVisible"] and r2["editorVisible"]:
                     problems.append((label, "both-panes-visible",
                                      "the list and the editor are both on screen at phone width"))
                 if not r2["editorVisible"]:
                     problems.append((label, "missing-control", "opening a note showed no editor"))
-                if not r2["back"]:
+                if phone and not r2["back"]:
                     problems.append((label, "no-way-back",
                                      "the editor is open with no back control"))
                 if r2["overflow"]:
                     problems.append((label, "horizontal-overflow", "the open editor scrolls sideways"))
-                if r2["bodyBottom"] > r2["navTop"] + 1:
+                if phone and r2["bodyBottom"] > r2["navTop"] + 1:
                     problems.append((label, "editor-under-nav",
                                      "the text area runs under the bottom nav"))
-                for z in r2["zoomy"]:
-                    problems.append((label, "ios-zoom-trap",
-                                     f"{z['cls']} is {z['fs']}px — iOS zooms the page on focus"))
+                if phone:
+                    for z in r2["zoomy"]:
+                        problems.append((label, "ios-zoom-trap",
+                                         f"{z['cls']} is {z['fs']}px — iOS zooms the page on focus"))
 
                 hb = r2.get("headBtns") or []
                 if len(hb) >= 2:
