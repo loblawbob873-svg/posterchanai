@@ -183,6 +183,22 @@
       if (db){ _wbuf.push(ev); if(!_wt) _wt=setTimeout(_flushWrites, 700); }  // batch IDB writes
       return true;
     },
+    /* Remove every event matching a predicate, from memory AND from disk. Store.query() collapses
+     * replaceable events to their latest version, so a caller that iterates a query result can only
+     * ever delete the newest copy of each and the older ones stay on disk — this walks the actual
+     * object store. Used by maintenance actions (e.g. "clear this device's copy of my notes and
+     * re-download"), never by anything automatic: nothing in this app deletes user data on a
+     * heuristic. Returns how many were removed. */
+    async purge(match){
+      let n = 0;
+      for (const ev of [...mem.events.values()]) if (match(ev)) { _indexDel(ev); mem.events.delete(ev.id); n++; }
+      if (db) try {
+        const all = await pr(tx('events','readonly').getAll());
+        const s = tx('events','readwrite');
+        for (const ev of all) if (match(ev)) s.delete(ev.id);
+      } catch(e){ console.warn('purge: IDB sweep failed', e); }
+      return n;
+    },
     removeEvent(id){
       _indexDel(mem.events.get(id));
       mem.events.delete(id);

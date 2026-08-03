@@ -4865,8 +4865,18 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
 .nt-wrap{display:grid;grid-template-columns:210px 300px 1fr;gap:0;height:calc(100dvh - 60px);
   min-height:0;border-top:1px solid var(--line)}
 .nt-side{border-right:1px solid var(--line);padding:10px;overflow-y:auto;min-height:0;display:flex;flex-direction:column;gap:8px}
-.nt-side-head{display:flex;gap:6px;flex-wrap:wrap}
-.nt-side-head .btn{flex:1 1 auto;justify-content:center;white-space:nowrap}
+.nt-side-head{display:flex;flex-direction:column;gap:6px}
+/* One primary action on its own line, then the three secondary ones sharing a row as equal thirds.
+   Four buttons wrapping freely at sidebar width broke 3+1 or 2+2 depending on the label lengths,
+   which looks like an accident because it is one. */
+.nt-side-head .nt-new{width:100%;justify-content:center}
+.nt-side-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+.nt-side-actions .btn{min-width:0;padding:7px 4px;font-size:12px;justify-content:center;gap:4px}
+.nt-side-actions .btn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nt-side-actions svg.ic{width:15px;height:15px;flex:none}
+.nt-imp-reset{display:flex;flex-direction:column;gap:4px;margin-top:14px;padding-top:12px;
+  border-top:1px solid var(--line)}
+.nt-imp-reset .btn{align-self:flex-start}
 .nt-search{width:100%}
 .nt-folders{display:flex;flex-direction:column;gap:2px}
 .nt-folder{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;
@@ -4945,7 +4955,8 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
   /* 16px minimum on every text input: iOS Safari ZOOMS the whole page on focus for anything
      smaller, and the page never zooms back out. */
   .nt-title,.nt-body,.nt-search,.nt-tagin,.nt-folder-sel{font-size:16px}
-  .nt-side-head .btn{padding:9px 10px}
+  .nt-side-head .nt-new{padding:11px 10px}
+  .nt-side-actions .btn{padding:10px 4px;font-size:12px}
   /* Touch targets: a 7px-padded row is a ~30px tap target, under the 44px guideline. */
   .nt-folder{padding:11px 10px}
   .nt-item{padding:12px}

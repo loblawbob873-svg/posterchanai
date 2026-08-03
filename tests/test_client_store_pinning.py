@@ -108,3 +108,26 @@ def test_a_tombstoned_note_does_not_come_back():
     """)
     assert r["n"] == 1
     assert r["content"] == "", "the old note body outlived its tombstone"
+
+
+def test_notes_attachment_urls_survive_the_markdown_sanitiser():
+    """`![pic](pcres:<sha>)` must reach the DOM as an <img>.
+
+    Notes reference their encrypted attachments with a `pcres:<sha256>` URL, which notes.js swaps
+    for a decrypted blob: URL after render. app.js's `_mdUrl` is a strict allowlist (https / root
+    relative) because it renders UNTRUSTED note markdown, and it silently dropped `pcres:` — so an
+    imported note showed its pictures as bare alt text and there was no <img> for the decryption
+    step to fill in. "Images not displaying", with every attachment correctly encrypted, uploaded
+    and linked.
+
+    Checked at the source level: `_mdUrl` lives inside app.js's IIFE and cannot be imported. That is
+    weaker than exercising it, but it does catch the allowance being deleted, which is the actual
+    regression risk.
+    """
+    app = os.path.join(ROOT, "static", "js", "client", "app.js")
+    with open(app) as f:
+        src = f.read()
+    assert "pcres:[0-9a-f]{64}" in src, "_mdUrl no longer allows Notes attachment URLs"
+    i = src.index("function _mdUrl")
+    body = src[i:i + 400]
+    assert "pcres" in body, "the pcres allowance is not inside _mdUrl any more"

@@ -425,9 +425,11 @@
       <aside class="nt-side">
         <div class="nt-side-head">
           <button class="btn btn-cyan nt-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>New note</button>
-          <button class="btn nt-addfolder" title="Create a folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>New folder</button>
-          <button class="btn nt-import" title="Import a Joplin export or a Notes backup"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Import</button>
-          <button class="btn nt-export" title="Download an encrypted backup of every note"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Backup</button>
+          <div class="nt-side-actions">
+            <button class="btn nt-addfolder" title="Create a folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg><span>Folder</span></button>
+            <button class="btn nt-import" title="Import a Joplin export or a Notes backup"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg><span>Import</span></button>
+            <button class="btn nt-export" title="Save a backup archive of every note"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg><span>Backup</span></button>
+          </div>
         </div>
         <input class="input nt-search" type="search" placeholder="Search notes…" value="${enc(_filter.q)}" autocomplete="off">
         <nav class="nt-folders">
@@ -834,7 +836,13 @@
         <label class="btn btn-cyan">Choose a .jex file<input type="file" accept=".jex,.tar" id="nt-imp-jex" hidden></label>
         <label class="btn">Choose a folder of .md files<input type="file" id="nt-imp-md" webkitdirectory directory multiple hidden></label>
       </div>
-      <div id="nt-imp-out"></div>`, root => {
+      <div id="nt-imp-out"></div>
+      <div class="nt-imp-reset">
+        <button class="btn btn-red small" id="nt-imp-reset">Clear this device’s copy</button>
+        <span class="muted small">Deletes the local cache of your notes and re-downloads them from the relay.
+        Use it if this device is showing notes you deleted elsewhere.</span>
+      </div>`, root => {
+      $('#nt-imp-reset', root).onclick = () => resetLocal(root);
       $('#nt-imp-jex', root).onchange = e => runImport(e.target.files[0], 'jex', root);
       $('#nt-imp-md', root).onchange = e => runImport(Array.from(e.target.files), 'md', root);
       // The sheet closes on a backdrop click like every other modal, which for a job that runs for
@@ -868,6 +876,36 @@
     }
     if(name === 'NotFoundError') return 'That file is no longer where the picker found it — re-export or pick it again.';
     return msg || 'could not read that file';
+  }
+
+  /* Clear this device's cached copy and re-read from the relay.
+   *
+   * Needed because deleting a note somewhere else cannot, on its own, empty this device: the cache
+   * is deliberately authoritative when the relay says nothing, since "the relay returned no notes"
+   * is exactly what an unreachable relay also looks like, and treating that as "you have no notes"
+   * is the wipe this codebase keeps guarding against. So a genuine reset has to be something you
+   * ask for. Queued offline writes are lost with it, which the confirm says.
+   */
+  async function resetLocal(root){
+    const queued = pending().length;
+    const msg = 'Clear this device’s copy of your notes and re-download from the relay?' +
+      (queued ? `\n\n${queued} note(s) written offline have not synced yet and WILL be lost.` : '');
+    if(!await uiConfirm(msg, {ok:'Clear', danger:true})) return;
+    const out = $('#nt-imp-out', root);
+    if(out) out.innerHTML = '<div class="spinner"></div>';
+    try{ localStorage.removeItem(PENDING_KEY); }catch(_){ }
+    let n = 0;
+    try{
+      n = await Store().purge(ev => ev.kind === KIND &&
+        (ev.tags||[]).some(t => t[0]==='d' && typeof t[1]==='string' && t[1].startsWith('pcai:note')));
+    }catch(e){ if(out) out.innerHTML = `<div class="empty">couldn’t clear: ${enc(e.message||'error')}</div>`; return; }
+    _lib = null; _sel = null; _loading = null;
+    unwatch();
+    await load();          // straight back from the relay
+    await refresh();
+    closeModal();
+    _paint();
+    toast(`cleared ${n} cached note event(s) — re-read ${_lib ? _lib.notes.size : 0} from the relay`);
   }
 
   async function runImport(input, mode, root){

@@ -3511,7 +3511,15 @@
   // to the viewer's authenticated instance origin would make the app issue an authed cross-origin GET to an
   // attacker-chosen path. Real Nostr notes use absolute URLs; a root-relative one just won't load — safe.
   // (AI-chat media, which IS trusted server output, is absolutized explicitly in aiFormat, not here.)
-  function _mdUrl(u){ u=(u||'').trim(); return /^(https?:\/\/|\/)/i.test(u) ? u : ''; }
+  // `pcres:<sha256>` is a NOTES attachment reference, and it has to survive this filter or an
+  // imported note renders its pictures as bare alt text — no <img> is created, so there is nothing
+  // for notes.js to swap a decrypted blob: URL into. Deliberately the narrowest possible allowance:
+  // exactly 64 hex and nothing else, not a general scheme opening. It is inert everywhere else in
+  // the app — no browser fetches `pcres:`, and only the Notes view ever resolves one — so a hostile
+  // nostr note containing it renders a broken image rather than anything reaching the network.
+  function _mdUrl(u){ u=(u||'').trim();
+    if(/^pcres:[0-9a-f]{64}$/i.test(u)) return u;
+    return /^(https?:\/\/|\/)/i.test(u) ? u : ''; }
   function mdInline(s){
     s=s.replace(/`([^`]+)`/g,(m,c)=>`<code>${c}</code>`);
     // Escaped inline HTML from the source markdown (GitHub-style READMEs use <div align=center>, <img>,
