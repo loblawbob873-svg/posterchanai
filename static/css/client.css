@@ -4900,6 +4900,12 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
 .nt-ed-head .nt-title{flex:1 1 auto;min-width:0;font-size:16px;font-weight:600}
 .nt-state{flex:none;min-width:60px;text-align:right}
 .nt-back{display:none;flex:none;background:none;border:none;color:inherit;cursor:pointer;padding:4px}
+/* The editor's icon buttons are sized HERE, together, rather than each borrowing whatever .btn
+   modifier happened to be typed. Preview was a plain .btn and Delete a .btn.small, so they were
+   visibly different heights sitting side by side. Square, identical, and big enough to hit. */
+.nt-ed-head .nt-ico{flex:none;width:38px;height:38px;padding:0;display:inline-flex;
+  align-items:center;justify-content:center}
+.nt-ed-head .nt-ico svg.ic{width:17px;height:17px}
 .nt-ed-bar{display:flex;gap:6px;padding:8px 10px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .nt-ed-bar .nt-folder-sel{flex:0 1 150px;min-width:0}
 .nt-ed-bar .nt-tagin{flex:1 1 160px;min-width:0}
@@ -4943,4 +4949,5 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
   /* Touch targets: a 7px-padded row is a ~30px tap target, under the 44px guideline. */
   .nt-folder{padding:11px 10px}
   .nt-item{padding:12px}
+  .nt-ed-head .nt-ico{width:44px;height:44px}
 }

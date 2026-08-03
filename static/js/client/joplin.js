@@ -93,6 +93,106 @@
     return out;
   }
 
+  /* ---- streaming reader -------------------------------------------------------------------
+   * A real Joplin library does not fit in memory. The one this was rebuilt against is 2.17 GB —
+   * 1339 items and 1205 attachments, one of them a 248 MB video — and `await file.arrayBuffer()`
+   * on it fails outright: Chrome will not materialise a blob that size into a single ArrayBuffer
+   * and throws NotReadableError, whose message talks about PERMISSIONS. So the first version of
+   * this importer looked, to the person holding a perfectly good export, exactly like a file the
+   * browser wasn't allowed to open.
+   *
+   * A tar is a flat sequence of 512-byte headers each followed by its data, so the whole archive
+   * can be INDEXED by reading only the headers and jumping over the payloads — no allocation
+   * proportional to the file. Notes (small, and needed all at once) are then read from their
+   * offsets, and every attachment stays on disk as an {offset,length} handle until the moment it
+   * is uploaded. Peak memory is one attachment, not one library.
+   */
+  const BLOCK = 512;
+  async function _at(file, off, len){
+    return new Uint8Array(await file.slice(off, off + len).arrayBuffer());
+  }
+
+  /** Index a tar Blob/File: [{name, offset, size}] for every regular file, headers only. */
+  async function indexTar(file, onProgress){
+    const out = [];
+    const total = file.size;
+    let off = 0, longName = '';
+    while(off + BLOCK <= total){
+      const hdr = await _at(file, off, BLOCK);
+      if(hdr.every(b => b === 0)){ off += BLOCK; continue; }   // padding / end-of-archive
+      const name = _str(hdr, 0, 100);
+      const size = _oct(hdr, 124, 12);
+      const type = String.fromCharCode(hdr[156] || 48);
+      const prefix = _str(hdr, 345, 155);
+      const dataOff = off + BLOCK;
+      off = dataOff + Math.ceil(size / BLOCK) * BLOCK;
+      if(type === 'L'){ longName = new TextDecoder().decode(await _at(file, dataOff, size)).replace(/\0+$/, ''); continue; }
+      if(type === 'x' || type === 'g'){
+        const m = /\d+ path=([^\n]+)\n/.exec(new TextDecoder().decode(await _at(file, dataOff, size)));
+        if(m) longName = m[1];
+        continue;
+      }
+      if(type !== '0' && type !== '\0' && type !== '7'){ longName = ''; continue; }
+      const full = longName || (prefix ? prefix + '/' + name : name);
+      longName = '';
+      if(full) out.push({ name: full, offset: dataOff, size });
+      if(onProgress && out.length % 200 === 0) onProgress(off, total);
+    }
+    return out;
+  }
+
+  /** Parse a .jex File WITHOUT reading it into memory. Attachments come back as lazy handles:
+   *  `res.data` is {length, offset, lazy:true} — read it with `readResource(file, res)`. */
+  async function parseJexFile(file, opts){
+    opts = opts || {};
+    const magic = await _at(file, 0, 2);
+    if(magic[0] === 0x1f && magic[1] === 0x8b){
+      // A gzipped export cannot be indexed by offset — there are no offsets until it is inflated.
+      // A small one still works through the in-memory path, so fall back rather than refuse: this
+      // function became the only route for .jex files, and rejecting outright would have removed
+      // support for gzipped exports that used to import fine. Only a genuinely huge one is refused,
+      // where the alternative is an out-of-memory crash minutes in.
+      const GZ_MAX = 256 * 1024 * 1024;
+      if(file.size > GZ_MAX){
+        throw new Error('that export is gzipped and too large to unpack in a browser — ' +
+                        'gunzip it first, or re-export from Joplin as a plain .jex');
+      }
+      return await parseJex(await file.arrayBuffer());
+    }
+    const idx = await indexTar(file, opts.onScan);
+    if(!idx.length) throw new Error('this file does not look like a Joplin .jex export');
+    const entries = [];
+    const mdEntries = [];
+    for(const e of idx){
+      const path = e.name.replace(/^\.\//, '');
+      if(/^resources\//.test(path)){
+        // Duck-typed handle: `collect` only ever asks a resource's bytes for `.length`, so a
+        // handle walks through it unchanged and nothing has to know about streaming.
+        entries.push({ name: path, data: { length: e.size, offset: e.offset, lazy: true } });
+      } else if(/\.md$/i.test(path)) mdEntries.push(e);
+    }
+    for(let i = 0; i < mdEntries.length; i++){
+      const e = mdEntries[i];
+      entries.push({ name: e.name, data: await _at(file, e.offset, e.size) });
+      if(opts.onRead && (i % 25 === 0 || i === mdEntries.length - 1)) opts.onRead(i + 1, mdEntries.length);
+    }
+    const r = collect(entries);
+    if(!r.notes.length && !r.folders.length){
+      throw new Error('no Joplin notes found in that file' +
+        (r.counts.encrypted ? ' — every item in it is still encrypted by Joplin' : ''));
+    }
+    return r;
+  }
+
+  /** Read one resource's bytes, whether it came from the streaming path (a handle) or the
+   *  in-memory one (already a Uint8Array). */
+  async function readResource(file, res){
+    const d = res && res.data;
+    if(!d) return null;
+    if(d.lazy) return await _at(file, d.offset, d.length);
+    return d;
+  }
+
   async function _gunzip(u8){
     if(typeof DecompressionStream === 'undefined') throw new Error('this export is gzipped and this browser cannot unzip it');
     const ds = new DecompressionStream('gzip');
@@ -391,7 +491,8 @@
     return out;
   }
 
-  const API = { TYPE, untar, parseItem, parseJex, parseFrontMatter, parseMarkdownFiles,
+  const API = { TYPE, untar, parseItem, parseJex, parseJexFile, indexTar, readResource,
+                parseFrontMatter, parseMarkdownFiles,
                 collect, rewriteLinks, linkedIds, folderPaths, tagsByNote, _ts };
   root.PCJoplin = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;

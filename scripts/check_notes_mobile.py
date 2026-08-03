@@ -23,6 +23,8 @@ Assertions, each corresponding to a way this specific screen breaks on a phone:
                        zooms back out. Applies to the title, the body, search and the tag field.
   editor-under-nav     the editor's bottom is behind the fixed .mobilenav (~62px + safe area), i.e.
                        someone wrote 100vh instead of 100dvh, or forgot to reserve the nav.
+  mismatched-buttons   Two icon buttons side by side in the editor header rendered at different
+                       sizes, because one carried .btn.small and the other did not.
   notes-cross-saved    Switching notes with a save still debounced wrote one note's fields onto
                        another. `.nt-editor` is ONE element whose innerHTML is replaced per note, so
                        a commit that looks its inputs up when it fires reads whichever note is on
@@ -142,7 +144,7 @@ AUDIT = r"""(() => {
   out.editorVisible = vis(document.querySelector('.nt-editor'));
   out.items = document.querySelectorAll('.nt-item').length;
   const small = [];
-  for(const el of document.querySelectorAll('.nt-item, .nt-folder, .nt-side-head .btn, .nt-res-item')){
+  for(const el of document.querySelectorAll('.nt-item, .nt-folder, .nt-side-head .btn, .nt-res-item, .nt-ed-head .btn')){
     if(!vis(el)) continue;
     const b = box(el);
     if(b.h < 32) small.push({sel: el.className, h: Math.round(b.h), text:(el.textContent||'').trim().slice(0,24)});
@@ -164,6 +166,10 @@ AUDIT = r"""(() => {
   out.editorBottom = (ed && vis(ed)) ? box(ed).bottom : 0;
   const body = document.querySelector('.nt-body');
   out.bodyBottom = (body && vis(body)) ? box(body).bottom : 0;
+  // Icon buttons that sit side by side must BE the same size. Preview shipped as a plain .btn and
+  // Delete as a .btn.small, so they were visibly different heights next to each other.
+  out.headBtns = Array.from(document.querySelectorAll('.nt-ed-head .btn')).filter(vis)
+    .map(el => ({ cls: el.className, w: Math.round(box(el).w), h: Math.round(box(el).h) }));
   return out;
 })()"""
 
@@ -336,6 +342,15 @@ async def drive(url):
                 for z in r2["zoomy"]:
                     problems.append((label, "ios-zoom-trap",
                                      f"{z['cls']} is {z['fs']}px — iOS zooms the page on focus"))
+
+                hb = r2.get("headBtns") or []
+                if len(hb) >= 2:
+                    widths = {b["w"] for b in hb}
+                    heights = {b["h"] for b in hb}
+                    if len(widths) > 1 or len(heights) > 1:
+                        problems.append((label, "mismatched-buttons",
+                                         "the editor's icon buttons are different sizes: " +
+                                         ", ".join(f"{b['cls'].split()[-1]} {b['w']}x{b['h']}" for b in hb)))
 
                 # Switching notes mid-debounce must not mix them.
                 x = await js(CROSS_SAVE, awaited=True)

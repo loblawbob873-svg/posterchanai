@@ -57,7 +57,7 @@
     ({ $, $$, enc, toast, uiConfirm, uiPrompt, modal, closeModal, publish, mdToHtml } = PC);
     window.PCNotes = {
       render(){ if(document.querySelector('.nt-wrap')) return; render(); },
-      unmount(){ _sel=null; },
+      unmount(){ _sel=null; unwatch(); },
       // Called on reconnect — flush anything written while offline.
       flush: flushPending,
       // For the offline bar / nav badge: how many writes are still queued.
@@ -88,34 +88,91 @@
   let _sel = null;          // id of the open note
   let _filter = { folder:FOLDER_ALL, q:'', tag:'' };
 
+  const FILTER = () => ({ authors:[ME().pubkey], kinds:[KIND], '#l':[L_TAG], limit:5000 });
+
+  /* CACHE FIRST, and resolve the moment the cache is in — the network refresh runs behind it.
+   * This used to await the relay before it returned, so opening Notes sat on a spinner for as long
+   * as the round trip took, and on a dead relay for as long as the timeout. Every other list in
+   * this app paints from cache instantly and refreshes underneath (see _cacheFirstList in app.js);
+   * a notebook, which is entirely the user's own already-synced data, has even less excuse to wait.
+   *
+   * The network answer is folded IN, never OVER: a relay that returns nothing — unreachable,
+   * throttled, or merely slow — must leave the local library alone. That asymmetry is the anti-wipe
+   * rule this codebase keeps relearning. */
   async function load(force){
     if(_lib && !force) return _lib;
-    if(!_loading) _loading = _load().finally(()=>{ _loading=null; });
+    if(!_loading) _loading = _loadCache().finally(()=>{ _loading=null; });
     return _loading;
   }
 
-  /* Cache first, then network — the same shape as the app's other cache-first reads. The cache
-   * answer is what makes Notes work offline; the network answer is folded IN, never OVER: a relay
-   * that returns nothing (unreachable, throttled, or just slow) must leave the local library alone.
-   * That asymmetry is the whole anti-wipe rule this codebase keeps relearning. */
-  async function _load(){
-    const filter = { authors:[ME().pubkey], kinds:[KIND], '#l':[L_TAG], limit:5000 };
+  async function _loadCache(){
     const lib = { notes:new Map(), folders:new Map() };
     let cached = [];
-    try{ cached = Store().query([filter]) || []; }catch(_){ cached = []; }
-    await _absorb(lib, cached);
+    try{ cached = Store().query([FILTER()]) || []; }catch(_){ cached = []; }
+    // Progressive: repaint every 60 decrypts so a big library fills in visibly instead of holding
+    // a spinner. Decryption is per note and there is no way around it — the title lives inside the
+    // ciphertext — so with a thousand notes the difference is a blank screen versus a filling one.
+    await _absorb(lib, cached, n => { if(n % 60 === 0){ _lib = lib; _paint(); } });
     _lib = lib;
-    try{
-      const live = await Relay().query([filter]);
-      if(live && live.length) await _absorb(lib, live);
-    }catch(_){ /* offline: the cache stands on its own */ }
     return _lib;
   }
 
+  /* The background half. Never blocks a paint; re-renders only if something actually changed and
+   * the user isn't mid-edit. */
+  let _refreshing = false;
+  async function refresh(){
+    if(_refreshing || !_lib) return;
+    _refreshing = true;
+    try{
+      const live = await Relay().query([FILTER()]);
+      if(live && live.length){
+        const before = _stamp();
+        await _absorb(_lib, live);
+        if(_stamp() !== before && PC.VIEW === 'notes' && !_dirty) _paint();
+      }
+    }catch(_){ /* offline: the cache stands on its own */ }
+    finally{ _refreshing = false; }
+  }
+  // Cheap change detector: count + newest event stamp. Comparing whole documents would mean
+  // re-serialising every note on every refresh.
+  function _stamp(){
+    let n = 0, top = 0;
+    for(const o of _lib.notes.values()){ n++; if(o._at > top) top = o._at; }
+    for(const o of _lib.folders.values()){ n++; if(o._at > top) top = o._at; }
+    return n + ':' + top;
+  }
+
+  /* A LIVE subscription, so a note written on another device shows up here without a reload —
+   * which is what "syncs" has to mean when the same library is open on a laptop and a phone. */
+  let _sub = null;
+  function watch(){
+    if(_sub || !Relay().subscribe) return;
+    try{
+      // `since`, NOT the plain library filter. Subscribing with the full filter makes the relay
+      // replay the entire library as the subscription's initial batch — a few thousand events, each
+      // one decrypted a second time (refresh() has just done them all) and each one triggering a
+      // change check. The live sub only wants the TAIL; the backfill is refresh()'s job. The 120s
+      // slack covers clock skew between this device and the relay.
+      const f = Object.assign(FILTER(), { since: now() - 120 });
+      delete f.limit;
+      _sub = Relay().subscribe([f], { live:true, onEvent: async (ev) => {
+        if(!_lib) return;
+        const before = _stamp();
+        await _absorb(_lib, [ev]);
+        if(_stamp() !== before && PC.VIEW === 'notes' && !_dirty) _paint();
+      }});
+    }catch(_){ _sub = null; }
+  }
+  function unwatch(){ if(_sub){ try{ Relay().close(_sub); }catch(_){ } _sub = null; } }
+
   /* Decrypt events into the library. Newest wins per id — events for one `d` can arrive from
-   * several relays with different created_at, and an older copy must never overwrite a newer one. */
-  async function _absorb(lib, evs){
+   * several relays with different created_at, and an older copy must never overwrite a newer one.
+   * Newest FIRST, so on a big library the notes someone actually wants to see decrypt first. */
+  async function _absorb(lib, evs, onProgress){
+    let seen = 0;
+    evs = (evs || []).slice().sort((a,b) => (b.created_at||0) - (a.created_at||0));
     for(const ev of evs){
+      if(onProgress) onProgress(++seen);
       const d = (ev.tags||[]).find(t=>t[0]==='d');
       if(!d || !d[1]) continue;
       const isNote = d[1].startsWith(D_NOTE), isFolder = d[1].startsWith(D_FOLDER);
@@ -192,7 +249,7 @@
       // NOT while something is half-typed: render() rebuilds the whole pane from innerHTML, so a
       // flush landing mid-sentence would replace the textarea with the last SAVED body and drop
       // whatever is inside the current debounce window.
-      if(PC.VIEW==='notes' && !_dirty) render();
+      if(PC.VIEW==='notes' && !_dirty) _paint();
     }
     return sent;
   }
@@ -266,6 +323,8 @@
     return Array.from(c.entries()).sort((a,b)=> b[1]-a[1] || a[0].localeCompare(b[0]));
   }
 
+  /* Entry point. Paints from cache as soon as it can, then refreshes and subscribes BEHIND the
+   * paint — neither is awaited, so opening Notes never waits on a network round trip. */
   async function render(){
     const feed = $('#feed');
     if(!feed) return;
@@ -274,6 +333,16 @@
       try{ await load(); }
       catch(e){ feed.innerHTML = `<div class="nt-wrap"><div class="empty">Couldn’t open your notes: ${enc(e.message||'error')}</div></div>`; return; }
     }
+    _paint();
+    watch();      // live: a note written on another device appears without a reload
+    refresh();    // deliberately NOT awaited
+  }
+
+  // Build the DOM from whatever is in _lib right now. Pure render — no I/O, so it is safe to call
+  // from a background refresh or a live event.
+  function _paint(){
+    const feed = $('#feed');
+    if(!feed || !_lib) return;
     const notes = visibleNotes();
     const pend = pending().length;
     const folders = Array.from(_lib.folders.values()).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
@@ -365,8 +434,8 @@
         <button class="nt-back" aria-label="Back to the list"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chevron-left"></use></svg></button>
         <input class="input nt-title" placeholder="Title" value="${enc(n.title||'')}" maxlength="200">
         <span class="nt-state muted small"></span>
-        <button class="btn nt-preview" title="Preview">👁</button>
-        <button class="btn btn-red small nt-del" title="Delete note"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>
+        <button class="btn nt-ico nt-preview" title="Preview" aria-label="Preview"><svg class="ic b-ic" aria-hidden="true"><use href="#i-eye"></use></svg></button>
+        <button class="btn btn-red nt-ico nt-del" title="Delete note" aria-label="Delete note"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>
       </div>
       <div class="nt-ed-bar">
         <select class="input nt-folder-sel">
@@ -528,10 +597,10 @@
     const name = (e && e.name) || '';
     const msg = (e && e.message) || '';
     if(name === 'NotReadableError' || name === 'SecurityError' || /could not be read/i.test(msg)){
-      return 'The browser was not allowed to read that ' + (mode === 'jex' ? 'file' : 'folder') + '. ' +
-        'This usually means it lives somewhere your browser is sandboxed out of (a Flatpak or Snap ' +
-        'build can only reach places like Downloads), or it moved after you picked it. ' +
-        'Copy the export into your Downloads folder and choose it again.';
+      return 'The browser could not read that ' + (mode === 'jex' ? 'file' : 'folder') + '. ' +
+        'If it lives somewhere your browser is sandboxed out of (a Flatpak or Snap build can only ' +
+        'reach places like Downloads), copy it there and pick it again. It can also mean the file ' +
+        'moved after you chose it.';
     }
     if(name === 'NotFoundError') return 'That file is no longer where the picker found it — re-export or pick it again.';
     return msg || 'could not read that file';
@@ -545,8 +614,18 @@
     say('<div class="spinner"></div><div class="muted small">reading the export…</div>');
     let parsed, unreadable = [];
     try{
-      if(mode === 'jex') parsed = await PCJoplin.parseJex(await input.arrayBuffer());
-      else {
+      if(mode === 'jex'){
+        // STREAMED, never `await input.arrayBuffer()`. A real library is gigabytes (the one this
+        // was rebuilt against is 2.17 GB), and Chrome refuses to materialise a blob that size,
+        // throwing a NotReadableError whose wording blames permissions — so a perfectly good
+        // export looked like a file the browser wasn't allowed to open. parseJexFile reads only
+        // the tar headers and the notes; attachments stay on disk until each one is uploaded.
+        parsed = await PCJoplin.parseJexFile(input, {
+          onScan: (at, total) => say(`<div class="spinner"></div><div class="muted small">scanning the archive… ${Math.round(at/total*100)}%</div>`),
+          onRead: (n, total) => say(`<div class="spinner"></div><div class="muted small">reading notes… ${n} / ${total}</div>`),
+        });
+        parsed._file = input;   // resources are read from it lazily during the import
+      } else {
         const files = [];
         for(const f of input){
           const path = f.webkitRelativePath || f.name;
@@ -591,6 +670,22 @@
    * Attachments are uploaded ONCE per Joplin resource id and shared by every note that references
    * them, because the encryption uses a content-derived IV: identical bytes produce identical
    * ciphertext, so Blossom dedups them anyway and re-uploading is pure waste. */
+  /* What the media server will accept, in bytes, or 0 for "don't know — try everything". BUD-06's
+   * HEAD /upload answers a too-large pre-flight with `X-Reason: max N MB`, which is the only place
+   * the number is published; the endpoint sets Access-Control-Expose-Headers so it is readable
+   * cross-origin. Asking beats hardcoding: this cap is an admin setting, so a LAN node can be set
+   * to 10 GB while a CDN-fronted one is stuck at 100 MB, and an importer that assumed either would
+   * be wrong on the other. */
+  async function _uploadLimit(){
+    try{
+      const r = await fetch(PC.mediaServer() + '/upload', {
+        method:'HEAD', headers:{ 'X-Content-Length': String(64 * 1024 * 1024 * 1024) } });
+      const m = /max\s+(\d+)\s*MB/i.exec(r.headers.get('X-Reason') || '');
+      if(m) return parseInt(m[1], 10) * 1048576;
+    }catch(_){ }
+    return 0;
+  }
+
   async function doImport(parsed, root){
     const prog = $('#nt-imp-prog', root);
     // Offline, every note would land in the pending queue instead of on the relay — a few thousand
@@ -633,16 +728,34 @@
     const shaByRes = new Map();
     const resMeta = new Map();
     let rdone = 0, rfail = 0;
+    const tooBig = [];
+    // Ask the server what it will actually accept rather than hardcoding a number: the cap is an
+    // admin setting (blossom_max_upload_mb), so a node on a LAN can be set far higher than one
+    // behind a CDN. BUD-06 answers a HEAD with the reason, and the endpoint exposes it to JS.
+    const limit = await _uploadLimit();
+    const totalBytes = parsed.resources.reduce((n,r)=> n + ((r.data && r.data.length) || 0), 0);
     for(const res of parsed.resources){
-      if(!res.data || !res.data.length){ rfail++; continue; }
+      const size = (res.data && res.data.length) || 0;
+      if(!size){ rfail++; continue; }
+      const name = res.filename || res.title || (res.id + (res.ext?'.'+res.ext:''));
+      if(limit && size > limit){ tooBig.push(`${name} (${Math.round(size/1048576)} MB)`); rdone++; continue; }
       try{
-        const name = res.filename || res.title || (res.id + (res.ext?'.'+res.ext:''));
-        const file = new File([res.data], name, { type: res.mime || 'application/octet-stream' });
+        // Read THIS attachment only — for a streamed .jex `res.data` is an {offset,length} handle,
+        // so peak memory is one file rather than the whole library.
+        const bytes = await PCJoplin.readResource(parsed._file, res);
+        if(!bytes || !bytes.length){ rfail++; rdone++; continue; }
+        const file = new File([bytes], name, { type: res.mime || 'application/octet-stream' });
         const sha = await PC.uploadEncFile(file, 'Notes');
         shaByRes.set(res.id, sha);
-        resMeta.set(res.id, { sha, name, mime:res.mime, size:res.data.length });
+        resMeta.set(res.id, { sha, name, mime:res.mime, size });
       }catch(_){ rfail++; }
-      prog.innerHTML = `<div class="muted small">attachments ${++rdone}/${parsed.resources.length}${rfail?` (${rfail} failed)`:''}…</div>`;
+      rdone++;
+      if(rdone % 2 === 0 || rdone === parsed.resources.length){
+        prog.innerHTML = `<div class="nt-imp-bar"><i style="width:${Math.round(rdone/parsed.resources.length*100)}%"></i></div>
+          <div class="muted small">attachments ${rdone}/${parsed.resources.length}` +
+          `${totalBytes?` · ${(totalBytes/1073741824).toFixed(2)} GB total`:''}` +
+          `${rfail?` · ${rfail} failed`:''}${tooBig.length?` · ${tooBig.length} too large`:''}…</div>`;
+      }
     }
 
     // Notes. Existing ones are found by their Joplin id (kept in src.id), so a second run of the
@@ -688,6 +801,9 @@
     prog.innerHTML = `<div class="nt-imp-done">
       <b>Imported ${done - failed} note${done-failed===1?'':'s'}.</b>
       ${rfail?`<div class="nt-warn small">⚠ ${rfail} attachment(s) could not be stored — their notes imported with the link left as-is.</div>`:''}
+      ${tooBig.length?`<div class="nt-warn small">⚠ ${tooBig.length} attachment(s) are larger than this server accepts and were skipped:
+        ${enc(tooBig.slice(0,5).join(', '))}${tooBig.length>5?' …':''}.
+        Raise “Max upload (MB)” in Admin → Media and run the import again — it updates rather than duplicating.</div>`:''}
       ${failed?`<div class="nt-warn small">⚠ ${failed} note(s) failed to save. Run the import again — it updates rather than duplicates.</div>`:''}
       ${queued?`<div class="muted small">${queued} saved on this device and will sync when you’re back online.</div>`:''}
     </div>`;

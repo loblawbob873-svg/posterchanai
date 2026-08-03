@@ -273,6 +273,113 @@ def test_front_matter_export_is_supported():
     assert r["folders"][0]["title"] == "Work"
 
 
+def test_streaming_parse_matches_the_in_memory_parse():
+    """The streaming reader is the ONLY path a .jex takes now, so it has to agree with the
+    in-memory one exactly.
+
+    It exists because `await file.arrayBuffer()` cannot read a real library: the export this was
+    rebuilt against is 2.17 GB, and Chrome refuses to materialise a blob that size, throwing a
+    NotReadableError whose message blames *permissions* — so a perfectly good export looked like a
+    file the browser wasn't allowed to open. A tar is a flat sequence of headers, so the archive is
+    indexed by reading headers and jumping over payloads, and attachments stay on disk as
+    {offset,length} handles until each one is uploaded.
+    """
+    png = b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 40
+    rid = _id(900)
+    entries = {
+        f"{_id(1)}.md": _item("With picture", f"see ![x](:/{rid})", **NOTE_PROPS),
+        f"{_id(2)}.md": _item("Plain", "no attachments here", id=_id(2), parent_id=_id(100), type_=1),
+        f"{_id(100)}.md": _item("Folder", "", id=_id(100), parent_id="", type_=2),
+        f"{rid}.md": _item("pic.png", "", id=rid, mime="image/png", filename="pic.png",
+                           file_extension="png", type_=4),
+        f"resources/{rid}.png": png,
+    }
+    jex = _jex(entries)
+    path = "/tmp/pcai-joplin-stream.jex"
+    with open(path, "wb") as f:
+        f.write(jex)
+
+    harness = textwrap.dedent(f"""
+        const {{ openAsBlob }} = require('fs');
+        const J = require({json.dumps(PARSER)});
+        (async () => {{
+          // openAsBlob gives a lazy, file-backed Blob — the same shape a browser <input type=file>
+          // hands over, and it never reads the file into memory.
+          const blob = await openAsBlob({json.dumps(path)});
+          const streamed = await J.parseJexFile(blob, {{}});
+          const inMem = await J.parseJex(new Uint8Array(require('fs').readFileSync({json.dumps(path)})));
+          const strip = r => ({{ notes: r.notes, folders: r.folders, tags: r.tags,
+                                counts: r.counts, warnings: r.warnings }});
+          // The one intended difference: streamed resources carry a lazy handle, not bytes.
+          const res = streamed.resources[0];
+          const bytes = await J.readResource(blob, res);
+          process.stdout.write(JSON.stringify({{
+            same: JSON.stringify(strip(streamed)) === JSON.stringify(strip(inMem)),
+            streamedCounts: streamed.counts,
+            lazy: !!(res.data && res.data.lazy),
+            resLen: bytes.length,
+            resHead: Array.from(bytes.slice(0, 8)),
+            inMemHead: Array.from(inMem.resources[0].data.slice(0, 8)),
+          }}));
+        }})().catch(e => {{ process.stdout.write(JSON.stringify({{error: e.message}})); }});
+    """)
+    hpath = "/tmp/pcai-joplin-stream-harness.js"
+    with open(hpath, "w") as f:
+        f.write(harness)
+    out = subprocess.run(["node", hpath], capture_output=True, timeout=120)
+    assert out.returncode == 0, out.stderr.decode()[:2000]
+    r = json.loads(out.stdout.decode())
+    assert "error" not in r, r.get("error")
+    assert r["same"], "the streaming parse disagrees with the in-memory parse"
+    assert r["streamedCounts"]["notes"] == 2
+    assert r["lazy"], "a streamed resource must stay on disk as a handle, not be read into memory"
+    assert r["resLen"] == len(png)
+    assert r["resHead"] == list(png[:8]) == r["inMemHead"], "the lazy read returned the wrong bytes"
+
+
+def test_streaming_reads_the_right_bytes_for_every_resource():
+    """Offset arithmetic: one wrong length and every LATER resource reads shifted bytes — each file
+    still has the right SIZE, so the import "succeeds" and quietly stores 1200 corrupt images."""
+    entries = {}
+    expect = {}
+    for i in range(1, 61):
+        rid = _id(500 + i)
+        # Deliberately odd sizes so nothing lands neatly on tar's 512-byte block boundary.
+        blob = bytes([i % 256]) * (i * 337 + 7)
+        entries[f"{rid}.md"] = _item(f"r{i}.bin", "", id=rid, mime="application/octet-stream",
+                                     filename=f"r{i}.bin", file_extension="bin", type_=4)
+        entries[f"resources/{rid}.bin"] = blob
+        expect[rid] = [blob[0], len(blob)]
+    entries[f"{_id(1)}.md"] = _item("n", "b", **NOTE_PROPS)
+    path = "/tmp/pcai-joplin-many.jex"
+    with open(path, "wb") as f:
+        f.write(_jex(entries))
+
+    harness = textwrap.dedent(f"""
+        const {{ openAsBlob }} = require('fs');
+        const J = require({json.dumps(PARSER)});
+        (async () => {{
+          const blob = await openAsBlob({json.dumps(path)});
+          const r = await J.parseJexFile(blob, {{}});
+          const got = {{}};
+          for(const res of r.resources){{
+            const b = await J.readResource(blob, res);
+            got[res.id] = [b[0], b.length];
+          }}
+          process.stdout.write(JSON.stringify({{got, n: r.resources.length}}));
+        }})().catch(e => {{ process.stdout.write(JSON.stringify({{error: e.message}})); }});
+    """)
+    hpath = "/tmp/pcai-joplin-many-harness.js"
+    with open(hpath, "w") as f:
+        f.write(harness)
+    out = subprocess.run(["node", hpath], capture_output=True, timeout=120)
+    assert out.returncode == 0, out.stderr.decode()[:2000]
+    r = json.loads(out.stdout.decode())
+    assert "error" not in r, r.get("error")
+    assert r["n"] == 60, r["n"]
+    assert r["got"] == expect, "a lazily-read resource returned the wrong bytes"
+
+
 def test_a_large_export_parses_whole():
     """Tar reading is offset arithmetic: one bad length silently truncates the archive, and the
     result still looks like a successful import of fewer notes."""
