@@ -53,9 +53,16 @@
     rest.sort((a,b)=>b.created_at-a.created_at);
     return [pin, rest];
   }
+  // Pinned events are counted, not just filtered, because the eviction CEILING has to rise with
+  // them. Without this, a 5000-note notebook keeps mem.events permanently above MEM_MAX, so every
+  // single incoming firehose event re-ran a full sort + _reindex of the whole cache — a UI that
+  // gets slower the more notes you own, which is precisely backwards.
+  let _pinCount = 0;
   function _evictMem(){
-    if (mem.events.size <= MEM_MAX) return;
+    if (mem.events.size <= MEM_MAX + _pinCount) return;
     const [pin, rest] = _splitPinned([...mem.events.values()]);
+    _pinCount = pin.length;
+    if (rest.length <= MEM_KEEP) return;   // nothing worth trimming — don't pay for a reindex
     // Pinned events are kept in full and come OUT of the budget, but never take all of it: a large
     // notebook must not leave the timeline with nothing cached to render.
     const arr = pin.concat(rest.slice(0, Math.max(MEM_KEEP - pin.length, 500)));
@@ -81,7 +88,8 @@
     _idxDelFrom(idx.kind, ev.kind, ev.id);
     for (const t of ev.tags || []){ if (t && t.length >= 2 && typeof t[0] === 'string' && t[0].length === 1) _idxDelFrom(idx.tag, t[0] + ':' + t[1], ev.id); }
   }
-  function _reindex(){ idx.author.clear(); idx.kind.clear(); idx.tag.clear(); for (const ev of mem.events.values()) _indexAdd(ev); }
+  function _reindex(){ idx.author.clear(); idx.kind.clear(); idx.tag.clear(); _pinCount = 0;
+    for (const ev of mem.events.values()){ _indexAdd(ev); if (_isPinned(ev)) _pinCount++; } }
   // Candidate event-id set for ONE filter, using the most selective index; null = "scan everything".
   function _candidates(f){
     if (f.ids) return new Set(f.ids.filter(id => mem.events.has(id)));

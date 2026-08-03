@@ -343,8 +343,18 @@
 
   /* The editor. Saves are debounced and LAST-WRITE-WINS on this device; every save is a whole-note
    * publish, so there is no partial state to reconcile. */
-  let _saveT = null, _dirty = false;
+  let _saveT = null, _dirty = false, _pendingCommit = null;
+  /* Run any debounced save that is still waiting, NOW. Called before the editor is rebuilt and
+   * before leaving it: `commit` closes over the note it belongs to, so letting it fire after the
+   * pane has been replaced is how one note's edit lands on another (see openNote). */
+  function flushEdit(){
+    if(!(_dirty && _pendingCommit)) return;
+    const fn = _pendingCommit;
+    clearTimeout(_saveT); _pendingCommit = null;
+    fn();
+  }
   function openNote(n, isNew){
+    flushEdit();          // whatever was half-saved belongs to the note we are leaving
     _sel = n.id;
     const host = document.querySelector('.nt-editor');
     if(!host) return;
@@ -370,13 +380,20 @@
       <div class="nt-render markdown hidden"></div>
       <div class="nt-res"></div>`;
 
-    const title = $('.nt-title', host), body = $('.nt-body', host), state = $('.nt-state', host);
-    const mark = txt => { state.textContent = txt; };
+    // CAPTURE every field, and never re-query them inside commit(). `host` is the ONE persistent
+    // .nt-editor element whose innerHTML is replaced per note, so a debounced save that looks its
+    // inputs up when it fires reads whichever note is on screen THEN — the title and body would be
+    // note A's (captured in the closure) while the folder and tags came from note B. A save that is
+    // half one note and half another, and looks entirely plausible afterwards.
+    const title = $('.nt-title', host), body = $('.nt-body', host), state = $('.nt-state', host),
+          folderSel = $('.nt-folder-sel', host), tagIn = $('.nt-tagin', host);
+    const mark = txt => { if(state.isConnected) state.textContent = txt; };
     const commit = async () => {
+      _pendingCommit = null;
       n.title = title.value.trim();
       n.body = body.value;
-      n.folder = $('.nt-folder-sel', host).value || '';
-      n.tags = $('.nt-tagin', host).value.split(',').map(s=>s.trim()).filter(Boolean).slice(0,30);
+      n.folder = folderSel.value || '';
+      n.tags = tagIn.value.split(',').map(s=>s.trim()).filter(Boolean).slice(0,30);
       // save() is written not to throw on a dead relay, but it CAN throw on a signer that refuses
       // or disconnects (NIP-46/Amber). Unhandled, that would leave "saving…" on screen forever with
       // the text unsaved and nothing said about it — the worst possible way to lose a note.
@@ -394,16 +411,17 @@
     const touch = () => {
       _dirty = true; mark('saving…');
       clearTimeout(_saveT);
+      _pendingCommit = commit;
       _saveT = setTimeout(commit, 700);
     };
     title.oninput = body.oninput = touch;
-    $('.nt-folder-sel', host).onchange = touch;
-    $('.nt-tagin', host).onchange = touch;
+    folderSel.onchange = touch;
+    tagIn.onchange = touch;
     // Leaving the field saves NOW rather than waiting out the debounce — closing the tab or the
     // laptop lid inside that 700ms is exactly when the edit would be lost.
-    body.onblur = title.onblur = () => { if(_dirty){ clearTimeout(_saveT); commit(); } };
+    body.onblur = title.onblur = flushEdit;
 
-    $('.nt-back', host).onclick = () => { _sel=null; document.querySelector('.nt-wrap').classList.remove('nt-open'); render(); };
+    $('.nt-back', host).onclick = () => { flushEdit(); _sel=null; document.querySelector('.nt-wrap').classList.remove('nt-open'); render(); };
     $('.nt-preview', host).onclick = () => {
       const r = $('.nt-render', host);
       const showing = !r.classList.contains('hidden');

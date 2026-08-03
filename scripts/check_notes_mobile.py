@@ -23,6 +23,10 @@ Assertions, each corresponding to a way this specific screen breaks on a phone:
                        zooms back out. Applies to the title, the body, search and the tag field.
   editor-under-nav     the editor's bottom is behind the fixed .mobilenav (~62px + safe area), i.e.
                        someone wrote 100vh instead of 100dvh, or forgot to reserve the nav.
+  notes-cross-saved    Switching notes with a save still debounced wrote one note's fields onto
+                       another. `.nt-editor` is ONE element whose innerHTML is replaced per note, so
+                       a commit that looks its inputs up when it fires reads whichever note is on
+                       screen then. The result is half of each note and looks entirely plausible.
   offline-write-lost   THE data-loss one, and not a layout question at all: with publishing failing
                        (offline), a typed note must still be in the library and queued, never gone.
                        publish() rolls its optimistic cache save BACK when the relay refuses, so a
@@ -167,6 +171,43 @@ AUDIT = r"""(() => {
 OPEN_NOTE = r"""(() => { const it = document.querySelector('.nt-item'); if(!it) return false;
                          it.click(); return true; })()"""
 
+# Edit note A, and switch to note B INSIDE the 700ms debounce. A's edit must land on A, whole, and
+# nothing of B's may leak into it.
+CROSS_SAVE = r"""(async () => {
+  const items = document.querySelectorAll('.nt-item');
+  if(items.length < 2) return {error:'need two notes'};
+  items[0].click();
+  await new Promise(r => setTimeout(r, 60));
+  const openTitle = () => (document.querySelector('.nt-title')||{}).value;
+  const first = openTitle();
+  const tagIn = document.querySelector('.nt-tagin');
+  const body  = document.querySelector('.nt-body');
+  tagIn.value = 'alpha-only';
+  tagIn.dispatchEvent(new Event('change', {bubbles:true}));
+  body.value = 'body of the first note';
+  body.dispatchEvent(new Event('input', {bubbles:true}));
+  // Switch immediately — well inside the debounce window.
+  document.querySelectorAll('.nt-item')[1].click();
+  await new Promise(r => setTimeout(r, 1600));
+  // Read back what was actually published for each note.
+  const byTitle = {};
+  for(const ev of window.__events){
+    const d = ((ev.tags||[]).find(t=>t[0]==='d')||[])[1]||'';
+    if(!d.startsWith('pcai:note:') || !ev.content) continue;
+    let o = null; try{ o = JSON.parse(ev.content); }catch(e){ continue; }
+    if(o && o.title) byTitle[o.title] = o;
+  }
+  const a = byTitle[first] || null;
+  const others = Object.keys(byTitle).filter(t => t !== first).map(t => byTitle[t]);
+  return {
+    first,
+    aTags: a ? a.tags : null,
+    aBody: a ? a.body : null,
+    leaked: others.some(o => (o.tags||[]).includes('alpha-only') ||
+                             (o.body||'').includes('body of the first note')),
+  };
+})()"""
+
 # The offline write. Types into the open editor with publishing failing, waits out the 700ms
 # debounce, and reports whether the text survived anywhere it could be recovered from.
 OFFLINE_WRITE = r"""(async () => {
@@ -295,6 +336,26 @@ async def drive(url):
                 for z in r2["zoomy"]:
                     problems.append((label, "ios-zoom-trap",
                                      f"{z['cls']} is {z['fs']}px — iOS zooms the page on focus"))
+
+                # Switching notes mid-debounce must not mix them.
+                x = await js(CROSS_SAVE, awaited=True)
+                if not x or x.get("error"):
+                    problems.append((label, "notes-cross-saved",
+                                     f"could not run the switch test ({(x or {}).get('error')})"))
+                else:
+                    if x["aTags"] is None:
+                        problems.append((label, "notes-cross-saved",
+                                         "the edit was never saved when the note was switched away from"))
+                    else:
+                        if "alpha-only" not in (x["aTags"] or []):
+                            problems.append((label, "notes-cross-saved",
+                                             f"the first note lost its own tags (got {x['aTags']!r})"))
+                        if "body of the first note" not in (x["aBody"] or ""):
+                            problems.append((label, "notes-cross-saved",
+                                             "the first note lost its own body"))
+                    if x["leaked"]:
+                        problems.append((label, "notes-cross-saved",
+                                         "one note's edit was written onto ANOTHER note"))
 
                 # And the one that isn't about layout at all.
                 w3 = await js(OFFLINE_WRITE, awaited=True)
