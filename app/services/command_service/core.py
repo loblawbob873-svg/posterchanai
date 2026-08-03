@@ -304,6 +304,38 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         c = cls.COMMAND_ALIASES.get(c, c)
         return c in cls.MEDIA_TOOL_COMMANDS or c in cls.MOTION_EFFECTS or c in cls.ANIMATED_EFFECTS
 
+    @classmethod
+    def did_you_mean(cls, message: str) -> Optional[str]:
+        """The command a one-word MISTYPING was reaching for, or None.
+
+        An unrecognised word falls through to the LLM, and for a word that plainly names a system
+        feature the model does not decline — it INVENTS. `syslgos` (a transposition of `syslogs`)
+        produced a full fake boot sequence: a kernel version, an sshd "Accepted connection from
+        192.168.1 (external)", a sudo-to-root line and an OOM kill, followed by an analysis calling
+        it "classic privilege escalation". None of it happened, and it is indistinguishable from
+        real output. Aliases cannot fix this because typos cannot be enumerated, so the near miss is
+        caught here instead and answered with a question rather than a hallucination.
+
+        Deliberately narrow, because this intercepts ordinary conversation if it is loose:
+        ONE word, at least 5 characters, not already a command, and a difflib ratio of 0.8+.
+        Measured against that bar: syslgos/sylogs/sysloggs → syslogs, logss → logs,
+        musicgen → musicgeni, while hello/thanks/test/what/ok match nothing.
+
+        Returns the CANONICAL name (aliases resolved), so a caller can present or run it directly.
+        It only ever SUGGESTS: auto-running a guess is wrong when the catalogue contains `node`.
+        """
+        import difflib
+        word = (message or "").strip().lower()
+        if not word or len(word) < 5 or " " in word:
+            return None
+        names = set(cls.COMMANDS) | set(cls.COMMAND_ALIASES) | set(cls.RETIRED_COMMANDS)
+        if word in names:
+            return None                                   # a real command; not a near miss
+        hit = difflib.get_close_matches(word, sorted(names), n=1, cutoff=0.8)
+        if not hit:
+            return None
+        return cls.COMMAND_ALIASES.get(hit[0], hit[0])
+
     def parse_command(self, message: str) -> Tuple[Optional[str], str]:
         """Parse message for commands, return (command, argument)"""
         # Remove emojis and other unicode symbols that might interfere with matching

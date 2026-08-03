@@ -395,6 +395,18 @@ async def _handle_message(update, db):
             if command:
                 command = CommandService.COMMAND_ALIASES.get(command, command)
 
+            # A one-word MISTYPING of a command must not reach the model. `syslgos` did, and the
+            # model answered with a fabricated boot sequence — kernel version, an sshd "Accepted
+            # connection from 192.168.1 (external)", a sudo-to-root line, an OOM kill — plus an
+            # analysis calling it "classic privilege escalation". Ask instead of guessing: running
+            # the guess outright is wrong when the catalogue contains `node`.
+            if command is None and not photos:
+                _sug = CommandService.did_you_mean(text)
+                if _sug:
+                    await telegram_service.send_message(
+                        chat_id, f"Did you mean: {_sug}\n\nSend {_sug} to run it.")
+                    return {"ok": True}
+
             # "post" can appear anywhere in a short reply message (e.g. "send post", "make a post")
             if command is None and reply_to and len(text_lower.split()) <= 5 and "post" in text_lower:
                 command = "post"

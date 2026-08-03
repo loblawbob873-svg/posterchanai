@@ -88,6 +88,21 @@ class TestAliasResolution(unittest.TestCase):
             self.assertEqual(parse(CS.__new__(CS), f"{word} nas"), ("logs", "nas"), word)
             self.assertIn(word, tg._TG_COMMANDS, f"{word} must be matchable on Telegram too")
 
+    def test_a_mistyped_command_is_caught_before_the_model_invents(self):
+        """`syslgos` reached the LLM, which answered with a fabricated boot sequence: a kernel
+        version, an sshd "Accepted connection from 192.168.1 (external)", a sudo-to-root line and an
+        OOM kill, then called it "classic privilege escalation". None of it happened. Typos cannot be
+        enumerated as aliases, so the near miss is caught and ASKED about instead."""
+        for typo, want in (("syslgos", "logs"), ("sylogs", "logs"), ("logss", "logs"),
+                           ("musicgen", "musicgeni")):
+            self.assertEqual(CS.did_you_mean(typo), want, typo)
+
+    def test_the_near_miss_guard_does_not_eat_ordinary_chat(self):
+        # it intercepts a message entirely, so a loose bar would break normal conversation
+        for word in ("hello", "thanks", "test", "what", "ok", "sure", "please help me",
+                     "logs", "syslogs", "node"):
+            self.assertIsNone(CS.did_you_mean(word), word)
+
     def test_health_alone_is_not_a_command(self):
         """Matching is bare-word-or-word-plus-space, so a `health` alias would answer "health check
         on the server" with a status board instead of a reply."""
