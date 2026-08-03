@@ -1523,8 +1523,16 @@ def relay_status() -> dict:
 
 def _drop_control(cmd: dict) -> dict:
     """Hand an admin command to the relay subprocess via its control dir (its poller picks it
-    up, executes on the relay loop). Atomic write so the poller never sees a partial file."""
-    if _relay.proc is None or _relay.proc.poll() is not None:
+    up, executes on the relay loop). Atomic write so the poller never sees a partial file.
+
+    Liveness is the STATUS FILE (relay_status), NOT the local `_relay.proc` handle. Under the role
+    split the relay is posterchanai-relay.service — not a child of the web app — so `_relay.proc` is
+    None in the app process even while the relay is running, and gating on it failed EVERY command
+    here with "relay not running": prune/auto-clean, block purge and reload, backfill, delete-author,
+    nip05/upstream/store reloads, and the WoT refresh that a NEW SIGNUP fires to get the user through
+    the gate. The control dir is a file channel the relay drains no matter who wrote to it, so which
+    process owns the handle is irrelevant to whether the command can be delivered."""
+    if not relay_status().get("running"):
         return {"ok": False, "error": "relay not running"}
     try:
         ctrl = _relay_paths(_relay_db_path())["control"]

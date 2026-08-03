@@ -38,6 +38,10 @@ ROOT_PACK = "_"                     # loose images sitting directly in the emoji
 IMAGE_EXTS = {".png", ".gif", ".webp", ".jpg", ".jpeg", ".apng", ".avif"}
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # per file; these end up inline in other people's timelines
 THUMB_PX = 72
+# Uploads are DOWNSCALED on the way in (see _shrink_upload). An emoji renders inline at ~20-32px;
+# 128 still covers a 3x display and a picker grid, and it is the size Pleroma/Akkoma packs ship at,
+# so copied-in packs are already under it and pass through untouched.
+EMOJI_MAX_PX = 128
 
 # The shortcode charset is the one the CLIENT's :shortcode: regex accepts — anything else would be
 # written into a note and never render, so it is sanitised on the way in rather than served broken.
@@ -356,6 +360,83 @@ def delete_pack(pack: str) -> int:
     return n
 
 
+# extension -> format, for the rare file Pillow opens without reporting one
+_EXT_FMT = {".png": "PNG", ".apng": "PNG", ".gif": "GIF", ".webp": "WEBP",
+            ".jpg": "JPEG", ".jpeg": "JPEG", ".avif": "AVIF"}
+
+
+def _shrink_frames(im):
+    """Every frame of `im`, converted to RGBA and downscaled, plus each frame's own delay.
+
+    RGBA throughout is what keeps a transparent emoji transparent — quantising per frame loses the
+    alpha on the way. Delays are collected PER FRAME because `im.info["duration"]` is only the first
+    frame's: reusing it for all of them retimes every variable-speed animation to a constant rate."""
+    from PIL import Image, ImageSequence
+    frames, delays = [], []
+    for fr in ImageSequence.Iterator(im):
+        delays.append(int(fr.info.get("duration", im.info.get("duration", 80)) or 80))
+        f = fr.convert("RGBA")
+        f.thumbnail((EMOJI_MAX_PX, EMOJI_MAX_PX), Image.LANCZOS)
+        frames.append(f)
+    return frames, delays
+
+
+def _shrink_upload(data: bytes, ext: str) -> bytes:
+    """Downscale an uploaded emoji to EMOJI_MAX_PX, keeping its FORMAT, transparency and animation.
+
+    Returns the original bytes untouched whenever re-encoding is not an improvement: the source is
+    already emoji-sized, the result came out bigger, or Pillow could not read it. An upload is never
+    worth failing over a compression step (the same rule thumbnail() follows).
+
+    Deliberately NOT media_service.compress_image, even though that is the house image compressor:
+    it flattens alpha onto WHITE and emits a JPEG. On these that would put a white box behind every
+    transparent emoji on a dark theme and cut an animated one down to its first frame. Format is
+    preserved rather than "upgraded" so the stored extension keeps matching the bytes, which is what
+    the served Content-Type is derived from.
+    """
+    try:
+        from PIL import Image
+    except Exception:
+        return data
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            fmt = (im.format or "").upper() or _EXT_FMT.get((ext or "").lower(), "PNG")
+            if max(im.size) <= EMOJI_MAX_PX:
+                return data          # already small; re-encoding would only shed quality
+            frames, delays = _shrink_frames(im)
+            if not frames:
+                return data
+            animated = len(frames) > 1
+            buf = io.BytesIO()
+            if animated:
+                extra = {"save_all": True, "append_images": frames[1:], "disposal": 2,
+                         "loop": im.info.get("loop", 0), "duration": delays}
+                if fmt == "WEBP":
+                    frames[0].save(buf, "WEBP", quality=85, method=4, **extra)
+                elif fmt == "PNG":
+                    frames[0].save(buf, "PNG", optimize=True, **extra)      # APNG
+                else:
+                    frames[0].save(buf, "GIF", optimize=True, **extra)
+            elif fmt == "JPEG":
+                frames[0].convert("RGB").save(buf, "JPEG", quality=85, optimize=True)
+            elif fmt == "WEBP":
+                frames[0].save(buf, "WEBP", quality=85, method=4)
+            elif fmt == "GIF":
+                frames[0].save(buf, "GIF", optimize=True)
+            else:
+                frames[0].save(buf, "PNG", optimize=True)
+            out = buf.getvalue()
+    except Exception as e:
+        logger.debug("[emoji] shrink failed (%s) — storing the original", e)
+        return data
+    # Never inflate a thin source: a small, already-optimised file can re-encode LARGER than it
+    # arrived, and storing that is strictly worse than doing nothing.
+    if not out or len(out) >= len(data):
+        return data
+    logger.info("[emoji] shrank upload %d -> %d bytes", len(data), len(out))
+    return out
+
+
 def add_emoji(pack: str, shortcode: str, filename: str, data: bytes, overwrite: bool = False) -> dict:
     """Store one uploaded image as `shortcode` in `pack`. A pack.json pack keeps the uploaded
     filename and gains a map entry; a plain pack is named by its shortcode (the filename IS the
@@ -370,6 +451,7 @@ def add_emoji(pack: str, shortcode: str, filename: str, data: bytes, overwrite: 
         raise ValueError("empty file")
     if len(data) > MAX_UPLOAD_BYTES:
         raise ValueError(f"too large ({len(data)/1048576:.1f} MB, max {MAX_UPLOAD_BYTES//1048576} MB)")
+    data = _shrink_upload(data, ext)
     existing = lookup(pack, sc)
     if existing and not overwrite:
         raise ValueError(f":{sc}: already exists in {pack}")
