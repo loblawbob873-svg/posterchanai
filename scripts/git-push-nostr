@@ -112,8 +112,12 @@ def main(argv: list) -> int:
     header = "Authorization: Nostr %s" % base64.b64encode(
         json.dumps(ev, separators=(",", ":")).encode("utf-8")).decode("ascii")
 
+    # GIT_PUSH_NOSTR tells the pre-push guard (scripts/grasp-pre-push-guard, installed as a repo's
+    # .git/hooks/pre-push) that this push DOES carry the header, so it should stand aside. Without it
+    # the guard would block the very command it exists to recommend.
+    env = dict(os.environ, GIT_PUSH_NOSTR="1")
     return subprocess.run(
-        ["git", "-c", "http.extraHeader=%s" % header, "push"] + argv).returncode
+        ["git", "-c", "http.extraHeader=%s" % header, "push"] + argv, env=env).returncode
 
 
 if __name__ == "__main__":
