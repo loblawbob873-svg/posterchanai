@@ -51,10 +51,20 @@ def main():
             sys.stderr.write("GRASP: default branch set to %s\n" % adopted[len("refs/heads/"):])
         # The operator authors this as a witness/mirror at 30618:<operator>:<id>, distinct from the
         # maintainer's own 30618:<owner>:<id> which stays authoritative for the ACL. Shared with the
-        # web-editor commit path (git_host_main) so both produce identical tags — private repos and
-        # every failure mode are handled inside.
-        ok = ghs.publish_state_witness(owner_hex, rid)
-        sys.stderr.write("GRASP: witness 30618 %s\n" % ("published" if ok else "not published"))
+        # web-editor commit path (git_host_main) so both produce identical tags — every failure mode
+        # is handled inside.
+        #
+        # The private check is duplicated here ON PURPOSE, even though publish_state_witness skips
+        # private repos itself: it returns a bare False for "deliberately skipped" and for "the relay
+        # refused / there is no operator key", so one shared message reported BOTH as "not published".
+        # Every push to a private repo therefore printed what reads as a recurring failure, and it was
+        # investigated as one. A skip and a failure are different events and must not share wording.
+        if ghs.is_private(owner_hex, rid):
+            sys.stderr.write("GRASP: witness 30618 skipped (private repo — its state comes from the "
+                             "maintainer's own 30618, not the operator's)\n")
+        else:
+            ok = ghs.publish_state_witness(owner_hex, rid)
+            sys.stderr.write("GRASP: witness 30618 %s\n" % ("published" if ok else "NOT PUBLISHED"))
     except Exception:
         pass   # best-effort; a push is already committed by the time post-receive runs
     finally:

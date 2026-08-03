@@ -180,11 +180,19 @@ A repo can be marked **private** at create time (`private=true`; default configu
   sign in the `WWW-Authenticate` realm, which git does relay to helpers as `wwwauth[]`. Until then:
   **clone/fetch over https, push over `nostr://`.**
 
-  Corollary, and it bites: an https push via a hand-made NIP-98 header authorizes by route 0 and
-  publishes **no** 30618, so the Nostr-side state only moves if `post-receive`'s operator witness
-  lands. While that reports `witness 30618 not published`, such a push leaves the 30618 stale — git
-  reads stay correct (they read the real repo) but a `nostr://` fetch reports the OLD sha and
-  resurrects deleted branches. Pushing the branch over `nostr://` republishes the state and repairs it.
+  Corollary, and it bites hardest on PRIVATE repos: an https push via a hand-made NIP-98 header
+  authorizes by route 0 and publishes **no** 30618, so the Nostr-side state only moves if something
+  else republishes it — and for a private repo nothing ever does. `publish_state_witness` skips
+  private repos by design (a private repo must leak no 30617/30618, and the local relay federates
+  outbound), so their 30618 comes **only** from the client, i.e. from an ngit/`nostr://` push. A
+  `nostr://` fetch reads refs from that 30618 rather than from the repo, so an https-only push cycle
+  leaves it stale: measured here, a later fetch reported the OLD `main` as a *forced update backwards*
+  and resurrected a branch deleted hours earlier, while `ls-remote` over https showed the truth.
+  Pushing the branch over `nostr://` republishes the state and repairs both views.
+
+  `GRASP: witness 30618 skipped (private repo …)` on a push is therefore **normal**, not a fault —
+  distinct wording from `NOT PUBLISHED`, which is a real failure (no operator key, relay refused).
+  They shared one message until 2026-08-03 and the skip was investigated as a recurring failure.
 
 ### ngit + private repos: two things had to be fixed
 
