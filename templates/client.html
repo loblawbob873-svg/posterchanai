@@ -257,13 +257,25 @@
             <span>View on GitHub</span>
         </a>
     </aside>
-</div>
 
-<!-- Right-column collapse toggle (≥1180px only): a neon arrow bar on the panel's edge. Persisted. -->
+<!-- Right-column collapse toggle (≥1180px only): a neon arrow bar on the panel's edge. Persisted.
+     INSIDE .app deliberately. It used to be a sibling of .app positioned `fixed` against the VIEWPORT,
+     which was only ever correct while .app ran edge-to-edge; now that .app is capped and centred, the
+     viewport edge is not the rail's edge, and the tab floated in the middle of the panel. As a child of
+     the (positioned) .app it is offset from the APP's box, so rail-width + padding puts it on the panel
+     edge in every regime with no viewport arithmetic — which also sidesteps body{zoom}, under which
+     `vw` units and a zoomed fixed element do not agree. -->
 <button class="rb-toggle" id="rb-toggle" title="Hide panel" aria-label="Toggle right panel"><svg class="ic x-ic" aria-hidden="true"><use href="#i-chevron-right"></use></svg></button>
+</div>
 <script>
 (function(){ var b=document.getElementById('rb-toggle'); if(!b) return;
-  function apply(c){ document.body.classList.toggle('rb-collapsed', c); b.textContent=c?'◂':'▸'; b.title=c?'Show panel':'Hide panel'; }
+  /* Swap the sprite reference, NOT textContent. `b.textContent=…` replaces every child of the button
+     — including the <svg> icon — with a bare text arrow, and because apply() also runs on load, the
+     icon was destroyed before it ever painted. Setting the <use> href keeps the icon and just points
+     it at the other direction. */
+  function apply(c){ document.body.classList.toggle('rb-collapsed', c);
+    var u=b.querySelector('use'); if(u) u.setAttribute('href', c?'#i-chevron-left':'#i-chevron-right');
+    b.title=c?'Show panel':'Hide panel'; }
   apply(localStorage.getItem('rbCollapsed')==='1');
   b.onclick=function(){ var c=!document.body.classList.contains('rb-collapsed'); try{ localStorage.setItem('rbCollapsed', c?'1':'0'); }catch(e){} apply(c); };
 })();

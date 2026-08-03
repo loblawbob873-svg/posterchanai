@@ -80,6 +80,18 @@
   --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px;
   --fs-0:11px; --fs-1:13px; --fs-2:15px; --fs-3:17px; --fs-4:20px; --fs-5:24px;
   --lh-tight:1.2; --lh:1.45; --lh-loose:1.6;
+  /* Max width of the reading column. 760px puts a post at ~76 characters per line at --fs-3, i.e. the
+     top of the comfortable 45-75 range, with the avatar gutter taken out. Declared here (and NOT
+     overridden by any theme) so the measure is one number to tune, not a figure buried in a grid. */
+  --feed-max:920px;
+  /* The capped width of the whole shell = the three tracks + both column gaps + .app's own padding
+     (300 + 20 + 920 + 20 + 340 + 64). Kept in lockstep with --feed-max: change one and the middle
+     column stops landing on the other. .rb-toggle's fixed offsets are derived from this number.
+     NOTE these are CSS px, and the client applies body{zoom} by viewport width, so the cap engages
+     EARLIER than the raw number suggests — at 1280 device px the layout viewport is ~1910 CSS px.
+     760px measured a 49-character line once zoom was accounted for, which is under the comfortable
+     band; 920 puts it at ~59-74 across 1280..2560. Tune against measured chars/line, never on paper. */
+  --app-max:1664px;
   /* ONE mono stack. There were seven ('Courier New', "JetBrains Mono", four spellings of ui-monospace),
      so an npub, a hash and a code block each rendered in a different typeface depending on the surface.
      --mono was already referenced 8 times as var(--mono,monospace) but never DEFINED, so every one of
@@ -666,7 +678,7 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 /* Inset the whole app from the screen edges (ditto-style) so the panels float in space instead of running
    edge-to-edge, plus a gap between the columns. Safe because *{box-sizing:border-box} — the padding comes
    out of the 1fr middle column, not out of the viewport. Dropped to 0 on mobile, where every px counts. */
-.app{display:grid;grid-template-columns:300px 1fr;height:100vh;column-gap:20px;padding:0 32px}
+.app{display:grid;grid-template-columns:300px 1fr;height:100vh;column-gap:20px;padding:0 32px;position:relative}   /* positioned: .rb-toggle is offset from THIS box, not the viewport */
 /* No box: .glass outlines all four sides, which boxed the rail in. Just ONE vertical rule on the inner
    edge — the divider between the rail and the feed. Its twin is .rightbar's border-left, so the shell
    reads as three columns of one surface separated by hairlines, not as three floating panels. */
@@ -831,14 +843,31 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 /* desktop-only right column: Hot / Trending + GitHub link (hidden below 1100px) */
 .rightbar,.rb-toggle{display:none}   /* hidden by default; shown at >=1180px where the right column exists */
 @media(min-width:1180px){
-  .app{grid-template-columns:300px minmax(0,1fr) 340px}   /* narrower rails → the feed gets the width */
+  /* THE READING COLUMN IS CAPPED, and the whole three-column cluster centres on wide screens.
+     `minmax(0,1fr)` handed the feed every spare pixel of the viewport, so the wider the monitor the
+     worse it read: MEASURED at --fs-3, a post ran 79 characters per line at 1280, 92 at 1440, 140 at
+     1920 and 160 at 2560. Comfortable prose is 45-75 characters and the classic optimum is 66, so on
+     any large screen the feed sat at roughly double the readable maximum — most of why it scanned as
+     an undifferentiated wall rather than as separate posts.
+     Capping .app rather than the feed alone keeps the three columns ADJACENT and spends the surplus
+     as one gutter either side of the cluster. Capping just the feed also fixes the measure, but it
+     opens ~400px of dead space between the feed and each rail, which reads as three drifting islands.
+     --app-max is the sum of the tracks so the middle column lands exactly on --feed-max:
+     300 + 20 gap + 920 + 20 gap + 340 + 64 padding = 1664. */
+  .app{grid-template-columns:300px minmax(0,1fr) 340px;max-width:var(--app-max);margin-inline:auto}
   /* Mirrors .sidebar exactly: same --rail surface, same single hairline on the edge that faces the feed. */
   .rightbar{display:flex;flex-direction:column;gap:16px;padding:18px 16px;overflow-y:auto;min-height:0;
     border:0;border-left:1px solid var(--line);background:var(--rail)}
   /* Collapse toggle — a neon arrow tab on the panel's left edge (vertically centered). Persisted in
      localStorage. Only present where the right column exists (>=1180px). */
-  .rb-toggle{display:flex;align-items:center;justify-content:center;position:fixed;z-index:25;
-    top:50%;right:calc(340px + 32px);transform:translateY(-50%);width:20px;height:74px;cursor:pointer;padding:0;   /* right rail (340px) + .app's outer padding (32px) — keeps the tab on the panel edge */
+  .rb-toggle{display:flex;align-items:center;justify-content:center;position:absolute;z-index:25;
+    /* Anchored to the RAIL's left edge, which is no longer the viewport's edge: .app is capped at
+       --app-max and centred, so past that width the cluster pulls away from the right of the screen.
+       Below --app-max the app is full width and this resolves to the old rail(340) + padding(32).
+       Above it the gutter is (100vw - 1664)/2, and 100vw - gutter - (1664 - 32 - 340) reduces to
+       is the rail (340px) plus .app's own outer padding (32px), measured from .app's box — so it
+       lands on the panel edge whatever the app's width or offset, with no viewport arithmetic. */
+    top:50%;right:calc(340px + 32px);transform:translateY(-50%);width:20px;height:74px;cursor:pointer;padding:0;
     font-size:13px;line-height:1;color:var(--cyan);font-family:inherit;
     /* Opaque var(--bg), not var(--rail): the rail is transparent now and the feed scrolls past behind
        this tab, so it needs its own fill — the canvas colour, so it still reads as part of the rail.
@@ -852,7 +881,7 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
     box-shadow:-3px 0 22px rgba(var(--accent-rgb),.5),inset 1px 0 0 rgba(var(--accent-rgb),.6)}
   body.rb-collapsed .app{grid-template-columns:300px minmax(0,1fr)}   /* drop the 3rd column → main widens */
   body.rb-collapsed .rightbar{display:none}
-  body.rb-collapsed .rb-toggle{right:32px}                   /* tab slides to the app's edge (= its outer padding) */
+  body.rb-collapsed .rb-toggle{right:32px}   /* tab slides to the app's edge (= its outer padding) */
   /* Per-VIEW hide. app.js allowlists the timeline-shaped views (RB_SHOW_VIEWS) and sets .rb-off on
      everything else — AI chat, News, Markets, Stats, Torrents, Shopping, Streams, chat rooms, Files,
      Settings, the games… all of which would rather have the width than a rail of unrelated posts.

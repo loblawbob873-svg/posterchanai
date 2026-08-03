@@ -133,6 +133,7 @@
   <symbol id="i-speech" viewBox="0 0 24 24"><path d="M4.4 5.6h11.2a2 2 0 012 2v5a2 2 0 01-2 2H9.2l-4 3.2v-3.2a2 2 0 01-.8-1.6v-5.4a2 2 0 011-2z"/><path d="M19.2 8.6a4.4 4.4 0 010 6.8"/></symbol>
   <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 3.6h6l-.8 5.4 3.2 3.2H6.6l3.2-3.2z"/><path d="M12 12.2v8.2"/></symbol>
   <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="M9.4 6l6 6-6 6"/></symbol>
+  <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="M14.6 6l-6 6 6 6"/></symbol>
   <symbol id="i-restore" viewBox="0 0 24 24"><path d="M4.2 12a7.8 7.8 0 107.8-7.8c-2.6 0-4.9 1.3-6.3 3.2"/><path d="M3.6 4.2v4.6h4.6"/></symbol>
   <symbol id="i-flip-h" viewBox="0 0 24 24"><path d="M12 3.4v17.2"/><path d="M9 6.6L4 12l5 5.4z"/><path d="M15 6.6l5 5.4-5 5.4z"/></symbol>
   <symbol id="i-flip-v" viewBox="0 0 24 24"><path d="M3.4 12h17.2"/><path d="M6.6 9L12 4l5.4 5z"/><path d="M6.6 15L12 20l5.4-5z"/></symbol>
