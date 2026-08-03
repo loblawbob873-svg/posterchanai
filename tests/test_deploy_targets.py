@@ -96,6 +96,21 @@ class Mapping(unittest.TestCase):
         got = dt.units_for(["docs/GIT.md", "app/services/stream_service.py"])
         self.assertEqual(got, [dt.MEDIA])
 
+    def test_a_git_hook_change_restarts_nothing(self):
+        """install_hooks writes a shim that `exec`s "<python> <checkout>/git_hooks/<f>.py", so
+        git-receive-pack spawns a fresh process per push and reads the file off disk every time — a
+        pull is all a hook change needs. Unmapped it meant "everything": editing one hook's log
+        message restarted all seven units on BOTH nodes and dropped every connected Nostr client."""
+        self.assertEqual(dt.units_for(["git_hooks/post_receive.py"]), [])
+        self.assertEqual(dt.units_for(["git_hooks/pre_receive.py"]), [])
+
+    def test_the_git_server_itself_restarts_only_the_git_unit(self):
+        self.assertEqual(dt.units_for(["git_host_main.py"]), [dt.GIT])
+
+    def test_a_hook_change_does_not_dilute_a_real_change(self):
+        got = dt.units_for(["git_hooks/post_receive.py", "app/services/nostr_relay/server.py"])
+        self.assertEqual(got, [dt.RELAY])
+
     def test_every_mapped_unit_is_a_real_unit_template(self):
         """A mapping naming a unit that does not exist would silently fail to restart at deploy."""
         for _prefix, units in dt._OWNED:

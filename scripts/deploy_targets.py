@@ -67,6 +67,8 @@ _OWNED = (
     ("app/services/tor_service.py", (TOR,)),
     ("app/services/http_proxy_service.py", (PROXY,)),
     ("app/services/git_http_service.py", (GIT,)),
+    # The git smart-HTTP server itself: its own process, launched by git_http_service from this path.
+    ("git_host_main.py", (GIT,)),
     ("botframework/", (BOTS,)),
     ("app/services/bot_manager_service.py", (BOTS,)),
 )
@@ -74,7 +76,15 @@ _OWNED = (
 # Changed-but-restarts-nothing. The client is served as static files (router.lan pulls its own
 # checkout), so a UI-only change must NOT take the ~90s outage a restart costs — that rule predates
 # this script and is why "never sync.sh for UI-only changes" exists.
-_INERT_PREFIXES = ("static/", "docs/", "tests/", "scripts/", ".github/", "README", "CLAUDE.md")
+_INERT_PREFIXES = ("static/", "docs/", "tests/", "scripts/", ".github/", "README", "CLAUDE.md",
+                   # git_hooks/ is NOT loaded by any service. install_hooks writes a shell shim into
+                   # each bare repo that `exec`s "<venv python> <checkout>/git_hooks/<file>.py", so
+                   # git-receive-pack spawns a FRESH process per push and reads the file off disk
+                   # every time — a pull is all a hook change needs. Left unmapped it meant "could
+                   # affect anything", so editing one hook's log message restarted all seven units on
+                   # both nodes, dropping every connected Nostr client. That is precisely the outage
+                   # the role split removed, caused by the tooling that exists to prevent it.
+                   "git_hooks/")
 _INERT_SUFFIXES = (".md",)
 # DEPLOY TOOLING. These are read fresh by whoever runs them and are imported by no service, so a
 # change to one must restart NOTHING. They were unmapped, which means "could affect anything" and
