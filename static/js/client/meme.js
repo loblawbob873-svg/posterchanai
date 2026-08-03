@@ -2120,12 +2120,16 @@
     return new Promise(resolve => {
       let m = { x:0.5, y:0.62, w:0.12, angle:0, anime:false }, done = false;
       PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Where is the mouth?</h3>
-        <div class="muted small" style="margin-bottom:8px">Drag the marker onto the mouth, and the
-        slider to match its width. I have put it where I think it is — on a photo that is usually right.</div>
+        <div class="muted small" style="margin-bottom:8px">Drag the marker onto the mouth, then match its
+        width and tilt. Tilt matters whenever the head is not upright — a tilted face's mouth opens along
+        its own axis, not straight down the screen. I have put it where I think it is — on a photo that is
+        usually right.</div>
         <div class="mb-mouth-wrap" id="mm-wrap"><img id="mm-img" src="${enc(show)}" alt="">
           <i class="mb-mouth-pin" id="mm-pin"></i></div>
         <label class="mb-f"><span>Mouth width</span>
           <input type="range" id="mm-w" min="3" max="45" step="1" value="12"></label>
+        <label class="mb-f"><span>Tilt <b id="mm-adeg" class="muted small">0°</b></span>
+          <input type="range" id="mm-a" min="-45" max="45" step="1" value="0"></label>
         <div class="mb-frow" style="margin-top:6px">
           <button class="btn btn-cyan small" id="mm-photo"><svg class="ic b-ic" aria-hidden="true"><use href="#i-camera"></use></svg>Photo</button>
           <button class="btn btn-ghost small" id="mm-draw"><svg class="ic b-ic" aria-hidden="true"><use href="#i-palette"></use></svg>Drawing / anime</button>
@@ -2137,6 +2141,7 @@
         </div>`, root => {
         const wrap = root.querySelector('#mm-wrap'), img = root.querySelector('#mm-img');
         const pin = root.querySelector('#mm-pin'), rng = root.querySelector('#mm-w');
+        const ang = root.querySelector('#mm-a'), adeg = root.querySelector('#mm-adeg');
         const hint = root.querySelector('#mm-hint');
         // The marker is painted from offsetWidth/offsetHeight, NOT from the client rect. On a tablet
         // (and any desktop that isn't high-DPI) the app is scaled with `body{zoom}`, and the two are
@@ -2154,7 +2159,12 @@
           pin.style.left = (img.offsetLeft + m.x * w) + 'px';
           pin.style.top  = (img.offsetTop  + m.y * h) + 'px';
           pin.style.width = Math.max(6, m.w * w) + 'px';
+          // The pin is the PREVIEW of the tilt, so it must use the renderer's sign convention —
+          // talk.py rotates its patches by -angle onto the frame, which is this same clockwise-
+          // positive screen rotation. Getting it backwards would look right here and come out
+          // mirrored in the video, with nothing on screen to say so.
           pin.style.transform = `translate(-50%,-50%) rotate(${m.angle}deg)`;
+          adeg.textContent = (m.angle > 0 ? '+' : '') + Math.round(m.angle) + '°';
           root.querySelector('#mm-photo').className = 'btn small ' + (m.anime?'btn-ghost':'btn-cyan');
           root.querySelector('#mm-draw').className  = 'btn small ' + (m.anime?'btn-cyan':'btn-ghost');
           hint.textContent = m.anime
@@ -2184,6 +2194,9 @@
         wrap.addEventListener('pointerup', up);
         wrap.addEventListener('pointercancel', up);
         rng.oninput = () => { m.w = (+rng.value || 12) / 100; paint(); };
+        // Range matches the server's clamp in _clean_mouth (±45°); a value outside it would be
+        // silently pulled back there, so the preview would stop agreeing with the render.
+        ang.oninput = () => { m.angle = clamp(+ang.value || 0, -45, 45); paint(); };
         root.querySelector('#mm-photo').onclick = () => { m.anime = false; paint(); };
         root.querySelector('#mm-draw').onclick  = () => { m.anime = true;  paint(); };
         img.onload = paint;
@@ -2211,6 +2224,12 @@
                 if(seen === 'anime' || seen === 'photo') m.anime = (seen === 'anime');
               }catch(_){ }
               rng.value = Math.round(clamp(m.w,0.03,0.45) * 100);
+              // The detector already measures the tilt off the mouth landmarks, so an angled photo
+              // opens with the slider ALREADY on it — the control is there to correct a bad seed
+              // (and to supply one at all on art, where detection is not trusted), not to make
+              // every tilted face a manual job.
+              m.angle = clamp(m.angle, -45, 45);
+              ang.value = Math.round(m.angle);
               paint();
             }
           }catch(_){ }

@@ -220,7 +220,7 @@ POSE_TALK = r"""(async () => {
 # eye was sent ~1.5x too far across and 1.5x too wide. That is "it doesn't align on anime": a photo
 # is seeded by the detector and never dragged, so only hand placement showed it.
 MOUTH_PLACEMENT = r"""(async () => {
-  const TX = 0.85, TY = 0.88, TW = 0.30;
+  const TX = 0.85, TY = 0.88, TW = 0.30, TA = -18;
   const btn = document.getElementById('mb-talk');
   if (!btn) return {err: 'no #mb-talk to click'};
   btn.click();
@@ -238,6 +238,12 @@ MOUTH_PLACEMENT = r"""(async () => {
   wrap.dispatchEvent(new PointerEvent('pointerup', {bubbles: true}));
   const rng = document.getElementById('mm-w');
   rng.value = Math.round(TW * 100); rng.dispatchEvent(new Event('input'));
+  // TILT. A head at an angle needs its mouth to open along the face's own axis, and the control is
+  // useless if the value never reaches the render — the server clamps it and both renderers rotate
+  // by it, so a slider wired to nothing would still LOOK right in the picker and come out level.
+  const ang = document.getElementById('mm-a');
+  if (!ang) return {err: 'the picker has no tilt control'};
+  ang.value = TA; ang.dispatchEvent(new Event('input'));
   const p = pin.getBoundingClientRect();
   const shown = {x: (p.left + p.width / 2 - r.left) / r.width,
                  y: (p.top + p.height / 2 - r.top) / r.height,
@@ -247,7 +253,7 @@ MOUTH_PLACEMENT = r"""(async () => {
   if (!window.__voiceOpts || !window.__voiceOpts.onTake) return {err: 'the picker did not open the studio'};
   await window.__voiceOpts.onTake(new Blob(['x'], {type: 'audio/wav'}), 'testvoice', 'hello there');
   for (let i = 0; i < 60 && !window.__talkBody; i++) await new Promise(r => setTimeout(r, 100));
-  return {zoom: getComputedStyle(document.body).zoom || '1', want: {x: TX, y: TY, w: TW},
+  return {zoom: getComputedStyle(document.body).zoom || '1', want: {x: TX, y: TY, w: TW, angle: TA},
           shown, sent: (window.__talkBody || {}).mouth || null};
 })()"""
 
@@ -734,6 +740,13 @@ async def drive(url):
                             problems.append((label, "mouth-misplaced",
                                              f"the render was sent {k}={sent.get(k)} for a marker "
                                              f"put at {want[k]:.2f}"))
+                    # TILT reaches the render. A head at an angle has to open its mouth along the
+                    # face's own axis; the slider is worthless if the value stops at the picker,
+                    # and that failure is invisible there — the pin rotates either way.
+                    if abs(float(sent.get("angle", 999)) - want["angle"]) > 0.5:
+                        problems.append((label, "mouth-misplaced",
+                                         f"the render was sent angle={sent.get('angle')} for a "
+                                         f"tilt set to {want['angle']}°"))
                 print(f"{label}: zoom={mp['zoom']} painted="
                       f"({shown['x']:.3f},{shown['y']:.3f},w={shown['w']:.3f}) sent={sent}")
 
