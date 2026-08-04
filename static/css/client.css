@@ -3944,7 +3944,13 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .dm-listhd{position:sticky;top:0;z-index:2;display:flex;gap:8px;align-items:center;
   padding:10px 12px;background:var(--bg2);border-bottom:1px solid var(--line)}
 .dm-search{margin:0;flex:1 1 auto;min-width:0;font-size:17px;min-height:42px;border-radius:999px;padding:10px 14px}
-.dm-newbtn{flex:0 0 auto;min-height:42px;white-space:nowrap}
+/* ONE hue, not two. The shared .btn-neon fill is a gradient from --neon to --neon2, and on most
+   themes those are opposite ends of the wheel — cyan to magenta on the default, blue to green on
+   Luna. Across a wide surface that reads as a deliberate wash; across a 90px button it is two
+   colours fighting, which is exactly how it was reported. Solid --neon keeps the button primary and
+   keeps .btn-neon's white-text contract, which every theme is already built around. */
+.dm-newbtn{flex:0 0 auto;min-height:42px;white-space:nowrap;
+  background:var(--neon);background-image:linear-gradient(180deg,rgba(255,255,255,.14),rgba(0,0,0,.10))}
 .dm-rows{display:block}
 
 .dm-peer{display:flex;gap:12px;align-items:center;padding:12px 14px;cursor:pointer;

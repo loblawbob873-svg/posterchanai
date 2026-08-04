@@ -628,6 +628,7 @@
           <div class="pv-foot-actions">
             <button class="pv-link pv-health" title="Weak, reused and old passwords"><svg class="ic" aria-hidden="true"><use href="#i-chart"></use></svg>Health</button>
             <button class="pv-link pv-import" title="Import a Bitwarden export"><svg class="ic" aria-hidden="true"><use href="#i-download"></use></svg>Import</button>
+            <button class="pv-link pv-export" title="Export for another password manager"><svg class="ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Export</button>
           </div>
           <button class="pv-link pv-pair" title="Pair a browser extension or another device"><svg class="ic" aria-hidden="true"><use href="#i-link"></use></svg>Pair a device</button>
           <button class="pv-link pv-device" title="This device"><svg class="ic" aria-hidden="true"><use href="#i-gear"></use></svg>This device</button>
@@ -667,6 +668,7 @@
     $$('.pv-new', feed).forEach(b => b.onclick = () => openItem(blankItem(_filter.folder), true));
     _wireDrawer(feed);
     $('.pv-import', feed).onclick = openImport;
+    $('.pv-export', feed).onclick = openExport;
     $('.pv-pair', feed).onclick = openPair;
     $('.pv-device', feed).onclick = openDevice;
     $('.pv-health', feed).onclick = openHealth;
@@ -1115,6 +1117,51 @@
           setStayUnlocked(stay.checked);
           toast(stay.checked ? 'this device stays unlocked' : 'this device will unlock through your signer');
         };
+      });
+  }
+
+  // ---------------------------------------------------------------- export
+
+  /* Getting your passwords OUT. A vault you cannot leave is a trap, and the honest counterpart to
+   * an import is an export that the place you are going to can actually read. */
+  function openExport(){
+    const items = Array.from(_lib.items.values());
+    const logins = items.filter(i => i.kind === 'login');
+    const rest = items.length - logins.length;
+    const withTotp = logins.filter(i => i.totp).length;
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Export passwords</h3>
+      <div class="nt-warn small">Whatever you download here is <b>PLAINTEXT</b>. Anyone who opens the
+        file can read every password in it. Import it where you are going, then delete it.</div>
+      <div class="pv-imp-pick">
+        <button class="btn btn-neon small" id="pe-csv">Chrome / Firefox (.csv)</button>
+        <button class="btn btn-ghost small" id="pe-json">Everything (.json)</button>
+      </div>
+      <div class="muted small">
+        <b>.csv</b> is the format Chrome and Firefox import (Chrome: Settings → Autofill → Passwords →
+        Import; Firefox: about:logins → Import from a File). Their columns are fixed, so it carries
+        ${logins.length} login${logins.length===1?'':'s'} and <b>nothing else</b> — no one-time codes
+        (${withTotp} would be lost), no notes, no folders${rest?`, and none of the ${rest} non-login entr${rest===1?'y':'ies'}`:''}.
+        <br><br>
+        <b>.json</b> is Bitwarden's format, which Bitwarden, KeePassXC, 1Password, Proton Pass and this
+        app all read. Nothing is dropped.
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn btn-ghost small" id="pe-close">Close</button></div>`,
+      root => {
+        $('#pe-close', root).onclick = closeModal;
+        const stamp = new Date().toISOString().slice(0,10);
+        const save = (text, name, mime) => {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(new Blob([text], {type:mime}));
+          a.download = name;
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(()=>URL.revokeObjectURL(a.href), 60000);
+          toast('exported — delete the file once you have imported it');
+          closeModal();
+        };
+        $('#pe-csv', root).onclick = () =>
+          save(V().toBrowserCsv(items), `posterchan-passwords-${stamp}.csv`, 'text/csv');
+        $('#pe-json', root).onclick = () =>
+          save(V().toBitwardenJson(items, folderNames()), `posterchan-passwords-${stamp}.json`, 'application/json');
       });
   }
 

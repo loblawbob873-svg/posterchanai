@@ -610,6 +610,80 @@
     return { items, folders: Array.from(folders) };
   }
 
+  /* EXPORT. A vault you cannot get out of is a trap, so this writes the two formats that actually
+   * import somewhere else.
+   *
+   * `browser` is the CSV Chrome and Firefox both read (Chrome: Settings > Autofill > Passwords >
+   * Import; Firefox: about:logins > Import from a File). Its columns are fixed by those importers
+   * and it is LOSSY by their design — no one-time codes, no notes, no folders, one URL per row —
+   * which is why the second format exists rather than being an afterthought.
+   *
+   * `full` is Bitwarden's own unencrypted .json shape, so it round-trips through this app's importer
+   * and through Bitwarden, KeePassXC, 1Password and Proton Pass, all of which read it. Nothing is
+   * dropped: TOTP secrets, per-URI match rules, custom fields, cards, notes and folders all survive.
+   *
+   * Both are PLAINTEXT. That is the point of an export and the reason the caller warns about it. */
+  function toBrowserCsv(items) {
+    const rows = [['name', 'url', 'username', 'password']];
+    for (const it of (items || [])) {
+      if (!it || it.kind !== 'login') continue;                 // the CSV has nowhere to put the rest
+      const uris = itemUris(it);
+      // One ROW PER URL, not per entry: a browser matches on the single `url` column, so an entry
+      // saved for five sites autofills on one of them unless each gets its own row. Both importers
+      // treat repeated name+username as separate logins, which is what the user already has.
+      const list = uris.length ? uris : [''];
+      for (const u of list) rows.push([it.title || hostOf(u) || 'Untitled', u,
+                                       it.username || '', it.password || '']);
+    }
+    return rows.map(r => r.map(_csvCell).join(',')).join('\r\n') + '\r\n';
+  }
+  function _csvCell(v) {
+    const s = String(v == null ? '' : v);
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+
+  const _BW_MATCH_N = { domain: 0, host: 1, startsWith: 2, exact: 3, regex: 4, never: 5 };
+
+  function toBitwardenJson(items, folders) {
+    const folderList = [], folderId = new Map();
+    for (const name of (folders || [])) {
+      if (!name || folderId.has(name)) continue;
+      const id = 'f' + (folderList.length + 1);
+      folderId.set(name, id);
+      folderList.push({ id, name });
+    }
+    const out = [];
+    for (const it of (items || [])) {
+      if (!it) continue;
+      const base = {
+        id: it.id, organizationId: null, collectionIds: null,
+        folderId: folderId.get(it.folder) || null,
+        name: it.title || 'Untitled', notes: it.notes || null,
+        favorite: !!it.favorite, reprompt: 0,
+        fields: (it.fields || []).map(f => ({ name: f.name, value: f.value,
+                                              type: f.hidden ? 1 : 0 })),
+      };
+      if (it.kind === 'card' && it.card) {
+        out.push(Object.assign(base, { type: 3, card: {
+          cardholderName: it.card.holder || null, brand: it.card.brand || null,
+          number: it.card.number || null, expMonth: it.card.expMonth || null,
+          expYear: it.card.expYear || null, code: it.card.code || null } }));
+      } else if (it.kind === 'identity' && it.identity) {
+        out.push(Object.assign(base, { type: 4, identity: it.identity }));
+      } else if (it.kind === 'note') {
+        out.push(Object.assign(base, { type: 2, secureNote: { type: 0 } }));
+      } else {
+        out.push(Object.assign(base, { type: 1, login: {
+          username: it.username || null, password: it.password || null,
+          totp: it.totp || null,
+          uris: itemUriRules(it).map(r => ({ uri: r.uri,
+                                             match: r.match ? (_BW_MATCH_N[r.match] ?? null) : null })),
+        } }));
+      }
+    }
+    return JSON.stringify({ encrypted: false, folders: folderList, items: out }, null, 2);
+  }
+
   /* Weak/reused/old — the report a password manager owes you, computed locally over the decrypted
    * set. Reuse is counted by exact password across DIFFERENT sites: the same password on two URIs of
    * one account is not reuse, and flagging it teaches people to ignore the warning. */
@@ -636,6 +710,6 @@
     b32decode, totp, totpRemaining, parseOtpAuth, totpConfig,
     generate, entropyBits, randInt,
     hostOf, baseDomain, matchLevel, matchesFor, itemUris, itemUriRules,
-    parseBitwarden, parseCsv, audit, splitUris,
+    parseBitwarden, parseCsv, audit, splitUris, toBrowserCsv, toBitwardenJson,
   };
 });
