@@ -474,6 +474,7 @@
             <button class="nt-link nt-import" title="Import a Joplin export or a Notes backup"><svg class="ic" aria-hidden="true"><use href="#i-download"></use></svg>Import</button>
             <button class="nt-link nt-export" title="Save a backup archive of every note"><svg class="ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Backup</button>
           </div>
+          <button class="nt-link nt-danger nt-nuke" title="Delete every note, folder and attachment"><svg class="ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete all notes &amp; files</button>
         </div>
       </aside>
       <section class="nt-list" aria-label="Notes">
@@ -495,6 +496,7 @@
     $('.nt-new', feed).onclick = () => openNote(blankNote(_filter.folder), true);
     $('.nt-import', feed).onclick = openImport;
     $('.nt-export', feed).onclick = exportBackup;
+    $('.nt-nuke', feed).onclick = () => deleteEverything(null, true);
     $('.nt-addfolder', feed).onclick = addFolder;
     $$('.nt-fcaret[data-caret]', feed).forEach(b => b.onclick = (e) => {
       e.stopPropagation(); toggleCollapse(b.dataset.caret); _paint();
@@ -901,7 +903,7 @@
         Attachments stay in Files → Blossom → Notes.</span>
       </div>`, root => {
       $('#nt-imp-reset', root).onclick = () => resetLocal(root);
-      $('#nt-imp-nuke', root).onclick = () => deleteEverything(root);
+      $('#nt-imp-nuke', root).onclick = () => deleteEverything(root, true);
       $('#nt-imp-jex', root).onchange = e => runImport(e.target.files[0], 'jex', root);
       $('#nt-imp-md', root).onchange = e => runImport(Array.from(e.target.files), 'md', root);
       // The sheet closes on a backdrop click like every other modal, which for a job that runs for
@@ -973,13 +975,28 @@
    *
    * Typed confirmation rather than a yes/no: it is unrecoverable and it is one tap away from a
    * button people press to fix a display problem. */
-  async function deleteEverything(root){
+  async function deleteEverything(root, withFiles){
     await load();
     const n = _lib.notes.size, f = _lib.folders.size;
     if(!n && !f){ toast('there are no notes to delete'); return; }
-    const typed = await uiPrompt(`Permanently delete ${n} note(s) and ${f} folder(s) from the relay and this device? ` +
-      `This cannot be undone.\n\nType DELETE to confirm.`, {ok:'Delete everything', placeholder:'DELETE'});
+    // Every blob these notes reference: attachments plus any body that was offloaded for size.
+    const shas = new Set();
+    if(withFiles) for(const o of _lib.notes.values()){
+      for(const r of (o.res || [])) if(r && r.sha) shas.add(r.sha);
+      if(o.bodyRef) shas.add(o.bodyRef);
+    }
+    const typed = await uiPrompt(
+      `Permanently delete ${n} note(s), ${f} folder(s)` +
+      (withFiles ? ` and ${shas.size} attachment(s)` : '') +
+      ` from the relay and this device? This cannot be undone.\n\nType DELETE to confirm.`,
+      {ok:'Delete everything', placeholder:'DELETE'});
     if((typed||'').trim().toUpperCase() !== 'DELETE'){ toast('not deleted'); return; }
+    // Runs in the import sheet when launched from there, and in its own sheet from the sidebar,
+    // so there is always somewhere to show progress for what can be thousands of deletes.
+    if(!root){
+      modal('<h3>Deleting everything</h3><div id="nt-imp-out"></div>', r => { root = r; });
+      root = document.querySelector('#modal-root .modal');
+    }
     const out = $('#nt-imp-out', root);
     const items = Array.from(_lib.notes.values()).map(o=>[o,'note'])
       .concat(Array.from(_lib.folders.values()).map(o=>[o,'folder']));
@@ -991,13 +1008,31 @@
           <div class="muted small">deleting ${done} / ${items.length}${failed?` · ${failed} failed`:''}…</div>`;
       }
     }
+    // Blobs AFTER the notes: a note that still referenced a deleted attachment would render a
+    // broken image, whereas an orphaned blob is merely wasted space. Batched, or every delete
+    // schedules its own save of the whole drive index.
+    let filesGone = 0, filesLeft = 0;
+    if(shas.size){
+      const FI = PC.filesIdx ? PC.filesIdx() : null;
+      if(FI && FI.beginBatch) FI.beginBatch();
+      let i = 0;
+      for(const sha of shas){
+        if(await PC.deleteBlobQuiet(sha)) filesGone++; else filesLeft++;
+        if(++i % 5 === 0 || i === shas.size){
+          out.innerHTML = `<div class="nt-imp-bar"><i style="width:${Math.round(i/shas.size*100)}%"></i></div>
+            <div class="muted small">deleting attachments ${i} / ${shas.size}${filesLeft?` · ${filesLeft} failed`:''}…</div>`;
+        }
+      }
+      if(FI && FI.endBatch){ try{ await FI.endBatch(); }catch(_){ } }
+    }
     try{ localStorage.removeItem(PENDING_KEY); }catch(_){ }
     try{ await Store().purge(ev => ev.kind === KIND &&
       (ev.tags||[]).some(t => t[0]==='d' && typeof t[1]==='string' && t[1].startsWith('pcai:note'))); }catch(_){ }
     _lib = { notes:new Map(), folders:new Map() }; _sel = null; _filter.folder = FOLDER_ALL;
     out.innerHTML = `<div class="nt-imp-done"><b>Deleted ${done - failed} item(s).</b>` +
       (failed ? `<div class="nt-warn small">⚠ ${failed} could not be deleted — run it again.</div>` : '') +
-      `<div class="muted small">Attachments are still in Files → Blossom → Notes.</div></div>`;
+      (shas.size ? `<div class="muted small">${filesGone} attachment(s) deleted${filesLeft?`, ${filesLeft} could not be`:''}.</div>`
+                 : `<div class="muted small">Attachments are still in Files → Blossom → Notes.</div>`) + `</div>`;
     toast(`deleted ${done - failed} notes and folders`);
     setTimeout(()=>{ closeModal(); _paint(); }, 1400);
   }

@@ -4907,6 +4907,13 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
 .nt-link svg.ic{width:14px;height:14px;flex:none;color:var(--neon)}
 .nt-link:hover{border-color:var(--neon);background:rgba(var(--accent-rgb),.16);color:var(--neon)}
 .nt-pending{color:var(--amber);font-size:11px}
+/* Destructive, and on its OWN row: three across a 190px column truncates every label, which is the
+   mistake this sidebar already made once. Muted until hover — it sits one tap from buttons people
+   press routinely, so it must not invite the reach. */
+.nt-link.nt-danger{width:100%;border-color:transparent;background:none;font-weight:500;
+  font-size:12px;opacity:.6}
+.nt-link.nt-danger svg.ic{color:#ff6b8a}
+.nt-link.nt-danger:hover{opacity:1;color:#ff6b8a;border-color:#ff3366;background:rgba(255,51,102,.12)}
 
 .nt-folders{display:flex;flex-direction:column;gap:1px}
 .nt-folder{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;

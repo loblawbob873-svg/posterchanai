@@ -12273,6 +12273,19 @@
       if(r&&r.ok){ toast('deleted'); renderBlossom(); } else toast('delete failed');
     }catch(_){ toast('delete failed'); }
   }
+  /* Delete one blob and forget it in the index — no confirm, no redraw. delBlob() below is the
+   * single-file UI path; this is for a caller that has already confirmed and is deleting many
+   * (notes.js "delete all notes and files"). 404 counts as success: the blob being already gone
+   * still means the index entry should go, which is what left files stuck as "delete failed". */
+  async function deleteBlobQuiet(sha){
+    try{
+      const server=mediaServer();
+      const auth=await sign(24242,'Delete blob',[['t','delete'],['x',sha],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
+      const res=await fetch(server+'/'+sha,{ method:'DELETE', headers:{'Authorization':'Nostr '+btoa(JSON.stringify(auth))} });
+      if(res.ok || res.status===404){ try{ FilesIdx.forget(sha); _filesDeleted.add(sha); delete _trackUrls[sha]; }catch(_){ } return true; }
+    }catch(_){ }
+    return false;
+  }
   async function delBlob(sha){
     if(!await uiConfirm('Delete this blob?'))return; const server=mediaServer();
     const auth=await sign(24242,'Delete blob',[['t','delete'],['x',sha],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
@@ -19563,7 +19576,7 @@
     // moment one is imported from a file), and the encrypted-drive pair. uploadEncFile/encFileUrl
     // are how a Notes attachment stays encrypted end-to-end: the app's master key never leaves the
     // client, so a sub-module must go through these rather than uploadBlob directly.
-    mdToHtml, uploadEncFile, encFileUrl, filesIdx: () => FilesIdx,
+    mdToHtml, uploadEncFile, encFileUrl, deleteBlobQuiet, filesIdx: () => FilesIdx,
     get ME(){ return ME; }, get CFG(){ return CFG; }, get VIEW(){ return VIEW; },
   };
 
