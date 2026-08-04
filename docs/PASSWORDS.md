@@ -180,11 +180,18 @@ site. All of it is in `tests/test_vault_core.py`.
 
     venv-unified/bin/python -m unittest tests.test_vault_core tests.test_vault_extension
     venv-unified/bin/python scripts/check_vault_mobile.py
+    venv-unified/bin/python scripts/check_extension_popup.py
 
 `test_vault_core.py` runs the shared core under node against the **RFC 6238 test vectors** (SHA1,
 SHA256, SHA512, including a timestamp past 2³¹ where a 32-bit counter folds), checks the generator is
 uniform over its alphabet and always includes every enabled class, and checks the lookalike-domain
 cases above.
+
+`check_extension_popup.py` covers the two ways a browser-action popup renders as a thin vertical
+line, which it did once: **sized in viewport units** (a popup has no viewport to measure — Firefox
+lays the document out to discover how big the popup should be, so `100vw` resolves to 0; Chrome
+resolves it against the screen, so a render test cannot see this and the check reads the stylesheet
+instead), and **the script throwing** before it reveals a pane, since every pane starts hidden.
 
 `check_vault_mobile.py` drives the real `vault.js` at phone and desktop widths: the drawer, tap
 targets, the 16px input floor, that the password field is not rendered in clear when an entry opens,

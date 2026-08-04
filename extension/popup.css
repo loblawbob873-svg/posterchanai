@@ -2,8 +2,16 @@
    is laid out in columns, and every button is a real tap target rather than a 20px desktop chip. */
 :root{ color-scheme: dark; }
 *{ box-sizing:border-box; }
+/* THE POPUP MUST BE SIZED IN ABSOLUTE UNITS. A browser-action popup has no viewport of its own to
+   measure: Firefox lays the document out to discover how big the popup should BE, so `100vw` and
+   `100vh` resolve against a width and height that do not exist yet. `width: min(380px, 100vw)` then
+   picks 0 and the whole popup renders as a one-pixel vertical line — which is exactly what it did.
+   Chrome happens to resolve those units against the screen, so this looked fine there.
+   On Firefox for Android the popup is shown full-screen instead, and `max-width:100%` is what lets
+   it fill rather than sitting in a 380px column. */
+html{ width:380px; max-width:100%; }
 body{
-  margin:0; width:min(380px, 100vw); min-height:220px;
+  margin:0; width:380px; max-width:100%; min-height:220px;
   background:#141220; color:#edeefa;
   font:13.5px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
 }
@@ -39,7 +47,9 @@ button{ font:inherit; }
 }
 .danger{ color:#ff7a95; }
 
-#list{ margin-top:8px; display:flex; flex-direction:column; gap:4px; max-height:60vh; overflow-y:auto; }
+/* px, not vh — same reason as the body above; 60vh of an unresolved viewport is 0, which
+   hides the whole list even once the popup has a width. */
+#list{ margin-top:8px; display:flex; flex-direction:column; gap:4px; max-height:420px; overflow-y:auto; }
 .item{ padding:8px 9px; border-radius:10px; border:1px solid rgba(140,200,255,.14); }
 .item:hover{ border-color:rgba(140,200,255,.34); }
 .it-t{ display:flex; flex-direction:column; gap:1px; min-width:0; }
