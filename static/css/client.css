@@ -4893,14 +4893,19 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
 
 /* Import / Backup are things you do twice a year. They belong at the bottom, quiet, out of the way
    of the two actions used constantly — not as full-size buttons competing for attention. */
-.nt-side-foot{margin-top:auto;padding-top:10px;border-top:1px solid var(--line);
-  display:flex;flex-direction:column;gap:6px}
+.nt-side-foot{margin-top:auto;padding-top:12px;margin-bottom:2px;border-top:1px solid var(--line);
+  display:flex;flex-direction:column;gap:7px}
 .nt-foot-actions{display:flex;gap:4px}
-.nt-link{flex:1 1 0;display:inline-flex;align-items:center;justify-content:center;gap:5px;
-  padding:7px 6px;border-radius:8px;border:1px solid transparent;background:none;color:inherit;
-  cursor:pointer;font-size:12px;opacity:.65;white-space:nowrap}
-.nt-link svg.ic{width:13px;height:13px;flex:none}
-.nt-link:hover{opacity:1;border-color:var(--line);background:rgba(var(--accent-rgb),.08)}
+/* Visible enough to FIND. These were toned down to keep them out of the way of the two actions
+   used constantly, and overshot: a borderless 65%-opacity label at the bottom of a column reads as
+   a caption, not a button, and Import is the first thing a new user needs. Bordered, accent-tinted
+   icons, and full opacity — quiet next to the primary button, but unmistakably clickable. */
+.nt-link{flex:1 1 0;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  padding:8px 6px;border-radius:9px;border:1px solid var(--line);
+  background:rgba(var(--accent-rgb),.06);color:inherit;
+  cursor:pointer;font-size:12.5px;font-weight:600;white-space:nowrap;transition:.12s}
+.nt-link svg.ic{width:14px;height:14px;flex:none;color:var(--neon)}
+.nt-link:hover{border-color:var(--neon);background:rgba(var(--accent-rgb),.16);color:var(--neon)}
 .nt-pending{color:var(--amber);font-size:11px}
 
 .nt-folders{display:flex;flex-direction:column;gap:1px}
