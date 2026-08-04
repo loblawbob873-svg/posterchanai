@@ -796,6 +796,14 @@ async function code(raw){
 
 // ---------------------------------------------------------------- boot
 
-const ready = loadCfg().then(() => { if(cfg) connect(); });
+/* The engine's init is AWAITED here, not fired and forgotten.
+ *
+ * It sets `api` synchronously but loads `bmOn` and the known-bookmark map AFTER an await. A popup
+ * opening right after a service-worker wake therefore asked for state mid-load and got enabled=false
+ * — the toggle rendered UNCHECKED on a browser where sync was on. Re-ticking it then ran a union
+ * against an EMPTY map, so nothing deduped and every bookmark was republished under a fresh sync id,
+ * which every other browser dutifully created as new. "Keeps getting unchecked" and "keeps bringing
+ * back dupe folders" are the same bug, twice. */
+const ready = loadCfg().then(async () => { if(cfg) connect(); await initBookmarks(); });
 // A phone suspends the whole extension; re-check the socket whenever anything talks to us.
 setInterval(() => { if(cfg && !_anyOpen()) connect(); }, 30000);

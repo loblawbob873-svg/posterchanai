@@ -337,3 +337,44 @@ def test_tidy_merges_duplicates_without_losing_a_bookmark():
     assert got["after"] == 1, f"tidy left {got['after']} copies"
     assert got["marks"] == 5, "tidy deleted a bookmark — it may only move them"
     assert got["r"]["merged"] == 4 and got["r"]["removed"] == 4
+
+
+def test_the_engine_refuses_to_act_before_its_state_is_loaded():
+    """Reported as two symptoms with one cause: "Sync bookmarks keeps getting unchecked" and "keeps
+    bringing back dupe folders".
+
+    init() assigns `api` on its first line and reads the stored state an await later. A popup opening
+    right after a service-worker wake asked for state inside that window and got enabled=false — the
+    toggle rendered UNCHECKED on a browser where sync was on. Re-ticking it ran a union against an
+    EMPTY known-map, so nothing deduped: every bookmark was republished under a fresh sync id and
+    every other browser created it as new.
+
+    So the flag is "storage has been read", not "api exists", and acting early is refused rather than
+    done against empty state."""
+    src = open(os.path.join(ROOT, "extension", "bookmarks.js"), encoding="utf-8").read()
+    assert "var loaded = false;" in src
+    assert "loaded = true;" in src
+    for guard in ("if (!api || !loaded) throw", "return !!api && loaded && on;"):
+        assert guard in src, f"missing the half-loaded guard: {guard}"
+
+    bg = open(os.path.join(ROOT, "extension", "background.js"), encoding="utf-8").read()
+    assert "await initBookmarks();" in bg, \
+        "the engine's init is fired and forgotten again; a message handled during it sees empty state"
+
+
+def test_enabling_before_load_does_not_republish_everything():
+    """The consequence, measured: a union that runs with no loaded state republishes the lot."""
+    got = _tree_harness("""
+      for (let i=0;i<3;i++) mk('1','B'+i,'https://x'+i+'.example/');
+      let published = 0;
+      // init is deliberately NOT awaited — the window the bug lived in.
+      const p = E.init({ B, open: async(ct)=>JSON.parse(ct),
+                         publish: async()=>{ published++; return true; }, isFull:()=>true, why:()=>'' });
+      let refused = '';
+      try { await E.setEnabled(true); } catch (e) { refused = e.message; }
+      await p;
+      out({ refused, published });
+    """)
+    assert got["refused"], "setEnabled ran against a half-loaded engine instead of refusing"
+    assert got["published"] == 0, \
+        f"{got['published']} events published from an unloaded engine — that is the duplicate storm"

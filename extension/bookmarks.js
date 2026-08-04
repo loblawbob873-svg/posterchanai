@@ -180,6 +180,10 @@
   var rmap = {};         // browserId -> syncId
   var items = {};        // syncId -> { title, url, folder, _at, removed }
   var on = false;
+  /* Set only once storage has been READ. `api` alone is not enough: it is assigned on the first line
+   * of init and the state arrives an await later, and acting in that window is what republished an
+   * entire bookmark tree under new ids. */
+  var loaded = false;
   /* Ids this engine is currently writing into the tree. The browser fires onCreated/onChanged for
    * OUR OWN writes too, and republishing those is an echo: two devices then bounce one bookmark back
    * and forth, each edit newer than the last, forever. */
@@ -210,6 +214,7 @@
     var got = await api.B.storage.local.get(['bmMap', 'bmOn', 'bmItems']);
     map = got.bmMap || {}; on = !!got.bmOn;
     items = got.bmItems || {};
+    loaded = true;
     rmap = {};
     Object.keys(map).forEach(function (s) { rmap[map[s]] = s; });
     if (on) listen();
@@ -224,12 +229,12 @@
     }, 400);
   }
 
-  function enabled() { return !!api && on; }
+  function enabled() { return !!api && loaded && on; }
 
   async function setEnabled(v) {
     // Never throw out of a message handler: the popup shows what comes back, and an exception from
     // here reads as "cannot access property B of null" instead of the actual situation.
-    if (!api) throw new Error('bookmark sync is not ready yet — reopen this in a moment');
+    if (!api || !loaded) throw new Error('bookmark sync is not ready yet — reopen this in a moment');
     on = !!v;
     await api.B.storage.local.set({ bmOn: on });
     if (on) { listen(); await union(); }
@@ -241,7 +246,7 @@
   /* An event arrived. Newest wins, a tombstone removes — but ONLY something this browser previously
    * synced (see the header: a bookmark we never mapped is not ours to delete). */
   async function absorb(id, ev) {
-    if (!api) return;
+    if (!api || !loaded) return;
     var cur = items[id];
     if (cur && (cur._at || 0) > (ev.created_at || 0)) return;
     if (!ev.content) {
@@ -416,7 +421,7 @@
 
   /* The first sync, and any manual rebuild: a UNION. Deletes nothing, in either direction. */
   async function union() {
-    if (!api) throw new Error('bookmark sync is not ready yet — reopen this in a moment');
+    if (!api || !loaded) throw new Error('bookmark sync is not ready yet — reopen this in a moment');
     var local = await snapshot();
     var remote = Object.keys(items).map(function (id) {
       return Object.assign({ id: id }, items[id]);
