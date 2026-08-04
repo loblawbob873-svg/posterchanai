@@ -63,11 +63,55 @@
     return pick[pick.length - 1] || null;
   }
 
+  const OTP_TYPES = 'input[type="text"],input[type="tel"],input[type="number"],input:not([type])';
+
+  /* Is this THE one-time-code box?
+   *
+   * `autocomplete="one-time-code"` is the standard answer and is trusted outright. Failing that,
+   * the usual words in a name/id/label — and finally the shape every 2FA form has and nothing else
+   * does: a short numeric field. maxlength 1 is the six-separate-boxes pattern; 4-8 is the single
+   * box. The shape rule is last because on its own it would also match a postcode or a PIN. */
+  function isOtpField(el){
+    if(!el || el.tagName !== 'INPUT' || el.type === 'password') return false;
+    if(!el.matches(OTP_TYPES)) return false;
+    const ac = (el.autocomplete || '').toLowerCase();
+    if(ac.includes('one-time-code')) return true;
+    const hay = (el.name||'') + ' ' + (el.id||'') + ' ' + ac + ' ' + (el.placeholder||'') + ' ' +
+                (el.getAttribute('aria-label')||'') + ' ' + (el.className||'');
+    if(OTP_HINT.test(hay)) return true;
+    const len = parseInt(el.getAttribute('maxlength') || '0', 10);
+    const numeric = (el.inputMode || '').toLowerCase() === 'numeric' || el.type === 'tel' ||
+                    el.type === 'number' || /^[\d\s*]*$/.test(el.pattern || '');
+    return numeric && (len === 1 || (len >= 4 && len <= 8));
+  }
+
   function otpFieldFor(root){
-    return Array.from((root || document).querySelectorAll('input[type="text"],input[type="tel"],input[type="number"],input:not([type])'))
-      .filter(visible)
-      .find(el => OTP_HINT.test((el.name||'') + ' ' + (el.id||'') + ' ' + (el.autocomplete||'') + ' ' +
-                                (el.placeholder||'') + ' ' + (el.getAttribute('aria-label')||'')));
+    return Array.from((root || document).querySelectorAll(OTP_TYPES)).filter(visible).find(isOtpField);
+  }
+
+  /* Every box of a split code entry, in order. Sites that render six single-character inputs are
+   * common enough that filling only the first — which is what writing to one field does — looks
+   * exactly like the feature being broken. */
+  function otpGroupFor(el){
+    if(!el) return [];
+    const scope = el.form || el.closest('div,section,fieldset,form') || document;
+    const all = Array.from(scope.querySelectorAll(OTP_TYPES)).filter(visible).filter(isOtpField);
+    const singles = all.filter(x => parseInt(x.getAttribute('maxlength') || '0', 10) === 1);
+    return (singles.length >= 4 && singles.includes(el)) ? singles : [el];
+  }
+
+  /* Put a code in. One box, or spread a digit per box. */
+  function fillCodeInto(field, code){
+    const group = otpGroupFor(field);
+    if(group.length > 1){
+      const digits = String(code || '').replace(/\D/g, '');
+      group.forEach((box, i) => setValue(box, digits[i] || ''));
+      const last = group[Math.min(digits.length, group.length) - 1];
+      if(last) try{ last.focus(); }catch(_){ }
+      return true;
+    }
+    setValue(field, code);
+    return true;
   }
 
   /* Set a value the way a human would, not the way a script does. React and friends listen for
@@ -155,21 +199,33 @@
     try{ res = await B.runtime.sendMessage({ type:'matches', url: location.href }); }
     catch(_){ res = null; }
     if(gen !== panelGen || !panelOpen) return;          // closed while we were asking
-    const list = (res && res.items) || [];
+    let list = (res && res.items) || [];
+    // The entry whose password was just filled goes first on the code step: it is nearly always the
+    // one wanted, and on a site with several accounts it is the only way to know which.
+    const recent = recentlyUsed();
+    if(recent) list = list.slice().sort((a, b) => (b.id === recent) - (a.id === recent));
     if(!list.length){
       panel.innerHTML = '<div class="pcpw-row pcpw-muted">No saved logins for this site — ' +
                         'open the PosterChan button to search your vault.</div>';
       return;
     }
-    panel.innerHTML = list.map(i =>
+    // On a code field, only entries that HAVE a code are any use, and the action is the code.
+    const codeMode = isOtpField(activeField);
+    const usable = codeMode ? list.filter(i => i.hasTotp) : list;
+    if(codeMode && !usable.length){
+      panel.innerHTML = '<div class="pcpw-row pcpw-muted">No one-time code saved for this site.</div>';
+      return;
+    }
+    panel.innerHTML = usable.map(i =>
       `<button class="pcpw-item" data-id="${esc(i.id)}">
-         <b>${esc(i.username || i.title || 'no username')}</b>
-         <span>${esc(i.title || '')}${i._match === 'domain' ? ' · same domain' : ''}${i.hasTotp ? ' · 2FA' : ''}</span>
+         <b>${codeMode ? 'Fill the code' : esc(i.username || i.title || 'no username')}</b>
+         <span>${esc(i.title || '')}${!codeMode && i._match === 'domain' ? ' · same domain' : ''}${
+           !codeMode && i.hasTotp ? ' · 2FA' : ''}${codeMode ? ' · ' + esc(i.username || '') : ''}</span>
        </button>`).join('');
     panel.querySelectorAll('.pcpw-item').forEach(b => {
       b.addEventListener('pointerdown', async (e) => {
         e.preventDefault(); e.stopPropagation(); cancelHide();
-        await fill(b.dataset.id);
+        if(codeMode) await fillCode(b.dataset.id); else await fill(b.dataset.id);
         closePanel();
       });
     });
@@ -189,11 +245,32 @@
     } else if(activeField){
       setValue(activeField, r.username || '');
     }
+    // A code on the SAME page (some sites ask for all three at once) goes in now. A code on the
+    // next page is handled when we get there — see fillCode and recentlyUsed.
     if(r.totp){
-      const otp = otpFieldFor(pw && pw.form);
-      if(otp) setValue(otp, r.totp);
+      const otp = otpFieldFor((pw && pw.form) || document);
+      if(otp) fillCodeInto(otp, r.totp);
     }
+    lastUsed = { id, at: Date.now() };
   }
+
+  /* The code for an entry, into the field the user is standing in. Fetched at the moment of the
+   * click and never before: a TOTP is only valid for its window, so a code obtained when the page
+   * loaded is one that may already have expired by the time it is used. */
+  async function fillCode(id){
+    let r;
+    try{ r = await B.runtime.sendMessage({ type:'fill', id }); }catch(_){ return; }
+    if(!r || !r.ok || !r.totp) return;
+    const field = (activeField && isOtpField(activeField)) ? activeField : otpFieldFor(document);
+    if(field) fillCodeInto(field, r.totp);
+    lastUsed = { id, at: Date.now() };
+  }
+
+  /* Which entry filled this page's password, and when. The code step is a different page, so the
+   * only way to offer the right entry there without asking again is to remember the choice — for a
+   * few minutes, which is far longer than a login takes and far shorter than a session. */
+  let lastUsed = null;
+  const recentlyUsed = () => (lastUsed && (Date.now() - lastUsed.at) < 5 * 60000) ? lastUsed.id : null;
 
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
     c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -220,7 +297,11 @@
   document.addEventListener('focusin', (e) => {
     const el = e.target;
     if(!el || el.tagName !== 'INPUT') return;
-    if(el.type === 'password' || (el.form && el.form.querySelector(PW_SEL))) ensureBadge(el);
+    // A password field, anything sharing a form with one, or a one-time-code box on its own — the
+    // SECOND step of a login, which has no password field anywhere and so never got a badge at all.
+    // That is where a code is actually needed, and it was the one place the add-on was silent.
+    if(el.type === 'password' || (el.form && el.form.querySelector(PW_SEL)) || isOtpField(el))
+      ensureBadge(el);
   }, true);
   document.addEventListener('focusout', () => {
     // Only ever hides the BADGE, and only while the panel is shut. An open panel is a thing the user

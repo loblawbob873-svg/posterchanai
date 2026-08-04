@@ -134,6 +134,15 @@ The extension connects to your relay itself, decrypts with the paired vault key,
 decrypted set so the popup opens instantly and works offline. It offers a badge in login fields, an
 "is this new?" save bar on submit, one-time codes with a countdown, and the same generator as the app.
 
+**One-time codes autofill too, including on the second step.** 2FA is almost always a separate page
+with no password field on it, which is exactly where a badge keyed to password fields never
+appeared. A field is treated as a code box by `autocomplete="one-time-code"` first, then the usual
+words in its name/label, then the shape nothing else has (a short numeric input) — and both layouts
+are filled: one box, or six single-character boxes getting a digit each rather than the whole code in
+the first. The code is fetched at the moment of the click, never earlier, because a TOTP is only
+valid for its window. The entry whose password was just filled is offered first on the code step,
+for five minutes, which is how the right account is picked on a site where you have several.
+
 **It ships the app's `vaultcore.js` verbatim** — copied by `build.sh`, and
 `tests/test_vault_extension.py` fails if the copy drifts. That is what stops the generator, the TOTP
 and the URL matcher from disagreeing between the app and the browser, which is the class of bug
