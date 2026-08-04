@@ -50,16 +50,14 @@ function instance() {
   if (cfg.instance == null) return DEFAULT_INSTANCE;
   return String(cfg.instance).replace(/\/+$/, '');
 }
-function originOf(u) { try { return new URL(u).origin; } catch (_) { return ''; } }
+// origin.js, NOT `new URL(u).origin` — that is the string "null" for app:// and every other
+// non-special scheme, which made isOurs() false for our OWN pages. Read the header there before
+// touching this; it is the difference between a working app and one that hands its own URLs to
+// Windows, denies itself the camera, and ignores its own IPC.
+const { originOf, isOurs: _isOurs } = require('./origin');
 // "Ours" = the bundle, plus the instance's own pages (the client frames <instance>/admin). With no
 // instance only the bundle qualifies, which is exactly right.
-function isOurs(url) {
-  const o = originOf(url);
-  if (!o) return false;
-  if (o === APP_ORIGIN) return true;
-  const inst = instance();
-  return !!inst && o === originOf(inst);
-}
+function isOurs(url) { return _isOurs(url, APP_ORIGIN, instance()); }
 
 // ---- the sign-in round trip is not an off-site link -------------------------------------------
 // "Sign in with Google / a fediverse account" leaves our origin BY DESIGN and comes back carrying a

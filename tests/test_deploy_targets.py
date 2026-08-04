@@ -68,6 +68,31 @@ class Mapping(unittest.TestCase):
         for p in ("sync.sh", "install.sh"):
             self.assertEqual(dt.units_for([p]), [], p)
 
+    def test_the_native_app_projects_restart_nothing(self):
+        """desktop/, mobile/ and extension/ are built and shipped by CI to a GitHub release, and no
+        service on a node imports, reads or serves a byte of any of them — /apk, /desktop/* and
+        /extension/* are 302s to those releases.
+
+        mobile/ was UNMAPPED, which means "could affect anything" and therefore EVERY unit: a two-line
+        comment fix in mobile/build-www.sh restarted all seven on both nodes — every connected Nostr
+        client dropped, streams killed mid-broadcast, the bots bounced — on a commit that otherwise
+        touched only static/ and templates/, i.e. one service. Exactly the outage the role split
+        exists to remove, and the third time this same hole has been found in a different directory."""
+        for p in ("desktop/main.js", "desktop/build-www.sh", "desktop/tor.js",
+                  "mobile/build-www.sh", "mobile/package.json",
+                  "mobile/android/app/src/main/AndroidManifest.xml",
+                  "extension/manifest.json", "extension/background.js"):
+            self.assertEqual(dt.units_for([p]), [], p)
+
+    def test_a_native_app_change_does_not_dilute_a_real_change(self):
+        """The other half: inert must mean "adds nothing", never "cancels something". A commit that
+        touches the APK bundler AND a router still restarts the router's units."""
+        # Compared as sets: units_for's ORDER is not part of its contract (sync.sh restarts whatever it
+        # is handed), and pinning it here would fail on an unrelated reshuffle.
+        self.assertEqual(set(dt.units_for(["mobile/build-www.sh", "app/routers/client.py"])),
+                         {dt.APP, dt.WORKER})
+        self.assertEqual(dt.units_for(["desktop/main.js", "relay_main.py"]), [dt.RELAY])
+
     def test_the_launchers_still_restart_everything(self):
         """run-*.sh IS each unit's ExecStart, so a change there genuinely needs every unit — the
         inert list must not grow to swallow them."""

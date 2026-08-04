@@ -544,6 +544,56 @@
         setTimeout(()=>{ if(!done){ done=true; rej(new Error('signer relay timed out')); } }, 9000);
       });
     },
+    /* Open the FIRST of several relays to answer, rather than each in turn.
+     *
+     * Sequentially — which is what this was — four relays at a 9s timeout apiece is up to 36 seconds
+     * of a button reading "preparing…" and nothing else, which is what a user reasonably calls stuck.
+     * It is worst exactly where it matters most: on a relays-only install there is no instance relay,
+     * so the list is entirely public ones, and over Tor every one of them is slow. Racing costs the
+     * same sockets, finishes in the time of the FASTEST, and makes the ORDER of the list nearly
+     * irrelevant — which is the real win, because ordering it correctly for both "a signer must be
+     * able to reach it" and "the user's own relay should count" has no single right answer.
+     *
+     * The losers are closed the instant there is a winner, with their handlers detached first so a
+     * loser's own close event cannot be counted as a failure of the race it already lost. */
+    _openFirstOf(list, ms){
+      const urls=[...new Set((Array.isArray(list)?list:[list]).filter(Boolean))];
+      if(!urls.length) return Promise.reject(new Error('no signer relay configured'));
+      this._wantOpen=true;
+      return new Promise((res,rej)=>{
+        let settled=false, dead=0;
+        const socks=[];
+        const drop=(w)=>{ try{ w.onopen=w.onerror=w.onclose=w.onmessage=null; w.close(); }catch(_){} };
+        const fail=()=>{ if(settled || ++dead < urls.length) return;
+          settled=true; clearTimeout(to); socks.forEach(drop);
+          rej(new Error('no signer relay is reachable right now — try again in a minute')); };
+        const to=setTimeout(()=>{ if(settled) return; settled=true; socks.forEach(drop);
+          rej(new Error('signer relays timed out')); }, ms||9000);
+        urls.forEach(url=>{
+          let ws; try{ ws=new WebSocket(url); }catch(_){ fail(); return; }
+          socks.push(ws);
+          ws.onerror=fail; ws.onclose=fail;
+          ws.onopen=()=>{
+            if(settled){ drop(ws); return; }              // someone else got there first
+            settled=true; clearTimeout(to);
+            socks.forEach(w=>{ if(w!==ws) drop(w); });
+            // Commit the winner into instance state — the same wiring _openRelay does for one socket.
+            this.ws=ws; this.relay=url;
+            this._subId='n46'+Math.random().toString(36).slice(2,8);
+            try{ ws.send(JSON.stringify(['REQ', this._subId,
+              { kinds:[24133], '#p':[this.appPk], since: Math.floor(Date.now()/1000)-5 }])); }
+            catch(e){ return rej(e); }
+            ws.onerror=null;
+            ws.onmessage=(e)=>this._recv(e.data);
+            // A remote signer is contacted only when signing, so the relay may idle-drop us —
+            // reconnect (and re-subscribe) so the next sign still gets through without re-pairing.
+            ws.onclose=()=>{ if(this._wantOpen && this.ws===ws){ this.ws=null;
+              setTimeout(()=>{ if(this._wantOpen && !this.ws) this._openRelay(url).catch(()=>{}); }, 2000); } };
+            res(url);
+          };
+        });
+      });
+    },
     async _recv(raw){
       let m; try{ m=JSON.parse(raw); }catch(_){ return; }
       if(m[0]!=='EVENT' || m[1]!==this._subId) return;
@@ -635,12 +685,7 @@
     async beginNostrConnect(relays, name){
       const list=(Array.isArray(relays)?relays:[relays]).filter(Boolean);
       await this._ensureAppKey();
-      let opened=false;
-      for(const r of list){
-        try{ await this._openRelay(r); opened=true; break; }
-        catch(_){ this.reset(); }   // that relay is down — drop the socket and try the next
-      }
-      if(!opened) throw new Error('no signer relay is reachable right now — try again in a minute');
+      await this._openFirstOf(list);
       const relay=this.relay;
       const secret=Math.random().toString(36).slice(2,12);
       // Permissions we request up front. Amber prompts per-action so an empty list still works,
@@ -1300,7 +1345,13 @@
   async function loginAmberNostrConnect(){
     amberErr(''); const btn=$('#btn-amber-nc'); btn.disabled=true; btn.textContent='preparing…';
     try{
-      const { uri, done }=await Nip46.beginNostrConnect(_ncRelays(), 'PosterChan');
+      // Say WHICH step is slow. "preparing…" covers a key generation and a set of relay sockets, so
+      // when the relays are the slow part — a relays-only install over Tor, which is the case that
+      // produced "stuck at preparing" — the one visible word named none of it.
+      const relays=_ncRelays();
+      amberErr('');
+      { const st=$('#amber-nc-status'); if(st) st.textContent='reaching a signer relay…'; }
+      const { uri, done }=await Nip46.beginNostrConnect(relays, 'PosterChan');
       $('#amber-nc-uri').textContent=uri;
       const open=$('#amber-nc-open'); if(open) open.href=uri;
       /* QR of the nostrconnect:// URI → scan it with a phone signer (Primal-style mobile login).

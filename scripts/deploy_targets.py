@@ -93,6 +93,15 @@ _INERT_PREFIXES = ("static/", "docs/", "tests/", "scripts/", ".github/", "README
                    # client dropped, streams killed mid-broadcast, nine bots bounced. Exactly the
                    # outage the role split removed, for a file the servers never load.
                    "desktop/",
+                   # The Capacitor Android project and the Firefox extension, for the SAME reason as
+                   # desktop/ above: both are built and shipped by CI (android.yml / extension.yml) to a
+                   # GitHub release, and no service on a systemd node imports, reads or serves a byte of
+                   # either — /apk, /desktop/* and /extension/* are 302s to those releases. mobile/ being
+                   # unmapped meant "could affect anything", so a two-line comment fix in
+                   # mobile/build-www.sh restarted ALL SEVEN units on both nodes: every connected Nostr
+                   # client dropped, streams killed mid-broadcast, the bots bounced. The commit that did
+                   # it otherwise touched only static/ and templates/ — a single-service restart.
+                   "mobile/", "extension/",
                    # git_hooks/ is NOT loaded by any service. install_hooks writes a shell shim into
                    # each bare repo that `exec`s "<venv python> <checkout>/git_hooks/<file>.py", so
                    # git-receive-pack spawns a FRESH process per push and reads the file off disk
