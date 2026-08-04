@@ -57,9 +57,9 @@ Assertions, each corresponding to a way this specific screen breaks on a phone:
                        await is an unsolicited popup, and 'noopener' returns null so the failure is
                        invisible. The tab must be reserved during the click, with a download as the
                        fallback.
-  backup-unsaveable    a REFUSED save dialog (Electron denied the fileSystem permission until the
-                       shell granted it; any browser can block the picker) made the backup attempt
-                       to assemble every attachment in memory, or drop them without saying so.
+  backup-unsaveable    no save dialog (Firefox has none: showSaveFilePicker is Chromium-only, and
+                       Electron denied the permission until the shell granted it) made the backup
+                       SKIP every attachment — a "backup" of a note library without its files.
   offline-write-lost   THE data-loss one, and not a layout question at all: with publishing failing
                        (offline), a typed note must still be in the library and queued, never gone.
                        publish() rolls its optimistic cache save BACK when the relay refuses, so a

@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v762';
+const CACHE = 'pc-nostr-v763';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -80,7 +80,54 @@ self.addEventListener('install', e => {
   // which is the one moment it matters. Per-entry, a bad path costs only that entry.
   e.waitUntil(caches.open(CACHE).then(c => Promise.all(SHELL.map(u => c.add(u).catch(()=>{})))));
 });
-self.addEventListener('message', e => { if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting(); });
+self.addEventListener('message', e => {
+  if (e.data && e.data.type === 'SKIP_WAITING') { self.skipWaiting(); return; }
+  if (e.data && e.data.type === 'pc-dl-open') _dlOpen(e.data, e.ports && e.ports[0]);
+});
+
+/* ---- streamed downloads -------------------------------------------------------------------
+ * A file the page GENERATES, written to disk without ever being held in memory.
+ *
+ * showSaveFilePicker is the obvious way and it is Chromium-only, so on Firefox the Notes backup had
+ * a choice between assembling gigabytes as one Blob and splitting into many downloads — and the
+ * second is worse than it sounds, because browsers block the 2nd and later automatic downloads, so
+ * parts of the archive go missing with nothing said.
+ *
+ * Instead the page opens a channel here, navigates to a URL this worker owns, and posts the bytes
+ * through as it makes them; the response is a stream the browser writes straight to disk with a
+ * Content-Disposition filename. One file, any size, constant memory, and it works everywhere a
+ * service worker does.
+ *
+ * Deliberately on its OWN path (/client/__dl/<id>) so it cannot interact with any other rule here,
+ * and the id is random so nothing else can address a stream it did not create. */
+const _dls = new Map();          // id -> { name, stream }
+
+function _dlOpen(msg, port){
+  if (!msg.id || !port) return;
+  let ctrl = null;
+  const stream = new ReadableStream({
+    start(c){ ctrl = c; },
+    // The user cancelled the download, or the tab went away: stop the producer.
+    cancel(){ try { port.postMessage({ cancelled: true }); } catch (_) {} _dls.delete(msg.id); },
+  });
+  _dls.set(msg.id, { name: msg.name || 'download.bin', type: msg.mime || 'application/octet-stream', stream });
+  port.onmessage = (ev) => {
+    const d = ev.data || {};
+    try {
+      if (d.chunk) {
+        ctrl.enqueue(new Uint8Array(d.chunk));
+        // Backpressure, so a fast producer cannot make the worker hold the whole file after all:
+        // the page waits for this before sending the next chunk.
+        port.postMessage({ want: Math.max(0, ctrl.desiredSize || 0) });
+      } else if (d.end) {
+        ctrl.close();
+      }
+    } catch (_) { _dls.delete(msg.id); }
+  };
+  try { port.start(); } catch (_) {}
+  // Nothing is fetched yet — the page navigates to the URL once it has this reply.
+  try { port.postMessage({ ready: true }); } catch (_) {}
+}
 self.addEventListener('activate', e => {
   // Drop stale shell caches but KEEP the current shell cache AND the media cache (don't re-download
   // every avatar/image just because the app code was redeployed).
@@ -378,6 +425,21 @@ self.addEventListener('fetch', e => {
     if (isDriveBlob(url, e.request)){ e.respondWith(cacheFirstBlob(e.request)); return; }
     if (e.request.destination === 'image' && url.origin !== self.location.origin) e.respondWith(cacheFirstMedia(e.request));
     return;
+  }
+
+  // A generated file being written to disk. Checked before anything else: it is ours, it exists
+  // only in memory, and it must never fall through to the network.
+  if (url.pathname.startsWith('/client/__dl/')) {
+    const d = _dls.get(url.pathname.slice('/client/__dl/'.length));
+    if (d) {
+      _dls.delete(url.pathname.slice('/client/__dl/'.length));
+      e.respondWith(new Response(d.stream, { headers: {
+        'Content-Type': d.type,
+        'Content-Disposition': 'attachment; filename="' + d.name.replace(/["\\]/g, '') + '"',
+        'Cache-Control': 'no-store',
+      }}));
+      return;
+    }
   }
 
   // ---- WEB PWA ----
