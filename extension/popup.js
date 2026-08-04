@@ -16,8 +16,15 @@ let tabUrl = '', matches = [], everything = [], ticker = null, vaultCount = 0;
 
 const send = (msg) => B.runtime.sendMessage(msg).catch(() => null);
 
+/* EVERY pane in the document, not a hardcoded list of three.
+ *
+ * Adding a pane to the HTML and a button that calls show() for it LOOKED complete and did nothing:
+ * this hid the three ids it knew about and never revealed the new one, so Bookmarks and Relays each
+ * opened onto a blank popup. Sites had been doing the same for longer — its button passes 'sites',
+ * which was never in the list either — which is how a broken tab survived unnoticed: the failure is
+ * a panel that shows nothing, and nothing in the console. */
 function show(pane){
-  for(const p of ['pane-pair','pane-list','pane-gen']) $('#'+p).classList.toggle('hidden', p !== pane);
+  for(const p of document.querySelectorAll('.pane')) p.classList.toggle('hidden', p.id !== pane);
 }
 
 /* The build, in the footer.
@@ -261,7 +268,7 @@ async function paintSites(){
     box.appendChild(el);
   }
 }
-$('#sites-tab').onclick = () => { show('sites'); paintSites(); };
+$('#sites-tab').onclick = () => { show('pane-sites'); paintSites(); };
 $('#sync').onclick = async () => { await send({ type:'sync' }); $('#status').textContent = 'syncing…'; setTimeout(boot, 1200); };
 /* Two taps, in-page. A native confirm() can dismiss a Firefox action popup outright — the await
  * would then never resume and Unpair would silently do nothing — and this project's rule against
