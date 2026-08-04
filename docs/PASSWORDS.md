@@ -102,9 +102,23 @@ Full mode hands over the signing key, so it is offered only when this device act
 NIP-07/NIP-46/Amber login has nothing to give, and the radio is disabled rather than producing a
 pairing that silently cannot save.
 
-## Firefox
+## Firefox and Chrome
 
 `extension/` — MV3, with `browser_specific_settings` for Firefox desktop **and** `gecko_android`.
+
+**One source tree, two bundles.** The only thing the browsers disagree about is the background entry:
+Firefox MV3 takes `"background": {"scripts": [...]}` and runs them as an event page, Chrome MV3 takes
+exactly one `service_worker` and REFUSES to load an extension that lists `scripts` — which is the only
+reason this would not install in Chrome. Everything else was already portable: every file aliases
+`const B = browser ?? chrome`, and no background script touches the DOM, `localStorage` or
+`XMLHttpRequest`, none of which exist in a service worker.
+
+So `build.sh` stages `dist/chrome/` with a **generated** manifest (service worker in, the Firefox-only
+`browser_specific_settings` out) plus `background-chrome.js`, a one-line worker that `importScripts`
+the same three files the Firefox manifest lists. There is deliberately no second checked-in manifest:
+two manifests drift, and the one that drifts is the one nobody loads day to day.
+`tests/test_extension_chrome_build.py` fails if that import list and `background.scripts` stop
+agreeing, or if a background script starts using something a worker does not have.
 
 ### Getting it
 
@@ -122,6 +136,11 @@ and a committed copy is a copy that goes stale. So a fresh checkout cannot be lo
 
 first, which populates `extension/vendor/` and refreshes `extension/vaultcore.js` in place, and then
 `about:debugging` → *This Firefox* → *Load Temporary Add-on* → `extension/manifest.json` works.
+
+For Chrome (and Edge/Brave): `chrome://extensions` → **Developer mode** → **Load unpacked** →
+`extension/dist/chrome`. Chrome will not install a zip directly, and unlike a Firefox temporary
+add-on an unpacked extension stays loaded across restarts — no signing, no store account. The release
+also ships `posterchan-passwords-chrome.zip`, which is the same folder zipped for transport.
 
 ### Installing it properly
 

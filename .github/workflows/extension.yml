@@ -59,6 +59,11 @@ jobs:
         run: |
           ls -la extension/dist/
           tar tzf extension/dist/posterchan-passwords-unpacked.tar.gz
+          # The Chrome bundle is the same sources with a GENERATED manifest; print the one key that
+          # differs, because getting it wrong is the difference between "installs" and "Chrome refuses
+          # to load this extension".
+          python3 -c "import json;m=json.load(open('extension/dist/chrome/manifest.json'));print('chrome background:', m['background']);assert 'scripts' not in m['background']"
+          unzip -l extension/dist/posterchan-passwords-chrome.zip | tail -5
 
       # Same reason as the APK workflow: GitHub stamps a release's date when the release OBJECT is
       # created, so replacing an asset under a rolling tag leaves it reading "2 days ago" next to a
@@ -77,13 +82,18 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: extension-latest
-          name: PosterChan Passwords — Firefox add-on (latest)
+          name: PosterChan Passwords — browser add-on (latest)
           body: |
             Autofill, one-time codes and a password generator for your PosterChan vault.
 
             **Desktop Firefox, right now:** download the `-unpacked.tar.gz`, extract it, then
             `about:debugging` → This Firefox → Load Temporary Add-on → pick `manifest.json`.
             (Temporary add-ons unload when Firefox restarts.)
+
+            **Chrome / Edge / Brave:** download `posterchan-passwords-chrome.zip`, extract it, then
+            `chrome://extensions` → turn on **Developer mode** → **Load unpacked** → pick the folder.
+            (Chrome will not install a zip directly, and an unpacked extension stays until removed —
+            it does not unload on restart the way Firefox's temporary add-ons do.)
 
             **Permanent / Android:** install the Mozilla-signed build from addons.mozilla.org.
             A build from here is unsigned, and release Firefox (desktop and Android) will only
@@ -99,4 +109,5 @@ jobs:
           files: |
             extension/dist/posterchan-passwords.zip
             extension/dist/posterchan-passwords-unpacked.tar.gz
+            extension/dist/posterchan-passwords-chrome.zip
           make_latest: false

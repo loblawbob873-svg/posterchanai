@@ -72,12 +72,38 @@ for f in ('approve.html', 'approve.js'):
         sys.exit(f + ' is missing from the bundle; the approval prompt cannot open')
 EOF
 
-rm -f dist/posterchan-passwords.zip dist/posterchan-passwords-unpacked.tar.gz
+rm -rf dist/posterchan-passwords.zip dist/posterchan-passwords-unpacked.tar.gz \
+       dist/posterchan-passwords-chrome.zip dist/chrome
 zip -qr dist/posterchan-passwords.zip $FILES -x '*.DS_Store'
 tar czf dist/posterchan-passwords-unpacked.tar.gz $FILES
 
-echo "built dist/posterchan-passwords.zip and dist/posterchan-passwords-unpacked.tar.gz"
+# ---- Chrome ------------------------------------------------------------------------------------
+# The SAME sources with a GENERATED manifest, never a second checked-in one: two manifests drift, and
+# the one that drifts is the one nobody loads day to day. Only the background entry differs — Firefox
+# MV3 takes a list of scripts and runs them as an event page, Chrome MV3 takes exactly one service
+# worker and REFUSES to load an extension that lists `scripts`. That single key is the whole reason
+# this would not install in Chrome; the JS was already portable (every file aliases
+# `browser ?? chrome`, and no background script touches the DOM, which a worker does not have).
+mkdir -p dist/chrome
+for f in $FILES; do cp -r "$f" dist/chrome/; done
+cp background-chrome.js dist/chrome/
+python3 - <<'EOF'
+import json
+m = json.load(open('manifest.json'))
+m.pop('browser_specific_settings', None)          # Firefox-only; Chrome warns on it
+m['background'] = {'service_worker': 'background-chrome.js'}
+m['minimum_chrome_version'] = '109'
+with open('dist/chrome/manifest.json', 'w') as fh:
+    json.dump(m, fh, indent=2)
+    fh.write('\n')
+EOF
+( cd dist/chrome && zip -qr ../posterchan-passwords-chrome.zip . -x '*.DS_Store' )
+
+echo "built dist/posterchan-passwords.zip, dist/posterchan-passwords-unpacked.tar.gz"
+echo "  and dist/posterchan-passwords-chrome.zip (+ dist/chrome/ to load unpacked)"
 echo
+echo "Load it in Chrome:       chrome://extensions -> Developer mode -> Load unpacked -> extension/dist/chrome"
+echo "                         (or drag dist/posterchan-passwords-chrome.zip onto that page)"
 echo "Load it in Firefox:      about:debugging -> This Firefox -> Load Temporary Add-on -> manifest.json"
 echo "Firefox for Android:     about:debugging on the desktop, with the phone connected over USB,"
 echo "                         or install a signed build from addons.mozilla.org."
