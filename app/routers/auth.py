@@ -25,7 +25,18 @@ from app.services.storage_service import StorageService
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-_APP_ORIGINS = {"https://localhost", "http://localhost", "capacitor://localhost", "ionic://localhost"}
+# Origins that reach this API CROSS-SITE from a bundled client, and therefore need SameSite=None on the
+# session cookie or the browser will not store it at all.
+#
+# `app://posterchan` is the DESKTOP app (its own privileged scheme — see desktop/main.js). It was missing
+# here long after it was added to the CORS allowlist in main.py, and the symptom was specific and
+# baffling: the Admin panel is an IFRAME of the instance's /admin, an iframe document load carries only
+# COOKIES (never the Authorization bearer the fetch shim attaches to XHR), and a Lax cookie is not sent
+# on a cross-site iframe load — nor even stored from a cross-site response. So /admin saw no session,
+# redirected to the client, and the app showed the WEBSITE inside the admin pane. "Tor loads the website
+# again, not admin" — with Tor incidental, because the cookie was never there with or without it.
+_APP_ORIGINS = {"https://localhost", "http://localhost", "capacitor://localhost", "ionic://localhost",
+                "app://posterchan"}
 
 
 def _cookie_attrs(request: Request):

@@ -14720,6 +14720,21 @@
     return host;
   }
   function _preloadAdmin(){ _ensureAdminHost(); }   // load /admin hidden so the first open is instant
+  /* The admin panel is an IFRAME of the instance's own /admin page, and an iframe document load can
+   * only carry COOKIES — the Authorization bearer the bundled fetch shim attaches applies to XHR and
+   * nothing else. In a bundled app that cookie is CROSS-SITE, so it needs SameSite=None, which browsers
+   * accept only with Secure, which is only sent over HTTPS.
+   *
+   * Against a plain-HTTP instance (a .onion — hidden services are http by design — or a LAN box) there
+   * is therefore no way for the app to hold that session, and the panel would show the instance's
+   * TIMELINE instead: /admin sees no cookie and redirects to the client. Say so, rather than rendering
+   * a website where the admin panel should be and leaving the user to work out why. */
+  function _adminUncookieable(){
+    if(!BUNDLED) return '';
+    const base=_instanceBase();
+    if(!base || /^https:/i.test(base)) return '';
+    return base;
+  }
   function _adminFrame(feed){
     // The iframe is created + loaded ONCE (post-auth, see _ensureAdminHost / _preloadAdmin) and kept
     // alive — re-entering admin just REVEALS it, never reloads it. (Reloading on every enter made the
@@ -14737,6 +14752,12 @@
     // /admin needs the session cookie nostr-login sets. If it's already established, render the
     // iframe SYNCHRONOUSLY (no await → no window for a re-render to clobber it). Otherwise show a
     // spinner and render when it resolves.
+    { const b=_adminUncookieable();
+      if(b){ feed.innerHTML='<div class="empty">The admin panel needs a browser session on <b>'
+          + enc(b.replace(/^https?:\/\//,'')) + '</b>, and this app cannot hold one over a plain-HTTP '
+          + 'address — the panel is a page from your server, and the cookie it needs may only be sent '
+          + 'cross-site over HTTPS.<br><br>Open <code>' + enc(b) + '/admin</code> in Tor Browser (for a '
+          + '.onion) or point this app at the HTTPS address of your server.</div>'; return; } }
     if(_aiAuth && _aiAuth.is_admin){ _adminFrame(feed); return; }
     feed.innerHTML='<div class="spinner"></div>';
     ensureAiSession().then(a=>{
