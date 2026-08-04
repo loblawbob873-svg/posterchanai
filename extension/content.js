@@ -23,7 +23,20 @@
   const USER_HINT = /user|email|login|account|identifier|phone|mobile/i;
   const OTP_HINT = /otp|totp|2fa|two.?factor|one.?time|auth.*code|verification/i;
 
-  let badge = null, panel = null, activeField = null;
+  let badge = null, panel = null, activeField = null, panelGen = 0;
+  /* The pending hide, and whether the panel is open.
+   *
+   * THE DISAPPEARING BUG: focusout scheduled a hide on a timer, and clicking the badge inside that
+   * window opened the panel which the stale timer then closed a moment later — so the panel flashed
+   * and vanished, seemingly at random, depending on how quickly you clicked. Worse on touch, where
+   * the `:hover` escape hatch the old guard relied on does not exist at all, so every tap on Firefox
+   * for Android raced it.
+   *
+   * Now: any interaction with our own UI cancels a pending hide, and once the panel is OPEN it is
+   * closed only by something deliberate — a click outside it, Escape, a fill, or the field going
+   * away. Never by a timer. */
+  let hideT = null, panelOpen = false;
+  const cancelHide = () => { clearTimeout(hideT); hideT = null; };
 
   const visible = (el) => {
     if(!el || !el.isConnected) return false;
@@ -73,19 +86,37 @@
   // ---------------------------------------------------------------- badge
 
   function ensureBadge(field){
+    cancelHide();
     activeField = field;
     if(!badge){
       badge = document.createElement('div');
       badge.className = 'pcpw-badge';
       badge.title = 'PosterChan Passwords';
       badge.textContent = '🔑';
-      badge.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); togglePanel(); });
+      // pointerdown, not mousedown: on a touch screen mousedown is synthesised late (or not at all
+      // before the tap is treated as a scroll), which is half of why this felt unreliable on a phone.
+      badge.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); e.stopPropagation(); cancelHide(); togglePanel();
+      });
       document.documentElement.appendChild(badge);
     }
     place();
   }
   function place(){
-    if(!badge || !activeField || !visible(activeField)) { hideAll(); return; }
+    if(!badge) return;
+    // Re-acquire a field that was replaced under us. Login screens re-render constantly — the app's
+    // own nsec box lives inside a <details> that is toggled, and a framework can swap the input on
+    // any keystroke — and treating "the element I remembered is gone" as "the user is finished"
+    // is what made the panel vanish mid-use.
+    if(activeField && !activeField.isConnected){
+      const again = document.querySelector(PW_SEL);
+      if(again) activeField = again;
+    }
+    if(!activeField || !visible(activeField)){
+      // An OPEN panel is not taken away because a measurement failed for a frame; only the badge is.
+      if(panelOpen) return;
+      hideAll(); return;
+    }
     const r = activeField.getBoundingClientRect();
     badge.style.top = (window.scrollY + r.top + (r.height - 20) / 2) + 'px';
     badge.style.left = (window.scrollX + r.right - 26) + 'px';
@@ -96,12 +127,20 @@
     }
   }
   function hideAll(){
+    cancelHide();
+    panelOpen = false;
     if(badge) badge.style.display = 'none';
+    if(panel) panel.style.display = 'none';
+  }
+  function closePanel(){
+    panelOpen = false;
     if(panel) panel.style.display = 'none';
   }
 
   async function togglePanel(){
-    if(panel && panel.style.display === 'block'){ panel.style.display = 'none'; return; }
+    cancelHide();
+    if(panelOpen){ closePanel(); return; }
+    panelOpen = true;
     if(!panel){
       panel = document.createElement('div');
       panel.className = 'pcpw-panel';
@@ -110,12 +149,16 @@
     panel.innerHTML = '<div class="pcpw-row pcpw-muted">looking…</div>';
     panel.style.display = 'block';
     place();
+    // The lookup is async; the user may have closed it again by the time it lands.
+    const gen = ++panelGen;
     let res;
     try{ res = await B.runtime.sendMessage({ type:'matches', url: location.href }); }
     catch(_){ res = null; }
+    if(gen !== panelGen || !panelOpen) return;          // closed while we were asking
     const list = (res && res.items) || [];
     if(!list.length){
-      panel.innerHTML = '<div class="pcpw-row pcpw-muted">No saved logins for this site.</div>';
+      panel.innerHTML = '<div class="pcpw-row pcpw-muted">No saved logins for this site — ' +
+                        'open the PosterChan button to search your vault.</div>';
       return;
     }
     panel.innerHTML = list.map(i =>
@@ -124,10 +167,10 @@
          <span>${esc(i.title || '')}${i._match === 'domain' ? ' · same domain' : ''}${i.hasTotp ? ' · 2FA' : ''}</span>
        </button>`).join('');
     panel.querySelectorAll('.pcpw-item').forEach(b => {
-      b.addEventListener('mousedown', async (e) => {
-        e.preventDefault(); e.stopPropagation();
+      b.addEventListener('pointerdown', async (e) => {
+        e.preventDefault(); e.stopPropagation(); cancelHide();
         await fill(b.dataset.id);
-        panel.style.display = 'none';
+        closePanel();
       });
     });
   }
@@ -179,15 +222,20 @@
     if(!el || el.tagName !== 'INPUT') return;
     if(el.type === 'password' || (el.form && el.form.querySelector(PW_SEL))) ensureBadge(el);
   }, true);
-  document.addEventListener('focusout', (e) => {
-    // Let a click on the panel land before it disappears.
-    setTimeout(() => {
-      const a = document.activeElement;
-      if(a && (a === badge || (panel && panel.contains(a)))) return;
-      if(panel && panel.matches(':hover')) return;
-      hideAll();
-    }, 180);
+  document.addEventListener('focusout', () => {
+    // Only ever hides the BADGE, and only while the panel is shut. An open panel is a thing the user
+    // asked for and is looking at; taking it away on a timer is what made this feel broken.
+    if(panelOpen) return;
+    cancelHide();
+    hideT = setTimeout(() => { hideT = null; if(!panelOpen) hideAll(); }, 250);
   }, true);
+  // Deliberate ways to close it.
+  document.addEventListener('pointerdown', (e) => {
+    if(!panelOpen) return;
+    if(e.target === badge || (panel && panel.contains(e.target))) return;
+    closePanel();
+  }, true);
+  document.addEventListener('keydown', (e) => { if(e.key === 'Escape' && panelOpen) closePanel(); }, true);
   window.addEventListener('scroll', place, true);
   window.addEventListener('resize', place);
 

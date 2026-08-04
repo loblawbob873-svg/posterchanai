@@ -12,7 +12,7 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-let tabUrl = '', allItems = [], ticker = null;
+let tabUrl = '', matches = [], everything = [], ticker = null, vaultCount = 0;
 
 const send = (msg) => B.runtime.sendMessage(msg).catch(() => null);
 
@@ -27,27 +27,46 @@ async function boot(){
   }catch(_){ }
   const st = await send({ type:'state' });
   if(!st || !st.paired){ show('pane-pair'); $('#status').textContent = ''; return; }
+  vaultCount = st.count || 0;
   $('#status').textContent = `${st.count} · ${st.status}${st.mode === 'ro' ? ' · read-only' : ''}`;
   show('pane-list');
   await paint();
 }
 
 async function paint(){
-  const res = await send({ type:'matches', url: tabUrl });
-  allItems = (res && res.items) || [];
+  // BOTH: what matches this page, and the whole vault so the search box can actually find things.
+  const [m, a] = await Promise.all([ send({ type:'matches', url: tabUrl }), send({ type:'all' }) ]);
+  matches = (m && m.items) || [];
+  everything = (a && a.items) || [];
   render();
+}
+
+/* Firefox MV3 does NOT grant host permissions at install — the user has to allow them, and until
+ * they do, tabs.query hands back no URL and the content script never injects. The popup then knows
+ * nothing about the page it is sitting on, and saying "no saved logins for this site" would be a
+ * lie: it cannot see the site. Ask for the grant instead. */
+async function hostGranted(){
+  try{ return await B.permissions.contains({ origins:['<all_urls>'] }); }
+  catch(_){ return true; }        // no permissions API → nothing to ask for
 }
 
 function render(){
   const q = ($('#q').value || '').trim().toLowerCase();
-  const list = allItems.filter(i => !q ||
-    (i.title||'').toLowerCase().includes(q) || (i.username||'').toLowerCase().includes(q));
-  const host = V.hostOf(tabUrl) || 'this page';
+  const host = V.hostOf(tabUrl);
+  // With text in the box, search the WHOLE vault — that is what a search box means, and the reason
+  // an entry called "nostr" saved for poster.place could not be found from a poster.place tab.
+  // Empty box: what matches this page, which is what you want the moment the popup opens.
+  const list = q
+    ? everything.filter(i => (i.title||'').toLowerCase().includes(q) ||
+                             (i.username||'').toLowerCase().includes(q) ||
+                             (i.host||'').toLowerCase().includes(q))
+    : matches;
   $('#list').innerHTML = list.length ? list.map(i => `
     <div class="item" data-id="${esc(i.id)}">
       <div class="it-t">
-        <b>${esc(i.title || host)}</b>
-        <span class="muted">${esc(i.username || '')}${i._match === 'domain' ? ' · same domain' : ''}</span>
+        <b>${esc(i.title || i.host || host || 'Untitled')}</b>
+        <span class="muted">${esc(i.username || '')}${i._match === 'domain' ? ' · same domain'
+          : (q && i.host ? ' · ' + esc(i.host) : '')}</span>
       </div>
       <div class="it-a">
         <button data-a="fill" title="Fill this page">Fill</button>
@@ -57,12 +76,16 @@ function render(){
       </div>
       <div class="otp" data-otp="${esc(i.id)}"></div>
     </div>`).join('')
-    : `<div class="muted pad">No saved logins for ${esc(host)}.
-        ${allItems.length ? '' : 'Open a site you have a login for, or search above.'}</div>`;
+    : `<div class="muted pad">${emptyWhy(q, host)}</div>`;
 
   document.querySelectorAll('.item').forEach(el => {
     el.querySelectorAll('[data-a]').forEach(b => b.onclick = () => act(el.dataset.id, b.dataset.a));
   });
+  const grant = $('#grant');
+  if(grant) grant.onclick = async () => {
+    try{ await B.permissions.request({ origins:['<all_urls>'] }); }catch(_){ }
+    boot();
+  };
   startTicker(list);
 }
 
@@ -110,6 +133,21 @@ async function act(id, what){
   // page stays alive); this one tells you it did not.
   $('#status').textContent = what === 'pass' ? 'password copied — clear your clipboard when done'
                            : what === 'totp' ? 'code copied' : 'username copied';
+}
+
+/* Why the list is empty — four different situations that all rendered as "no saved logins for this
+ * site", which is only ever true for one of them. */
+function emptyWhy(q, host){
+  if(q) return `Nothing in your vault matches “${esc(q)}”. ${everything.length} entr` +
+               `${everything.length === 1 ? 'y' : 'ies'} searched.`;
+  if(!vaultCount) return 'Your vault is empty here — it may still be syncing, or this pairing is ' +
+                         'for a different account. Try Sync below.';
+  if(!tabUrl) return 'This add-on can’t see which page you’re on, so it can’t match a login. ' +
+                     'Firefox doesn’t grant that at install.<br>' +
+                     '<button id="grant" class="primary">Allow on all sites</button>' +
+                     '<br>Or type a name above to search all ' + everything.length + ' entries.';
+  return `No saved login for ${esc(host || 'this page')} — search above to look through all ` +
+         `${everything.length} entries.`;
 }
 
 // ---------------------------------------------------------------- generator

@@ -230,6 +230,17 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
       switch(msg && msg.type){
         case 'state':
           return reply({ paired: !!cfg, mode: cfg && cfg.mode, count: items.size, status, lastSync });
+        /* EVERY login, for searching. The popup used to hold only the matches for the current tab
+         * and filter THOSE, so an entry the site did not match could not be found at all — typing
+         * its name searched an empty list. Passwords are not included; the popup asks for one by id
+         * when the user presses a button. */
+        case 'all': {
+          const list = Array.from(items.values()).filter(i => i.kind === 'login')
+            .sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+          return reply({ items: list.map(i => ({ id:i.id, title:i.title, username:i.username,
+                                                 host: (V.hostOf(V.itemUris(i)[0] || '') || ''),
+                                                 hasTotp: !!i.totp })) });
+        }
         case 'matches': {
           const list = V.matchesFor(Array.from(items.values()).filter(i => i.kind === 'login'), msg.url);
           // The password goes to the POPUP (the user asked for it) but never to a content script

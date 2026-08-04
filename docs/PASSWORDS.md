@@ -181,6 +181,7 @@ site. All of it is in `tests/test_vault_core.py`.
     venv-unified/bin/python -m unittest tests.test_vault_core tests.test_vault_extension
     venv-unified/bin/python scripts/check_vault_mobile.py
     venv-unified/bin/python scripts/check_extension_popup.py
+    venv-unified/bin/python scripts/check_extension_autofill.py
 
 `test_vault_core.py` runs the shared core under node against the **RFC 6238 test vectors** (SHA1,
 SHA256, SHA512, including a timestamp past 2³¹ where a 32-bit counter folds), checks the generator is
@@ -192,6 +193,12 @@ line, which it did once: **sized in viewport units** (a popup has no viewport to
 lays the document out to discover how big the popup should be, so `100vw` resolves to 0; Chrome
 resolves it against the screen, so a render test cannot see this and the check reads the stylesheet
 instead), and **the script throwing** before it reveals a pane, since every pane starts hidden.
+
+`check_extension_autofill.py` drives the real content script against the app's OWN login markup —
+a password input inside a `<details>`, with no `<form>` — because that is where the panel was
+reported disappearing. It clicks the badge immediately after a blur, waits out every timer involved,
+re-renders the field underneath it, and then fills. Verified to fail against both of the causes it
+was written for.
 
 `check_vault_mobile.py` drives the real `vault.js` at phone and desktop widths: the drawer, tap
 targets, the 16px input floor, that the password field is not rendered in clear when an entry opens,
