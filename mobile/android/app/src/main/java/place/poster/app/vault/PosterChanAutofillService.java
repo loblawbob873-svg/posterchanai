@@ -26,7 +26,6 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 /**
  * Android autofill for the PosterChan vault.
@@ -72,16 +71,24 @@ public class PosterChanAutofillService extends AutofillService {
     private static final int MAX_DATASETS = 8;
 
     /* Packages whose getWebDomain() means what it says. A native app can set that field to anything;
-     * a browser is the only caller for which it is the address bar. An allowlist is coarse — a
-     * browser not listed here simply gets no autofill, which is a missing convenience — and the
-     * alternative is handing bank credentials to whatever app asks for them. */
+     * a browser is the only caller for which it is the address bar.
+     *
+     * An unlisted browser — or an in-app browser / Custom Tab inside another app — does not get
+     * silence any more; its claimed domain is discarded and it is treated as an app, which means
+     * associations it was given plus clearly-labelled suggestions ranked on its PACKAGE. That is
+     * deliberately weak: nothing that surface says about which site it is showing is believed, and
+     * the whole-vault fallback is withheld from it entirely (see matchApp). Adding a browser here
+     * makes it work properly; leaving one out degrades it, and no longer breaks it. */
     private static final java.util.Set<String> BROWSERS = new java.util.HashSet<>(java.util.Arrays.asList(
             "com.android.chrome", "com.chrome.beta", "com.chrome.dev", "com.chrome.canary",
             "org.mozilla.firefox", "org.mozilla.firefox_beta", "org.mozilla.fenix",
             "org.mozilla.focus", "com.microsoft.emmx", "com.brave.browser",
             "com.opera.browser", "com.opera.mini.native", "com.duckduckgo.mobile.android",
             "com.vivaldi.browser", "com.sec.android.app.sbrowser", "com.kiwibrowser.browser",
-            "org.chromium.chrome", "com.android.browser"));
+            "org.chromium.chrome", "com.android.browser",
+            "com.google.android.googlequicksearchbox", "com.samsung.android.app.sbrowser",
+            "com.UCMobile.intl", "com.yandex.browser", "org.mozilla.fennec_fdroid",
+            "us.spotco.fennec_dos", "io.github.forkmaintainers.iceraven", "com.neeva.app"));
 
     @Override
     public void onFillRequest(@NonNull FillRequest request, @NonNull CancellationSignal cancellationSignal,
@@ -97,23 +104,33 @@ public class PosterChanAutofillService extends AutofillService {
                     parse(s.getWindowNodeAt(i).getRootViewNode(), parsed);
                 }
             }
+            resolve(parsed);
             if (parsed.password == null && parsed.username == null) { callback.onSuccess(null); return; }
 
-            /* ONLY A BROWSER MAY CLAIM TO BE A WEBSITE. ViewStructure.setWebDomain() is public API,
-             * so any installed app can describe a virtual node as "chase.com" and be handed the
-             * real Chase credential, rendered exactly like a legitimate match. Removing the
-             * reversed-package guess closed the long way round to that; this is the short one.
-             * Without a verified browser on the other end there is nothing here we can trust, and
-             * offering nothing is the correct answer. */
             String pkg = packageOf(request);
+            // Whether this app told us it was showing a web page. It is not trusted to say WHICH
+            // page — but that it is showing one at all changes what is safe to offer (see matchApp).
+            boolean claimedWeb = false;
+            /* ONLY A BROWSER MAY CLAIM TO BE A WEBSITE — but a non-browser that claims one is still
+             * an APP, and it gets what any app gets.
+             *
+             * setWebDomain() is public API, so any installed app can describe a node as "chase.com"
+             * and be handed the real Chase credential looking exactly like a legitimate match. That
+             * is what this refuses: the CLAIM is discarded outright, never weighed.
+             *
+             * Refusing the whole request was too much, though. An app that renders its own login in
+             * its own WebView — Sam's Club does — reports a web domain as a matter of course, and
+             * got silence: no suggestions, no associated entry, nothing, on a screen where it is
+             * plainly the app asking for its own password. Dropping to the package path costs
+             * nothing security-wise, because that path never reads the claimed domain: it matches on
+             * `androidapp://<package>` associations the user made, and labels everything else
+             * "suggested" for the user to choose. A lying app gains exactly what an honest one does.
+             */
             if (!(parsed.fieldDomain + parsed.pageDomain).isEmpty() && !BROWSERS.contains(pkg)) {
-                // An app claiming a web domain it cannot be trusted for gets NOTHING, still — the
-                // package path below is for apps that make no such claim. Falling through to it here
-                // would reward the lie with a shortlist.
-
-                Log.i(TAG, "ignoring a webDomain claimed by " + pkg);
-                callback.onSuccess(null);
-                return;
+                Log.i(TAG, "ignoring a webDomain claimed by " + pkg + " — treating it as an app");
+                parsed.fieldDomain = "";
+                parsed.pageDomain = "";
+                claimedWeb = true;
             }
             List<String> candidates = VaultMatch.hostCandidates(parsed.fieldDomain, parsed.pageDomain);
             String snapshot = VaultStore.get(this);
@@ -124,7 +141,7 @@ public class PosterChanAutofillService extends AutofillService {
             } else {
                 // A native app: no web domain to compare against, so this is the package path.
                 if (!BROWSERS.contains(pkg)) VaultStore.noteApp(this, pkg);
-                matches = matchApp(snapshot, pkg);
+                matches = matchApp(snapshot, pkg, claimedWeb);
             }
             if (matches.isEmpty()) {
                 // Named, because "no suggestions here" is otherwise indistinguishable from a broken
@@ -227,7 +244,7 @@ public class PosterChanAutofillService extends AutofillService {
      * can label the rest honestly. Nothing is filled on a guess — the user reads their own entry's
      * name and picks it.
      */
-    private List<JSONObject> matchApp(String json, String pkg) {
+    private List<JSONObject> matchApp(String json, String pkg, boolean claimedWeb) {
         List<JSONObject> out = new ArrayList<>();
         List<List<JSONObject>> ranked = new ArrayList<>();
         for (int i = 0; i < 4; i++) ranked.add(new ArrayList<JSONObject>());
@@ -252,10 +269,16 @@ public class PosterChanAutofillService extends AutofillService {
             Log.w(TAG, "unreadable snapshot", t);
         }
         for (int r = 3; r >= 1; r--) out.addAll(ranked.get(r));
-        // Rank 0 is everything else — the "search my logins" row every other manager shows. Offered
-        // only when nothing scored, so a screen with a real candidate is not buried under a hundred
-        // unrelated ones.
-        if (out.isEmpty()) out.addAll(ranked.get(0));
+        /* Rank 0 is everything else — the "search my logins" row every other manager shows. Offered
+         * only when nothing scored, so a screen with a real candidate is not buried under a hundred
+         * unrelated ones.
+         *
+         * NOT on a surface that told us it was showing a web page. An in-app browser or Custom Tab
+         * can be pointed at anything, including a phishing page, and "here is your entire vault,
+         * pick one" a tap away from a convincing fake is a worse offer than nothing. An app showing
+         * its OWN login (which is why that path exists at all) ranks against its own package and
+         * never needs this fallback. */
+        if (out.isEmpty() && !claimedWeb) out.addAll(ranked.get(0));
         return out;
     }
 
@@ -274,6 +297,13 @@ public class PosterChanAutofillService extends AutofillService {
         String fieldDomain = "";
         /** The outermost document's domain: the one that is actually in the address bar. */
         String pageDomain = "";
+        /* Every editable text field on the screen, in tree order, with the domain that enclosed it.
+         * Collected first and judged afterwards: taking the first thing that looked like a password
+         * and the first that looked like a username, independently, is what let one misread field
+         * poison the other slot — see VaultMatch.pickFields. */
+        final List<VaultMatch.FieldInfo> fields = new ArrayList<>();
+        final List<AutofillId> ids = new ArrayList<>();
+        final List<String> domains = new ArrayList<>();
     }
 
     /**
@@ -299,43 +329,96 @@ public class PosterChanAutofillService extends AutofillService {
             if (out.pageDomain.isEmpty()) out.pageDomain = wd;   // shallowest = the top document
         }
 
-        String[] hints = node.getAutofillHints();
         int type = node.getAutofillType();
-        if (type == View.AUTOFILL_TYPE_TEXT) {
-            if (hints != null) {
-                for (String h : hints) {
-                    if (h == null) continue;
-                    String hh = h.toLowerCase(Locale.ROOT);
-                    if (out.password == null && hh.contains("password")) out.password = node.getAutofillId();
-                    else if (out.username == null && (hh.contains("username") || hh.contains("email")))
-                        out.username = node.getAutofillId();
+        AutofillId id = node.getAutofillId();
+        if (type == View.AUTOFILL_TYPE_TEXT && id != null && node.getVisibility() == View.VISIBLE) {
+            StringBuilder hb = new StringBuilder();
+            String[] hints = node.getAutofillHints();
+            if (hints != null) for (String h : hints) if (h != null) hb.append(h).append(' ');
+            String text = String.valueOf(node.getIdEntry()) + ' ' + node.getHint() + ' '
+                        + node.getContentDescription();
+            boolean htmlPassword = false, skip = false;
+            /* WEBVIEW CONTENT. A page inside an app's own WebView is not a stack of Android views:
+             * its fields carry NO autofillHints, NO idEntry and NO Android input type — they carry
+             * HTML. `<input type="password">` and `autocomplete="current-password"` are the whole
+             * signal, and without reading them a WebView login screen looks like a screen with no
+             * fields on it, which is "autofill does nothing at all in this app". Increasingly that
+             * is most apps. */
+            android.view.ViewStructure.HtmlInfo html = node.getHtmlInfo();
+            if (html != null && "input".equalsIgnoreCase(String.valueOf(html.getTag()))) {
+                String itype = "", extra = "";
+                java.util.List<android.util.Pair<String, String>> attrs = html.getAttributes();
+                if (attrs != null) {
+                    for (android.util.Pair<String, String> a : attrs) {
+                        if (a == null || a.first == null) continue;
+                        String k = a.first.toLowerCase(java.util.Locale.ROOT);
+                        String v = a.second == null ? "" : a.second;
+                        if (k.equals("type")) itype = v.toLowerCase(java.util.Locale.ROOT);
+                        // name/id/placeholder/aria-label/autocomplete are what a page calls its own
+                        // boxes; they feed the same text scoring an Android view's id would.
+                        else if (k.equals("name") || k.equals("id") || k.equals("placeholder")
+                                 || k.equals("aria-label") || k.equals("autocomplete")
+                                 || k.equals("label")) extra += " " + v;
+                    }
                 }
+                if (itype.equals("password")) htmlPassword = true;
+                // A non-text input is not a login field: checkboxes, buttons and hidden inputs are
+                // exactly what a form has most of. SKIPPED, not returned from — a `return` here
+                // would abandon the rest of the subtree as well, and the walk still has children to
+                // visit even when this node is not one we want.
+                if (!itype.isEmpty() && !itype.equals("text") && !itype.equals("email")
+                        && !itype.equals("tel") && !itype.equals("password")
+                        && !itype.equals("number")) skip = true;
+                text = text + extra;
             }
-            if (out.password == null && isPasswordInput(node)) out.password = node.getAutofillId();
-            if (out.username == null && looksLikeUsername(node)) out.username = node.getAutofillId();
-            // Whichever field we settled on, remember the document it was in.
-            if (out.fieldDomain.isEmpty() && (out.password != null || out.username != null))
-                out.fieldDomain = inherited;
+            if (!skip) {
+                out.fields.add(new VaultMatch.FieldInfo(hb.toString(),
+                                                        isRealPassword(node) || htmlPassword,
+                                                        isVisiblePassword(node), text));
+                out.ids.add(id);
+                out.domains.add(inherited);
+            }
         }
         for (int i = 0; i < node.getChildCount(); i++) parse(node.getChildAt(i), out, inherited, depth + 1);
     }
 
-    private static boolean isPasswordInput(AssistStructure.ViewNode n) {
+    /** Turn the collected fields into a username slot and a password slot. */
+    private static void resolve(Parsed out) {
+        int[] pick = VaultMatch.pickFields(out.fields);
+        if (pick[0] >= 0) {
+            out.username = out.ids.get(pick[0]);
+            if (out.fieldDomain.isEmpty()) out.fieldDomain = out.domains.get(pick[0]);
+        }
+        if (pick[1] >= 0) {
+            out.password = out.ids.get(pick[1]);
+            if (out.fieldDomain.isEmpty()) out.fieldDomain = out.domains.get(pick[1]);
+        }
+    }
+
+    /** A masked field: the keyboard is hiding it, so it is a secret. */
+    private static boolean isRealPassword(AssistStructure.ViewNode n) {
         int t = n.getInputType();
         int cls = t & InputType.TYPE_MASK_CLASS;
         int var = t & InputType.TYPE_MASK_VARIATION;
         if (cls == InputType.TYPE_CLASS_TEXT &&
                 (var == InputType.TYPE_TEXT_VARIATION_PASSWORD
-                        || var == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
                         || var == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD)) return true;
         return cls == InputType.TYPE_CLASS_NUMBER && var == InputType.TYPE_NUMBER_VARIATION_PASSWORD;
     }
 
-    private static boolean looksLikeUsername(AssistStructure.ViewNode n) {
-        String hay = String.valueOf(n.getIdEntry()) + ' ' + n.getHint() + ' ' + n.getContentDescription();
-        hay = hay.toLowerCase(Locale.ROOT);
-        return hay.contains("user") || hay.contains("email") || hay.contains("login")
-                || hay.contains("account") || hay.contains("identifier");
+    /**
+     * `textVisiblePassword` — kept SEPARATE from a real password field, which is the whole fix.
+     *
+     * It does not mean "this is a password". It means "no suggestions, no autocorrect, do not learn
+     * what is typed here" — which is exactly what a bank wants on an account number or a customer
+     * ID. Wells Fargo sets it on the USERNAME box, so counting it as a password picked that box as
+     * the password slot, skipped the real password box, and typed the password into the username
+     * field on screen. VaultMatch.pickFields scores it below every real signal.
+     */
+    private static boolean isVisiblePassword(AssistStructure.ViewNode n) {
+        int t = n.getInputType();
+        return (t & InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_TEXT
+                && (t & InputType.TYPE_MASK_VARIATION) == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD;
     }
 
     /**

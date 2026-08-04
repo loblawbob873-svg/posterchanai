@@ -173,6 +173,106 @@ public final class VaultMatch {
             "com", "org", "net", "android", "app", "apps", "mobile", "client", "www", "inc",
             "the", "prod", "release", "google", "co", "uk", "us"));
 
+    // ---------------------------------------------------------------- which field is which
+
+    /** One editable text field, as much as this decision needs to know about it. */
+    public static final class FieldInfo {
+        /** Joined autofillHints, lowercased. The app telling us what it is — believed over anything. */
+        public String hints = "";
+        /** A real password inputType: PASSWORD, WEB_PASSWORD or NUMBER_PASSWORD. */
+        public boolean realPassword;
+        /** textVisiblePassword. NOT the same thing — see pickFields. */
+        public boolean visiblePassword;
+        /** idEntry + hint + contentDescription, lowercased. */
+        public String text = "";
+
+        public FieldInfo(String hints, boolean realPassword, boolean visiblePassword, String text) {
+            this.hints = hints == null ? "" : hints.toLowerCase(Locale.ROOT);
+            this.realPassword = realPassword;
+            this.visiblePassword = visiblePassword;
+            this.text = text == null ? "" : text.toLowerCase(Locale.ROOT);
+        }
+    }
+
+    private static final java.util.regex.Pattern _USER_RE = java.util.regex.Pattern.compile(
+            "user|e-?mail|login|account|identifier|\\bid\\b|customer|member|signon|userid");
+    private static final java.util.regex.Pattern _PASS_RE = java.util.regex.Pattern.compile(
+            "password|passcode|passphrase|\\bpin\\b|\\bpwd\\b");
+    /** Fields that are plainly something else, for the positional fallback only. */
+    private static final java.util.regex.Pattern _NOT_USER_RE = java.util.regex.Pattern.compile(
+            "search|query|amount|zip|postal|address|city|state|phone|card|cvv|expiry|otp|code|"
+            + "\\bdob\\b|birth|comment|message|note");
+
+    /**
+     * Decide which field takes the username and which takes the password, over the WHOLE screen.
+     *
+     * THE BUG THIS EXISTS FOR: the walk took the first field that looked like a password and the
+     * first that looked like a username, independently, in tree order — and it counted
+     * `textVisiblePassword` as a password. Banks routinely put `textVisiblePassword` on the
+     * USERNAME field, because it is how you stop the keyboard offering suggestions and learning what
+     * someone types. So on Wells Fargo the username box was picked as the password box, the real
+     * password box was then skipped (something was already chosen), and the password was typed into
+     * the username field in front of the user.
+     *
+     * The rules that follow are ordered by how much the app is actually TELLING us versus how much
+     * we are inferring, and the whole screen is scored before anything is chosen — first-wins over a
+     * tree is what made one misread field poison the other slot.
+     */
+    public static int[] pickFields(List<FieldInfo> fields) {
+        int user = -1, pass = -1, userScore = 0, passScore = 0;
+        if (fields == null) return new int[]{-1, -1};
+        for (int i = 0; i < fields.size(); i++) {
+            FieldInfo f = fields.get(i);
+            if (f == null) continue;
+            int ps = 0, us = 0;
+            // 4: the app declared it. An autofillHint is a statement, not a guess.
+            if (f.hints.contains("password")) ps = 4;
+            // NOT "phone". A shipping-address or checkout screen declares phone hints and has no
+            // login on it at all — scoring it made the vault drop down over a phone-number box,
+            // fill an email into it, and arm the "save this login?" prompt on an address form.
+            else if (f.hints.contains("username") || f.hints.contains("emailaddress")
+                     || f.hints.contains("email")) us = 4;
+            // 3: a real password inputType — the keyboard is masking it, so it is a secret.
+            if (ps == 0 && us == 0 && f.realPassword) ps = 3;
+            // 2: it says so on the label.
+            if (ps == 0 && us == 0 && _PASS_RE.matcher(f.text).find()) ps = 2;
+            if (ps == 0 && us == 0 && _USER_RE.matcher(f.text).find()) us = 2;
+            /* 1: visible-password, and ONLY if nothing above fired. This is the trap: it means "no
+             * suggestions, no learning", which is what a bank wants on an account number as much as
+             * on a password. Scored below every real signal so a screen with a genuine password
+             * field always prefers that one, and never taken when the label says username. */
+            if (ps == 0 && us == 0 && f.visiblePassword) ps = 1;
+            if (ps > passScore) { passScore = ps; pass = i; }
+            if (us > userScore) { userScore = us; user = i; }
+        }
+        /* One field cannot be both. Unreachable as the rules stand — `ps` and `us` are mutually
+         * exclusive by construction (the hint rule is if/else and every later rule is gated on both
+         * being zero) — and kept because it is the invariant the whole thing rests on: handing one
+         * AutofillId both values writes the password into the box the user can read. */
+        if (user >= 0 && user == pass) {
+            if (passScore >= userScore) user = -1; else pass = -1;
+        }
+        /* A screen with a password and no named username field: take the editable field just BEFORE
+         * it. That is where a username lives on a two-box login, and it is why a form whose boxes
+         * carry no hints at all still fills. Only when the password was a strong signal — inferring
+         * a username next to a field we ourselves only guessed is two guesses stacked. */
+        if (pass > 0 && user < 0 && passScore >= 3) {
+            FieldInfo prev = fields.get(pass - 1);
+            /* A visible-password box IS allowed to be the username here — that is the exact bank
+             * pattern (no suggestions on the customer ID), and excluding it would leave the
+             * unlabelled version of the Wells Fargo screen with no username slot at all.
+             *
+             * But "the previous editable field" is only a guess about LAYOUT, and a screen has other
+             * boxes: a toolbar search input sits ahead of the login card in tree order on most
+             * WebView apps, and a checkout page has amounts. Disqualify anything that says what it
+             * is and is not a username — otherwise this types someone's email into a search box. */
+            if (prev != null && !prev.realPassword
+                    && !_PASS_RE.matcher(prev.text).find()
+                    && !_NOT_USER_RE.matcher(prev.text).find()) user = pass - 1;
+        }
+        return new int[]{user, pass};
+    }
+
     /** exact = 2, same-domain = 1, no = 0. Higher is a better match, and only 2 may fill silently. */
     public static int rank(List<String> hosts, List<String> domains, String host) {
         if (hostMatches(hosts, host)) return 2;
