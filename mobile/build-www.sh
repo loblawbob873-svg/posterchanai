@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 SRC="$(cd .. && pwd)"
 
 rm -rf www
-mkdir -p www/static/js/client www/static/css www/static/fonts www/static/vendor/nostr
+mkdir -p www/static/js/client www/static/css www/static/fonts
 
 cp "$SRC"/static/js/client/*.js       www/static/js/client/
 cp "$SRC"/static/css/client.css       www/static/css/
@@ -21,11 +21,13 @@ cp "$SRC"/static/fonts/*.woff2        www/static/fonts/ 2>/dev/null || true
 # client at / — not /client like the web PWA). Without this the SW never registered in the app and the
 # media cache never ran (media re-downloaded every view). app.js registers /sw.js when in-app.
 cp "$SRC"/static/js/client/sw.js      www/sw.js
-cp "$SRC"/static/vendor/nostr/nostr.bundle.js www/static/vendor/nostr/
-# hls.js — loaded on demand by the Streams tab (loadHls injects <script src>, which the bundled-mode fetch
-# shim does NOT rewrite), so it must be bundled locally or in-app HLS playback 404s.
-mkdir -p www/static/vendor/hls
-cp "$SRC"/static/vendor/hls/hls.min.js www/static/vendor/hls/ 2>/dev/null || true
+# The WHOLE vendor tree, not a hand-picked list. Each of these is pulled in by a root-relative
+# <script src>/<link href>, which the bundled-mode fetch shim never sees — the WebView resolves them
+# against the page, so anything not copied 404s and the feature dies with nothing useful in the console.
+# The enumerated list is how jsqr (QR SCANNING — the "scan a signer QR" login) and katex (the maths in
+# Flashcards) were silently missing from the APK for as long as it has existed: both load ON DEMAND, so
+# nothing breaks until someone opens that one screen. Copying the directory can't forget the next one.
+cp -r "$SRC"/static/vendor            www/static/
 cp "$SRC"/static/*.png                www/static/ 2>/dev/null || true
 
 # The rendered shell (auth gate + app scaffold) — take the LIVE one so the app matches the site exactly.

@@ -130,6 +130,91 @@ AUDIT = r"""(() => {
   return out;
 })()"""
 
+# The SIGN-IN screen, before any login. Settings has the same controls, but Settings is behind the login —
+# so without this, choosing your own relays (or none) meant first signing in to somebody else's instance
+# to go and find the switch. On a fresh APK that is the only server anyone has.
+AUTH_AUDIT = r"""(() => {
+  const q = (s) => document.querySelector(s);
+  const out = {};
+  out.gateVisible = !!(q('#auth-gate') && !q('#auth-gate').classList.contains('hidden'));
+  const row = q('#auth-conn-row');
+  out.connRowPresent = !!row;
+  out.connRowShown = !!(row && !row.classList.contains('hidden'));
+  out.connLabel = (q('#auth-conn-label') || {}).textContent || '';
+  // Open the chooser the way a user does, then check every control is really there.
+  const btn = q('#btn-auth-conn'); if (btn) btn.click();
+  const pane = q('#auth-conn');
+  out.paneOpens = !!(pane && !pane.classList.contains('hidden'));
+  out.loginHidden = !!(q('#auth-login') && q('#auth-login').classList.contains('hidden'));
+  out.hasInstanceInput = !!q('#conn-instance');
+  out.hasNoneButton = !!q('#btn-conn-none');
+  out.hasRelayBox = !!q('#conn-relays');
+  out.relayBoxLines = q('#conn-relays')
+    ? String(q('#conn-relays').value || '').split(/\n/).filter(s => s.trim()).length : 0;
+  out.relayBoxHasOurs = q('#conn-relays') ? /relay\.poster\.place/.test(q('#conn-relays').value || '') : false;
+  // Relays and the server must be INDEPENDENT: setting one may not rewrite or discard the other. This
+  // is the shape the first draft got wrong — it offered "use a server" OR "use relays only", which said
+  // you had to give up the server to choose your relays.
+  out.relaysBeforeServer = (() => {
+    try {
+      const secs = [...document.querySelectorAll('#auth-conn .auth-sec .auth-sec-t')].map(s => s.textContent || '');
+      return /relay/i.test(secs[0] || '');   // relays are the primary setting, the server is the option
+    } catch (_) { return false; }
+  })();
+  out.serverOptional = [...document.querySelectorAll('#auth-conn .auth-sec-t')]
+    .some(s => /optional/i.test(s.textContent || ''));
+
+  // Dropping the server with NOTHING saved and an empty box must be refused — relays would then be the
+  // only thing left to talk to, and there would be none. Saved relays are cleared first so the check
+  // does not depend on what an earlier iteration happened to leave behind.
+  if (q('#conn-relays')) {
+    const keep = q('#conn-relays').value;
+    let saved = null;
+    try { saved = localStorage.getItem('pc_nostr_settings');
+          const o = JSON.parse(saved || '{}'); delete o.relays; delete o.relaysEnabled;
+          localStorage.setItem('pc_nostr_settings', JSON.stringify(o)); } catch (_) {}
+    q('#conn-relays').value = '';
+    q('#btn-conn-none').click();
+    out.emptyRefused = !!((q('#conn-error') || {}).textContent || '').trim();
+    try { if (saved !== null) localStorage.setItem('pc_nostr_settings', saved); } catch (_) {}
+    q('#conn-relays').value = keep;
+    if (q('#conn-error')) q('#conn-error').textContent = '';
+  }
+  // A junk server address must be refused too, rather than becoming https://typo.
+  if (q('#conn-instance')) {
+    q('#conn-instance').value = 'not a domain';
+    q('#btn-conn-instance').click();
+    out.junkRefused = !!((q('#conn-error') || {}).textContent || '').trim();
+    q('#conn-instance').value = '';
+    if (q('#conn-error')) q('#conn-error').textContent = '';
+  }
+  const back = q('#btn-conn-back'); if (back) back.click();
+  out.backReturns = !!(q('#auth-login') && !q('#auth-login').classList.contains('hidden'));
+
+  // Signup must be possible with no server: the captcha gates admission to a NODE's web-of-trust relay,
+  // and with no node there is nothing to be admitted to. Drawing it put an unanswerable box (its image
+  // comes from /client/captcha) in front of the button, and signupGo refused to proceed without an answer.
+  const su = q('#btn-show-signup'); if (su) su.click();
+  out.signupOpens = !!(q('#auth-signup') && !q('#auth-signup').classList.contains('hidden'));
+  out.hasGenKey = !!q('#btn-gen-key');
+
+  out.overflow = document.documentElement.scrollWidth > window.innerWidth + 1;
+  out.errors = (window.__pcErrors || []).slice(0, 10);
+  return out;
+})()"""
+
+SIGNUP_AUDIT = r"""(() => {
+  const q = (s) => document.querySelector(s);
+  return {
+    keysShown: !!(q('#signup-keys') && !q('#signup-keys').classList.contains('hidden')),
+    nsec: (q('#signup-nsec') || {}).textContent || '',
+    npub: (q('#signup-npub') || {}).textContent || '',
+    captchaDrawn: !!q('#signup-captcha-box'),
+    goShown: !!(q('#btn-signup-go') && !q('#btn-signup-go').classList.contains('hidden')),
+    errors: (window.__pcErrors || []).slice(0, 10),
+  };
+})()"""
+
 SETTINGS_AUDIT = r"""(() => {
   const q = (s) => document.querySelector(s);
   const out = {};
@@ -270,6 +355,90 @@ async def drive(problems):
                 problems.append(f"{label}: page scrolls horizontally")
             for e in res["errors"]:
                 problems.append(f"{label}: console error: {e}")
+
+        # ---- the sign-in screen, BEFORE any login -------------------------------------------------
+        for w, h, mobile in [(1280, 860, False), (390, 844, True)]:
+            label = f"sign-in {w}x{h}"
+            await call("Emulation.setDeviceMetricsOverride",
+                       {"width": w, "height": h, "deviceScaleFactor": 2 if mobile else 1,
+                        "mobile": mobile})
+            await call("Page.navigate", {"url": url})
+            await asyncio.sleep(9)
+            # The app boots into GUEST mode showing a public feed, so the sign-in card is not on screen
+            # yet — reach it the way a guest does, by clicking the identity chip that offers to log in.
+            opened = await js(
+                "(() => { const mc=document.querySelector('#me-card');"
+                " if(mc && typeof mc.onclick==='function'){ mc.click(); return 'clicked'; }"
+                " return 'no guest login affordance'; })()")
+            if opened != "clicked":
+                problems.append(f"{label}: could not reach the sign-in card from guest mode ({opened})")
+                continue
+            await asyncio.sleep(2)
+            a = await js(AUTH_AUDIT)
+            if not isinstance(a, dict) or a.get("__throw"):
+                problems.append(f"{label}: sign-in audit did not evaluate ({a})")
+                continue
+            if not a["gateVisible"]:
+                problems.append(f"{label}: the login gate is not showing — cannot audit sign-in")
+                continue
+            if not a["connRowPresent"]:
+                problems.append(f"{label}: no connection row on the sign-in card — the only way to choose "
+                                "relays is Settings, which is behind the login")
+                continue
+            if not a["connRowShown"]:
+                problems.append(f"{label}: connection row present but hidden in a bundled build")
+            if "no server" not in a["connLabel"].lower():
+                problems.append(f"{label}: connection row should say there is no server, says {a['connLabel']!r}")
+            if not a["paneOpens"] or not a["loginHidden"]:
+                problems.append(f"{label}: the connection chooser does not open")
+                continue
+            if not a["hasInstanceInput"]:
+                problems.append(f"{label}: no instance field in the chooser")
+            if not a["hasNoneButton"]:
+                problems.append(f"{label}: no 'use no server' button in the chooser")
+            if not a["relaysBeforeServer"]:
+                problems.append(f"{label}: the server is presented before relays — relays are the primary "
+                                "setting and apply with or without a server")
+            if not a["serverOptional"]:
+                problems.append(f"{label}: the server is not marked optional, so choosing your own relays "
+                                "still reads as giving the server up")
+            if not a["hasRelayBox"]:
+                problems.append(f"{label}: no relay list in the chooser — relays cannot be set pre-login")
+            elif a["relayBoxLines"] < 2:
+                problems.append(f"{label}: relay list not pre-filled ({a['relayBoxLines']} line(s))")
+            elif not a["relayBoxHasOurs"]:
+                problems.append(f"{label}: relay pre-fill does not include our own relay")
+            if not a.get("emptyRefused"):
+                problems.append(f"{label}: 'relays only' accepted an EMPTY relay list — the app would have "
+                                "nothing at all to talk to")
+            if not a.get("junkRefused"):
+                problems.append(f"{label}: a junk server address was accepted instead of refused")
+            if not a["backReturns"]:
+                problems.append(f"{label}: 'back' does not return to the sign-in options")
+            if not a["signupOpens"] or not a["hasGenKey"]:
+                problems.append(f"{label}: cannot reach 'create a new identity'")
+            if a["overflow"]:
+                problems.append(f"{label}: sign-in screen scrolls horizontally")
+            for e in a["errors"]:
+                problems.append(f"{label}: console error: {e}")
+
+            # Generating a key must work, and must NOT put a server captcha in the way.
+            gen = await js("(() => { const b=document.querySelector('#btn-gen-key');"
+                           " if(!b) return 'no gen button'; b.click(); return 'clicked'; })()")
+            if gen == "clicked":
+                await asyncio.sleep(4)
+                s2 = await js(SIGNUP_AUDIT)
+                if isinstance(s2, dict) and not s2.get("__throw"):
+                    if not s2["keysShown"] or not s2["nsec"].startswith("nsec1"):
+                        problems.append(f"{label}: key generation did not produce an nsec "
+                                        f"({s2.get('nsec','')[:16]!r})")
+                    if s2["captchaDrawn"]:
+                        problems.append(f"{label}: a server captcha is drawn with no server — its image "
+                                        "comes from /client/captcha and signup refuses to proceed without it")
+                    if not s2["goShown"]:
+                        problems.append(f"{label}: the 'I saved it — enter' button never appeared")
+                    for e in s2["errors"]:
+                        problems.append(f"{label}: console error after gen: {e}")
 
         # ---- log in and open Settings, at desktop and phone width ----------------------------------
         nsec = make_nsec()

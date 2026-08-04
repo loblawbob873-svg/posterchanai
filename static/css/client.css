@@ -667,6 +667,23 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .auth-more .btn{margin:0 0 12px}
 .auth-foot{display:flex;flex-direction:column;gap:6px;align-items:stretch}
 .auth-foot .btn{margin:0}
+/* "Server: poster.place / change" on the sign-in card (native builds only). Deliberately quieter than a
+   .btn: it is a statement of where you are with a way out, not a fourth way to sign in competing with
+   the three above it. */
+.auth-conn{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.auth-conn-btn{display:flex;align-items:center;gap:8px;width:100%;padding:9px 11px;border-radius:11px;
+  border:1px solid var(--line);background:transparent;color:var(--muted);font-size:12.5px;font-family:inherit;
+  cursor:pointer;text-align:left}
+.auth-conn-btn:hover{border-color:var(--cyan);color:var(--text)}
+.auth-conn-btn>span:first-of-type{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.auth-conn-btn .ic{flex:none;width:15px;height:15px}
+.auth-conn-go{flex:none;color:var(--cyan);text-transform:uppercase;letter-spacing:.6px;font-size:11px}
+/* "— where your posts live" / "— optional" beside a section heading: same line, not shouted. The
+   heading itself is uppercase + tracked; this stays sentence case so it reads as the aside it is. */
+.auth-sec-n{text-transform:none;letter-spacing:0;opacity:.75}
+/* The relay box is a list of URLs, so wrapping mid-url is worse than a scrollbar. */
+#conn-relays{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.5;
+  white-space:pre;overflow-wrap:normal;overflow-x:auto}
 .divider{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;margin:12px 0}
 .divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line)}
 .auth-error{color:#ff6b8b;font-size:13px;min-height:18px;text-align:center;margin-top:6px}

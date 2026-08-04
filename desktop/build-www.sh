@@ -16,7 +16,7 @@ cd "$(dirname "$0")"
 SRC="$(cd .. && pwd)"
 
 rm -rf www
-mkdir -p www/static/js/client www/static/css www/static/fonts www/static/vendor/nostr www/static/vendor/hls
+mkdir -p www/static/js/client www/static/css www/static/fonts
 
 cp "$SRC"/static/js/client/*.js       www/static/js/client/
 cp "$SRC"/static/css/client.css       www/static/css/
@@ -28,10 +28,14 @@ cp "$SRC"/static/fonts/*.woff2        www/static/fonts/ 2>/dev/null || true
 # The service worker sits at the bundle ROOT: the app loads the client at / (not /client like the web
 # PWA), so root scope is the only scope that covers it. app.js registers /sw.js when bundled.
 cp "$SRC"/static/js/client/sw.js      www/sw.js
-cp "$SRC"/static/vendor/nostr/nostr.bundle.js www/static/vendor/nostr/
-# hls.js is injected as a <script src> by the Streams tab, which the fetch shim does NOT rewrite, so it
-# has to be local or in-app HLS playback 404s.
-cp "$SRC"/static/vendor/hls/hls.min.js www/static/vendor/hls/ 2>/dev/null || true
+# The WHOLE vendor tree, not a hand-picked list. Every one of these is pulled in by a root-relative
+# <script src>/<link href>/@font-face, which the fetch shim never sees — the browser resolves them
+# against the page, so anything not here 404s against the bundle and the feature that needs it dies
+# with no console error worth reading. An enumerated list is how jsqr (QR SCANNING, the "scan a signer
+# QR" login) and katex (the maths in Flashcards) were silently missing from the app for as long as the
+# app has existed: both are loaded on DEMAND, so nothing breaks until someone opens that one screen.
+# Copying the directory means adding a vendored library cannot forget the app again.
+cp -r "$SRC"/static/vendor            www/static/
 cp "$SRC"/static/*.png                www/static/ 2>/dev/null || true
 
 PC_VER="$(date -u +%s)" python3 - "$SRC" <<'PY'

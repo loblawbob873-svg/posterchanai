@@ -1189,33 +1189,14 @@
     document.body.classList.remove('guest');
     showAuth(which);
   }
-  // Native app only: let a fresh install choose which PosterChan instance to connect to (defaults to
-  // poster.place). Injected into the login screen so it can be set BEFORE logging in (login talks to the
-  // instance). Saving stores it (localStorage pc_instance, read by the bundle shim) and reloads so every
-  // request retargets the new domain. No-op in the PWA (served by its own instance already).
-  function _instancePicker(){
-    if(!window.Capacitor || !window.__PC_API_BASE__) return;
-    const pane=document.getElementById('auth-login'); if(!pane || document.getElementById('instance-row')) return;
-    const cur=window.__PC_API_BASE__;
-    const div=document.createElement('div'); div.id='instance-row'; div.style.marginTop='10px';
-    div.innerHTML='<div class="divider"><span>instance</span></div>'
-      +'<input id="instance-input" class="input" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="https://your-instance">'
-      +'<button id="instance-save" class="btn btn-ghost full" style="margin-top:6px"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Connect to this instance</button>'
-      +'<div class="muted small" id="instance-cur" style="margin-top:4px"></div>';
-    pane.appendChild(div);
-    const inp=document.getElementById('instance-input'); inp.value=cur;
-    document.getElementById('instance-cur').textContent='currently: '+cur;
-    document.getElementById('instance-save').onclick=()=>{
-      let u=(inp.value||'').trim(); if(!u) return;
-      // .onion → http:// (hidden services are plain HTTP; see the same rule in Settings' norm()).
-      if(!/^https?:\/\//i.test(u)) u=(/\.onion$/i.test(u.split('/')[0].split(':')[0]) ? 'http://' : 'https://')+u;
-      u=u.replace(/\/+$/,'');
-      if(u===cur){ toast('already connected to '+u); return; }
-      // switching instance keeps your Nostr key (portable) but re-establishes the server session on reload
-      if(window.__PC_SET_INSTANCE__) window.__PC_SET_INSTANCE__(u);
-      else { try{ localStorage.setItem('pc_instance', u); }catch(_){} location.reload(); }
-    };
-  }
+  /* The instance picker that used to be INJECTED here is gone — `#auth-conn-row` in the template plus
+   * _bindAuthConn() replaced it, and this is only the repaint.
+   *
+   * It was Capacitor-only, so the desktop app never had one; it offered an instance and nothing else, so
+   * there was no way to choose your own relays (let alone none) before logging in; and it bailed out on
+   * `!__PC_API_BASE__`, which is exactly the relays-only state — so the one control that could get you
+   * back to a server vanished precisely when it was the only way back. */
+  function _instancePicker(){ try{ _paintAuthConn(); }catch(_){} }
   function bindAuth(){
     $('#btn-nip07').onclick = loginNip07;
     // NIP-55 is Android-only and pointless without a signer installed, so the button stays hidden until
@@ -1234,6 +1215,7 @@
     $('#btn-back-login').onclick = ()=>{ $('#auth-signup').classList.add('hidden'); $('#auth-login').classList.remove('hidden'); };
     $('#btn-gen-key').onclick = genKey;
     $('#btn-signup-go').onclick = signupGo;
+    try{ _bindAuthConn(); }catch(_){}   // native builds: choose the server (or none) before signing in
     // Global [data-copy] handler for TEXT NODES (code blocks etc.). It must skip form fields: their
     // textContent is the empty string, so this wrote "" to the clipboard — and because it runs in
     // ADDITION to the element's own handler, it both emitted a second bogus "copied" toast AND clobbered
@@ -1299,9 +1281,21 @@
   // ephemeral, so our relay carries it without storing anything; it accepts it whenever either party is a
   // web-of-trust member (same rule DMs and calls use). The public relays stay as a fallback — a brand-new
   // account that isn't in our WoT yet still needs somewhere to meet its signer.
+  /* Relays to meet a remote signer on, in the order they are TRIED — beginNostrConnect takes the first
+   * that opens and names it in the nostrconnect:// URI, so this order decides where the signer is told
+   * to meet us.
+   *
+   * The user's own relays are a FALLBACK, not the head of the list. Putting them first looked right for
+   * a standalone install and would have broken the common case: a personal or WoT-gated relay that the
+   * client can open is not necessarily one a third-party signer (nsec.app, a phone) can reach, and being
+   * told to meet on one it cannot reach fails as a 180-second silence with nothing to read. They are
+   * added only when there is no instance relay, which is exactly the case this exists to fix — before,
+   * that left three hardcoded public relays and nothing of the user's at all. */
   function _ncRelays(){
     const own=(CFG && CFG.relay_url) || '';
-    return [own, 'wss://relay.nsec.app', 'wss://relay.damus.io', 'wss://relay.primal.net'].filter(Boolean);
+    const mine=(!own && ClientSettings.get('relaysEnabled')) ? userRelays() : [];
+    return [...new Set([own, 'wss://relay.nsec.app', 'wss://relay.damus.io',
+                        'wss://relay.primal.net', ...mine].filter(Boolean))];
   }
   async function loginAmberNostrConnect(){
     amberErr(''); const btn=$('#btn-amber-nc'); btn.disabled=true; btn.textContent='preparing…';
@@ -1309,16 +1303,34 @@
       const { uri, done }=await Nip46.beginNostrConnect(_ncRelays(), 'PosterChan');
       $('#amber-nc-uri').textContent=uri;
       const open=$('#amber-nc-open'); if(open) open.href=uri;
-      // QR of the nostrconnect:// URI → scan it with a phone signer (Primal-style mobile login).
-      // Fire-and-forget: the QR is a convenience, it must NEVER block/break the actual login flow.
-      const qr=$('#amber-nc-qr');
+      /* QR of the nostrconnect:// URI → scan it with a phone signer (Primal-style mobile login).
+       *
+       * It is RENDERED BY THE SERVER (/client/qr), so with no instance — or one that is unreachable,
+       * which is every .onion the moment Tor is not routing — there is no QR and the box showed only
+       * its "…or scan with a signer on another device" label above an empty space. Silently: the
+       * .catch() swallowed it, on the theory that a missing convenience must not break the login.
+       * That was right about not throwing and wrong about saying nothing, because the QR IS the
+       * instruction on this screen — with it absent the screen tells you to scan nothing.
+       *
+       * Still fire-and-forget, but the label now admits it and points at the URI, which is on screen,
+       * copyable, and works in every signer a QR would have reached. */
+      const qr=$('#amber-nc-qr'), qrLbl=$('#amber-nc-qrlbl');
       if(qr){ qr.classList.add('hidden');
+        const noQr=(why)=>{ if(qrLbl) qrLbl.textContent = _standalone()
+          ? 'No QR without a server — copy the link below into your signer instead.'
+          : 'Couldn’t draw the QR (' + why + ') — copy the link below into your signer instead.'; };
         fetch('/client/qr',{method:'POST',headers:{'Content-Type':'text/plain'},body:uri})
-          .then(r=> r.ok ? r.blob() : null)
-          .then(b=>{ if(b){ qr.src=URL.createObjectURL(b); qr.classList.remove('hidden'); } })
-          .catch(()=>{}); }
+          .then(r=> r.ok ? r.blob() : Promise.reject(new Error('HTTP '+r.status)))
+          .then(b=>{ qr.src=URL.createObjectURL(b); qr.classList.remove('hidden');
+                     if(qrLbl) qrLbl.textContent='…or scan with a signer on another device'; })
+          .catch(e=> noQr((e && e.message) || 'offline')); }
       $('#amber-nc-status').textContent='waiting for the signer to approve…';
       $('#amber-nc-box').classList.remove('hidden');
+      // Re-enable the button NOW rather than in `finally`. `done` does not settle until the signer
+      // approves or its 180s timeout fires, so leaving it disabled meant three minutes of a dead
+      // control with a "waiting…" line under it — indistinguishable from the app having locked up, and
+      // there was no way to abandon the attempt and try another route.
+      btn.disabled=false; btn.textContent='↻ Start over';
       const { userPk, session }=await done; finishAmberLogin(userPk, session);
     }catch(e){ amberErr(e.message||'could not connect'); Nip46.reset(); $('#amber-nc-box').classList.add('hidden'); }
     finally{ btn.disabled=false; btn.textContent='📲 Open in Amber / scan QR'; }
@@ -1413,6 +1425,122 @@
       Session.save({ mode:'local', sk: r.sk }); startApp();
     } catch(e){ authErr('invalid nsec'); }
   }
+  /* ---------- the connection chooser on the SIGN-IN screen (native builds only) ----------
+   *
+   * Settings has the same controls, but Settings is behind the login — so wanting your own relays, or
+   * none, meant first signing in to somebody else's instance to go and find the switch. On a fresh APK
+   * that is the only server anyone has, which made "be independent of an instance" a thing you could
+   * only choose after depending on one.
+   *
+   * Browser: hidden. The instance IS the site you opened, and there is nothing to pick.
+   */
+  function _bindAuthConn(){
+    const row = $('#auth-conn-row'); if(!row || !BUNDLED) return;
+    row.classList.remove('hidden');
+    _paintAuthConn();
+    const login = $('#auth-login'), pane = $('#auth-conn');
+    const show = (on)=>{ if(!pane||!login) return;
+      login.classList.toggle('hidden', on); pane.classList.toggle('hidden', !on);
+      if(on){ _fillAuthConnFields(); } };
+    { const b=$('#btn-auth-conn'); if(b) b.onclick=()=>show(true); }
+    { const b=$('#btn-conn-back'); if(b) b.onclick=()=>{ _connErr(''); show(false); }; }
+    { const b=$('#btn-conn-instance'); if(b) b.onclick=()=>{
+        const raw=(($('#conn-instance')||{}).value||'').trim();
+        if(!raw){ _connErr('enter a server address, or choose “Use no server”'); return; }
+        const u=_normInstance(raw);
+        if(!u){ _connErr('that doesn’t look like a server address'); return; }
+        _connErr(''); _setInstanceFromAuth(u);
+      }; }
+    { const b=$('#btn-conn-none'); if(b) b.onclick=async()=>{
+        /* Dropping the server is independent of the relay list — the two are separate settings and this
+         * button must not quietly rewrite the other one. It only checks that SOMETHING will be left to
+         * talk to: with a server there is always its built-in relay to fall back on, without one the
+         * relays are all there is, so an empty list here would leave the app connected to nothing.
+         * `_relaysReady()` accepts an already-saved list just as happily as the box's contents. */
+        if(!_relaysReady()) return;
+        _connErr(''); _setInstanceFromAuth('');
+      }; }
+    { const b=$('#btn-conn-relays'); if(b) b.onclick=()=>{ _saveAuthRelays(); }; }
+  }
+  function _connErr(m){ const e=$('#conn-error'); if(e) e.textContent=m||''; }
+  // Normalise a typed server address. A bare .onion gets http:// — a hidden service is plain HTTP (Tor
+  // itself is the encryption and the authentication) — and anything without a plausible host is refused
+  // rather than turned into https://typo, which would just fail to load with no explanation.
+  function _normInstance(u){
+    u=String(u||'').trim(); if(!u) return '';
+    if(!/^https?:\/\//i.test(u)) u=(/\.onion$/i.test(u.split('/')[0].split(':')[0]) ? 'http://' : 'https://')+u;
+    u=u.replace(/\/+$/,'');
+    let host=''; try{ host=new URL(u).hostname; }catch(_){ return ''; }
+    const ok = host==='localhost' || /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(host);
+    return ok ? u : '';
+  }
+  function _paintAuthConn(){
+    const l=$('#auth-conn-label'); if(!l) return;
+    const b=_instanceBase();
+    l.textContent = b ? ('Server: ' + b.replace(/^https?:\/\//,'')) : 'No server';
+  }
+  function _fillAuthConnFields(){
+    const i=$('#conn-instance'); if(i && !i.value) i.value=_instanceBase().replace(/^https?:\/\//,'');
+    const t=$('#conn-relays');
+    // Seeded from the saved list when there is one, else the same defaults Settings offers — an empty
+    // box would ask someone to already know which relays exist.
+    if(t && !t.value){ const cur=userRelays(); t.value=(cur.length?cur:defaultRelays().filter(Boolean)).join('\n'); }
+    const s=$('#conn-note'); if(s) s.textContent='';
+  }
+  // The relay URLs currently typed into the box, normalised and deduped.
+  function _authRelayUrls(){
+    const t=$('#conn-relays'); if(!t) return [];
+    return [...new Set(String(t.value||'').split(/[\s,]+/).map(u=>normalizeRelay(u)).filter(Boolean))];
+  }
+  /* Will this app have a relay to talk to once the server is gone? True if the box has one OR a list is
+   * already saved — it is a precondition check, not a save, so it must not treat "the user set their
+   * relays earlier and has not retyped them" as an error. */
+  function _relaysReady(){
+    if(_authRelayUrls().length || userRelays().length) return true;
+    _connErr('add at least one relay first — with no server, relays are the only thing the app can talk to');
+    return false;
+  }
+  /* Write the relay box to client settings. Independent of the server: it never reads or changes the
+   * instance, exactly as choosing a server never touches this list.
+   *
+   * relaysEnabled goes on because editing the list here IS the act of choosing your own relays — this
+   * surface has no separate switch, and leaving it off would save the list and then silently keep using
+   * the built-in relay anyway. */
+  /* Persist the box without reloading. Split out because BOTH server buttons reload on their own, and
+   * they must not throw away relay edits made just above them: the two settings are independent, which
+   * means neither may quietly discard the other's unsaved work. No-op when the box is empty or unchanged,
+   * so pressing Connect never rewrites a relay list the user did not touch. */
+  function _persistAuthRelays(){
+    const urls=_authRelayUrls();
+    if(!urls.length) return false;
+    if(JSON.stringify(urls)===JSON.stringify(userRelays())) return false;
+    ClientSettings.set('relays', urls); ClientSettings.set('relaysEnabled', true);
+    return true;
+  }
+  function _saveAuthRelays(){
+    const urls=_authRelayUrls();
+    if(!urls.length){ _connErr('add at least one relay, one per line'); return false; }
+    ClientSettings.set('relays', urls); ClientSettings.set('relaysEnabled', true);
+    _connErr('');
+    const s=$('#conn-note'); if(s) s.textContent='✓ saved '+urls.length+' relay'+(urls.length===1?'':'s')+' — reconnecting…';
+    // Reload rather than reconnect in place: the pool, the local Store's view of it and every live
+    // subscription are all built at boot, and Settings takes the same route for the same reason.
+    setTimeout(()=>{ try{ location.reload(); }catch(_){} }, 700);
+    return true;
+  }
+  function _setInstanceFromAuth(u){
+    // Carry any relay edits over the reload this is about to do — see _persistAuthRelays.
+    const carried=_persistAuthRelays();
+    const s=$('#conn-note');
+    if(s) s.textContent = (carried ? 'relays saved · ' : '')
+      + (u ? ('connecting to '+u.replace(/^https?:\/\//,'')+'…') : 'switching to no server…');
+    // Remember it for the Settings quick-picks, exactly as switching from Settings does.
+    if(u){ try{ const r=JSON.parse(localStorage.getItem('pc_instances')||'[]');
+      localStorage.setItem('pc_instances', JSON.stringify([...new Set([u, ...r])].slice(0,6))); }catch(_){} }
+    if(window.__PC_SET_INSTANCE__) window.__PC_SET_INSTANCE__(u);
+    else { try{ localStorage.setItem('pc_instance', u); }catch(_){} setTimeout(()=>location.reload(), 300); }
+  }
+
   let _gen = null, _captchaToken = null;
   async function genKey(){
     _gen = await Relay.worker.call('genKey', {});
@@ -1421,7 +1549,12 @@
     _ensureCaptchaUI(); loadCaptcha();
   }
   // Captcha gating new-account WoT admission (anti-spam/DDoS). Injected above the "Create account" button.
+  // NOT drawn with no instance: the captcha exists to gate admission to THIS NODE's web-of-trust relay,
+  // and with no node there is nothing to be admitted to. Drawing it anyway put an unanswerable box in
+  // front of the button (the image comes from /client/captcha) and signupGo refused to proceed without an
+  // answer — so on a relays-only install you could not create an identity at all.
   function _ensureCaptchaUI(){
+    if(_standalone()) return;
     if($('#signup-captcha-box')) return; const go=$('#btn-signup-go'); if(!go||!go.parentNode) return;
     const box=document.createElement('div'); box.id='signup-captcha-box'; box.className='captcha-box';
     box.innerHTML=`<div class="captcha-lbl">🤖 Prove you're human</div>
@@ -1432,6 +1565,7 @@
     $('#signup-captcha').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); signupGo(); } };
   }
   async function loadCaptcha(){
+    if(_standalone()) return;   // no node to gate admission to, and no /client/captcha to ask
     const img=$('#signup-captcha-img'); if(img){ img.src=''; img.alt='loading…'; }
     try{ const r=await fetch('/client/captcha').then(r=>r.json());
       _captchaToken=r.token; if(img) img.src=r.image; const inp=$('#signup-captcha'); if(inp){ inp.value=''; inp.focus(); } }
@@ -1439,17 +1573,26 @@
   }
   async function signupGo(){
     if (!_gen) return;
-    const ans = (($('#signup-captcha')||{}).value||'').trim();
-    if (!ans){ $('#signup-status').textContent = 'enter the captcha code'; const i=$('#signup-captcha'); if(i) i.focus(); return; }
-    // WoT admission is gated by the captcha — do it FIRST. If the captcha fails, abort + reload it and
-    // create NO local session, so a bot can't spin up admitted accounts.
-    $('#signup-status').textContent = 'checking…';
-    let res; try {
-      res = await fetch('/client/signup-follow', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ pubkey: _gen.pubkey, captcha_token: _captchaToken, captcha_answer: ans }) }).then(r=>r.json());
-    } catch(_){ res = { ok:false, error:'net' }; }
-    if (res && res.error==='captcha'){ $('#signup-status').textContent = '❌ captcha incorrect — try again'; loadCaptcha(); return; }
-    // captcha passed → set up the local session
+    /* With no instance there is no captcha to answer, no web-of-trust to be admitted to and no identity
+     * server to claim a NIP-05 from — a key is simply a key. So the whole server half is skipped rather
+     * than attempted-and-tolerated: every one of those calls would fail, and the captcha check below
+     * would have refused to go on at all. What remains is what a Nostr account actually is: a keypair,
+     * a local session, and a kind-0 published to the user's own relays. */
+    const solo = _standalone();
+    let res = null;
+    if (!solo) {
+      const ans = (($('#signup-captcha')||{}).value||'').trim();
+      if (!ans){ $('#signup-status').textContent = 'enter the captcha code'; const i=$('#signup-captcha'); if(i) i.focus(); return; }
+      // WoT admission is gated by the captcha — do it FIRST. If the captcha fails, abort + reload it and
+      // create NO local session, so a bot can't spin up admitted accounts.
+      $('#signup-status').textContent = 'checking…';
+      try {
+        res = await fetch('/client/signup-follow', { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ pubkey: _gen.pubkey, captcha_token: _captchaToken, captcha_answer: ans }) }).then(r=>r.json());
+      } catch(_){ res = { ok:false, error:'net' }; }
+      if (res && res.error==='captcha'){ $('#signup-status').textContent = '❌ captcha incorrect — try again'; loadCaptcha(); return; }
+    }
+    // captcha passed (or there was none) → set up the local session
     $('#signup-status').textContent = 'registering…';
     await Relay.worker.call('setKey', { sk: _gen.sk });
     signer = makeSigner('local', _gen.pubkey); ME = { mode:'local', pubkey: _gen.pubkey, npub: _gen.npub };
@@ -1459,7 +1602,7 @@
     // event so names can't be squatted). The node assigns a free name@domain and returns it.
     const nm = $('#signup-name').value.trim();
     let nip05 = null;
-    try {
+    if (!solo) try {
       const auth = await sign(27235, 'claim-nip05', [['p', _gen.pubkey]]);
       const r = await fetch('/client/claim-nip05', { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ pubkey: _gen.pubkey, name: nm, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
@@ -17190,20 +17333,10 @@
       // it removed the picker precisely when it was the only way back to an instance.
       if(pick && inp && go && BUNDLED){
         const cur=_instanceBase();
-        // Normalise to https://host, and REJECT anything that isn't a plausible domain — otherwise a typo
-        // ('asdf') would become https://asdf and the app would switch/reload to a dead instance. Returns '' if
-        // the input isn't a valid host (needs a dot + a TLD, or is localhost/an IP).
-        const norm=u=>{
-          u=(u||'').trim(); if(!u) return '';
-          // A bare .onion gets http://, not https:// — a hidden service is plain HTTP (Tor itself is the
-          // encryption + authentication), and our own onion publishes port 80 only, so defaulting to
-          // https there produces an address that can never connect. An explicit scheme is respected.
-          if(!/^https?:\/\//i.test(u)) u=(/\.onion$/i.test(u.split('/')[0].split(':')[0]) ? 'http://' : 'https://')+u;
-          u=u.replace(/\/+$/,'');
-          let host=''; try{ host=new URL(u).hostname; }catch(_){ return ''; }
-          const ok = host==='localhost' || /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(host);
-          return ok ? u : '';
-        };
+        // ONE normaliser, shared with the sign-in chooser (_normInstance): the two surfaces set the same
+        // setting, so a rule that held on one and not the other — which .onion scheme, which hosts count
+        // as plausible — would be a bug the moment they disagreed.
+        const norm=_normInstance;
         let recent=[]; try{ recent=JSON.parse(localStorage.getItem('pc_instances')||'[]'); }catch(_){}
         const opts=[...new Set([cur, 'https://poster.place', ...recent].map(norm).filter(Boolean))];
         pick.innerHTML=opts.map(u=>`<button class="instance-chip${u===cur?' on':''}" data-u="${enc(u)}">${enc(u.replace(/^https?:\/\//,''))}${u===cur?' ✓':''}</button>`).join('');

@@ -114,7 +114,47 @@
                 <span class="muted small">New here?</span>
                 <button id="btn-show-signup" class="btn btn-ghost full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Create a new identity</button>
             </div>
+            <!-- Which server/relays this app talks to, BEFORE signing in. Native builds only (app.js
+                 unhides it when bundled): in a browser the instance is simply the site you opened.
+                 It belongs here and not only in Settings, because Settings is behind the login — so
+                 someone who wants their own relays, or none, had to first sign in to somebody else's
+                 instance to find the switch. Filled in by _paintAuthConn(). -->
+            <div class="auth-conn hidden" id="auth-conn-row">
+                <button id="btn-auth-conn" class="auth-conn-btn" type="button">
+                    <svg class="ic b-ic" aria-hidden="true"><use href="#i-relay"></use></svg>
+                    <span id="auth-conn-label">Connecting to…</span>
+                    <span class="auth-conn-go">change</span>
+                </button>
+            </div>
             <div id="auth-error" class="auth-error"></div>
+        </div>
+
+        <!-- Connection chooser. A third answer alongside "this instance" and "another instance": none at
+             all, which runs the app on relays and your key only. -->
+        <!-- TWO INDEPENDENT SETTINGS, not a fork. Relays are where your posts live and are ALWAYS yours
+             to set; a server is an optional extra that adds AI, media rendering, streams and the file
+             manager. Every combination is legitimate — your own relays WITH a server, our relays with no
+             server, both, neither. An earlier draft made this a choice between "use a server" and "use
+             relays only", which quietly said you had to give up the server to pick your relays. -->
+        <div id="auth-conn" class="auth-pane hidden">
+            <div class="auth-sec">
+                <span class="auth-sec-t">Relays <span class="auth-sec-n">— where your posts live</span></span>
+                <p class="muted small">One per line. Pre-filled with the relays PosterChan uses — replace them
+                    with your own at any time. These apply whether or not you use a server.</p>
+                <textarea id="conn-relays" class="input" rows="5" autocapitalize="none" autocorrect="off" spellcheck="false"></textarea>
+                <button id="btn-conn-relays" class="btn btn-neon full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-relay"></use></svg>Save relays</button>
+            </div>
+            <div class="auth-sec">
+                <span class="auth-sec-t">Server <span class="auth-sec-n">— optional</span></span>
+                <p class="muted small">Adds AI, Meme Builder, News, Torrents and Server Stats. Without one the
+                    app still does Social, Messages, Notifications, Notes, Passwords, Budget, Calls and the games.</p>
+                <input id="conn-instance" class="input" type="text" inputmode="url" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="poster.place, your-server.com, or a .onion">
+                <button id="btn-conn-instance" class="btn btn-cyan full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-globe"></use></svg>Connect to this server</button>
+                <button id="btn-conn-none" class="btn btn-ghost full">Use no server</button>
+            </div>
+            <button id="btn-conn-back" class="btn btn-ghost full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>back</button>
+            <div id="conn-note" class="muted small"></div>
+            <div id="conn-error" class="auth-error"></div>
         </div>
 
         <div id="auth-amber" class="auth-pane hidden">
@@ -126,7 +166,10 @@
             <button id="btn-amber-nc" class="btn btn-cyan full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Open in Amber / scan QR</button>
             <div id="amber-nc-box" class="keybox hidden">
                 <a id="amber-nc-open" class="btn btn-neon full" href="#"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Tap to open in Amber</a>
-                <label>…or scan with a signer on another device</label>
+                <!-- Wording is REPLACED by loginAmberNostrConnect when the QR cannot be drawn: /client/qr
+                     is server-rendered, so with no instance (or an unreachable one over Tor) this label
+                     would otherwise tell you to scan a QR that is not there. -->
+                <label id="amber-nc-qrlbl">…or scan with a signer on another device</label>
                 <img id="amber-nc-qr" class="nc-qr hidden" alt="scan to sign in">
                 <div class="keyrow"><code id="amber-nc-uri"></code><button class="mini" data-copy="amber-nc-uri">copy</button></div>
                 <div class="muted small" id="amber-nc-status">waiting for the signer to approve…</div>
