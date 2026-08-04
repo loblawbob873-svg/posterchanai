@@ -91,3 +91,45 @@ class ExtensionCore(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BundleCompleteness(unittest.TestCase):
+    """Both artifacts must ship every file the add-on needs.
+
+    The .zip goes to AMO and the tarball is what people extract for about:debugging. They were
+    assembled from two hand-kept lists — one in build.sh, one in the CI workflow — so the signer's
+    inject.js/approve.html/approve.js went into the zip and not the tarball. That is not a partial
+    add-on: the manifest names inject.js as a content script, so Firefox refuses to load the whole
+    thing, and the release's own install instructions pointed at that tarball.
+    """
+
+    def test_build_sh_has_one_file_list(self):
+        with open(os.path.join(REPO, "extension", "build.sh"), encoding="utf-8") as f:
+            s = f.read()
+        self.assertIn('zip -qr dist/posterchan-passwords.zip $FILES', s)
+        self.assertIn('tar czf dist/posterchan-passwords-unpacked.tar.gz $FILES', s)
+
+    def test_ci_does_not_keep_its_own_list(self):
+        wf = os.path.join(REPO, ".github", "workflows", "extension.yml")
+        with open(wf, encoding="utf-8") as f:
+            s = f.read()
+        self.assertNotIn("tar czf dist/posterchan-passwords-unpacked.tar.gz \\", s,
+                         "CI is assembling the tarball again instead of using build.sh's")
+
+    def test_every_manifest_file_is_in_the_list(self):
+        with open(MANIFEST, encoding="utf-8") as f:
+            m = json.load(f)
+        with open(os.path.join(REPO, "extension", "build.sh"), encoding="utf-8") as f:
+            files = set(f.read().split('FILES="', 1)[1].split('"', 1)[0].replace("\\", "").split())
+        want = set()
+        for cs in m.get("content_scripts", []):
+            want |= set(cs.get("js", [])) | set(cs.get("css", []))
+        want |= set(m.get("background", {}).get("scripts", []))
+        popup = m.get("action", {}).get("default_popup")
+        if popup:
+            want.add(popup)
+        for war in m.get("web_accessible_resources", []):
+            want |= set(war.get("resources", []))
+        want |= {"approve.html", "approve.js"}       # opened by the extension, not named in the manifest
+        missing = sorted(f for f in want if f not in files and "/" not in f)
+        self.assertEqual(missing, [], "not shipped: %s" % missing)

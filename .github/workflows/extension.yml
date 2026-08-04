@@ -50,18 +50,24 @@ jobs:
           echo "app: $a"; echo "ext: $b"
           [ "$a" = "$b" ] || { echo "::error title=vaultcore drift::the extension is shipping a different core than the app"; exit 1; }
 
-      - name: Also publish an unpacked bundle (for about:debugging)
+      # The unpacked tarball is built by build.sh, from the SAME file list as the .zip. It used to
+      # be assembled here instead, and drifted: the NIP-07 signer's three files went into the zip
+      # and not the tarball, which does not mean a partial add-on — the manifest names inject.js as
+      # a content script, so Firefox refuses to load the whole thing. The release's own install
+      # instructions pointed at that tarball.
+      - name: Show what was built
         run: |
-          cd extension
-          tar czf dist/posterchan-passwords-unpacked.tar.gz \
-            manifest.json background.js content.js content.css \
-            popup.html popup.js popup.css vaultcore.js vendor icons
-          ls -la dist/
+          ls -la extension/dist/
+          tar tzf extension/dist/posterchan-passwords-unpacked.tar.gz
 
       # Same reason as the APK workflow: GitHub stamps a release's date when the release OBJECT is
       # created, so replacing an asset under a rolling tag leaves it reading "2 days ago" next to a
       # build made a minute ago. Delete and let the next step recreate it with an honest date; the
       # tag and the download URL survive.
+      - name: Read the version the manifest actually declares
+        id: ver
+        run: echo "v=$(python3 -c "import json;print(json.load(open('extension/manifest.json'))['version'])")" >> "$GITHUB_OUTPUT"
+
       - name: Retire the previous rolling release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -79,11 +85,17 @@ jobs:
             `about:debugging` → This Firefox → Load Temporary Add-on → pick `manifest.json`.
             (Temporary add-ons unload when Firefox restarts.)
 
-            **Permanent / Android:** needs a Mozilla-signed build — see docs/PASSWORDS.md.
+            **Permanent / Android:** install the Mozilla-signed build from addons.mozilla.org.
+            A build from here is unsigned, and release Firefox (desktop and Android) will only
+            install it temporarily. See docs/PASSWORDS.md.
+
+            **Nostr sign-in (NIP-07):** once paired with full access, this provides `window.nostr`,
+            so a Nostr site can log you in with your key. Each site is asked for once, per event
+            kind, in a real browser window; review or revoke it under **Sites** in the popup.
 
             Pair it from the app: Passwords → Pair a device.
 
-            Build 1.0.${{ github.run_number }}.
+            Version ${{ steps.ver.outputs.v }} (build ${{ github.run_number }}).
           files: |
             extension/dist/posterchan-passwords.zip
             extension/dist/posterchan-passwords-unpacked.tar.gz

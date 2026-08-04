@@ -27,14 +27,46 @@ if [ ! -f icons/icon-96.png ]; then
   python3 make-icons.py || echo "note: icons not generated (no Pillow) — using whatever is in icons/"
 fi
 
-rm -f dist/posterchan-passwords.zip
-zip -qr dist/posterchan-passwords.zip \
-  manifest.json background.js content.js content.css inject.js \
-  popup.html popup.js popup.css approve.html approve.js \
-  vaultcore.js vendor icons \
-  -x '*.DS_Store'
+# ONE list, both artifacts. The .zip goes to AMO and the tarball is what people extract for
+# about:debugging, and they were maintained separately — in build.sh and again in the CI workflow —
+# so the signer's three new files went into the zip and not the tarball. That is not a partial
+# bundle, it is an UNLOADABLE one: the manifest names inject.js as a content script, so Firefox
+# rejects the whole add-on rather than quietly running without it. Anyone following the release's
+# own install instructions got that.
+FILES="manifest.json background.js content.js content.css inject.js \
+       popup.html popup.js popup.css approve.html approve.js \
+       vaultcore.js vendor icons"
 
-echo "built dist/posterchan-passwords.zip"
+# Every file the manifest references must actually be in the bundle. Cheap, and it is the check that
+# would have caught the above the moment inject.js was added.
+python3 - "$FILES" <<'EOF'
+import json, os, sys
+shipped = set(sys.argv[1].split())
+m = json.load(open('manifest.json'))
+want = set()
+for cs in m.get('content_scripts', []):
+    want |= set(cs.get('js', [])) | set(cs.get('css', []))
+for k in ('background',):
+    want |= set(m.get(k, {}).get('scripts', []))
+for p in (m.get('action', {}).get('default_popup'),):
+    if p: want.add(p)
+for war in m.get('web_accessible_resources', []):
+    want |= set(war.get('resources', []))
+missing = sorted(f for f in want if f not in shipped and not os.path.dirname(f))
+if missing:
+    sys.exit('the manifest references files the bundle does not ship: ' + ', '.join(missing))
+# The pages the extension opens itself are not in the manifest at all — name them here so they
+# cannot be dropped either.
+for f in ('approve.html', 'approve.js'):
+    if f not in shipped:
+        sys.exit(f + ' is missing from the bundle; the approval prompt cannot open')
+EOF
+
+rm -f dist/posterchan-passwords.zip dist/posterchan-passwords-unpacked.tar.gz
+zip -qr dist/posterchan-passwords.zip $FILES -x '*.DS_Store'
+tar czf dist/posterchan-passwords-unpacked.tar.gz $FILES
+
+echo "built dist/posterchan-passwords.zip and dist/posterchan-passwords-unpacked.tar.gz"
 echo
 echo "Load it in Firefox:      about:debugging -> This Firefox -> Load Temporary Add-on -> manifest.json"
 echo "Firefox for Android:     about:debugging on the desktop, with the phone connected over USB,"
