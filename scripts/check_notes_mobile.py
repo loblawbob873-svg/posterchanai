@@ -731,17 +731,15 @@ async def drive(url):
                         problems.append((label, "backup-unsaveable",
                                          f"could not run the backup test ({(bk or {}).get('error')})"))
                     else:
-                        if bk["attachmentReads"]:
-                            problems.append((label, "backup-unsaveable",
-                                             f"the save dialog was refused and it still read "
-                                             f"{bk['attachmentReads']} attachment(s) into memory — "
-                                             "a real library is gigabytes"))
                         if not bk["downloaded"]:
                             problems.append((label, "backup-unsaveable",
-                                             "the save dialog was refused and nothing was saved at all"))
-                        if "WITHOUT" not in (bk["said"] or ""):
+                                             "no save dialog and nothing was downloaded at all"))
+                        # Firefox has NO showSaveFilePicker, so this is every Firefox user. Dropping
+                        # the attachments there means their backup is not a backup of their library.
+                        if not bk["attachmentReads"]:
                             problems.append((label, "backup-unsaveable",
-                                             f"the backup silently dropped the attachments (said: {bk['said']!r})"))
+                                             "the attachments were skipped because the browser has no "
+                                             "save dialog — they must be written in parts instead"))
 
                 # And the one that isn't about layout at all.
                 w3 = await js(OFFLINE_WRITE, awaited=True)

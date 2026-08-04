@@ -1023,12 +1023,28 @@
     // `canStream` (which only means the API EXISTS), is what turned a refused save dialog into an
     // attempt to assemble a multi-gigabyte archive in memory — the exact failure the streaming path
     // was written to avoid, reached by the fallback that was supposed to be the safe one.
-    let withFiles = resCount > 0 && canStream;
+    /* ATTACHMENTS COME TOO, EVEN WITHOUT A FILE PICKER.
+     *
+     * showSaveFilePicker is Chromium-only — FIREFOX DOES NOT HAVE IT — so `canStream` is false there
+     * for everyone, and this used to answer that by silently dropping every attachment from the
+     * backup. A backup of a note library without its pictures is not a backup of that library, and
+     * "this browser can't stream to disk" explained the mechanism to someone who wanted their files.
+     *
+     * Without a file handle the archive has to be held in memory until it is handed over, so it is
+     * written in PARTS instead: each part is a complete, valid .jex that imports on its own, and a
+     * part is closed and downloaded as soon as it reaches PART_MAX. Re-importing them in any order
+     * updates by id rather than duplicating, which is what makes splitting safe. */
+    const PART_MAX = 150 * 1024 * 1024;
+    let withFiles = resCount > 0;
+    let parted = withFiles && !canStream;
+    const partsEst = parted ? Math.max(1, Math.ceil(resBytes / PART_MAX)) : 1;
     const msg = `Back up ${notes.length} note${notes.length===1?'':'s'}` +
-      (resCount ? (withFiles
-        ? ` and ${resCount} attachment${resCount===1?'':'s'} (${(resBytes/1073741824).toFixed(2)} GB)`
-        : ` — WITHOUT the ${resCount} attachment(s), which this browser can't stream to disk`) : '') +
-      '.\n\nThe archive is a Joplin .jex and is NOT encrypted — anything in it is readable by ' +
+      (resCount ? ` and ${resCount} attachment${resCount===1?'':'s'} (${(resBytes/1073741824).toFixed(2)} GB)` : '') +
+      (parted ? `.\n\nThis browser has no save dialog, so the archive arrives as about ${partsEst} ` +
+                `download${partsEst===1?'':'s'} of up to 150 MB each. Each one is a complete .jex and ` +
+                `they import together, in any order.`
+              : '.') +
+      '\n\nThe archive is a Joplin .jex and is NOT encrypted — anything in it is readable by ' +
       'whoever holds the file. Keep it somewhere you trust.';
     if(!await uiConfirm(msg, {ok:'Back up'})) return;
 
@@ -1051,13 +1067,12 @@
       // No file handle → everything is held in memory until the end, so attachments are OUT. Say so
       // rather than producing an archive that is quietly missing the files, and say WHY when there
       // was a real error (a denied permission reads exactly like an unsupported browser otherwise).
-      if(withFiles){
-        withFiles = false;
-        toast(`backing up the notes WITHOUT the ${resCount} attachment(s)` +
-              (pickerErr ? ` — this device refused the save dialog (${pickerErr})` : ''));
-      } else if(pickerErr){
-        toast('this device refused the save dialog — saving to your downloads instead');
-      }
+      /* No file handle — either the browser has no picker (Firefox) or it refused one. Either way
+       * the attachments still go in; they are written in PARTS instead, because without a handle the
+       * archive is held in memory until it is handed over. Dropping them was the old answer and it
+       * was the wrong one: a note library without its pictures is not a backup of that library. */
+      parted = withFiles;
+      if(pickerErr) toast('no save dialog on this device — saving to your downloads instead');
     }
 
     /* Can the drive be opened at all? Asked ONCE, after we know attachments are actually going in,
@@ -1112,7 +1127,32 @@
         }
       }
     }
-    const put = async (u8) => { if(writer) await writer.write(u8); else parts.push(u8); };
+    /* One part's worth of bytes, flushed to a download when it gets big. With a real file handle
+     * there is only ever one "part" and nothing is held. */
+    let partNo = 0, partBytes = 0;
+    const download = (chunks, n) => {
+      const blob = new Blob(chunks, {type:'application/x-tar'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `posterchan-notes-${stamp}${n ? '-part' + n : ''}.jex`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(a.href), 60000);
+    };
+    const put = async (u8) => {
+      if(writer){ await writer.write(u8); return; }
+      parts.push(u8); partBytes += u8.length;
+    };
+    /* Close the current part at a note boundary and start the next. Never mid-note: a tar cut
+     * between a note's entry and its resource would produce a part that imports a note whose
+     * picture is in a file the importer has not been given yet. */
+    const rollPart = async () => {
+      if(writer || !parted || partBytes < PART_MAX) return;
+      parts.push(PCJoplin.tarEnd());
+      download(parts, ++partNo);
+      parts = []; partBytes = 0;
+      note(`part ${partNo} saved — keep going`);
+      await new Promise(r => setTimeout(r, 400));   // let the browser start the download
+    };
     const enc8 = new TextEncoder();
     const entry = async (name, bytes) => {
       await put(PCJoplin.tarHeader(name, bytes.length));
@@ -1174,14 +1214,12 @@
           }
         }
         if(++done % 20 === 0) note(`backing up… ${done}/${notes.length}`);
+        await rollPart();                     // only ever between notes
       }
-      await put(PCJoplin.tarEnd());
-      if(writer) await writer.close();
+      if(writer){ await put(PCJoplin.tarEnd()); await writer.close(); }
       else {
-        const blob = new Blob(parts, {type:'application/x-tar'});
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob); a.download = `posterchan-notes-${stamp}.jex`;
-        a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 20000);
+        parts.push(PCJoplin.tarEnd());
+        download(parts, partNo ? ++partNo : 0);
       }
       if(failed){
         // The most common reason, named, and the first few files by name — enough to act on.
