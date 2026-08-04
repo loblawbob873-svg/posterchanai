@@ -249,6 +249,7 @@ async function initBookmarks(){
        * guessing at the pairing mode and asserting it as fact when the real cause was a socket that
        * had not opened yet; the software knows which it is and should say so. */
       why: () => !cfg ? 'not paired'
+                : !B.bookmarks ? 'the browser has not granted the bookmarks permission to this extension'
                 : !(cfg.mode === 'full' && cfg.sk) ? 'this pairing is read-only — it has no signing key'
                 : !_anyOpen() ? 'no relay connection'
                 : '',
@@ -632,7 +633,13 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
          * publish its own (no signing key) — the same line the vault draws, stated in the popup
          * rather than discovered when nothing leaves this browser. */
         case 'bm-enable': {
-          if(!(BM && BM.engine)) return reply({ ok:false, error:'bookmark sync unavailable' });
+          if(!(BM && BM.engine)) return reply({ ok:false, error:'bookmark sync unavailable in this build' });
+          /* The permission is the one prerequisite the extension cannot arrange for itself: a browser
+           * that has not granted `bookmarks` gives us no API at all, and every call below would throw
+           * from inside a merge, where the message reads like a bug in the merge. */
+          if(!B.bookmarks) return reply({ ok:false,
+            error:'this browser has not granted the bookmarks permission — open the extension\'s ' +
+                  'details page and allow it, then try again' });
           const v = await BM.engine.setEnabled(!!msg.on);
           return reply({ ok:true, on:v, count: BM.engine.count() });
         }

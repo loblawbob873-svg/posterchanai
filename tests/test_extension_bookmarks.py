@@ -196,3 +196,33 @@ def test_publishing_waits_for_a_relay_socket():
     j = src.index("'EOSE'")
     assert "BM.engine.union()" in src[j:j + 600], \
         "nothing retries the unpublished bookmarks when a relay finally answers"
+
+
+def test_bookmarks_are_sealed_and_uncleanable():
+    """The two questions worth asking of anything new that lives on a relay: is it encrypted, and can
+    a cleaner delete it?
+
+    ENCRYPTED — the body goes through the vault's `seal`, AES-256-GCM under the 32-byte vault key with
+    a random IV, the same call a password uses. The relay holds ciphertext and cannot read a URL.
+
+    UNCLEANABLE — bookmarks are kind 30078, which is in the relay's `_NEVER_EXPIRE_KINDS`. That is not
+    incidental: NIP-37 recommends stamping drafts with `expiration: now+90d`, and the NIP-40 sweep is
+    otherwise unconditional, so any other client touching one of these events could have made it
+    vanish 90 days later from the relay holding the only copy. The tag is DROPPED at ingest rather
+    than merely un-swept (a stored expiration hides the event from every read), and the same kinds are
+    excluded from prune, with an assert that the two sets cannot overlap. Notes learned this the hard
+    way; bookmarks inherit it by being the same kind.
+    """
+    bg = open(os.path.join(ROOT, "extension", "background.js"), encoding="utf-8").read()
+    i = bg.index("async function publishBookmark(")
+    body = bg[i:i + 900]
+    assert "V.seal(key, item)" in body, "bookmark bodies must be sealed, not published in the clear"
+    assert "kind: KIND" in body, "bookmarks must publish under kind 30078"
+    assert "const KIND = 30078;" in bg
+
+    store = open(os.path.join(ROOT, "app", "services", "nostr_relay", "store.py"), encoding="utf-8").read()
+    assert "_NEVER_EXPIRE_KINDS = _GIT_KINDS + (30078,)" in store, \
+        "kind 30078 lost its expiry exemption — every bookmark, note and setting becomes deletable " \
+        "by a stray NIP-40 tag from any other client"
+    assert 'assert not (set(_NEVER_EXPIRE_KINDS) & set(_PRUNABLE_KINDS))' in store, \
+        "the never-expire/prunable overlap guard is gone"

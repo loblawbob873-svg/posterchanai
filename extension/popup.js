@@ -309,6 +309,13 @@ function paintBm(){
     const r = await send({ type:'bm-enable', on: b.checked });
     _bmOn = !!(r && r.on); _bmCount = (r && r.count) || 0;
     b.disabled = false; paintBm();
+    // An enable that FAILED used to leave the checkbox snapping back with no explanation, which is
+    // indistinguishable from a toggle that does not work.
+    if(r && r.ok === false) $('#bm-note').innerHTML = '<b>Could not turn it on:</b> ' +
+      String(r.error || 'unknown reason');
+    else if(!r) $('#bm-note').innerHTML =
+      '<b>No answer from the extension.</b> It may be disabled pending a new permission — check the ' +
+      'browser\'s extensions page.';
   }; }
 { const b = $('#bm-sync');
   if(b) b.onclick = async () => {
