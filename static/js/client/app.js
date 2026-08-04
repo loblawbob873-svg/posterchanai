@@ -1725,6 +1725,34 @@
   function startApp(){
     GUEST = !signer;   // a real login always has a signer; the guest sentinel does not
     document.body.classList.toggle('guest', GUEST);
+    /* ?next=/admin — where the server sent us to sign in from. /admin has no login page of its own
+     * (the password UI is retired; the cookie a Nostr sign-in sets IS the admin session), so a
+     * logged-out visit lands here. Without this it stopped at the timeline with no hint that a
+     * sign-in had been wanted, which is what "admin does not work over Tor" actually was: a .onion is
+     * a separate origin, so the clearnet cookie is never sent and every visit starts logged out.
+     *
+     * Same-origin PATHS only, re-validated here rather than trusted from the query string: the server
+     * refuses to emit anything else, and this must hold even if a link is hand-written. */
+    if(!GUEST){
+      try{
+        const nxt = new URLSearchParams(location.search).get('next') || '';
+        if(nxt.startsWith('/') && !nxt.startsWith('//') && !nxt.includes('\\')){
+          /* ONE hop per target, per tab. Being signed in HERE (a Nostr key) is not the same as having
+           * a session on the SERVER — a relays-only user has no server at all, and a cookie can have
+           * expired — so /admin can perfectly well bounce us straight back with the same ?next=. That
+           * is an infinite redirect between two pages that each think the other should act. */
+          const once = 'pc_next_once';
+          if(sessionStorage.getItem(once) === nxt){
+            sessionStorage.removeItem(once);
+            toast('That page needs a session on this server — sign in to it and try again.');
+          } else {
+            sessionStorage.setItem(once, nxt);
+            location.replace(nxt);
+            return;
+          }
+        } else { try{ sessionStorage.removeItem('pc_next_once'); }catch(_){ } }
+      }catch(_){ }
+    }
     // Cold-start speed: seed the follow set from its local cache NOW, before the relay connects, so the
     // Home feed paints from the persisted Store cache instantly (its filter is FOLLOWS) instead of showing
     // empty until the post-connect kind-3 hydration round-trip. fetchFollows reconciles it from the relay.
@@ -17115,7 +17143,11 @@
     let _curTheme=s.theme||_cachedTheme||siteDefaultTheme();
     if(!THEME_SLUGS.has(_curTheme)) _curTheme=siteDefaultTheme();   // stale/removed slug → don't desync the dropdown
     // Panes that need a server drop out entirely with no instance — see INSTANCE_SETTINGS_TABS.
-    const tabs=[['profile','Profile'],['relays','Relays'],['media','Media'],['zaps','Zaps'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']]
+    // Tor gets a tab only where there is a Tor control to put in it — the desktop shell (native tor)
+    // or Android (Orbot). It is deliberately NOT in INSTANCE_SETTINGS_TABS: a relays-only install is
+    // exactly where someone is most likely to want everything routed through Tor.
+    const _torTab = (_hasNativeTor() || !!window.Capacitor) ? [['tor','Tor']] : [];
+    const tabs=[['profile','Profile'],['relays','Relays'],..._torTab,['media','Media'],['zaps','Zaps'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']]
       .filter(t => !(_standalone() && INSTANCE_SETTINGS_TABS.has(t[0])));
     // Standalone has no built-in relay for the switch to fall back TO, so "use my own relays" is not a
     // choice there — the list IS the relay config, always on. The switch is hidden and forced checked
@@ -17165,24 +17197,7 @@
             <span class="input-row" style="display:flex;gap:6px;margin-top:6px"><button class="btn btn-ghost small${_standalone()?' active':''}" id="us-instance-none">${_standalone()?'✓ Relays only — no server':'Use relays only (no server)'}</button></span>
           </label>
           <div class="muted small">Which PosterChan server this app talks to for AI, media rendering and streams — your Nostr key and your posts never depend on it, they live on relays. Tap a quick-pick or type a domain, or paste a <code>.onion</code> address to connect over Tor. <b>Relays only</b> runs the app with no server at all: you keep Social, Messages, Notes, Passwords, Budget and the games, and the server-backed features are hidden until you name an instance again. Switching reloads the app.</div>
-          ${window.Capacitor ? `<div class="fld" id="us-tor-row" style="margin-top:10px">🧅 Tor
-            <div class="muted small" id="us-tor-state" style="margin-top:4px">Checking for Orbot…</div>
-            <span class="input-row" style="display:flex;gap:6px;margin-top:6px">
-              <button class="btn btn-ghost small" id="us-tor-start">Start Orbot</button>
-              <button class="btn btn-ghost small" id="us-tor-open">Open Orbot</button>
-            </span>
-          </div>` : ''}` : ''}
-          ${_hasNativeTor() ? `<div class="fld" id="us-ntor-row" style="margin-top:10px">🧅 Tor
-            <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center;margin:6px 0 0">Route everything through Tor<label class="switch"><input type="checkbox" id="us-ntor-on"><span class="slider"></span></label></label>
-            <div class="muted small" id="us-ntor-state" style="margin-top:4px">Checking…</div>
-            <label class="fld" style="margin-top:8px">Exit country
-              <select class="input" id="us-ntor-cc"></select>
-            </label>
-            <div class="muted small">Where your traffic leaves the Tor network — sites see an address in this country. <b>Any</b> is fastest and the most private; pinning one country narrows the pool of exits, so it is slower and more identifying. Not a guarantee: if no exit is available there, Tor will not connect rather than quietly use another.</div>
-            <span class="input-row" style="display:flex;gap:6px;margin-top:8px">
-              <button class="btn btn-ghost small" id="us-ntor-new">New circuit</button>
-            </span>
-          </div>` : ''}
+          ` : ''}
           ${_standalone() ? '' : `<label class="fld">Notification email<input class="input" id="us-email" value="${enc(s.notification_email||'')}" placeholder="you@example.com"></label>
           <label class="fld">News sources <span class="muted small">(one per line: url|name) — used by the <code>news</code> command</span><textarea class="input" id="us-news-src" rows="4">${enc(s.news_sources||'')}</textarea></label>`}
         </div>
@@ -17220,6 +17235,30 @@
           <div class="muted small">API keys let external apps use the AI API as you.</div>
           <div class="set-actions"><input class="input" id="us-key-name" placeholder="Key name (optional)"><button class="btn btn-ghost small" id="us-key-new">Generate new key</button></div>
           <div id="us-key-list"></div>
+        </div>
+        <!-- Tor has its own pane. It was two blocks bolted to the end of Profile, which by then also
+             carried the instance picker, the relays-only switch, the media cache and the email/news
+             fields — and Tor is not a profile setting, it is how the whole app reaches the network.
+             The wiring below is keyed on these ids and did not move. -->
+        <div class="us-pane" data-pane="tor">
+          ${_hasNativeTor() ? `<div class="fld" id="us-ntor-row">🧅 Tor
+            <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center;margin:6px 0 0">Route everything through Tor<label class="switch"><input type="checkbox" id="us-ntor-on"><span class="slider"></span></label></label>
+            <div class="muted small" id="us-ntor-state" style="margin-top:4px">Checking…</div>
+            <label class="fld" style="margin-top:8px">Exit country
+              <select class="input" id="us-ntor-cc"></select>
+            </label>
+            <div class="muted small">Where your traffic leaves the Tor network — sites see an address in this country. <b>Any</b> is fastest and the most private; pinning one country narrows the pool of exits, so it is slower and more identifying. Not a guarantee: if no exit is available there, Tor will not connect rather than quietly use another.</div>
+            <span class="input-row" style="display:flex;gap:6px;margin-top:8px">
+              <button class="btn btn-ghost small" id="us-ntor-new">New circuit</button>
+            </span>
+          </div>` : ''}
+          ${window.Capacitor ? `<div class="fld" id="us-tor-row">🧅 Tor
+            <div class="muted small" id="us-tor-state" style="margin-top:4px">Checking for Orbot…</div>
+            <span class="input-row" style="display:flex;gap:6px;margin-top:6px">
+              <button class="btn btn-ghost small" id="us-tor-start">Start Orbot</button>
+              <button class="btn btn-ghost small" id="us-tor-open">Open Orbot</button>
+            </span>
+          </div>` : ''}
         </div>
         <div class="us-pane" data-pane="relays">
           <label class="fld${_standalone()?' hidden':''}" style="flex-direction:row;justify-content:space-between;align-items:center">Use my own relays<label class="switch"><input type="checkbox" id="set-relays-on" ${relaysOn?'checked':''}><span class="slider"></span></label></label>

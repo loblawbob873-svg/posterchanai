@@ -434,9 +434,21 @@ def set_onion(enabled: bool, target: str = "", relay_port: int = 0):
 
 
 def get_onion_address():
-    """The deployment's current .onion address (from the primary daemon), or None."""
+    """The deployment's current .onion address, or None.
+
+    Falls back to READING THE HOSTNAME FILE when this process holds no daemon handle, which on a
+    role-split deployment is every process except the tor one. Without that fallback the admin page
+    asked the APP process — where `_services` is empty, so this returned None — and rendered
+    "starting… Tor is generating the address (a few seconds)" **forever**, on a deployment whose
+    .onion had existed for six weeks. `set_onion()` already knew about this case and used the global
+    read; the READ path did not, which is the whole bug: the address was never missing, only
+    unreachable from the process that was asked for it.
+
+    The file is the truth in either case — tor writes it, and it persists across restarts (that is
+    what makes the address stable), so preferring the handle buys nothing.
+    """
     svc = primary_service()
-    return svc.get_onion_address() if svc else None
+    return (svc.get_onion_address() if svc else None) or get_onion_address_global()
 
 
 def request_onion_host(request) -> str:

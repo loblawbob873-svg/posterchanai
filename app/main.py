@@ -5,6 +5,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse, HTMLResponse, FileResponse
 from sqlalchemy.orm import Session
 from datetime import datetime
+from urllib.parse import quote
 import os
 import logging
 import threading
@@ -1005,11 +1006,27 @@ async def desktop_asset(asset: str):
     return RedirectResponse(url=_DESKTOP_DL + name, status_code=302)
 
 
+def _safe_next(nxt: str) -> str:
+    """A same-origin PATH to return to after signing in, or "".
+
+    Must start with a single "/" and carry no scheme and no authority: "//evil.com" is a
+    protocol-relative URL that browsers follow off-site, so it is refused along with "http://…".
+    """
+    nxt = (nxt or "").strip()
+    if not nxt.startswith("/") or nxt.startswith("//") or "\\" in nxt or ":" in nxt.split("/")[0]:
+        return ""
+    return nxt[:200]
+
+
 @app.get("/login")
 async def login_page(request: Request, next: str = None):
     # Old password login UI retired — log in with your Nostr key in the unified client. (The session
     # cookie nostr-login sets is what /admin needs, so admins reach the panel from Settings → Admin.)
-    return RedirectResponse(url="/client", status_code=302)
+    #
+    # `next` used to be accepted and DISCARDED, which is half of why /admin was a dead end for anyone
+    # without a cookie: it bounced here and here forgot where they had been going.
+    nxt = _safe_next(next)
+    return RedirectResponse(url="/client" + (f"?next={quote(nxt, safe='')}" if nxt else ""), status_code=302)
 
 
 @app.get("/admin")
@@ -1019,7 +1036,15 @@ async def admin_page(
     current_user: User = Depends(get_current_user_optional)
 ):
     if not current_user:
-        return RedirectResponse(url="/login", status_code=302)
+        # Straight to the sign-in surface, CARRYING the destination. This used to redirect to /login,
+        # which redirects to /client, which dropped the request on the floor: two hops to end up on the
+        # timeline with no hint that a sign-in was wanted or where you had been headed.
+        #
+        # It reads as "admin is broken over Tor" because a .onion is a SEPARATE ORIGIN — the cookie from
+        # the clearnet host is never sent to it, so every visit there is logged-out and hits this path,
+        # while on the domain you already hold a session and never see it. Same for a new browser, a
+        # second device, or cleared cookies.
+        return RedirectResponse(url="/client?next=%2Fadmin", status_code=302)
     if not current_user.is_admin:
         return RedirectResponse(url="/", status_code=302)
     resp = templates.TemplateResponse("admin.html", {
