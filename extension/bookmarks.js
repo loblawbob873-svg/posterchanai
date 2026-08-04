@@ -52,8 +52,48 @@
   /* What identifies "the same bookmark" across browsers when the mapping is gone: its URL inside its
    * folder. Not the title — a title is renamed far more often than a bookmark is re-filed, and
    * matching on it re-creates duplicates every time someone tidies one up. */
+  /* WHICH top-level container a bookmark lives in. The toolbar is the one people notice: a bookmark
+   * put on the toolbar in one browser belongs on the toolbar in the other, and dumping everything into
+   * "other bookmarks" quietly loses the arrangement that made it worth syncing.
+   *
+   * Classified by ROOT ID first, because those are stable and documented — Chrome: '1' bar, '2' other,
+   * '3' mobile; Firefox: 'toolbar_____', 'menu________', 'unfiled_____', 'mobile______' — and by title
+   * only as a fallback, since titles are localised ("Lesezeichen-Symbolleiste") and a user can rename
+   * them. `menu` has no Chrome equivalent, so it lands in `other` there; that is a one-way squash and
+   * is why the root travels as a NAME rather than an id.
+   */
+  var ROOT_IDS = {
+    '1': 'toolbar', '2': 'other', '3': 'mobile',                       // Chrome / Edge / Brave
+    'toolbar_____': 'toolbar', 'menu________': 'menu',
+    'unfiled_____': 'other', 'mobile______': 'mobile',                 // Firefox
+  };
+  function classifyRoot(node) {
+    if (!node) return 'other';
+    if (ROOT_IDS[node.id]) return ROOT_IDS[node.id];
+    var t = String(node.title || '').toLowerCase();
+    if (t.indexOf('toolbar') >= 0 || t.indexOf('bookmarks bar') >= 0 || t.indexOf('favorites bar') >= 0)
+      return 'toolbar';
+    if (t.indexOf('menu') >= 0) return 'menu';
+    if (t.indexOf('mobile') >= 0) return 'mobile';
+    return 'other';
+  }
+
+  /* The top-level container a node sits under, as one of those names. */
+  function rootOf(nodesById, node) {
+    var cur = node, last = node, guard = 0;
+    while (cur && cur.parentId && guard++ < 64) {
+      var next = nodesById[cur.parentId];
+      if (!next) break;
+      if (!next.parentId) return classifyRoot(cur);        // `cur` IS the top-level container
+      last = cur = next;
+    }
+    return classifyRoot(last);
+  }
+
   function matchKey(item) {
-    return (item.folder || '') + '\n' + normUrl(item.url);
+    // The root is part of identity: the same URL on the toolbar and in "other bookmarks" is two
+    // bookmarks, and merging them would silently move one of them.
+    return (item.root || 'other') + '\n' + (item.folder || '') + '\n' + normUrl(item.url);
   }
 
   function normUrl(u) {
@@ -121,6 +161,7 @@
   root.PCBookmarks = {
     D_BM: D_BM, L_BM: L_BM,
     pathOf: pathOf, matchKey: matchKey, normUrl: normUrl,
+    rootOf: rootOf, classifyRoot: classifyRoot,
     isSyncable: isSyncable, newer: newer, planUnion: planUnion,
   };
 })(typeof self !== 'undefined' ? self : this);
@@ -154,14 +195,33 @@
     api.B.storage.local.set({ bmMap: map });
   }
 
+  /* WHAT IT KNOWS IS PERSISTED, and that is not an optimisation.
+   *
+   * Chrome kills an idle service worker within ~30s, so a popup opened a minute later ran against an
+   * engine that had forgotten every bookmark — "0 synced", on a browser that had just synced dozens.
+   * Worse than the wrong number: with `items` empty, a "Merge now" sees no remote state, so nothing
+   * is deduped and everything is published again.
+   *
+   * The vault caches its DECRYPTED items for exactly this reason, and the argument is the same here:
+   * this lives in extension storage right next to the vault key, so caching ciphertext instead would
+   * protect nothing while making every popup wait on a relay. */
   async function init(handles) {
     api = handles;
-    var got = await api.B.storage.local.get(['bmMap', 'bmOn']);
+    var got = await api.B.storage.local.get(['bmMap', 'bmOn', 'bmItems']);
     map = got.bmMap || {}; on = !!got.bmOn;
+    items = got.bmItems || {};
     rmap = {};
     Object.keys(map).forEach(function (s) { rmap[map[s]] = s; });
     if (on) listen();
     return on;
+  }
+
+  var _saveT = null;
+  function saveSoon() {
+    clearTimeout(_saveT);
+    _saveT = setTimeout(function () {
+      try { api.B.storage.local.set({ bmItems: items }); } catch (_) {}
+    }, 400);
   }
 
   function enabled() { return on; }
@@ -182,6 +242,7 @@
     if (cur && (cur._at || 0) > (ev.created_at || 0)) return;
     if (!ev.content) {
       items[id] = { removed: true, _at: ev.created_at || 0 };
+      saveSoon();
       if (on) await applyRemoval(id);
       return;
     }
@@ -189,6 +250,7 @@
     try { obj = await api.open(ev.content); } catch (_) { return; }   // another key's — not ours
     obj._at = ev.created_at || 0;
     items[id] = obj;
+    saveSoon();
     if (on) await applyUpsert(id, obj);
   }
 
@@ -208,15 +270,22 @@
       var existing = null;
       try { existing = (await api.B.bookmarks.get(bid))[0]; } catch (_) {}
       if (existing) {
-        if (existing.title === obj.title && P.normUrl(existing.url) === P.normUrl(obj.url)) return;
+        var want = await ensureFolder(obj.folder || '', obj.root);
+        var sameText = existing.title === obj.title && P.normUrl(existing.url) === P.normUrl(obj.url);
+        var samePlace = existing.parentId === want;
+        if (sameText && samePlace) return;
         writing.add(bid);
-        try { await api.B.bookmarks.update(bid, { title: obj.title || '', url: obj.url }); } catch (_) {}
+        // MOVES COUNT. Applying only the text left a bookmark dragged to the toolbar on one device
+        // sitting wherever it already was on every other one — which is most of what "sync my
+        // bookmarks" is asked to do.
+        try { if (!sameText) await api.B.bookmarks.update(bid, { title: obj.title || '', url: obj.url }); } catch (_) {}
+        try { if (!samePlace) await api.B.bookmarks.move(bid, { parentId: want }); } catch (_) {}
         setTimeout(function () { writing.delete(bid); }, 2000);
         return;
       }
       forget(id);                            // the mapping is stale — fall through and re-create
     }
-    var parent = await ensureFolder(obj.folder || '');
+    var parent = await ensureFolder(obj.folder || '', obj.root);
     var made = null;
     try { made = await api.B.bookmarks.create({ parentId: parent, title: obj.title || '', url: obj.url }); }
     catch (_) { return; }
@@ -224,15 +293,17 @@
                 remember(id, made.id); }
   }
 
-  /* Create the folder path if it is missing, under the browser's "other bookmarks" root — which is
-   * the one container every browser has and nobody's toolbar layout depends on. Placement is a
-   * decision made HERE rather than carried in the event, because the roots have different names and
-   * different ids in every browser (see pathOf). */
-  async function ensureFolder(path) {
+  /* Create the folder path if it is missing, under the container the bookmark came from — toolbar
+   * stays toolbar, which is the placement people actually notice. The root travels as a NAME because
+   * its id and title differ per browser (see classifyRoot); resolving it to a local id is a decision
+   * made HERE, on arrival. `menu` has no Chrome equivalent and falls back to `other`. */
+  async function ensureFolder(path, root) {
     var roots = await api.B.bookmarks.getTree();
     var kids = (roots[0] && roots[0].children) || [];
-    // "other" is conventionally the LAST root in both Firefox and Chrome; fall back to the first.
-    var base = (kids[kids.length - 1] || kids[0] || {}).id;
+    var byRoot = {};
+    kids.forEach(function (k) { byRoot[P.classifyRoot(k)] = k.id; });
+    var base = byRoot[root || 'other'] || byRoot.other || byRoot.toolbar ||
+               (kids[kids.length - 1] || kids[0] || {}).id;
     if (!path) return base;
     var parts = path.split('/').filter(Boolean), cur = base;
     for (var i = 0; i < parts.length; i++) {
@@ -262,7 +333,8 @@
       });
     })(tree);
     return flat.filter(P.isSyncable).map(function (n) {
-      return { id: n.id, title: n.title || '', url: n.url, folder: P.pathOf(byId, n) };
+      return { id: n.id, title: n.title || '', url: n.url,
+               folder: P.pathOf(byId, n), root: P.rootOf(byId, n) };
     });
   }
 
@@ -278,10 +350,15 @@
     var byId = {}, tree = await api.B.bookmarks.getTree();
     (function walk(ns) { (ns || []).forEach(function (n) { byId[n.id] = n; if (n.children) walk(n.children); }); })(tree);
     var syncId = rmap[browserId] || newId();
-    var item = { title: node.title || '', url: node.url, folder: P.pathOf(byId, node) };
-    remember(syncId, browserId);
-    items[syncId] = Object.assign({}, item, { _at: Math.floor(Date.now() / 1000) });
-    await publishOne(syncId, item);
+    var item = { title: node.title || '', url: node.url,
+                 folder: P.pathOf(byId, node), root: P.rootOf(byId, node) };
+    remember(syncId, browserId);                       // identity first, and permanently
+    var ok = await publishOne(syncId, item);
+    /* Only record it as KNOWN-ON-THE-RELAY when the relay said so. Recording it regardless is what
+     * makes a read-only pairing (or a dropped socket) look synced forever: union() dedupes against
+     * this map, so an entry that was never published would never be retried. The mapping above is
+     * kept either way — a retry must reuse the same sync id, or it publishes a duplicate. */
+    if (ok) { items[syncId] = Object.assign({}, item, { _at: Math.floor(Date.now() / 1000) }); saveSoon(); }
   }
 
   async function onLocalRemove(browserId) {
@@ -289,6 +366,7 @@
     var syncId = rmap[browserId];
     if (!syncId) return;                            // never synced — nothing to tell anyone
     items[syncId] = { removed: true, _at: Math.floor(Date.now() / 1000) };
+    saveSoon();
     forget(syncId);
     await api.publish(syncId, null);                // null = tombstone
   }
@@ -312,13 +390,16 @@
     var plan = P.planUnion(local, remote, map);
     plan.link.forEach(function (l) { remember(l.syncId, l.browserId); });
     for (var i = 0; i < plan.create.length; i++) await applyUpsert(plan.create[i].id, plan.create[i]);
+    var sent = plan.publish.length;
     for (var j = 0; j < plan.publish.length; j++) {
       var l = plan.publish[j], sid = rmap[l.id] || newId();
       remember(sid, l.id);
-      items[sid] = { title: l.title, url: l.url, folder: l.folder, _at: Math.floor(Date.now() / 1000) };
-      await publishOne(sid, { title: l.title, url: l.url, folder: l.folder });
+      var body = { title: l.title, url: l.url, folder: l.folder, root: l.root };
+      var ok = await publishOne(sid, body);
+      if (ok) { items[sid] = Object.assign({}, body, { _at: Math.floor(Date.now() / 1000) }); saveSoon(); }
+      else sent--;                                     // report what actually left, not what was tried
     }
-    return { created: plan.create.length, published: plan.publish.length,
+    return { created: plan.create.length, published: sent,
              linked: plan.link.length, ignoredTombstones: plan.skipRemoved };
   }
 

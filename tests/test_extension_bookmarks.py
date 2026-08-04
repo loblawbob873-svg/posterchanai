@@ -115,3 +115,63 @@ def test_newest_wins():
                       P.newer({v:'new',_at:2},{v:'old',_at:1}).v,
                       P.newer(null,{v:'only',_at:0}).v]);""")
     assert got == ["new", "new", "only"]
+
+
+def test_the_toolbar_stays_the_toolbar():
+    """A bookmark on the toolbar belongs on the toolbar in the other browser. Dumping everything into
+    "other bookmarks" loses the arrangement that made syncing worth doing.
+
+    Classified by root ID first — Chrome '1'/'2'/'3', Firefox 'toolbar_____' etc. — because titles are
+    localised ("Lesezeichen-Symbolleiste") and renameable."""
+    got = run("""
+      out({
+        chromeBar:   P.classifyRoot({id:'1', title:'Bookmarks bar'}),
+        chromeOther: P.classifyRoot({id:'2', title:'Other bookmarks'}),
+        ffToolbar:   P.classifyRoot({id:'toolbar_____', title:'Bookmarks Toolbar'}),
+        ffMenu:      P.classifyRoot({id:'menu________', title:'Bookmarks Menu'}),
+        ffOther:     P.classifyRoot({id:'unfiled_____', title:'Other Bookmarks'}),
+        localised:   P.classifyRoot({id:'weird', title:'Lesezeichen-Symbolleiste'}),
+        unknown:     P.classifyRoot({id:'zzz', title:'Something else'}),
+      });
+    """)
+    assert got["chromeBar"] == "toolbar" and got["ffToolbar"] == "toolbar"
+    assert got["chromeOther"] == "other" and got["ffOther"] == "other"
+    assert got["ffMenu"] == "menu", "Firefox's menu is its own container; Chrome has none"
+    assert got["unknown"] == "other", "an unrecognised container must not become the toolbar"
+    # A localised toolbar title is not required to be recognised (the ID does that job); this only
+    # records what the fallback happens to do.
+    assert got["localised"] in ("toolbar", "other")
+
+
+def test_root_is_read_from_the_tree():
+    got = run("""
+      // Keyed BY ID — that is what nodesById means, and keying it by a variable name made the
+      // lookup miss and the answer fall back to 'other'.
+      const byId = { 'root':{id:'root'}, '1':{id:'1',title:'Bookmarks bar',parentId:'root'},
+                     'f':{id:'f',title:'News',parentId:'1'} };
+      out({ direct: P.rootOf(byId, {id:'x', parentId:'1', url:'https://a.example/'}),
+            nested: P.rootOf(byId, {id:'y', parentId:'f', url:'https://b.example/'}) });
+    """)
+    assert got == {"direct": "toolbar", "nested": "toolbar"}, \
+        "a bookmark inside a folder on the toolbar is still on the toolbar"
+
+
+def test_the_same_url_in_two_containers_is_two_bookmarks():
+    """Merging them would silently MOVE one. The root is part of identity for that reason."""
+    got = run("""
+      const a = {url:'https://a.example/', folder:'', root:'toolbar'};
+      const b = {url:'https://a.example/', folder:'', root:'other'};
+      out({ same: P.matchKey(a) === P.matchKey(b), a: P.matchKey(a) });
+    """)
+    assert got["same"] is False, "a toolbar bookmark and an 'other' one collided in the match key"
+
+
+def test_a_union_pairs_only_within_the_same_container():
+    got = run("""
+      const local  = [{id:'b1', title:'T', url:'https://a.example/', folder:'', root:'other'}];
+      const remote = [{id:'s1', title:'T', url:'https://a.example/', folder:'', root:'toolbar', _at:5}];
+      out(P.planUnion(local, remote, {}));
+    """)
+    assert [c["id"] for c in got["create"]] == ["s1"], \
+        "the toolbar copy should be created; it is not the same bookmark as the one in 'other'"
+    assert [p["id"] for p in got["publish"]] == ["b1"]
