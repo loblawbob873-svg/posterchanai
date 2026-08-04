@@ -11397,6 +11397,18 @@
       // never silently mint a replacement: the new key can't read the existing encrypted index or Music
       // blobs, and re-wrapping it over the old one in localStorage destroys the only way back to them.
       if(this._mkWrapped){ this.mk=_b64u8(JSON.parse(await signer.nip44dec(ME.pubkey,this._mkWrapped)).k); return this.mk; }
+      /* ABSENT IS NOT "NONE". The guard above covers a key that won't unwrap and misses the case
+       * that actually happened: no local key at all — a fresh device, cleared storage, a private
+       * window, or a saveLocal() that failed under quota pressure. Minting there produced a key that
+       * decrypts nothing, saved it over the empty slot, and left the device permanently unable to
+       * read its own files while the real key sat on the server. So ASK THE SERVER FIRST, and mint
+       * only if it answered and genuinely had none. A failed pull is not an answer. */
+      if(!this._pullDone){
+        try{ await this.pull(); }catch(_){ }
+        if(this.mk) return this.mk;
+        if(this._mkWrapped){ this.mk=_b64u8(JSON.parse(await signer.nip44dec(ME.pubkey,this._mkWrapped)).k); return this.mk; }
+        if(!this._pullDone) throw new Error('couldn’t reach your drive to load its key — nothing was changed');
+      }
       this.mk=crypto.getRandomValues(new Uint8Array(32));
       this._mkWrapped=await signer.nip44enc(ME.pubkey, JSON.stringify({k:_u8b64(this.mk)})); this.saveLocal();
       return this.mk;
@@ -11420,7 +11432,18 @@
           body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
         const ptr=r&&r.ok&&r.index;
         if(ptr&&typeof ptr==='object'){
-          if(ptr.mk) this._mkWrapped=ptr.mk;
+          /* THE SERVER'S WRAPPED KEY WINS, and a stale local one is thrown away — including the
+           * already-unwrapped copy in memory, which `_ensureMK` returns before it looks at anything
+           * else. Without that, a device that once minted a key of its own is stuck with it for the
+           * whole session AND across restarts (saveLocal persisted it), so every encrypted file it
+           * owns fails to decrypt with OperationError — "couldn't load this image, operation
+           * failed" — while the correct key sits on the server untouched. This is the line that
+           * lets such a device heal itself on the next load. */
+          if(ptr.mk && ptr.mk !== this._mkWrapped){
+            this._mkWrapped = ptr.mk;
+            this.mk = null;                 // re-unwrap from the authority, not from the local guess
+            this.saveLocal();
+          }
           let idx=null;
           if(ptr.indexSha){                         // v2: index lives in an encrypted Blossom blob (scales to 1000s)
             this._lastIndexSha=ptr.indexSha;        // remembered so the grid can hide the index blob itself
@@ -11917,7 +11940,19 @@
     const m=FilesIdx.meta(sha) || (mimeHint ? {mime:mimeHint} : null);
     const r=await fetch(mediaServer()+'/'+sha); if(!r.ok) throw new Error('blob HTTP '+r.status);
     const blob=new Uint8Array(await r.arrayBuffer());
-    const plain=await _masterDecrypt(await FilesIdx._ensureMK(), blob);
+    let plain;
+    try{
+      plain=await _masterDecrypt(await FilesIdx._ensureMK(), blob);
+    }catch(e){
+      /* AES-GCM failing is "wrong key", not "bad file" — WebCrypto reports it as OperationError,
+       * "The operation failed for an operation-specific reason", which reads like corruption and
+       * sent this hunt in the wrong direction for a day. A device can hold the wrong key (it once
+       * minted its own; see _ensureMK), so before believing the file is unreadable, re-read the key
+       * from the server, which is the authority, and try once more. Doing it HERE is what heals a
+       * device that is already stuck, without the user having to do anything. */
+      try{ await FilesIdx.pull(); }catch(_){ }
+      plain=await _masterDecrypt(await FilesIdx._ensureMK(), blob);
+    }
     const u=URL.createObjectURL(new Blob([plain],{type:(m&&m.mime)||'application/octet-stream'}));
     _encUrls[sha]=u; _encOrder.push(sha);
     _encEvict();
