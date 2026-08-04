@@ -98,3 +98,19 @@ def test_bookmark_sync_ships_in_both_bundles():
     assert "bookmarks.js" in manifest["background"]["scripts"]
     assert "bookmarks" in manifest["permissions"], "the engine cannot read the tree without it"
     assert "bookmarks.js" in _read("build.sh"), "bookmarks.js is not in the shipped file list"
+
+
+def test_the_inline_injection_is_skipped_where_the_manifest_does_it():
+    """Chrome registers inject.js with `world: MAIN`, so content.js injecting an inline copy as well
+    is a second provider — and on any page with a strict CSP the attempt is refused and logged:
+
+        Executing inline script violates the following Content Security Policy directive
+        'script-src 'self' 'wasm-unsafe-eval' …'
+
+    Alarming, points at nothing, and got reported as a Chrome pairing failure. content.js reads its
+    own manifest rather than sniffing the browser."""
+    src = _read("content.js")
+    assert "getManifest()" in src and "cs.world === 'MAIN'" in src, \
+        "content.js still injects inline unconditionally; on Chrome that is a redundant provider and a CSP error"
+    i = src.index("_mainWorld")
+    assert "if(!_mainWorld)" in src[i:i + 900], "the inline injection is not actually gated"

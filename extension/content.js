@@ -26,7 +26,20 @@
    * key. Injected at document_start so a site that looks for a signer immediately finds one, and
    * injected INLINE — a `src` pointing at the extension publishes our per-install UUID to every page
    * on the web (see inject.js). */
-  try{
+  /* …and NOT when the manifest already put inject.js in the page's world. The Chrome build registers
+   * it with `"world": "MAIN"`, so doing this as well is a second, redundant provider — and where a
+   * page (or an extension page) has a strict CSP the attempt is REFUSED and logged:
+   *
+   *   Executing inline script violates the following Content Security Policy directive
+   *   'script-src 'self' 'wasm-unsafe-eval' …'
+   *
+   * which is alarming, points at nothing, and was reported as a bug in Chrome pairing. The manifest
+   * is readable from here, so ask it rather than guessing at the browser. */
+  const _mainWorld = (() => {
+    try{ return ((B.runtime.getManifest() || {}).content_scripts || [])
+                  .some(cs => cs && cs.world === 'MAIN'); }catch(_){ return false; }
+  })();
+  if(!_mainWorld) try{
     const el = document.createElement('script');
     el.textContent = '(' + __pcNostrProvider + ')();';
     (document.head || document.documentElement).appendChild(el);
