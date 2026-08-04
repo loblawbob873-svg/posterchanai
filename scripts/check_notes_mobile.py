@@ -53,6 +53,10 @@ Assertions, each corresponding to a way this specific screen breaks on a phone:
                        the attachment strip crushed the note's own text. It is a wrapping flex row
                        whose automatic minimum size is its content, so thirty thumbnails claimed
                        fifteen rows and left the note 36px on a phone.
+  attachment-wont-open a PDF (or any non-image attachment) opened nowhere. window.open() after an
+                       await is an unsolicited popup, and 'noopener' returns null so the failure is
+                       invisible. The tab must be reserved during the click, with a download as the
+                       fallback.
   backup-unsaveable    a REFUSED save dialog (Electron denied the fileSystem permission until the
                        shell granted it; any browser can block the picker) made the backup attempt
                        to assemble every attachment in memory, or drop them without saying so.
@@ -376,6 +380,36 @@ STALLED_QUEUE = _PIC_NOTE + r"""
   return { early, later: loaded(), calls: new Set(window.__encCalls).size };
 })()"""
 
+# Opening an attachment (a PDF, say) must not depend on a popup that the browser has already stopped
+# allowing. window.open() AFTER an await is treated as unsolicited — the click is over by the time
+# the blob is decrypted — and 'noopener' made it unrecoverable, because with that flag open() returns
+# null by spec, so a blocked popup and a working one look identical. Reported as "windows app can't
+# open PDF from Note" and then "firefox can't open pdf from note either".
+OPEN_ATTACHMENT = r"""(async () => {
+  const it = Array.from(document.querySelectorAll('.nt-item'))
+    .find(b => (b.textContent||'').includes('Groceries'));
+  if(!it) return {error:'the seeded note with an attachment is missing'};
+  it.click();
+  await new Promise(r => setTimeout(r, 500));
+
+  // A browser that refuses popups: window.open returns null, exactly as it does once the gesture
+  // has expired. The attachment must still reach the user — as a download.
+  const realOpen = window.open;
+  let openedWith = null, downloaded = null;
+  window.open = (u) => { openedWith = u; return null; };
+  const realClick = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = function(){ if(this.download) downloaded = this.href; else realClick.call(this); };
+
+  const btn = document.querySelector('.nt-res-item') || document.querySelector('.nt-res-thumb');
+  if(!btn){ window.open = realOpen; HTMLAnchorElement.prototype.click = realClick;
+            return {error:'no attachment control rendered'}; }
+  btn.click();
+  await new Promise(r => setTimeout(r, 900));
+  window.open = realOpen; HTMLAnchorElement.prototype.click = realClick;
+  return { reservedTab: openedWith === '', downloaded: !!downloaded,
+           toasts: (window.__toasts||[]).slice(-2) };
+})()"""
+
 # A REFUSED save dialog must degrade honestly. showSaveFilePicker is the only way to write a library
 # with attachments (they are gigabytes), so when the picker is denied the backup has to fall back to
 # notes-only AND say so — never quietly attempt to assemble every attachment in memory, which is the
@@ -674,6 +708,21 @@ async def drive(url):
                         problems.append((label, "queue-wedged",
                                          f"{sq['calls']} reads stalled and nothing loaded afterwards — "
                                          "a dead socket takes every picture in every note with it"))
+
+                if label == "390px":
+                    oa = await js(OPEN_ATTACHMENT, awaited=True)
+                    if not oa or oa.get("error"):
+                        problems.append((label, "attachment-wont-open",
+                                         f"could not run the open test ({(oa or {}).get('error')})"))
+                    else:
+                        if not oa["reservedTab"]:
+                            problems.append((label, "attachment-wont-open",
+                                             "the tab was not reserved before decrypting, so the "
+                                             "browser sees an unsolicited popup and blocks it"))
+                        if not oa["downloaded"]:
+                            problems.append((label, "attachment-wont-open",
+                                             "the popup was refused and nothing reached the user — "
+                                             f"toasts: {oa['toasts']}"))
 
                 # A refused save dialog must not try to hold the whole library in memory.
                 if label == "390px":

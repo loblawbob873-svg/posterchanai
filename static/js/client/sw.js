@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v756';
+const CACHE = 'pc-nostr-v757';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -264,23 +264,39 @@ async function cacheFirstBlob(req){
   if (hit) return hit;
   let res;
   try { res = await fetch(req); } catch (_) { return Response.error(); }
+
+  const len = +(res.headers.get('content-length') || 0);
+  // Ciphertext, and ONLY ciphertext. A 64-hex tail is not proof on its own: `/blossom/list/<pubkey>`
+  // is a live JSON listing of the user's whole drive whose path ends in exactly that shape, and
+  // cache-first would have frozen someone's file list forever. The encrypted drive is opaque bytes
+  // and always arrives as octet-stream; anything structured is somebody's API talking.
+  const ct = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  const opaque = !ct || ct === 'application/octet-stream' || ct === 'binary/octet-stream';
+  // 200 only. A 206 is one RANGE of the blob; stored under the full URL it would be served later as
+  // the whole file — a truncated body that decrypts to nothing, cached forever.
+  if (!(res.status === 200 && opaque && !req.headers.get('range') && len > 0 && len <= DRIVE_MAX_BYTES))
+    return res;
+
+  /* READ ONCE, then serve and store from the same bytes. NOT res.clone().
+   *
+   * A clone tees the stream, so the browser must buffer whatever the slower consumer has not read —
+   * and the slower consumer here is a disk write into a cache holding gigabytes of attachments. Under
+   * that pressure the tee can ERROR the stream the page is reading, which surfaces as "couldn't load
+   * image" on a request the server logged as a clean 200. That is exactly what it did: 576 OK on the
+   * server, failures in the client, and the files all present.
+   *
+   * Buffering costs memory equal to the blob, which is bounded by DRIVE_MAX_BYTES and is memory the
+   * caller is about to allocate anyway (encFileUrl reads the whole thing to decrypt it). Nothing
+   * about the cache can now affect what the page receives. */
+  let buf;
+  try { buf = await res.arrayBuffer(); } catch (_) { return Response.error(); }
+  const headers = new Headers(res.headers);
   try {
-    const len = +(res.headers.get('content-length') || 0);
-    // Ciphertext, and ONLY ciphertext. A 64-hex tail is not proof on its own: `/blossom/list/<pubkey>`
-    // is a live JSON listing of the user's whole drive whose path ends in exactly that shape, and
-    // cache-first would have frozen someone's file list forever. The encrypted drive is opaque bytes
-    // and always arrives as octet-stream; anything structured is somebody's API talking.
-    const ct = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-    const opaque = !ct || ct === 'application/octet-stream' || ct === 'binary/octet-stream';
-    // 200 only. A 206 is one RANGE of the blob; stored under the full URL it would be served later
-    // as the whole file — a truncated body that decrypts to nothing, cached forever.
-    if (res.status === 200 && opaque && !req.headers.get('range') && len > 0 && len <= DRIVE_MAX_BYTES){
-      // NOT awaited: the clone is taken now, but the disk write must not sit between the network and
-      // the decrypt waiting on it. Reading and storing proceed in parallel.
-      cache.put(req, res.clone()).then(() => trimCache(cache, DRIVE_MAX, 'drive')).catch(()=>{});
-    }
-  } catch (_) {}   // over quota → serve it uncached rather than fail the read
-  return res;
+    cache.put(req, new Response(buf, { status: 200, headers }))
+      .then(() => trimCache(cache, DRIVE_MAX, 'drive'))
+      .catch(() => {});      // out of quota: the page already has its bytes
+  } catch (_) {}
+  return new Response(buf, { status: 200, headers });
 }
 
 // Web Share Target (POST): another app shared a file/text INTO us via the OS share sheet. The browser

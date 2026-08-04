@@ -756,6 +756,29 @@
    *
    * The service worker stores these under DRIVE_CACHE (see sw.js), so this is a first-view cost:
    * open the note again, on this device, and the bytes come from disk with no network at all. */
+  /* Open a decrypted attachment. THE TAB IS RESERVED FIRST, while the click is still live.
+   *
+   * `window.open(url)` AFTER an await is blocked: decrypting the blob takes a moment, and by the
+   * time it resolves the browser no longer considers a user gesture in progress, so the call is
+   * treated as an unsolicited popup. `'noopener'` made it unrecoverable — with that flag open()
+   * returns null by specification, so there was no handle to check and no way to tell a blocked
+   * popup from a working one. That is why a PDF opened nowhere, in Firefox and in the desktop app
+   * alike, while images (set as an <img src>, never opened) were fine.
+   *
+   * So: take the tab synchronously, then point it at the blob. If the browser refused the tab, fall
+   * back to a download, which needs no popup and no gesture. */
+  async function openAttachment(getUrl, name){
+    let w = null;
+    try{ w = window.open('', '_blank'); }catch(_){ w = null; }
+    let u;
+    try{ u = await getUrl(); }
+    catch(e){ try{ if(w) w.close(); }catch(_){ } throw e; }
+    if(w && !w.closed){ try{ w.opener = null; }catch(_){ } w.location.href = u; return; }
+    const a = document.createElement('a');
+    a.href = u; a.download = name || 'attachment'; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+
   const _IMG_CONC = 4;
   /* A slot is a turn at the front of the queue, NOT a promise to wait forever. encFileUrl is a bare
    * fetch(), and a fetch that stalls — a dropped connection the OS hasn't given up on, a proxy
@@ -836,7 +859,8 @@
         img.src = u;
         // A thumbnail lives INSIDE a button that already opens the file: adding a second handler
         // here would open it twice, once on the image and once on the click that bubbles up.
-        if(opts.click !== false) img.onclick = () => window.open(u, '_blank', 'noopener');
+        if(opts.click !== false) img.onclick = () => { openAttachment(async () => u, img.alt || '')
+                                                        .catch(() => toast('couldn’t open that image')); };
       }catch(e){
         if(!img.isConnected) return;
         /* A failure is TEMPORARY until proven otherwise, and must never destroy the element: this
@@ -847,7 +871,9 @@
         img.classList.add('nt-img-fail');
         img.alt = navigator.onLine ? 'Couldn’t load this image — tap to try again'
                                    : 'Not downloaded — open this note once while online';
-        img.title = img.alt;
+        // The REASON, on hover: "blob HTTP 404" and "that picture timed out" are different problems
+        // and the difference is invisible when every failure renders the same sentence.
+        img.title = img.alt + ((e && e.message) ? ` (${e.message})` : '');
         const again = (ev) => { if(ev) ev.stopPropagation();      // don't also fire the thumbnail's "open file"
                                 img.classList.remove('nt-img-fail'); img.classList.add('nt-img-lazy');
                                 _imgQueue(img); };
@@ -876,9 +902,9 @@
       a.tabIndex = 0;
       const open = async (ev) => {
         ev.preventDefault();
-        try{ window.open(await _withTimeout(PC.encFileUrl(sha, byShaMime.get(sha)), 180000, 'that file'),
-                         '_blank', 'noopener'); }
-        catch(_){ toast(navigator.onLine ? 'couldn’t open that attachment'
+        try{ await openAttachment(() => _withTimeout(PC.encFileUrl(sha, byShaMime.get(sha)),
+                                                    180000, 'that file'), a.textContent || ''); }
+        catch(e){ toast(navigator.onLine ? 'couldn’t open that attachment: ' + (e.message || 'error')
                                          : 'that attachment isn’t downloaded for offline use'); }
       };
       a.onclick = open;
@@ -913,8 +939,10 @@
     const more = $('.nt-res-more', box);
     if(more) more.onclick = () => renderRes(n, host, true);
     const open = async (b) => {
-      try{ const u = await PC.encFileUrl(b.dataset.sha, b.dataset.mime); window.open(u, '_blank', 'noopener'); }
-      catch(e){ toast(navigator.onLine ? 'couldn’t open that attachment' : 'that attachment isn’t downloaded for offline use'); }
+      try{ await openAttachment(() => _withTimeout(PC.encFileUrl(b.dataset.sha, b.dataset.mime),
+                                                   180000, 'that file'), b.title || ''); }
+      catch(e){ toast(navigator.onLine ? 'couldn’t open that attachment: ' + (e.message || 'error')
+                                       : 'that attachment isn’t downloaded for offline use'); }
     };
     $$('.nt-res-item', box).forEach(b => b.onclick = () => open(b));
     // Thumbnails are decrypted in place: there is no server-side thumbnail for an encrypted blob and

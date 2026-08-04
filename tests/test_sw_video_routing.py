@@ -57,10 +57,15 @@ globalThis.caches = { open: async (name) => { opened.push(name);
 // rejection that kills node AFTER the routing decision was already made). RES overrides it where the
 // question is what gets STORED, which depends on the status, content-type and length.
 const RES = %s;
+// A response the worker can actually READ: cacheFirstBlob buffers the body rather than teeing it,
+// so a stub with only headers no longer exercises the path it is meant to.
+globalThis.Headers = globalThis.Headers || class { constructor(h){ this._h = h || {}; }
+                                                   get(k){ return this._h.get ? this._h.get(k) : null; } };
 globalThis.fetch = async () => ({ status: RES.status, type: RES.status ? 'basic' : 'opaque',
                                   ok: RES.status === 200, clone(){ return this; },
+                                  arrayBuffer: async () => new ArrayBuffer(8),
                                   headers: { get: (k) => RES[String(k).toLowerCase()] || null } });
-globalThis.Response = class { static error(){ return {}; } constructor(){} };
+globalThis.Response = class { static error(){ return {}; } constructor(body, init){ this.body = body; this.init = init; } };
 globalThis.clients = self.clients;
 %s
 if (!handler) { console.log(JSON.stringify({error: 'no fetch handler registered'})); }
