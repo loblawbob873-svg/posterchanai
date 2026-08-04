@@ -315,7 +315,12 @@ function paintBm(){
     b.disabled = true; b.textContent = 'merging…';
     const r = await send({ type:'bm-sync' });
     b.textContent = r && r.ok ? `+${r.created} here, +${r.published} sent` : (r && r.error) || 'failed';
-    setTimeout(() => { b.textContent = 'Merge now'; b.disabled = false; }, 2500);
+    // A merge that sent nothing states the reason under the button — the alternative is a bare 0 that
+    // looks identical whether the pairing cannot sign, the relay is unreachable, or there was simply
+    // nothing new to send.
+    if(r && r.ok && r.blocked) $('#bm-note').innerHTML =
+      `<b>Sent nothing:</b> ${r.blocked}. ${r.wanted} bookmark${r.wanted === 1 ? '' : 's'} waiting.`;
+    setTimeout(() => { b.textContent = 'Merge now'; b.disabled = false; }, 3500);
     const st = await send({ type:'state' });
     _bmOn = !!(st && st.bmOn); _bmCount = (st && st.bmCount) || 0; paintBm();
   }; }

@@ -399,8 +399,10 @@
       if (ok) { items[sid] = Object.assign({}, body, { _at: Math.floor(Date.now() / 1000) }); saveSoon(); }
       else sent--;                                     // report what actually left, not what was tried
     }
-    return { created: plan.create.length, published: sent,
-             linked: plan.link.length, ignoredTombstones: plan.skipRemoved };
+    // When there was something to send and none of it went, say WHY rather than reporting a bare 0.
+    var blocked = (plan.publish.length && !sent && api.why) ? api.why() : '';
+    return { created: plan.create.length, published: sent, wanted: plan.publish.length,
+             linked: plan.link.length, ignoredTombstones: plan.skipRemoved, blocked: blocked };
   }
 
   function newId() {

@@ -245,6 +245,13 @@ async function initBookmarks(){
       open: (ct) => V.open(key, ct),
       publish: publishBookmark,
       isFull: () => !!(cfg && cfg.mode === 'full' && cfg.sk),
+      /* WHY a merge sent nothing, in words, for the popup to show. "Nothing happened" sent me
+       * guessing at the pairing mode and asserting it as fact when the real cause was a socket that
+       * had not opened yet; the software knows which it is and should say so. */
+      why: () => !cfg ? 'not paired'
+                : !(cfg.mode === 'full' && cfg.sk) ? 'this pairing is read-only — it has no signing key'
+                : !_anyOpen() ? 'no relay connection'
+                : '',
     });
   }catch(_){ }
 }
