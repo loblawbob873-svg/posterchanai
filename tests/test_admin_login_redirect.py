@@ -37,6 +37,13 @@ from app.main import _safe_next, admin_page, login_page  # noqa: E402
     ("/back\\slash", ""),
     ("", ""),
     (None, ""),
+    # Browsers DELETE tab/newline/CR from a URL before resolving it, so each of these reads as
+    # "/<something>/evil.com" to a leading-character check and navigates to //evil.com — off-site.
+    # Caught reviewing the first version of this function, which accepted all three.
+    ("/\t/evil.com", ""),
+    ("/\n/evil.com", ""),
+    ("/\r/evil.com", ""),
+    ("/\x7f/evil.com", ""),
 ])
 def test_only_same_origin_paths_survive(raw, want):
     assert _safe_next(raw) == want

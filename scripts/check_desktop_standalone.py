@@ -287,6 +287,13 @@ SETTINGS_AUDIT = r"""(() => {
   out.torCountries = q('#us-ntor-cc') ? q('#us-ntor-cc').options.length : 0;
   out.torAnyFirst = q('#us-ntor-cc') && q('#us-ntor-cc').options.length
     ? q('#us-ntor-cc').options[0].value === '' : false;
+  // …and something to click to REACH it. Tor moved out of Profile into its own pane; the controls
+  // existing in the DOM says nothing about whether a tab links to them, and an unreachable pane is
+  // indistinguishable from a deleted one.
+  out.torTab = [...document.querySelectorAll('.us-tabs [data-pane], .us-tabs [data-tab], .us-tab')]
+    .some(t => (t.dataset.pane || t.dataset.tab || '') === 'tor'
+               || /^\s*tor\s*$/i.test(t.textContent || ''));
+  out.torPane = !!q('.us-pane[data-pane="tor"]');
 
   out.overflow = document.documentElement.scrollWidth > window.innerWidth + 1;
   out.errors = (window.__pcErrors || []).slice(0, 10);
@@ -561,6 +568,11 @@ async def drive(problems):
                 problems.append(f"{label}: Tor country picker has {s['torCountries']} option(s)")
             elif not s["torAnyFirst"]:
                 problems.append(f"{label}: 'Any country' is not the first Tor option")
+            if s.get("torRow") and not s.get("torPane"):
+                problems.append(f"{label}: the Tor controls are not in the Tor pane")
+            if s.get("torRow") and not s.get("torTab"):
+                problems.append(f"{label}: no Tor tab in Settings — the pane exists but nothing links "
+                                "to it, which is the same as it not being there")
             if s["overflow"]:
                 problems.append(f"{label}: Settings scrolls horizontally")
             for e in s["errors"]:

@@ -1736,7 +1736,10 @@
     if(!GUEST){
       try{
         const nxt = new URLSearchParams(location.search).get('next') || '';
-        if(nxt.startsWith('/') && !nxt.startsWith('//') && !nxt.includes('\\')){
+        // Control characters are refused because the BROWSER strips tab/newline/CR before resolving a
+        // URL: "/<TAB>/evil.com" does not start with "//" when tested here, and does by the time it
+        // navigates. The server refuses them too — this is not trusting that it did.
+        if(nxt.startsWith('/') && !nxt.startsWith('//') && !nxt.includes('\\') && !/[\u0000-\u001f\u007f]/.test(nxt)){
           /* ONE hop per target, per tab. Being signed in HERE (a Nostr key) is not the same as having
            * a session on the SERVER — a relays-only user has no server at all, and a cookie can have
            * expired — so /admin can perfectly well bounce us straight back with the same ?next=. That

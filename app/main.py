@@ -1011,9 +1011,17 @@ def _safe_next(nxt: str) -> str:
 
     Must start with a single "/" and carry no scheme and no authority: "//evil.com" is a
     protocol-relative URL that browsers follow off-site, so it is refused along with "http://…".
+
+    CONTROL CHARACTERS ARE REJECTED, and that is not tidiness. Browsers DELETE tab, newline and
+    carriage return from a URL before resolving it, so "/<TAB>/evil.com" passes every check that only
+    looks at the leading characters — it does not start with "//" — and then navigates to //evil.com,
+    i.e. off-site. Found reviewing this function, not in the wild; it is the whole reason the check is
+    a whitelist of what may appear rather than a blacklist of what may not.
     """
     nxt = (nxt or "").strip()
     if not nxt.startswith("/") or nxt.startswith("//") or "\\" in nxt or ":" in nxt.split("/")[0]:
+        return ""
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in nxt):
         return ""
     return nxt[:200]
 
