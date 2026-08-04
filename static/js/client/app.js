@@ -1809,7 +1809,7 @@
     const map = { ok:['ok','online'], connecting:['','connecting…'], off:['off','reconnecting…'], init:['','…'] };
     const [cls,txt] = map[s]||['',''];
     updateOfflineBar(s);
-    if(s === 'ok') _flushOutbox();
+    if(s === 'ok'){ _flushOutbox(); _carryIfRelaysChanged(); }
     const el = $('#conn-status'); if(!el) return; el.className = 'conn ' + cls; el.querySelector('span').textContent = txt;
   }
   // ---------- offline state ----------
@@ -1870,6 +1870,120 @@
   // ---------- outbox wiring ----------
   // Drain shortly after the relay comes up, not the instant it does: the socket has just re-armed its live
   // subscriptions and a burst of publishes into it is the least likely moment for all of them to land.
+  /* CARRY THE PRIVATE LIBRARIES TO A NEW RELAY SET.
+   *
+   * Notes, Passwords, Budget and the files index live nowhere but a relay. Point the app at a
+   * different one and they are not there: the screens read the pool they are connected to, so the
+   * vault reads EMPTY and the notebook reads empty, and the first save writes a fresh version to the
+   * new relay while every earlier one stays on the old — one library split across two relays, each
+   * device seeing whichever half it can reach. Nothing warns, because nothing is wrong from the
+   * app's point of view; it asked a relay for events and the relay honestly had none.
+   *
+   * The events are already here, signed, in the local Store. A Nostr event is self-authenticating,
+   * so carrying it over is a byte copy — no key, no re-signing, no chance of altering one. This
+   * republishes them to the pool once, after a relay change, and only then.
+   *
+   * PUBLIC posts are deliberately NOT carried: they are already on the network, whoever follows you
+   * has them, and re-broadcasting a year of notes to a new relay is a different act with different
+   * consequences. This is the half that has no other copy.
+   */
+  const _CARRY_KEY = 'pcaiRelaysChanged';
+  /* Only the libraries this CLIENT authors and encrypts to itself.
+   *
+   * Not `pcai:files-index` or `pcai:drafts`: those are signed with the per-user storage key the
+   * SERVER holds, so they are a different author entirely and live on the server's own relay, which
+   * a client relay change does not touch — `authors:[me]` could never have matched them.
+   *
+   * Not `pcai:news-feeds` / `pcai:news-read` either, and that one is a judgement rather than a
+   * technicality: they are published as PLAINTEXT, so copying them is handing a full RSS
+   * subscription list and reading history to a relay the user may have just added on someone else's
+   * recommendation. Everything below is NIP-44 ciphertext to everyone but its author, which is what
+   * makes moving it unremarkable. */
+  const _CARRY_D = [/^pcai:note:/, /^pcai:notefolder:/, /^pcai:pw:/, /^pcai:pwfolder:/,
+                    /^pcai:pwkey$/, /^pcai:budget$/];
+  let _carrying = false;
+
+  function _isCarryDoc(ev){
+    const d = ((ev.tags||[]).find(t => t[0] === 'd') || [])[1] || '';
+    return _CARRY_D.some(re => re.test(d));
+  }
+
+  /* Pull the libraries off the relays we are about to STOP using, into the local cache.
+   *
+   * Run while still connected to the old set, because afterwards there is nowhere to get them from.
+   * It also covers the case the local cache cannot: a device that has only ever READ this library
+   * holds none of it (budget.js and news.js absorb relay results into their own state and never call
+   * Store.saveEvent), so a carry sourced from the cache alone would copy nothing, report success,
+   * and leave the library behind. */
+  async function stashPrivateBeforeRelayChange(){
+    if(!ME || !ME.pubkey) return 0;
+    let evs = [];
+    try{ evs = await Relay.query([{ authors:[ME.pubkey], kinds:[30078], limit:100000 }], 12000) || []; }
+    catch(_){ return 0; }
+    let n = 0;
+    for(const ev of evs) if(_isCarryDoc(ev)){ try{ if(Store.saveEvent(ev)) n++; }catch(_){ } }
+    return n;
+  }
+
+  /* Republish them to the CURRENT pool. The events are already signed — a Nostr event is
+   * self-authenticating, so this is a byte copy: no key, no re-signing, and no way to alter one.
+   *
+   * `publishTo` per relay, NOT `publish`: publish() resolves on the FIRST relay that accepts, and
+   * when someone ADDS a relay to their existing set the old one accepts every republish instantly
+   * (it already has them) — "moved" would read 100% while the new relay, the only one that needed
+   * anything, got nothing. */
+  async function carryPrivateToRelays(opts){
+    if(_carrying) return { busy:true, moved:0, total:0 };
+    const quiet = !!(opts && opts.quiet);
+    _carrying = true;
+    try{
+      if(!ME || !ME.pubkey) return { noUser:true, moved:0, total:0 };
+      let evs = [];
+      try{ evs = Store.query([{ authors:[ME.pubkey], kinds:[30078], limit:100000 }]) || []; }catch(_){ }
+      const want = evs.filter(_isCarryDoc);
+      if(!want.length) return { moved:0, total:0 };
+      const urls = (Relay.urls && Relay.urls()) || [];
+      if(!urls.length) return { offline:true, moved:0, total:0 };
+      if(!quiet) toast(`copying ${want.length} private item(s) to ${urls.length} relay(s)…`);
+      let moved = 0;
+      for(const ev of want){
+        let ok = 0;
+        for(const u of urls){
+          // publishTo opens its own socket, so it reports THAT relay's answer rather than the
+          // pool's best one.
+          try{ ok += await Relay.publishTo([u], ev, { timeout:6000, max:1 }); }
+          catch(_){ }
+        }
+        if(ok >= urls.length) moved++;
+        // Paced: a relay that rate-limits a burst leaves a PARTIAL copy, which is the one outcome
+        // worse than not starting — it looks finished.
+        await new Promise(r => setTimeout(r, 40));
+      }
+      if(!quiet) toast(moved === want.length
+        ? `✅ ${moved} private item(s) now on all your relays`
+        : `copied ${moved} of ${want.length} — run it again from Settings when they are reachable`);
+      return { moved, total: want.length };
+    } finally { _carrying = false; }
+  }
+
+  /* One shot, after the relay set actually changed.
+   *
+   * The flag is cleared ONLY by a run that completed. Every other outcome — a concurrent run, no
+   * signed-in user yet (a cold start can land in guest mode while the extension is still injecting),
+   * offline, a partial copy — leaves it set to be retried on the next connect. Clearing on "nothing
+   * happened" is how a library ends up split with nothing left to say so. */
+  async function _carryIfRelaysChanged(){
+    let flag = null;
+    try{ flag = localStorage.getItem(_CARRY_KEY); }catch(_){ }
+    if(!flag) return;
+    // Wait for the pool rather than the first socket: status flips to 'ok' as soon as ANY relay
+    // opens, and publishing into a half-open pool drops silently (Conn._send checks readyState).
+    try{ if(Relay.ready) await Relay.ready(8000); }catch(_){ }
+    const r = await carryPrivateToRelays({});
+    if(r.busy || r.noUser || r.offline) return;
+    if(r.moved === r.total){ try{ localStorage.removeItem(_CARRY_KEY); }catch(_){ } }
+  }
+
   function _flushOutbox(){
     if(!window.Outbox || !Outbox.count()) return;
     setTimeout(()=>{ Outbox.flush().then(res=>{
@@ -16683,7 +16797,12 @@
             <div class="set-actions">
               <button class="btn btn-ghost small" id="set-relay-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add relay</button>
               <button class="btn btn-ghost small" id="set-relay-ext"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Import from extension</button>
+              <button class="btn btn-ghost small" id="set-relay-carry" title="Republish your private libraries to the relays above"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Copy my private data here</button>
             </div>
+            <div class="muted small">Notes, Passwords and Budget live only on a relay, so they are
+              copied to your new relays whenever you change this list. This button runs it again if
+              one was unreachable at the time. (Your files index is signed by the server and stays
+              where it is.)</div>
             <div class="set-actions">
               <input class="input" id="set-nip05" placeholder="you@domain.com" value="${enc(ME&&niceImport()||'')}">
               <button class="btn btn-ghost small" id="set-relay-nip05"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Import from NIP-05</button>
@@ -16752,6 +16871,18 @@
     drawRelayRows();
     const syncRelays=()=>{ _setRelays=$$('#set-relay-list .relay-row input').map(i=>i.value.trim()); };
     { const t=$('#set-relays-on'); if(t) t.onchange=e=>$('#set-relays-body').classList.toggle('disabled', !e.target.checked); }
+    { const c=$('#set-relay-carry'); if(c) c.onclick=async()=>{
+        c.disabled=true;
+        try{
+          const r = await carryPrivateToRelays({});
+          // The guard returns without a toast, so say something — a button that silently does
+          // nothing while an automatic run is in flight reads as broken.
+          if(r.busy) toast('already copying — give it a moment');
+          else if(r.noUser) toast('sign in first');
+          else if(r.offline) toast('not connected to any relay yet');
+          else if(!r.total) toast('nothing private to copy yet');
+        } finally { c.disabled=false; }
+      }; }
     // The chosen media destination ('default' | 'nostrbuild' | 'custom'), read from the radio group.
     const _mediaMode=()=> (($('input[name=media-mode]:checked')||{}).value) || 'default';
     // Map the chosen mode → the {enabled, url} we persist. 'default' = built-in/auto (no override);
@@ -17034,7 +17165,14 @@
         syncRelays();
         const urls=[...new Set(_setRelays.map(u=>normalizeRelay(u)).filter(Boolean))];
         const on=$('#set-relays-on').checked;
-        if(on!==!!ClientSettings.get('relaysEnabled') || JSON.stringify(urls)!==JSON.stringify(userRelays())) needReload=true;
+        if(on!==!!ClientSettings.get('relaysEnabled') || JSON.stringify(urls)!==JSON.stringify(userRelays())){
+          needReload=true;
+          /* The private libraries have to follow, or the vault reads empty on the new relay and the
+           * next save splits it across two. Two halves: pull them off the OLD relays NOW, while we
+           * are still connected to them, and flag the republish for after the reconnect. */
+          try{ localStorage.setItem(_CARRY_KEY, String(Date.now())); }catch(_){ }
+          try{ await stashPrivateBeforeRelayChange(); }catch(_){ }
+        }
         ClientSettings.set('relaysEnabled', on); ClientSettings.set('relays', urls);
         // only publish the NIP-65 list when the user actually enabled their own relays — don't mutate
         // their relay list (which follows them to other clients) just because URLs are prefilled.
@@ -19786,6 +19924,9 @@
   }
 
   window.__PC = {
+    // Republish the encrypted libraries to the current relay pool (Settings → relays, and
+    // automatically after a relay change). Exposed for the sub-modules and for the console.
+    carryPrivateToRelays,
     $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast,
     ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
     // fetch that carries auth on BOTH web (session cookie) and the APK (bearer token) — for authed server
