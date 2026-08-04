@@ -31,6 +31,12 @@ function showVersion(){
   }catch(_){ }
 }
 
+/* Declared HERE, above boot(), not beside the bookmark UI at the bottom of the file: boot() assigns
+ * these, boot() is called during script evaluation, and a `let` below that call is in its temporal
+ * dead zone until evaluation reaches it. It happens to survive today only because the assignment sits
+ * after an await — one edit moving it earlier turns the whole popup into a ReferenceError. */
+let _mode = null, _bmOn = false, _bmCount = 0;
+
 async function boot(){
   try{
     const tabs = await B.tabs.query({ active:true, currentWindow:true });
@@ -283,7 +289,6 @@ boot();
  * and what it cannot do when the pairing is read-only. "Merge now" is the union: it gains bookmarks
  * on both sides and deletes nothing, which is also what happens the first time it is switched on.
  */
-let _mode = null, _bmOn = false, _bmCount = 0;
 
 function paintBm(){
   const box = $('#bm-on'); if(!box) return;
