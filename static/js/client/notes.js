@@ -1151,6 +1151,16 @@
     // picture failed to upload would be the worst possible trade.
     const shaByRes = new Map();
     const resMeta = new Map();
+    /* RESUME. Everything a previous run of the same library uploaded is already recorded on the
+     * notes themselves, so a re-import should not re-encrypt and re-send gigabytes to arrive at
+     * byte-identical blobs the server would only dedup anyway. Keyed on name+size, which is what
+     * the note stores; a collision would at worst reuse an identical-sized file of the same name.
+     * This is what makes "run it again to pick up what failed" a reasonable instruction rather
+     * than a half-hour penalty. */
+    const known = new Map();
+    for(const n of _lib.notes.values())
+      for(const r of (n.res || [])) if(r && r.sha && r.name) known.set(r.name + '|' + (r.size||0), r);
+    let reused = 0;
     let rdone = 0;
     const failed = [];    // {id,name} — reported by NAME and retryable, never just a count
     const tooBig = [];
@@ -1179,6 +1189,7 @@
       prog.innerHTML = `<div class="nt-imp-bar"><i style="width:${Math.round(rdone/Math.max(parsed.resources.length,1)*100)}%"></i></div>
         <div class="muted small">attachments ${rdone}/${parsed.resources.length}` +
         `${totalBytes?` · ${(totalBytes/1073741824).toFixed(2)} GB total`:''}` +
+        `${reused?` · ${reused} already uploaded`:''}` +
         `${failed.length?` · ${failed.length} failed (will retry)`:''}${tooBig.length?` · ${tooBig.length} too large`:''}…</div>`;
     };
 
@@ -1192,6 +1203,13 @@
       const name = res.filename || res.title || (res.id + (res.ext?'.'+res.ext:''));
       if(!size) return { ok:false, name, why:'empty' };
       if(limit && size > limit){ tooBig.push(`${name} (${Math.round(size/1048576)} MB)`); return { ok:'skip' }; }
+      const prev = known.get(name + '|' + size);
+      if(prev && prev.sha){
+        shaByRes.set(res.id, prev.sha);
+        resMeta.set(res.id, { sha:prev.sha, name, mime:res.mime || prev.mime, size });
+        reused++;
+        return { ok:true };
+      }
       let lastErr = '';
       for(let attempt = 0; attempt < 3; attempt++){
         if(_cancel) return { ok:false, name, why:'cancelled' };
@@ -1294,6 +1312,7 @@
     }
     prog.innerHTML = `<div class="nt-imp-done">
       <b>${_cancel?'Stopped after':'Imported'} ${done - noteFail} note${done-noteFail===1?'':'s'}.</b>
+      ${reused?`<div class="muted small">${reused} attachment(s) were already uploaded and were reused.</div>`:''}
       ${_cancel?'<div class="muted small">Nothing is lost — run the import again and it picks up where this left off, updating rather than duplicating.</div>':''}
       ${failed.length?`<div class="nt-warn small">⚠ ${failed.length} attachment(s) could not be stored after 3 tries — their notes imported with the link left as text:
         ${enc(failed.slice(0,8).map(f=>f.name).join(', '))}${failed.length>8?' …':''}.
