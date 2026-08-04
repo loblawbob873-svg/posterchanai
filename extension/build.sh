@@ -39,3 +39,11 @@ echo
 echo "Load it in Firefox:      about:debugging -> This Firefox -> Load Temporary Add-on -> manifest.json"
 echo "Firefox for Android:     about:debugging on the desktop, with the phone connected over USB,"
 echo "                         or install a signed build from addons.mozilla.org."
+echo
+# "Duplicate add-on ID" from AMO is not a problem with the build: it means Submit a New Add-on was
+# used for an ID that already has a listing. There is one listing per ID, forever, and every build
+# after the first is a VERSION of it — including while an earlier version is still in review.
+echo "AMO:                     Developer Hub -> your add-on -> Upload New Version."
+echo "                         NOT 'Submit a New Add-on' — the ID ($(python3 -c "import json;print(json.load(open('manifest.json'))['browser_specific_settings']['gecko']['id'])")) already has"
+echo "                         a listing, and re-submitting it is the 'duplicate add-on ID' error."
+echo "                         The version must be higher than anything submitted before: $(python3 -c "import json;print(json.load(open('manifest.json'))['version'])")"

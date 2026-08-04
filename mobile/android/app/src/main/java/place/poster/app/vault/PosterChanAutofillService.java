@@ -95,13 +95,20 @@ public class PosterChanAutofillService extends AutofillService {
              * Without a verified browser on the other end there is nothing here we can trust, and
              * offering nothing is the correct answer. */
             String pkg = packageOf(request);
-            if (!parsed.webDomain.isEmpty() && !BROWSERS.contains(pkg)) {
+            if (!(parsed.fieldDomain + parsed.pageDomain).isEmpty() && !BROWSERS.contains(pkg)) {
                 Log.i(TAG, "ignoring a webDomain claimed by " + pkg);
                 callback.onSuccess(null);
                 return;
             }
-            List<JSONObject> matches = match(VaultStore.get(this), parsed.webDomain);
-            if (matches.isEmpty()) { callback.onSuccess(null); return; }
+            List<String> candidates = VaultMatch.hostCandidates(parsed.fieldDomain, parsed.pageDomain);
+            List<JSONObject> matches = match(VaultStore.get(this), candidates);
+            if (matches.isEmpty()) {
+                // Named, because "no suggestions on this one site" is otherwise indistinguishable
+                // from a broken service, an unsaved login and a field we never found.
+                Log.i(TAG, "no match for " + candidates + " (" + pkg + ")");
+                callback.onSuccess(null);
+                return;
+            }
 
             FillResponse.Builder resp = new FillResponse.Builder();
             int added = 0;
@@ -159,23 +166,20 @@ public class PosterChanAutofillService extends AutofillService {
         } catch (Throwable t) { return ""; }
     }
 
-    /** The saved credentials for this screen, best first: exact host, then same registrable domain. */
-    private List<JSONObject> match(String json, String webDomain) {
+    /** The saved credentials for this screen, best first: exact host, then same registrable domain.
+     *  The comparison itself is VaultMatch, which is plain Java and has tests. */
+    private List<JSONObject> match(String json, List<String> candidates) {
         List<JSONObject> exact = new ArrayList<>(), domain = new ArrayList<>();
-        if (json == null || json.isEmpty()) return exact;
+        if (json == null || json.isEmpty() || candidates.isEmpty()) return exact;
         try {
             JSONArray arr = new JSONArray(json);
-            String host = normHost(webDomain);
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject it = arr.optJSONObject(i);
                 if (it == null) continue;
-                if (!host.isEmpty()) {
-                    if (contains(it.optJSONArray("hosts"), host)) { exact.add(it); continue; }
-                    // `domains` holds the registrable domain of each stored URI; the page's host is
-                    // compared against it by suffix so `login.hsbc.co.uk` matches `hsbc.co.uk`
-                    // without this file needing to know what a public suffix is.
-                    if (suffixMatch(it.optJSONArray("domains"), host)) domain.add(it);
-                }
+                int r = VaultMatch.bestRank(strings(it.optJSONArray("hosts")),
+                                            strings(it.optJSONArray("domains")), candidates);
+                if (r == 2) exact.add(it);
+                else if (r == 1) domain.add(it);
                 // NOTE: no package-name guessing. See the class comment.
             }
         } catch (Throwable t) {
@@ -185,41 +189,21 @@ public class PosterChanAutofillService extends AutofillService {
         return exact;
     }
 
-    private static boolean contains(JSONArray a, String want) {
-        if (a == null) return false;
-        for (int i = 0; i < a.length(); i++) if (want.equalsIgnoreCase(a.optString(i, ""))) return true;
-        return false;
-    }
-
-    /** host == domain, or host ends with ".domain" — a subdomain of a site we hold. */
-    private static boolean suffixMatch(JSONArray domains, String host) {
-        if (domains == null || host.isEmpty()) return false;
-        for (int i = 0; i < domains.length(); i++) {
-            String d = domains.optString(i, "").toLowerCase(Locale.ROOT);
-            if (d.isEmpty()) continue;
-            if (host.equals(d) || host.endsWith("." + d)) return true;
-        }
-        return false;
-    }
-
-    private static String normHost(String s) {
-        if (s == null) return "";
-        String h = s.trim().toLowerCase(Locale.ROOT);
-        int i = h.indexOf("://");
-        if (i >= 0) h = h.substring(i + 3);
-        int slash = h.indexOf('/');
-        if (slash >= 0) h = h.substring(0, slash);
-        int colon = h.indexOf(':');
-        if (colon >= 0) h = h.substring(0, colon);
-        if (h.startsWith("www.")) h = h.substring(4);
-        return h;
+    private static List<String> strings(JSONArray a) {
+        List<String> out = new ArrayList<>();
+        if (a == null) return out;
+        for (int i = 0; i < a.length(); i++) out.add(a.optString(i, ""));
+        return out;
     }
 
     // ---------------------------------------------------------------- structure
 
     private static final class Parsed {
         AutofillId username, password;
-        String webDomain = "";
+        /** The domain of the document the field we are filling lives in — an SSO iframe, usually. */
+        String fieldDomain = "";
+        /** The outermost document's domain: the one that is actually in the address bar. */
+        String pageDomain = "";
     }
 
     /**
@@ -230,10 +214,20 @@ public class PosterChanAutofillService extends AutofillService {
      * own id/hint text. A WebView reports its page through getWebDomain(), which is what makes a
      * browser on the phone match the same way the desktop extension does.
      */
-    private void parse(AssistStructure.ViewNode node, Parsed out) {
+    private void parse(AssistStructure.ViewNode node, Parsed out) { parse(node, out, "", 0); }
+
+    private void parse(AssistStructure.ViewNode node, Parsed out, String inherited, int depth) {
         if (node == null) return;
         String wd = node.getWebDomain();
-        if (wd != null && !wd.isEmpty() && out.webDomain.isEmpty()) out.webDomain = wd;
+        /* The domain in scope for everything below this node. Passed DOWN rather than latched
+         * globally: the old code kept the first webDomain it met anywhere in the tree, so a page
+         * whose analytics or captcha iframe happened to sort ahead of its login form convinced the
+         * phone it was on that frame's site. Nothing matched, nothing was offered, and it looked
+         * like the one site autofill "just doesn't work on". */
+        if (wd != null && !wd.isEmpty()) {
+            inherited = wd;
+            if (out.pageDomain.isEmpty()) out.pageDomain = wd;   // shallowest = the top document
+        }
 
         String[] hints = node.getAutofillHints();
         int type = node.getAutofillType();
@@ -249,8 +243,11 @@ public class PosterChanAutofillService extends AutofillService {
             }
             if (out.password == null && isPasswordInput(node)) out.password = node.getAutofillId();
             if (out.username == null && looksLikeUsername(node)) out.username = node.getAutofillId();
+            // Whichever field we settled on, remember the document it was in.
+            if (out.fieldDomain.isEmpty() && (out.password != null || out.username != null))
+                out.fieldDomain = inherited;
         }
-        for (int i = 0; i < node.getChildCount(); i++) parse(node.getChildAt(i), out);
+        for (int i = 0; i < node.getChildCount(); i++) parse(node.getChildAt(i), out, inherited, depth + 1);
     }
 
     private static boolean isPasswordInput(AssistStructure.ViewNode n) {
