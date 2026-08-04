@@ -1272,7 +1272,7 @@
     $('#btn-back-login').onclick = ()=>{ $('#auth-signup').classList.add('hidden'); $('#auth-login').classList.remove('hidden'); };
     $('#btn-gen-key').onclick = genKey;
     $('#btn-signup-go').onclick = signupGo;
-    try{ _bindAuthConn(); }catch(_){}   // native builds: choose the server (or none) before signing in
+    try{ _bindAuthConn(); }catch(_){}   // relays (and, in a native build, the server) before signing in
     // Global [data-copy] handler for TEXT NODES (code blocks etc.). It must skip form fields: their
     // textContent is the empty string, so this wrote "" to the clipboard — and because it runs in
     // ADDITION to the element's own handler, it both emitted a second bogus "copied" toast AND clobbered
@@ -1487,18 +1487,27 @@
       Session.save({ mode:'local', sk: r.sk }); startApp();
     } catch(e){ authErr('invalid nsec'); }
   }
-  /* ---------- the connection chooser on the SIGN-IN screen (native builds only) ----------
+  /* ---------- the connection chooser on the SIGN-IN screen ----------
    *
    * Settings has the same controls, but Settings is behind the login — so wanting your own relays, or
    * none, meant first signing in to somebody else's instance to go and find the switch. On a fresh APK
    * that is the only server anyone has, which made "be independent of an instance" a thing you could
    * only choose after depending on one.
    *
-   * Browser: hidden. The instance IS the site you opened, and there is nothing to pick.
+   * IT IS ON THE WEB TOO. This was native-only on the reasoning that a browser has nothing to pick,
+   * which was true of the SERVER and wrong about the relays — a browser user has exactly the same
+   * reason to name their own relays before signing in, and telling them to sign in first to reach the
+   * setting is the very thing this control exists to stop. So the row always shows and the PANE varies:
+   * relays everywhere, the server section only where the server is a choice (`#conn-server-sec`).
+   *
+   * Pre-login relay edits take effect on the reload that follows, because connectRelays() reads
+   * ClientSettings before it looks at anything else — case 1 there, which is not gated on being signed
+   * in. Relays are a device setting; nothing about them needs a key.
    */
   function _bindAuthConn(){
-    const row = $('#auth-conn-row'); if(!row || !BUNDLED) return;
+    const row = $('#auth-conn-row'); if(!row) return;
     row.classList.remove('hidden');
+    { const s=$('#conn-server-sec'); if(s) s.classList.toggle('hidden', !BUNDLED); }
     _paintAuthConn();
     const login = $('#auth-login'), pane = $('#auth-conn');
     const show = (on)=>{ if(!pane||!login) return;
@@ -1538,6 +1547,13 @@
   }
   function _paintAuthConn(){
     const l=$('#auth-conn-label'); if(!l) return;
+    // In a browser the server is not in question, so naming it would offer a change that is not on
+    // offer. Say what IS editable here, and how many are in force.
+    if(!BUNDLED){
+      const n=userRelays().length;
+      l.textContent = n ? ('Relays: ' + n + ' of your own') : 'Relays: the defaults';
+      return;
+    }
     const b=_instanceBase();
     l.textContent = b ? ('Server: ' + b.replace(/^https?:\/\//,'')) : 'No server';
   }
@@ -7857,13 +7873,46 @@
     // above anything that genuinely fits on screen at once (a tablet showing the Notifications view AND
     // the rail is the densest case). Too low and a video you CAN see would sit blank.
     const MAX_MOUNTED = 8;
+    /* How long a video that has not managed to paint its first frame yet is left alone after it
+     * scrolls away. This is the whole of the "no video previews over Tor" bug.
+     *
+     * The poster frame is a NETWORK FETCH: metadata (the moov atom, which for a non-faststart MP4 is
+     * at the far end of the file) and then a seek. Measured on real timeline videos, direct vs through
+     * a tor SOCKS proxy in headless Chrome: 319ms → 2347ms, 356ms → 5135ms, 1099ms → 38569ms. Nothing
+     * is wrong with the video or with tor; every round trip simply costs 10-30x more.
+     *
+     * Aborting that fetch keeps NOTHING. Measured: unmount at 1.5s leaves readyState back at 0, and
+     * the remount pays the full 5367ms again — the cancelled bytes are not resumed and not reused.
+     * So on a feed you are scrolling, an unmount-on-leave beats the fetch every time and no video EVER
+     * paints: permanent black boxes, on exactly the connection where the user can least tell why.
+     * Direct, the fetch wins in 300ms and nobody ever saw this.
+     *
+     * A load in flight is therefore not idle — it is the preview arriving — and it is left alone for a
+     * while. The CAP is unaffected (see mount(): a cap eviction forces, because a hard resource limit
+     * is not a policy) and so is DOM removal, so the decoder pressure this whole module exists to
+     * control is unchanged: never more than MAX_MOUNTED, ever. */
+    const FIRST_FRAME_GRACE = 20000;
     const mounted = new Set();
+    const visible = new WeakSet();          // last known intersection state, for the grace timer
     const _url = el => el.dataset.vsrc || '';
     const _dist = el => { const r=el.getBoundingClientRect(); const c=(innerHeight||800)/2; return Math.abs(r.top+r.height/2-c); };
-    function unmount(el){
+    const _painted = el => el.readyState >= 2;               // HAVE_CURRENT_DATA — a frame exists
+    function unmount(el, force){
       if(!el.dataset.vmount) return;
       if(!el.paused && !el.ended) return;                         // playing → leave it alone (audio keeps going off-screen)
-      delete el.dataset.vmount; mounted.delete(el);
+      if(!force && el.isConnected && !_painted(el)){
+        const waited = Date.now() - (+el.dataset.vmt || 0);
+        if(waited < FIRST_FRAME_GRACE){
+          // Come back when the grace is up: the observer will not fire again for something that has
+          // already left the viewport, so without this the element would stay mounted indefinitely.
+          clearTimeout(el._vgrace);
+          el._vgrace = setTimeout(()=>{ if(!visible.has(el)) unmount(el, true); },
+                                  FIRST_FRAME_GRACE - waited);
+          return;
+        }
+      }
+      clearTimeout(el._vgrace);
+      delete el.dataset.vmount; delete el.dataset.vmt; mounted.delete(el);
       try{ if(el.currentTime>0.2) el.dataset.vpos=String(el.currentTime); }catch(_){}
       try{ el.pause(); }catch(_){}
       el.removeAttribute('src'); el.preload='none';
@@ -7877,11 +7926,13 @@
       if(mounted.size>=MAX_MOUNTED){
         for(const far of [...mounted].sort((a,b)=>_dist(b)-_dist(a))){
           if(_dist(far)<=_dist(el)) break;
-          unmount(far); if(mounted.size<MAX_MOUNTED) break;
+          // FORCED: the cap is a hard limit on live decoders, not a preference. Letting a still-loading
+          // video refuse here would starve the one the user is actually looking at.
+          unmount(far, true); if(mounted.size<MAX_MOUNTED) break;
         }
         if(mounted.size>=MAX_MOUNTED) return;
       }
-      el.dataset.vmount='1'; mounted.add(el);
+      el.dataset.vmount='1'; el.dataset.vmt=String(Date.now()); mounted.add(el);
       el.preload='metadata';
       const u=_url(el), pos=+(el.dataset.vpos||0);
       // #t= seeks the browser to a frame and PAINTS it — metadata alone still renders black in several
@@ -7889,7 +7940,10 @@
       el.src = u.includes('#') ? u : u + '#t=' + (pos>0.2 ? pos.toFixed(2) : '0.1');
     }
     const io = ('IntersectionObserver' in window) ? new IntersectionObserver(ents=>{
-      for(const e of ents){ if(e.isIntersecting) mount(e.target); else unmount(e.target); }
+      for(const e of ents){
+        if(e.isIntersecting){ visible.add(e.target); mount(e.target); }
+        else { visible.delete(e.target); unmount(e.target); }
+      }
     }, { rootMargin:'300px 0px' }) : null;
     // No IntersectionObserver (nothing current, but the whole feature hangs off it) → mount on sight, which
     // is precisely the old behaviour. Degrading to "no video ever gets a src" would be the worse bug.
@@ -7915,7 +7969,10 @@
       setTimeout(()=>{
         if(el.isConnected) return;                                // it was a move, not a removal
         if(io) io.unobserve(el);
-        mounted.delete(el); delete el.dataset.vmount;
+        // A pending first-frame grace dies with the node — it is keyed on the element still being in
+        // the document, and a timer that outlives it would fire against a detached video.
+        clearTimeout(el._vgrace); visible.delete(el);
+        mounted.delete(el); delete el.dataset.vmount; delete el.dataset.vmt;
         try{ el.pause(); }catch(_){}
         el.removeAttribute('src'); try{ el.load(); }catch(_){}
       }, 0);

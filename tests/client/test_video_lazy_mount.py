@@ -68,8 +68,19 @@ class VideoLazyMount(unittest.TestCase):
         self.assertRegex(mount, r"MAX_MOUNTED\s*=\s*[1-9]", "there must be a cap on live media players")
         # Both directions. Mounting on entry with nothing releasing on exit is how you end up back at
         # "every video that has ever scrolled past holds a decoder" — the state this fix removes.
-        self.assertRegex(mount, r"isIntersecting\s*\)?\s*mount\(", "entering the viewport must mount")
-        self.assertRegex(mount, r"else\s+unmount\(", "leaving the viewport must release")
+        # Matched loosely on purpose: these used to be single-expression arms and are now blocks (the
+        # observer also records visibility for the first-frame grace), and a regex pinned to the old
+        # spelling failed a change that kept the behaviour exactly. What matters is that the entering
+        # arm mounts and the leaving arm unmounts, not how the arm is punctuated.
+        io = mount[mount.index("new IntersectionObserver"):]
+        enter = io[:io.index("else")]
+        self.assertIn("isIntersecting", enter)
+        self.assertRegex(enter, r"mount\(e\.target\)", "entering the viewport must mount")
+        self.assertRegex(io, r"else\s*\{[^}]*unmount\(e\.target\)", "leaving the viewport must release")
+        # The release must be conditional on there being nothing to lose — see test_video_mount_grace.py.
+        self.assertIn("FIRST_FRAME_GRACE", mount,
+                      "a video still fetching its first frame must not be aborted when it scrolls "
+                      "away; on a slow link (tor) the preview then never appears at all")
 
     def test_notification_subs_do_not_redraw_per_event(self):
         """The live subscriptions must coalesce their redraws, not rebuild the view per event."""

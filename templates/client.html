@@ -144,7 +144,10 @@
                 <textarea id="conn-relays" class="input" rows="5" autocapitalize="none" autocorrect="off" spellcheck="false"></textarea>
                 <button id="btn-conn-relays" class="btn btn-neon full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-relay"></use></svg>Save relays</button>
             </div>
-            <div class="auth-sec">
+            <!-- Server section only where the server is a CHOICE, i.e. a native build. In a browser the
+                 instance is the site you opened and there is nothing here to pick, but the relays above
+                 are still yours to set — which is why the pane, not the row, is what varies. -->
+            <div class="auth-sec" id="conn-server-sec">
                 <span class="auth-sec-t">Server <span class="auth-sec-n">— optional</span></span>
                 <p class="muted small">Adds AI, Meme Builder, News, Torrents and Server Stats. Without one the
                     app still does Social, Messages, Notifications, Notes, Passwords, Budget, Calls and the games.</p>
