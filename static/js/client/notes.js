@@ -67,6 +67,36 @@
       // still open over it, which is the "this is just a webview" tell the back handler exists for.
       drawerOpen: () => _drawerOpen,
       closeDrawer: () => _drawer(false),
+      /* Save something from elsewhere in the app into the notebook.
+       *
+       * The FILES are encrypted and uploaded like any other attachment, not linked: a note that
+       * pointed at a public Blossom URL would show a blank box the moment that blob aged out or the
+       * phone went offline, and it would put the picture on a server that is not supposed to be able
+       * to read this library. The public link belongs in the TEXT, where it is a reference rather
+       * than the content.
+       *
+       * Returns the note id, so a caller can offer to open it. Throws on failure — a toast that says
+       * "saved" over a note that is not there is worse than an error. */
+      async save(o){
+        await load();
+        const n = blankNote('');
+        n.title = (o && o.title || 'Saved').slice(0, 200);
+        n.tags = (o && o.tags || []).slice(0, 8);
+        let body = (o && o.body) || '';
+        for(const f of ((o && o.files) || [])){
+          await _ensureNotesFolder();
+          const sha = await PC.uploadEncFile(f, 'Notes');
+          n.res.push({ sha, name:f.name, mime:f.type || 'application/octet-stream', size:f.size });
+          body += (/^image\//.test(f.type) ? `\n![${f.name}](pcres:${sha})\n` : `\n[${f.name}](pcres:${sha})\n`);
+        }
+        n.body = body;
+        const r = await save(n, 'note');
+        // Offline is a SUCCESS with a caveat, not a failure: the note is in the local library and
+        // the queue publishes it on reconnect, which is the whole point of the offline notebook.
+        if(!r || (!r.ok && !r.queued)) throw new Error('could not write the note');
+        if(PC.VIEW === 'notes') _paint();
+        return { id:n.id, queued: !!(r && r.queued) };
+      },
     };
     // A reconnect is the moment to drain the queue. 'online' fires on the window; the relay's own
     // reopen is the more reliable signal on mobile (a phone can be "online" with no route), so both.

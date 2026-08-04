@@ -433,6 +433,42 @@ BACKUP_REFUSED = r"""(async () => {
 
 # The offline write. Types into the open editor with publishing failing, waits out the 700ms
 # debounce, and reports whether the text survived anywhere it could be recovered from.
+# PCNotes.save() — the door the rest of the app comes in through (the post-card "Save to Notes"
+# button is the first caller). Two things have to hold, and the second is the one that bites: the
+# ATTACHMENT must become an encrypted pcres: reference rather than a link, and an offline save must
+# still leave the note in the local library. save() returns {ok:false, queued:true} when the relay
+# refuses, and publish() rolls its optimistic cache write BACK on refusal — so a caller that treats
+# queued as success over a note publish() already deleted would report "saved" about nothing.
+SAVE_API = r"""(async () => {
+  if(!window.PCNotes || !window.PCNotes.save) return {error:'PCNotes.save is gone'};
+  const png = new File([new Uint8Array([137,80,78,71])], 'post.png', {type:'image/png'});
+  const out = {};
+  window.__online = true;
+  const a = await window.PCNotes.save({ title:'A card', body:'the post text\n',
+                                        tags:['saved-post'], files:[png] });
+  out.onlineId = a && a.id;
+  out.onlineQueued = !!(a && a.queued);
+
+  window.__online = false;
+  const b = await window.PCNotes.save({ title:'Saved on a train', body:'offline body\n',
+                                        tags:['saved-post'], files:[png] });
+  out.offlineId = b && b.id;
+  out.offlineQueued = !!(b && b.queued);
+  // The note the caller was told about must actually be readable back.
+  out.offlineInStore = window.Store._evs.some(e => (e.content||'').includes('offline body'));
+  let pending = [];
+  try{ pending = JSON.parse(localStorage.getItem('pcaiNotesPending')||'[]'); }catch(e){}
+  out.offlineInPending = pending.some(e => (e.content||'').includes('offline body'));
+  // The picture is an encrypted attachment, not a URL: a linked blob goes blank offline and puts
+  // the image on a server this library is specifically encrypted against.
+  const ev = window.Store._evs.filter(e => (e.content||'').includes('the post text')).pop();
+  out.hasRes = !!(ev && /"res":\[\{"sha"/.test(ev.content||''));
+  out.hasRef = !!(ev && /pcres:/.test(ev.content||''));
+  out.hasTag = !!(ev && /saved-post/.test(ev.content||''));
+  window.__online = true;
+  return out;
+})()"""
+
 OFFLINE_WRITE = r"""(async () => {
   window.__online = false;
   const t = document.querySelector('.nt-title'), b = document.querySelector('.nt-body');
@@ -740,6 +776,31 @@ async def drive(url):
                             problems.append((label, "backup-unsaveable",
                                              "the attachments were skipped because the browser has no "
                                              "save dialog — they must be written in parts instead"))
+
+                sv = await js(SAVE_API, awaited=True)
+                if not sv or sv.get("error"):
+                    problems.append((label, "save-api-broken",
+                                     f"PCNotes.save could not run ({(sv or {}).get('error')})"))
+                else:
+                    if not sv.get("onlineId"):
+                        problems.append((label, "save-api-broken", "an online save returned no note id"))
+                    if not sv.get("hasRes") or not sv.get("hasRef"):
+                        problems.append((label, "save-api-broken",
+                                         "the attachment was not stored as an encrypted pcres: "
+                                         "reference — a linked blob goes blank offline"))
+                    if not sv.get("hasTag"):
+                        problems.append((label, "save-api-broken", "the tags were dropped"))
+                    if not sv.get("offlineInStore"):
+                        problems.append((label, "offline-write-lost",
+                                         "a note saved through PCNotes.save while offline is NOT in "
+                                         "the local cache — publish()'s rollback ate it"))
+                    if not sv.get("offlineInPending"):
+                        problems.append((label, "offline-write-lost",
+                                         "an offline PCNotes.save was not queued to send"))
+                    if not sv.get("offlineQueued"):
+                        problems.append((label, "save-api-broken",
+                                         "an offline save did not tell the caller it was queued, so "
+                                         "the UI cannot say the note will sync later"))
 
                 # And the one that isn't about layout at all.
                 w3 = await js(OFFLINE_WRITE, awaited=True)

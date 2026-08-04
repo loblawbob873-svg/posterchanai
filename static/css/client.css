@@ -532,6 +532,13 @@ body.anim-off *, body.anim-off *::before, body.anim-off *::after{ animation-play
 a.btn{display:inline-block;text-align:center;text-decoration:none}
 a.btn.full{display:block}
 .btn.small{padding:8px 14px;font-size:13px}
+/* The action row under a rendered post card. Six buttons do not fit across a phone, and a plain
+   flex row squeezes them until the labels overrun — the same failure as the Passwords sidebar
+   footer. So it WRAPS, and every button gets a floor wide enough for its own text; on a narrow
+   screen that lands two per row instead of six unreadable slivers. */
+.ss-acts{justify-content:center;gap:8px;margin-top:14px;flex-wrap:wrap}
+.ss-acts>*{flex:1 1 auto;min-width:132px;justify-content:center;white-space:nowrap}
+@media (max-width:420px){ .ss-acts>*{min-width:calc(50% - 4px)} }
 /* Glow is a STATE, not a resting style. Every filled button glowing at rest is why a row of six reads
    as six equally-urgent things and the eye finds no primary — the single loudest "unpolished" signal in
    the UI. At rest they get real elevation (--sh-1); the bloom is what hover/focus adds. Shared rules, so

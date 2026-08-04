@@ -8963,7 +8963,7 @@
       try{ await navigator.clipboard.writeText(link); }catch(_){}
       modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-camera"></use></svg>Post card</h3><img src="${enc(link)}" style="max-width:100%;max-height:54vh;border-radius:10px;display:block;margin:0 auto">`+
         `<div class="muted small" style="margin-top:10px;word-break:break-all">${enc(link)}</div>`+
-        `<div class="row" style="justify-content:center;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn btn-cyan small" id="ss-fx"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>Effect</button><button class="btn btn-cyan small" id="ss-meme"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>Meme Builder</button><button class="btn btn-neon small" id="ss-copy"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy link</button><a class="btn btn-cyan small" href="${enc(link)}" target="_blank" rel="noopener"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Open</a><button class="btn btn-cyan small" id="ss-close">Close</button></div>`,
+        `<div class="row ss-acts"><button class="btn btn-cyan small" id="ss-fx"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>Effect</button><button class="btn btn-cyan small" id="ss-meme"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>Meme Builder</button><button class="btn btn-cyan small" id="ss-note"><svg class="ic b-ic" aria-hidden="true"><use href="#i-note"></use></svg>Save to Notes</button><button class="btn btn-neon small" id="ss-copy"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy link</button><a class="btn btn-cyan small" href="${enc(link)}" target="_blank" rel="noopener"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Open</a><button class="btn btn-cyan small" id="ss-close">Close</button></div>`,
         root=>{
           const cp=root.querySelector('#ss-copy'); if(cp) cp.onclick=async()=>{ try{ await navigator.clipboard.writeText(link); toast('📋 link copied'); }catch(_){ toast(link); } };
           // 🎬 Effect: run the card PNG through the Effects studio; no reply target → its 🚀 Post button
@@ -8980,6 +8980,39 @@
               const ok = window.PCMeme && window.PCMeme.addMedia && window.PCMeme.addMedia(link, 'image/png', { id, pk: ev.pubkey });
               toast(ok ? '🎞️ card added to the Meme Builder' : 'could not add that card');
             }, 60);
+          };
+          /* 📓 Save to Notes: the card, the post's own words and a link back, as ONE private note.
+           *
+           * The PNG goes in as an ENCRYPTED attachment rather than as the Blossom URL that is right
+           * there: a note that linked to the blob would go blank the day that blob ages out or the
+           * phone loses signal, and it would leave the picture readable by a server that is not
+           * supposed to be able to read this library at all. The public link is kept in the text,
+           * where it is a reference and not the content. */
+          const nb=root.querySelector('#ss-note');
+          if(nb) nb.onclick=async()=>{
+            if(!window.PCNotes || !window.PCNotes.save){ toast('Notes is not loaded'); return; }
+            nb.disabled=true; const was=nb.innerHTML; nb.textContent='Saving…';
+            try{
+              let ent=''; try{ ent=NT().nip19.neventEncode({ id, author: ev.pubkey }); }catch(_){ }
+              const lines=[];
+              if(text) lines.push(text.trim());
+              lines.push('');
+              lines.push(`— ${name || handle}${timestamp ? ' · ' + timestamp : ''}`);
+              if(ent) lines.push(`[the original post](${_webLink(ent)})`);
+              lines.push(`[card image](${link})`);
+              const r=await window.PCNotes.save({
+                title: (name ? name + ' — ' : '') + (text ? text.trim().split('\n')[0].slice(0,70) : 'post'),
+                body: lines.join('\n') + '\n',
+                tags: ['saved-post'],
+                files: [file],
+              });
+              closeModal();
+              toast(r.queued ? '📓 saved to Notes — will sync when you are back online'
+                             : '📓 saved to Notes');
+            }catch(e){
+              nb.disabled=false; nb.innerHTML=was;
+              toast('could not save to Notes: '+((e&&e.message)||'error'));
+            }
           };
           const cl=root.querySelector('#ss-close'); if(cl) cl.onclick=closeModal;
         });
