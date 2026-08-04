@@ -1,0 +1,90 @@
+name: Firefox extension
+
+# Builds the PosterChan Passwords add-on and publishes it to a rolling GitHub Release, so
+# poster.place/extension always has something to hand out.
+#
+# It exists because the built artifact is NOT in the repo: extension/dist and extension/vendor are
+# generated (vendor/nostr.bundle.js is copied from the app's own vendored bundle, vaultcore.js from
+# the client) and committing either would be a second copy to keep in step. That was the right call
+# for the tree and the wrong one for the user, who had no way to obtain the thing at all — hence
+# this. `about:debugging` still wants an unpacked directory, so both are published: the .zip for
+# signing/AMO, and the unpacked bundle as a tarball for a temporary install.
+#
+# NOT SIGNED here. Mozilla signing needs AMO credentials and an account decision that isn't CI's to
+# make; without it Firefox for Android and release Firefox will refuse a permanent install. See
+# docs/PASSWORDS.md for what that means in practice.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'extension/**'
+      - 'static/js/client/vaultcore.js'      # the shared core IS the extension's core
+      - 'static/vendor/nostr/nostr.bundle.js'
+      - '.github/workflows/extension.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Pillow (the icons are generated, not committed)
+        run: python3 -m pip install --quiet pillow
+
+      - name: Build
+        run: bash extension/build.sh
+
+      # The copy step in build.sh is the anti-drift mechanism; prove it did its job rather than
+      # trusting it. A silently stale vaultcore.js in the extension is the exact failure
+      # tests/test_vault_extension.py exists to catch, and it is cheap to check again here where the
+      # artifact is actually produced.
+      - name: The shipped core must match the app's
+        run: |
+          a=$(sha256sum static/js/client/vaultcore.js | cut -d' ' -f1)
+          b=$(sha256sum extension/vaultcore.js       | cut -d' ' -f1)
+          echo "app: $a"; echo "ext: $b"
+          [ "$a" = "$b" ] || { echo "::error title=vaultcore drift::the extension is shipping a different core than the app"; exit 1; }
+
+      - name: Also publish an unpacked bundle (for about:debugging)
+        run: |
+          cd extension
+          tar czf dist/posterchan-passwords-unpacked.tar.gz \
+            manifest.json background.js content.js content.css \
+            popup.html popup.js popup.css vaultcore.js vendor icons
+          ls -la dist/
+
+      # Same reason as the APK workflow: GitHub stamps a release's date when the release OBJECT is
+      # created, so replacing an asset under a rolling tag leaves it reading "2 days ago" next to a
+      # build made a minute ago. Delete and let the next step recreate it with an honest date; the
+      # tag and the download URL survive.
+      - name: Retire the previous rolling release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete extension-latest --yes --repo "$GITHUB_REPOSITORY" || true
+
+      - name: Publish rolling release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: extension-latest
+          name: PosterChan Passwords — Firefox add-on (latest)
+          body: |
+            Autofill, one-time codes and a password generator for your PosterChan vault.
+
+            **Desktop Firefox, right now:** download the `-unpacked.tar.gz`, extract it, then
+            `about:debugging` → This Firefox → Load Temporary Add-on → pick `manifest.json`.
+            (Temporary add-ons unload when Firefox restarts.)
+
+            **Permanent / Android:** needs a Mozilla-signed build — see docs/PASSWORDS.md.
+
+            Pair it from the app: Passwords → Pair a device.
+
+            Build 1.0.${{ github.run_number }}.
+          files: |
+            extension/dist/posterchan-passwords.zip
+            extension/dist/posterchan-passwords-unpacked.tar.gz
+          make_latest: false

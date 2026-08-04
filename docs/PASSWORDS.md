@@ -100,9 +100,35 @@ pairing that silently cannot save.
 
 `extension/` — MV3, with `browser_specific_settings` for Firefox desktop **and** `gecko_android`.
 
-    extension/build.sh      → extension/dist/posterchan-passwords.zip
+### Getting it
 
-Load with `about:debugging` → *Load Temporary Add-on* → `manifest.json`.
+    https://poster.place/extension        the unpacked bundle (.tar.gz) — for about:debugging
+    https://poster.place/extension/zip    the packed .zip — for signing / AMO submission
+
+Both redirect to the rolling `extension-latest` GitHub Release, built by
+`.github/workflows/extension.yml` on every change to `extension/` or to the shared core.
+
+**The built artifact is not in the repo, and neither is `extension/vendor/`.** Both are assembled
+from files that already live here — `static/js/client/vaultcore.js` and the vendored nostr bundle —
+and a committed copy is a copy that goes stale. So a fresh checkout cannot be loaded as-is: run
+
+    extension/build.sh
+
+first, which populates `extension/vendor/` and refreshes `extension/vaultcore.js` in place, and then
+`about:debugging` → *This Firefox* → *Load Temporary Add-on* → `extension/manifest.json` works.
+
+### Installing it properly
+
+A temporary add-on unloads when Firefox restarts, and release Firefox **and Firefox for Android**
+refuse a permanent install of an unsigned extension. That needs a Mozilla account and an AMO
+submission (or a self-distributed signed build, which AMO also issues). Until then:
+
+* **Desktop:** the temporary-add-on route above, or Developer Edition / Nightly with
+  `xpinstall.signatures.required=false`.
+* **Android:** signing is not optional — Firefox for Android installs add-ons from AMO or from a
+  custom collection, both of which require a signed build.
+
+Nothing here signs anything: it needs credentials and an account decision.
 
 The extension connects to your relay itself, decrypts with the paired vault key, and caches the
 decrypted set so the popup opens instantly and works offline. It offers a badge in login fields, an

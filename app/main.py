@@ -962,8 +962,33 @@ small{color:#5c5c73;font-size:12px;display:block;margin-top:18px}</style>
 <a href="/desktop/mac">🍎 &nbsp;macOS (Apple silicon)</a>
 <a class=s href="/desktop/mac-intel">macOS (Intel)</a>
 <a class=s href="/apk">📱 Android APK</a>
+<a class=s href="/extension">🔑 Firefox add-on (passwords)</a>
 <small>Unsigned builds — Windows shows a SmartScreen prompt (More info → Run anyway);
 on macOS right-click the app → Open.</small></div>""")
+
+
+_EXT_DL = ("https://github.com/loblawbob873-svg/posterchanai/releases/download/extension-latest/")
+
+
+@app.get("/extension")
+async def firefox_extension():
+    """The Firefox add-on (autofill + one-time codes for the password vault).
+
+    A redirect rather than a local mirror, unlike /apk: an add-on is a one-off desktop download over
+    a connection that is by definition working, not a 60 MB APK pulled onto a throttled phone, so the
+    resume/Range argument that justifies mirroring the APK doesn't apply. The artifact is built by
+    .github/workflows/extension.yml — it is deliberately not in the repo, because it is assembled
+    from files that already live there (the shared vaultcore.js and the vendored nostr bundle) and a
+    committed copy is a copy that goes stale.
+    """
+    return RedirectResponse(url=_EXT_DL + "posterchan-passwords-unpacked.tar.gz", status_code=302)
+
+
+@app.get("/extension/zip")
+async def firefox_extension_zip():
+    """The packed .zip — what you submit to addons.mozilla.org for signing. The unpacked tarball
+    above is the one to grab for `about:debugging`, which wants a directory."""
+    return RedirectResponse(url=_EXT_DL + "posterchan-passwords.zip", status_code=302)
 
 
 @app.get("/desktop/{asset}")
