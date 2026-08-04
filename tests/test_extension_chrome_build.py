@@ -78,9 +78,10 @@ def test_nip07_goes_into_the_page_world_directly_on_chrome():
     a site's CSP to refuse), injects no node, and leaks only "this extension exists", identically for
     every install.
 
-    Reported as "on Brave, says no NIP-07 extension". I could not reproduce it here — headless Chrome
-    does not activate extensions at all on this box (no content-script world is ever created) — so
-    this is the Chrome-native path taken on its merits, not a confirmed root cause.
+    Reported as "on Brave, says no NIP-07 extension", and CONFIRMED by the fix: with the inline
+    <script> path Brave found no signer on any site, and with this one it does. (It could not be
+    reproduced on this box — headless Chrome never activates extensions here, so no content-script
+    world is ever created — which is why it shipped as the Chrome-native path on its merits first.)
     """
     build = _read("build.sh")
     assert "'world': 'MAIN'" in build, "inject.js is not registered in the page's world for Chrome"

@@ -77,7 +77,10 @@ var __pcNostrProvider = function () {
  * pointing at the extension publishes a per-install UUID to every page on the web.
  *
  * Chrome has a direct route Firefox did not: a content script registered with `"world": "MAIN"` runs
- * in the page itself. That is strictly better here — no inline <script> for a site's
+ * in the page itself. CONFIRMED, not theorised: with the inline-<script> path Brave reported "no
+ * NIP-07 extension" on every site, and registering this file in the MAIN world fixed it. Chromium
+ * does not let a content script's inline <script> define anything the page can see here; Firefox
+ * does, which is why the same code worked there and only there. That is strictly better here — no inline <script> for a site's
  * Content-Security-Policy to refuse, no injected node, and Chrome's extension id is the same for
  * every install, so it is not the supercookie a Firefox UUID would be. build.sh registers this file
  * that way in the generated Chrome manifest, and there is nothing in the page's world to call it, so
