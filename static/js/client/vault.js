@@ -625,8 +625,8 @@
         <div class="pv-side-foot">
           ${pend?`<div class="pv-pending small">${pend} waiting to sync</div>`:''}
           ${_unreadable?`<div class="pv-pending small">${_unreadable} entr${_unreadable===1?'y':'ies'} could not be decrypted</div>`:''}
+          <button class="pv-link pv-health" title="Weak, reused and old passwords"><svg class="ic" aria-hidden="true"><use href="#i-chart"></use></svg>Health</button>
           <div class="pv-foot-actions">
-            <button class="pv-link pv-health" title="Weak, reused and old passwords"><svg class="ic" aria-hidden="true"><use href="#i-chart"></use></svg>Health</button>
             <button class="pv-link pv-import" title="Import a Bitwarden export"><svg class="ic" aria-hidden="true"><use href="#i-download"></use></svg>Import</button>
             <button class="pv-link pv-export" title="Export for another password manager"><svg class="ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Export</button>
           </div>

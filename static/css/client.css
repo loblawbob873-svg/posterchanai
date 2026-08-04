@@ -4914,15 +4914,20 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
    of the two actions used constantly — not as full-size buttons competing for attention. */
 .nt-side-foot,.pv-side-foot{margin-top:auto;padding-top:12px;margin-bottom:2px;border-top:1px solid var(--line);
   display:flex;flex-direction:column;gap:7px}
-.nt-foot-actions,.pv-foot-actions{display:flex;gap:4px}
+/* TWO across, never three. Each is flex:1 with a nowrap label, so a third squeezes all of them
+   below their own text and the last one runs off the edge of the sidebar — which is what "the
+   Export button is cut off" was. The row is capped at two and anything else gets its own full-width
+   row above it, which is also the honest grouping: Import/Export are a pair, Health is a report. */
+.nt-foot-actions,.pv-foot-actions{display:flex;gap:6px}
+.nt-foot-actions>*,.pv-foot-actions>*{min-width:0}
 /* Visible enough to FIND. These were toned down to keep them out of the way of the two actions
    used constantly, and overshot: a borderless 65%-opacity label at the bottom of a column reads as
    a caption, not a button, and Import is the first thing a new user needs. Bordered, accent-tinted
    icons, and full opacity — quiet next to the primary button, but unmistakably clickable. */
 .nt-link,.pv-link{flex:1 1 0;display:inline-flex;align-items:center;justify-content:center;gap:6px;
-  padding:8px 6px;border-radius:9px;border:1px solid var(--line);
-  background:rgba(var(--accent-rgb),.06);color:inherit;
-  cursor:pointer;font-size:12.5px;font-weight:600;white-space:nowrap;transition:.12s}
+  padding:9px 8px;border-radius:9px;border:1px solid var(--line);
+  background:rgba(var(--accent-rgb),.06);color:inherit;min-height:36px;
+  cursor:pointer;font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;transition:.12s}
 .nt-link svg.ic,.pv-link svg.ic{width:14px;height:14px;flex:none;color:var(--neon)}
 .nt-link:hover,.pv-link:hover{border-color:var(--neon);background:rgba(var(--accent-rgb),.16);color:var(--neon)}
 .nt-pending,.pv-pending{color:var(--amber);font-size:11px}

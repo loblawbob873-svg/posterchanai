@@ -215,6 +215,28 @@ AUDIT = r"""(() => {
     if(t && el.scrollWidth > el.clientWidth + 2)
       out.clipped.push({ text:t.slice(0,20), shown:Math.round(el.clientWidth), needs:Math.round(el.scrollWidth) });
   }
+  /* A `white-space:nowrap` label does NOT report scrollWidth > clientWidth when it overruns — the
+     text simply spills out of the box, so the check above saw nothing while a third button in the
+     sidebar footer ran off the edge in front of the user. Measure what the content actually NEEDS
+     (the real text width via a Range, plus the icon and the padding) against the box it was given. */
+  for(const el of document.querySelectorAll('.pv-link, .btn')){
+    if(!vis(el)) continue;
+    const node = [...el.childNodes].find(n => n.nodeType === 3 && n.textContent.trim());
+    if(!node) continue;
+    const r = document.createRange(); r.selectNodeContents(node);
+    const textW = r.getBoundingClientRect().width;
+    const cs = getComputedStyle(el);
+    let need = textW + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) +
+               parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+    for(const kid of el.children){
+      if(!vis(kid)) continue;
+      need += kid.getBoundingClientRect().width + (parseFloat(cs.columnGap) || parseFloat(cs.gap) || 0);
+    }
+    const have = el.getBoundingClientRect().width;
+    if(need > have + 2)
+      out.clipped.push({ text:node.textContent.trim().slice(0,20), shown:Math.round(have),
+                         needs:Math.round(need) });
+  }
   return out;
 })()"""
 
