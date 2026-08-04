@@ -101,3 +101,14 @@ def test_files_are_patterns_not_a_handwritten_list():
 @pytest.mark.parametrize("mod", ["origin.js", "tor.js", "preload.js", "main.js"])
 def test_the_modules_that_exist_today(mod):
     assert _packed(mod), f"{mod} would not be packed"
+
+
+def test_no_comment_keys_in_the_build_config():
+    """JSON has no comments and electron-builder does not tolerate the usual workaround: its schema
+    REJECTS unknown properties, so a `"//files": "why…"` key next to `files` fails validation and the
+    build produces no installer at all. Written here because I did exactly that while fixing the bug
+    above — the explanation belongs in desktop/README.md and in this file, not in the config."""
+    bad = [k for k in PKG["build"] if k.startswith("//")]
+    assert not bad, (
+        f"comment keys in build config: {bad} — electron-builder validates its schema strictly and "
+        "will refuse to build")

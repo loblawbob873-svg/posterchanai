@@ -25,7 +25,6 @@
     "productName": "PosterChan",
     "copyright": "PosterChan",
     "directories": { "output": "dist", "buildResources": "build" },
-    "//files": "PATTERNS, never a hand-written list. origin.js was added as a module and not added here, so every installer shipped a main.js whose first requires threw 'Cannot find module ./origin' — the app died on launch, on all three platforms, and nothing in CI or the standalone check looks at what electron-builder actually packed. *.js and *.html cover every top-level module and page by construction. Guarded by tests/test_desktop_packaging.py.",
     "files": ["*.js", "*.html", "icon.png", "package.json", "www/**/*"],
     "extraResources": [{ "from": "resources/tor", "to": "tor" }],
     "win": {
