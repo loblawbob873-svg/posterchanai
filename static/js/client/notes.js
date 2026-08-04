@@ -1079,11 +1079,31 @@
         try{ await _withTimeout(PC.encFileUrl(first.sha, first.mime), 60000, 'reading a file'); }
         catch(e){
           const why = (e && e.message) || 'error';
+          /* DIAGNOSE, don't speculate. The previous wording blamed the signer, which was a guess and
+           * a wrong one; "OperationError: the operation failed for an operation-specific reason" is
+           * WebCrypto's way of saying AES-GCM decrypted with the WRONG KEY, and it reads like a
+           * corrupt file. So find out which it is: seal a few bytes, upload, read back. If that
+           * round trip works, this device's drive is healthy and these particular files need the key
+           * that wrote them — which is a completely different problem, with a different answer. */
+          let diag = '';
+          try{
+            const t = PC.driveSelfTest ? await PC.driveSelfTest() : null;
+            diag = !t ? ''
+              : t.ok ? '\n\nThis device CAN encrypt and read back a new file, so its key is working — ' +
+                       'these particular attachments were written with a different key. Nothing here ' +
+                       'can recover them, and backing up without them will not lose anything you ' +
+                       'still have.'
+                     : '\n\nThis device cannot encrypt and read back even a NEW file (' + t.why + '), ' +
+                       'so the problem is the drive on this device, not these files. Reload and try ' +
+                       'again before backing up without them.';
+          }catch(err){
+            diag = '\n\nA test file could not be written either (' + ((err && err.message) || 'error') +
+                   '), so this is the drive on this device rather than these files.';
+          }
           const go = await uiConfirm(
-            `The attachments can’t be read on this device — the first one failed with “${why}”.\n\n` +
-            `That is usually the signer refusing to unlock the file key, or being signed in to a ` +
-            `different account than the one that uploaded them.\n\nBack up the ${notes.length} ` +
-            `notes WITHOUT their ${resCount} attachments?`, {ok:'Notes only'});
+            `The attachments can’t be read on this device — the first one failed with “${why}”.` +
+            diag + `\n\nBack up the ${notes.length} notes WITHOUT their ${resCount} attachments?`,
+            {ok:'Notes only'});
           if(!go){
             try{ if(writer) await writer.abort(); }catch(_){ }
             return;

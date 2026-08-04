@@ -11380,7 +11380,7 @@
     // proved the server has none). _pullBlocked = the server HAS an index we could not read — the one
     // state in which writing anything would destroy it. The three are not the same thing, and
     // conflating _pullDone with "we have the index" is what wiped a drive's folders: see _save/_gc.
-    data: { folders: ['Music'], files: {}, encFolders: [] }, _pulled:false, _pullDone:false, _pullOk:false, _pullBlocked:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null, _indexShas:new Set(), _dirty:false, _saving:false,
+    data: { folders: ['Music'], files: {}, encFolders: [] }, _pulled:false, _pulling:false, _pullDone:false, _pullOk:false, _pullBlocked:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null, _indexShas:new Set(), _dirty:false, _saving:false,
     _key(){ return 'pc_files_idx_'+((ME&&ME.pubkey)||'anon'); },
     _norm(){ if(!this.data||typeof this.data!=='object') this.data={folders:['Music'],files:{},encFolders:[]};
       if(!Array.isArray(this.data.folders)) this.data.folders=['Music'];
@@ -11403,7 +11403,10 @@
        * decrypts nothing, saved it over the empty slot, and left the device permanently unable to
        * read its own files while the real key sat on the server. So ASK THE SERVER FIRST, and mint
        * only if it answered and genuinely had none. A failed pull is not an answer. */
-      if(!this._pullDone){
+      // NOT from inside pull() — pull() calls this to unwrap the key it just fetched, and
+      // `_pullDone` is only set at its END, so a pointer with no mk would recurse until the stack
+      // gave out. `_pulling` is the re-entrancy guard.
+      if(!this._pullDone && !this._pulling){
         try{ await this.pull(); }catch(_){ }
         if(this.mk) return this.mk;
         if(this._mkWrapped){ this.mk=_b64u8(JSON.parse(await signer.nip44dec(ME.pubkey,this._mkWrapped)).k); return this.mk; }
@@ -11427,6 +11430,7 @@
       this.saveLocal();
     },
     async pull(){
+      this._pulling = true;
       try{ const auth=await sign(27235,'files-index',[['p',ME.pubkey]]);
         const r=await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
@@ -11491,7 +11495,7 @@
         } else if(r && r.ok){
           this._pullOk=true;                      // server has no index at all — a fresh drive, safe to save
         }
-        this._pullDone=true;
+        this._pullDone=true; this._pulling=false;
       }catch(_){}
       return this._norm();
     },
@@ -19713,6 +19717,20 @@
     // uiPrompt for the same reason (meme.js: naming a saved project) — window.prompt wedges focus
     // exactly like window.confirm, and it is the ONLY way a sub-module can ask for a line of text.
     uploadBlob, selfProof, uiConfirm, uiPrompt,
+    /* Does the encrypted drive work AT ALL on this device, right now? Seals a few bytes, uploads
+     * them, reads them back and compares. It answers the one question that matters when a stored
+     * file will not open: is this device's key broken, or is it the wrong key FOR THAT FILE? The
+     * difference decides whether the answer is "reload" or "those bytes need the key that wrote
+     * them", and guessing at it produced a dialog that blamed the user's signer for a bug. */
+    async driveSelfTest(){
+      const probe = new Uint8Array(32); crypto.getRandomValues(probe);
+      const f = new File([probe], 'pc-drive-selftest.bin', { type:'application/octet-stream' });
+      const sha = await uploadEncFile(f, 'Music');
+      const back = new Uint8Array(await (await fetch(await encFileUrl(sha))).arrayBuffer());
+      if(back.length !== probe.length) return { ok:false, why:'the round trip changed length' };
+      for(let i=0;i<probe.length;i++) if(back[i] !== probe[i]) return { ok:false, why:'the bytes came back different' };
+      return { ok:true, sha };
+    },
     // Opening a decrypted file on Android: a WebView can neither view a PDF nor download a blob:,
     // so a sub-module must be able to hand one to the OS instead (notes.js attachments).
     isNativeApp: _isNativeApp, nativeOpenBlob,
