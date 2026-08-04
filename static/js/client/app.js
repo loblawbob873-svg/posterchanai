@@ -8275,16 +8275,55 @@
   // nothing custodial touches this server. Address lives in kind-0 like Monero (no agreed key, so read
   // liberally / write the two we control). ---------------------------------------------------------
   // CashAddr (`q…`/`p…`, with or without the bitcoincash: prefix) OR a legacy base58 address.
+  /* CashAddr CHECKSUM, not just the shape. `/^[qp][a-z0-9]{41}$/` accepts any 42-character token
+   * starting q or p, and this value is presented to people as "the address to send money to" — a
+   * false positive means a tip goes nowhere recoverable. The BCH checksum is a bech32-style polymod
+   * over the expanded prefix and the payload; a valid address makes it zero. */
+  const _CA_CHARSET='qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+  function _caPolymod(values){
+    let c=1n;
+    for(const d of values){
+      const c0=c>>35n;
+      c=((c&0x07ffffffffn)<<5n)^BigInt(d);
+      if(c0&0x01n) c^=0x98f2bc8e61n;
+      if(c0&0x02n) c^=0x79b76d99e2n;
+      if(c0&0x04n) c^=0xf33e5fb3c4n;
+      if(c0&0x08n) c^=0xae2eabe2a8n;
+      if(c0&0x10n) c^=0x1e4f43e470n;
+    }
+    return c^1n;
+  }
+  function isCashAddr(a){
+    const body=String(a||'').trim().replace(/^bitcoincash:/i,'').toLowerCase();
+    if(!/^[qp][a-z0-9]{41}$/.test(body)) return false;
+    const vals=[];
+    for(const ch of 'bitcoincash') vals.push(ch.charCodeAt(0)&0x1f);
+    vals.push(0);
+    for(const ch of body){ const i=_CA_CHARSET.indexOf(ch); if(i<0) return false; vals.push(i); }
+    try{ return _caPolymod(vals)===0n; }catch(_){ return false; }
+  }
   function isBchAddr(a){ a=(a||'').trim().replace(/^bitcoincash:/i,'');
-    return /^[qp][a-z0-9]{41}$/i.test(a) || /^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(a); }
+    // Legacy base58 keeps the shape check (its checksum needs a double SHA-256, and it only ever
+    // arrives from someone typing it into their own profile field).
+    return isCashAddr(a) || /^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(a); }
   const _BCH_CASHADDR=/(?:bitcoincash:)?[qp][a-z0-9]{41}/i;
+  /* Only the fields a user DELIBERATELY set. This is what the profile editor must use: pre-filling
+   * its input from the heuristic scan below meant someone who merely mentioned an address in their
+   * BIO had it auto-filled, and then saving any unrelated change (a display name) wrote `bch` and
+   * `bitcoincash_address` into their kind-0 — fields they never entered, published to every other
+   * client. Reported as "poster.place is adding BCH addresses to my profile", and it was. */
+  function bchDirect(p){
+    if(!p) return '';
+    const direct = p.bitcoincash_address || p.bch || p.bch_address || p.bitcoincash;
+    return (direct && isBchAddr(direct)) ? String(direct).trim().replace(/^bitcoincash:/i,'') : '';
+  }
+  /* READ-ONLY convenience for tipping SOMEONE ELSE: find an address they put somewhere other than
+   * the canonical key. Never use this to populate anything that gets written back. */
   function bchOf(p){
     if(!p) return '';
     const strip=s=>String(s).trim().replace(/^bitcoincash:/i,'');
-    const direct = p.bitcoincash_address || p.bch || p.bch_address || p.bitcoincash;
-    if(direct && isBchAddr(direct)) return strip(direct);
-    // Liberal fallback: only the UNAMBIGUOUS CashAddr form (legacy base58 is too short to scan for
-    // across arbitrary fields without false positives — direct keys still accept it).
+    const direct = bchDirect(p);
+    if(direct) return direct;
     for(const k in p){ const v=p[k]; if(typeof v==='string'){ const m=v.match(_BCH_CASHADDR); if(m && isBchAddr(m[0])) return strip(m[0]); } }
     return '';
   }
@@ -13866,7 +13905,7 @@
       <label class="fld">⚡ Lightning address<input class="input" id="pf-lud16" placeholder="you@walletofsatoshi.com" value="${enc(p.lud16||'')}"></label>
       <label class="fld">ɱ Monero address<input class="input" id="pf-xmr" placeholder="4… or 8… (XMR — others can tip you)" value="${enc(xmrOf(p))}"></label>
       <label class="chk" style="display:flex;gap:8px;align-items:flex-start;margin:-4px 0 8px;font-size:13px"><input type="checkbox" id="pf-xmr-stamp" ${ClientSettings.get('xmrStampNotes',false)?'checked':''} style="margin-top:3px"><span class="muted">Attach my Monero address to every post so any client can tip me from a post (like Nosmero). <b>Less private</b> — it links all your posts to one address. Off = address only on your profile.</span></label>
-      <label class="fld">🟢 Bitcoin Cash address<input class="input" id="pf-bch" placeholder="bitcoincash:q… (others can tip you)" value="${enc(bchOf(p))}"></label>
+      <label class="fld">🟢 Bitcoin Cash address<input class="input" id="pf-bch" placeholder="bitcoincash:q… (others can tip you)" value="${enc(bchDirect(p))}"></label>
       <label class="fld">Picture URL<input class="input" id="pf-pic" placeholder="https://…" value="${enc(p.picture||'')}"></label>
       <label class="fld">Banner URL<input class="input" id="pf-banner" placeholder="https://…" value="${enc(p.banner||'')}"></label>
       <label class="fld">About<textarea id="pf-about" placeholder="a few words about you">${enc(p.about||'')}</textarea></label>
