@@ -63,7 +63,7 @@ async function loadCfg(){
   userRelays = Array.isArray(got.relays) ? got.relays : [];
   cfg = got.cfg || null;
   if(cfg && cfg.key) key = V.fromB64(cfg.key);
-  if(key) initBookmarks();          // safe to call twice; the engine only wires its listeners once
+  initBookmarks();                  // safe to call twice; the engine only wires its listeners once
   // The decrypted set is cached so the popup opens instantly and works with no network at all —
   // the same promise the app makes on a phone. It is written to extension storage, which is as
   // protected as the vault key sitting beside it; caching only the ciphertext would buy nothing
@@ -264,8 +264,15 @@ async function publishBookmark(syncId, item){
   }catch(_){ return false; }
 }
 
+/* Initialised WITHOUT waiting for a vault key. init() only reads extension storage and wires the
+ * browser's bookmark listeners; the key is needed to open or seal a body, and both closures below
+ * read `key` when they are CALLED, so pairing later works with no re-init.
+ *
+ * Gating this on `key` meant an unpaired browser left `api` null inside the engine, and the first
+ * thing the popup's toggle does is touch it: "cannot access property B, api is null" — an exception
+ * from a switch, rather than the extension saying it is not paired. */
 async function initBookmarks(){
-  if(!key || !BM || !BM.engine) return;
+  if(!BM || !BM.engine) return;
   try{
     await BM.engine.init({
       B: B,

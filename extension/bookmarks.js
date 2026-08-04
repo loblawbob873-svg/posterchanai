@@ -224,9 +224,12 @@
     }, 400);
   }
 
-  function enabled() { return on; }
+  function enabled() { return !!api && on; }
 
   async function setEnabled(v) {
+    // Never throw out of a message handler: the popup shows what comes back, and an exception from
+    // here reads as "cannot access property B of null" instead of the actual situation.
+    if (!api) throw new Error('bookmark sync is not ready yet — reopen this in a moment');
     on = !!v;
     await api.B.storage.local.set({ bmOn: on });
     if (on) { listen(); await union(); }
@@ -238,6 +241,7 @@
   /* An event arrived. Newest wins, a tombstone removes — but ONLY something this browser previously
    * synced (see the header: a bookmark we never mapped is not ours to delete). */
   async function absorb(id, ev) {
+    if (!api) return;
     var cur = items[id];
     if (cur && (cur._at || 0) > (ev.created_at || 0)) return;
     if (!ev.content) {
@@ -383,6 +387,7 @@
 
   /* The first sync, and any manual rebuild: a UNION. Deletes nothing, in either direction. */
   async function union() {
+    if (!api) throw new Error('bookmark sync is not ready yet — reopen this in a moment');
     var local = await snapshot();
     var remote = Object.keys(items).map(function (id) {
       return Object.assign({ id: id }, items[id]);
@@ -411,7 +416,7 @@
     return s;
   }
 
-  function count() { return Object.keys(items).filter(function (k) { return !items[k].removed; }).length; }
+  function count() { if (!api) return 0; return Object.keys(items).filter(function (k) { return !items[k].removed; }).length; }
 
   P.engine = { init: init, absorb: absorb, setEnabled: setEnabled, enabled: enabled,
                union: union, count: count };
