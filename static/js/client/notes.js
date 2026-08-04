@@ -993,6 +993,7 @@
       'whoever holds the file. Keep it somewhere you trust.';
     if(!await uiConfirm(msg, {ok:'Back up'})) return;
 
+
     let writer = null, parts = null, handle = null, pickerErr = '';
     const stamp = new Date().toISOString().slice(0,10);
     if(canStream){
@@ -1019,6 +1020,39 @@
         toast('this device refused the save dialog — saving to your downloads instead');
       }
     }
+
+    /* Can the drive be opened at all? Asked ONCE, after we know attachments are actually going in,
+     * and before the loop that would otherwise report the same failure a thousand times over.
+     *
+     * Every attachment read needs the same master key, so when that key cannot be unwrapped — a
+     * signer that refuses, an account whose key never synced — every read fails identically. The
+     * old summary rendered that as "1207 attachments could not be read", which names a symptom and
+     * not one of its three possible causes. It is one problem, and it is worth knowing before
+     * producing an archive that is silently missing every file in it.
+     *
+     * On "notes only" the writer stays open and the backup continues without files. On cancel it is
+     * ABORTED before returning: a picked-but-unwritten handle leaves a 0-byte .jex on disk and holds
+     * a lock that makes the next attempt at the same filename fail. */
+    if(withFiles){
+      const probe = notes.find(n => (n.res || []).length);
+      const first = probe && probe.res[0];
+      if(first){
+        try{ await _withTimeout(PC.encFileUrl(first.sha, first.mime), 60000, 'reading a file'); }
+        catch(e){
+          const why = (e && e.message) || 'error';
+          const go = await uiConfirm(
+            `The attachments can’t be read on this device — the first one failed with “${why}”.\n\n` +
+            `That is usually the signer refusing to unlock the file key, or being signed in to a ` +
+            `different account than the one that uploaded them.\n\nBack up the ${notes.length} ` +
+            `notes WITHOUT their ${resCount} attachments?`, {ok:'Notes only'});
+          if(!go){
+            try{ if(writer) await writer.abort(); }catch(_){ }
+            return;
+          }
+          withFiles = false;
+        }
+      }
+    }
     const put = async (u8) => { if(writer) await writer.write(u8); else parts.push(u8); };
     const enc8 = new TextEncoder();
     const entry = async (name, bytes) => {
@@ -1030,7 +1064,10 @@
     const hex32 = (v) => String(v||'').replace(/[^0-9a-f]/gi,'').toLowerCase().padEnd(32,'0').slice(0,32);
     const t = PCJoplin._iso;
     let done = 0, failed = 0;
+    const whys = new Map();          // reason -> how many attachments hit it
+    const firstFail = [];            // the first few, by name, so one can be looked up by hand
     const note = (h) => toast(h);
+
     try{
       // Folders keep their FULL PATH as the title, flat. Re-importing resolves the path back to the
       // same tree; in Joplin they appear as folders literally named "Family/Tax Returns", which is
@@ -1057,14 +1094,25 @@
           const rid = hex32(r.sha);
           const ext = (r.name || '').includes('.') ? (r.name.split('.').pop() || '').slice(0,8) : '';
           try{
-            const u = await PC.encFileUrl(r.sha, r.mime);
+            // A minute per attachment, so one dead socket costs one file rather than the run — the
+            // same rule the importer and the note reader already follow.
+            const u = await _withTimeout(PC.encFileUrl(r.sha, r.mime), 60000, 'reading that file');
             const bytes = new Uint8Array(await (await fetch(u)).arrayBuffer());
             const rmd = PCJoplin.serializeItem(r.name || rid, '', {
               id: rid, mime: r.mime || 'application/octet-stream', filename: r.name || '',
               file_extension: ext, size: bytes.length, encryption_applied: 0, type_: 4 });
             await entry(`${rid}.md`, enc8.encode(rmd));
             await entry(`resources/${rid}${ext?'.'+ext:''}`, bytes);
-          }catch(_){ failed++; }
+          }catch(e){
+            failed++;
+            /* KEEP THE REASON. This swallowed every error and reported only a count, so "1207
+             * attachments could not be read" said nothing about whether the files were gone, the
+             * signer had refused to unlock them, or the network was down — three different problems
+             * with three different answers, and no way to tell them apart from the message. */
+            const why = (e && e.message) || 'unknown error';
+            whys.set(why, (whys.get(why) || 0) + 1);
+            if(firstFail.length < 3) firstFail.push(`${r.name || rid}: ${why}`);
+          }
         }
         if(++done % 20 === 0) note(`backing up… ${done}/${notes.length}`);
       }
@@ -1076,8 +1124,14 @@
         a.href = URL.createObjectURL(blob); a.download = `posterchan-notes-${stamp}.jex`;
         a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 20000);
       }
-      toast(failed ? `backed up ${done} notes — ${failed} attachment(s) could not be read`
-                   : `backed up ${done} notes`);
+      if(failed){
+        // The most common reason, named, and the first few files by name — enough to act on.
+        const top = Array.from(whys.entries()).sort((a,b)=>b[1]-a[1])[0];
+        toast(`backed up ${done} notes — ${failed} attachment(s) could not be read` +
+              (top ? ` (${top[1]}× “${top[0]}”)` : ''));
+        console.warn('[notes backup] attachment failures by reason:',
+                     Object.fromEntries(whys), 'first:', firstFail);
+      } else toast(`backed up ${done} notes`);
     }catch(e){
       try{ if(writer) await writer.abort(); }catch(_){ }
       toast('backup failed: ' + (e.message || 'error'));

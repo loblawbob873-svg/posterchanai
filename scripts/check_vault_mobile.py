@@ -29,6 +29,11 @@ Assertions, each a way THIS screen breaks:
   totp-dead            a stored one-time code secret produces no code, or no countdown. The code is
                        the reason 2FA is in here at all.
   generator-broken     the generator produces nothing, or ignores the character classes.
+  import-merged-entries
+                       a Bitwarden import merged two DIFFERENT credentials into one, destroying a
+                       password — two logins for the same service in different regions, or a secure
+                       note colliding with a login of the same name. Re-importing must also update
+                       in place rather than duplicating the vault.
   vault-key-reminted   THE data-loss one: when the relay is unreachable, the vault must NOT mint a
                        new key. Doing so replaces the only key that can read the existing items —
                        the same failure the encrypted drive's master key learned once already.
@@ -236,6 +241,45 @@ GENERATOR = r"""(async () => {
   return { bad: out.length, sample: V.generate({length:24}) };
 })()"""
 
+# A real import, through the real code. The dedupe key decides which incoming record UPDATES an
+# existing entry and which creates one, and a key that is too loose destroys a password without
+# saying anything. Measured while the key was title+username: two Amazon logins (.com and .co.uk,
+# same name, same address, different passwords) collapsed into one, and a secure note called "Wifi"
+# was overwritten by a login called "Wifi". The progress bar said "4 imported".
+IMPORT_DEDUPE = r"""(async () => { try {
+  const csv = [
+    'folder,favorite,type,name,notes,fields,reprompt,archivedDate,login_uri,login_username,login_password,login_totp',
+    ',,login,Amazon,,,,,https://amazon.com,me@x.com,pwUS,',
+    ',,login,Amazon,,,,,https://amazon.co.uk,me@x.com,pwUK,',
+    ',,note,Wifi,"ssid: home",,,,,,,',
+    ',,login,Wifi,,,,,https://router.lan,,routerpw,',
+  ].join('\n');
+  const file = new File([csv], 'bw.csv', { type:'text/csv' });
+
+  const runImport = async () => {
+    document.querySelector('.pv-import').click();
+    await new Promise(r => setTimeout(r, 200));
+    const input = document.querySelector('#pi-file');
+    const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files;
+    input.dispatchEvent(new Event('change', { bubbles:true }));
+    await new Promise(r => setTimeout(r, 1800));
+    const close = document.querySelector('#pi-close'); if(close) close.click();
+    await new Promise(r => setTimeout(r, 200));
+  };
+
+  await runImport();
+  const after1 = window.PCVault.snapshot().items
+    .filter(i => /Amazon|Wifi/.test(i.title || ''))
+    .map(i => [i.kind, i.title, i.username, i.password, (i.notes||'').slice(0,4)].join('/')).sort();
+
+  // …and doing it AGAIN must update in place, not double everything.
+  await runImport();
+  const after2 = window.PCVault.snapshot().items
+    .filter(i => /Amazon|Wifi/.test(i.title || '')).length;
+
+  return { rows: after1, count: after1.length, afterSecond: after2 };
+} catch(e) { return { error: String(e && e.message || e) }; } })()"""
+
 # THE data-loss one. With the relay unreachable and no local key, opening the vault must FAIL rather
 # than mint a second key — a new key makes every existing item permanently unreadable, and the screen
 # would look like a working, empty vault.
@@ -395,11 +439,27 @@ async def drive(url):
                     problems.append((label, "generator-broken",
                                      f"{(g or {}).get('bad', '?')} of 40 generated passwords were wrong"))
 
+
+                if label == "390px":
+                    imp = await js(IMPORT_DEDUPE, awaited=True)
+                    if not imp or imp.get("error"):
+                        problems.append((label, "import-merged-entries",
+                                         f"could not run the import test ({(imp or {}).get('error')})"))
+                    else:
+                        if imp["count"] != 4:
+                            problems.append((label, "import-merged-entries",
+                                             f"4 distinct entries imported as {imp['count']}: {imp['rows']}"))
+                        if imp["afterSecond"] != imp["count"]:
+                            problems.append((label, "import-merged-entries",
+                                             f"re-importing the same file changed the count "
+                                             f"{imp['count']} -> {imp['afterSecond']}"))
+
                 await call("Page.navigate", {"url": url + "?norelay=1"})
                 for _ in range(80):
                     await asyncio.sleep(0.25)
                     if await js("window.__ready === true"):
                         break
+
                 nk = await js(NO_REMINT, awaited=True)
                 if not nk:
                     problems.append((label, "vault-key-reminted", "could not run the key test"))

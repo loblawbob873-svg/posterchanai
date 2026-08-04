@@ -417,3 +417,120 @@ class RealExportShapes(unittest.TestCase):
         items = _node("return V.parseBitwarden(F.t).items;", {"t": csv})
         self.assertEqual(items[0]["password"], "pa,ss")
         self.assertEqual(items[1]["notes"], "line one\nline two")
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class MultipleUrls(unittest.TestCase):
+    """An entry usually has SEVERAL sites, and all of them have to work.
+
+    Reported as "I don't see nostr in the autofill results": the entry listed a public site, two
+    other Nostr clients, a LAN address and an onion — and Bitwarden's CSV joins those with COMMAS,
+    while the importer split only on newlines. The whole list became one unparseable URL that
+    matched nothing, on an entry whose first URI was the site being looked at.
+    """
+    def test_a_comma_joined_cell_becomes_separate_uris(self):
+        csv = ("folder,favorite,type,name,notes,fields,reprompt,archivedDate,"
+               "login_uri,login_username,login_password,login_totp\n"
+               ',,login,nostr,,,,,"https://poster.place,https://yakihonne.com,http://nas.lan:3051",me,pw,\n')
+        got = _node("const p = V.parseBitwarden(F.t);"
+                    "return { uris: p.items[0].uris,"
+                    "         hit: V.matchLevel(p.items[0], 'https://poster.place/client') };",
+                    {"t": csv})
+        self.assertEqual(got["uris"],
+                         ["https://poster.place", "https://yakihonne.com", "http://nas.lan:3051"])
+        self.assertEqual(got["hit"], "exact")
+
+    def test_a_comma_inside_one_url_is_not_a_separator(self):
+        """That same export has OAuth redirect URLs carrying commas in their query strings."""
+        one = "https://auth.example.com/login?state=a,b,c&next=/home"
+        csv = ("folder,favorite,type,name,notes,fields,reprompt,archivedDate,"
+               "login_uri,login_username,login_password,login_totp\n"
+               f',,login,Thing,,,,,"{one}",me,pw,\n')
+        got = _node("return V.parseBitwarden(F.t).items[0].uris;", {"t": csv})
+        self.assertEqual(got, [one])
+
+    def test_every_listed_site_matches_not_only_the_first(self):
+        item = {"kind": "login", "uris": ["https://a.example.com", "https://b.example.org",
+                                          "http://192.168.0.9:3051"]}
+        got = _node("return ['https://a.example.com/x','https://b.example.org/y','http://192.168.0.9:3051/z']"
+                    "  .map(u => V.matchLevel(F.i, u));", {"i": item})
+        self.assertEqual(got, ["exact", "exact", "exact"])
+
+    def test_bitwarden_match_rules_are_honoured(self):
+        """0 domain, 1 host, 2 starts-with, 3 exact, 4 regex, 5 never — the one place a user has
+        already said how they want a site recognised. The importer used to drop it."""
+        export = {"encrypted": False, "items": [{"id": "i1", "type": 1, "name": "R", "login": {
+            "username": "u", "password": "p", "uris": [
+                {"uri": "^https://bank\\.example\\.com/(login|auth)", "match": 4},
+                {"uri": "https://shop.example.org/signin", "match": 3},
+                {"uri": "https://portal.example.net/app", "match": 2},
+                {"uri": "https://never.example.com", "match": 5}]}}]}
+        got = _node("const it = V.parseBitwarden(F.t).items[0];"
+                    "return ['https://bank.example.com/login?x=1','https://bank.example.com/other',"
+                    "        'https://shop.example.org/signin','https://shop.example.org/other',"
+                    "        'https://portal.example.net/app/page','https://never.example.com/login']"
+                    "  .map(u => V.matchLevel(it, u));", {"t": json.dumps(export)})
+        self.assertEqual(got, ["exact", "", "exact", "", "exact", ""])
+
+    def test_a_broken_regex_does_not_take_the_entry_with_it(self):
+        item = {"kind": "login", "uris": [{"uri": "([", "match": "regex"}, "https://ok.example.com"]}
+        self.assertEqual(_node("return V.matchLevel(F.i, 'https://ok.example.com/x');", {"i": item}),
+                         "exact")
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class MatchingIsNotFooled(unittest.TestCase):
+    """matchLevel is the gate the extension consults before handing a plaintext password to a frame
+    (background.js, `case 'fill'`). Everything here is a way a lookalike site got past it."""
+
+    def _lvl(self, uris, page):
+        return _node("return V.matchLevel({kind:'login', uris:F.u}, F.p);", {"u": uris, "p": page})
+
+    def test_startswith_does_not_accept_a_lookalike_host(self):
+        """A string prefix is not a URL match: `https://good.com` is a prefix of
+        `https://good.com.evil.com`, of `good.commerce.net`, and of `good.com@evil.com`."""
+        rule = [{"uri": "https://good.com", "match": "startsWith"}]
+        for page in ("https://good.com.evil.com/login", "https://good.commerce.net/x",
+                     "https://good.com@evil.com/", "https://good.comrade.io/"):
+            self.assertEqual(self._lvl(rule, page), "", f"{page} must not match")
+
+    def test_startswith_still_narrows_within_the_right_host(self):
+        rule = [{"uri": "https://good.com/app", "match": "startsWith"}]
+        self.assertEqual(self._lvl(rule, "https://good.com/app/settings"), "exact")
+        self.assertEqual(self._lvl(rule, "https://good.com/other"), "")
+
+    def test_a_domain_inside_a_saved_url_is_not_a_second_site(self):
+        """Bitwarden joins several URIs with commas, so splitting looked obvious — but a saved
+        OAuth link carries commas of its own, and the tail became a matchable domain."""
+        csv = ("name,login_uri,login_username,login_password\n"
+               'X,"https://ex.com/cb?redirect=https://good.com,evil.com/pwn",u,p\n')
+        got = _node("const it = V.parseBitwarden(F.t).items[0];"
+                    "return { uris: it.uris, evil: V.matchLevel(it, 'https://evil.com/login') };",
+                    {"t": csv})
+        self.assertEqual(len(got["uris"]), 1, "the saved URL must not be split or truncated")
+        self.assertEqual(got["evil"], "")
+
+    def test_a_path_that_looks_like_a_host_is_not_split_out(self):
+        csv = ("name,login_uri,login_username,login_password\n"
+               'X,"https://ex.com/a,b.io/c",u,p\n')
+        got = _node("const it = V.parseBitwarden(F.t).items[0];"
+                    "return { uris: it.uris, other: V.matchLevel(it, 'https://b.io/login') };",
+                    {"t": csv})
+        self.assertEqual(got["uris"], ["https://ex.com/a,b.io/c"])
+        self.assertEqual(got["other"], "")
+
+    def test_several_real_urls_still_split(self):
+        csv = ("name,login_uri,login_username,login_password\n"
+               'X,"https://poster.place,https://yakihonne.com,http://nas.lan:3051",u,p\n')
+        got = _node("return V.parseBitwarden(F.t).items[0].uris;", {"t": csv})
+        self.assertEqual(got, ["https://poster.place", "https://yakihonne.com", "http://nas.lan:3051"])
+
+    def test_a_pathological_regex_cannot_hang_the_browser(self):
+        """One user-written rule running against a page-controlled URL, for every stored item, on
+        every page. Catastrophic backtracking here freezes the extension's worker."""
+        rule = [{"uri": r"^https://example\.com/(([a-z]+)+)+x$", "match": "regex"}]
+        page = "https://example.com/" + "a" * 60
+        got = _node("const t0 = Date.now();"
+                    "const r = V.matchLevel({kind:'login', uris:F.u}, F.p);"
+                    "return { r, ms: Date.now() - t0 };", {"u": rule, "p": page})
+        self.assertLess(got["ms"], 2000, "the match must not blow up on a crafted pattern")

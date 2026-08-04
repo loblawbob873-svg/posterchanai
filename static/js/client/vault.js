@@ -427,7 +427,13 @@
       const items = Array.from(_lib.items.values())
         .filter(i => i.kind === 'login' && (i.username || i.password))
         .map(i => {
-          const uris = V().itemUris(i);
+          /* Only URIs that are actually matchable BY HOST become keys. A `never` rule is excluded —
+           * the whole point of it is that the site must not be offered, and indexing its host meant
+           * Android autofilled exactly the place the user had excluded. A `regex` rule is excluded
+           * too: it is a pattern, not an address, and hostOf() of one produces a nonsense host
+           * (`bank\.example\.com` → `bank`) that would match some unrelated machine on a LAN. */
+          const rules = V().itemUriRules(i).filter(r => r.match !== 'never' && r.match !== 'regex');
+          const uris = rules.map(r => r.uri);
           const hosts = uris.map(u => V().hostOf(u)).filter(Boolean);
           return { id:i.id, title:i.title||'', username:i.username||'', password:i.password||'',
                    totp:i.totp||'', uris, hosts,
@@ -706,7 +712,14 @@
       it.username = user.value;
       it.password = pass.value;
       it.totp = totpIn.value.trim();
-      it.uris = urisIn.value.split('\n').map(s=>s.trim()).filter(Boolean);
+      /* Keep each URI's match RULE. The textarea shows plain addresses, so rebuilding `uris` from
+       * its lines threw the rules away — and a user's explicit "never autofill here" silently became
+       * an ordinary domain match the next time they edited the title. Rules are re-attached by
+       * address; a line the user changed loses its rule, which is right, because it is a different
+       * address. */
+      const wasRule = new Map(V().itemUriRules(it).filter(r => r.match).map(r => [r.uri, r.match]));
+      it.uris = urisIn.value.split('\n').map(s=>s.trim()).filter(Boolean)
+        .map(u => wasRule.has(u) ? { uri:u, match:wasRule.get(u) } : u);
       it.folder = folderIn.value.trim();
       it.tags = tagIn.value.split(',').map(s=>s.trim()).filter(Boolean).slice(0,30);
       it.notes = notes.value;
@@ -908,19 +921,52 @@
      * by what identifies a login to a person: its name, its username and its first site. The .csv
      * export carries no ids at all, so without the fallback every re-import duplicated the entire
      * vault — and the failure message below tells people to run it again. */
-    const bySrc = new Map(), byShape = new Map();
-    const shapeOf = (i) => [(i.title||'').trim().toLowerCase(), (i.username||'').trim().toLowerCase(),
-                            (V().hostOf(V().itemUris(i)[0]||'')||'')].join('|');
+    const bySrc = new Map(), byShape = new Map();   // byShape: key -> [items], never one
+    /* Matching an incoming record to one already here.
+     *
+     * A Bitwarden id is authoritative when there is one (the .json export). The CSV has none, so it
+     * falls back to a shape — and the shape MUST include the site, or two genuinely different
+     * credentials merge and one password is destroyed. Measured on a four-item export while this
+     * key was just title+username: an `amazon.com` login and an `amazon.co.uk` login under the same
+     * name and address collapsed into one, and a secure note called "Wifi" was overwritten by a
+     * login called "Wifi" — reported as "4 imported".
+     *
+     * So: same kind, same title, same username, and at least one site in common. Plus one narrow
+     * migration case — an entry stored before the multi-URI split fix has a mangled host like
+     * `poster.place,https`, which can share nothing with the corrected list; those are matched on
+     * kind+title+username alone so the re-import people run to PICK UP that fix updates in place
+     * instead of duplicating the vault. A mangled host cannot occur any other way. */
+    const norm = (v) => String(v || '').trim().toLowerCase();
+    const idOf = (i) => [norm(i.kind || 'login'), norm(i.title), norm(i.username)].join('|');
+    const hostsOf = (i) => new Set(V().itemUris(i).map(u => V().hostOf(u)).filter(Boolean));
+    const mangled = (i) => V().itemUris(i).some(u => /,/.test(V().hostOf(u) || ''));
+    const findExisting = (rec) => {
+      if(rec.src && rec.src.id && bySrc.has(rec.src.id)) return bySrc.get(rec.src.id);
+      const cands = byShape.get(idOf(rec)) || [];
+      const want = hostsOf(rec);
+      for(const c of cands){
+        if(mangled(c)) return c;
+        for(const h of hostsOf(c)) if(want.has(h)) return c;
+        if(!want.size && !hostsOf(c).size) return c;      // two site-less entries (a note, a card)
+      }
+      return null;
+    };
     for(const i of _lib.items.values()){
       if(i.src && i.src.id) bySrc.set(i.src.id, i);
-      byShape.set(shapeOf(i), i);
+      const k = idOf(i);
+      if(!byShape.has(k)) byShape.set(k, []);
+      byShape.get(k).push(i);
     }
     let done = 0, failed = 0, queued = 0, oddTotp = 0;
     for(const rec of parsed.items){
-      const existing = ((rec.src && rec.src.id) ? bySrc.get(rec.src.id) : null) || byShape.get(shapeOf(rec));
+      const existing = findExisting(rec);
       const it = existing || blankItem('');
       Object.assign(it, rec, { id: it.id, created: it.created || now() });
-      byShape.set(shapeOf(it), it);      // so two identical rows in one file don't both land
+      // Track what this run has added, so a second row that is genuinely the same entry lands on
+      // it — and one that merely shares a name does not.
+      const k = idOf(it);
+      if(!byShape.has(k)) byShape.set(k, []);
+      if(!byShape.get(k).includes(it)) byShape.get(k).push(it);
       // The TOTP field may be a bare secret or a whole otpauth:// URI — totpConfig reads both, and
       // the value is kept AS GIVEN either way.
       //

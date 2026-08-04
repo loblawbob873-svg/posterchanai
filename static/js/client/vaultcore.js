@@ -293,26 +293,121 @@
    * '' = no. Every URI on the item is considered: sites move their login to another host
    * (accounts.example.com) and a manager that only remembers the one you first saved is a manager
    * you stop trusting. */
+  /* Is this pattern safe to run on untrusted input?
+   *
+   * Catastrophic backtracking needs a quantifier applied to something that is itself quantified —
+   * `(a+)+`, `(a*)*`, `(a|aa)+`. That family is what this refuses, by finding every quantified
+   * group and checking whether its body contains a quantifier or an alternation. It is deliberately
+   * CONSERVATIVE: some harmless patterns are refused, and refusing costs a match that was never
+   * offered, while accepting costs a hung browser.
+   *
+   * Not a general safety proof — that is undecidable in the interesting cases — but it covers the
+   * shapes a person actually writes by accident, and the length cap bounds the rest. */
+  const _reCache = new Map();
+  function _safeRegex(pattern) {
+    const p = String(pattern || '');
+    if (!p || p.length > 200) return false;
+    if (_reCache.has(p)) return _reCache.get(p);
+    let ok = true;
+    const stack = [];
+    for (let i = 0; i < p.length && ok; i++) {
+      const c = p[i];
+      if (c === '\\') { i++; continue; }                 // escaped: never structural
+      if (c === '[') { while (i < p.length && p[i] !== ']') { if (p[i] === '\\') i++; i++; } continue; }
+      if (c === '(') { stack.push({ start: i, inner: false }); continue; }
+      if (c === ')') {
+        const g = stack.pop();
+        const next = p[i + 1];
+        if (g && g.inner && (next === '+' || next === '*' || next === '{')) ok = false;
+        // A quantified group nested in another group makes THAT one quantified-inside too.
+        if (stack.length && (next === '+' || next === '*' || next === '{')) stack[stack.length - 1].inner = true;
+        continue;
+      }
+      if (c === '+' || c === '*' || c === '{' || c === '|') {
+        if (stack.length) stack[stack.length - 1].inner = true;
+      }
+    }
+    _reCache.set(p, ok);
+    return ok;
+  }
+
   function matchLevel(item, pageUrl) {
     const host = hostOf(pageUrl);
     if (!host) return '';
-    const uris = itemUris(item);
+    const page = String(pageUrl || '');
     let best = '';
-    for (const u of uris) {
-      const h = hostOf(u);
-      if (!h) continue;
-      if (h === host) return 'exact';
-      if (baseDomain(h) && baseDomain(h) === baseDomain(host)) best = 'domain';
+    for (const r of itemUriRules(item)) {
+      const u = r.uri;
+      switch (r.match) {
+        case 'never':
+          continue;
+        case 'regex':
+          /* A user-supplied pattern, run against a page-supplied string, for every stored item on
+           * every page. try/catch covers a syntax error but NOT catastrophic backtracking:
+           * `^https://example\.com/(([a-z]+)+)+x$` against a sixty-character path took 111 SECONDS
+           * here, on a URL well under any length cap — bounding the input does not help, because
+           * the blow-up is in the pattern. In the extension's background worker that is a freeze of
+           * everything, triggered by whatever page you happen to open.
+           *
+           * So the PATTERN is vetted (see _safeRegex) and a rejected one simply does not match.
+           * Failing closed is right: the cost is a credential not offered, which is visible and
+           * fixable, against a browser that stops responding, which is neither. */
+          if (page.length > 2048 || !_safeRegex(u)) continue;
+          try { if (new RegExp(u).test(page)) return 'exact'; } catch (_) {}
+          continue;
+        case 'exact':
+          if (page === u || page.replace(/\/+$/, '') === u.replace(/\/+$/, '')) return 'exact';
+          continue;
+        case 'startsWith': {
+          /* A raw string prefix is NOT a URL match. `https://good.com` is a prefix of
+           * `https://good.com.evil.com/login`, of `https://good.commerce.net`, and of
+           * `https://good.com@evil.com` — and matchLevel is the gate the extension uses to decide
+           * whether to hand a plaintext password to a frame, so a prefix test alone releases the
+           * credential to whoever registers the lookalike. The host has to agree first; the prefix
+           * then narrows within that host, which is what the rule is actually for. */
+          if (!u) continue;
+          const ph = hostOf(u);
+          if (ph && ph === host && page.startsWith(u)) return 'exact';
+          continue;
+        }
+        case 'host': {
+          // Bitwarden's "host" includes the port; hostOf drops it, so this is host-without-port.
+          const hh = hostOf(u);
+          if (hh && hh === host) return 'exact';
+          continue;
+        }
+        default: {
+          const h = hostOf(u);
+          if (!h) continue;
+          if (h === host) return 'exact';
+          if (baseDomain(h) && baseDomain(h) === baseDomain(host)) best = 'domain';
+        }
+      }
     }
     return best;
   }
 
-  function itemUris(item) {
+  function itemUris(item) { return itemUriRules(item).map(r => r.uri); }
+
+  /* Every site on an entry, with how it wants to be matched. An entry routinely has SEVERAL — the
+   * one this was reported over lists a public site, two other Nostr clients, a LAN address and an
+   * onion — and all of them must work, not just the first.
+   *
+   * `match` comes from Bitwarden and is honoured rather than flattened: 'domain' (the default),
+   * 'host', 'startsWith', 'exact', 'regex', and 'never'. It is the one place a user has already
+   * said how a site should be recognised. */
+  function itemUriRules(item) {
     const out = [];
     if (!item) return out;
-    if (Array.isArray(item.uris)) for (const u of item.uris) { if (u) out.push(typeof u === 'string' ? u : u.uri); }
-    if (item.url) out.push(item.url);
-    return out.filter(Boolean);
+    if (Array.isArray(item.uris)) {
+      for (const u of item.uris) {
+        if (!u) continue;
+        if (typeof u === 'string') out.push({ uri: u, match: '' });
+        else if (u.uri) out.push({ uri: u.uri, match: u.match || '' });
+      }
+    }
+    if (item.url) out.push({ uri: item.url, match: '' });
+    return out.filter(r => r.uri);
   }
 
   /* Credentials for a page, best match first. Ranking, not filtering: an exact-host match beats a
@@ -366,6 +461,9 @@
     return { items, folders: Array.from(new Set(Array.from(folders.values()).filter(Boolean))) };
   }
 
+  // Bitwarden's URI match types, by their numeric value in the export.
+  const BW_MATCH = { 0: 'domain', 1: 'host', 2: 'startsWith', 3: 'exact', 4: 'regex', 5: 'never' };
+
   function _bwItem(it, folders) {
     if (!it || typeof it !== 'object') return null;
     const type = it.type || 1;
@@ -388,7 +486,16 @@
         username: String(lg.username || ''),
         password: String(lg.password || ''),
         totp: String(lg.totp || ''),
-        uris: (lg.uris || []).map(u => (u && u.uri) || '').filter(Boolean),
+        // Keep Bitwarden's per-URI match RULE, not just the string. 0 base domain, 1 host,
+        // 2 starts-with, 3 exact, 4 regular expression, 5 never. Dropping it (which this did) throws
+        // away the one place a user has already said how they want a site matched.
+        uris: (lg.uris || []).map(u => {
+          if(!u) return null;
+          const uri = (typeof u === 'string') ? u : u.uri;
+          if(!uri) return null;
+          const m = (typeof u === 'object' && u.match != null) ? BW_MATCH[u.match] : null;
+          return m ? { uri, match: m } : uri;
+        }).filter(Boolean),
       });
     }
     if (type === 3) {
@@ -405,6 +512,47 @@
         Object.entries(d).filter(([, v]) => v != null && v !== '').map(([k, v]) => [k, String(v)])) });
     }
     return Object.assign(base, { kind: 'note' });
+  }
+
+  /* Bitwarden puts SEVERAL URIs in one `login_uri` cell, joined by commas — not newlines, which is
+   * what this used to split on. So an entry with more than one site came across as a single
+   * unparseable URL and matched nothing at all: measured on a real export, the entry saved for
+   * https://poster.place (plus yakihonne, primal, a LAN address and an onion) was invisible on
+   * poster.place, which is exactly how it was reported.
+   *
+   * Split on a comma ONLY where a new URL plainly begins — a scheme, or a bare host — because a
+   * single URL can legitimately carry commas in its query string, and that same export has OAuth
+   * redirect URLs that do. Newlines split too; different Bitwarden versions have used both. */
+  function splitUris(cell){
+    const out = [];
+    for (const line of String(cell || '').split('\n')) {
+      let seg = '';
+      for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (c === ',' && _startsUrl(line.slice(i + 1))) { out.push(seg); seg = ''; continue; }
+        seg += c;
+      }
+      out.push(seg);
+    }
+    return out.map(u => u.trim().replace(/,+$/, '')).filter(Boolean);
+  }
+
+  /* Does a new URL begin here? ONLY an explicit `scheme://` counts.
+   *
+   * The tempting extra rule — also split before a bare host — is unsafe in a password manager,
+   * because matchLevel is what the extension consults before handing a plaintext password to a
+   * page. `https://ex.com/cb?redirect=https://good.com,evil.com/pwn` and `https://ex.com/a,b.io/c`
+   * are each ONE saved URL; splitting them produced a second "URI" of `evil.com` / `b.io`, and the
+   * credential was then offered on a third-party domain that merely appeared inside the user's own
+   * link. Narrowing the rule (no splitting inside a query, require a real TLD) shrank that class
+   * without closing it.
+   *
+   * The cost is a secondary URI written without a scheme — `https://cloud.example/,test.example` —
+   * staying attached to the first, so it does not match on its own. That is a missing convenience
+   * the user can see and fix. The other direction is a password offered on a domain they never
+   * saved, which they cannot see at all. */
+  function _startsUrl(rest) {
+    return /^\s*[a-z][a-z0-9+.-]*:\/\//i.test(rest);
   }
 
   /* The CSV export. Quoted fields with embedded commas and newlines are the normal case here (a
@@ -449,7 +597,7 @@
         kind: (user || pass || uri) ? 'login' : 'note',
         title: name || uri || 'Untitled',
         folder, username: user, password: pass, totp: get(iTotp),
-        uris: uri ? uri.split('\n').filter(Boolean) : [],
+        uris: splitUris(uri),
         notes: get(iNotes), favorite: /^(1|true)$/i.test(get(iFav)), fields: [],
       });
     }
@@ -481,7 +629,7 @@
     newVaultKey, seal, open,
     b32decode, totp, totpRemaining, parseOtpAuth, totpConfig,
     generate, entropyBits, randInt,
-    hostOf, baseDomain, matchLevel, matchesFor, itemUris,
+    hostOf, baseDomain, matchLevel, matchesFor, itemUris, itemUriRules,
     parseBitwarden, parseCsv, audit,
   };
 });
