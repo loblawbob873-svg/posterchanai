@@ -264,6 +264,227 @@ async function flushOutbox(){
   if(left.length !== outbox.length) await B.storage.local.set({ outbox: left });
 }
 
+/* ================================================================ NIP-07 signing
+ *
+ * The extension already holds the signing key in FULL pairing mode, so it can be the signer a Nostr
+ * app asks for — which means logging in without pasting an nsec into a web page, which is the thing
+ * everyone is told never to do and does anyway.
+ *
+ * WHAT A SITE CAN AND CANNOT GET. `getPublicKey` is public information and is granted per origin
+ * like everything else. Signing and the encrypt/decrypt calls need the key, so they are refused
+ * outright in read-only pairing. Approval is per ORIGIN and, for signing, per EVENT KIND: a site
+ * allowed to publish a note (kind 1) has not thereby been allowed to replace your contact list
+ * (kind 3) or move money (kind 9734). That distinction is the entire security value of a signer over
+ * a pasted key, and the prompt names the kind.
+ *
+ * The prompt is a REAL EXTENSION WINDOW, not an overlay drawn in the page. A page can draw anything
+ * it likes, including a convincing copy of an approval dialog; it cannot draw a browser window that
+ * says which extension is asking.
+ */
+const NOSTR_OK = 'nostrPerms';      // { "<origin>|<method>|<kind>": "allow" | "deny" }
+const _asking = new Map();          // id -> { req, resolve }
+
+// The methods that exist. A page-supplied `method` is checked against this BEFORE it is allowed
+// anywhere near a permission key: the key is `origin|method|kind`, so an unvetted method string is
+// a way to WRITE a key it doesn't own — approving a prompt for the gibberish method
+// "signEvent|3" stores exactly the entry that silently authorises real kind-3 signing forever.
+const NOSTR_METHODS = new Set(['getPublicKey', 'getRelays', 'signEvent',
+                               'nip04.encrypt', 'nip04.decrypt', 'nip44.encrypt', 'nip44.decrypt']);
+const _inflight = new Map();        // origin -> count of prompts currently open
+
+function _originOf(sender){
+  try{ return new URL((sender && (sender.origin || sender.url)) || '').origin; }catch(_){ return ''; }
+}
+
+async function _perms(){
+  const got = await B.storage.local.get(NOSTR_OK);
+  return got[NOSTR_OK] || {};
+}
+function _permKey(origin, method, kind){
+  // Signing is keyed by kind; everything else is keyed by method alone.
+  return origin + '|' + method + (method === 'signEvent' ? '|' + kind : '');
+}
+
+/* The kind, decided ONCE, here. It has to be a real non-negative integer and it has to be the same
+ * value the prompt names and the signer signs — `"0x3"` reads as an unfamiliar number in the window
+ * and then `|0`s to 3 at the signer, which is a contact-list replacement the user never saw. */
+function _kindOf(ev){
+  const k = ev && ev.kind;
+  if(typeof k !== 'number' || !Number.isInteger(k) || k < 0 || k > 65535) return null;
+  return k;
+}
+
+async function handleNostr(msg, sender){
+  await ready;
+  const origin = _originOf(sender);
+  if(!origin || !/^https?:/.test(origin)) return { ok:false, error:'not a web page' };
+  if(!cfg || !key) return { ok:false, error:'PosterChan Passwords is not paired' };
+
+  const method = String(msg.method || '');
+  const params = msg.params || {};
+  if(!NOSTR_METHODS.has(method)) return { ok:false, error:'unsupported method' };
+  const needsKey = method !== 'getPublicKey' && method !== 'getRelays';
+  if(needsKey && !(cfg.mode === 'full' && cfg.sk))
+    return { ok:false, error:'this browser is paired READ-ONLY, so it cannot sign. Re-pair with full access from PosterChan → Passwords → Pair a device.' };
+
+  let kind = null;
+  if(method === 'signEvent'){
+    kind = _kindOf(params.event);
+    if(kind === null) return { ok:false, error:'that event has no valid kind' };
+  }
+  const decision = await _ask(origin, method, kind, params);
+  if(decision !== 'allow') return { ok:false, error:'refused' };
+
+  try{
+    const T = NT();
+    const sk = _skBytes();
+    switch(method){
+      case 'getPublicKey': return { ok:true, result: cfg.pubkey };
+      case 'getRelays': {
+        const out = {};
+        for(const u of relayUrls()) out[u] = { read:true, write:true };
+        return { ok:true, result: out };
+      }
+      case 'signEvent': {
+        // Built field by field rather than copied-and-deleted: the site does not get to choose whose
+        // event this is (pubkey/id/sig come from the key we hold), and it does not get to smuggle
+        // extra properties into something we signed.
+        const src = params.event || {};
+        const now = Math.floor(Date.now()/1000);
+        let at = Number(src.created_at);
+        // Clamped, not merely defaulted. A replaceable event dated in the far future outranks every
+        // real update the user ever makes again — a permanent, unfixable contact list.
+        if(!Number.isFinite(at) || Math.abs(at - now) > 900) at = now;
+        const ev = { kind, created_at: Math.floor(at), tags: _cleanTags(src.tags),
+                     content: String(src.content == null ? '' : src.content) };
+        return { ok:true, result: T.finalizeEvent(ev, sk) };
+      }
+      case 'nip04.encrypt': return { ok:true, result: await T.nip04.encrypt(sk, params.pubkey, params.plaintext) };
+      case 'nip04.decrypt': return { ok:true, result: await T.nip04.decrypt(sk, params.pubkey, params.ciphertext) };
+      case 'nip44.encrypt': {
+        const ck = T.nip44.v2.utils.getConversationKey(sk, params.pubkey);
+        return { ok:true, result: T.nip44.v2.encrypt(params.plaintext, ck) };
+      }
+      case 'nip44.decrypt': {
+        const ck = T.nip44.v2.utils.getConversationKey(sk, params.pubkey);
+        return { ok:true, result: T.nip44.v2.decrypt(params.ciphertext, ck) };
+      }
+      default: return { ok:false, error:'unsupported method ' + method };
+    }
+  }catch(e){ return { ok:false, error:(e && e.message) || 'failed' }; }
+}
+
+function _skBytes(){
+  return /^[0-9a-f]{64}$/i.test(cfg.sk) ? V.fromHex(cfg.sk) : NT().nip19.decode(cfg.sk).data;
+}
+
+// Tags are an array of arrays of strings, and nothing else gets signed.
+function _cleanTags(tags){
+  if(!Array.isArray(tags)) return [];
+  const out = [];
+  for(const t of tags.slice(0, 5000)){
+    if(!Array.isArray(t) || !t.length) continue;
+    out.push(t.slice(0, 100).map(x => String(x == null ? '' : x)));
+  }
+  return out;
+}
+
+/* Ask, unless this origin already answered for this method (and kind). A stored `deny` is honoured
+ * silently — re-prompting for something the user refused is how people learn to click Allow. */
+async function _ask(origin, method, kind, params){
+  const perms = await _perms();
+  const k = _permKey(origin, method, kind);
+  if(perms[k]) return perms[k];
+
+  // A page can call signEvent in a loop. Without a cap that is two hundred browser windows in the
+  // user's face, with no gesture required to open any of them.
+  const open = _inflight.get(origin) || 0;
+  if(open >= 3) return 'deny';
+  _inflight.set(origin, open + 1);
+
+  const id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const req = { id, origin, method, kind,
+                preview: method === 'signEvent' ? _preview(params.event) : '' };
+  const answered = new Promise(res => _asking.set(id, { req, resolve: res }));
+  const url = B.runtime.getURL('approve.html#' + id);
+  let shut = () => {};
+  try{
+    // Firefox for Android has no `windows` API at all, and this extension declares Android support —
+    // without the tab fallback every NIP-07 call there is refused with no prompt ever shown.
+    if(B.windows && B.windows.create){
+      const w = await B.windows.create({ url, type:'popup', width:420, height:520 });
+      if(w && w.id != null) shut = () => B.windows.remove(w.id).catch(()=>{});
+    }else{
+      const t = await B.tabs.create({ url });
+      if(t && t.id != null) shut = () => B.tabs.remove(t.id).catch(()=>{});
+    }
+  }catch(_){
+    _asking.delete(id);
+    _inflight.set(origin, (_inflight.get(origin) || 1) - 1);
+    return 'deny';                      // no window: refuse rather than sign unasked
+  }
+  // A prompt nobody answers must not leave the page hanging forever — and the window it left behind
+  // must not sit there looking live after the answer stopped mattering.
+  let timer;
+  const decision = await Promise.race([
+    answered,
+    new Promise(r => { timer = setTimeout(() => r('timeout'), 115000); }),
+  ]);
+  clearTimeout(timer);
+  _asking.delete(id);
+  _inflight.set(origin, Math.max(0, (_inflight.get(origin) || 1) - 1));
+  if(decision === 'timeout'){ shut(); return 'deny'; }
+  return decision;
+}
+
+// Only the approval window may drive these. Nothing routes a page's message here today, but the
+// bridge and this switch share one listener, so the guard is what keeps a future edit from turning
+// "a site asked" into "the user allowed".
+function _fromApproval(sender){
+  return !!sender && !sender.tab &&
+         typeof sender.url === 'string' && sender.url.startsWith(B.runtime.getURL('approve.html'));
+}
+
+function _pendingApproval(id, sender){
+  if(!_fromApproval(sender)) return { ok:false, error:'no' };
+  const a = _asking.get(id);
+  return a ? { ok:true, req: a.req } : { ok:false, error:'that request has expired' };
+}
+
+async function _answerApproval(msg, sender){
+  if(!_fromApproval(sender)) return { ok:false };
+  const a = _asking.get(msg.id);
+  if(!a) return { ok:false };
+  if(msg.remember){
+    const perms = await _perms();
+    perms[_permKey(a.req.origin, a.req.method, a.req.kind)] = msg.allow ? 'allow' : 'deny';
+    await B.storage.local.set({ [NOSTR_OK]: perms });
+  }
+  a.resolve(msg.allow ? 'allow' : 'deny');
+  return { ok:true };
+}
+
+/* What the event actually says, for the prompt. A signer that shows "sign this event?" and nothing
+ * else is a rubber stamp — and CONTENT alone is that same rubber stamp for exactly the kinds that
+ * matter, because a zap's amount, a delete's targets and a contact list's follows are all in TAGS
+ * and leave `content` empty. */
+function _preview(ev){
+  if(!ev) return '';
+  const out = [];
+  const c = String(ev.content == null ? '' : ev.content);
+  if(c) out.push(c.length > 300 ? c.slice(0, 300) + '…' : c);
+  const tags = _cleanTags(ev.tags);
+  const counts = new Map();
+  for(const t of tags){
+    if(t[0] === 'amount' || t[0] === 'relay' || t[0] === 'challenge' || t[0] === 'd')
+      out.push(t[0] + ': ' + t.slice(1).join(' ').slice(0, 120));
+    else counts.set(t[0], (counts.get(t[0]) || 0) + 1);
+  }
+  const summary = [...counts].map(([n, c2]) => c2 + ' × ' + n).join(', ');
+  if(summary) out.push('tags: ' + summary);
+  return out.join('\n').slice(0, 900);
+}
+
 // ---------------------------------------------------------------- pairing
 
 async function pair(code){
@@ -369,6 +590,22 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
           return reply({ known: !!exact, rotating: !exact && here.length > 0,
                          id: here.length ? here[0].id : '' });
         }
+        case 'nostr':
+          return reply(await handleNostr(msg, sender));
+        case 'approve-answer':
+          return reply(await _answerApproval(msg, sender));
+        case 'nostr-perms':
+          if(sender.tab) return reply({ ok:false });   // the popup asks this, never a page
+          return reply({ ok:true, perms: await _perms() });
+        case 'nostr-forget': {
+          if(sender.tab) return reply({ ok:false });
+          const perms = await _perms();
+          for(const k of Object.keys(perms)) if(k.split('|')[0] === msg.origin) delete perms[k];
+          await B.storage.local.set({ [NOSTR_OK]: perms });
+          return reply({ ok:true });
+        }
+        case 'approve-ask':
+          return reply(_pendingApproval(msg.id, sender));
         case 'save': return reply(await saveItem(msg.item));
         case 'pair': return reply(await pair(msg.code));
         case 'unpair': return reply(await unpair());

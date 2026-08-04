@@ -29,7 +29,8 @@ fi
 
 rm -f dist/posterchan-passwords.zip
 zip -qr dist/posterchan-passwords.zip \
-  manifest.json background.js content.js content.css popup.html popup.js popup.css \
+  manifest.json background.js content.js content.css inject.js \
+  popup.html popup.js popup.css approve.html approve.js \
   vaultcore.js vendor icons \
   -x '*.DS_Store'
 

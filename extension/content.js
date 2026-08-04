@@ -19,6 +19,34 @@
   if(window.__pcPwLoaded) return;
   window.__pcPwLoaded = true;
 
+  /* ---- NIP-07 bridge ---------------------------------------------------------------------
+   * inject.js runs in the PAGE's world and defines window.nostr; it can reach us only by
+   * postMessage, and we are the only ones who can reach the background. Nothing is decided here:
+   * this relays, and the background checks the origin against what the user approved and holds the
+   * key. Injected at document_start so a site that looks for a signer immediately finds one, and
+   * injected INLINE — a `src` pointing at the extension publishes our per-install UUID to every page
+   * on the web (see inject.js). */
+  try{
+    const el = document.createElement('script');
+    el.textContent = '(' + __pcNostrProvider + ')();';
+    (document.head || document.documentElement).appendChild(el);
+    el.remove();          // it has already run; the node is only litter from here
+  }catch(_){ }
+
+  window.addEventListener('message', async (e) => {
+    if(e.source !== window) return;
+    const d = e.data;
+    if(!d || d.__pcnostr !== 'req' || !d.id) return;
+    let res;
+    try{ res = await B.runtime.sendMessage({ type:'nostr', method: d.method, params: d.params }); }
+    catch(err){ res = { error: (err && err.message) || 'the extension is not available' }; }
+    // The reply carries the id back, and nothing else from the page is echoed: a site cannot use
+    // this to have us repeat something to itself as though the extension had said it.
+    window.postMessage({ __pcnostr:'res', id: d.id,
+                         result: res && res.ok ? res.result : undefined,
+                         error: res && res.ok ? undefined : ((res && res.error) || 'refused') }, '*');
+  });
+
   const PW_SEL = 'input[type="password"]:not([disabled]):not([readonly])';
   const USER_HINT = /user|email|login|account|identifier|phone|mobile/i;
   const OTP_HINT = /otp|totp|2fa|two.?factor|one.?time|auth.*code|verification/i;

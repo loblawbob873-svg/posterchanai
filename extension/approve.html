@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="popup.css">
+<style>
+  body{ width:auto; min-height:0; padding:14px; }
+  h1{ font-size:15px; margin:0 0 4px; }
+  .origin{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px;
+           word-break:break-all; color:#8fd2ff; margin-bottom:10px; }
+  .what{ padding:10px 12px; border-radius:10px; border:1px solid rgba(140,200,255,.22);
+         background:rgba(255,255,255,.04); margin-bottom:10px; }
+  .kind{ font-weight:600; }
+  pre{ margin:8px 0 0; padding:8px; border-radius:8px; background:rgba(0,0,0,.28);
+       font-size:11.5px; white-space:pre-wrap; word-break:break-word; max-height:140px;
+       overflow:auto; }
+  .warn{ color:#ffbe5c; font-size:12px; margin-bottom:10px; }
+  label.remember{ display:flex; align-items:center; gap:7px; margin:10px 0; font-size:13px; }
+  .row{ display:flex; gap:8px; }
+  .row button{ flex:1 1 0; min-height:42px; border-radius:9px; cursor:pointer; font:inherit;
+               border:1px solid rgba(140,200,255,.3); background:rgba(140,200,255,.1); color:inherit; }
+  #allow{ background:rgba(140,200,255,.3); font-weight:600; }
+  #deny{ color:#ff9db4; }
+</style>
+</head>
+<body>
+  <h1>A site wants to use your Nostr key</h1>
+  <div class="origin" id="origin">…</div>
+  <div class="what" id="what"></div>
+  <div class="warn" id="warn"></div>
+  <label class="remember"><input type="checkbox" id="remember" checked>
+    Remember this answer for this site</label>
+  <div class="row">
+    <button id="deny">Deny</button>
+    <button id="allow">Allow</button>
+  </div>
+<script src="approve.js"></script>
+</body>
+</html>

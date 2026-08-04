@@ -20,6 +20,17 @@ function show(pane){
   for(const p of ['pane-pair','pane-list','pane-gen']) $('#'+p).classList.toggle('hidden', p !== pane);
 }
 
+/* The build, in the footer.
+ *
+ * "It works on my laptop but not my tablet" is almost never the site — it is two different builds,
+ * and until the popup says which one it is there is no way to tell from the outside. */
+function showVersion(){
+  try{
+    const el = document.getElementById('ver');
+    if(el) el.textContent = 'v' + B.runtime.getManifest().version;
+  }catch(_){ }
+}
+
 async function boot(){
   try{
     const tabs = await B.tabs.query({ active:true, currentWindow:true });
@@ -204,6 +215,46 @@ $('#pair-go').onclick = async () => {
   if(r && r.ok){ $('#pair-err').textContent = ''; boot(); }
   else $('#pair-err').textContent = (r && r.error) || 'pairing failed';
 };
+/* What the signer has been allowed to do, and how to take it back.
+ *
+ * A remembered "allow" means a site signs with the user's key from then on with no window at all.
+ * A store like that with no way to read or revoke it leaves unpairing as the only escape hatch,
+ * which throws away the vault to withdraw one permission. */
+const _KINDNAMES = { 0:'profile', 1:'notes', 3:'contact list', 4:'legacy DMs', 5:'deletions',
+                     6:'reposts', 7:'reactions', 1059:'private messages', 9734:'zap requests',
+                     10002:'relay list', 22242:'relay logins', 30023:'articles' };
+function _permLabel(method, kind){
+  if(method !== 'signEvent') return method.replace('nip04.', '').replace('nip44.', '');
+  return 'sign ' + (_KINDNAMES[kind] || ('kind ' + kind));
+}
+async function paintSites(){
+  const r = await send({ type:'nostr-perms' });
+  const perms = (r && r.perms) || {};
+  const bySite = new Map();
+  for(const k of Object.keys(perms)){
+    const [origin, method, kind] = k.split('|');
+    if(!bySite.has(origin)) bySite.set(origin, []);
+    bySite.get(origin).push({ k, label: _permLabel(method, kind|0), how: perms[k] });
+  }
+  const box = $('#sites');
+  if(!bySite.size){ box.innerHTML = '<div class="muted small">No site has asked yet.</div>'; return; }
+  box.innerHTML = '';
+  for(const [origin, rows] of bySite){
+    const el = document.createElement('div');
+    el.className = 'item';
+    el.innerHTML = '<div class="t"></div><div class="s"></div>' +
+                   '<button class="danger" data-o="">Forget</button>';
+    el.querySelector('.t').textContent = origin;
+    el.querySelector('.s').textContent = rows.map(x => (x.how === 'deny' ? 'blocked: ' : '') + x.label)
+                                             .join(', ');
+    el.querySelector('button').onclick = async () => {
+      await send({ type:'nostr-forget', origin });
+      paintSites();
+    };
+    box.appendChild(el);
+  }
+}
+$('#sites-tab').onclick = () => { show('sites'); paintSites(); };
 $('#sync').onclick = async () => { await send({ type:'sync' }); $('#status').textContent = 'syncing…'; setTimeout(boot, 1200); };
 /* Two taps, in-page. A native confirm() can dismiss a Firefox action popup outright — the await
  * would then never resume and Unpair would silently do nothing — and this project's rule against
@@ -222,4 +273,5 @@ $('#unpair').onclick = async () => {
 };
 
 bindGen();
+showVersion();
 boot();

@@ -9,6 +9,28 @@ const NT = self.NostrTools;
 let SK = null;            // Uint8Array secret key (local-key mode only)
 let PK = null;            // hex pubkey
 
+/* The NIP-44 conversation key, memoized per peer.
+ *
+ * It is an ECDH — the single most expensive thing in this worker, and it depends on nothing but
+ * (our key, their key). Measured on a desktop with the bundled nostr-tools: deriving it 115 times
+ * costs 245ms while the 115 DECRYPTS that follow cost 21ms. So a screen that opens a hundred
+ * self-encrypted documents — Notes, which encrypts every note to the user's OWN key, so it is
+ * literally the SAME conversation key a hundred times — spent 92% of its load deriving one number
+ * over and over. That is what made a cache-first, fully local library look like it was waiting on
+ * the network. On a phone the same work is seconds.
+ *
+ * Cleared with the key, so it can never outlive the login it belongs to. */
+const _ck = new Map();    // peer hex -> conversation key
+function convKey(peer){
+  let k = _ck.get(peer);
+  if (!k){
+    k = NT.nip44.getConversationKey(SK, peer);
+    if (_ck.size > 200) _ck.clear();      // bounded; re-deriving a few is cheaper than growing forever
+    _ck.set(peer, k);
+  }
+  return k;
+}
+
 function reply(id, ok, data, error){ self.postMessage({ id, ok, data, error: error || null }); }
 
 self.onmessage = async (e) => {
@@ -18,9 +40,10 @@ self.onmessage = async (e) => {
       case 'setKey': {                       // args.sk = hex secret
         SK = hexToBytes(args.sk);
         PK = NT.getPublicKey(SK);
+        _ck.clear();                      // a cached key from a previous login must never be reused
         return reply(id, true, { pubkey: PK });
       }
-      case 'clearKey': { SK = null; PK = null; return reply(id, true, {}); }
+      case 'clearKey': { SK = null; PK = null; _ck.clear(); return reply(id, true, {}); }
       case 'exportNsec': {                     // reveal the local secret key (local-login only)
         if (!SK) return reply(id, false, null, 'no local key');
         return reply(id, true, { nsec: NT.nip19.nsecEncode(SK) });
@@ -58,13 +81,11 @@ self.onmessage = async (e) => {
       // ---- NIP-44 (used by NIP-46 remote-signer transport; some signers reply NIP-44 not NIP-04) ----
       case 'nip44enc': {                       // args.peer (hex), args.text
         if (!SK) return reply(id, false, null, 'no local key');
-        const ck = NT.nip44.getConversationKey(SK, args.peer);
-        return reply(id, true, { ct: NT.nip44.encrypt(args.text, ck) });
+        return reply(id, true, { ct: NT.nip44.encrypt(args.text, convKey(args.peer)) });
       }
       case 'nip44dec': {                       // args.peer, args.ct
         if (!SK) return reply(id, false, null, 'no local key');
-        const ck = NT.nip44.getConversationKey(SK, args.peer);
-        return reply(id, true, { pt: NT.nip44.decrypt(args.ct, ck) });
+        return reply(id, true, { pt: NT.nip44.decrypt(args.ct, convKey(args.peer)) });
       }
       // ---- NIP-17 private DMs (gift-wrapped via NIP-59 seal + NIP-44 encryption), local key only ----
       case 'nip17wrap': {                      // args.peer (hex), args.text -> two kind-1059 wraps
