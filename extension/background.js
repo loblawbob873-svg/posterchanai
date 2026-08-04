@@ -37,7 +37,13 @@ const L_TAG = 'pcai-pw';
 let cfg = null;          // { pubkey, key(b64), relay, mode, sk? }
 let key = null;          // raw Uint8Array(32)
 let items = new Map();   // id -> item
-let ws = null, wsTimer = null, backoff = 1000;
+/* ONE SOCKET PER RELAY. The vault is published to every relay the app is connected to, so reading
+ * from only one made that one a single point of failure for getting at a password. Events are
+ * merged by absorb(), which is newest-wins per item, so several relays answering the same
+ * subscription is exactly what we want: whichever is reachable, and whichever is most current,
+ * wins. A relay that is down simply contributes nothing. */
+const conns = new Map();         // url -> { ws, timer, backoff, ready }
+let ws = null, wsTimer = null, backoff = 1000;   // the primary, kept for publishAndWait
 const okWaiters = new Map();     // event id -> resolver, for publishAndWait
 let lastSync = 0, status = 'not paired';
 
@@ -59,35 +65,82 @@ async function saveItems(){
 
 // ---------------------------------------------------------------- relay
 
+function relayUrls(){
+  if(!cfg) return [];
+  return [...new Set([...(cfg.relays || []), cfg.relay].filter(Boolean))].slice(0, 6);
+}
+
 function connect(){
-  if(!cfg || !cfg.relay) return;
-  clearTimeout(wsTimer);
-  // Detach BEFORE closing: an onclose still bound fires retry(), which reconnects on a timer and
-  // closes the socket this call is about to open. Clicking Sync twice used to start that cycle.
-  try{ if(ws){ ws.onclose = null; ws.onerror = null; ws.onmessage = null; ws.close(); } }catch(_){ }
-  try{ ws = new WebSocket(cfg.relay); }
-  catch(_){ return retry(); }
-  ws.onopen = () => {
-    backoff = 1000;
-    status = 'syncing…';
-    // Everything, then the tail. The vault is small (hundreds of events at most), so one query is
-    // cheaper than paging, and `#l` is a single-letter tag the relay indexes.
-    send(['REQ', 'pcvault', { kinds:[KIND], authors:[cfg.pubkey], '#l':[L_TAG], limit: 5000 }]);
+  const want = relayUrls();
+  if(!want.length) return;
+  for(const [u, c] of conns){ if(!want.includes(u)){ closeConn(c); conns.delete(u); } }
+  for(const u of want) if(!conns.has(u)) openConn(u);
+  refreshStatus();
+}
+
+function closeConn(c){
+  if(!c) return;
+  clearTimeout(c.timer);
+  try{ if(c.ws){ c.ws.onclose = c.ws.onerror = c.ws.onmessage = c.ws.onopen = null; c.ws.close(); } }catch(_){ }
+}
+
+function openConn(url){
+  const c = conns.get(url) || { ws:null, timer:null, backoff:1000, ready:false };
+  conns.set(url, c);
+  closeConn(c);                 // detach before replacing, or the close we cause schedules a retry
+  c.ready = false;
+  try{ c.ws = new WebSocket(url); }
+  catch(_){ return retry(url); }
+  c.ws.onopen = () => {
+    c.backoff = 1000;
+    // The primary socket is whichever opened first: publishing needs ONE that is definitely up.
+    if(!ws || ws.readyState !== 1) ws = c.ws;
+    try{ c.ws.send(JSON.stringify(
+      ['REQ', 'pcvault', { kinds:[KIND], authors:[cfg.pubkey], '#l':[L_TAG], limit: 5000 }])); }catch(_){ }
+    refreshStatus();
   };
-  ws.onmessage = (e) => {
+  c.ws.onmessage = (e) => {
     let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
     if(m[0] === 'EVENT' && m[2]) absorb(m[2]);
     else if(m[0] === 'OK'){ const w = okWaiters.get(m[1]); if(w) w(m[2] === true); }
-    else if(m[0] === 'EOSE'){ status = 'ready'; lastSync = Date.now(); saveItems(); flushOutbox(); }
+    else if(m[0] === 'EOSE'){ c.ready = true; lastSync = Date.now(); saveItems(); flushOutbox(); refreshStatus(); }
   };
-  ws.onclose = () => { status = 'offline'; retry(); };
-  ws.onerror = () => { try{ ws.close(); }catch(_){ } };
+  c.ws.onclose = () => { c.ready = false; if(ws === c.ws) ws = _anyOpen(); refreshStatus(); retry(url); };
+  c.ws.onerror = () => { try{ c.ws.close(); }catch(_){ } };
 }
-function send(msg){ try{ ws && ws.readyState === 1 && ws.send(JSON.stringify(msg)); }catch(_){ } }
-function retry(){
-  clearTimeout(wsTimer);
-  wsTimer = setTimeout(connect, backoff);
-  backoff = Math.min(backoff * 2, 60000);
+
+function _anyOpen(){
+  for(const c of conns.values()) if(c.ws && c.ws.readyState === 1) return c.ws;
+  return null;
+}
+
+function retry(url){
+  const c = conns.get(url);
+  if(!c) return;
+  clearTimeout(c.timer);
+  c.timer = setTimeout(() => openConn(url), c.backoff);
+  c.backoff = Math.min(c.backoff * 2, 60000);
+}
+
+/* What the popup shows. "1 of 3 relays" is the honest version of "offline" when two are down and
+ * everything still works — and of "ready" when the only one that answered is stale. */
+function refreshStatus(){
+  const total = relayUrls().length;
+  const up = [...conns.values()].filter(c => c.ws && c.ws.readyState === 1).length;
+  if(!cfg) status = 'not paired';
+  else if(!up) status = 'offline';
+  else if([...conns.values()].some(c => c.ready)) status = total > 1 ? `ready · ${up}/${total} relays` : 'ready';
+  else status = 'syncing…';
+}
+
+function send(msg){
+  // To EVERY open relay: a subscription or a publish should not depend on which one happens to be up.
+  let sent = 0;
+  for(const c of conns.values()){
+    if(!c.ws || c.ws.readyState !== 1) continue;
+    try{ c.ws.send(JSON.stringify(msg)); sent++; }catch(_){ }
+  }
+  return sent;
 }
 
 const dOf = ev => ((ev.tags||[]).find(t => t[0] === 'd') || [])[1] || '';
@@ -152,12 +205,12 @@ async function saveItem(item){
  * timeout — every one of which means "not stored", and all of which used to read as success. */
 function publishAndWait(ev, ms){
   return new Promise((resolve) => {
-    if(!ws || ws.readyState !== 1) return resolve(false);
+    if(!_anyOpen()) return resolve(false);
     let done = false;
     const finish = (v) => { if(done) return; done = true; okWaiters.delete(ev.id); resolve(v); };
     okWaiters.set(ev.id, (accepted) => finish(!!accepted));
     setTimeout(() => finish(false), ms || 8000);
-    try{ ws.send(JSON.stringify(['EVENT', ev])); }catch(_){ finish(false); }
+    if(!send(['EVENT', ev])) finish(false);
   });
 }
 
@@ -198,10 +251,11 @@ async function pair(code){
     throw new Error('that is not a PosterChan pairing code');
   if(payload.mode === 'full' && !payload.sk)
     throw new Error('that code says "full" but carries no signing key — pair again');
-  if(!payload.relay)
+  if(!payload.relay && !(payload.relays || []).length)
     throw new Error('that pairing code carries no relay address, so this browser could never sync. ' +
                     'Check the app has a relay configured and pair again.');
   cfg = { pubkey: payload.pubkey, key: payload.key, relay: payload.relay || '',
+          relays: Array.isArray(payload.relays) ? payload.relays.filter(Boolean) : [],
           mode: payload.mode === 'full' ? 'full' : 'ro', sk: payload.sk || '' };
   key = V.fromB64(cfg.key);
   items = new Map();
@@ -212,7 +266,8 @@ async function pair(code){
 
 async function unpair(){
   cfg = null; key = null; items = new Map();
-  try{ ws && ws.close(); }catch(_){ }
+  for(const [u, c] of conns){ closeConn(c); conns.delete(u); }
+  ws = null;
   await B.storage.local.clear();
   status = 'not paired';
   return { ok:true };
@@ -305,4 +360,4 @@ async function code(raw){
 
 const ready = loadCfg().then(() => { if(cfg) connect(); });
 // A phone suspends the whole extension; re-check the socket whenever anything talks to us.
-setInterval(() => { if(cfg && (!ws || ws.readyState > 1)) connect(); }, 30000);
+setInterval(() => { if(cfg && !_anyOpen()) connect(); }, 30000);

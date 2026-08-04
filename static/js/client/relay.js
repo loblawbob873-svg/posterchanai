@@ -122,6 +122,10 @@
     },
     // back-compat single-relay entry point (built-in WoT relay, trusted)
     connect(url){ this.configure({ urls: url ? [url] : [], verify: false }); },
+    // Every relay this pool talks to. `publish()` already broadcasts to all of them; this is for
+    // telling ANOTHER device (the password extension) where else the same events can be read, so a
+    // single relay being down is not a single point of failure for it.
+    urls(){ return [...this._conns.keys()]; },
 
     // Resolve once a socket is actually OPEN (or `ms` elapses). Call BEFORE a burst of one-shot reads on a
     // cold start: on first launch (esp. the APK, radio waking) the socket is still CONNECTING, and firing

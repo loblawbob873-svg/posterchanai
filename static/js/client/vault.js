@@ -242,6 +242,7 @@
     try{ cached = Store().query([FILTER()]) || []; }catch(_){ cached = []; }
     await _absorb(lib, cached, true);
     _lib = lib;
+    _repairUris();           // entries damaged by an older import, fixed in place
     _syncAndroid();          // the autofill service's copy tracks the vault, not the screen
     return _lib;
   }
@@ -320,6 +321,45 @@
       if(!obj || typeof obj !== 'object') continue;
       obj.id = id; obj._at = ev.created_at || 0;
       (isFolder ? lib.folders : lib.items).set(id, obj);
+    }
+  }
+
+  /* REPAIR, rather than "please import it again".
+   *
+   * An older build split Bitwarden's comma-joined URI cell on newlines only, so an entry listing
+   * several sites was stored as ONE unparseable URL — its host came out as `blackhillsenergy.com,
+   * https` and it matched nothing, on the very site it was saved for. Fourteen entries in a real
+   * 117-entry vault, including most of the banks.
+   *
+   * The damage is unambiguous — a parsed HOST containing a comma cannot arise any other way — and
+   * the repair is exactly the split that should have happened. So it is done here, once, quietly,
+   * instead of asking someone to re-run an import to fix a bug they did not cause. Only entries
+   * that are actually damaged are touched, and each is republished as itself (a replaceable event),
+   * so nothing is duplicated and nothing else is rewritten. */
+  let _repaired = false;
+  async function _repairUris(){
+    if(_repaired || !_lib) return;
+    _repaired = true;
+    const broken = [];
+    for(const it of _lib.items.values()){
+      const uris = V().itemUris(it);
+      if(!uris.some(u => (V().hostOf(u) || '').includes(','))) continue;
+      const fixed = [];
+      for(const u of uris){
+        if((V().hostOf(u) || '').includes(',')) fixed.push(...V().splitUris(u));
+        else fixed.push(u);
+      }
+      // Only a change that actually gains something counts — never rewrite an entry for nothing.
+      if(fixed.length > uris.length){ it.uris = fixed; broken.push(it); }
+    }
+    if(!broken.length) return;
+    let ok = 0;
+    for(const it of broken){
+      try{ await save(it, 'item'); ok++; }catch(_){ }
+    }
+    if(ok){
+      toast(`repaired ${ok} saved login${ok===1?'':'s'} whose web addresses were stored wrong`);
+      _paint();
     }
   }
 
@@ -1081,8 +1121,16 @@
         out.innerHTML = '<div class="muted small">preparing…</div>';
         try{
           await ensureKey();
+          /* Every relay this device talks to, not just the configured one. The app already
+           * publishes to all of them (Relay._send broadcasts to the pool), so the same vault is on
+           * each — but the extension only ever knew about one, which made that one a single point of
+           * failure for reading a password. `relay` stays for a device paired by an older build. */
+          const relays = [...new Set([
+            ...((Relay().urls && Relay().urls()) || []),
+            (PC.CFG && PC.CFG.relay_url) || '',
+          ].filter(Boolean))];
           const payload = { v:1, t:'pcvault', pubkey: ME().pubkey, key: V().toB64(_key),
-                            relay: (PC.CFG && PC.CFG.relay_url) || '', mode };
+                            relay: relays[0] || '', relays, mode };
           if(mode === 'full'){
             // Only a LOCAL login has a key to give. nip07/nip46/nip55 hold it in a signer that never
             // hands it over — which is the point of them — so there is nothing to pair, and the

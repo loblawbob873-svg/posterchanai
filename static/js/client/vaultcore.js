@@ -630,6 +630,6 @@
     b32decode, totp, totpRemaining, parseOtpAuth, totpConfig,
     generate, entropyBits, randInt,
     hostOf, baseDomain, matchLevel, matchesFor, itemUris, itemUriRules,
-    parseBitwarden, parseCsv, audit,
+    parseBitwarden, parseCsv, audit, splitUris,
   };
 });

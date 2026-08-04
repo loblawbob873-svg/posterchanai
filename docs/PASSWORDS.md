@@ -80,6 +80,12 @@ call `joplin.js` makes about an E2EE Joplin export, and for the same reason: sil
 success. Logins, secure notes, cards and identities all come across; each keeps its Bitwarden id in
 `src`, so re-importing **updates in place** instead of duplicating.
 
+**You do not have to re-import to pick up a fix.** An older build stored Bitwarden's comma-joined
+URI cell as one unparseable URL — a host like `blackhillsenergy.com,https`, matching nothing, on 14
+of 117 entries in a real vault including most of the banks. A parsed host containing a comma cannot
+arise any other way, so the repair is unambiguous and runs by itself the next time Passwords is
+opened, touching only the damaged entries and republishing each as itself.
+
 Delete the export file afterwards. Until you do, it is a plaintext copy of every password you own.
 
 ## Sharing it with other devices
@@ -154,6 +160,14 @@ for five minutes, which is how the right account is picked on a site where you h
 `tests/test_vault_extension.py` fails if the copy drifts. That is what stops the generator, the TOTP
 and the URL matcher from disagreeing between the app and the browser, which is the class of bug
 nobody notices until it matters.
+
+**It reads from every relay you use, not one.** `Relay._send` already broadcasts a publish to the
+whole pool, so the vault is on each relay the app talks to — but the extension only knew about one,
+which made that one a single point of failure for reading a password. The pairing code now carries
+the list (up to six), the extension keeps a socket to each, and `absorb()` merges them newest-wins
+per item. A relay that is down contributes nothing; the popup says "ready · 2/3 relays" rather than
+claiming to be offline while working perfectly. Pairing codes from an older build still carry a
+single `relay` and keep working.
 
 What a hostile relay can do: withhold an update or replay an older event, i.e. show you a password
 you have since changed. It cannot forge one — the item bodies are authenticated (GCM) and it does
