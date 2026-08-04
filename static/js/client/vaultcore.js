@@ -447,8 +447,25 @@
     let data = null;
     try { data = JSON.parse(raw); } catch (_) { data = null; }
     if (data && typeof data === 'object') return _bwJson(data);
-    if (/^[^\n]*\bname\b[^\n]*,/i.test(raw) && /login_password|login_username/i.test(raw)) return _bwCsv(raw);
-    throw new Error('that is not a Bitwarden export — expected the .json or .csv file');
+    /* Sniff the HEADER, not the file's provenance. This required `login_password|login_username`,
+     * i.e. Bitwarden's spelling — so a Chrome or Firefox export was not merely imported badly, it
+     * was REFUSED, with an error telling the user their own password manager's export was not a
+     * real export. Any CSV whose first row names a password column (or a username and an address)
+     * is something we can read; the alias table decides the rest. */
+    const rows = parseCsv(raw);
+    if (rows.length > 1) {
+      const head = rows[0].map(h => String(h || '').replace(/^\ufeff/, '').trim().toLowerCase());
+      const c = _csvCols(head);
+      /* A PASSWORD COLUMN IS REQUIRED. Accepting username+url as well let a CSV whose password
+       * column we don't recognise import every entry with a BLANK password — and nothing surfaces
+       * that: the dialog says "Imported N entries… now delete the export file", and the health
+       * audit skips password-less items, so the user destroys their only plaintext copy on the
+       * strength of a successful-looking import of nothing. A contacts export (name,email,website)
+       * came in as logins the same way. */
+      if (c.password >= 0) return _bwCsv(raw);
+    }
+    throw new Error('that file has no passwords in it — export from your password manager or ' +
+                    'browser as .csv (or Bitwarden .json) and try again');
   }
 
   function _bwJson(data) {
@@ -581,30 +598,68 @@
     return rows.filter(r => r.length > 1 || (r[0] || '').trim());
   }
 
+  /* Column names, by what they MEAN rather than by which app wrote them.
+   *
+   * Every manager exports the same five things under a different spelling, and matching only
+   * Bitwarden's meant the two exports people actually arrive with imported badly in a way that
+   * looked like it had worked. Chrome writes `url`, not `uri` — so every entry came in with NO
+   * ADDRESS, which is the one field autofill matches on: a full vault that never offers anything on
+   * any site. Firefox has no name column at all, so on top of that every entry was called
+   * "Untitled". Both reported the right number imported.
+   *
+   * Ordered: the first alias present wins, so an export carrying both `login_password` and
+   * `password` (Bitwarden's own) resolves the way Bitwarden means it.
+   */
+  const _CSV_ALIASES = {
+    title:    ['name', 'title', 'account', 'item name', 'display name', 'entry'],
+    username: ['login_username', 'username', 'user name', 'login name', 'login', 'user', 'email',
+               'e-mail', 'account name'],
+    password: ['login_password', 'password', 'pass', 'passwd', 'pwd', 'secret'],
+    uri:      ['login_uri', 'uri', 'url', 'urls', 'web site', 'website', 'login_url', 'site',
+               'hostname'],
+    totp:     ['login_totp', 'totp', 'otpauth', 'otp', 'otpsecret', 'one-time password',
+               'verification code', '2fa', 'two-factor'],
+    notes:    ['notes', 'note', 'comments', 'comment', 'extra', 'memo'],
+    folder:   ['folder', 'grouping', 'group', 'category', 'collection'],
+    favorite: ['favorite', 'fav', 'favourite'],
+  };
+
+  function _csvCols(head) {
+    const out = {};
+    for (const key in _CSV_ALIASES) {
+      out[key] = -1;
+      for (const alias of _CSV_ALIASES[key]) {
+        const i = head.indexOf(alias);
+        if (i >= 0) { out[key] = i; break; }
+      }
+    }
+    return out;
+  }
+
   function _bwCsv(text) {
     const rows = parseCsv(text);
     if (!rows.length) return { items: [], folders: [] };
-    const head = rows[0].map(h => String(h || '').trim().toLowerCase());
-    const col = (name) => head.indexOf(name);
-    const iName = col('name'), iUser = col('login_uri') >= 0 ? col('login_username') : col('username');
-    const iPass = col('login_password') >= 0 ? col('login_password') : col('password');
-    const iUri = col('login_uri') >= 0 ? col('login_uri') : col('uri');
-    const iTotp = col('login_totp'), iNotes = col('notes'), iFolder = col('folder'), iFav = col('favorite');
+    // A BOM survives the download and would make the first header `\ufeffname`, matching nothing —
+    // so Chrome's export loses its title column to one invisible character.
+    const head = rows[0].map(h => String(h || '').replace(/^\ufeff/, '').trim().toLowerCase());
+    const c = _csvCols(head);
     const items = [], folders = new Set();
     for (const r of rows.slice(1)) {
       const get = (i) => (i >= 0 && i < r.length ? String(r[i] || '') : '');
-      const name = get(iName).trim();
-      const user = get(iUser), pass = get(iPass), uri = get(iUri);
-      if (!name && !user && !pass) continue;
-      const folder = get(iFolder).trim();
+      const user = get(c.username), pass = get(c.password), uri = get(c.uri);
+      const name = get(c.title).trim();
+      if (!name && !user && !pass && !uri) continue;
+      const folder = get(c.folder).trim();
       if (folder) folders.add(folder);
       items.push({
-        src: { app: 'bitwarden', id: '' },
+        src: { app: 'csv', id: '' },
         kind: (user || pass || uri) ? 'login' : 'note',
-        title: name || uri || 'Untitled',
-        folder, username: user, password: pass, totp: get(iTotp),
+        // Firefox exports no name at all. The host is what the user would have called it anyway,
+        // and it beats 900 rows called "Untitled".
+        title: name || hostOf(uri) || uri || 'Untitled',
+        folder, username: user, password: pass, totp: get(c.totp),
         uris: splitUris(uri),
-        notes: get(iNotes), favorite: /^(1|true)$/i.test(get(iFav)), fields: [],
+        notes: get(c.notes), favorite: /^(1|true|yes)$/i.test(get(c.favorite)), fields: [],
       });
     }
     return { items, folders: Array.from(folders) };

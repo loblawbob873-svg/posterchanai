@@ -26,6 +26,55 @@ from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridge
 # per-item docs (chat conversations/messages, upload refs, drafts, ai-requests) are NEVER broadcast.
 _BACKUP_NS = ("pcai:setting:", "pcai:user:", "pcai:usercfg:", "pcai:bot:")
 
+# The user's own encrypted libraries. Withheld from the PUBLIC upstreams by _broadcastable, and the
+# only things _private_mirrorable will send to the operator's own relays.
+#
+# Spelled out rather than shortened to "pcai:note"/"pcai:pw". Those bare prefixes cover today's five
+# namespaces by accident of spelling, and would silently adopt any future `pcai:notes-export` or
+# `pcai:pwpolicy` into the set of things that get copied off this machine. An explicit list makes
+# adding one a decision.
+# Per-item namespaces (one event per note / entry / folder / message) are prefixes...
+_PRIVATE_NS = ("pcai:note:", "pcai:notefolder:", "pcai:pw:", "pcai:pwfolder:",
+               # `pcai:upload:` is the key that makes a chat attachment readable. Mirroring the
+               # messages without it copies the conversation and leaves every file in it unopenable
+               # — a restore that looks complete and is not.
+               "pcai:files-index-bak:", "pcai:conv:", "pcai:msg:", "pcai:upload:")
+# ...and the singleton documents are EXACT names, not prefixes. `pcai:budget` as a prefix also
+# matches `pcai:budgeting`, which is how an unrelated future doc gets copied off the box without
+# anyone deciding it should be.
+_PRIVATE_DOCS = ("pcai:pwkey", "pcai:budget", "pcai:files-index", "pcai:drafts", "pcai:voices",
+                 "pcai:news-feeds", "pcai:news-read", "pcai:client-prefs")
+# Kinds that are private in their entirety rather than by namespace: an UNFINISHED article or
+# listing is the purest case of "exists once, irreplaceable" — _broadcastable keeps it off the
+# public network precisely because it is not published yet, which also left it with no second copy
+# anywhere.
+_PRIVATE_KINDS = (30024, 30403)
+
+
+def _private_mirrorable(ev) -> bool:
+    """Whether a write belongs on the operator's PRIVATE mirror relays.
+
+    Redundancy for the data that has none. A note or a vault entry lives in exactly one Postgres —
+    this relay's — so losing that box loses the library, which is a worse failure than any of the
+    ones the public fan-out protects against. Everything public is already on twenty relays; the
+    irreplaceable half was on one.
+
+    A SEPARATE list, not the public upstreams, and that distinction is the whole design. These
+    events are ciphertext, so mirroring them is not a disclosure of content — but each one carries
+    the author's pubkey, a stable `d` tag and a timestamp, so a copy on a stranger's relay is a
+    permanent public record of how many passwords someone has and when each one changed, and nothing
+    can withdraw it later. On relays the operator runs, that record is already theirs. On
+    relay.example.social it belongs to somebody else, forever. So this fans out to whatever the
+    operator explicitly names and nowhere else; blank means no mirroring at all.
+    """
+    k = ev.get("kind")
+    if k in _PRIVATE_KINDS:
+        return True
+    if k != 30078:
+        return False
+    d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), "")
+    return d.startswith(_PRIVATE_NS) or d in _PRIVATE_DOCS
+
 
 def _broadcastable(ev, cfg=None) -> bool:
     """Whether a direct write should be re-broadcast to the upstream relays. Notes, profiles,
@@ -226,11 +275,12 @@ class _OutQ:
 
 
 class RelayServer:
-    def __init__(self, store, gate, config: dict, outbox_cb=None):
+    def __init__(self, store, gate, config: dict, outbox_cb=None, private_cb=None):
         self.store = store
         self.gate = gate                 # .is_member(pubkey) -> bool
         self.cfg = config
         self.outbox_cb = outbox_cb       # async fn(event) | None (Phase 4)
+        self.private_cb = private_cb     # async fn(event) | None — the operator's own mirror relays
         self.subs = SubscriptionManager()
         self._conns = 0
         self._neg: dict = {}   # conn -> {sub_id: negentropy item set} (NIP-77 sessions)
@@ -829,6 +879,17 @@ class RelayServer:
             _origin = "bridge"
         else:
             _origin = "direct"
+        # Only consulted for the private mirror, and only for the handful of kinds it covers — a
+        # read per private write is nothing, and it is the difference between a mirror and a loop.
+        _was_new = True
+        if self.private_cb and _private_mirrorable(ev):
+            try:
+                _was_new = not await self.store.has_event(eid)
+            except Exception as e:
+                # Don't mirror when we can't tell — a missed copy beats a loop. But SAY so: silent
+                # here means a failing read pool turns the backup off while it still looks on.
+                logger.warning("[nostr-relay] private mirror skipped (has_event failed): %s", e)
+                _was_new = False
         stored = await self.store.add_event(ev, origin=_origin)
         if not stored:
             # add_event did NOT persist the event — a transient insert/commit error (logged in
@@ -843,6 +904,21 @@ class RelayServer:
             if _is_puppet and kind == 0:
                 self._register_bridge_nip05(ev)   # serve this puppet's <name>@host identity
             self.subs.fanout(ev, self._send)
+            # The private mirror is a different list with a different rule, so it is a separate
+            # decision — an event is never on both paths.
+            #
+            # `_was_new` matters here and nowhere else. add_event reports True for a DUPLICATE (the
+            # insert is ON CONFLICT DO NOTHING and the publisher is owed an OK either way), so
+            # mirroring on `stored` alone means two nodes pointed at each other — the topology this
+            # feature's own help text recommends — bounce every private event between them forever:
+            # A mirrors to B, B stores it and mirrors back, A stores the duplicate and mirrors again.
+            # One perpetual cycle per event, until both 500-slot queues saturate and start dropping
+            # the NEWEST writes. The backup stops working silently while both boxes burn CPU.
+            if self.private_cb and _was_new and _private_mirrorable(ev):
+                try:
+                    self.private_cb(ev)
+                except Exception as e:
+                    logger.debug("[nostr-relay] private mirror enqueue failed: %s", e)
             if self.outbox_cb and _broadcastable(ev, self.cfg) and not self._dm_for_puppet(ev):
                 # Blaster: re-broadcast inbound writes to the upstream relays — notes, profile
                 # updates, published articles, AND DMs (encrypted, so no content leaks; this is how

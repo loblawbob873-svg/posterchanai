@@ -16,7 +16,7 @@ early `return True` for a kind someone is adding.
 """
 import unittest
 
-from app.services.nostr_relay.server import _BACKUP_NS, _broadcastable
+from app.services.nostr_relay.server import _BACKUP_NS, _broadcastable, _private_mirrorable
 
 
 def ev(kind, d=None, tags=None):
@@ -101,5 +101,147 @@ class DoesLeave(unittest.TestCase):
         self.assertFalse(_broadcastable(ev(1, tags=[["nofederate"]]), {}))
 
 
+class PrivateMirror(unittest.TestCase):
+    """The second path: the encrypted libraries go to the operator's OWN relays, and only there.
+
+    Everything public is already on twenty relays; the irreplaceable half was on one. This is the
+    redundancy for that half — and the reason it is a separate list rather than the public upstreams
+    is the metadata trail, not the contents.
+    """
+
+    def test_the_private_libraries_are_mirrorable(self):
+        for d in ("pcai:note:abc", "pcai:notefolder:work", "pcai:pw:abc", "pcai:pwfolder:banking",
+                  "pcai:pwkey", "pcai:budget", "pcai:files-index", "pcai:files-index-bak:1",
+                  "pcai:drafts", "pcai:voices", "pcai:news-feeds", "pcai:news-read",
+                  "pcai:client-prefs", "pcai:conv:x", "pcai:msg:x", "pcai:upload:c:1"):
+            with self.subTest(d):
+                self.assertTrue(_private_mirrorable(ev(30078, d)))
+
+    def test_unpublished_drafts_are_mirrorable(self):
+        """A NIP-23 article draft is withheld from the public network because it is not finished —
+        which also left the purest case of 'exists once, irreplaceable' with no second copy."""
+        for kind in (30024, 30403):
+            with self.subTest(kind=kind):
+                self.assertTrue(_private_mirrorable(ev(kind, "draft")))
+                self.assertFalse(_broadcastable(ev(kind, "draft"), {"backup_datastore": True}))
+
+    def test_the_mirror_skips_an_event_the_relay_already_had(self):
+        """Two nodes pointed at each other — the recommended topology — would otherwise bounce every
+        private event between them forever: add_event reports True for a DUPLICATE, so `stored`
+        alone is not 'this is new'."""
+        import inspect
+
+        from app.services.nostr_relay.server import RelayServer
+        src = inspect.getsource(RelayServer)
+        self.assertIn("if self.private_cb and _was_new and _private_mirrorable(ev):", src)
+        self.assertIn("_was_new = not await self.store.has_event(eid)", src)
+
+    def test_config_docs_are_not_on_the_private_path(self):
+        """They already have their own route (backup_datastore → the public upstreams)."""
+        for d in ("pcai:setting:llm_model", "pcai:user:abc", "pcai:usercfg:abc", "pcai:bot:1"):
+            with self.subTest(d):
+                self.assertFalse(_private_mirrorable(ev(30078, d)))
+
+    def test_nothing_else_is(self):
+        self.assertFalse(_private_mirrorable(ev(1)))
+        self.assertFalse(_private_mirrorable(ev(30078, "some-other-app")))
+        self.assertFalse(_private_mirrorable(ev(30078)))          # no d tag at all
+        self.assertFalse(_private_mirrorable(ev(30023, "pcai:note:abc")))   # right d, wrong kind
+
+    def test_the_two_paths_never_overlap(self):
+        """An event on both would be published twice, and one of those is the public network."""
+        for d in ("pcai:note:abc", "pcai:pw:abc", "pcai:pwkey", "pcai:budget",
+                  "pcai:setting:x", "pcai:user:x", "pcai:usercfg:x", "pcai:bot:x"):
+            with self.subTest(d):
+                e = ev(30078, d)
+                for cfg in ({}, {"backup_datastore": True}, {"backup_datastore": False}):
+                    self.assertFalse(_broadcastable(e, cfg) and _private_mirrorable(e),
+                                     "%s would be sent down both paths" % d)
+
+    def test_a_lookalike_namespace_is_not_swept_in(self):
+        """startswith on a bare prefix is how an unrelated doc gets mirrored by accident."""
+        self.assertFalse(_private_mirrorable(ev(30078, "pcai:notify:x")))
+        self.assertFalse(_private_mirrorable(ev(30078, "pcai:power:x")))
+
+
+class MirrorWiring(unittest.TestCase):
+    """Off by default, and off means the decision cannot be reached at all."""
+
+    def test_the_setting_exists_and_defaults_to_blank(self):
+        from app.schemas import SettingsResponse
+        f = SettingsResponse.model_fields["nostr_relay_private_relays"]
+        self.assertIsNone(f.default, "mirroring must be something an operator turned on")
+
+    def test_the_server_only_mirrors_when_a_callback_was_given(self):
+        import inspect
+
+        from app.services.nostr_relay.server import RelayServer
+        self.assertIn("private_cb", inspect.signature(RelayServer.__init__).parameters)
+        src = inspect.getsource(RelayServer)
+        self.assertIn("if self.private_cb and _private_mirrorable(ev):", src)
+
+    def test_no_relays_means_no_second_outbox(self):
+        import inspect
+
+        from app.services.nostr_relay import thread
+        src = inspect.getsource(thread)
+        self.assertIn('if cfg["private_relays"]:', src)
+        self.assertIn("private_cb=(private.enqueue if private else None)", src)
+
+
+    def test_the_namespace_list_is_explicit(self):
+        """Bare prefixes would adopt a future namespace into the copied-off-the-box set."""
+        from app.services.nostr_relay.server import _PRIVATE_DOCS, _PRIVATE_NS
+        self.assertEqual(_PRIVATE_NS,
+                         ("pcai:note:", "pcai:notefolder:", "pcai:pw:", "pcai:pwfolder:",
+                          "pcai:files-index-bak:", "pcai:conv:", "pcai:msg:", "pcai:upload:"))
+        self.assertEqual(_PRIVATE_DOCS,
+                         ("pcai:pwkey", "pcai:budget", "pcai:files-index", "pcai:drafts",
+                          "pcai:voices", "pcai:news-feeds", "pcai:news-read", "pcai:client-prefs"))
+        for d in ("pcai:notes-export:1", "pcai:pwpolicy", "pcai:budgeting"):
+            self.assertFalse(_private_mirrorable(ev(30078, d)), d)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReplaceableTieBreak(unittest.TestCase):
+    """NIP-01: on EQUAL created_at the LOWER event id wins.
+
+    The store handed a tie to the newcomer and DELETED the incumbent. Non-conformant on its own, and
+    it makes two mutually-mirroring relays disagree forever: save the same note from two devices
+    inside one second, and each node flips to whatever the other last sent it. The losing version is
+    deleted, so it looks new again on the way back, which re-arms the mirror's has_event guard on
+    every flip. The rule has to be total and identical on both ends.
+    """
+
+    def test_the_rule_is_lowest_id_on_a_tie(self):
+        import inspect
+
+        from app.services.nostr_relay.store import RelayStore
+        src = inspect.getsource(RelayStore._insert_one)
+        self.assertIn('older = row["created_at"] < created', src,
+                      "a strictly-older incumbent is the only one a later event replaces")
+        self.assertIn('tie_lost = row["created_at"] == created and eid < row["id"]', src)
+        self.assertNotIn('row["created_at"] <= created', src,
+                         "<= hands every tie to whoever wrote last — the flip-flop")
+
+    def test_the_mirror_says_something_when_it_cannot_check(self):
+        """Silence there turns the backup off while it still looks on."""
+        import inspect
+
+        from app.services.nostr_relay.server import RelayServer
+        self.assertIn("private mirror skipped (has_event failed)", inspect.getsource(RelayServer))
+
+    def test_the_mirror_has_its_own_queue_budget_and_its_own_log_line(self):
+        """The public outbox is paced to be polite to strangers; this one holds the only copy."""
+        import inspect
+
+        from app.services.nostr_relay import thread
+        src = inspect.getsource(thread)
+        self.assertIn('label="private-mirror"', src)
+        self.assertIn("min_interval=0.05", src)
+        from app.services.nostr_relay.outbox import Outbox
+        self.assertEqual(inspect.signature(Outbox.__init__).parameters["label"].default, "outbox")
+        self.assertIn("%s queue full", inspect.getsource(Outbox.enqueue))

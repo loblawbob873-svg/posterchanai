@@ -158,6 +158,7 @@ class _Relay:
         self.gate: WotGate | None = None
         self.server: RelayServer | None = None
         self.outbox = None
+        self.private_outbox = None
         self.cfg: dict = {}
 
     def is_running(self) -> bool:
@@ -285,6 +286,12 @@ def _read_config() -> dict:
             "port": gi("nostr_relay_port", 3052),
             "seeds": seeds,
             "upstream": upstream,
+            # The operator's OWN relays, for mirroring the private encrypted libraries (notes,
+            # passwords, budget, files index). Blank = no mirroring, which is the default: this has
+            # to be a list someone chose, because these events are a permanent per-user metadata
+            # trail wherever they land. Point it at your other node, not at a public relay.
+            "private_relays": nostr_service.relay.normalize_relays(
+                g("nostr_relay_private_relays", "") or ""),
             # Bypass the outbound Tor proxy for the relay's OWN upstream traffic (sync/outbox/
             # WoT). Direct is faster and avoids the proxy-startup-race log flood; doesn't change
             # the bots' proxy behavior. (The relay client already tries proxy-then-direct per
@@ -655,9 +662,30 @@ async def _main(cfg: dict) -> None:
                     maxsize=cfg["outbox_max_queue"], direct=cfg["direct"],
                     retries=cfg["outbox_retries"], retry_delay=cfg["outbox_retry_delay"])
     outbox.start()
-    server = RelayServer(store, gate, cfg, outbox_cb=outbox.enqueue)
+    # A SECOND outbox, with its own relay list, for the private libraries. Same paced queue and the
+    # same retry behaviour — a mirror that gives up on the first refusal is not a backup. It only
+    # exists when the operator named relays for it; with none, nothing is mirrored and the callback
+    # is None, so the decision cannot be reached at all.
+    private = None
+    if cfg["private_relays"]:
+        # NOT the public outbox's budget. That pacing exists to avoid being rate-limited or blocked
+        # by strangers' relays; this one targets a relay the operator runs, and the events on it are
+        # the ones with no other copy. At 1/s with a 500-slot queue a Joplin import or a chat burst
+        # overruns it and `enqueue` drops the NEWEST writes — the vault entries this exists to
+        # protect — logging the same line the public blaster does, so nothing distinguishes "we
+        # skipped a stranger's relay" from "your notes were not backed up".
+        private = Outbox(cfg["private_relays"], min_interval=0.05,
+                         maxsize=20000, direct=cfg["direct"],
+                         retries=cfg["outbox_retries"], retry_delay=cfg["outbox_retry_delay"],
+                         label="private-mirror")
+        private.start()
+        logger.info("[nostr-relay] private mirror ON — encrypted libraries also go to %d relay(s): %s",
+                    len(cfg["private_relays"]), ", ".join(cfg["private_relays"]))
+    server = RelayServer(store, gate, cfg, outbox_cb=outbox.enqueue,
+                         private_cb=(private.enqueue if private else None))
     await server.warm_bridge_nip05()   # load persisted fediverse-puppet NIP-05 names before serving
     _relay.store, _relay.gate, _relay.server, _relay.outbox = store, gate, server, outbox
+    _relay.private_outbox = private
     _relay.stop_event = asyncio.Event()
 
     # WoT build on startup ONLY when there is NO cached snapshot (first run / cleared cache). If the
@@ -1115,6 +1143,7 @@ async def _main(cfg: dict) -> None:
                             # is NOT here: it's driven by nostr_relay_disable_proxy, a restart-key, so
                             # it can't change on this live path — re-reading it would imply otherwise.
                             cfg["upstream"] = fresh["upstream"]
+                            cfg["private_relays"] = fresh["private_relays"]
                             cfg["firehose_max_relays"] = fresh["firehose_max_relays"]
                             cfg["ingest_kinds"] = fresh["ingest_kinds"]
                             cfg["operator"] = fresh["operator"]
@@ -1125,6 +1154,15 @@ async def _main(cfg: dict) -> None:
                             # the new set while the firehose ingests nothing.
                             await _restart_firehose()
                             outbox.upstream = cfg["upstream"]   # next publish targets the new set
+                            # The mirror follows the same live change — re-pointed, or emptied.
+                            # An operator who realises they aimed it at the wrong relay clears the
+                            # box and saves; without this it keeps shipping every new note and vault
+                            # entry there indefinitely, with nothing anywhere to say so. Turning it
+                            # ON from blank still needs the restart (there is no worker to re-point).
+                            if private is not None:
+                                private.upstream = cfg["private_relays"]
+                                if not cfg["private_relays"]:
+                                    logger.info("[nostr-relay] private mirror OFF (relay list cleared)")
                             logger.info("[nostr-relay] control: firehose reconnected to %d upstream "
                                         "relay(s) live (no restart)", len(cfg["upstream"]))
                         except Exception as e:
@@ -1184,6 +1222,8 @@ async def _main(cfg: dict) -> None:
         for t in (_firehose.get("tasks") or []):
             t.cancel()
         outbox.stop()
+        if private is not None:
+            private.stop()      # or its worker and retry tasks outlive store.close()
         ws.close()
         try:
             await ws.wait_closed()

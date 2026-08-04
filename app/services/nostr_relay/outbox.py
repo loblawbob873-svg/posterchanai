@@ -18,7 +18,12 @@ logger = logging.getLogger(__name__)
 
 class Outbox:
     def __init__(self, upstream, min_interval: float = 1.0, maxsize: int = 500, direct: bool = False,
-                 retries: int = 2, retry_delay: float = 15.0, max_inflight_retries: int = 50):
+                 retries: int = 2, retry_delay: float = 15.0, max_inflight_retries: int = 50,
+                 label: str = "outbox"):
+        # Named, because there are two of these now and the private mirror's drops mean something
+        # entirely different from the public blaster's: one is "we were polite to a stranger's
+        # relay", the other is "your notes were not backed up".
+        self.label = label
         self.upstream = upstream
         self.min_interval = min_interval
         self.direct = direct
@@ -57,8 +62,8 @@ class Outbox:
         except asyncio.QueueFull:
             self._dropped += 1
             if self._dropped % 50 == 1:
-                logger.warning("[nostr-relay] outbox queue full — dropped %d (sending too fast)",
-                               self._dropped)
+                logger.warning("[nostr-relay] %s queue full — dropped %d (sending too fast)",
+                               self.label, self._dropped)
 
     async def _worker(self) -> None:
         while True:

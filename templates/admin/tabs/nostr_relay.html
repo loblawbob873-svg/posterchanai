@@ -347,6 +347,12 @@
             <small>One per line. <strong>Blank = the bots' default relay set.</strong> Used both to pull the WoT feed and to broadcast notes written here.</small>
         </div>
         <div class="form-group">
+            <label for="nostr_relay_private_relays">Private mirror relays</label>
+            <textarea id="nostr_relay_private_relays" name="nostr_relay_private_relays" rows="3" placeholder="blank = no mirroring (your notes and passwords stay on this node only)"></textarea>
+            <small>One per line. Where your users' <strong>encrypted libraries</strong> — Notes, Passwords, Budget, the files index — are copied for redundancy. They are the only data here with no second copy anywhere: everything public is already on the upstream relays above, while a note or a vault entry lives in exactly this one Postgres, so losing this box loses it.
+            <br><strong>Point this at a relay you run</strong> (your other node), not at a public one. The bodies are ciphertext and nobody else can read them — but every event carries the author's pubkey, a stable id and a timestamp, so a copy on someone else's relay is a permanent public record of how many passwords each user has and when each one changed, and there is no taking it back. On your own relay that record is already yours. <strong>Restart after turning this on.</strong></small>
+        </div>
+        <div class="form-group">
             <label for="nostr_relay_send_only">
                 <input type="checkbox" id="nostr_relay_send_only" name="nostr_relay_send_only"> Send-only — broadcast to these, don't mirror them
             </label>

@@ -532,6 +532,10 @@ class SettingsResponse(BaseModel):
     nostr_relay_port: Optional[int] = None
     nostr_relay_wot_seeds: Optional[str] = None          # npub/hex seeds, newline/comma
     nostr_relay_upstream_relays: Optional[str] = None     # blank = bots' DEFAULT_RELAYS
+    # Mirror the PRIVATE encrypted libraries (notes/passwords/budget/files index) to relays you run.
+    # Blank = off. Deliberately NOT the public upstreams: the bodies are ciphertext, but each event
+    # is a permanent per-user metadata trail (pubkey + stable d-tag + timestamp) wherever it lands.
+    nostr_relay_private_relays: Optional[str] = None
     nostr_relay_retention_days: Optional[int] = None  # auto-clean feed notes older than N days (0=off)
     nostr_relay_max_events: Optional[int] = None      # hard count cap on feed events (0=unlimited)
     nostr_relay_wot_enabled: Optional[bool] = True

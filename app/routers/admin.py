@@ -580,7 +580,10 @@ def update_settings(
         # above). Flush the new values to the datastore SYNCHRONOUSLY first — the relay re-reads its
         # config from Postgres on reload, and the normal write-through is async, so without this it
         # could read STALE values and ignore the change.
-        _relay_reload_keys = ("nostr_relay_upstream_relays", "nostr_relay_firehose_max_relays",
+        # nostr_relay_private_relays is here so clearing it actually STOPS the mirror: without a
+        # reload the relay keeps copying every private write to a relay the operator has removed.
+        _relay_reload_keys = ("nostr_relay_private_relays",
+                              "nostr_relay_upstream_relays", "nostr_relay_firehose_max_relays",
                               "nostr_relay_ingest_kinds")
         if not _relay_will_restart and any(k in changed_keys for k in _relay_reload_keys):
             flushed = False

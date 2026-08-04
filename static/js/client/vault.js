@@ -627,7 +627,7 @@
           ${_unreadable?`<div class="pv-pending small">${_unreadable} entr${_unreadable===1?'y':'ies'} could not be decrypted</div>`:''}
           <button class="pv-link pv-health" title="Weak, reused and old passwords"><svg class="ic" aria-hidden="true"><use href="#i-chart"></use></svg>Health</button>
           <div class="pv-foot-actions">
-            <button class="pv-link pv-import" title="Import a Bitwarden export"><svg class="ic" aria-hidden="true"><use href="#i-download"></use></svg>Import</button>
+            <button class="pv-link pv-import" title="Import from a browser or another password manager"><svg class="ic" aria-hidden="true"><use href="#i-download"></use></svg>Import</button>
             <button class="pv-link pv-export" title="Export for another password manager"><svg class="ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Export</button>
           </div>
           <button class="pv-link pv-pair" title="Pair a browser extension or another device"><svg class="ic" aria-hidden="true"><use href="#i-link"></use></svg>Pair a device</button>
@@ -975,9 +975,15 @@
 
   function openImport(){
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-download"></use></svg>Import passwords</h3>
-      <div class="muted small">Bitwarden’s <b>unencrypted</b> export — <code>.json</code> or <code>.csv</code>.
-        In Bitwarden: Tools → Export vault → File format .json, with password protection OFF. Import it
-        here, then delete the file: until you do, it is a plaintext copy of every password you own.</div>
+      <div class="muted small">An <b>unencrypted</b> export from wherever your passwords are now —
+        <code>.csv</code> from a browser or most managers, or Bitwarden’s <code>.json</code>.
+        <br><b>Chrome:</b> Settings → Autofill → Passwords → ⋮ → Export passwords.
+        <b>Firefox:</b> about:logins → ⋯ → Export Logins.
+        <b>Bitwarden:</b> Tools → Export vault, format .json, password protection OFF — the .json is the
+        only one that brings your <b>one-time codes</b>, folders and notes across; a browser .csv has no
+        column for them.
+        <br>Import here, then delete the file: until you do, it is a plaintext copy of every password
+        you own.</div>
       <div class="pv-imp-pick"><input type="file" id="pi-file" accept=".json,.csv,application/json,text/csv"></div>
       <div id="pi-prog"></div>
       <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">

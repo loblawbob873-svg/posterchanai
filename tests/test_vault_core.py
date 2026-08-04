@@ -534,3 +534,117 @@ class MatchingIsNotFooled(unittest.TestCase):
                     "const r = V.matchLevel({kind:'login', uris:F.u}, F.p);"
                     "return { r, ms: Date.now() - t0 };", {"u": rule, "p": page})
         self.assertLess(got["ms"], 2000, "the match must not blow up on a crafted pattern")
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class BrowserCsvImport(unittest.TestCase):
+    """Chrome and Firefox exports — the two files people actually arrive with.
+
+    The importer matched Bitwarden's column names only, and the failure was silent in the worst way:
+    Chrome writes `url`, not `uri`, so every entry imported with NO ADDRESS — and the address is the
+    only field autofill matches on, so the result was a full vault that never offered anything on any
+    site. Firefox has no name column either, so every entry was also called "Untitled". Both reported
+    the correct number imported.
+    """
+
+    CHROME = ('name,url,username,password,note\r\n'
+              'GitHub,https://github.com/login,octocat,hunter2,\r\n'
+              'Bank,https://bank.example.com/,me@example.com,"s3cr3t, really",note text\r\n')
+
+    # Firefox quotes every cell and ships no title.
+    FIREFOX = ('"url","username","password","httpRealm","formActionOrigin","guid","timeCreated",'
+               '"timeLastUsed","timePasswordChanged"\r\n'
+               '"https://github.com","octocat","hunter2","","https://github.com","{abc}","1","2","3"\r\n')
+
+    def _parse(self, text):
+        return _node("return V.parseBitwarden(F.text);", {"text": text})
+
+    def test_chrome_export_keeps_the_url(self):
+        r = self._parse(self.CHROME)
+        self.assertEqual(len(r["items"]), 2)
+        a, b = r["items"]
+        self.assertEqual(a["title"], "GitHub")
+        self.assertEqual(a["username"], "octocat")
+        self.assertEqual(a["password"], "hunter2")
+        self.assertEqual(a["uris"], ["https://github.com/login"],
+                         "no URL means autofill never offers this entry anywhere")
+        self.assertEqual(b["password"], "s3cr3t, really")   # the quoted comma survives
+        self.assertEqual(b["notes"], "note text")           # Chrome's column is `note`, singular
+
+    def test_chrome_export_survives_a_bom(self):
+        """The downloaded file has one, and it would make the first header match nothing."""
+        r = self._parse("﻿" + self.CHROME)
+        self.assertEqual(r["items"][0]["title"], "GitHub")
+
+    def test_firefox_export_gets_a_url_and_a_usable_name(self):
+        r = self._parse(self.FIREFOX)
+        self.assertEqual(len(r["items"]), 1)
+        it = r["items"][0]
+        self.assertEqual(it["uris"], ["https://github.com"])
+        self.assertEqual(it["username"], "octocat")
+        self.assertEqual(it["title"], "github.com",
+                         "Firefox ships no name; the host beats a page of 'Untitled'")
+
+    def test_bitwarden_csv_still_wins_its_own_columns(self):
+        """It carries both `login_password` and, in some exports, `password` — order matters."""
+        r = self._parse('folder,favorite,type,name,notes,login_uri,login_username,login_password,login_totp\r\n'
+                        'Work,1,login,GitHub,n,https://github.com,octocat,hunter2,JBSWY3DPEHPK3PXP\r\n')
+        it = r["items"][0]
+        self.assertEqual(it["password"], "hunter2")
+        self.assertEqual(it["totp"], "JBSWY3DPEHPK3PXP")
+        self.assertEqual(it["folder"], "Work")
+        self.assertTrue(it["favorite"])
+        self.assertEqual(r["folders"], ["Work"])
+
+    def test_a_row_with_only_a_url_is_still_imported(self):
+        """It was dropped: the guard required a name, user or password, and Firefox rows have none."""
+        r = self._parse('url,username,password\r\nhttps://example.com,,\r\n')
+        self.assertEqual(len(r["items"]), 1)
+        self.assertEqual(r["items"][0]["uris"], ["https://example.com"])
+
+    def test_totp_round_trips_through_the_bitwarden_export(self):
+        """The answer to 'does it export TOTP': yes, in the .json — the CSV has nowhere to put it."""
+        out = _node("""
+          const items = [{ id:'1', kind:'login', title:'GitHub', username:'octocat',
+                           password:'hunter2', totp:'JBSWY3DPEHPK3PXP',
+                           uris:[{uri:'https://github.com'}] }];
+          const back = V.parseBitwarden(V.toBitwardenJson(items, []));
+          return { totp: back.items[0].totp, csv: V.toBrowserCsv(items) };
+        """)
+        self.assertEqual(out["totp"], "JBSWY3DPEHPK3PXP")
+        self.assertNotIn("JBSWY3DPEHPK3PXP", out["csv"])
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class CsvSniffer(unittest.TestCase):
+    """What counts as a password file — and what must be refused rather than half-imported.
+
+    Accepting a CSV on username+url alone let an export whose password column we didn't recognise
+    import EVERY entry with a blank password. Nothing surfaced it: the dialog said "Imported N
+    entries… now delete the export file", and the health audit skips password-less items. The user
+    destroys their only plaintext copy on the strength of a successful-looking import of nothing.
+    """
+
+    def _err(self, text):
+        return _node("try { V.parseBitwarden(F.text); return {ok:true}; } "
+                     "catch (e) { return {ok:false, msg:String(e.message||e)}; }", {"text": text})
+
+    def test_a_contacts_export_is_refused(self):
+        r = self._err('name,email,website\r\nAlice,a@example.com,https://example.com\r\n')
+        self.assertFalse(r["ok"], "a CRM export must not become a vault of blank passwords")
+
+    def test_an_unrecognised_password_column_is_refused_not_blanked(self):
+        """RoboForm calls it `Pwd`; if we ever stop recognising a name, refuse rather than blank."""
+        r = self._err('Name,Url,Login,Nonsense\r\nGitHub,https://github.com,octocat,x\r\n')
+        self.assertFalse(r["ok"])
+
+    def test_roboform_style_pwd_is_recognised(self):
+        out = _node("return V.parseBitwarden(F.text).items[0];",
+                    {"text": 'Name,Url,Login,Pwd,Note\r\nGitHub,https://github.com,octocat,hunter2,n\r\n'})
+        self.assertEqual(out["password"], "hunter2")
+        self.assertEqual(out["username"], "octocat")
+
+    def test_the_browsers_are_still_accepted(self):
+        for csv in ('name,url,username,password,note\r\nA,https://a.com,u,p,\r\n',
+                    '"url","username","password"\r\n"https://a.com","u","p"\r\n'):
+            self.assertTrue(self._err(csv)["ok"], csv[:30])

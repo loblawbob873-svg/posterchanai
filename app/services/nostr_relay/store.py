@@ -307,10 +307,16 @@ class RelayStore:
                     "SELECT id, created_at FROM events WHERE pubkey=? AND kind=?",
                     (pubkey, kind))
                 for row in cur.fetchall():
-                    if row["created_at"] <= created and row["id"] != eid:
+                    # Same NIP-01 tie-break as the addressable branch below: equal created_at is
+                    # settled by the LOWER id, not by arrival order. Kinds 0/3/10002 are the user's
+                    # profile, follow list and relay list — the ones where two nodes disagreeing
+                    # forever is most visible.
+                    if row["id"] == eid:
+                        continue
+                    if row["created_at"] < created or (row["created_at"] == created and eid < row["id"]):
                         self._delete_sync(conn, row["id"])
-                    elif row["created_at"] > created:
-                        return False  # a newer version already stored
+                    else:
+                        return False  # a newer (or tie-winning) version already stored
             elif _PARAM_REPLACEABLE(kind):
                 d = next((t[1] for t in tags if len(t) >= 2 and t[0] == "d"), "")
                 cur = conn.execute(
@@ -322,9 +328,21 @@ class RelayStore:
                         (row["id"],)).fetchone()
                     rdv = rd["value"] if rd else ""
                     if rdv == d:
-                        if row["created_at"] <= created and row["id"] != eid:
+                        # NIP-01's tie-break: on EQUAL created_at the lower event id wins. This used
+                        # to hand a tie to the newcomer and delete the incumbent, which is not just
+                        # non-conformant — it makes two relays that mirror each other disagree
+                        # forever. Save the same note from two devices inside one second and each
+                        # node keeps flipping to whatever the other last sent it, re-arming the
+                        # mirror's "is this new?" guard on every flip, because the losing version is
+                        # DELETED and so always looks new again. The rule has to be total and
+                        # identical on both ends, and lowest-id is the one the spec defines.
+                        if row["id"] == eid:
+                            continue
+                        older = row["created_at"] < created
+                        tie_lost = row["created_at"] == created and eid < row["id"]
+                        if older or tie_lost:
                             self._delete_sync(conn, row["id"])
-                        elif row["created_at"] > created:
+                        else:
                             return False
 
             conn.execute(
