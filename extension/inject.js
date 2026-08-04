@@ -69,3 +69,27 @@ var __pcNostrProvider = function () {
     window.nostr = nostr;
   }
 };
+
+/* SELF-RUN IN THE PAGE'S WORLD.
+ *
+ * Firefox loads this as a content script (isolated world) and content.js stringifies the function
+ * into an inline <script> to get it into the page — the long way round, taken because a `src`
+ * pointing at the extension publishes a per-install UUID to every page on the web.
+ *
+ * Chrome has a direct route Firefox did not: a content script registered with `"world": "MAIN"` runs
+ * in the page itself. That is strictly better here — no inline <script> for a site's
+ * Content-Security-Policy to refuse, no injected node, and Chrome's extension id is the same for
+ * every install, so it is not the supercookie a Firefox UUID would be. build.sh registers this file
+ * that way in the generated Chrome manifest, and there is nothing in the page's world to call it, so
+ * it calls itself.
+ *
+ * Distinguishing the two: a content script in an ISOLATED world can see chrome.runtime.id; the
+ * page's world cannot. Where it can, content.js is going to do the injecting and this must NOT run
+ * (it would define window.nostr in the isolated world, where no site can see it, and then the real
+ * injection would find `window.nostr` already set — in the wrong world — and decline).
+ */
+try {
+  if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.id) __pcNostrProvider();
+} catch (_) {
+  try { __pcNostrProvider(); } catch (__) {}
+}

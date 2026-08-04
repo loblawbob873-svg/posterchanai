@@ -14,4 +14,4 @@
  * `"type": "module"` would mean rewriting three files (one of them shared with the app) as modules
  * for no gain.
  */
-importScripts('vendor/nostr.bundle.js', 'vaultcore.js', 'background.js');
+importScripts('vendor/nostr.bundle.js', 'vaultcore.js', 'bookmarks.js', 'background.js');

@@ -35,7 +35,7 @@ fi
 # own install instructions got that.
 FILES="manifest.json background.js content.js content.css inject.js \
        popup.html popup.js popup.css approve.html approve.js \
-       vaultcore.js vendor icons"
+       vaultcore.js bookmarks.js vendor icons"
 
 # Every file the manifest references must actually be in the bundle. Cheap, and it is the check that
 # would have caught the above the moment inject.js was added.
@@ -92,7 +92,20 @@ import json
 m = json.load(open('manifest.json'))
 m.pop('browser_specific_settings', None)          # Firefox-only; Chrome warns on it
 m['background'] = {'service_worker': 'background-chrome.js'}
-m['minimum_chrome_version'] = '109'
+m['minimum_chrome_version'] = '111'                # "world": "MAIN" landed in 111
+# NIP-07 goes into the PAGE'S WORLD DIRECTLY on Chrome. Firefox has to smuggle inject.js in as an
+# inline <script> built by content.js, because a `src` to the extension leaks a per-install UUID —
+# a real supercookie there. Chrome supports registering a content script with world MAIN, which is
+# strictly better: no inline script for a site's CSP to refuse, no injected node, and Chrome's
+# extension id is identical for every install, so it fingerprints the extension and not the user.
+# inject.js self-invokes when it finds itself in a world without chrome.runtime.id.
+cs = m['content_scripts'][0]
+cs['js'] = [f for f in cs['js'] if f != 'inject.js']
+m['content_scripts'] = [
+    {**cs},
+    {'matches': cs['matches'], 'js': ['inject.js'], 'run_at': 'document_start',
+     'all_frames': cs.get('all_frames', True), 'world': 'MAIN'},
+]
 with open('dist/chrome/manifest.json', 'w') as fh:
     json.dump(m, fh, indent=2)
     fh.write('\n')

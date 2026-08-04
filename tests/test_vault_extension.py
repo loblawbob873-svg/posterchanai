@@ -77,15 +77,19 @@ class ExtensionCore(unittest.TestCase):
         with open(MANIFEST, encoding="utf-8") as fh:
             man = json.load(fh)
         self.assertEqual(sorted(man.get("permissions", [])),
-                         ["activeTab", "clipboardWrite", "storage"])
+                         ["activeTab", "bookmarks", "clipboardWrite", "storage"])
         src = ""
-        for f in ("background.js", "popup.js", "content.js"):
+        for f in ("background.js", "popup.js", "content.js", "bookmarks.js"):
             with open(os.path.join(REPO, "extension", f), encoding="utf-8") as fh:
                 src += fh.read()
         self.assertIn("storage.local", src)
         self.assertIn("clipboard.writeText", src)
-        # No history, no bookmarks, no cookies, no downloads, no webRequest.
-        for never in ("history", "bookmarks", "cookies", "downloads", "webRequest", "tabs"):
+        # `bookmarks` arrived with bookmark sync and is the ONLY addition since this test was written.
+        # It is a real cost — both browsers show "read and change your bookmarks" at install — so it
+        # has to be earned by a call, exactly like the others, and it is off until switched on.
+        self.assertIn("B.bookmarks", src, "the bookmarks permission is requested but never used")
+        # Still no history, no cookies, no downloads, no webRequest, no blanket tabs.
+        for never in ("history", "cookies", "downloads", "webRequest", "tabs"):
             self.assertNotIn(never, man.get("permissions", []), f"{never} is not needed")
 
 

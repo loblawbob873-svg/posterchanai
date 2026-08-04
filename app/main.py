@@ -998,6 +998,18 @@ async def firefox_extension_zip():
     return RedirectResponse(url=_EXT_DL + "posterchan-passwords.zip", status_code=302)
 
 
+@app.get("/extension/chrome")
+async def chrome_extension():
+    """Chrome, Edge and Brave: the same extension, packed with a generated MV3 manifest whose
+    background is a service worker (Chrome refuses one that lists `scripts`; Firefox requires them).
+
+    Extract it and use chrome://extensions → Developer mode → Load unpacked. Chrome will not install
+    a zip directly — but an unpacked extension needs no signing and no store account, and unlike a
+    Firefox temporary add-on it survives a restart, so this is the whole installation story here.
+    """
+    return RedirectResponse(url=_EXT_DL + "posterchan-passwords-chrome.zip", status_code=302)
+
+
 @app.get("/desktop/{asset}")
 async def desktop_asset(asset: str):
     name = _DESKTOP_ALIASES.get(asset.lower(), asset)

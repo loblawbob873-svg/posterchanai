@@ -40,6 +40,7 @@ async function boot(){
   if(!st || !st.paired){ show('pane-pair'); $('#status').textContent = ''; return; }
   vaultCount = st.count || 0;
   $('#status').textContent = `${st.count} · ${st.status}${st.mode === 'ro' ? ' · read-only' : ''}`;
+  _mode = st.mode; _bmOn = !!st.bmOn; _bmCount = st.bmCount || 0;
   show('pane-list');
   await paint();
 }
@@ -275,3 +276,41 @@ $('#unpair').onclick = async () => {
 bindGen();
 showVersion();
 boot();
+
+
+/* ---- bookmark sync -------------------------------------------------------------------------
+ * The toggle writes into the browser's bookmark tree, so it says what it will do BEFORE it is on,
+ * and what it cannot do when the pairing is read-only. "Merge now" is the union: it gains bookmarks
+ * on both sides and deletes nothing, which is also what happens the first time it is switched on.
+ */
+let _mode = null, _bmOn = false, _bmCount = 0;
+
+function paintBm(){
+  const box = $('#bm-on'); if(!box) return;
+  box.checked = _bmOn;
+  const ro = _mode === 'ro';
+  $('#bm-note').innerHTML = _bmOn
+    ? (ro ? `${_bmCount} synced · <b>receive only</b> — this pairing has no signing key, so bookmarks
+             saved here stay here. Pair with full access to publish them.`
+          : `${_bmCount} synced · two-way. Encrypted per bookmark, like your passwords.`)
+    : `Off. Turning it on merges this browser's bookmarks with your other devices' — it adds on both
+       sides and deletes nothing.${ro ? ' This pairing is read-only, so it can receive but not send.' : ''}`;
+}
+
+{ const t = $('#bm-tab'); if(t) t.onclick = () => { show('pane-bm'); paintBm(); }; }
+{ const b = $('#bm-on');
+  if(b) b.onchange = async () => {
+    b.disabled = true;
+    const r = await send({ type:'bm-enable', on: b.checked });
+    _bmOn = !!(r && r.on); _bmCount = (r && r.count) || 0;
+    b.disabled = false; paintBm();
+  }; }
+{ const b = $('#bm-sync');
+  if(b) b.onclick = async () => {
+    b.disabled = true; b.textContent = 'merging…';
+    const r = await send({ type:'bm-sync' });
+    b.textContent = r && r.ok ? `+${r.created} here, +${r.published} sent` : (r && r.error) || 'failed';
+    setTimeout(() => { b.textContent = 'Merge now'; b.disabled = false; }, 2500);
+    const st = await send({ type:'state' });
+    _bmOn = !!(st && st.bmOn); _bmCount = (st && st.bmCount) || 0; paintBm();
+  }; }

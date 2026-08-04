@@ -22,6 +22,7 @@
     "scripts": [
       "vendor/nostr.bundle.js",
       "vaultcore.js",
+      "bookmarks.js",
       "background.js"
     ]
   },
@@ -57,7 +58,8 @@
   "permissions": [
     "storage",
     "activeTab",
-    "clipboardWrite"
+    "clipboardWrite",
+    "bookmarks"
   ],
   "host_permissions": [
     "<all_urls>"

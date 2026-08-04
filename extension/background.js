@@ -31,6 +31,17 @@ const D_ITEM = 'pcai:pw:';
 const D_FOLDER = 'pcai:pwfolder:';
 const D_KEY = 'pcai:pwkey';
 const L_TAG = 'pcai-pw';
+/* Bookmarks ride the SAME subscription and the same key — one encrypted event per bookmark, exactly
+ * like a vault item (see bookmarks.js). Adding the label here rather than opening a second socket
+ * keeps "which relays am I talking to" a single answer. */
+/* Tolerant of bookmarks.js being absent: both manifests load it before this file, but a harness (or
+ * a future load order) that does not must still get a working vault rather than a background script
+ * that throws before its first line of logic. The d-tag prefix and label are duplicated as fallbacks
+ * for that case ONLY — bookmarks.js is the definition. */
+const BM = (typeof PCBookmarks !== 'undefined') ? PCBookmarks
+         : ((typeof self !== 'undefined' && self.PCBookmarks) || null);
+const D_BM = (BM && BM.D_BM) || 'pcai:bm:';
+const L_BM = (BM && BM.L_BM) || 'pcai-bm';
 
 // ---------------------------------------------------------------- state
 
@@ -51,6 +62,7 @@ async function loadCfg(){
   const got = await B.storage.local.get(['cfg', 'items', 'outbox']);
   cfg = got.cfg || null;
   if(cfg && cfg.key) key = V.fromB64(cfg.key);
+  if(key) initBookmarks();          // safe to call twice; the engine only wires its listeners once
   // The decrypted set is cached so the popup opens instantly and works with no network at all —
   // the same promise the app makes on a phone. It is written to extension storage, which is as
   // protected as the vault key sitting beside it; caching only the ciphertext would buy nothing
@@ -96,7 +108,7 @@ function openConn(url){
     // The primary socket is whichever opened first: publishing needs ONE that is definitely up.
     if(!ws || ws.readyState !== 1) ws = c.ws;
     try{ c.ws.send(JSON.stringify(
-      ['REQ', 'pcvault', { kinds:[KIND], authors:[cfg.pubkey], '#l':[L_TAG], limit: 5000 }])); }catch(_){ }
+      ['REQ', 'pcvault', { kinds:[KIND], authors:[cfg.pubkey], '#l':[L_TAG, L_BM], limit: 5000 }])); }catch(_){ }
     refreshStatus();
   };
   c.ws.onmessage = (e) => {
@@ -158,6 +170,7 @@ async function absorb(ev){
   try{ if(!NT().verifyEvent(ev)) return; }catch(_){ return; }
   const d = dOf(ev);
   if(!d || d === D_KEY || d.startsWith(D_FOLDER)) return;
+  if(d.startsWith(D_BM)) return absorbBookmark(d.slice(D_BM.length), ev);
   if(!d.startsWith(D_ITEM)) return;
   const id = d.slice(D_ITEM.length);
   if(!id) return;
@@ -170,6 +183,48 @@ async function absorb(ev){
   obj.id = id; obj._at = ev.created_at || 0;
   items.set(id, obj);
   saveItemsSoon();
+}
+
+/* ---------------------------------------------------------------- bookmarks
+ *
+ * The engine lives in bookmarks.js and is handed what it needs rather than reaching for it: the
+ * browser API, the decryptor, and ONE publish function so that signing, the OK-wait and the
+ * read-only rule stay here, where the vault already implements them.
+ *
+ * READ-ONLY PAIRING SYNCS ONE WAY, and says so instead of failing quietly. A read-only device holds
+ * no signing key, so it can receive bookmarks from the relay and apply them, and cannot publish its
+ * own — the same line the vault draws, for the same reason. Queuing them in the vault's outbox would
+ * be wrong: that queue is drained by the APP publishing vault items, and it has never heard of a
+ * bookmark.
+ */
+async function absorbBookmark(id, ev){
+  if(!(BM && BM.engine)) return;
+  try{ await BM.engine.absorb(id, ev); }catch(_){ }
+}
+
+async function publishBookmark(syncId, item){
+  if(!(cfg && cfg.mode === 'full' && cfg.sk)) return false;      // read-only: receive only
+  const at = Math.floor(Date.now()/1000);
+  try{
+    // A tombstone is an EMPTY content, never an absent event: "I don't have it" and "it was deleted"
+    // are different facts, and only the second may remove a bookmark on another device.
+    const content = item ? await V.seal(key, item) : '';
+    const ev = finalize({ kind: KIND, created_at: at, content,
+                          tags: [['d', D_BM + syncId], ['l', L_BM]] });
+    return await publishAndWait(ev);
+  }catch(_){ return false; }
+}
+
+async function initBookmarks(){
+  if(!key || !BM || !BM.engine) return;
+  try{
+    await BM.engine.init({
+      B: B,
+      open: (ct) => V.open(key, ct),
+      publish: publishBookmark,
+      isFull: () => !!(cfg && cfg.mode === 'full' && cfg.sk),
+    });
+  }catch(_){ }
 }
 
 let _saveT = null;
@@ -514,6 +569,7 @@ async function pair(code){
           relays: Array.isArray(payload.relays) ? payload.relays.filter(Boolean) : [],
           mode: payload.mode === 'full' ? 'full' : 'ro', sk: payload.sk || '' };
   key = V.fromB64(cfg.key);
+  initBookmarks();
   items = new Map();
   await B.storage.local.set({ cfg, items: [] });
   connect();
@@ -540,7 +596,22 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
       await ready;
       switch(msg && msg.type){
         case 'state':
-          return reply({ paired: !!cfg, mode: cfg && cfg.mode, count: items.size, status, lastSync });
+          return reply({ paired: !!cfg, mode: cfg && cfg.mode, count: items.size, status, lastSync,
+                         bmOn: !!(BM && BM.engine && BM.engine.enabled()),
+                         bmCount: (BM && BM.engine) ? BM.engine.count() : 0 });
+        /* Bookmark sync, off until asked for. A read-only pairing can RECEIVE bookmarks and cannot
+         * publish its own (no signing key) — the same line the vault draws, stated in the popup
+         * rather than discovered when nothing leaves this browser. */
+        case 'bm-enable': {
+          if(!(BM && BM.engine)) return reply({ ok:false, error:'bookmark sync unavailable' });
+          const v = await BM.engine.setEnabled(!!msg.on);
+          return reply({ ok:true, on:v, count: BM.engine.count() });
+        }
+        case 'bm-sync': {
+          if(!(BM && BM.engine) || !BM.engine.enabled()) return reply({ ok:false, error:'bookmark sync is off' });
+          const r = await BM.engine.union();
+          return reply({ ok:true, ...r });
+        }
         /* EVERY login, for searching. The popup used to hold only the matches for the current tab
          * and filter THOSE, so an entry the site did not match could not be found at all — typing
          * its name searched an empty list. Passwords are not included; the popup asks for one by id

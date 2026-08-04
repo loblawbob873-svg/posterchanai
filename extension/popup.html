@@ -48,6 +48,15 @@
   </div>
 </section>
 
+<!-- Bookmark sync. OFF until asked for, because turning it on writes into the browser's bookmark
+     tree, and a sync nobody chose is the one that surprises somebody. The line under it says which
+     direction it can go: a read-only pairing has no signing key, so it can receive and not send. -->
+<section id="pane-bm" class="pane hidden">
+  <label class="row"><input type="checkbox" id="bm-on"> <b>Sync bookmarks</b></label>
+  <div id="bm-note" class="muted small"></div>
+  <button id="bm-sync">Merge now</button>
+</section>
+
 <section id="pane-sites" class="pane hidden">
   <div class="muted small" style="margin-bottom:8px">Sites you let use your Nostr key.</div>
   <div id="sites"></div>
@@ -56,6 +65,7 @@
 <footer class="bot">
   <span id="ver" class="muted small"></span>
   <button id="sites-tab">Sites</button>
+  <button id="bm-tab">Bookmarks</button>
   <button id="sync">Sync</button>
   <button id="unpair" class="danger">Unpair</button>
 </footer>

@@ -69,3 +69,31 @@ def test_the_background_scripts_stay_worker_safe():
             assert banned not in src, (
                 f"{name} uses {banned}, which does not exist in a service worker — the Chrome build "
                 "would break at runtime while Firefox stayed fine")
+
+
+def test_nip07_goes_into_the_page_world_directly_on_chrome():
+    """Firefox has to smuggle inject.js into the page as an inline <script> built by content.js,
+    because a `src` to the extension would publish a per-install UUID to every page — a supercookie.
+    Chrome can register a content script with `world: MAIN`, which needs no inline script (nothing for
+    a site's CSP to refuse), injects no node, and leaks only "this extension exists", identically for
+    every install.
+
+    Reported as "on Brave, says no NIP-07 extension". I could not reproduce it here — headless Chrome
+    does not activate extensions at all on this box (no content-script world is ever created) — so
+    this is the Chrome-native path taken on its merits, not a confirmed root cause.
+    """
+    build = _read("build.sh")
+    assert "'world': 'MAIN'" in build, "inject.js is not registered in the page's world for Chrome"
+    inject = _read("inject.js")
+    assert "chrome.runtime.id" in inject and "__pcNostrProvider()" in inject, (
+        "inject.js must self-invoke when it finds itself in a world without chrome.runtime.id — in "
+        "the MAIN world nothing else will call it")
+
+
+def test_bookmark_sync_ships_in_both_bundles():
+    """A background file listed for one browser and not the other is the drift the test above exists
+    for; this is the same check from the other end, for the file most recently added."""
+    manifest = json.loads(_read("manifest.json"))
+    assert "bookmarks.js" in manifest["background"]["scripts"]
+    assert "bookmarks" in manifest["permissions"], "the engine cannot read the tree without it"
+    assert "bookmarks.js" in _read("build.sh"), "bookmarks.js is not in the shipped file list"
