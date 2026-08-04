@@ -645,17 +645,23 @@
    * clipboard, so the clear is skipped rather than throwing. */
   const CLIP_CLEAR_MS = 45000;
   let _clipT = null;
-  async function copy(text, what){
+  /* `holdMs` overrides the 45-second auto-clear. That window is right for a PASSWORD — paste it and
+   * move on — and wrong for anything you have to carry into another application: the pairing code has
+   * to survive opening a browser, finding the extension, and possibly installing it first, and a
+   * clipboard that empties underneath you looks exactly like a Copy button that does not work. */
+  async function copy(text, what, holdMs){
     try{ await navigator.clipboard.writeText(text); }
     catch(_){ toast('couldn’t reach the clipboard'); return; }
-    toast((what||'copied') + ' — clipboard clears in 45s');
+    const hold = holdMs || CLIP_CLEAR_MS;
+    toast((what||'copied') + ' — clipboard clears in ' +
+          (hold >= 60000 ? Math.round(hold/60000) + ' min' : Math.round(hold/1000) + 's'));
     clearTimeout(_clipT);
     _clipT = setTimeout(async () => {
       try{
         if(document.hasFocus() && (await navigator.clipboard.readText()) === text)
           await navigator.clipboard.writeText('');
       }catch(_){ }
-    }, CLIP_CLEAR_MS);
+    }, hold);
   }
 
   // ---------------------------------------------------------------- render
@@ -1329,8 +1335,11 @@
             <div class="row" style="gap:8px"><button class="mini" id="pv-code-copy">Copy code</button></div>
             <div class="muted small">Paste this into the extension’s Pair screen. Anyone who has it has your
               ${mode==='full'?'passwords AND your identity':'passwords'} — don’t send it over chat.</div>`;
-          $('#pv-code-copy', root).onclick = () => copy(code, 'pairing code copied');
-          const ta = $('#pv-code', root); if(ta) ta.onclick = () => ta.select();
+          $('#pv-code-copy', root).onclick = () => copy(code, 'pairing code copied', 300000);
+          const ta = $('#pv-code', root);
+          // Selected on sight: this is a one-shot value that has to leave this window, and requiring
+          // a click to select it is a step that adds nothing.
+          if(ta){ ta.onclick = () => ta.select(); try{ ta.focus(); ta.select(); }catch(_){ } }
         }catch(e){ out.innerHTML = `<div class="nt-warn small">${enc(e.message||'could not prepare a pairing code')}</div>`; }
       };
     });

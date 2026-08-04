@@ -265,3 +265,75 @@ def test_a_typo_is_dropped_not_stored():
     assert out[1] == "wss://r.example", "https must become wss"
     assert out[2] == "" and out[3] == "", "junk must be dropped"
     assert out[4] == "ws://localhost:3052", "a local relay must survive"
+
+
+def _tree_harness(body):
+    """A fake bookmarks API that behaves like a real one — create/move/remove are ASYNC — so a
+    check-then-create without a lock races exactly as the browser's does."""
+    return run("""
+      let nid = 100;
+      const nodes = { root:{id:'root',children:['1','2']},
+                      '1':{id:'1',title:'Bookmarks bar',parentId:'root',children:[]},
+                      '2':{id:'2',title:'Other bookmarks',parentId:'root',children:[]} };
+      const mk = (parent,title,url) => { const n={id:String(++nid),title,url,parentId:parent,children:[]};
+        nodes[n.id]=n; nodes[parent].children.push(n.id); return n; };
+      const tick = () => new Promise(r=>setTimeout(r,1));
+      const B = { storage:{local:{get:async()=>({bmOn:true}),set:async()=>{}}},
+        bookmarks:{ onCreated:{addListener(){}},onChanged:{addListener(){}},
+          onMoved:{addListener(){}},onRemoved:{addListener(){}},
+          getTree: async()=>{ await tick(); return [{id:'root',children:[nodes['1'],nodes['2']]}]; },
+          getChildren: async(id)=>{ await tick(); return (nodes[id].children||[]).map(c=>nodes[c]); },
+          create: async(o)=>{ await tick(); return mk(o.parentId,o.title,o.url); },
+          get: async(id)=>[nodes[id]],
+          move: async(id,o)=>{ await tick(); const n=nodes[id];
+            nodes[n.parentId].children = nodes[n.parentId].children.filter(c=>c!==id);
+            n.parentId=o.parentId; nodes[o.parentId].children.push(id); },
+          remove: async(id)=>{ await tick(); const n=nodes[id];
+            nodes[n.parentId].children = nodes[n.parentId].children.filter(c=>c!==id); delete nodes[id]; },
+          update: async()=>{} } };
+      const E = P.engine;
+      (async () => {
+      """ + body + """
+      })();
+    """)
+
+
+def test_a_burst_of_arrivals_creates_one_folder_not_twenty():
+    """THE duplicate-folder bug, reported as "I see a bunch of dupe folders" after a first sync.
+
+    Events arrive from the subscription in a burst and each is applied independently, so twenty
+    bookmarks in one folder all ran the folder lookup at once: every one called getChildren, none saw
+    the folder because none had been created yet, and every one created its own. Check-then-create is
+    not atomic. Measured against this harness before the fix: 20 "Work" folders and 20 "News" ones."""
+    got = _tree_harness("""
+      await E.init({ B, open: async(ct)=>JSON.parse(ct), publish: async()=>true,
+                     isFull: ()=>true, why: ()=>'' });
+      const evs = Array.from({length:20}, (_,i) => ({ created_at:1000+i,
+        content: JSON.stringify({ title:'B'+i, url:'https://x'+i+'.example/',
+                                  folder:'Work/News', root:'toolbar' }) }));
+      await Promise.all(evs.map((ev,i) => E.absorb('id'+i, ev)));
+      out({ work: Object.values(nodes).filter(n=>!n.url&&n.title==='Work').length,
+            news: Object.values(nodes).filter(n=>!n.url&&n.title==='News').length,
+            marks: Object.values(nodes).filter(n=>n.url).length });
+    """)
+    assert got["work"] == 1, f"{got['work']} copies of the folder — the create race is back"
+    assert got["news"] == 1, f"{got['news']} copies of the nested folder"
+    assert got["marks"] == 20, "every bookmark must still be created"
+
+
+def test_tidy_merges_duplicates_without_losing_a_bookmark():
+    """Cleanup for the duplicates an earlier build already made. It may only MOVE children and delete
+    a folder that is empty afterwards — never a bookmark, in any branch."""
+    got = _tree_harness("""
+      for (let i=0;i<5;i++){ const f=mk('1','Work'); mk(f.id,'B'+i,'https://x'+i+'.example/'); }
+      await E.init({ B, open: async(ct)=>JSON.parse(ct), publish: async()=>true,
+                     isFull: ()=>true, why: ()=>'' });
+      const before = Object.values(nodes).filter(n=>!n.url&&n.title==='Work').length;
+      const r = await E.tidy();
+      out({ before, after: Object.values(nodes).filter(n=>!n.url&&n.title==='Work').length,
+            marks: Object.values(nodes).filter(n=>n.url).length, r });
+    """)
+    assert got["before"] == 5
+    assert got["after"] == 1, f"tidy left {got['after']} copies"
+    assert got["marks"] == 5, "tidy deleted a bookmark — it may only move them"
+    assert got["r"]["merged"] == 4 and got["r"]["removed"] == 4

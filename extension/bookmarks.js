@@ -297,30 +297,59 @@
                 remember(id, made.id); }
   }
 
-  /* Create the folder path if it is missing, under the container the bookmark came from — toolbar
-   * stays toolbar, which is the placement people actually notice. The root travels as a NAME because
-   * its id and title differ per browser (see classifyRoot); resolving it to a local id is a decision
-   * made HERE, on arrival. `menu` has no Chrome equivalent and falls back to `other`. */
-  async function ensureFolder(path, root) {
+  /* Resolve a folder path to a local id, creating what is missing — ONE level at a time, memoised,
+   * and never twice concurrently.
+   *
+   * THIS IS WHERE THE DUPLICATE FOLDERS CAME FROM. Events arrive from the subscription in a burst and
+   * each one is applied independently, so twenty bookmarks in "Work" all ran this at once: every one
+   * of them called getChildren, none of them saw a "Work" folder because none had been created yet,
+   * and every one created its own. The check and the create are not atomic, and nothing was making
+   * them so — the result is one duplicate per concurrent event, which is exactly what a first sync
+   * of a real bookmark tree looks like.
+   *
+   * The fix is a per-(parent,name) promise: the first caller creates, everyone else awaits the SAME
+   * promise and gets the same id. Memoised per level rather than per full path, or "Work/A" and
+   * "Work/B" would still race on creating "Work".
+   *
+   * The root itself travels as a NAME (toolbar / menu / other) because ids and titles differ per
+   * browser; resolving it is a decision made here, on arrival. `menu` has no Chrome equivalent and
+   * falls back to `other`. */
+  var _folder = {};        // parentId + '\n' + name -> Promise<id>
+
+  async function rootId(root) {
     var roots = await api.B.bookmarks.getTree();
     var kids = (roots[0] && roots[0].children) || [];
     var byRoot = {};
     kids.forEach(function (k) { byRoot[P.classifyRoot(k)] = k.id; });
-    var base = byRoot[root || 'other'] || byRoot.other || byRoot.toolbar ||
-               (kids[kids.length - 1] || kids[0] || {}).id;
-    if (!path) return base;
-    var parts = path.split('/').filter(Boolean), cur = base;
-    for (var i = 0; i < parts.length; i++) {
+    return byRoot[root || 'other'] || byRoot.other || byRoot.toolbar ||
+           (kids[kids.length - 1] || kids[0] || {}).id;
+  }
+
+  function ensureChild(parentId, name) {
+    var key = parentId + '\n' + name;
+    if (_folder[key]) return _folder[key];
+    _folder[key] = (async function () {
       var children = [];
-      try { children = await api.B.bookmarks.getChildren(cur); } catch (_) {}
-      var hit = children.filter(function (c) { return !c.url && c.title === parts[i]; })[0];
-      if (hit) { cur = hit.id; continue; }
+      try { children = await api.B.bookmarks.getChildren(parentId); } catch (_) {}
+      var hit = children.filter(function (c) { return !c.url && c.title === name; })[0];
+      if (hit) return hit.id;
       var made = null;
-      try { made = await api.B.bookmarks.create({ parentId: cur, title: parts[i] }); } catch (_) { return cur; }
-      if (!made) return cur;
-      writing.add(made.id); setTimeout(function (id) { return function(){ writing.delete(id); }; }(made.id), 2000);
-      cur = made.id;
-    }
+      try { made = await api.B.bookmarks.create({ parentId: parentId, title: name }); } catch (_) {}
+      if (!made) return parentId;                      // could not create — put it in the parent
+      writing.add(made.id);
+      var id = made.id;
+      setTimeout(function () { writing.delete(id); }, 2000);
+      return id;
+    })();
+    // A failure must not be remembered as an answer, or every later bookmark inherits it.
+    _folder[key].catch(function () { delete _folder[key]; });
+    return _folder[key];
+  }
+
+  async function ensureFolder(path, root) {
+    var cur = await rootId(root);
+    var parts = String(path || '').split('/').filter(Boolean);
+    for (var i = 0; i < parts.length; i++) cur = await ensureChild(cur, parts[i]);
     return cur;
   }
 
@@ -416,8 +445,58 @@
     return s;
   }
 
+  /* Merge sibling folders that share a title, keeping the first and moving everything into it.
+   *
+   * For duplicates ALREADY created before folder creation was serialised: a check-then-create race
+   * made one copy per concurrent event, so a first sync of a real tree produced dozens. Nothing here
+   * can tell "a folder this engine duplicated" from "two folders somebody named the same on
+   * purpose", so it is a BUTTON and never automatic.
+   *
+   * It only moves children and deletes a folder that is EMPTY after the move. No bookmark is removed
+   * by this in any branch. */
+  async function tidy() {
+    if (!api) throw new Error('bookmark sync is not ready yet');
+    var merged = 0, removed = 0;
+
+    async function pass(parentId) {
+      var kids = [];
+      try { kids = await api.B.bookmarks.getChildren(parentId); } catch (_) { return; }
+      var byTitle = {};
+      for (var i = 0; i < kids.length; i++) {
+        var k = kids[i];
+        if (k.url) continue;                              // a bookmark, never a duplicate folder
+        var t = k.title || '';
+        if (!byTitle[t]) { byTitle[t] = k.id; continue; }
+        var keep = byTitle[t], move = [];
+        try { move = await api.B.bookmarks.getChildren(k.id); } catch (_) {}
+        for (var j = 0; j < move.length; j++) {
+          writing.add(move[j].id);
+          try { await api.B.bookmarks.move(move[j].id, { parentId: keep }); } catch (_) {}
+          (function (id) { setTimeout(function () { writing.delete(id); }, 2000); })(move[j].id);
+        }
+        var left = [];
+        try { left = await api.B.bookmarks.getChildren(k.id); } catch (_) {}
+        if (!left.length) {
+          writing.add(k.id);
+          try { await api.B.bookmarks.remove(k.id); removed++; } catch (_) {}
+        }
+        merged++;
+      }
+      // Recurse AFTER merging, so the surviving folder is walked once with everything in it.
+      var after = [];
+      try { after = await api.B.bookmarks.getChildren(parentId); } catch (_) {}
+      for (var m = 0; m < after.length; m++) if (!after[m].url) await pass(after[m].id);
+    }
+
+    var roots = await api.B.bookmarks.getTree();
+    var tops = (roots[0] && roots[0].children) || [];
+    for (var r = 0; r < tops.length; r++) await pass(tops[r].id);
+    _folder = {};                                         // ids may have moved under us
+    return { merged: merged, removed: removed };
+  }
+
   function count() { if (!api) return 0; return Object.keys(items).filter(function (k) { return !items[k].removed; }).length; }
 
   P.engine = { init: init, absorb: absorb, setEnabled: setEnabled, enabled: enabled,
-               union: union, count: count };
+               union: union, count: count, tidy: tidy };
 })(typeof self !== 'undefined' ? self : this);

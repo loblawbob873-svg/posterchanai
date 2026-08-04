@@ -367,3 +367,17 @@ function paintBm(){
     $('#relay-note').textContent = 'In use: ' + ((r.using || []).join(', ') || '(none)')
       + (dropped > 0 ? `  ·  ${dropped} entr${dropped === 1 ? 'y' : 'ies'} ignored (not a relay address)` : '');
   }; }
+
+/* Cleanup for the duplicate folders an earlier build created (folder creation was not serialised, so
+ * a burst of arriving bookmarks each made their own copy). Explicit, because nothing can tell those
+ * apart from two folders somebody named the same deliberately. */
+{ const b = $('#bm-tidy');
+  if(b) b.onclick = async () => {
+    b.disabled = true; b.textContent = 'tidying…';
+    const r = await send({ type:'bm-tidy' });
+    b.textContent = 'Tidy duplicate folders';
+    b.disabled = false;
+    $('#bm-note').innerHTML = (r && r.ok)
+      ? `Merged ${r.merged} duplicate folder${r.merged === 1 ? '' : 's'} (${r.removed} removed). No bookmarks were deleted.`
+      : `<b>Could not tidy:</b> ${(r && r.error) || 'no answer'}`;
+  }; }

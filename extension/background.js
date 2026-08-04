@@ -677,6 +677,11 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
           const v = await BM.engine.setEnabled(!!msg.on);
           return reply({ ok:true, on:v, count: BM.engine.count() });
         }
+        case 'bm-tidy': {
+          if(!(BM && BM.engine)) return reply({ ok:false, error:'bookmark sync unavailable' });
+          const r = await BM.engine.tidy();
+          return reply({ ok:true, ...r });
+        }
         case 'bm-sync': {
           if(!(BM && BM.engine) || !BM.engine.enabled()) return reply({ ok:false, error:'bookmark sync is off' });
           const r = await BM.engine.union();
