@@ -13934,11 +13934,29 @@
         // Nosmero — so they can tip you) AND `xmr` (what this client also reads); clearing removes every
         // alias. Previously we wrote ONLY `xmr` and DELETED monero_address, which hid your address from
         // those clients and even wiped a monero_address set elsewhere.
-        if(_xmr){ meta.xmr=_xmr; meta.monero_address=_xmr; } else { delete meta.xmr; delete meta.monero_address; }
-        delete meta.monero;   // fold the rarer `monero` alias into the two canonical keys we write
-        // BCH address → the two keys this client reads back; clearing removes every alias.
-        if(_bch){ meta.bch=_bch; meta.bitcoincash_address=_bch; } else { delete meta.bch; delete meta.bitcoincash_address; }
-        delete meta.bch_address; delete meta.bitcoincash;   // fold rarer aliases into the two canonical keys
+        /* Aliases are only rewritten when the address actually CHANGED.
+         *
+         * These deletes used to be unconditional, which meant saving ANY unrelated edit — a display
+         * name — stripped `monero`/`bch_address`/`bitcoincash` from the profile. Someone whose other
+         * client reads only `bch_address` would have had their tipping silently broken by us, having
+         * touched nothing to do with money. Same failure as pre-filling the field from a bio scan:
+         * writing over parts of someone's profile they never asked us to manage.
+         *
+         * Changed or cleared, folding the aliases in IS right — otherwise a stale old address stays
+         * live under a key we no longer write, and money goes to the wrong place. */
+        const _xmrWas = xmrOf(p), _bchWas = bchDirect(p);
+        if(_xmr){
+          meta.xmr=_xmr; meta.monero_address=_xmr;
+          if(_xmr !== _xmrWas) delete meta.monero;
+        } else if(_xmrWas){
+          delete meta.xmr; delete meta.monero_address; delete meta.monero;
+        }
+        if(_bch){
+          meta.bch=_bch; meta.bitcoincash_address=_bch;
+          if(_bch !== _bchWas){ delete meta.bch_address; delete meta.bitcoincash; }
+        } else if(_bchWas){
+          delete meta.bch; delete meta.bitcoincash_address; delete meta.bch_address; delete meta.bitcoincash;
+        }
         closeModal(); { const r=await publish(0, JSON.stringify(meta), []);   // failure toast by publish()
           if(r && r.ok){ Store.saveProfile({pubkey:ME.pubkey,created_at:Math.floor(Date.now()/1000),content:JSON.stringify(meta)}); toast('profile saved'); renderMe(); renderProfileView(ME.pubkey); } } };
     });

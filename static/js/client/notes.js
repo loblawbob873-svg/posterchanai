@@ -1132,6 +1132,19 @@
     }catch(_){ }
   }
 
+  /* Nothing in an import may wait forever. A relay publish has its own 8s timeout, but a blob
+   * upload is a bare fetch() — and a fetch that stalls (a dropped connection the OS hasn't given up
+   * on, a proxy holding the socket) never settles. One of those anywhere in 1200 attachments hangs
+   * the whole run with the progress bar frozen and Stop useless, because the cancel flag is only
+   * read BETWEEN items. A timeout turns that into an ordinary failure, which is already retried. */
+  function _withTimeout(promise, ms, what){
+    let t;
+    return Promise.race([
+      promise,
+      new Promise((_, rej) => { t = setTimeout(() => rej(new Error((what||'that') + ' timed out')), ms); }),
+    ]).finally(() => clearTimeout(t));
+  }
+
   async function doImport(parsed, root){
     const prog = $('#nt-imp-prog', root);
     if(_importing){ toast('an import is already running'); return; }
@@ -1251,10 +1264,12 @@
         try{
           // Read THIS attachment only — for a streamed .jex `res.data` is an {offset,length}
           // handle, so peak memory is one file rather than the whole library.
-          const bytes = await PCJoplin.readResource(parsed._file, res);
+          const bytes = await _withTimeout(PCJoplin.readResource(parsed._file, res), 60000, 'reading the file');
           if(!bytes || !bytes.length) return { ok:false, name, why:'unreadable in the export' };
           const file = new File([bytes], name, { type: res.mime || 'application/octet-stream' });
-          const sha = await PC.uploadEncFile(file, 'Notes');
+          // 3 minutes: generous enough for a ~95 MB attachment on a slow link, short enough that a
+          // dead socket doesn't cost the whole import.
+          const sha = await _withTimeout(PC.uploadEncFile(file, 'Notes'), 180000, 'the upload');
           shaByRes.set(res.id, sha);
           resMeta.set(res.id, { sha, name, mime:res.mime, size });
           return { ok:true };
@@ -1328,7 +1343,9 @@
       for(let attempt = 0; attempt < 3 && !saved; attempt++){
         if(_cancel) break;
         try{
-          const r = await save(rec, 'note');
+          // save() can upload too — an oversized body is offloaded to a blob — so it needs the
+          // same bound as an attachment rather than publish()'s 8s alone.
+          const r = await _withTimeout(save(rec, 'note'), 180000, 'saving the note');
           if(r.ok || r.queued){ if(r.queued) queued++; saved = true; }
         }catch(_){ }
         if(!saved) await new Promise(r => setTimeout(r, 500 * (attempt + 1) * (attempt + 1)));
