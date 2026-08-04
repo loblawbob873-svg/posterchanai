@@ -40,10 +40,20 @@ FILES="manifest.json background.js content.js content.css inject.js \
 # Every file the manifest references must actually be in the bundle. Cheap, and it is the check that
 # would have caught the above the moment inject.js was added.
 python3 - "$FILES" <<'EOF'
-import json, os, sys
+import json, os, re, sys
 shipped = set(sys.argv[1].split())
 m = json.load(open('manifest.json'))
 want = set()
+# The manifest is not the only thing that names a file. A PAGE does too — popup.html loads popup.js
+# and popup.css, approve.html loads approve.js — and none of those appear in manifest.json. The
+# desktop app shipped an installer that could not open for exactly this shape of omission (a module
+# added, a hand-written packing list not updated), so scan the pages as well as the manifest.
+for page in [f for f in shipped if f.endswith('.html')]:
+    if os.path.isfile(page):
+        html = open(page, encoding='utf-8').read()
+        for ref in re.findall(r'(?:src|href)=["\']([^"\':#?]+)["\']', html):
+            if not ref.startswith(('http:', 'https:', 'data:', '//')):
+                want.add(ref)
 for cs in m.get('content_scripts', []):
     want |= set(cs.get('js', [])) | set(cs.get('css', []))
 for k in ('background',):
@@ -54,7 +64,7 @@ for war in m.get('web_accessible_resources', []):
     want |= set(war.get('resources', []))
 missing = sorted(f for f in want if f not in shipped and not os.path.dirname(f))
 if missing:
-    sys.exit('the manifest references files the bundle does not ship: ' + ', '.join(missing))
+    sys.exit('the manifest or a page references files the bundle does not ship: ' + ', '.join(missing))
 # The pages the extension opens itself are not in the manifest at all — name them here so they
 # cannot be dropped either.
 for f in ('approve.html', 'approve.js'):
