@@ -304,8 +304,39 @@ async def list_blobs(pubkey: str, request: Request, db: Session = Depends(get_db
                         headers={**_CORS, "Cache-Control": "no-store, max-age=0"})
 
 
+@router.api_route("/thumb/{sha256}", methods=["GET", "HEAD"])
+async def get_blob_thumb(sha256: str, request: Request, db: Session = Depends(get_db)):
+    """A blob's preview JPEG, on its OWN PATH — the only reason this route exists.
+
+    Thumbnails used to be `<blob-url>?thumb=1`, and caches key on the PATH: Cloudflare (and the origin
+    nginx, which sets x-cache-status) both ignored the query, so `<sha>.mp4` and `<sha>.mp4?thumb=1`
+    shared ONE cache entry. Whichever was fetched first won — pinned for a year by the
+    `immutable, max-age=31536000` these responses carry. Measured through the public edge:
+
+        GET /<sha>.mp4?thumb=1  ->  200 video/mp4  1,612,155 bytes   cf-cache-status: HIT
+
+    i.e. the Files grid's <img> was handed the whole MP4, could not decode it, and fell back to the
+    🎬 icon. FOREVER, for that blob, at that edge. Images never showed it because the collision hands
+    them the full-size image, which renders perfectly well — which is exactly why this looked like
+    "video thumbnails are broken and image ones are fine", and why it seemed to depend on the browser
+    or on Tor: it depends only on which of the two URLs that edge happened to cache first.
+
+    A distinct path cannot collide with the blob, so `immutable` is now honest here.
+    """
+    # One implementation, asked explicitly for a thumbnail — not by rewriting the request's query
+    # string underneath itself, which works only until something reads query_params first.
+    return await _serve_blob(sha256, request, db, force_thumb=True)
+
+
 @router.api_route("/{sha256}", methods=["GET", "HEAD"])
 async def get_blob(sha256: str, request: Request, db: Session = Depends(get_db)):
+    return await _serve_blob(sha256, request, db)
+
+
+# The implementation both routes share. `force_thumb` lives HERE and not in a route signature, because
+# FastAPI turns a route's plain arguments into query parameters — it would have become a public
+# ?force_thumb=… on every blob URL, and a second spelling of the thing whose spelling caused the bug.
+async def _serve_blob(sha256: str, request: Request, db: Session, force_thumb: bool = False):
     if not blossom_service.is_enabled(db):
         return _err(404, "Blossom server disabled")
     sha = _strip_ext(sha256)
@@ -369,7 +400,7 @@ async def get_blob(sha256: str, request: Request, db: Session = Depends(get_db))
     # Images compress directly; videos get an ffmpeg-extracted frame (covers old + new uploads with no
     # batch step — the grid requests it on demand). An empty-bytes sentinel caches "no thumbnail" so a
     # video ffmpeg can't decode isn't re-run on every render.
-    if request.query_params.get("thumb") and (mime.startswith("image/") or mime.startswith("video/")):
+    if (force_thumb or request.query_params.get("thumb")) and (mime.startswith("image/") or mime.startswith("video/")):
         t = _thumb_get(sha)
         if t is None:
             async with _thumb_sem:               # bound concurrent generation so a list can't peg cores

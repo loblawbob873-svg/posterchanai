@@ -11441,7 +11441,24 @@
   }
   // Grid thumbnail. Images load a small server-side JPEG (?thumb=1) instead of the full file, and
   // videos show an icon rather than downloading the whole clip — both to save bandwidth in the grid.
-  function thumbUrl(u){ return u + (u.indexOf('?')<0?'?':'&') + 'thumb=1'; }
+  /* A blob's preview, on its own PATH rather than as ?thumb=1 on the blob itself.
+   *
+   * Caches key on the path and Cloudflare (and our own nginx) ignored the query, so `<sha>.mp4` and
+   * `<sha>.mp4?thumb=1` shared ONE entry, pinned for a year by the `immutable` these carry. Whichever
+   * was fetched first won. Measured through the public edge: the thumbnail URL returned 200 video/mp4,
+   * 1.6 MB, cf-cache-status HIT — the whole film, handed to an <img>, which cannot decode it and falls
+   * back to the 🎬 icon. Images never showed it: the same collision gives them the FULL-SIZE image,
+   * which renders, so only video tiles looked broken and it seemed to depend on the browser.
+   *
+   * Falls back to the query form for a server that predates /thumb/ (the <img> onerror does the rest). */
+  function thumbUrl(u){
+    u = String(u || '');
+    const q = u.indexOf('?');
+    const path = q < 0 ? u : u.slice(0, q), rest = q < 0 ? '' : u.slice(q);
+    const cut = path.lastIndexOf('/');
+    if(cut < 0) return u + (q < 0 ? '?' : '&') + 'thumb=1';
+    return path.slice(0, cut) + '/thumb/' + path.slice(cut + 1) + rest;
+  }
   // A file's extension (no dot, lowercase): the real one off its name when we have one, else derived
   // from the URL or the MIME type. Blossom blobs are named by their sha256, so the name — ours from
   // the Files index, or the server's from the listing — is where the true extension survives.
@@ -11942,7 +11959,7 @@
     if(!list){ g.innerHTML='<div class="empty">Couldn’t load this user’s files.</div>'; return; }
     if(!list.length){ g.innerHTML='<div class="empty">No files.</div>'; return; }
     g.innerHTML = list.map(b=>{
-      const full=server+'/'+b.sha256, thumb=full+'?thumb=1', t=(b.type||'').toLowerCase(), sz=_fmtBytes(b.size||0);
+      const full=server+'/'+b.sha256, thumb=thumbUrl(full), t=(b.type||'').toLowerCase(), sz=_fmtBytes(b.size||0);
       const isImg=t.startsWith('image/'), isVid=t.startsWith('video/');
       let inner;
       if(isImg||isVid) inner=`<img src="${enc(thumb)}" loading="lazy" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">`+(isVid?`<span style="position:absolute;top:4px;left:4px;font-size:14px;text-shadow:0 0 3px #000">▶</span>`:'');
@@ -19522,7 +19539,12 @@
   }
 
   function openLightbox(src, kind, group){
-    const norm=(u)=>{ try{ const x=new URL(u, location.href); x.searchParams.delete('thumb'); return x.href; }catch(_){ return u; } };   // always full-res, never the ?thumb=1 grid image
+    // Always full-res, never the grid's preview. BOTH spellings: the old ?thumb=1 (still served, and
+    // still in older clients' caches) and the /thumb/ path that replaced it — dropping only the query
+    // would open the 320px JPEG in the lightbox.
+    const norm=(u)=>{ try{ const x=new URL(u, location.href); x.searchParams.delete('thumb');
+      x.pathname = x.pathname.replace(/\/thumb\/([^/]+)$/, '/$1');
+      return x.href; }catch(_){ return u; } };
     const multi = !!(group && group.items && group.items.length>1);
     const items = multi ? group.items.map(it=>({ src:norm(it.src), kind:it.kind }))
                         : [{ src:norm(src), kind:kind||null }];
