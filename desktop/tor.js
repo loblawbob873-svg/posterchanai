@@ -20,6 +20,8 @@
  *     ask for one; bootstrap progress we read from stdout, which needs no auth.
  *  4. Ephemeral ports. A fixed 9050 collides with a system tor, and a system tor is exactly what a
  *     Tor user has. The collision shows up as "tor exited immediately", i.e. as a broken app.
+ *  5. LD_LIBRARY_PATH on Linux — see spawnEnv(). Without it the bundled tor either does not start or,
+ *     worse, starts against the WRONG libevent and dies on a symbol it cannot find.
  */
 const { app } = require('electron');
 const { spawn } = require('child_process');
@@ -45,31 +47,88 @@ const COUNTRIES = [
 const COUNTRY_NAMES = new Map(COUNTRIES);
 
 // ---- where the bundled binary lives -------------------------------------------------------------
-// Packed layout mirrors the expert bundle's own, unchanged, so a version bump is a re-extract:
-//   <resources>/tor/tor/tor(.exe)      the binary + its shared libraries
-//   <resources>/tor/data/geoip{,6}     the country database (see note 1 above)
-function bundleRoot() {
+/* Packed layout mirrors the expert bundle's own, unchanged, so a version bump is a re-extract:
+ *   <resources>/tor/tor/tor(.exe)      the binary + its shared libraries
+ *   <resources>/tor/data/geoip{,6}     the country database (see note 1 above)
+ *
+ * Plus an OPTIONAL per-architecture tree beside it, which today means exactly one thing: macOS.
+ *
+ *   <resources>/tor/arm64/tor/tor      the Apple Silicon build
+ *
+ * The .dmg is built for x64 and arm64 from one packaged resources tree, and the binary inside it is
+ * a real Mach-O for one architecture or the other. Shipping only the x86_64 one made the Tor switch
+ * depend on ROSETTA — which is not installed on a Mac until something asks for it, and a native
+ * arm64 Electron app never does. So the first thing that ever needed it would be tor, at which point
+ * it does not run: exec fails with EBADARCH, and until the handler below existed that was an
+ * unhandled 'error' event, i.e. the app dying rather than the feature declining.
+ *
+ * Resolution is by process.arch and falls back to the base tree, so an x64 build (including one run
+ * under Rosetta, where process.arch IS 'x64') keeps using the x86_64 binary, and Windows and Linux —
+ * which ship no arch subdirectory at all — are unaffected. geoip is architecture-independent and
+ * stays in the base tree; only the binary is duplicated. */
+function baseRoot() {
   return app.isPackaged
     ? path.join(process.resourcesPath, 'tor')
     : path.join(__dirname, 'resources', 'tor');
 }
 function torBinary() {
   const exe = process.platform === 'win32' ? 'tor.exe' : 'tor';
+  const roots = [path.join(baseRoot(), process.arch), baseRoot()];
   // Both shapes are accepted because the archives have not always agreed on whether the binary sits
   // in tor/ or at the root, and a layout change must not silently disable the feature.
-  for (const p of [path.join(bundleRoot(), 'tor', exe), path.join(bundleRoot(), exe)]) {
-    try { if (fs.statSync(p).isFile()) return p; } catch (_) {}
+  for (const root of roots) {
+    for (const p of [path.join(root, 'tor', exe), path.join(root, exe)]) {
+      try { if (fs.statSync(p).isFile()) return p; } catch (_) {}
+    }
   }
   return null;
 }
 function geoipFiles() {
   const out = {};
+  const roots = [path.join(baseRoot(), process.arch), baseRoot()];
   for (const [key, name] of [['geoip', 'geoip'], ['geoip6', 'geoip6']]) {
-    for (const p of [path.join(bundleRoot(), 'data', name), path.join(bundleRoot(), name)]) {
-      try { if (fs.statSync(p).isFile()) { out[key] = p; break; } } catch (_) {}
+    for (const root of roots) {
+      for (const p of [path.join(root, 'data', name), path.join(root, name)]) {
+        try { if (fs.statSync(p).isFile()) { out[key] = p; break; } } catch (_) {}
+      }
+      if (out[key]) break;
     }
   }
   return out;
+}
+
+/* The environment tor is spawned with. This is the whole of note 5, and it is a LINUX problem only.
+ *
+ * The expert bundle ships tor's own libevent/libssl/libcrypto next to the binary — and on Linux the
+ * binary has NO RPATH and NO RUNPATH (verified with readelf on 14.5.8), so ld.so never looks there.
+ * cwd has nothing to do with it: the dynamic loader has never searched the working directory. The
+ * previous code set cwd to the bundle and believed that covered it, which produced two failures:
+ *
+ *   - on a box WITHOUT those libraries (a clean desktop, which is the AppImage's whole audience) tor
+ *     never runs: "error while loading shared libraries: libevent-2.1.so.7".
+ *   - on a box WITH them — most distributions — it is worse, because it starts against the SYSTEM
+ *     libraries and dies on the first symbol its own build expects and theirs does not have:
+ *     "symbol lookup error: undefined symbol: evutil_secure_rng_add_bytes". Reproduced here on a
+ *     stock system before this was written, with the real bundle.
+ *
+ * Both surface as "Tor stopped unexpectedly (exit 127)" — a Tor switch that cannot work, on the one
+ * platform where the user is most likely to already have a system tor and assume we found it.
+ *
+ * The tor directory REPLACES any inherited LD_LIBRARY_PATH rather than being prepended to it. An
+ * AppImage (and a snap, and a flatpak) injects its own library directory there, and its libssl or
+ * libstdc++ shadowing tor's is exactly the failure above with a different library name. tor needs
+ * nothing outside its own directory and the system defaults, so the deterministic value is the one
+ * to send.
+ *
+ * macOS needs NOTHING here: its tor links its dylib as `@executable_path/libevent-2.1.7.dylib`,
+ * which dyld resolves from the binary's own location no matter where it was started from. Do not
+ * "fix" macOS with DYLD_LIBRARY_PATH — it is stripped from any hardened or signed process, so it
+ * would be a line that reads as protection and is not. Windows searches the .exe's directory first
+ * by default, so it is covered too. */
+function spawnEnv(bin) {
+  const env = Object.assign({}, process.env);
+  if (process.platform === 'linux') env.LD_LIBRARY_PATH = path.dirname(bin);
+  return env;
 }
 
 // A free localhost port, asked of the OS rather than guessed — see note 4.
@@ -183,8 +242,10 @@ async function start() {
   let proc;
   try {
     proc = spawn(bin, ['-f', torrc], {
-      // cwd at the bundle root so tor finds its co-located shared libraries on Linux/macOS.
+      // cwd at the bundle root: tor writes nothing relative here (DataDirectory is absolute), but a
+      // pluggable transport launched later resolves from it. The shared libraries are spawnEnv's job.
       cwd: path.dirname(bin),
+      env: spawnEnv(bin),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -208,6 +269,11 @@ async function start() {
    * missed by both halves. Hence the carry buffer rather than per-chunk matching.
    */
   let carry = '';
+  // The last thing tor said before it stopped. A tor that dies during startup says WHY on its way out
+  // ("error while loading shared libraries: ...", "Permissions on directory ... are too permissive"),
+  // and reporting only "exit 127" throws that away — which is how the Linux library bug above stayed
+  // a mystery. Kept short: this is appended to a message in a card, not a log viewer.
+  let lastLine = '';
   const readLines = (chunk) => {
     carry += String(chunk);
     const lines = carry.split(/\r?\n/);
@@ -216,6 +282,7 @@ async function start() {
     if (carry.length > 8192) carry = carry.slice(-1024);
     let moved = false;
     for (const line of lines) {
+      if (line.trim()) lastLine = line.trim().slice(0, 200);
       const m = /Bootstrapped (\d+)/.exec(line);
       if (m) {
         const pct = Math.min(100, parseInt(m[1], 10));
@@ -237,6 +304,23 @@ async function start() {
   };
   if (proc.stdout) proc.stdout.on('data', readLines);
   if (proc.stderr) proc.stderr.on('data', readLines);
+  /* 'error' means the child never ran: the binary is missing, is not executable, or is built for
+   * another architecture (macOS EBADARCH — an x86_64 tor on an Apple Silicon Mac with no Rosetta).
+   * A ChildProcess is an EventEmitter, so with NO listener node re-throws it as an uncaught exception
+   * and takes the Electron main process with it: the app would VANISH on the click that turns Tor on,
+   * which is indistinguishable from a crash and leaves nothing to read. */
+  proc.on('error', (e) => {
+    if (state.proc !== proc) return;
+    state.proc = null;
+    state.bootstrapped = false;
+    state.progress = null;
+    const bad = e && (e.code === 'EBADARCH' || e.code === 'ENOEXEC');
+    state.error = bad && process.platform === 'darwin'
+      ? 'The bundled Tor will not run on this Mac. Install Rosetta, or use the build for your '
+        + 'processor, then try again.'
+      : 'Tor could not be started: ' + ((e && e.message) || e);
+    emit();
+  });
   proc.on('exit', (code) => {
     if (state.proc !== proc) return;      // superseded by a restart — not this process's news
     state.proc = null;
@@ -247,7 +331,8 @@ async function start() {
     // here would silently drop the user onto the clear net at the worst possible moment.
     if (state.enabled && !state.error) {
       state.error = 'Tor stopped unexpectedly' + (code == null ? '' : ' (exit ' + code + ')')
-        + '. Traffic is blocked until it restarts.';
+        + '. Traffic is blocked until it restarts.'
+        + (lastLine ? ' It last said: ' + lastLine : '');
     }
     emit();
   });

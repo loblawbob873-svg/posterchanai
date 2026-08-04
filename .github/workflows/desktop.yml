@@ -51,11 +51,14 @@ jobs:
           - os: macos-latest
             name: mac
             script: build:mac
-            # The .dmg is universal (x64 + arm64) and electron-builder packs ONE extraResources tree into
-            # both, so the bundle has to work on either arch. macos-aarch64 would break Intel Macs, so
-            # x86_64 it is — Rosetta covers Apple Silicon, and tor is a short-lived local proxy where the
-            # translation cost is irrelevant next to network latency.
+            # BOTH Mac architectures, because electron-builder packs ONE extraResources tree into the x64
+            # and arm64 .dmgs alike and a Mach-O is built for one or the other. Shipping only x86_64 made
+            # the Tor switch depend on Rosetta — which an Apple Silicon Mac does not have until something
+            # asks for it, and a native arm64 app never does, so tor was the first thing to ask and it
+            # failed to exec. The arm64 binary goes in a subdirectory that tor.js prefers by process.arch
+            # (geoip is architecture-independent and stays shared).
             tor: macos-x86_64
+            tor_arm64: macos-aarch64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -91,6 +94,27 @@ jobs:
           test -n "$GEO" || { echo "::error::no geoip database — the exit-country picker would be a no-op"; ls -R resources/tor; exit 1; }
           chmod +x "$BIN" || true
           echo "tor: $BIN"; echo "geoip: $GEO"
+
+          # The second architecture, where there is one (macOS). Only the tor/ directory is taken —
+          # its binary and dylib — because data/geoip is the same file on every architecture and is
+          # 15 MB. tor.js looks in <root>/<process.arch>/ first and falls back to the base tree, so an
+          # architecture we do not ship is not a special case anywhere in the app.
+          P2="${{ matrix.tor_arm64 || '' }}"
+          if [ -n "$P2" ]; then
+            URL2="https://archive.torproject.org/tor-package-archive/torbrowser/${V}/tor-expert-bundle-${P2}-${V}.tar.gz"
+            echo "Fetching $URL2"
+            mkdir -p resources/tor/arm64
+            curl -fsSL --retry 3 --retry-delay 5 "$URL2" -o tor-arm64.tar.gz
+            tar -xzf tor-arm64.tar.gz -C resources/tor/arm64 tor
+            rm -f tor-arm64.tar.gz
+            BIN2="resources/tor/arm64/tor/tor"
+            test -f "$BIN2" || { echo "::error::no arm64 tor binary — Apple Silicon would need Rosetta"; ls -R resources/tor/arm64; exit 1; }
+            # Same architecture check the app cannot make for itself: an x86_64 binary sitting in the
+            # arm64 slot would exec fine on an Intel Mac and fail on the machines this is FOR.
+            file "$BIN2" | grep -q arm64 || { echo "::error::arm64 slot holds $(file "$BIN2")"; exit 1; }
+            chmod +x "$BIN2" || true
+            echo "tor (arm64): $BIN2"
+          fi
 
       # Version == the run number, like the APK's versionCode. electron-updater compares this against
       # the feed's `version`, so it MUST increase on every build or no client ever sees an update.

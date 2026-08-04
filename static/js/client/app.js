@@ -5,6 +5,18 @@
   const $ = (s,r=document)=>r.querySelector(s);
   const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
   const enc = s => (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  /* Every QR in the app, drawn HERE — see static/js/client/qr.js. They were rendered by the server
+   * (POST /client/qr → segno) until a build with no instance, and Tor, made the same point twice: a
+   * picture of a string it already has should not need a network. Returns '' when there is nothing to
+   * draw, so each caller keeps its own fallback wording rather than showing an empty frame. */
+  function qrSrc(text){
+    try{ return (text && window.PCQR) ? PCQR.dataUrl(String(text)) : ''; }catch(_){ return ''; }
+  }
+  function qrImg(text, alt){
+    const src=qrSrc(text);
+    // The src is percent-encoded SVG, so quotes and angle brackets cannot escape the attribute.
+    return src ? '<img alt="' + enc(alt||'QR code') + '" src="' + src + '">' : '';
+  }
   let LOGO = '/static/posterchan-relay.png';   // overridden by CFG.logo_url (Admin → custom logo)
   // Repost/boost glyph as an SVG (inherits currentColor → themes green/cyan with a glow), instead of
   // the 🔁 emoji which renders a fixed orange that clashes with the cyberpunk palette.
@@ -1356,25 +1368,24 @@
       const open=$('#amber-nc-open'); if(open) open.href=uri;
       /* QR of the nostrconnect:// URI → scan it with a phone signer (Primal-style mobile login).
        *
-       * It is RENDERED BY THE SERVER (/client/qr), so with no instance — or one that is unreachable,
-       * which is every .onion the moment Tor is not routing — there is no QR and the box showed only
-       * its "…or scan with a signer on another device" label above an empty space. Silently: the
-       * .catch() swallowed it, on the theory that a missing convenience must not break the login.
-       * That was right about not throwing and wrong about saying nothing, because the QR IS the
-       * instruction on this screen — with it absent the screen tells you to scan nothing.
+       * This used to be a POST to /client/qr, and it was the worst possible thing to put behind a
+       * server: with no instance there is none to ask, and over Tor an .onion that is not routing yet
+       * fails identically — on the ONE screen whose entire instruction is "scan this". It degraded to
+       * a label admitting there was no QR and pointing at the link, which was honest and still left
+       * the person holding a phone with nothing to point it at.
        *
-       * Still fire-and-forget, but the label now admits it and points at the URI, which is on screen,
-       * copyable, and works in every signer a QR would have reached. */
+       * Drawn locally now (static/js/client/qr.js), which also means the connect SECRET in the URI is
+       * no longer POSTed anywhere to be turned into a picture. Synchronous — a version-6 code is well
+       * under a millisecond — so there is no pending state and no way for it to arrive after the
+       * signer has already approved. */
       const qr=$('#amber-nc-qr'), qrLbl=$('#amber-nc-qrlbl');
-      if(qr){ qr.classList.add('hidden');
-        const noQr=(why)=>{ if(qrLbl) qrLbl.textContent = _standalone()
-          ? 'No QR without a server — copy the link below into your signer instead.'
-          : 'Couldn’t draw the QR (' + why + ') — copy the link below into your signer instead.'; };
-        fetch('/client/qr',{method:'POST',headers:{'Content-Type':'text/plain'},body:uri})
-          .then(r=> r.ok ? r.blob() : Promise.reject(new Error('HTTP '+r.status)))
-          .then(b=>{ qr.src=URL.createObjectURL(b); qr.classList.remove('hidden');
-                     if(qrLbl) qrLbl.textContent='…or scan with a signer on another device'; })
-          .catch(e=> noQr((e && e.message) || 'offline')); }
+      if(qr){
+        const src=qrSrc(uri);
+        if(src){ qr.src=src; qr.classList.remove('hidden');
+                 if(qrLbl) qrLbl.textContent='…or scan with a signer on another device'; }
+        else{ qr.classList.add('hidden');
+              if(qrLbl) qrLbl.textContent='Couldn’t draw the QR — copy the link below into your signer instead.'; }
+      }
       $('#amber-nc-status').textContent='waiting for the signer to approve…';
       $('#amber-nc-box').classList.remove('hidden');
       // Re-enable the button NOW rather than in `finally`. `done` does not settle until the signer
@@ -8655,9 +8666,9 @@
   // ---------- Monero tips (non-custodial) ----------
   // Mirrors the zap UX but there's no LNURL/invoice: the recipient publishes an XMR address in their
   // kind-0, and the SENDER pays from their own wallet (scan the QR, or the monero: deeplink opens a
-  // wallet app prefilled). Nothing touches this server except the QR render (segno, /client/qr —
-  // stays on the box, no third-party leak). On confirmation we post a public kind-1 tip note (the
-  // chosen "always post" behaviour) crediting the recipient — there's no cryptographic receipt for XMR.
+  // wallet app prefilled). Nothing touches this server at all now — the QR is drawn in the page, so a
+  // tip works offline and on a build with no instance. On confirmation we post a public kind-1 tip
+  // note (the chosen "always post" behaviour) crediting the recipient — no cryptographic receipt for XMR.
   async function doXmrTip(noteId, pk, cardXmr){
     const p=profOf(pk); const ev=noteId?Store.get(noteId):null;
     // Prefer the render-time address (passed from the card) so an evicted note doesn't lose its per-note tag.
@@ -8677,18 +8688,17 @@
         <textarea class="input" id="xmr-prf" rows="2" placeholder="tx proof signature (OutProofV…)" spellcheck="false"></textarea></details>`}
       <div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-cyan small" id="xmr-copy">Copy address</button><span class="spacer"></span>${GUEST?'':`<button class="btn btn-neon small" id="xmr-sent" title="post a public tip note crediting them"><svg class="ic b-ic" aria-hidden="true"><use href="#i-check"></use></svg>I sent it</button>`}</div>`,
       root=>{
-        const amtEl=$('#xmr-amt',root), qrBox=$('#xmr-qr',root), openBtn=$('#xmr-open',root); let _u=null, _t=null;
+        const amtEl=$('#xmr-amt',root), qrBox=$('#xmr-qr',root), openBtn=$('#xmr-open',root);
         const amtVal=()=>{ const n=parseFloat(amtEl.value); return (isFinite(n)&&n>0)?String(n):''; };   // omit blank / 0 / NaN — never tx_amount=0
         const qrFail='<div class="muted small">QR unavailable — scan or copy the address below.</div>';
-        const renderQr=()=>{ qrBox.innerHTML='<div class="muted small">generating QR…</div>';
-          fetch('/client/qr',{method:'POST',headers:{'Content-Type':'text/plain'},body:uri(amtVal())})
-            .then(r=>r.ok?r.blob():null).then(b=>{ if(!b){ qrBox.innerHTML=qrFail; return; }
-              if(_u) URL.revokeObjectURL(_u); _u=URL.createObjectURL(b); qrBox.innerHTML=`<img alt="Monero tip QR" src="${_u}">`; })
-            .catch(()=>{ qrBox.innerHTML=qrFail; }); };
-        const sync=()=>{ openBtn.href=uri(amtVal()); };   // deeplink tracks the amount IMMEDIATELY (QR fetch is debounced, the href is not)
+        // Drawn in the page (see qrSrc). It was a POST per keystroke to /client/qr, which is why the
+        // amount was debounced by 400ms and why an offline reader — or anyone on a build with no
+        // server — got "QR unavailable" on a picture of an address the app was already showing them.
+        const renderQr=()=>{ qrBox.innerHTML=qrImg(uri(amtVal()), 'Monero tip QR') || qrFail; };
+        const sync=()=>{ openBtn.href=uri(amtVal()); };
         sync(); renderQr();
-        amtEl.addEventListener('input',()=>{ sync(); clearTimeout(_t); _t=setTimeout(renderQr,400); });
-        $$('.xmr-preset',root).forEach(b=> b.onclick=()=>{ amtEl.value=b.dataset.amt; sync(); clearTimeout(_t); _t=setTimeout(renderQr,300); });   // one-tap amount
+        amtEl.addEventListener('input',()=>{ sync(); renderQr(); });
+        $$('.xmr-preset',root).forEach(b=> b.onclick=()=>{ amtEl.value=b.dataset.amt; sync(); renderQr(); });   // one-tap amount
         $('#xmr-copy',root).onclick=()=>{ try{ navigator.clipboard.writeText(addr).then(()=>toast('address copied'),()=>prompt('Copy the Monero address:',addr)); }catch(_){ prompt('Copy the Monero address:',addr); } };
         { const s=$('#xmr-sent',root); if(s) s.onclick=async()=>{ const a=amtVal();
           const txid=(($('#xmr-txid',root)||{}).value||'').trim().toLowerCase();
@@ -8792,18 +8802,14 @@
         <input class="input" id="bch-txid" placeholder="transaction id (64 hex)" autocomplete="off" spellcheck="false"></details>`}
       <div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-cyan small" id="bch-copy">Copy address</button><span class="spacer"></span>${GUEST?'':`<button class="btn btn-neon small" id="bch-sent" title="post a public tip note crediting them"><svg class="ic b-ic" aria-hidden="true"><use href="#i-check"></use></svg>I sent it</button>`}</div>`,
       root=>{
-        const amtEl=$('#bch-amt',root), qrBox=$('#bch-qr',root), openBtn=$('#bch-open',root); let _u=null,_t=null;
+        const amtEl=$('#bch-amt',root), qrBox=$('#bch-qr',root), openBtn=$('#bch-open',root);
         const amtVal=()=>{ const n=parseFloat(amtEl.value); return (isFinite(n)&&n>0)?String(n):''; };   // omit blank / 0 / NaN
         const qrFail='<div class="muted small">QR unavailable — scan or copy the address below.</div>';
-        const renderQr=()=>{ qrBox.innerHTML='<div class="muted small">generating QR…</div>';
-          fetch('/client/qr',{method:'POST',headers:{'Content-Type':'text/plain'},body:uri(amtVal())})
-            .then(r=>r.ok?r.blob():null).then(b=>{ if(!b){ qrBox.innerHTML=qrFail; return; }
-              if(_u) URL.revokeObjectURL(_u); _u=URL.createObjectURL(b); qrBox.innerHTML=`<img alt="BCH tip QR" src="${_u}">`; })
-            .catch(()=>{ qrBox.innerHTML=qrFail; }); };
-        const sync=()=>{ openBtn.href=uri(amtVal()); };   // deeplink tracks the amount immediately (QR fetch is debounced)
+        const renderQr=()=>{ qrBox.innerHTML=qrImg(uri(amtVal()), 'BCH tip QR') || qrFail; };
+        const sync=()=>{ openBtn.href=uri(amtVal()); };
         sync(); renderQr();
-        amtEl.addEventListener('input',()=>{ sync(); clearTimeout(_t); _t=setTimeout(renderQr,400); });
-        $$('.bch-preset',root).forEach(b=> b.onclick=()=>{ amtEl.value=b.dataset.amt; sync(); clearTimeout(_t); _t=setTimeout(renderQr,300); });
+        amtEl.addEventListener('input',()=>{ sync(); renderQr(); });
+        $$('.bch-preset',root).forEach(b=> b.onclick=()=>{ amtEl.value=b.dataset.amt; sync(); renderQr(); });
         $('#bch-copy',root).onclick=()=>{ try{ navigator.clipboard.writeText(addr).then(()=>toast('address copied'),()=>prompt('Copy the BCH address:',addr)); }catch(_){ prompt('Copy the BCH address:',addr); } };
         { const s=$('#bch-sent',root); if(s) s.onclick=async()=>{ const a=amtVal();
           const txid=(($('#bch-txid',root)||{}).value||'').trim().toLowerCase();

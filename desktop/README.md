@@ -50,6 +50,30 @@ on*) and pick an exit country.
   like "tor exited immediately".
 * A **LAN instance stops working while Tor is on**, by design: "everything through Tor" includes it.
 
+### The same feature on all three platforms — which took two fixes
+
+Windows, Linux and macOS get the identical switch, country picker and "new circuit". Two of them were
+shipping it broken, in ways nothing in the app could report:
+
+* **Linux: `LD_LIBRARY_PATH`.** The bundled tor has no `RPATH` and no `RUNPATH`, its libevent/libssl/
+  libcrypto sit beside it, and the dynamic loader does not search the working directory — so tor either
+  did not start ("cannot open shared object file") or, on any distribution that HAS a system libevent,
+  started against the wrong one and died on `undefined symbol: evutil_secure_rng_add_bytes`. The
+  environment now names the bundle directory, and *replaces* rather than prepends: an AppImage exports
+  its own library directory, and that shadowing tor's is the same bug wearing a different name.
+* **macOS: both architectures are shipped.** Only `macos-x86_64` used to be, so on Apple Silicon tor
+  needed **Rosetta** — which is not installed until something asks for it, and a native arm64 app never
+  does. `resources/tor/arm64/` now carries the arm64 binary and `tor.js` prefers it by `process.arch`
+  (geoip is architecture-independent and stays shared). macOS needs nothing like the Linux fix: its tor
+  links `@executable_path/libevent-2.1.7.dylib`, which dyld resolves from the binary's own location.
+  Do not "fix" it with `DYLD_LIBRARY_PATH` — that is stripped from hardened processes, so it would read
+  as protection and not be any.
+
+A binary that cannot exec is now an **error in the panel**, not a dead app: an `'error'` event with no
+listener is re-thrown by node and takes the Electron main process with it, so the window used to vanish
+on the click that turned Tor on. Startup failures also carry tor's own last line ("exit 127" is not a
+bug report — it is what made the Linux problem take a `readelf` to find).
+
 Covered by `tests/test_desktop_tor.py`, which drives `tor.js` under node with `electron` and the tor
 binary stubbed. Each assertion was verified to fail with its guard removed.
 

@@ -59,8 +59,18 @@ def run_js(tmp_path, body, crash_after=None):
     # (progress stuck at the first match, 100% never seen, boot card hung until its timeout).
     fake = res / "tor" / "tor"
     tail = f"sleep {crash_after}\nexit 1\n" if crash_after else "sleep 30\n"
+    # It records the environment it was GIVEN before saying anything. tor's own shared libraries are
+    # found (or not) by the dynamic loader before main() runs, so nothing tor prints can tell you
+    # whether that was set up right — the only way to test it is to look at what was handed to the
+    # process. `which` names the binary that ran, for the per-architecture lookup.
+    probe = textwrap.dedent("""\
+        D="$(dirname "$0")"
+        printf '%s' "${LD_LIBRARY_PATH-}" > "$D/../ldpath.txt"
+        printf '%s' "$0" > "$D/../which.txt"
+    """)
     fake.write_text(textwrap.dedent("""\
         #!/bin/sh
+    """) + probe + textwrap.dedent("""\
         echo "Feb 01 00:00:00.000 [notice] Bootstrapped 10% (conn): Connecting to a relay"
         echo "Feb 01 00:00:00.000 [notice] Bootstrapped 45% (requesting_descriptors): Asking for descriptors"
         echo "Feb 01 00:00:00.000 [notice] Bootstrapped 100% (done): Done"
@@ -220,6 +230,100 @@ def test_turning_it_off_is_not_an_error(tmp_path):
     assert s["error"] == "", f"a deliberate switch-off must not leave an error behind: {s}"
     # The country survives being switched off, so turning it back on keeps the user's choice.
     assert s["country"] == "us", s
+
+
+@pytest.mark.skipif(not __import__("sys").platform.startswith("linux"),
+                    reason="LD_LIBRARY_PATH is a Linux-only concern (see spawnEnv)")
+def test_linux_spawns_tor_with_its_OWN_libraries(tmp_path):
+    """The bundled Linux tor has no RPATH and no RUNPATH — verified with readelf on the real 14.5.8
+    expert bundle — and ld.so has never searched the working directory. So without LD_LIBRARY_PATH the
+    feature fails one of two ways, and the second is the nasty one:
+
+      no system libevent  → "error while loading shared libraries: libevent-2.1.so.7"
+      a system libevent   → it loads the WRONG build and dies on a symbol that build does not export:
+                            "symbol lookup error: undefined symbol: evutil_secure_rng_add_bytes".
+                            Reproduced on a stock distribution with the real binary; most Linux desktops
+                            have libevent, so this was the common case, not the edge one.
+
+    Both reach the user as "Tor stopped unexpectedly (exit 127)". The value must also be EXACTLY the
+    bundle directory, not the bundle appended to whatever was inherited: an AppImage exports its own
+    library directory in LD_LIBRARY_PATH, and its libssl shadowing tor's is the same failure with a
+    different library name."""
+    run_js(tmp_path, """
+      await tor.init({ enabled: true, country: '' });
+      await new Promise(r => setTimeout(r, 1200));
+      tor.stop();
+    """)
+    got = (tmp_path / "resources" / "tor" / "ldpath.txt").read_text()
+    want = str(tmp_path / "resources" / "tor" / "tor")
+    assert got == want, (
+        f"tor was spawned with LD_LIBRARY_PATH={got!r}, want exactly {want!r} — its bundled "
+        "libevent/libssl/libcrypto sit there and the loader looks nowhere else")
+
+
+def test_the_architecture_subdirectory_wins(tmp_path):
+    """macOS ships two tor binaries (x86_64 + arm64) in one packaged resources tree, because a .dmg is
+    built per architecture off the same tree and a Mach-O is built for one. tor.js picks by
+    process.arch and falls back to the base tree — get the preference backwards and an Apple Silicon
+    Mac runs the Intel binary, which needs Rosetta, which is not installed until something asks for
+    it. A native arm64 app never asks, so tor asks first and fails to exec."""
+    out = run_js(tmp_path, """
+      const arch = path.join(RES, 'tor', process.arch, 'tor');
+      fs.mkdirSync(arch, { recursive: true });
+      const src = path.join(RES, 'tor', 'tor', 'tor');
+      fs.writeFileSync(path.join(arch, 'tor'), fs.readFileSync(src));
+      fs.chmodSync(path.join(arch, 'tor'), 0o755);
+      await tor.init({ enabled: true, country: '' });
+      await new Promise(r => setTimeout(r, 1200));
+      console.log('ARCH<<<' + process.arch + '>>>');
+      tor.stop();
+    """)
+    arch = out.split("ARCH<<<")[1].split(">>>")[0]
+    ran = (tmp_path / "resources" / "tor" / arch / "which.txt").read_text()
+    assert ran == str(tmp_path / "resources" / "tor" / arch / "tor" / "tor"), (
+        f"the base-tree binary ran while an {arch} one was present: {ran}")
+
+
+def test_a_binary_that_cannot_run_is_an_error_not_a_dead_app(tmp_path):
+    """A ChildProcess is an EventEmitter, so an 'error' event with no listener is re-thrown as an
+    uncaught exception — in Electron that takes the MAIN PROCESS down, i.e. the window disappears on
+    the click that turned Tor on, with nothing to read anywhere. The ways a spawn never happens are
+    all real: a binary the installer failed to mark executable, a /tmp mounted noexec under an
+    AppImage, and an x86_64 tor on an Apple Silicon Mac with no Rosetta (EBADARCH).
+
+    The node process exiting 0 IS half this assertion — run_js fails the test on a non-zero exit, which
+    is what an unhandled 'error' would produce."""
+    out = run_js(tmp_path, """
+      fs.chmodSync(path.join(RES, 'tor', 'tor', 'tor'), 0o644);   // present, not executable
+      await tor.init({ enabled: true, country: '' });
+      await new Promise(r => setTimeout(r, 800));
+      console.log('S<<<' + JSON.stringify(tor.status()) + '>>>');
+    """)
+    s = json.loads(out.split("S<<<")[1].split(">>>")[0])
+    assert s["error"], f"a tor that could not be started must say so: {s}"
+    assert s["running"] is False, s
+    assert s["enabled"] is True, (
+        "the switch must stay on so the proxy stays pointed at a dead port — see fail-closed")
+
+
+def test_a_startup_failure_says_what_tor_said(tmp_path):
+    """"exit 127" is not a bug report. Tor names the reason on its way out — a missing shared library,
+    a too-permissive DataDirectory — and throwing that away is why the Linux library bug above took a
+    readelf to find rather than a screenshot."""
+    out = run_js(tmp_path, """
+      // Replace the harness's fake with one that dies the way the real thing did (run_js writes it,
+      // so this has to happen here rather than before the call).
+      const bin = path.join(RES, 'tor', 'tor', 'tor');
+      fs.writeFileSync(bin, "#!/bin/sh\\n"
+        + "echo 'error while loading shared libraries: libevent-2.1.so.7' >&2\\n"
+        + "exit 127\\n");
+      fs.chmodSync(bin, 0o755);
+      await tor.init({ enabled: true, country: '' });
+      await new Promise(r => setTimeout(r, 900));
+      console.log('S<<<' + JSON.stringify(tor.status()) + '>>>');
+    """)
+    s = json.loads(out.split("S<<<")[1].split(">>>")[0])
+    assert "libevent" in s["error"], f"tor's own last words must reach the user: {s['error']!r}"
 
 
 def test_countries_are_offered_with_any_available(tmp_path):

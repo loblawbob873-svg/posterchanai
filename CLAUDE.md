@@ -548,6 +548,23 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
     `tests/test_desktop_tor.py` + `scripts/check_desktop_standalone.py` cover all of it; Electron itself
     cannot be driven here (it needs an X display), so the preload bridge is STUBBED the way preload
     injects it.
+    **Windows worked and the other two did not, for two different reasons — both invisible.** LINUX: the
+    bundled tor has NO RPATH/RUNPATH and ld.so does not search cwd, so it either would not start or (on
+    any distro with a system libevent, i.e. most) loaded the WRONG one and died on `undefined symbol:
+    evutil_secure_rng_add_bytes`; `spawnEnv` sets `LD_LIBRARY_PATH` to the bundle dir and REPLACES the
+    inherited value (an AppImage exports its own lib dir, which shadows tor's). macOS needs none of that
+    (`@executable_path`) and must not get `DYLD_LIBRARY_PATH`, which hardened processes strip. MACOS: only
+    the x86_64 binary shipped, so Apple Silicon needed ROSETTA — not installed until something asks, and a
+    native arm64 app never asks; CI now also packs `resources/tor/arm64/` and `torBinary()` prefers
+    `<root>/<process.arch>`. A binary that cannot exec is an error in the panel, not a dead app: an
+    `'error'` event with NO listener is re-thrown and kills the Electron main process.
+  - **QR codes are drawn in the CLIENT** (`static/js/client/qr.js`, byte mode + EC level M, versions
+    1-40), not fetched from `POST /client/qr`. A server-rendered QR is the one dependency the sign-in
+    screen cannot have — with no instance there is nothing to ask and over Tor an unrouted .onion fails
+    the same way, on the screen whose entire instruction is "scan this". Same for the two tip QRs. The
+    endpoint is KEPT for installed clients (a cached PWA, an older APK/desktop build still POST to it).
+    `tests/test_client_qr_encoder.py` does not compare pictures — it DECODES every version 1-40 with
+    jsQR, because a wrong EC table looks perfect and scans as nothing.
 
 ## Conventions / gotchas
 

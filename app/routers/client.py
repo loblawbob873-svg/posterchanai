@@ -441,10 +441,16 @@ async def _live_stream_count() -> int:
 
 @router.post("/qr")
 async def client_qr(request: Request):
-    """Render arbitrary text as a QR-code SVG. Used for Primal-style mobile sign-in: the web shows
-    a QR of the ephemeral `nostrconnect://` URI, and a phone signer (Amber / nsec.app / Primal)
-    scans it to establish the NIP-46 remote-signer session. POST (not GET) so the connect secret in
-    the URI never lands in an access log. Same-origin, no auth — it just encodes whatever is posted."""
+    """Render arbitrary text as a QR-code SVG. POST (not GET) so the connect secret in a
+    `nostrconnect://` URI never lands in an access log. Same-origin, no auth — it just encodes
+    whatever is posted.
+
+    LEGACY as of the client-side encoder (static/js/client/qr.js): nothing in this repo calls it any
+    more, because a picture of a string the client already holds should not need a server — which is
+    what a no-instance build and Tor each proved, on the sign-in screen, where the QR IS the
+    instruction. Kept because installed clients outlive a deploy: a PWA running from its service
+    worker cache, an older APK and an older desktop build all still POST here, and removing it would
+    take their QRs away to save one endpoint and a dependency that is already installed."""
     data = (await request.body()).decode("utf-8", "ignore").strip()
     if not data or len(data) > 4096:
         return Response(status_code=400)

@@ -215,6 +215,43 @@ SIGNUP_AUDIT = r"""(() => {
   };
 })()"""
 
+# The sign-in QR, drawn by the bundle and read back by the bundle's own scanner.
+#
+# It was server-rendered (POST /client/qr), which is the one dependency this screen cannot have: with
+# no instance there is nothing to ask, and the label above it says "scan this". The risks now are both
+# packaging ones that a unit test cannot see — qr.js not copied into www/, or the <script> tag lost in
+# the shell rewrite — and both would show up here as "no encoder", not as a broken picture.
+#
+# The decode is jsQR, loaded from the bundle's vendored copy, so this also proves that file is present
+# (it was missing from every APK ever built until the vendor tree started being copied whole).
+QR_AUDIT = r"""(async () => {
+  const out = { encoder: !!window.PCQR, drawn: '', decoded: '', err: '' };
+  if (!out.encoder) return out;
+  const uri = 'nostrconnect://' + 'a3'.repeat(32) + '?relay=wss%3A%2F%2Frelay.nsec.app&secret='
+            + '9f'.repeat(16) + '&name=PosterChan&perms=sign_event%3A1%2Cnip44_encrypt';
+  try {
+    out.drawn = window.PCQR.dataUrl(uri).slice(0, 24);
+    const q = window.PCQR.modules(uri);
+    const S = 4, B = 4, dim = (q.size + B * 2) * S;
+    const cv = document.createElement('canvas'); cv.width = cv.height = dim;
+    const cx = cv.getContext('2d');
+    cx.fillStyle = '#fff'; cx.fillRect(0, 0, dim, dim);
+    cx.fillStyle = '#000';
+    for (let y = 0; y < q.size; y++) for (let x = 0; x < q.size; x++)
+      if (q.mod[y][x]) cx.fillRect((x + B) * S, (y + B) * S, S, S);
+    await new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = '/static/vendor/qr/jsqr.js'; s.onload = res; s.onerror = () => rej(new Error('no jsqr'));
+      document.head.appendChild(s);
+    });
+    const d = cx.getImageData(0, 0, dim, dim);
+    const got = window.jsQR(d.data, dim, dim);
+    out.decoded = got ? got.data : '';
+    out.want = uri;
+  } catch (e) { out.err = String((e && e.message) || e); }
+  return out;
+})()"""
+
 SETTINGS_AUDIT = r"""(() => {
   const q = (s) => document.querySelector(s);
   const out = {};
@@ -440,6 +477,21 @@ async def drive(problems):
                     for e in s2["errors"]:
                         problems.append(f"{label}: console error after gen: {e}")
 
+            # The signer QR must be drawable with no server, and must actually scan.
+            qr = await js(QR_AUDIT)
+            if not isinstance(qr, dict) or qr.get("__throw"):
+                problems.append(f"{label}: the QR audit did not evaluate ({qr})")
+            elif not qr.get("encoder"):
+                problems.append(f"{label}: no QR encoder in the bundle — the sign-in screen would tell "
+                                "you to scan a QR that cannot be drawn without a server")
+            elif qr.get("err"):
+                problems.append(f"{label}: drawing or scanning the sign-in QR failed: {qr['err']}")
+            elif not str(qr.get("drawn", "")).startswith("data:image/svg"):
+                problems.append(f"{label}: the QR is not an inline image ({qr.get('drawn')!r})")
+            elif qr.get("decoded") != qr.get("want"):
+                problems.append(f"{label}: the sign-in QR does not decode back to its URI "
+                                f"({(qr.get('decoded') or 'nothing readable')[:40]!r})")
+
         # ---- log in and open Settings, at desktop and phone width ----------------------------------
         nsec = make_nsec()
         for w, h, mobile in [(1280, 860, False), (390, 844, True)]:
@@ -556,13 +608,17 @@ async def run():
         print("SKIP  websockets not installed")
         return 2
 
-    if not os.path.isdir(WWW) or not os.path.isfile(os.path.join(WWW, "index.html")):
-        print("building desktop/www …")
-        r = subprocess.run(["bash", "build-www.sh"], cwd=os.path.join(ROOT, "desktop"),
-                           capture_output=True, text=True)
-        if r.returncode != 0:
-            print("SKIP  desktop/build-www.sh failed:\n" + (r.stderr or r.stdout))
-            return 2
+    # ALWAYS rebuild. This used to build only when www/ was absent, which meant a bundle left over from
+    # an earlier session was tested instead of the working tree — every assertion silently about old
+    # code, reported green. It cost a real one: a new client file that build-www.sh had never copied
+    # (and a <script> tag the shell rewrite had never seen) passed the packaging checks here because
+    # neither the file nor the tag was in the stale www/ being served. The build takes about a second.
+    print("building desktop/www …")
+    r = subprocess.run(["bash", "build-www.sh"], cwd=os.path.join(ROOT, "desktop"),
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        print("SKIP  desktop/build-www.sh failed:\n" + (r.stderr or r.stdout))
+        return 2
     if not shutil.which("google-chrome-stable"):
         print("SKIP  google-chrome-stable not found")
         return 2
