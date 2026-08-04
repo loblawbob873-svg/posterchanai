@@ -1601,6 +1601,9 @@
         if(_App && _App.addListener){ try{ _App.addListener('backButton', ()=>{
           if(document.getElementById('call-overlay') || document.getElementById('room-overlay')) return;  // never bail mid-call
           if(document.body.classList.contains('modal-open')){ try{ closeModal(); }catch(_){} return; }     // close an open sheet/modal
+          // Notes' folder drawer is an overlay too, and only exists on a phone — i.e. only where
+          // this button does. Without this, Back left Notes with the drawer still standing open.
+          if(window.PCNotes && PCNotes.drawerOpen && PCNotes.drawerOpen()){ try{ PCNotes.closeDrawer(); }catch(_){} return; }
           const mini=document.getElementById('mini-player'); if(mini && mini.classList.contains('on')){ try{ closeMini(); }catch(_){} return; }
           if(typeof VIEW!=='undefined' && VIEW && VIEW!=='home'){ try{ history.back(); }catch(_){ switchView('home'); } return; }
           if(window.__pcBackArmed){ try{ _App.exitApp && _App.exitApp(); }catch(_){} return; }             // second tap at home → exit
@@ -11888,9 +11891,18 @@
   // Decrypt any master-key blob to an object URL — the generic half of trackUrl(), for images and
   // documents rather than audio. Its own small LRU: the music player pins the playing track in
   // _trackUrls and a note full of pictures would evict it.
-  const _encUrls={}; const _encOrder=[];
+  const _encUrls={}; const _encOrder=[]; const _encPending={};
   async function encFileUrl(sha, mimeHint){
     if(_encUrls[sha]) return _encUrls[sha];
+    // SHARE the work in flight. The cache above is only populated after the fetch+decrypt resolves,
+    // so two callers asking for the same blob at the same time — which is the normal case, a note
+    // rendering a picture inline while the attachment strip renders its thumbnail — each downloaded
+    // and decrypted the whole file, and the second object URL overwrote (and leaked) the first.
+    if(_encPending[sha]) return _encPending[sha];
+    const p = _encFileUrl(sha, mimeHint).finally(()=>{ delete _encPending[sha]; });
+    _encPending[sha]=p; return p;
+  }
+  async function _encFileUrl(sha, mimeHint){
     // mimeHint: the drive index is not the only record of a blob any more — a Notes attachment also
     // stores its own name/mime on the note. If a bulk import was interrupted before the index was
     // flushed, meta() is empty, and an object URL typed application/octet-stream does NOT render in
@@ -11901,8 +11913,27 @@
     const plain=await _masterDecrypt(await FilesIdx._ensureMK(), blob);
     const u=URL.createObjectURL(new Blob([plain],{type:(m&&m.mime)||'application/octet-stream'}));
     _encUrls[sha]=u; _encOrder.push(sha);
-    while(_encOrder.length>24){ const old=_encOrder.shift(); if(_encUrls[old]){ URL.revokeObjectURL(_encUrls[old]); delete _encUrls[old]; } }
+    _encEvict();
     return u;
+  }
+  const ENC_LRU = 40;
+  function _encEvict(){
+    if(_encOrder.length <= ENC_LRU) return;
+    // What is still PAINTING. Revoking a URL that is breaks the picture it belongs to — a note with
+    // more images than the LRU holds used to lose the ones you had scrolled past, which reads as
+    // "the attachment is gone". Collected ONCE per eviction: asking per candidate walked the whole
+    // live document.images for every entry, and since an in-use entry goes back on the queue rather
+    // than being dropped, that cost grew with every decrypt in the session.
+    const live = new Set();
+    for(const im of document.images) if(im.src) live.add(im.src);
+    let guard = _encOrder.length;
+    while(_encOrder.length > ENC_LRU && guard-- > 0){
+      const old = _encOrder.shift();
+      const u = _encUrls[old];
+      if(!u) continue;
+      if(live.has(u)){ _encOrder.push(old); continue; }    // still on screen → to the back of the queue
+      URL.revokeObjectURL(u); delete _encUrls[old];
+    }
   }
   async function uploadFilesSeq(files){
     files=files.filter(Boolean); if(!files.length) return;

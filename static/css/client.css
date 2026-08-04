@@ -577,6 +577,15 @@ button:not(.tl-fab):has(> svg.ic.x-ic:only-child){display:inline-flex;align-item
 .input,textarea{width:100%;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:11px;
   color:var(--text);padding:12px 14px;font-size:15px;outline:none;margin:6px 0;font-family:inherit}
 .input:focus,textarea:focus{border-color:var(--cyan);box-shadow:var(--glow-cy)}
+/* A native <select>'s POPUP is painted by the browser from the element's own background/color, and
+   an <option> inherits NEITHER from the rule above — so a select styled `background:none` (which is
+   how the quiet toolbars here style theirs) drew light theme text on the UA's white list. On the
+   dark themes that is white on white: the Notes editor's folder menu opened completely unreadable.
+   Set on the option itself, so it survives whatever a surrounding rule does to the closed control,
+   and in theme variables so it follows the light themes too. Deliberately ONLY the <option>:
+   painting `select.input` as well would repaint the closed control on every quiet toolbar in the
+   app, which is a different change entirely. */
+option,optgroup{background-color:var(--bg2);color:var(--text)}
 .mini{cursor:pointer;background:var(--panel2);border:1px solid var(--line);color:var(--cyan);
   border-radius:8px;padding:4px 10px;font-size:12px;transition:.15s}
 .mini:hover{color:var(--neon);border-color:var(--neon)}
@@ -4870,6 +4879,10 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
   min-height:0;border-top:1px solid var(--line)}
 .nt-side{border-right:1px solid var(--line);padding:12px 10px;overflow-y:auto;min-height:0;
   display:flex;flex-direction:column;gap:9px}
+/* The drawer's backdrop exists only below 820px. It must be display:none here and not merely
+   invisible: .nt-wrap is a grid, so an unstyled div inside it is a GRID ITEM and would take the
+   sidebar's column on every desktop layout. */
+.nt-scrim{display:none}
 
 /* Search reads as a search field: the icon sits INSIDE the input rather than a bare box that could
    be anything. */
@@ -4936,9 +4949,17 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
 .nt-tag i{font-style:normal;opacity:.5;font-size:10px}
 
 .nt-list{border-right:1px solid var(--line);overflow-y:auto;min-height:0;display:flex;flex-direction:column}
-.nt-list-head{display:flex;align-items:center;justify-content:space-between;gap:8px;
+/* The list's own toolbar: what you are looking at, how many, and the search that filters it. Search
+   moved here out of the sidebar because it belongs to the pane it acts on — and because on a phone
+   the sidebar is a drawer, and a search you have to open a drawer to reach is a search nobody uses. */
+.nt-list-head{display:flex;flex-direction:column;gap:8px;
   padding:12px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:1}
+.nt-list-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .nt-list-head b{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nt-list-title{flex:1 1 auto;min-width:0}
+/* The folder handle and the compact New button are the phone layout; above 820px the sidebar is a
+   real column and both would be a second way to do what is already on screen. */
+.nt-fbtn,.nt-new-m{display:none}
 .nt-count{flex:none;font-size:11px;opacity:.5;font-variant-numeric:tabular-nums;
   padding:2px 8px;border-radius:999px;background:rgba(var(--accent-rgb),.12)}
 .nt-item{display:flex;flex-direction:column;gap:2px;width:100%;padding:11px 14px;border:none;
@@ -5004,11 +5025,19 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
 .nt-render>*{max-width:68ch}
 .nt-render h1,.nt-render h2,.nt-render h3{margin:1.1em 0 .4em;line-height:1.25}
 .nt-render img{max-width:100%;height:auto}
-.nt-res{border-top:1px solid var(--line);padding:8px 10px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+/* The attachment strip is a FOOTER, and has to be bounded like one. It is a wrapping flex row whose
+   automatic minimum size is its content, so a note with thirty attachments claimed fifteen rows of
+   thumbnails and squeezed the note itself — which has min-height:0 and therefore loses every such
+   argument — down to 36px on a phone. The text of the note is the point of the screen; the files
+   get a fifth of it and scroll. */
+.nt-res{border-top:1px solid var(--line);padding:8px 10px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;
+  flex:0 0 auto;min-height:0;max-height:22vh;overflow-y:auto}
 .nt-res:empty{display:none}
 .nt-res-head{flex:1 0 100%}
 .nt-res-item{padding:4px 9px;border-radius:8px;border:1px solid var(--line);background:none;color:inherit;
   cursor:pointer;font-size:13px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nt-res-head i{font-style:normal;opacity:.6;margin-left:4px}
+.nt-res-more{align-self:center}   /* the rest is .mini, the app's small-pill button */
 
 .nt-imp-pick{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
 .nt-imp-pick .btn{cursor:pointer}
@@ -5024,9 +5053,34 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
   /* One pane at a time. The list IS the page until a note is opened, and then the editor is —
      .nt-open swaps them. Both panes are grid-stacked in the same cell rather than toggled with
      display:none on a parent, so opening a note doesn't reflow the sidebar behind it. */
-  .nt-wrap{grid-template-columns:1fr;grid-template-rows:auto 1fr;
+  .nt-wrap{grid-template-columns:1fr;grid-template-rows:1fr;
     height:calc(100dvh - 56px - 62px - env(safe-area-inset-bottom))}
-  .nt-side{border-right:none;border-bottom:1px solid var(--line);max-height:40vh}
+  /* THE FOLDER TREE IS A DRAWER, not a pane. Stacked above the list and capped at 40vh, it took
+     half of a phone screen — permanently, whether or not you were doing anything with folders — and
+     left the notes themselves a ~300px window. Now it is off-canvas until the folder name in the
+     toolbar is tapped, and the list gets the whole screen. */
+  .nt-side{position:fixed;z-index:60;left:0;top:0;bottom:0;width:min(84vw,320px);max-height:none;
+    padding-top:calc(12px + env(safe-area-inset-top));padding-bottom:calc(12px + env(safe-area-inset-bottom));
+    background:var(--bg);border-right:1px solid var(--line);border-bottom:none;
+    transform:translateX(-101%);transition:transform .2s ease;box-shadow:2px 0 18px rgba(0,0,0,.35)}
+  .nt-wrap.nt-drawer .nt-side{transform:none}
+  /* Derived from the drawer's own state, so there is no second thing to keep in sync. Same fill as
+     the app's other backdrop (.pop-backdrop) — an off-palette black reads wrong on the light themes. */
+  .nt-wrap.nt-drawer .nt-scrim{display:block;position:fixed;inset:0;z-index:59;background:rgba(4,2,12,.5)}
+  /* The drawer belongs to the LIST. Opening a note replaces the list with the editor, so anything
+     still hanging over it is over the wrong screen. (.nt-side is hidden by the .nt-open rule below.) */
+  .nt-wrap.nt-open.nt-drawer .nt-scrim{display:none}
+  .nt-fbtn{display:inline-flex;align-items:center;gap:6px;min-width:0;flex:1 1 auto;
+    padding:7px 9px;border-radius:9px;border:1px solid var(--line);background:rgba(var(--accent-rgb),.06);
+    color:inherit;cursor:pointer;text-align:left}
+  .nt-fbtn b{font-size:15px;min-width:0}
+  .nt-fbtn svg.ic{width:15px;height:15px;flex:none;opacity:.7}
+  .nt-fbtn .nt-fbtn-c{margin-left:auto;width:13px;height:13px}
+  .nt-wrap.nt-drawer .nt-fbtn .nt-fbtn-c{transform:rotate(180deg)}
+  .nt-new-m{display:inline-flex;align-items:center;justify-content:center;flex:none;
+    width:40px;height:40px;padding:0;border-radius:10px}
+  .nt-new-m svg.ic{width:17px;height:17px;margin:0}
+  .nt-list-title{display:none}         /* the folder button carries the name on a phone */
   .nt-list{border-right:none}
   .nt-editor{display:none}
   .nt-wrap.nt-open .nt-side,.nt-wrap.nt-open .nt-list{display:none}
@@ -5066,8 +5120,25 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
 .nt-res-thumb img{width:100%;height:64px;object-fit:cover;border-radius:6px;background:rgba(128,128,128,.15)}
 .nt-res-thumb span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
 .nt-res-thumb:hover{border-color:var(--neon)}
-.nt-thumb-miss img{opacity:.35}
-.nt-img-miss{display:inline-block;padding:2px 6px;border:1px dashed var(--line);border-radius:6px}
+/* A picture that hasn't been decrypted YET. It needs a real box for two reasons: an <img> with no
+   src is 0px tall, which no IntersectionObserver will ever report as visible (so it would never
+   load), and a note whose images pop in at their natural size shoves the paragraph you are reading
+   down the page. Same reservation trick as the timeline. */
+.nt-render img.nt-img-lazy,.nt-render img.nt-img-fail{display:block;width:100%;max-width:340px;min-height:150px;
+  border-radius:8px;background:rgba(128,128,128,.12);border:1px solid var(--line)}
+/* The shimmer is the app's own .skel gradient, reused rather than re-invented — which also means it
+   is covered by the reduced-motion rule that turns .skel's animation off. A note holds dozens of
+   these at once and the ones below the fold shimmer for as long as it is open, so an animation the
+   user asked not to see would have run indefinitely on exactly the screen it matters least. */
+.nt-render img.nt-img-lazy{cursor:default;background-size:200% 100%;animation:shimmer 1.3s linear infinite;
+  background-image:linear-gradient(100deg,var(--panel) 38%,var(--panel2) 50%,var(--panel) 62%)}
+@media(prefers-reduced-motion:reduce){ .nt-render img.nt-img-lazy{animation:none} }
+/* Failed: still an image, still in place, and asking to be tried again — never a tombstone. */
+.nt-render img.nt-img-fail{cursor:pointer;border-style:dashed;border-color:var(--amber);
+  font-size:12.5px;padding:8px;object-fit:contain}
+.nt-res-thumb img.nt-img-fail{opacity:.5}
+/* A pcres: attachment LINK: resolved on click, so it has no href and needs the styling of one. */
+.nt-render .nt-res-link{color:var(--neon);cursor:pointer;text-decoration:underline}
 /* An image inside a rendered note: never wider than the pane, and clickable to open full size. */
 .nt-render img{max-width:100%;height:auto;border-radius:8px;cursor:zoom-in}
 

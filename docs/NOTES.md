@@ -57,6 +57,24 @@ Encrypted with the client's master key and stored on Blossom through the same pa
 music — one encrypted drive, not two. The note holds only the sha256; the bytes are useless without
 the key, which never leaves your device.
 
+**They are cached on the device, like everything else.** A blob is addressed by the sha256 of its own
+bytes, so the service worker stores it cache-first in its own cache (`pc-drive-v1`, `sw.js`) and a
+second view of a note costs no network at all. Its own cache and not the media one, deliberately: the
+timeline's images are a firehose that would evict a deliberately imported library within a session.
+The rule matches "the last path segment is a 64-hex hash", **not** `/blossom/…` — `encFileUrl` fetches
+`mediaServer() + '/' + sha`, and that is the user's own server root whenever they have set one, so a
+path-anchored rule would have silently cached nothing for exactly those people
+(`tests/test_sw_video_routing.py`).
+
+**And they load as you reach them, not all at once.** Every `pcres:` picture in a note is a full
+download of the ciphertext plus a decrypt, and an imported note is routinely dozens of screenshots:
+resolving them on open fired 131 requests in eleven seconds and left the note looking broken until
+they landed. Pictures are now loaded by an IntersectionObserver through a queue four wide, links
+resolve on click rather than on open, and the attachment strip lists 12 with a "show N more" — a
+thumbnail is a private download too. A picture that fails **stays a picture**: it keeps its element,
+marks itself, retries once on its own and again on tap. It used to be replaced by a permanent
+"[image unavailable]", so one dropped request looked exactly like a lost attachment.
+
 Those uploads set `X-Keep`, which exempts the blob from the server's age sweep **forever**
 (`blossom_service._cleanup_once`). This matters: the sweep is driven live by
 `blossom_blob_ttl_days`, so turning that setting on a year from now would otherwise retroactively
@@ -115,13 +133,30 @@ line. Any forward scan for the metadata block breaks on a note whose body contai
 `todo: call the bank` — which is normal prose, not a corner case. `parseItem` is a faithful port of
 Joplin's own `BaseItem.unserialize` for this reason; there is a test for exactly that body.
 
+## On a phone
+
+The list **is** the page. Its toolbar carries the current folder, the count, search and New note;
+the folder tree lives behind the folder button as a drawer, and picking anything closes it (Escape,
+the backdrop and the Android back button all close it too).
+
+It shipped as a pane stacked above the list, capped at `40vh` — so folders held half the screen at
+all times and the notes got the remainder, measured at **273px of 726**. Above 820px nothing changes:
+the sidebar is still a column and the same markup serves both, because a second copy for phones is
+how the two quietly diverge.
+
 ## Checks
 
     venv-unified/bin/python -m pytest tests/test_joplin_import.py tests/test_blossom_keep.py tests/test_relay_prune.py
+    venv-unified/bin/python -m unittest tests.test_sw_video_routing
     venv-unified/bin/python scripts/check_notes_mobile.py
 
-`check_notes_mobile.py` drives the real `notes.js` against a stubbed host at phone widths and
-asserts the layout collapses to one pane with a way back, that no input is under 16px (iOS zooms the
-page on focus and never zooms out), that nothing sits under the fixed bottom nav — and the
-offline write survives. Run it before deploying a Notes change; `check_client_mobile.py` never opens
-this screen.
+`check_notes_mobile.py` drives the real `notes.js` against a stubbed host at phone AND desktop widths
+and asserts the layout collapses to one pane with a way back, that no input is under 16px (iOS zooms
+the page on focus and never zooms out), that nothing sits under the fixed bottom nav, that the folder
+tree is a drawer rather than a pane and can be opened and closed, that opening a picture-heavy note
+does not fetch every picture in it, that a failed picture stays a retryable picture, that the
+attachment strip doesn't crush the note's text — and that the offline write survives. Run it before
+deploying a Notes change; `check_client_mobile.py` never opens this screen.
+
+Each assertion was verified to FAIL against the behaviour it replaced, which is the only way to know
+a guard guards anything.

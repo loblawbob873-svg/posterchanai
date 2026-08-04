@@ -31,6 +31,24 @@ Assertions, each corresponding to a way this specific screen breaks on a phone:
                        another. `.nt-editor` is ONE element whose innerHTML is replaced per note, so
                        a commit that looks its inputs up when it fires reads whichever note is on
                        screen then. The result is half of each note and looks entirely plausible.
+  folder-pane-hogs-screen
+                       the folder tree is on screen at rest on a phone, or the note list is left
+                       under 80% of the pane. It shipped as a pane stacked above the list, capped at
+                       40vh: folders took half the screen permanently and the notes got 273px of 726.
+  folders-unreachable  …and the drawer that replaced it doesn't open, or won't close again.
+  image-stampede       opening a note fetched most of its attachments at once. Every `pcres:` image
+                       is a full download of the ciphertext plus a decrypt — the real library fired
+                       131 of them in eleven seconds and the note looked broken until they landed.
+                       They must load as they come into view, and the strip below the note must not
+                       list a thumbnail for every attachment either.
+  image-failure-permanent
+                       a picture that failed to load was replaced by a text placeholder. The element
+                       is destroyed, so one dropped request out of a hundred in flight is
+                       indistinguishable from a lost attachment and nothing can ask again.
+  attachments-eat-the-note
+                       the attachment strip crushed the note's own text. It is a wrapping flex row
+                       whose automatic minimum size is its content, so thirty thumbnails claimed
+                       fifteen rows and left the note 36px on a phone.
   offline-write-lost   THE data-loss one, and not a layout question at all: with publishing failing
                        (offline), a typed note must still be in the library and queued, never gone.
                        publish() rolls its optimistic cache save BACK when the relay refuses, so a
@@ -76,6 +94,8 @@ const $$ = (s,r)=> Array.from((r||document).querySelectorAll(s));
 const enc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 window.__events = [];        // what "the relay" accepted
 window.__online = true;      // flip to false to simulate offline
+window.__encCalls = [];      // every attachment decrypt the client asked for
+window.__encFail = false;    // true → every decrypt fails (a dropped request)
 let _seq = 0;
 
 window.Store = {
@@ -111,9 +131,23 @@ window.__PC = {
   },
   nip44enc: async (pk, s) => s,
   nip44dec: async (pk, s) => s,
-  mdToHtml: s => '<p>'+enc(s)+'</p>',
+  // Enough markdown to produce the one thing this file needs to see: an <img src="pcres:…">, the
+  // same shape the real _mdUrl allowlists. Without it a note full of pictures renders as text and
+  // the whole attachment path goes untested.
+  mdToHtml: s => '<p>' + enc(s).replace(/!\[([^\]]*)\]\((pcres:[0-9a-f]{64})\)/g,
+                                        (m, alt, u) => `<img src="${u}" alt="${alt}">`) + '</p>',
   uploadEncFile: async () => 'sha'+(++_seq),
-  encFileUrl: async () => 'data:text/plain,x',
+  // Records every decrypt so the test can count them, and can be told to FAIL — a picture that
+  // won't load is the normal case here (a dropped request), not an exotic one.
+  encFileUrl: async (sha) => {
+    window.__encCalls.push(sha);
+    if(window.__encFail) throw new Error('blob HTTP 502');
+    // A picture with REAL dimensions, not a 1x1 pixel: a loaded image that collapses to 3px pulls
+    // the next thirty up into view, so every one of them loads and the lazy path looks broken when
+    // it is the test's own placeholder that is wrong.
+    return 'data:image/svg+xml,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"></svg>');
+  },
   get ME(){ return {pubkey:'me'}; },
   get VIEW(){ return 'notes'; },
 };
@@ -125,10 +159,18 @@ window.__PC = {
   // Seed a library the way the app would have: a folder and a few notes, already "on the relay".
   const mk = (d, obj) => ({ id:'seed'+d, pubkey:'me', kind:30078, created_at: 1700000000,
                             tags:[['d',d],['l','pcai-notes']], content: JSON.stringify(obj), sig:'x' });
+  // An imported note carrying a lot of pictures — the shape that made this screen unusable. Each
+  // one is a separate download + decrypt, so what matters is that opening the note does NOT ask for
+  // all of them. Sorted last (oldest `updated`) so it can't disturb the two tests that address
+  // notes by position.
+  const shas = Array.from({length:30}, (_,i) => (i+1).toString(16).padStart(2,'0').repeat(32));
+  const picBody = shas.map((s,i) => `shot ${i}\n\n![shot ${i}](pcres:${s})`).join('\n\n');
   window.__events = [
     mk('pcai:notefolder:f1', {v:1, id:'f1', name:'Work', created:1, updated:1}),
     mk('pcai:note:n1', {v:1, id:'n1', title:'Quarterly plan', body:'line one\nline two', folder:'f1', tags:['work'], created:1, updated:1700000000, res:[]}),
     mk('pcai:note:n2', {v:1, id:'n2', title:'Groceries', body:'milk', folder:'', tags:[], created:1, updated:1699000000, res:[]}),
+    mk('pcai:note:n3', {v:1, id:'n3', title:'Screenshots', body:picBody, folder:'', tags:[], created:1, updated:1698000000,
+                        res: shas.map((s,i) => ({sha:s, name:`shot${i}.png`, mime:'image/png', size:1024}))}),
   ];
   for(let i=0;i<80 && !window.PCNotes;i++) await new Promise(r=>setTimeout(r,50));
   await window.PCNotes.render();
@@ -189,8 +231,24 @@ AUDIT = r"""(() => {
   }
   out.headBtns = Array.from(document.querySelectorAll('.nt-ed-head .btn')).filter(vis)
     .map(el => ({ cls: el.className, w: Math.round(box(el).w), h: Math.round(box(el).h) }));
+  // How the screen is DIVIDED. vis() is not enough for the folder tree: a drawer that has been
+  // translated off-canvas still has client rects, so ask where it actually is.
+  const onScreen = el => { if(!vis(el)) return false; const b = box(el);
+                           return b.right > 0 && b.x < vw && b.bottom > 0 && b.y < window.innerHeight; };
+  out.foldersOnScreen = onScreen(document.querySelector('.nt-folder[data-f]'));
+  out.folderBtn = vis(document.querySelector('.nt-fbtn'));
+  out.searchVisible = vis(document.querySelector('.nt-search'));
+  const listEl = document.querySelector('.nt-list');
+  out.listH = (listEl && vis(listEl)) ? Math.round(box(listEl).h) : 0;
+  out.wrapH = wrapEl ? Math.round(box(wrapEl).h) : 0;
   return out;
 })()"""
+
+# Tap the folder handle. On a phone the tree is a drawer, and this is the only way to it.
+OPEN_DRAWER = r"""(() => { const b = document.querySelector('.nt-fbtn');
+                           if(!b || !b.getClientRects().length) return false; b.click(); return true; })()"""
+CLOSE_DRAWER = r"""(() => { const s = document.querySelector('.nt-scrim');
+                            if(s && !s.hidden) s.click(); return true; })()"""
 
 # Open a note, then report what the layout does. Separate from AUDIT because it MUTATES.
 OPEN_NOTE = r"""(() => { const it = document.querySelector('.nt-item'); if(!it) return false;
@@ -231,6 +289,58 @@ CROSS_SAVE = r"""(async () => {
     leaked: others.some(o => (o.tags||[]).includes('alpha-only') ||
                              (o.body||'').includes('body of the first note')),
   };
+})()"""
+
+# Both picture tests start from the same note, so they open with the same preamble.
+_PIC_NOTE = r"""(async () => {
+  const picNote = () => Array.from(document.querySelectorAll('.nt-item'))
+    .find(b => (b.textContent||'').includes('Screenshots'));
+"""
+
+# Opening a picture-heavy note must not fetch every picture in it. Each `pcres:` reference is a full
+# download of the ciphertext plus a decrypt; resolving all of them on open fired 131 requests in
+# eleven seconds on the real library and left the note looking broken until they landed. What has to
+# be true: only what is near the viewport loads on open, and the rest still loads when scrolled to.
+LAZY_IMAGES = _PIC_NOTE + r"""
+  const item = picNote(); if(!item) return {error:'the picture-heavy note is not in the list'};
+  window.__encCalls = [];
+  item.click();
+  await new Promise(r => setTimeout(r, 1000));
+  const imgs = () => Array.from(document.querySelectorAll('.nt-render img'));
+  const withSrc = () => imgs().filter(i => (i.getAttribute('src')||'').startsWith('data:')).length;
+  // UNIQUE blobs. The stub has no in-flight dedupe (the real encFileUrl does), so counting raw calls
+  // would be measuring the stub — what matters is how many distinct attachments were pulled.
+  const uniq = () => new Set(window.__encCalls).size;
+  const total = imgs().length, onOpen = uniq(), loadedTop = withSrc();
+  // How the editor divides itself. A note's own text must not be crushed by its attachment strip.
+  const h = sel => { const e = document.querySelector(sel); if(!e) return 0;
+                     return Math.round(e.getBoundingClientRect().height); };
+  const panes = { render: h('.nt-render'), res: h('.nt-res'), editor: h('.nt-editor'),
+                  thumbs: document.querySelectorAll('.nt-res-thumb').length };
+  // The pictures at the BOTTOM of the note: lazy has to mean "later", not "never".
+  const pane = document.querySelector('.nt-render');
+  if(pane) pane.scrollTop = pane.scrollHeight;
+  await new Promise(r => setTimeout(r, 1400));
+  return { total, onOpen, loadedTop, afterScroll: uniq(), loadedEnd: withSrc(), panes };
+})()"""
+
+# A picture that fails to load must stay a picture. This used to replace the <img> with a permanent
+# "[image unavailable]" — the element was destroyed, so one dropped request out of a hundred in
+# flight was indistinguishable from a lost attachment and there was no way to ask again.
+IMAGE_RETRY = _PIC_NOTE + r"""
+  const item = picNote(); if(!item) return {error:'the picture-heavy note is not in the list'};
+  window.__encFail = true;
+  window.__encCalls = [];
+  item.click();
+  await new Promise(r => setTimeout(r, 900));
+  const failed = document.querySelectorAll('.nt-render img.nt-img-fail').length;
+  const survived = document.querySelectorAll('.nt-render img').length;
+  const tombstones = document.querySelectorAll('.nt-render .nt-img-miss').length;
+  window.__encFail = false;             // the network comes back
+  await new Promise(r => setTimeout(r, 2200));   // the automatic retry is at 1.5s
+  const recovered = Array.from(document.querySelectorAll('.nt-render img'))
+    .filter(i => (i.getAttribute('src')||'').startsWith('data:')).length;
+  return { failed, survived, tombstones, recovered };
 })()"""
 
 # The offline write. Types into the open editor with publishing failing, waits out the 700ms
@@ -348,6 +458,43 @@ async def drive(url):
                                      f"the pane's bottom ({round(r['wrapBottom'])}px) is under the nav "
                                      f"({round(r['navTop'])}px) — 100vh instead of 100dvh?"))
 
+                # Search filters the list, so it has to be ON the list — not behind a drawer.
+                if not r["searchVisible"]:
+                    problems.append((label, "missing-control", "the search field is not on screen"))
+                if phone:
+                    # THE ONE THIS SCREEN GOT WRONG: the folder tree was a pane stacked above the
+                    # list, capped at 40vh, so folders took half a phone screen at all times and the
+                    # notes got what was left.
+                    if r["foldersOnScreen"]:
+                        problems.append((label, "folder-pane-hogs-screen",
+                                         "the folder tree is on screen at rest — it must be a drawer, "
+                                         "not a permanent pane, on a phone"))
+                    if r["wrapH"] and r["listH"] < r["wrapH"] * 0.8:
+                        problems.append((label, "folder-pane-hogs-screen",
+                                         f"the note list gets only {r['listH']}px of {r['wrapH']}px"))
+                    # A drawer nobody can open is worse than the pane it replaced.
+                    if not r["folderBtn"]:
+                        problems.append((label, "folders-unreachable",
+                                         "no control on the list opens the folder tree"))
+                    elif await js(OPEN_DRAWER):
+                        await asyncio.sleep(0.4)
+                        rd = await js(AUDIT)
+                        if not (rd or {}).get("foldersOnScreen"):
+                            problems.append((label, "folders-unreachable",
+                                             "tapping the folder control did not bring the tree on screen"))
+                        if (rd or {}).get("overflow"):
+                            problems.append((label, "horizontal-overflow", "the open drawer scrolls the page sideways"))
+                        await js(CLOSE_DRAWER)
+                        await asyncio.sleep(0.35)
+                        if (await js(AUDIT) or {}).get("foldersOnScreen"):
+                            problems.append((label, "folders-unreachable",
+                                             "the drawer would not close again"))
+                else:
+                    # Desktop is a three-pane layout and must stay one: the drawer rules must not leak.
+                    if not r["foldersOnScreen"]:
+                        problems.append((label, "missing-control",
+                                         "the folder sidebar is off screen at desktop width"))
+
                 # Open a note: on a phone that must REPLACE the list, not sit beside it.
                 if not await js(OPEN_NOTE):
                     problems.append((label, "missing-control", "could not open a note"))
@@ -400,6 +547,67 @@ async def drive(url):
                     if x["leaked"]:
                         problems.append((label, "notes-cross-saved",
                                          "one note's edit was written onto ANOTHER note"))
+
+                # Opening a note full of pictures must not fetch all of them.
+                li = await js(LAZY_IMAGES, awaited=True)
+                if os.environ.get("PC_DEBUG"): print(f"  DEBUG {label} lazy={li}")
+                if not li or li.get("error"):
+                    problems.append((label, "image-stampede",
+                                     f"could not run the picture test ({(li or {}).get('error')})"))
+                else:
+                    if not li["total"]:
+                        problems.append((label, "image-stampede",
+                                         "the picture-heavy note rendered no images at all"))
+                    else:
+                        if li["onOpen"] > li["total"] * 0.6:
+                            problems.append((label, "image-stampede",
+                                             f"opening the note fetched {li['onOpen']} of {li['total']} "
+                                             "attachments at once — they must load as they come into view"))
+                        # …and the strip below the note must not list every one of them either.
+                        if (li.get("panes") or {}).get("thumbs", 0) >= li["total"]:
+                            problems.append((label, "image-stampede",
+                                             "the attachment strip rendered a thumbnail for every "
+                                             "attachment — each one is a private download and decrypt"))
+                        if not li["loadedTop"]:
+                            problems.append((label, "image-stampede",
+                                             "no picture loaded at all — lazy has to mean later, not never"))
+                        if li["afterScroll"] <= li["onOpen"]:
+                            problems.append((label, "image-stampede",
+                                             "scrolling to the end of the note loaded no further pictures"))
+                        # …and they have to ARRIVE, not merely be requested: a picture that is
+                        # fetched and never given a src is the same blank box to the reader.
+                        if li["loadedEnd"] <= li["loadedTop"]:
+                            problems.append((label, "image-stampede",
+                                             f"scrolling requested more pictures but only {li['loadedEnd']} "
+                                             "ever appeared"))
+                    # The attachment strip is a wrapping flex row whose automatic minimum size is its
+                    # content: thirty thumbnails claimed fifteen rows and crushed the note itself,
+                    # which has min-height:0, to 36px. The text is what the screen is FOR.
+                    p = li.get("panes") or {}
+                    if p.get("editor") and p.get("render", 0) < p["editor"] * 0.45:
+                        problems.append((label, "attachments-eat-the-note",
+                                         f"the note's text gets {p['render']}px of the editor's "
+                                         f"{p['editor']}px — the attachment strip takes {p.get('res')}px"))
+
+                # A failed picture must stay a picture, and come back on its own.
+                ir = await js(IMAGE_RETRY, awaited=True)
+                if not ir or ir.get("error"):
+                    problems.append((label, "image-failure-permanent",
+                                     f"could not run the retry test ({(ir or {}).get('error')})"))
+                else:
+                    if ir["tombstones"]:
+                        problems.append((label, "image-failure-permanent",
+                                         "a failed image was replaced by a text placeholder — the element "
+                                         "is gone, so nothing can retry it"))
+                    if not ir["survived"]:
+                        problems.append((label, "image-failure-permanent",
+                                         "the <img> elements did not survive a failed load"))
+                    elif not ir["failed"]:
+                        problems.append((label, "image-failure-permanent",
+                                         "a failed image is not marked as failed — it just looks empty"))
+                    if not ir["recovered"]:
+                        problems.append((label, "image-failure-permanent",
+                                         "no image recovered after the network came back"))
 
                 # And the one that isn't about layout at all.
                 w3 = await js(OFFLINE_WRITE, awaited=True)

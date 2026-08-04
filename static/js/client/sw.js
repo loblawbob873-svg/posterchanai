@@ -9,8 +9,16 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v748';
+const CACHE = 'pc-nostr-v749';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
+// Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
+// attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
+// not MEDIA_CACHE, because the two evict on completely different terms: the timeline's images are a
+// firehose that would push a deliberately-imported note library out within a session, and the
+// library is the thing the app promises is readable offline ("open this note once while online").
+const DRIVE_CACHE = 'pc-drive-v1';
+const DRIVE_MAX = 6000;                   // entry cap; the shared byte budget below is the real limit
+const DRIVE_MAX_BYTES = 96 * 1024 * 1024; // don't store a single huge attachment — it still streams fine
 const SHARE_CACHE = 'pc-share-v1';        // temporary stash for a file/text shared IN via the OS share sheet
 const MEDIA_MAX = 10000;                  // high entry cap (Cache.keys() is insertion-ordered → evict oldest);
                                           // the configurable BYTE budget below is the real limit. Pairs with
@@ -18,7 +26,7 @@ const MEDIA_MAX = 10000;                  // high entry cap (Cache.keys() is ins
 const CONFIG_CACHE = 'pc-config-v1';      // client-written config the SW reads (currently: /media-budget bytes)
 const VIDEO_MAX_BYTES = 60 * 1024 * 1024; // cache a PLAYED video up to this size (raised 15→60MB for more
                                           // re-watch/bandwidth savings); the 4GB byte budget is the real cap
-                                          // and trimMedia evicts oldest, so bigger clips just get cached too.
+                                          // and trimCache evicts oldest, so bigger clips just get cached too.
 // The bundled Capacitor APK registers this SW at the ROOT (/sw.js); the web PWA registers it at
 // /client/sw.js. In the APK the client is the LOCAL BUNDLE — authoritative and updated by the APK
 // itself — so the SW must be MEDIA-ONLY there and never cache/serve app code or navigations, or it
@@ -72,7 +80,7 @@ self.addEventListener('activate', e => {
   // Drop stale shell caches but KEEP the current shell cache AND the media cache (don't re-download
   // every avatar/image just because the app code was redeployed).
   e.waitUntil(caches.keys().then(ks => Promise.all(
-    ks.filter(k => k !== CACHE && k !== MEDIA_CACHE && k !== SHARE_CACHE && k !== CONFIG_CACHE).map(k => caches.delete(k))
+    ks.filter(k => k !== CACHE && k !== MEDIA_CACHE && k !== DRIVE_CACHE && k !== SHARE_CACHE && k !== CONFIG_CACHE).map(k => caches.delete(k))
   )).then(()=>self.clients.claim()));
 });
 
@@ -186,7 +194,7 @@ async function cacheFirstMedia(req){
     // can't tell success from an error page, so caching it risks poisoning the avatar permanently. Skip
     // it; the browser's HTTP cache still handles repeat loads of the same avatar URL.
     const cacheable = res.status === 200 && (!isVideo || (len > 0 && len <= VIDEO_MAX_BYTES));
-    if (cacheable) { await cache.put(req, res.clone()); trimMedia(cache); }
+    if (cacheable) { await cache.put(req, res.clone()); trimCache(cache, MEDIA_MAX, 'media'); }
   } catch (_) {}   // quota exceeded / uncacheable → just serve it uncached
   return res;
 }
@@ -198,22 +206,79 @@ async function mediaBudgetBytes(){
     if (r){ const n = +(await r.text()); if (n > 0) return n; } } catch (_) {}
   return MEDIA_DEFAULT_BUDGET;
 }
-async function trimMedia(cache){
+/* Bound ONE cache: an entry cap, then the configurable origin-wide byte budget. Shared by the media
+ * and drive caches — the eviction policy is a single rule about this origin's storage, and keeping a
+ * second copy of it per cache is how the two would end up disagreeing about the same number.
+ *
+ * THROTTLED, because the drive cache is written in BURSTS (opening one imported note stores dozens of
+ * attachments back to back) where the media cache trickles. Each run enumerates up to MEDIA_MAX
+ * Requests and calls storage.estimate(), an origin-wide computation of tens of milliseconds — running
+ * that per stored blob competed with the decrypts it was meant to be speeding up. Nothing here is
+ * urgent: it is a budget guard, not a correctness one. */
+const _trimAt = {};
+async function trimCache(cache, max, key){
+  const now = Date.now();
+  if (now - (_trimAt[key] || 0) < 20000) return;
+  _trimAt[key] = now;
   const keys = await cache.keys();
-  for (let i = 0; i < keys.length - MEDIA_MAX; i++) cache.delete(keys[i]);   // count cap: evict oldest first
+  for (let i = 0; i < keys.length - max; i++) cache.delete(keys[i]);   // count cap: evict oldest first
   // Byte cap (configurable): persist() stops the browser evicting under pressure, so bound total storage
-  // ourselves. estimate() is origin-wide (a fine proxy) and cheap; over budget → drop the oldest ~10%.
+  // ourselves. estimate() is origin-wide (a fine proxy); over budget → drop the oldest ~10%.
   try {
     if (navigator.storage && navigator.storage.estimate){
       const budget = await mediaBudgetBytes();
       const { usage } = await navigator.storage.estimate();
       if (usage && usage > budget){
-        const k2 = await cache.keys();
-        const drop = Math.max(1, Math.ceil(k2.length * 0.1));
-        for (let i = 0; i < drop; i++) cache.delete(k2[i]);
+        const drop = Math.max(1, Math.ceil(keys.length * 0.1));
+        for (let i = 0; i < drop; i++) cache.delete(keys[i]);   // `keys` is still the insertion order
       }
     }
   } catch (_) {}
+}
+
+/* ---- Encrypted drive: content-addressed blobs ----
+ * A Blossom blob is addressed BY THE SHA256 OF ITS BYTES, so the URL can never mean anything else —
+ * cache-first with no revalidation is not a heuristic here, it is exact.
+ *
+ * These are invisible to every rule above. `encFileUrl()` reads them with fetch(), whose
+ * request.destination is '' (not 'image' — the bytes are ciphertext; the <img> only ever sees the
+ * decrypted object: URL), so they fell through to the pass-through branch and were NEVER stored.
+ * Opening a note re-downloaded every picture in it, every time, and "open this note once while
+ * online" bought nothing at all. */
+/* Content-addressed by the LAST path segment, not by our own mount path. `/blossom/<sha>` is only
+ * where THIS node serves them: encFileUrl and trackUrl both fetch `mediaServer() + '/' + sha`, and
+ * mediaServer() is the user's OWN server root whenever they've set one — so a rule anchored to
+ * /blossom/ would have matched nothing for exactly those users and left the cache silently inert,
+ * with "open this note once while online" quietly untrue for them.
+ *
+ * `mode !== 'navigate'` so a 64-hex route can never be pinned cache-first as a page. */
+function isDriveBlob(url, req){
+  return /\/[0-9a-f]{64}(\.[a-z0-9]{1,8})?$/i.test(url.pathname)
+    && req.mode !== 'navigate' && req.destination !== 'image' && req.destination !== 'video';
+}
+async function cacheFirstBlob(req){
+  const cache = await caches.open(DRIVE_CACHE);
+  const hit = await cache.match(req);
+  if (hit) return hit;
+  let res;
+  try { res = await fetch(req); } catch (_) { return Response.error(); }
+  try {
+    const len = +(res.headers.get('content-length') || 0);
+    // Ciphertext, and ONLY ciphertext. A 64-hex tail is not proof on its own: `/blossom/list/<pubkey>`
+    // is a live JSON listing of the user's whole drive whose path ends in exactly that shape, and
+    // cache-first would have frozen someone's file list forever. The encrypted drive is opaque bytes
+    // and always arrives as octet-stream; anything structured is somebody's API talking.
+    const ct = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    const opaque = !ct || ct === 'application/octet-stream' || ct === 'binary/octet-stream';
+    // 200 only. A 206 is one RANGE of the blob; stored under the full URL it would be served later
+    // as the whole file — a truncated body that decrypts to nothing, cached forever.
+    if (res.status === 200 && opaque && !req.headers.get('range') && len > 0 && len <= DRIVE_MAX_BYTES){
+      // NOT awaited: the clone is taken now, but the disk write must not sit between the network and
+      // the decrypt waiting on it. Reading and storing proceed in parallel.
+      cache.put(req, res.clone()).then(() => trimCache(cache, DRIVE_MAX, 'drive')).catch(()=>{});
+    }
+  } catch (_) {}   // over quota → serve it uncached rather than fail the read
+  return res;
 }
 
 // Web Share Target (POST): another app shared a file/text INTO us via the OS share sheet. The browser
@@ -247,6 +312,11 @@ self.addEventListener('fetch', e => {
   // playback direct), app code, or navigations. Everything else passes straight through, keeping the
   // bundle authoritative so the SW can't fight the APK's own update flow.
   if (IS_APP){
+    // The encrypted drive is the one exception worth making: it is DATA, not app code, addressed by
+    // the hash of its own bytes, and in the bundle it is cross-origin (the SW runs on localhost, the
+    // blobs come from the instance) so nothing else here would ever store it. Without this the app
+    // re-downloads a note's attachments on every open and Notes is unusable offline.
+    if (isDriveBlob(url, e.request)){ e.respondWith(cacheFirstBlob(e.request)); return; }
     if (e.request.destination === 'image' && url.origin !== self.location.origin) e.respondWith(cacheFirstMedia(e.request));
     return;
   }
@@ -267,6 +337,9 @@ self.addEventListener('fetch', e => {
 
   if (isAppCode) e.respondWith(staleWhileRevalidate(e.request));
   else if (isVendorOrIcon) e.respondWith(cacheFirst(e.request));
+  // Encrypted-drive blobs (fetch(), so destination ''), BEFORE the destination rules below: a public
+  // <img> pointing at the same path is ordinary media and keeps going to MEDIA_CACHE.
+  else if (isDriveBlob(url, e.request)) e.respondWith(cacheFirstBlob(e.request));
   // CROSS-ORIGIN VIDEO: leave it to the browser, exactly as the APK branch above does.
   //
   // A <video> with no crossorigin attribute fetches no-cors, so fetch() hands back an OPAQUE response

@@ -1,6 +1,9 @@
-"""What the service worker does and does NOT intercept (static/js/client/sw.js).
+"""What the service worker does and does NOT intercept, and into WHICH cache (static/js/client/sw.js).
 
 Run: venv-unified/bin/python -m unittest tests.test_sw_video_routing
+
+Two routing decisions live here. The second (EncryptedDriveBlobs) is the encrypted drive: blobs read
+with fetch(), whose request.destination is '', which no rule in the worker matched.
 
 A cross-origin <video> must reach the network untouched.
 
@@ -42,13 +45,21 @@ const self = {
   registration: { showNotification: () => {} },
 };
 globalThis.self = self;
-globalThis.caches = { open: async () => ({ match: async () => undefined, put: async () => {},
-                                           keys: async () => [], delete: async () => {} }),
+const opened = [];   // which cache a branch reaches for -- that IS the routing decision for reads
+const stored = [];   // and what it actually PUT there, which is the decision that outlives the tab
+globalThis.caches = { open: async (name) => { opened.push(name);
+                        return { match: async () => undefined,
+                                 put: async (rq) => { stored.push([name, rq && rq.url]); },
+                                 keys: async () => [], delete: async () => {} }; },
                       match: async () => undefined, keys: async () => [], delete: async () => {} };
-// Benign: some branches fetch asynchronously, and an throwing stub would surface as an unhandled
-// rejection that kills node AFTER the routing decision was already made. Routing is what we measure.
-globalThis.fetch = async () => ({ status: 0, type: 'opaque', ok: false, clone(){ return this; },
-                                  headers: { get: () => null } });
+// The response the network "returns". Opaque by default (what a cross-origin <video> really gets, and
+// benign for branches that fetch asynchronously: a throwing stub would surface as an unhandled
+// rejection that kills node AFTER the routing decision was already made). RES overrides it where the
+// question is what gets STORED, which depends on the status, content-type and length.
+const RES = %s;
+globalThis.fetch = async () => ({ status: RES.status, type: RES.status ? 'basic' : 'opaque',
+                                  ok: RES.status === 200, clone(){ return this; },
+                                  headers: { get: (k) => RES[String(k).toLowerCase()] || null } });
 globalThis.Response = class { static error(){ return {}; } constructor(){} };
 globalThis.clients = self.clients;
 %s
@@ -62,7 +73,8 @@ else {
     waitUntil: () => {},
   };
   try { handler(e); } catch (err) { console.log(JSON.stringify({error: String(err)})); }
-  console.log(JSON.stringify({ intercepted }));
+  // A put happens several awaits after the handler returns, so let the microtasks drain first.
+  setTimeout(() => console.log(JSON.stringify({ intercepted, opened, stored })), 30);
 }
 """
 
@@ -70,11 +82,17 @@ WEB_SW = "https://poster.place/static/js/client/sw.js"   # web PWA: /client scop
 APP_SW = "https://poster.place/sw.js"                     # bundled desktop/APK: root scope -> IS_APP
 
 
-def _route(sw_url, url, destination, mode="no-cors"):
+OPAQUE = {"status": 0}                                            # what a no-cors fetch really returns
+CIPHERTEXT = {"status": 200, "content-type": "application/octet-stream", "content-length": "4096"}
+JSON_BODY = {"status": 200, "content-type": "application/json", "content-length": "512"}
+
+
+def _run(sw_url, url, destination, mode="no-cors", res=None):
     with open(SW, encoding="utf-8") as fh:
         src = fh.read()
     js = HARNESS % (json.dumps(sw_url),
                     json.dumps({"url": url, "destination": destination, "mode": mode}),
+                    json.dumps(res or OPAQUE),
                     src)
     out = subprocess.run([shutil.which("node") or "node", "-e", js],
                          capture_output=True, text=True, timeout=60)
@@ -83,7 +101,23 @@ def _route(sw_url, url, destination, mode="no-cors"):
     got = json.loads(out.stdout.strip().splitlines()[-1])
     if "error" in got:
         raise AssertionError(got["error"])
-    return got["intercepted"]
+    return got
+
+
+def _route(sw_url, url, destination, mode="no-cors"):
+    return _run(sw_url, url, destination, mode)["intercepted"]
+
+
+def _cache_used(sw_url, url, destination, mode="cors"):
+    """Which cache the request was routed INTO ('' if it wasn't intercepted)."""
+    got = _run(sw_url, url, destination, mode)
+    return (got.get("opened") or [""])[0] if got["intercepted"] else ""
+
+
+def _stored_in(sw_url, url, destination, res, mode="cors"):
+    """Which cache the response was actually WRITTEN to ('' if it wasn't kept)."""
+    got = _run(sw_url, url, destination, mode, res)
+    return (got.get("stored") or [["", ""]])[0][0]
 
 
 TWIMG = ("https://video.twimg.com/amplify_video/2083577909483122688/vid/avc1/"
@@ -130,6 +164,59 @@ class BundledAppServiceWorker(unittest.TestCase):
         """Bundle assets must refresh on an APK update, so the SW must never serve them."""
         self.assertFalse(_route(APP_SW, OWN_IMAGE, "image"))
         self.assertFalse(_route(APP_SW, OWN_ICON, "image"))
+
+
+SHA = "9f3b" + "a" * 60                                          # a 64-hex content address
+OWN_BLOB = f"https://poster.place/blossom/{SHA}"                 # this node's mount path
+CUSTOM_BLOB = f"https://blossom.example.com/{SHA}"               # a user's OWN Blossom server
+BLOB_THUMB = f"https://poster.place/blossom/{SHA}.png?thumb=1"   # public grid thumbnail (an <img>)
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class EncryptedDriveBlobs(unittest.TestCase):
+    """Notes attachments, music tracks and the files index are content-addressed ciphertext read
+    with fetch() -- request.destination is '', because the <img> only ever sees the decrypted
+    object: URL. That made them invisible to every rule in the worker: they fell through to the
+    pass-through branch and were NEVER stored, so opening a note re-downloaded every picture in it
+    and "open this note once while online" bought nothing at all."""
+
+    def test_a_drive_blob_is_cached(self):
+        self.assertEqual(_cache_used(WEB_SW, OWN_BLOB, ""), "pc-drive-v1")
+
+    def test_a_blob_on_the_users_own_server_is_cached_too(self):
+        """encFileUrl fetches mediaServer() + '/' + sha, and mediaServer() is the user's own server
+        root whenever they have set one -- so a rule anchored to /blossom/ would have matched
+        nothing for exactly those users, silently, with no way for them to tell."""
+        self.assertEqual(_cache_used(WEB_SW, CUSTOM_BLOB, ""), "pc-drive-v1")
+
+    def test_the_drive_does_not_share_the_media_cache(self):
+        """Separate caches on purpose: the timeline's images are a firehose that would evict a
+        deliberately imported note library within a session."""
+        self.assertEqual(_cache_used(WEB_SW, BLOB_THUMB, "image"), "pc-media-v2")
+
+    def test_a_navigation_to_a_hash_route_is_not_pinned(self):
+        """Cache-first on a navigation would pin a page forever. Only non-navigations qualify."""
+        self.assertNotEqual(_cache_used(WEB_SW, OWN_BLOB, "", mode="navigate"), "pc-drive-v1")
+
+    def test_the_bundled_app_caches_the_drive_as_well(self):
+        """The APK's worker is media-only so it can never pin stale app code -- but a blob addressed
+        by the hash of its own bytes is DATA, and in the bundle it is cross-origin, so nothing else
+        would ever store it. Without this, Notes is unusable offline in the app."""
+        self.assertEqual(_cache_used(APP_SW, OWN_BLOB, ""), "pc-drive-v1")
+
+    def test_the_bundled_app_still_leaves_app_code_alone(self):
+        self.assertFalse(_route(APP_SW, "https://poster.place/static/js/client/app.js", "script"))
+
+    def test_the_ciphertext_is_what_gets_kept(self):
+        self.assertEqual(_stored_in(WEB_SW, OWN_BLOB, "", CIPHERTEXT), "pc-drive-v1")
+
+    def test_a_json_listing_is_never_frozen(self):
+        """`/blossom/list/<pubkey>` is a LIVE listing of the whole drive, and its path ends in 64 hex
+        exactly like a blob's does. Cache-first on that would have pinned someone's file list to
+        whatever it was the first time they opened Files — so the hash shape decides the route, and
+        the content type decides what is allowed to persist."""
+        listing = f"https://poster.place/blossom/list/{SHA}"
+        self.assertEqual(_stored_in(WEB_SW, listing, "", JSON_BODY), "")
 
 
 if __name__ == "__main__":

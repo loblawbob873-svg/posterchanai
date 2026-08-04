@@ -62,6 +62,11 @@
       flush: flushPending,
       // For the offline bar / nav badge: how many writes are still queued.
       pendingCount: () => pending().length,
+      // The phone folder drawer is an OVERLAY, so the Android back button has to close it before it
+      // starts walking the view stack — otherwise Back leaves Notes altogether while a panel is
+      // still open over it, which is the "this is just a webview" tell the back handler exists for.
+      drawerOpen: () => _drawerOpen,
+      closeDrawer: () => _drawer(false),
     };
     // A reconnect is the moment to drain the queue. 'online' fires on the window; the relay's own
     // reopen is the more reliable signal on mobile (a phone can be "online" with no route), so both.
@@ -448,12 +453,9 @@
     const tags = allTags();
     const total = _lib.notes.size;
 
-    feed.innerHTML = `<div class="nt-wrap${_sel?' nt-open':''}">
+    feed.innerHTML = `<div class="nt-wrap${_sel?' nt-open':''}${_drawerOpen?' nt-drawer':''}">
+      <div class="nt-scrim"></div>
       <aside class="nt-side">
-        <div class="nt-searchwrap">
-          <svg class="ic nt-searchic" aria-hidden="true"><use href="#i-search"></use></svg>
-          <input class="input nt-search" type="search" placeholder="Search notes…" value="${enc(_filter.q)}" autocomplete="off">
-        </div>
         <button class="btn btn-cyan nt-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>New note</button>
         <div class="nt-sec">
           <span>Folders</span>
@@ -479,8 +481,22 @@
       </aside>
       <section class="nt-list" aria-label="Notes">
         <div class="nt-list-head">
-          <b>${enc(folderName(_filter.folder))}</b>
-          <span class="nt-count">${notes.length}</span>
+          <div class="nt-list-top">
+            <!-- Phone only: the folder tree is a drawer, and this is the handle. It doubles as the
+                 heading, so the name of what you are looking at is still the first thing on the row. -->
+            <button class="nt-fbtn" aria-label="Choose a folder" aria-expanded="${_drawerOpen}">
+              <svg class="ic" aria-hidden="true"><use href="#i-folder"></use></svg>
+              <b>${enc(folderName(_filter.folder))}</b>
+              <svg class="ic nt-fbtn-c" aria-hidden="true"><use href="#i-chevron-down"></use></svg>
+            </button>
+            <b class="nt-list-title">${enc(folderName(_filter.folder))}</b>
+            <span class="nt-count">${notes.length}</span>
+            <button class="btn btn-cyan nt-new nt-new-m" title="New note" aria-label="New note"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg></button>
+          </div>
+          <div class="nt-searchwrap">
+            <svg class="ic nt-searchic" aria-hidden="true"><use href="#i-search"></use></svg>
+            <input class="input nt-search" type="search" placeholder="Search notes…" value="${enc(_filter.q)}" autocomplete="off">
+          </div>
         </div>
         ${notes.length ? notes.map(n=>`
           <button class="nt-item${_sel===n.id?' active':''}" data-id="${enc(n.id)}">
@@ -493,7 +509,10 @@
       <section class="nt-editor" aria-label="Editor"></section>
     </div>`;
 
-    $('.nt-new', feed).onclick = () => openNote(blankNote(_filter.folder), true);
+    // Both of them: the sidebar's and the phone toolbar's. $ returns the FIRST match, so wiring
+    // this with $ would leave whichever one the markup happens to emit second doing nothing.
+    $$('.nt-new', feed).forEach(b => b.onclick = () => openNote(blankNote(_filter.folder), true));
+    _wireDrawer(feed);
     $('.nt-import', feed).onclick = openImport;
     $('.nt-export', feed).onclick = exportBackup;
     $('.nt-nuke', feed).onclick = () => deleteEverything(null, true);
@@ -504,11 +523,42 @@
     const s = $('.nt-search', feed);
     let t=null;
     s.oninput = () => { clearTimeout(t); t=setTimeout(()=>{ _filter.q = s.value; renderList(); }, 160); };
-    $$('.nt-folder[data-f]', feed).forEach(b => b.onclick = () => { _filter.folder = b.dataset.f; _filter.tag=''; render(); });
-    $$('.nt-tag', feed).forEach(b => b.onclick = () => { _filter.tag = (_filter.tag===b.dataset.t?'':b.dataset.t); render(); });
-    $$('.nt-item', feed).forEach(b => b.onclick = () => { const n=_lib.notes.get(b.dataset.id); if(n) openNote(n, false); });
+    // Choosing something IS the end of the errand the drawer was opened for — leaving it standing
+    // over the list you just filtered means every pick costs a second tap to see the result.
+    $$('.nt-folder[data-f]', feed).forEach(b => b.onclick = () => { _filter.folder = b.dataset.f; _filter.tag=''; _drawer(false); render(); });
+    $$('.nt-tag', feed).forEach(b => b.onclick = () => { _filter.tag = (_filter.tag===b.dataset.t?'':b.dataset.t); _drawer(false); render(); });
+    $$('.nt-item', feed).forEach(b => b.onclick = () => { _drawer(false); const n=_lib.notes.get(b.dataset.id); if(n) openNote(n, false); });
     if(_sel && _lib.notes.has(_sel)) openNote(_lib.notes.get(_sel), false);
   }
+
+  /* The folder tree, on a phone.
+   * It used to be a pane stacked above the list, capped at 40vh — so the folders took HALF the
+   * screen and the notes got what was left, on the screen whose entire job is showing notes. Above
+   * 820px nothing here applies and the sidebar is a column as before; below it, the same markup
+   * slides in as a drawer over the list, opened from the folder name in the toolbar. One tree, one
+   * set of handlers, two presentations — a second copy for phones is how the two quietly diverge.
+   *
+   * ONE flag owns the state. The class, the backdrop and aria-expanded are all painted FROM
+   * `_drawerOpen` — by _paint when it rebuilds, by _drawer when it doesn't — rather than each being
+   * read back out of the DOM. The version that asked the DOM shipped with `aria-expanded` hardcoded
+   * false in the template, so a repaint with the drawer open already disagreed with itself. */
+  let _drawerOpen = false;
+  function _drawer(open){
+    _drawerOpen = !!open;                 // survives a repaint (a note arriving from another device
+                                          // must not slam the drawer shut mid-scroll)
+    const wrap = document.querySelector('.nt-wrap'); if(!wrap) return;
+    wrap.classList.toggle('nt-drawer', _drawerOpen);
+    const btn = wrap.querySelector('.nt-fbtn'); if(btn) btn.setAttribute('aria-expanded', String(_drawerOpen));
+  }
+  function _wireDrawer(feed){
+    const btn = $('.nt-fbtn', feed);
+    if(btn) btn.onclick = () => _drawer(!_drawerOpen);
+    const sc = $('.nt-scrim', feed);
+    if(sc) sc.onclick = () => _drawer(false);
+  }
+  // Escape closes it, like every other overlay in the app. Registered once, at module scope, rather
+  // than per paint — a handler added on every render is a handler leaked on every render.
+  document.addEventListener('keydown', e => { if(e.key === 'Escape' && _drawerOpen) _drawer(false); });
 
   // Re-render just the list (search typing) so the editor and its caret survive.
   function renderList(){
@@ -551,6 +601,7 @@
   }
   function openNote(n, isNew){
     flushEdit();          // whatever was half-saved belongs to the note we are leaving
+    _imgReset();          // and so does every pending picture load
     _sel = n.id;
     const host = document.querySelector('.nt-editor');
     if(!host) return;
@@ -691,54 +742,168 @@
     return mdToHtml(String(src||''));
   }
 
-  // `pcres:<sha>` links (written by the importer) resolve to a decrypted object URL at view time.
-  // They can't be resolved earlier: the URL is a blob: handle that dies with the page.
-  async function hydrateRes(root, n){
-    const byShaMime = new Map((n.res||[]).map(r => [r.sha, r.mime]));
-    const els = Array.from(root.querySelectorAll('img[src^="pcres:"], a[href^="pcres:"]'));
-    // In PARALLEL. Each one is a fetch plus a decrypt, and a note full of screenshots resolved
-    // serially shows its pictures appearing one at a time over several seconds.
-    await Promise.all(els.map(async el => {
-      const isImg = el.tagName === 'IMG';
-      const sha = (isImg ? el.getAttribute('src') : el.getAttribute('href')).slice(6);
+  /* ---------------------------------------------------------------- attachments in the page
+   * A `pcres:<sha>` reference resolves to a decrypted object URL at VIEW time — it can't be resolved
+   * earlier, because the URL is a blob: handle that dies with the page.
+   *
+   * It is done LAZILY and a few at a time, which is the whole difference between this screen working
+   * and not. Every picture is a full download of the ciphertext plus an AES-GCM decrypt, and an
+   * imported Joplin note is routinely dozens of screenshots: resolving them all on open fired 131
+   * blob fetches inside eleven seconds — most of them for pictures far below the fold — and the note
+   * sat there looking broken until the whole library had come down the wire. Now nothing is fetched
+   * until it is near the viewport, and at most _IMG_CONC are in flight at once, so the picture you
+   * are actually looking at gets the connection.
+   *
+   * The service worker stores these under DRIVE_CACHE (see sw.js), so this is a first-view cost:
+   * open the note again, on this device, and the bytes come from disk with no network at all. */
+  const _IMG_CONC = 4;
+  let _imgQ = [], _imgActive = 0, _imgObs = null;
+  const _imgWatched = new Set();
+  function _imgPump(){
+    while(_imgActive < _IMG_CONC && _imgQ.length){
+      const el = _imgQ.shift();
+      if(!el.isConnected || !el._pcload) continue;   // note closed / re-rendered while it waited
+      _imgActive++;
+      el._pcload().catch(()=>{}).then(()=>{ _imgActive--; _imgPump(); });
+    }
+  }
+  function _imgQueue(el){ _imgQ.push(el); _imgPump(); }
+  /* An IntersectionObserver keeps a strong reference to every target and never reports a DETACHED
+   * one, so a target whose pane was re-rendered is never unobserved and never freed — along with the
+   * closure it carries. And the panes here are replaced constantly: switching notes, toggling
+   * read/edit, the offloaded body arriving, "show more", attaching a file. Rather than hope every
+   * one of those remembers to call a reset (the bug that shape always produces), sweep whatever has
+   * come off the page each time we are about to watch more. */
+  function _imgSweep(){
+    for(const el of _imgWatched){
+      if(el.isConnected) continue;
+      if(_imgObs) _imgObs.unobserve(el);
+      el._pcload = null;
+      _imgWatched.delete(el);
+    }
+  }
+  // Leaving a note is also the moment to drop work queued for it.
+  function _imgReset(){
+    if(_imgObs){ _imgObs.disconnect(); _imgObs = null; }
+    _imgWatched.clear();
+    _imgQ = [];
+  }
+  function _imgObserver(){
+    if(_imgObs || typeof IntersectionObserver === 'undefined') return _imgObs;
+    _imgObs = new IntersectionObserver(ents => {
+      for(const e of ents){
+        if(!e.isIntersecting) continue;
+        _imgObs.unobserve(e.target); _imgWatched.delete(e.target);
+        if(e.target._pcload) _imgQueue(e.target);
+      }
+    // 300px, not the 600px the timeline's video mounter uses: an item here costs a whole encrypted
+    // download plus a decrypt, so preloading two screens ahead is most of the stampede back again.
+    }, { rootMargin: '300px 0px' });
+    return _imgObs;
+  }
+  /* Watch an <img>, and decrypt its blob when it comes near the screen. No IntersectionObserver
+   * (nothing current lacks it, but the whole feature hangs off it) → load immediately, which is
+   * exactly the old behaviour, still bounded by the queue. */
+  function _lazyImg(img, sha, mime, opts){
+    opts = opts || {};
+    img.removeAttribute('src');              // a `pcres:` src is a URL the browser will try, and fail, to fetch
+    img.classList.add('nt-img-lazy');
+    img._pcload = async () => {
+      if(!img.isConnected) return;
       try{
         // The note carries the mime itself, so a picture still renders when the drive index has no
         // entry for the blob (an import interrupted before its index flush) — an object URL typed
         // application/octet-stream does not display in an <img>.
-        const u = await PC.encFileUrl(sha, byShaMime.get(sha));
-        if(isImg){ el.src = u; el.loading = 'lazy'; el.onclick = () => window.open(u, '_blank', 'noopener'); }
-        else { el.href = u; el.target = '_blank'; el.rel = 'noopener'; }
-      }catch(_){
-        if(isImg){ const p=document.createElement('span'); p.className='muted small nt-img-miss';
-          p.textContent = navigator.onLine ? '[image unavailable]' : '[image not downloaded — open this note once while online]';
-          el.replaceWith(p); }
+        const u = await PC.encFileUrl(sha, mime);
+        if(!img.isConnected) return;
+        img.classList.remove('nt-img-lazy', 'nt-img-fail');
+        img.src = u;
+        // A thumbnail lives INSIDE a button that already opens the file: adding a second handler
+        // here would open it twice, once on the image and once on the click that bubbles up.
+        if(opts.click !== false) img.onclick = () => window.open(u, '_blank', 'noopener');
+      }catch(e){
+        if(!img.isConnected) return;
+        /* A failure is TEMPORARY until proven otherwise, and must never destroy the element: this
+         * used to replace the <img> with a permanent "[image unavailable]", so one dropped request
+         * — a near certainty while a hundred of them were in flight at once — looked exactly like a
+         * lost attachment, with no way to ask again short of leaving the note and coming back. */
+        img.classList.remove('nt-img-lazy');
+        img.classList.add('nt-img-fail');
+        img.alt = navigator.onLine ? 'Couldn’t load this image — tap to try again'
+                                   : 'Not downloaded — open this note once while online';
+        img.title = img.alt;
+        const again = (ev) => { if(ev) ev.stopPropagation();      // don't also fire the thumbnail's "open file"
+                                img.classList.remove('nt-img-fail'); img.classList.add('nt-img-lazy');
+                                _imgQueue(img); };
+        img.onclick = again;
+        if(!img.dataset.retried && navigator.onLine){
+          img.dataset.retried = '1';
+          setTimeout(() => { if(img.isConnected && img.classList.contains('nt-img-fail')) again(); }, 1500);
+        }
       }
-    }));
+    };
+    const io = _imgObserver();
+    if(io){ io.observe(img); _imgWatched.add(img); } else _imgQueue(img);
+  }
+  async function hydrateRes(root, n){
+    _imgSweep();
+    const byShaMime = new Map((n.res||[]).map(r => [r.sha, r.mime]));
+    // A LINK resolves on click, never on open. Downloading and decrypting a 40 MB PDF to render the
+    // word it is written on is the same mistake, in miniature, that the images used to make.
+    for(const a of Array.from(root.querySelectorAll('a[href^="pcres:"]'))){
+      const sha = a.getAttribute('href').slice(6);
+      a.removeAttribute('href');             // not a URL any browser can follow
+      a.classList.add('nt-res-link');
+      a.onclick = async (ev) => {
+        ev.preventDefault();
+        try{ window.open(await PC.encFileUrl(sha, byShaMime.get(sha)), '_blank', 'noopener'); }
+        catch(_){ toast(navigator.onLine ? 'couldn’t open that attachment'
+                                         : 'that attachment isn’t downloaded for offline use'); }
+      };
+    }
+    for(const img of Array.from(root.querySelectorAll('img[src^="pcres:"]'))){
+      const sha = img.getAttribute('src').slice(6);
+      _lazyImg(img, sha, byShaMime.get(sha));
+    }
   }
 
-  function renderRes(n, host){
+  /* How many attachments the strip shows before it stops. An imported note routinely carries dozens,
+   * and every thumbnail here is a private download + decrypt — there is no server-side thumbnail for
+   * a blob the server cannot read. Bounding the LIST rather than trusting the strip's own clipping
+   * to keep the observer honest is the difference between "a few" and "all of them": measured at a
+   * desktop width, an unbounded strip pulled 26 of a 30-picture note's attachments on open, none of
+   * which anyone had asked to see. It is also the better strip — thirty thumbnails under a note is
+   * a wall, not an index. */
+  const RES_SHOWN = 12;
+  function renderRes(n, host, showAll){
     const box = $('.nt-res', host); if(!box) return;
+    _imgSweep();
     if(!n.res || !n.res.length){ box.innerHTML=''; return; }
     const isImg = r => /^image\//.test(r.mime || '');
-    box.innerHTML = `<div class="nt-res-head muted small">Attachments</div>` + n.res.map(r=>
+    const all = n.res, shown = showAll ? all : all.slice(0, RES_SHOWN), rest = all.length - shown.length;
+    box.innerHTML = `<div class="nt-res-head muted small">Attachments <i>${all.length}</i></div>` + shown.map(r=>
       isImg(r)
         ? `<button class="nt-res-thumb" data-sha="${enc(r.sha)}" data-mime="${enc(r.mime||'')}" title="${enc(r.name||'')}">
              <img alt="${enc(r.name||'attachment')}" loading="lazy"><span class="muted small">${enc(r.name||r.sha.slice(0,8))}</span></button>`
         : `<button class="nt-res-item" data-sha="${enc(r.sha)}" data-mime="${enc(r.mime||'')}">📎 ${enc(r.name||r.sha.slice(0,8))} <i class="muted small">${((r.size||0)/1024).toFixed(0)} KB</i></button>`
-    ).join('');
+    ).join('') + (rest > 0 ? `<button class="mini nt-res-more">Show ${rest} more</button>` : '');
+    const more = $('.nt-res-more', box);
+    if(more) more.onclick = () => renderRes(n, host, true);
     const open = async (b) => {
       try{ const u = await PC.encFileUrl(b.dataset.sha, b.dataset.mime); window.open(u, '_blank', 'noopener'); }
       catch(e){ toast(navigator.onLine ? 'couldn’t open that attachment' : 'that attachment isn’t downloaded for offline use'); }
     };
     $$('.nt-res-item', box).forEach(b => b.onclick = () => open(b));
     // Thumbnails are decrypted in place: there is no server-side thumbnail for an encrypted blob and
-    // there cannot be — the server can't read the picture. Lazy + parallel so a note with thirty
-    // attachments doesn't decrypt them one after another.
+    // there cannot be — the server can't read the picture. So they go through the SAME lazy queue as
+    // the inline images, and for the same reason: this strip lists EVERY attachment on the note, and
+    // decrypting all of them on open was half of the stampede (the other half being that each blob
+    // was fetched twice over, once here and once inline, until encFileUrl learned to share a fetch
+    // already in flight).
     $$('.nt-res-thumb', box).forEach(b => {
       b.onclick = () => open(b);
-      PC.encFileUrl(b.dataset.sha, b.dataset.mime)
-        .then(u => { const im = b.querySelector('img'); if(im) im.src = u; })
-        .catch(() => b.classList.add('nt-thumb-miss'));
+      const im = b.querySelector('img'); if(!im) return;
+      _lazyImg(im, b.dataset.sha, b.dataset.mime, { click:false });
     });
   }
 
