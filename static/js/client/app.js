@@ -1739,7 +1739,12 @@
       h.replaceWith(el);
     }, true);
   }
-  function logout(){ Session.clear(); try{ localStorage.removeItem('pc_settings_cache'); }catch(_){}   // per-user cache — never leak/save it across identities on a shared install
+  function logout(){
+    // The password vault's decrypted Android snapshot is not part of the session store, so it
+    // survives a logout unless it is asked to go. A handed-down phone would otherwise keep
+    // autofilling the previous user's passwords into every app on it.
+    try{ if(window.PCVault && PCVault.forget) PCVault.forget(); }catch(_){}
+ Session.clear(); try{ localStorage.removeItem('pc_settings_cache'); }catch(_){}   // per-user cache — never leak/save it across identities on a shared install
     try{ fetch('/api/auth/logout',{method:'POST'}); }catch(_){}   // clear the server session cookie too
     Relay.worker.call('clearKey',{}); location.reload(); }
 

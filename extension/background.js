@@ -149,6 +149,13 @@ const dOf = ev => ((ev.tags||[]).find(t => t[0] === 'd') || [])[1] || '';
  * older created_at can never overwrite a newer one that is already held. */
 async function absorb(ev){
   if(!key || !ev || ev.pubkey !== cfg.pubkey) return;   // not ours — a relay may send anything
+  /* VERIFY THE SIGNATURE. Without it a relay can hand us an unsigned event carrying the user's
+   * pubkey, and two things follow: an empty-content one DELETES an entry from the extension's only
+   * local copy (the tombstone branch below, then written to storage), and an old ciphertext
+   * re-stamped with a fresh created_at permanently outranks the genuine current event. That turns
+   * "a relay can show you something stale" into "a relay chooses which of your old passwords you
+   * see", and empties the vault on demand. nostr-tools is already bundled for signing. */
+  try{ if(!NT().verifyEvent(ev)) return; }catch(_){ return; }
   const d = dOf(ev);
   if(!d || d === D_KEY || d.startsWith(D_FOLDER)) return;
   if(!d.startsWith(D_ITEM)) return;
@@ -174,10 +181,26 @@ function saveItemsSoon(){ clearTimeout(_saveT); _saveT = setTimeout(saveItems, 4
  * mode it goes to a local OUTBOX and stays there, visibly, until the app publishes it — which is
  * exactly what "read-only" was chosen to mean, and is said in the UI rather than failing silently. */
 async function saveItem(item){
+  /* MERGE onto what is already there. The save bar can only know a username, a password and the
+   * page it is on — so replacing the stored entry with that wiped the TOTP secret, the notes, the
+   * folder, the tags and every other URI. On an "Update" after rotating a password that is a
+   * one-way loss of the 2FA secret, published to every device in full mode. */
+  const prev = item.id ? items.get(item.id) : null;
+  if(prev){
+    const merged = Object.assign({}, prev, item);
+    merged.uris = [...new Set([...(prev.uris || []), ...(item.uris || [])])];
+    for(const k of ['totp','notes','folder','tags','fields','created','src'])
+      if(prev[k] !== undefined && (item[k] === undefined || item[k] === '' ||
+         (Array.isArray(item[k]) && !item[k].length))) merged[k] = prev[k];
+    item = merged;
+  }
   item.id = item.id || randomId();
   item.updated = Math.floor(Date.now()/1000);
   if(!item.created) item.created = item.updated;
   item.kind = item.kind || 'login';
+  // Stamp it, or `cur._at || 0` makes ANY incoming event newer and the next sync silently reverts
+  // the password that was just saved — while the new one sits invisibly in the outbox.
+  item._at = item.updated;
   items.set(item.id, item);
   await saveItems();
   if(cfg.mode === 'full' && cfg.sk){
@@ -312,8 +335,15 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
            * alone put it into a cross-origin frame's DOM, where the embedder's own JS reads it
            * straight off the input. The credential is released only to a frame the item actually
            * matches, by the same rule the app uses. */
+          /* EXACT ONLY. `matchLevel` also returns 'domain' for a shared registrable domain — and
+           * `baseDomain` has no notion of shared-hosting suffixes, so `victim.github.io` and
+           * `evil.github.io` reduce to the same site. Accepting 'domain' here meant a page on a
+           * sibling subdomain of a hosting provider could be handed the password. The header of
+           * content.js already states the rule this now implements: a domain match is offered in
+           * the list for a human to choose, never released to a frame automatically. */
           const from = (sender && sender.url) || '';
-          if(!V.matchLevel(it, from)) return reply({ ok:false, error:'this frame is not that site' });
+          if(V.matchLevel(it, from) !== 'exact')
+            return reply({ ok:false, error:'this frame is not that site' });
           const totp = it.totp ? await code(it.totp) : '';
           return reply({ ok:true, username: it.username || '', password: it.password || '', totp });
         }

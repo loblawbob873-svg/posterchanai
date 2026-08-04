@@ -60,6 +60,18 @@ public class PosterChanAutofillService extends AutofillService {
     private static final String TAG = "PosterChanAutofill";
     private static final int MAX_DATASETS = 8;
 
+    /* Packages whose getWebDomain() means what it says. A native app can set that field to anything;
+     * a browser is the only caller for which it is the address bar. An allowlist is coarse — a
+     * browser not listed here simply gets no autofill, which is a missing convenience — and the
+     * alternative is handing bank credentials to whatever app asks for them. */
+    private static final java.util.Set<String> BROWSERS = new java.util.HashSet<>(java.util.Arrays.asList(
+            "com.android.chrome", "com.chrome.beta", "com.chrome.dev", "com.chrome.canary",
+            "org.mozilla.firefox", "org.mozilla.firefox_beta", "org.mozilla.fenix",
+            "org.mozilla.focus", "com.microsoft.emmx", "com.brave.browser",
+            "com.opera.browser", "com.opera.mini.native", "com.duckduckgo.mobile.android",
+            "com.vivaldi.browser", "com.sec.android.app.sbrowser", "com.kiwibrowser.browser",
+            "org.chromium.chrome", "com.android.browser"));
+
     @Override
     public void onFillRequest(@NonNull FillRequest request, @NonNull CancellationSignal cancellationSignal,
                               @NonNull FillCallback callback) {
@@ -76,6 +88,18 @@ public class PosterChanAutofillService extends AutofillService {
             }
             if (parsed.password == null && parsed.username == null) { callback.onSuccess(null); return; }
 
+            /* ONLY A BROWSER MAY CLAIM TO BE A WEBSITE. ViewStructure.setWebDomain() is public API,
+             * so any installed app can describe a virtual node as "chase.com" and be handed the
+             * real Chase credential, rendered exactly like a legitimate match. Removing the
+             * reversed-package guess closed the long way round to that; this is the short one.
+             * Without a verified browser on the other end there is nothing here we can trust, and
+             * offering nothing is the correct answer. */
+            String pkg = packageOf(request);
+            if (!parsed.webDomain.isEmpty() && !BROWSERS.contains(pkg)) {
+                Log.i(TAG, "ignoring a webDomain claimed by " + pkg);
+                callback.onSuccess(null);
+                return;
+            }
             List<JSONObject> matches = match(VaultStore.get(this), parsed.webDomain);
             if (matches.isEmpty()) { callback.onSuccess(null); return; }
 
@@ -124,6 +148,15 @@ public class PosterChanAutofillService extends AutofillService {
         if (p.password != null && !pass.isEmpty()) { b.setValue(p.password, AutofillValue.forText(pass)); any = true; }
         if (!any) return null;
         try { return b.build(); } catch (Throwable t) { return null; }
+    }
+
+    /** Which app is asking. */
+    private static String packageOf(FillRequest request) {
+        try {
+            AssistStructure s = request.getFillContexts()
+                    .get(request.getFillContexts().size() - 1).getStructure();
+            return String.valueOf(s.getActivityComponent().getPackageName());
+        } catch (Throwable t) { return ""; }
     }
 
     /** The saved credentials for this screen, best first: exact host, then same registrable domain. */

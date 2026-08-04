@@ -47,7 +47,9 @@ const self = {
 globalThis.self = self;
 const opened = [];   // which cache a branch reaches for -- that IS the routing decision for reads
 const stored = [];   // and what it actually PUT there, which is the decision that outlives the tab
+const CACHES_FAIL = %s;
 globalThis.caches = { open: async (name) => { opened.push(name);
+                        if (CACHES_FAIL) throw new DOMException('The operation failed for an operation-specific reason', 'UnknownError');
                         return { match: async () => undefined,
                                  put: async (rq) => { stored.push([name, rq && rq.url]); },
                                  keys: async () => [], delete: async () => {} }; },
@@ -77,9 +79,15 @@ else {
     respondWith: () => { intercepted = true; },
     waitUntil: () => {},
   };
+  let served = 'none';
+  const realRespond = e.respondWith;
+  e.respondWith = (p) => { intercepted = true;
+    Promise.resolve(p).then(r => { served = (r && r.status === 200) ? 'ok'
+                                          : (r && r.body !== undefined) ? 'response' : 'other'; },
+                            () => { served = 'REJECTED'; }); };
   try { handler(e); } catch (err) { console.log(JSON.stringify({error: String(err)})); }
   // A put happens several awaits after the handler returns, so let the microtasks drain first.
-  setTimeout(() => console.log(JSON.stringify({ intercepted, opened, stored })), 30);
+  setTimeout(() => console.log(JSON.stringify({ intercepted, opened, stored, served })), 30);
 }
 """
 
@@ -92,11 +100,13 @@ CIPHERTEXT = {"status": 200, "content-type": "application/octet-stream", "conten
 JSON_BODY = {"status": 200, "content-type": "application/json", "content-length": "512"}
 
 
-def _run(sw_url, url, destination, mode="no-cors", res=None):
+def _run(sw_url, url, destination, mode="no-cors", res=None, caches_fail=False):
     with open(SW, encoding="utf-8") as fh:
         src = fh.read()
+    # ORDER MATTERS and follows the template, not the signature: PAGE, REQ, CACHES_FAIL, RES, src.
     js = HARNESS % (json.dumps(sw_url),
                     json.dumps({"url": url, "destination": destination, "mode": mode}),
+                    "true" if caches_fail else "false",
                     json.dumps(res or OPAQUE),
                     src)
     out = subprocess.run([shutil.which("node") or "node", "-e", js],
@@ -214,6 +224,24 @@ class EncryptedDriveBlobs(unittest.TestCase):
 
     def test_the_ciphertext_is_what_gets_kept(self):
         self.assertEqual(_stored_in(WEB_SW, OWN_BLOB, "", CIPHERTEXT), "pc-drive-v1")
+
+    def test_a_broken_cache_still_serves_the_file(self):
+        """THE invariant, and the one this broke. caches.open()/match() sat outside any try, so once
+        the origin's storage came under pressure — which caching gigabytes of attachments is exactly
+        how you produce — the rejection escaped respondWith() and EVERY attachment failed. It reached
+        the user as "could not open attachment: operation failed for an operation-specific reason",
+        i.e. a storage error dressed up as a missing file.
+
+        A cache is an optimisation. Anything it does wrong must cost speed, never the file."""
+        got = _run(WEB_SW, OWN_BLOB, "", res=CIPHERTEXT, caches_fail=True)
+        self.assertTrue(got["intercepted"])
+        self.assertNotEqual(got["served"], "REJECTED",
+                            "a storage failure must not fail the read — it must fall through to the network")
+        self.assertFalse(got["stored"], "nothing can be stored when the cache is unavailable")
+
+    def test_a_broken_cache_does_not_break_images_either(self):
+        got = _run(WEB_SW, OWN_IMAGE, "image", caches_fail=True)
+        self.assertNotEqual(got["served"], "REJECTED")
 
     def test_a_json_listing_is_never_frozen(self):
         """`/blossom/list/<pubkey>` is a LIVE listing of the whole drive, and its path ends in 64 hex

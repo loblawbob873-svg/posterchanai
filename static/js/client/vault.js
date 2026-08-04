@@ -71,6 +71,8 @@
       isUnlocked: () => !!_key,
       // Settings → Privacy owns the switch; this module owns what it means.
       stayUnlocked, setStayUnlocked,
+      // Logout calls this: the decrypted autofill snapshot must not outlive the session.
+      forget: () => { try{ localStorage.removeItem(_lsRaw()); }catch(_){ } return _clearAndroid(); },
       // Android: push the decrypted set into the autofill service's own store. No-op elsewhere.
       syncAndroid: () => _syncAndroid(),
       // The phone folder drawer is an overlay, so hardware Back has to close it before it walks the
@@ -125,8 +127,13 @@
   function setStayUnlocked(on){
     try{
       localStorage.setItem(STAY_KEY, on ? '1' : '0');
-      if(!on) localStorage.removeItem(_lsRaw());
-      else if(_key) localStorage.setItem(_lsRaw(), V().toB64(_key));
+      if(!on){
+        localStorage.removeItem(_lsRaw());
+        // …and the AUTOFILL snapshot, which is a decrypted copy sitting in the same device's
+        // storage. Turning this off and leaving that behind would make the setting's own
+        // description untrue.
+        _clearAndroid();
+      } else if(_key){ localStorage.setItem(_lsRaw(), V().toB64(_key)); _syncAndroid(); }
     }catch(_){ }
   }
 
@@ -351,12 +358,18 @@
   async function _repairUrisOnce(){
     const broken = [];
     for(const it of _lib.items.values()){
-      const uris = V().itemUris(it);
-      if(!uris.some(u => (V().hostOf(u) || '').includes(','))) continue;
+      // Rules are preserved: itemUris() is a lossy projection, and writing its result back would
+      // turn every `never` on a repaired entry into an ordinary match. Split URIs inherit the rule
+      // of the URI they came from, which is the only defensible reading of a value that was never
+      // meant to be one string.
+      const rules = V().itemUriRules(it);
+      if(!rules.some(r => (V().hostOf(r.uri) || '').includes(','))) continue;
+      const uris = rules.map(r => r.uri);
       const fixed = [];
-      for(const u of uris){
-        if((V().hostOf(u) || '').includes(',')) fixed.push(...V().splitUris(u));
-        else fixed.push(u);
+      for(const r of rules){
+        if((V().hostOf(r.uri) || '').includes(','))
+          for(const u of V().splitUris(r.uri)) fixed.push(r.match ? { uri:u, match:r.match } : u);
+        else fixed.push(r.match ? { uri:r.uri, match:r.match } : r.uri);
       }
       // Only a change that actually gains something counts — never rewrite an entry for nothing.
       if(fixed.length > uris.length){ it.uris = fixed; broken.push(it); }
@@ -467,6 +480,16 @@
    *
    * Fire-and-forget: the plugin is absent in every browser, and a vault that refused to open
    * because it couldn't talk to Android would be a worse bug than no autofill. */
+  /* Wipe the autofill service's copy. Called on logout and when the device is told not to stay
+   * unlocked — without it, a shared or handed-down phone keeps offering the previous user's
+   * passwords in every other app, indefinitely, with nothing on screen to say so. */
+  async function _clearAndroid(){
+    try{
+      const plug = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.VaultAutofill;
+      if(plug && plug.clear) await plug.clear();
+    }catch(_){ }
+  }
+
   async function _syncAndroid(){
     try{
       const Cap = window.Capacitor;
@@ -485,12 +508,19 @@
            * Android autofilled exactly the place the user had excluded. A `regex` rule is excluded
            * too: it is a pattern, not an address, and hostOf() of one produces a nonsense host
            * (`bank\.example\.com` → `bank`) that would match some unrelated machine on a LAN. */
+          /* Android compares strings, so a rule it cannot express must not be flattened into one
+           * it can. `never` and `regex` contribute nothing at all. `exact`/`startsWith`/`host` are
+           * host-only: they may match their own host but must NOT widen to the registrable domain,
+           * or an entry restricted to one page is offered across the whole site and every subdomain
+           * — honoured on the desktop and quietly ignored on the phone. */
           const rules = V().itemUriRules(i).filter(r => r.match !== 'never' && r.match !== 'regex');
           const uris = rules.map(r => r.uri);
           const hosts = uris.map(u => V().hostOf(u)).filter(Boolean);
+          const wide = rules.filter(r => !r.match || r.match === 'domain')
+                            .map(r => V().hostOf(r.uri)).filter(Boolean);
           return { id:i.id, title:i.title||'', username:i.username||'', password:i.password||'',
                    totp:i.totp||'', uris, hosts,
-                   domains: Array.from(new Set(hosts.map(h => V().baseDomain(h)).filter(Boolean))) };
+                   domains: Array.from(new Set(wide.map(h => V().baseDomain(h)).filter(Boolean))) };
         });
       await plug.put({ items: JSON.stringify(items) });
       return true;

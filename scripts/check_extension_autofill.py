@@ -17,6 +17,11 @@ There were three causes, and none of them is visible in a unit test:
   * `place()` called hideAll() whenever the remembered field stopped being measurable, and a login
     screen re-renders: the app's own nsec box lives inside a <details>, with no <form> around it.
 
+Driven over CDP with REAL mouse input, not synthetic events: the content script refuses anything
+whose `isTrusted` is false, because a page can otherwise dispatch its own PointerEvent at the badge
+and drive the entire fill flow with no human involved. A harness that could exercise it with
+synthetic events would be testing something other than what ships.
+
 So this drives the actual client page in a headless browser with the real content script injected
 and the extension APIs stubbed: focus the nsec field, click the badge, wait longer than every timer
 involved, and require the panel to still be there — then click an entry and require the value to
@@ -24,6 +29,7 @@ land in the field.
 
 Exit 0 = clean, 1 = regressions, 2 = could not run (no Chrome).
 """
+import asyncio
 import json
 import os
 import re
@@ -31,6 +37,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.request
+
+PORT = 9483
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXT = os.path.join(ROOT, "extension")
@@ -69,6 +78,13 @@ OTP_PAGE = r"""<!doctype html><meta charset="utf-8"><body>
 
 OTP_DRIVE = r"""
 (async () => {
+const wantClick = async (sel) => {
+  window.__clickWanted = sel;
+  for(let i=0;i<60 && window.__clickWanted;i++) await new Promise(r=>setTimeout(r,80));
+  await new Promise(r=>setTimeout(r,250));
+};
+const finish = (o) => { window.__result = o; window.__clickWanted = '__done'; };
+
   const wait = (ms) => new Promise(r => setTimeout(r, ms));
   const out = {};
   const open = async (field) => {
@@ -77,8 +93,7 @@ OTP_DRIVE = r"""
     await wait(200);
     const badge = document.querySelector('.pcpw-badge');
     if(!badge || badge.style.display !== 'block') return null;
-    badge.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
-    await wait(400);
+    await wantClick('.pcpw-badge');
     return document.querySelector('.pcpw-item');
   };
 
@@ -87,20 +102,27 @@ OTP_DRIVE = r"""
   let item = await open(document.querySelector('#code1'));
   out.badgeOnCodeField = !!item;
   out.offersCode = !!(item && /fill the code/i.test(item.textContent));
-  if(item){ item.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true })); await wait(350); }
+  if(item) await wantClick('.pcpw-item');
   out.singleFilled = document.querySelector('#code1').value;
 
   // 2. The six-box shape: one digit per input, not the whole code in the first.
   item = await open(document.querySelector('#six .d'));
-  if(item){ item.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true })); await wait(350); }
+  if(item) await wantClick('.pcpw-item');
   out.boxes = [...document.querySelectorAll('#six .d')].map(i => i.value).join('');
   out.errors = window.__errors;
-  document.title = 'RESULT' + JSON.stringify(out);
+  finish(out);
 })();
 """
 
 DRIVE = r"""
 (async () => {
+const wantClick = async (sel) => {
+  window.__clickWanted = sel;
+  for(let i=0;i<60 && window.__clickWanted;i++) await new Promise(r=>setTimeout(r,80));
+  await new Promise(r=>setTimeout(r,250));
+};
+const finish = (o) => { window.__result = o; window.__clickWanted = '__done'; };
+
   const wait = (ms) => new Promise(r => setTimeout(r, ms));
   const out = {};
   // The gate ships hidden and the app reveals it on load; there is no app JS here, so do it.
@@ -108,7 +130,7 @@ DRIVE = r"""
   if(gate) gate.classList.remove('hidden');
   const field = document.querySelector('#nsec-input');
   out.foundField = !!field;
-  if(!field){ document.title = 'RESULT' + JSON.stringify(out); return; }
+  if(!field){ finish(out); return; }
 
   // The field lives inside a <details>; open it the way a user would.
   const det = document.querySelector('#auth-key');
@@ -119,13 +141,13 @@ DRIVE = r"""
 
   const badge = document.querySelector('.pcpw-badge');
   out.badgeShown = !!(badge && badge.style.display === 'block');
-  if(!badge){ document.title = 'RESULT' + JSON.stringify(out); return; }
+  if(!badge){ finish(out); return; }
 
   // THE RACE: a blur lands (the page moves focus, the details re-lays out) and the user clicks the
   // badge immediately after. The old build scheduled a hide here and honoured it.
-  field.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
-  badge.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
-  await wait(120);
+  // A real mouse press on the badge already produces the blur this race needs; dispatching a
+  // synthetic focusout as well fired the hide path twice and is not what a user does.
+  await wantClick('.pcpw-badge');
   const panel = document.querySelector('.pcpw-panel');
   out.panelOpenedAt120 = !!(panel && panel.style.display === 'block');
 
@@ -141,40 +163,111 @@ DRIVE = r"""
   await wait(250);
   out.survivesRerender = !!(panel && panel.style.display === 'block');
 
-  const item = document.querySelector('.pcpw-item');
-  if(item){
-    item.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
-    await wait(400);
-  }
+  if(document.querySelector('.pcpw-item')) await wantClick('.pcpw-item');
   const now = document.querySelector('#nsec-input');
   out.filled = !!(now && now.value === 'nsec1filledbytheextension');
   out.closedAfterFill = !!(panel && panel.style.display !== 'block');
   out.errors = window.__errors;
-  document.title = 'RESULT' + JSON.stringify(out);
+  finish(out);
 })();
 """
 
 
-def _run_page(chrome, html, drive, content_js, content_css):
-    """Render one page with the real content script injected; return what it reported."""
+async def _run_page_cdp(chrome, html, drive, content_js, content_css):
+    """Render one page with the real content script injected, driving it with REAL input.
+
+    CDP rather than --dump-dom, because the content script refuses events whose `isTrusted` is
+    false — a page can otherwise dispatch its own PointerEvent at the badge and drive the whole
+    fill flow with no human involved. Synthetic events cannot exercise it, and weakening the guard
+    to suit the harness would be testing something other than what ships. Input.dispatchMouseEvent
+    produces the real thing.
+    """
+    import websockets
     html = html.replace("</body>",
                         f"<style>{content_css}</style>\n"
                         f"<script>{STUBS}</script>\n"
                         f"<script>{content_js}</script>\n"
                         f"<script>{drive}</script>\n</body>")
     d = tempfile.mkdtemp()
-    page = os.path.join(d, "page.html")
+    page_file = os.path.join(d, "page.html")
+    with open(page_file, "w", encoding="utf-8") as fh:
+        fh.write(html)
+    proc = subprocess.Popen(
+        [chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
+         f"--remote-debugging-port={PORT}", f"--user-data-dir={d}/prof",
+         "--window-size=1100,900", "about:blank"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        with open(page, "w", encoding="utf-8") as fh:
-            fh.write(html)
-        p = subprocess.run(
-            [chrome, "--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=6000",
-             f"--user-data-dir={d}/prof", "--dump-dom", "file://" + page],
-            capture_output=True, text=True, timeout=120)
-        m = re.search(r"RESULT(\{.*?\})</title>", p.stdout, re.S)
-        return json.loads(m.group(1)) if m else None
+        target = None
+        for _ in range(60):
+            try:
+                tabs = json.load(urllib.request.urlopen(f"http://127.0.0.1:{PORT}/json/list"))
+                target = [t for t in tabs if t["type"] == "page"][0]
+                break
+            except Exception:
+                await asyncio.sleep(0.5)
+        if not target:
+            return None
+        async with websockets.connect(target["webSocketDebuggerUrl"], max_size=64 * 1024 * 1024) as ws:
+            n = [0]
+
+            async def call(method, params=None):
+                n[0] += 1
+                await ws.send(json.dumps({"id": n[0], "method": method, "params": params or {}}))
+                while True:
+                    msg = json.loads(await ws.recv())
+                    if msg.get("id") == n[0]:
+                        return msg.get("result")
+
+            await call("Runtime.enable")
+            await call("Page.enable")
+            await call("Page.navigate", {"url": "file://" + page_file})
+            await asyncio.sleep(1.0)
+
+            # A real click, at real coordinates, on whatever selector the page asks for next.
+            async def pump():
+                for _ in range(80):
+                    r = await call("Runtime.evaluate",
+                                   {"expression": "window.__clickWanted || ''", "returnByValue": True})
+                    sel = (r.get("result") or {}).get("value") or ""
+                    if sel == "__done":
+                        break
+                    if sel:
+                        box = await call("Runtime.evaluate", {"returnByValue": True, "expression": f"""
+                            (() => {{ const el = document.querySelector({json.dumps(sel)});
+                                      if(!el) return null; const r = el.getBoundingClientRect();
+                                      return {{x: r.x + r.width/2, y: r.y + r.height/2}}; }})()"""})
+                        pt = (box.get("result") or {}).get("value")
+                        if pt:
+                            # A move first, then press with `buttons` set: Chrome will not synthesise
+                            # a pointerdown from a press that never had the pointer over the target.
+                            await call("Input.dispatchMouseEvent",
+                                       {"type": "mouseMoved", "x": pt["x"], "y": pt["y"],
+                                        "buttons": 0, "pointerType": "mouse"})
+                            await call("Input.dispatchMouseEvent",
+                                       {"type": "mousePressed", "x": pt["x"], "y": pt["y"],
+                                        "button": "left", "buttons": 1, "clickCount": 1,
+                                        "pointerType": "mouse"})
+                            await call("Input.dispatchMouseEvent",
+                                       {"type": "mouseReleased", "x": pt["x"], "y": pt["y"],
+                                        "button": "left", "buttons": 0, "clickCount": 1,
+                                        "pointerType": "mouse"})
+                        await call("Runtime.evaluate", {"expression": "window.__clickWanted = ''"})
+                    await asyncio.sleep(0.15)
+
+            await pump()
+            r = await call("Runtime.evaluate",
+                           {"expression": "window.__result ? JSON.stringify(window.__result) : ''",
+                            "returnByValue": True})
+            val = (r.get("result") or {}).get("value") or ""
+            return json.loads(val) if val else None
     finally:
+        proc.terminate()
         shutil.rmtree(d, ignore_errors=True)
+
+
+def _run_page(chrome, html, drive, content_js, content_css):
+    return asyncio.run(_run_page_cdp(chrome, html, drive, content_js, content_css))
 
 
 def main():
@@ -198,28 +291,10 @@ def main():
     with open(os.path.join(EXT, "content.css"), encoding="utf-8") as fh:
         content_css = fh.read()
 
-    html = html.replace("</body>",
-                        f"<style>{content_css}</style>\n"
-                        f"<script>{STUBS}</script>\n"
-                        f"<script>{content_js}</script>\n"
-                        f"<script>{DRIVE}</script>\n</body>")
-
-    d = tempfile.mkdtemp()
-    page = os.path.join(d, "login.html")
-    with open(page, "w", encoding="utf-8") as fh:
-        fh.write(html)
-    try:
-        p = subprocess.run(
-            [chrome, "--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=6000",
-             f"--user-data-dir={d}/prof", "--dump-dom", "file://" + page],
-            capture_output=True, text=True, timeout=120)
-        m = re.search(r"RESULT(\{.*?\})</title>", p.stdout, re.S)
-        if not m:
-            print("SKIP  the page never reported")
-            return 2
-        got = json.loads(m.group(1))
-    finally:
-        shutil.rmtree(d, ignore_errors=True)
+    got = _run_page(chrome, html, DRIVE, content_js, content_css)
+    if got is None:
+        print("SKIP  the login page never reported")
+        return 2
 
     otp = _run_page(chrome, OTP_PAGE, OTP_DRIVE, content_js, content_css)
     print("autofill:", json.dumps(got))

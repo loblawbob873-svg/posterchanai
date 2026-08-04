@@ -79,9 +79,15 @@
     const hay = (el.name||'') + ' ' + (el.id||'') + ' ' + ac + ' ' + (el.placeholder||'') + ' ' +
                 (el.getAttribute('aria-label')||'') + ' ' + (el.className||'');
     if(OTP_HINT.test(hay)) return true;
+    /* The shape rule, and it has to be an actual signal. `/^[\d\s*]*$/.test(el.pattern || '')`
+     * matched the EMPTY string, which is what an input with no pattern reflects — so `numeric` was
+     * true for essentially every field and the rule collapsed to "maxlength 1, or 4-8". A CVV, a
+     * ZIP, a PIN, a coupon code and a short username all became one-time-code boxes; worse, after a
+     * normal password fill the live TOTP was written into the first one found in the same form. */
     const len = parseInt(el.getAttribute('maxlength') || '0', 10);
+    const pat = (el.pattern || '').trim();
     const numeric = (el.inputMode || '').toLowerCase() === 'numeric' || el.type === 'tel' ||
-                    el.type === 'number' || /^[\d\s*]*$/.test(el.pattern || '');
+                    el.type === 'number' || (!!pat && /^[\^]?[\[\\]?\\?d/.test(pat));
     return numeric && (len === 1 || (len >= 4 && len <= 8));
   }
 
@@ -94,10 +100,19 @@
    * exactly like the feature being broken. */
   function otpGroupFor(el){
     if(!el) return [];
-    const scope = el.form || el.closest('div,section,fieldset,form') || document;
-    const all = Array.from(scope.querySelectorAll(OTP_TYPES)).filter(visible).filter(isOtpField);
-    const singles = all.filter(x => parseInt(x.getAttribute('maxlength') || '0', 10) === 1);
-    return (singles.length >= 4 && singles.includes(el)) ? singles : [el];
+    /* WALK UP until a scope actually holds the group. Taking the first ancestor was wrong for the
+     * markup this exists to handle: six-box code entry almost always wraps EACH input in its own
+     * div, so `closest('div')` returns a scope containing exactly one — and only the box under the
+     * cursor got filled, which is the symptom this function was written to fix. */
+    let node = el.parentElement, hops = 0;
+    while(node && hops++ < 6){
+      const singles = Array.from(node.querySelectorAll(OTP_TYPES)).filter(visible).filter(isOtpField)
+        .filter(x => parseInt(x.getAttribute('maxlength') || '0', 10) === 1);
+      if(singles.length >= 4 && singles.includes(el)) return singles;
+      if(node === el.form) break;
+      node = node.parentElement;
+    }
+    return [el];
   }
 
   /* Put a code in. One box, or spread a digit per box. */
@@ -140,6 +155,10 @@
       // pointerdown, not mousedown: on a touch screen mousedown is synthesised late (or not at all
       // before the tap is treated as a scroll), which is half of why this felt unreliable on a phone.
       badge.addEventListener('pointerdown', (e) => {
+        // isTrusted: a page can dispatch its own PointerEvent at our badge and drive the whole flow
+        // — open the panel, click the entry, read the filled value out of its own input — with no
+        // human involved. Only the browser can set this flag.
+        if(!e.isTrusted) return;
         e.preventDefault(); e.stopPropagation(); cancelHide(); togglePanel();
       });
       document.documentElement.appendChild(badge);
@@ -224,6 +243,7 @@
        </button>`).join('');
     panel.querySelectorAll('.pcpw-item').forEach(b => {
       b.addEventListener('pointerdown', async (e) => {
+        if(!e.isTrusted) return;                 // see the badge handler
         e.preventDefault(); e.stopPropagation(); cancelHide();
         if(codeMode) await fillCode(b.dataset.id); else await fill(b.dataset.id);
         closePanel();
@@ -348,6 +368,7 @@
     if(!res || res.known) return;
     const rotating = !!res.rotating;
     const same = res.id ? [{ id: res.id }] : [];
+    document.querySelectorAll('.pcpw-savebar').forEach(b => b.remove());   // never stack two
     const bar = document.createElement('div');
     bar.className = 'pcpw-savebar';
     bar.innerHTML = `<span>${rotating ? 'Update this password in PosterChan?'
@@ -357,12 +378,14 @@
     const close = () => bar.remove();
     bar.querySelector('.pcpw-no').onclick = close;
     bar.querySelector('.pcpw-yes').onclick = async () => {
-      const r = await B.runtime.sendMessage({ type:'save', item: {
+      let r = null;
+      try{ r = await B.runtime.sendMessage({ type:'save', item: {
         id: rotating ? same[0].id : undefined,     // update in place, never a second copy
         kind:'login', title: location.hostname.replace(/^www\./,''),
         username: cred.username, password: cred.password,
-        uris: [location.origin], totp:'', notes:'', tags:[], folder:'' } });
-      bar.innerHTML = `<span>${r && r.queued
+        uris: [location.origin] } }); }
+      catch(_){ r = null; }
+      bar.innerHTML = `<span>${!r ? 'Couldn’t reach PosterChan — nothing was saved.' : r.queued
         ? 'Saved here — it will sync when you next open the PosterChan app.'
         : 'Saved.'}</span><button class="pcpw-no">OK</button>`;
       bar.querySelector('.pcpw-no').onclick = close;

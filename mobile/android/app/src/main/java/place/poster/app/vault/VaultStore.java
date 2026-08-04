@@ -86,7 +86,9 @@ public final class VaultStore {
             prefs(ctx).edit().putString(KEY_BLOB, Base64.encodeToString(out, Base64.NO_WRAP)).apply();
             return true;
         } catch (Throwable t) {
+            // Same reasoning as get(): a broken key must not be kept, or every future write fails.
             Log.w(TAG, "could not store the vault snapshot", t);
+            reset(ctx);
             return false;
         }
     }
@@ -106,17 +108,28 @@ public final class VaultStore {
             return new String(pt, StandardCharsets.UTF_8);
         } catch (Throwable t) {
             // A Keystore key can be invalidated (device credential removed, app restored to another
-            // device). That is not an error to shout about — it means "no snapshot", and the app
-            // rewrites one the next time it opens. Clear the unreadable blob so it is not retried
-            // forever.
-            Log.i(TAG, "vault snapshot unreadable — clearing (" + t.getClass().getSimpleName() + ")");
-            clear(ctx);
+            // device). Clearing only the BLOB is not enough: an invalidated alias still EXISTS, so
+            // key() keeps returning it and both put() and get() throw forever — autofill silently
+            // dead, put() returning false on every vault change, and no way back short of clearing
+            // app data. Drop the alias too, so the next key() mints a fresh one.
+            Log.i(TAG, "vault snapshot unreadable — resetting (" + t.getClass().getSimpleName() + ")");
+            reset(ctx);
             return "";
         }
     }
 
     public static synchronized void clear(Context ctx) {
         prefs(ctx).edit().remove(KEY_BLOB).apply();
+    }
+
+    /** Drop the stored snapshot AND the key that sealed it, so the next write starts clean. */
+    public static synchronized void reset(Context ctx) {
+        clear(ctx);
+        try {
+            KeyStore ks = KeyStore.getInstance("AndroidKeyStore");
+            ks.load(null);
+            ks.deleteEntry(ALIAS);
+        } catch (Throwable ignored) {}
     }
 
     /** True where the platform can host an AutofillService at all (API 26+). */

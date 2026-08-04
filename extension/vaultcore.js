@@ -379,7 +379,13 @@
         default: {
           const h = hostOf(u);
           if (!h) continue;
-          if (h === host) return 'exact';
+          /* A credential saved for https:// is NOT for http://. On a hostile network the attacker
+           * serves the plaintext version of a site and this would have filled the real password
+           * into it — the host matches, and nothing else was being compared. Downgrading to
+           * 'domain' rather than refusing outright keeps a genuinely http-only site (a LAN box, a
+           * router) usable: it is still offered, but it is never the silent answer. */
+          const secure = /^https:/i.test(u), pageSecure = /^https:/i.test(page);
+          if (h === host) { if (secure && !pageSecure) { best = 'domain'; continue; } return 'exact'; }
           if (baseDomain(h) && baseDomain(h) === baseDomain(host)) best = 'domain';
         }
       }

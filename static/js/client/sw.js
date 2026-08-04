@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v757';
+const CACHE = 'pc-nostr-v758';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -18,7 +18,10 @@ const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly po
 // library is the thing the app promises is readable offline ("open this note once while online").
 const DRIVE_CACHE = 'pc-drive-v1';
 const DRIVE_MAX = 6000;                   // entry cap; the shared byte budget below is the real limit
-const DRIVE_MAX_BYTES = 96 * 1024 * 1024; // don't store a single huge attachment — it still streams fine
+const DRIVE_MAX_BYTES = 8 * 1024 * 1024;  // per blob. 96 MB was far too generous: a few large
+                                          // attachments exhaust the origin's storage quota, and it
+                                          // is the many SMALL ones that make reopening a note fast.
+                                          // A bigger file still loads, just from the network.
 const SHARE_CACHE = 'pc-share-v1';        // temporary stash for a file/text shared IN via the OS share sheet
 const MEDIA_MAX = 10000;                  // high entry cap (Cache.keys() is insertion-ordered → evict oldest);
                                           // the configurable BYTE budget below is the real limit. Pairs with
@@ -173,9 +176,14 @@ function networkFirst(req){
 // fetch + store. Bounded so it can't blow the mobile storage quota, and never caches partial/streamed
 // video (206) or a big video the user is streaming — only whole, small, actually-fetched clips.
 async function cacheFirstMedia(req){
-  const cache = await caches.open(MEDIA_CACHE);
-  const hit = await cache.match(req);
-  if (hit) return hit;
+  // Guarded for the same reason as cacheFirstBlob: a storage failure here would take every avatar
+  // and image on the page down with it, and a cache is never allowed to do that.
+  let cache = null;
+  try {
+    cache = await caches.open(MEDIA_CACHE);
+    const hit = await cache.match(req);
+    if (hit) return hit;
+  } catch (_) { cache = null; }
   let res;
   // Cross-origin images (fediverse avatars + custom emoji, other instances' media) come back OPAQUE via the
   // <img>'s default no-cors mode → status 0 → the guard below refuses to cache them, so they re-download on
@@ -195,7 +203,7 @@ async function cacheFirstMedia(req){
     // ONLY cache a trusted 200 (same-origin / CORS). An opaque cross-origin response has status 0 — we
     // can't tell success from an error page, so caching it risks poisoning the avatar permanently. Skip
     // it; the browser's HTTP cache still handles repeat loads of the same avatar URL.
-    const cacheable = res.status === 200 && (!isVideo || (len > 0 && len <= VIDEO_MAX_BYTES));
+    const cacheable = cache && res.status === 200 && (!isVideo || (len > 0 && len <= VIDEO_MAX_BYTES));
     if (cacheable) { await cache.put(req, res.clone()); trimCache(cache, MEDIA_MAX, 'media'); }
   } catch (_) {}   // quota exceeded / uncacheable → just serve it uncached
   return res;
@@ -221,13 +229,18 @@ const _trimAt = {};
 async function trimCache(cache, max, key){
   const now = Date.now();
   if (now - (_trimAt[key] || 0) < 20000) return;
+  // The byte budget below is ORIGIN-WIDE (storage.estimate), so watching 4 GB of timeline video
+  // would otherwise make the next note attachment evict the note library — the opposite of why the
+  // two caches are separate. The drive answers to its entry cap and its per-blob cap; only the
+  // media cache trims on the shared byte budget.
+  const byBytes = key === 'media';
   _trimAt[key] = now;
   const keys = await cache.keys();
   for (let i = 0; i < keys.length - max; i++) cache.delete(keys[i]);   // count cap: evict oldest first
   // Byte cap (configurable): persist() stops the browser evicting under pressure, so bound total storage
   // ourselves. estimate() is origin-wide (a fine proxy); over budget → drop the oldest ~10%.
   try {
-    if (navigator.storage && navigator.storage.estimate){
+    if (byBytes && navigator.storage && navigator.storage.estimate){
       const budget = await mediaBudgetBytes();
       const { usage } = await navigator.storage.estimate();
       if (usage && usage > budget){
@@ -259,11 +272,25 @@ function isDriveBlob(url, req){
     && req.mode !== 'navigate' && req.destination !== 'image' && req.destination !== 'video';
 }
 async function cacheFirstBlob(req){
-  const cache = await caches.open(DRIVE_CACHE);
-  const hit = await cache.match(req);
-  if (hit) return hit;
+  /* THE CACHE MAY NEVER BREAK A READ. This is the invariant, and it was violated: caches.open() and
+   * cache.match() sat outside any try, so once the origin's storage came under pressure — which is
+   * exactly what caching gigabytes of attachments produces — their rejection propagated out of
+   * respondWith() and every drive blob failed. Reported as "why images no load, why no attachments
+   * load in notes" and "could not open attachment: operation failed for an operation-specific
+   * reason", which is a storage error, surfaced as though the file were gone.
+   *
+   * A cache is an optimisation. Anything it does wrong must cost speed, never the file. Every
+   * interaction with it is now guarded, and each failure falls through to the network. */
+  let cache = null;
+  try {
+    cache = await caches.open(DRIVE_CACHE);
+    const hit = await cache.match(req);
+    if (hit) return hit;
+  } catch (_) { cache = null; }          // storage unavailable/full: go to the network, uncached
+
   let res;
   try { res = await fetch(req); } catch (_) { return Response.error(); }
+  if (!cache) return res;                // nothing to store into; hand the page its bytes
 
   const len = +(res.headers.get('content-length') || 0);
   // Ciphertext, and ONLY ciphertext. A 64-hex tail is not proof on its own: `/blossom/list/<pubkey>`
@@ -291,12 +318,13 @@ async function cacheFirstBlob(req){
   let buf;
   try { buf = await res.arrayBuffer(); } catch (_) { return Response.error(); }
   const headers = new Headers(res.headers);
+  const out = new Response(buf, { status: 200, headers });   // built FIRST — the page's copy is safe
   try {
     cache.put(req, new Response(buf, { status: 200, headers }))
       .then(() => trimCache(cache, DRIVE_MAX, 'drive'))
       .catch(() => {});      // out of quota: the page already has its bytes
   } catch (_) {}
-  return new Response(buf, { status: 200, headers });
+  return out;
 }
 
 // Web Share Target (POST): another app shared a file/text INTO us via the OS share sheet. The browser
