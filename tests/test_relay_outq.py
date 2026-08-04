@@ -102,6 +102,7 @@ def test_send_classifies_frames():
     srv = RelayServer.__new__(RelayServer)      # no store/gate needed for the queue path
     q = _OutQ(16)
     srv._outq = {"conn": q}
+    srv._conn_ips = {}      # __new__ skips __init__, and the first drop logs the connection's IP
     for i in range(16):
         srv._send("conn", ["EVENT", "s1", {"id": f"{i:064x}"}])
     srv._send("conn", ["EVENT", "s1", {"id": "late"}])   # droppable: queue stays as it was

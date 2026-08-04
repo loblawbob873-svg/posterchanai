@@ -45,6 +45,10 @@ Assertions, each corresponding to a way this specific screen breaks on a phone:
                        a picture that failed to load was replaced by a text placeholder. The element
                        is destroyed, so one dropped request out of a hundred in flight is
                        indistinguishable from a lost attachment and nothing can ask again.
+  queue-wedged         a STALLED read (a fetch that never settles, which is what a dropped socket
+                       actually gives you — not a rejection) held its slot forever. Four of those
+                       and no picture in any note loads again for the rest of the session, with
+                       nothing on screen to say why.
   attachments-eat-the-note
                        the attachment strip crushed the note's own text. It is a wrapping flex row
                        whose automatic minimum size is its content, so thirty thumbnails claimed
@@ -96,6 +100,7 @@ window.__events = [];        // what "the relay" accepted
 window.__online = true;      // flip to false to simulate offline
 window.__encCalls = [];      // every attachment decrypt the client asked for
 window.__encFail = false;    // true → every decrypt fails (a dropped request)
+window.__encHang = 0;        // >0 → that many reads never settle at all (a stalled socket)
 let _seq = 0;
 
 window.Store = {
@@ -142,6 +147,9 @@ window.__PC = {
   encFileUrl: async (sha) => {
     window.__encCalls.push(sha);
     if(window.__encFail) throw new Error('blob HTTP 502');
+    // A STALLED read: a promise that never settles, which is what a dropped socket actually gives
+    // you — not a rejection. The first __encHang calls hang forever.
+    if(window.__encHang > 0){ window.__encHang--; return new Promise(() => {}); }
     // A picture with REAL dimensions, not a 1x1 pixel: a loaded image that collapses to 3px pulls
     // the next thirty up into view, so every one of them loads and the lazy path looks broken when
     // it is the test's own placeholder that is wrong.
@@ -341,6 +349,27 @@ IMAGE_RETRY = _PIC_NOTE + r"""
   const recovered = Array.from(document.querySelectorAll('.nt-render img'))
     .filter(i => (i.getAttribute('src')||'').startsWith('data:')).length;
   return { failed, survived, tombstones, recovered };
+})()"""
+
+# A STALLED read must not wedge the queue. encFileUrl is a bare fetch(), and a fetch that stalls
+# never settles — it does not reject, so nothing downstream ever runs. With a fixed number of slots
+# and no timer, four stalls means no picture in any note ever loads again for the rest of the
+# session, silently. Hangs exactly as many reads as the queue is wide, then waits out the slot
+# release and checks that work resumed. Slow on purpose (~23s); run at one width.
+STALLED_QUEUE = _PIC_NOTE + r"""
+  const item = picNote(); if(!item) return {error:'the picture-heavy note is not in the list'};
+  const loaded = () => Array.from(document.querySelectorAll('.nt-render img, .nt-res-thumb img'))
+    .filter(i => (i.getAttribute('src')||'').startsWith('data:')).length;
+  window.__encHang = 4;                 // every slot, held open forever
+  window.__encCalls = [];
+  item.click();
+  await new Promise(r => setTimeout(r, 1200));
+  const early = loaded();
+  await new Promise(r => setTimeout(r, 21000));   // the slot release is at 20s
+  const pane = document.querySelector('.nt-render');
+  if(pane) pane.scrollTop = pane.scrollHeight;
+  await new Promise(r => setTimeout(r, 1500));
+  return { early, later: loaded(), calls: new Set(window.__encCalls).size };
 })()"""
 
 # The offline write. Types into the open editor with publishing failing, waits out the 700ms
@@ -608,6 +637,18 @@ async def drive(url):
                     if not ir["recovered"]:
                         problems.append((label, "image-failure-permanent",
                                          "no image recovered after the network came back"))
+
+                # A stalled read must not take the queue with it. One width only — it waits out a
+                # 20s timer, and the answer cannot differ by viewport.
+                if label == "390px":
+                    sq = await js(STALLED_QUEUE, awaited=True)
+                    if not sq or sq.get("error"):
+                        problems.append((label, "queue-wedged",
+                                         f"could not run the stall test ({(sq or {}).get('error')})"))
+                    elif not sq["later"]:
+                        problems.append((label, "queue-wedged",
+                                         f"{sq['calls']} reads stalled and nothing loaded afterwards — "
+                                         "a dead socket takes every picture in every note with it"))
 
                 # And the one that isn't about layout at all.
                 w3 = await js(OFFLINE_WRITE, awaited=True)

@@ -757,6 +757,15 @@
    * The service worker stores these under DRIVE_CACHE (see sw.js), so this is a first-view cost:
    * open the note again, on this device, and the bytes come from disk with no network at all. */
   const _IMG_CONC = 4;
+  /* A slot is a turn at the front of the queue, NOT a promise to wait forever. encFileUrl is a bare
+   * fetch(), and a fetch that stalls — a dropped connection the OS hasn't given up on, a proxy
+   * holding the socket — never settles at all. Four of those and the queue is wedged for the rest of
+   * the session: no picture in any note ever loads again, with nothing on screen to say why, which
+   * is precisely the symptom this whole change exists to fix. So the slot is released on a timer and
+   * the download is left to finish in the background — released, not cancelled, because a genuinely
+   * slow 25 MB attachment on a phone is not a stall and must still arrive. The load itself has the
+   * outer bound below. (Same rule as the importer: nothing here may wait forever.) */
+  const _IMG_SLOT_MS = 20000;
   let _imgQ = [], _imgActive = 0, _imgObs = null;
   const _imgWatched = new Set();
   function _imgPump(){
@@ -764,7 +773,10 @@
       const el = _imgQ.shift();
       if(!el.isConnected || !el._pcload) continue;   // note closed / re-rendered while it waited
       _imgActive++;
-      el._pcload().catch(()=>{}).then(()=>{ _imgActive--; _imgPump(); });
+      let freed = false;
+      const free = () => { if(freed) return; freed = true; clearTimeout(t); _imgActive--; _imgPump(); };
+      const t = setTimeout(free, _IMG_SLOT_MS);
+      el._pcload().catch(()=>{}).then(free);
     }
   }
   function _imgQueue(el){ _imgQ.push(el); _imgPump(); }
@@ -814,7 +826,11 @@
         // The note carries the mime itself, so a picture still renders when the drive index has no
         // entry for the blob (an import interrupted before its index flush) — an object URL typed
         // application/octet-stream does not display in an <img>.
-        const u = await PC.encFileUrl(sha, mime);
+        // Bounded, for the reason spelled out at _IMG_SLOT_MS: a stalled fetch never settles, and an
+        // image that hangs forever leaves a shimmering box with no way to ask again. Three minutes
+        // is the importer's number, and generous for the largest attachment on a slow link; past it
+        // this becomes an ordinary failure, which is to say a retryable one.
+        const u = await _withTimeout(PC.encFileUrl(sha, mime), 180000, 'that picture');
         if(!img.isConnected) return;
         img.classList.remove('nt-img-lazy', 'nt-img-fail');
         img.src = u;
@@ -854,12 +870,19 @@
       const sha = a.getAttribute('href').slice(6);
       a.removeAttribute('href');             // not a URL any browser can follow
       a.classList.add('nt-res-link');
-      a.onclick = async (ev) => {
+      // An <a> with no href is not focusable and not reachable by keyboard, so it has to say what it
+      // now is. Losing the href is the price of resolving on click; losing the tab stop needn't be.
+      a.setAttribute('role', 'button');
+      a.tabIndex = 0;
+      const open = async (ev) => {
         ev.preventDefault();
-        try{ window.open(await PC.encFileUrl(sha, byShaMime.get(sha)), '_blank', 'noopener'); }
+        try{ window.open(await _withTimeout(PC.encFileUrl(sha, byShaMime.get(sha)), 180000, 'that file'),
+                         '_blank', 'noopener'); }
         catch(_){ toast(navigator.onLine ? 'couldn’t open that attachment'
                                          : 'that attachment isn’t downloaded for offline use'); }
       };
+      a.onclick = open;
+      a.onkeydown = (ev) => { if(ev.key === 'Enter' || ev.key === ' ') open(ev); };
     }
     for(const img of Array.from(root.querySelectorAll('img[src^="pcres:"]'))){
       const sha = img.getAttribute('src').slice(6);
