@@ -26,25 +26,29 @@
    * key. Injected at document_start so a site that looks for a signer immediately finds one, and
    * injected INLINE — a `src` pointing at the extension publishes our per-install UUID to every page
    * on the web (see inject.js). */
-  /* …and NOT when the manifest already put inject.js in the page's world. The Chrome build registers
-   * it with `"world": "MAIN"`, so doing this as well is a second, redundant provider — and where a
-   * page (or an extension page) has a strict CSP the attempt is REFUSED and logged:
+  /* …unless the provider is ALREADY THERE. The Chrome build registers inject.js with
+   * `"world": "MAIN"`, so it installs itself and this would be a second, redundant copy — and on a
+   * page with a strict CSP the attempt is refused and logged, which reads as a bug in the extension.
    *
-   *   Executing inline script violates the following Content Security Policy directive
-   *   'script-src 'self' 'wasm-unsafe-eval' …'
+   * The check is the RESULT, not the manifest. An earlier version asked the manifest whether MAIN was
+   * declared and skipped on that basis: a manifest saying so is not evidence the script ran, and if
+   * anything stopped it there was then no fallback left — the inline path had been the thing quietly
+   * making it work. The provider marks the documentElement when it installs (see inject.js), which is
+   * the one signal both worlds can see, so this injects only when nothing answered.
    *
-   * which is alarming, points at nothing, and was reported as a bug in Chrome pairing. The manifest
-   * is readable from here, so ask it rather than guessing at the browser. */
-  const _mainWorld = (() => {
-    try{ return ((B.runtime.getManifest() || {}).content_scripts || [])
-                  .some(cs => cs && cs.world === 'MAIN'); }catch(_){ return false; }
-  })();
-  if(!_mainWorld) try{
-    const el = document.createElement('script');
-    el.textContent = '(' + __pcNostrProvider + ')();';
-    (document.head || document.documentElement).appendChild(el);
-    el.remove();          // it has already run; the node is only litter from here
-  }catch(_){ }
+   * Deferred a turn: both content scripts run at document_start and the order between worlds is not
+   * guaranteed, so checking synchronously would race the very thing it is testing for. */
+  const _installProvider = () => {
+    try{
+      if(document.documentElement && document.documentElement.hasAttribute('data-pc-nostr')) return;
+      if(typeof __pcNostrProvider === 'undefined') return;   // MAIN-world build: not in this world
+      const el = document.createElement('script');
+      el.textContent = '(' + __pcNostrProvider + ')();';
+      (document.head || document.documentElement).appendChild(el);
+      el.remove();          // it has already run; the node is only litter from here
+    }catch(_){ }
+  };
+  setTimeout(_installProvider, 0);
 
   window.addEventListener('message', async (e) => {
     if(e.source !== window) return;

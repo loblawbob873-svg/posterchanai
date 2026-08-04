@@ -110,7 +110,13 @@ def test_the_inline_injection_is_skipped_where_the_manifest_does_it():
     Alarming, points at nothing, and got reported as a Chrome pairing failure. content.js reads its
     own manifest rather than sniffing the browser."""
     src = _read("content.js")
-    assert "getManifest()" in src and "cs.world === 'MAIN'" in src, \
-        "content.js still injects inline unconditionally; on Chrome that is a redundant provider and a CSP error"
-    i = src.index("_mainWorld")
-    assert "if(!_mainWorld)" in src[i:i + 900], "the inline injection is not actually gated"
+    inj = _read("inject.js")
+    # Gated on the RESULT, not on the manifest. A manifest declaring `world: MAIN` is not evidence the
+    # script ran, and gating on it removed the fallback that had been quietly doing the work. The
+    # provider marks the documentElement when it installs — the one signal both worlds can see.
+    assert "data-pc-nostr" in inj, "the provider does not mark the DOM, so nothing can detect it"
+    assert "hasAttribute('data-pc-nostr')" in src, \
+        "content.js does not check whether a provider is already installed before injecting one"
+    assert "setTimeout(_installProvider" in src, \
+        "the check must be deferred a turn — both content scripts run at document_start and the order "\
+        "between worlds is not guaranteed"

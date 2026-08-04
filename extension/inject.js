@@ -68,6 +68,11 @@ var __pcNostrProvider = function () {
   } catch (_) {
     window.nostr = nostr;
   }
+  /* A MARKER IN THE DOM, which is the one thing both worlds can see. content.js runs in the isolated
+   * world and cannot read this window's `nostr`, so without this it has no way to know whether the
+   * provider actually got installed — only whether the manifest SAYS it should have, which is not the
+   * same claim. It falls back to the inline injection when this attribute is missing. */
+  try { document.documentElement.setAttribute('data-pc-nostr', '1'); } catch (_) {}
 };
 
 /* SELF-RUN IN THE PAGE'S WORLD.
