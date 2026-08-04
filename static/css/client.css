@@ -2877,6 +2877,14 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .fx-grid-eff:hover,.fx-grid-eff:focus-within{-webkit-mask-image:none;mask-image:none}
 .fx-guide{line-height:1.45}
 .fx-guide code{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:13px}
+/* The action row under a chat result. Up to eight buttons — Send the Reply, Convert to MP3, Post,
+   Save to Blossom, Save to Notes, Meme Builder, Download, Copy link — and it used to carry its
+   layout as an inline style on two separate template literals, so a change had to be made twice or
+   the two rows silently diverged. Here, once, and it wraps with a width floor per button: a plain
+   flex row squeezes eight labels into slivers on a phone. */
+.fx-reply-row{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
+.fx-reply-row>*{flex:1 1 auto;min-width:136px;justify-content:center;white-space:nowrap}
+@media (max-width:460px){ .fx-reply-row>*{min-width:calc(50% - 4px)} }
 .fx-reply-row .ai-reply-fx{min-height:42px;font-weight:700}
 /* Section header + inline hint + optional-add rows. */
 .fx-sec{font-size:13px;font-weight:700;color:var(--cyan);margin:12px 0 4px}

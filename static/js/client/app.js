@@ -14558,11 +14558,13 @@
       const cfx=e.target.closest('.ai-copy-fx'); if(cfx){ e.preventDefault(); copyEffectUrl(cfx.dataset.mid, cfx); return; }   // upload + copy the public Blossom URL
       const sfx=e.target.closest('.ai-save-fx'); if(sfx){ e.preventDefault(); saveEffectToBlossom(sfx.dataset.mid, sfx); return; }   // keep generated media on the user's Blossom drive
       const dfx=e.target.closest('.ai-dl-fx'); if(dfx){ e.preventDefault(); downloadEffectMedia(dfx.dataset.mid, dfx); return; }     // save the bytes to the device
+      const nfx=e.target.closest('.ai-note-fx'); if(nfx){ e.preventDefault(); notesFromEffectMedia(nfx.dataset.mid, nfx); return; }  // the bytes → the private notebook
       const mfx=e.target.closest('.ai-mp3-fx'); if(mfx){ e.preventDefault(); convertEffectToMp3(mfx.dataset.mid, mfx); return; }     // branded MP4 → MP3 via `extractaudio`
       const cpf=e.target.closest('.ai-copyfile'); if(cpf){ e.preventDefault(); copyFileUrl(cpf.dataset.url, cpf); return; }   // inline /api/files/ media → re-upload + copy public URL
       const rpf=e.target.closest('.ai-replyfile'); if(rpf){ e.preventDefault(); replyFileUrl(rpf.dataset.url, rpf); return; }
       const ppf=e.target.closest('.ai-postfile'); if(ppf){ e.preventDefault(); postFileUrl(ppf.dataset.url, ppf); return; }     // share generated media → new Nostr post
       const svf=e.target.closest('.ai-savefile'); if(svf){ e.preventDefault(); saveFileToBlossom(svf.dataset.url, svf); return; }   // artifact → Blossom drive
+      const ntf=e.target.closest('.ai-notefile'); if(ntf){ e.preventDefault(); notesFromFileUrl(ntf.dataset.url, ntf); return; }     // artifact → the private notebook
       const dlf=e.target.closest('.ai-dlfile'); if(dlf){ e.preventDefault(); downloadFileUrl(dlf.dataset.url, dlf); return; }       // artifact → device
       const m3f=e.target.closest('.ai-mp3file'); if(m3f){ e.preventDefault(); mp3FromFileUrl(m3f.dataset.url, m3f); return; }       // branded MP4 → MP3
       const mbf=e.target.closest('.ai-memefile'); if(mbf){ e.preventDefault(); memeBuildFile(mbf.dataset.url, mbf, mbf.dataset.kind); return; }   // keep editing the result in the Meme Builder
@@ -15838,6 +15840,7 @@
     const post=`<button class="btn btn-neon small ai-postfile" data-url="${enc(u)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Post</button>`;
     const save=`<button class="btn btn-cyan small ai-savefile" data-url="${enc(u)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save to Blossom</button>`;
     const dl=`<button class="btn btn-cyan small ai-dlfile" data-url="${enc(u)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</button>`;
+    const nt=`<button class="btn btn-cyan small ai-notefile" data-url="${enc(u)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-note"></use></svg>Save to Notes</button>`;
     // 🎵 only where there IS an audio track. This row renders from the PERSISTED markdown, which
     // carries no payload fields — so the distinction rides in the label the server writes:
     // `!video[song]` for musicgeni/narrate, `!video[video]` for a silent videogeni clip.
@@ -15849,7 +15852,7 @@
     // layers as well as images, which is what makes this worth having for effects at all.
     // Not offered for audio — addMedia only seeds image/video layers.
     const mb=(kind==='audio')?'':`<button class="btn btn-cyan small ai-memefile" data-url="${enc(u)}" data-kind="${enc(kind||'image')}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>Meme Builder</button>`;
-    return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${mp3}${post}${save}${mb}${dl}${copy}</div>`;
+    return `<div class="fx-reply-row">${reply}${mp3}${post}${save}${nt}${mb}${dl}${copy}</div>`;
   }
   // Set an action button's LABEL without eating its sprite icon. These buttons show progress
   // ('saving…', '✓ copied') and then restore themselves, and every one of them did it with
@@ -15869,6 +15872,58 @@
   }
   // Download an artifact to the device. The URL is AUTHED, so an <a download> pointing at it would
   // 401 — fetch with credentials, then click an object URL of the bytes.
+  /* Any generated file → a private note.
+   *
+   * ONE helper for both action rows. There are two rows because a result arrives either as an
+   * /api/files/ artifact or as a base64 payload, and every button has had to be added to both — the
+   * "no Meme Builder after geni" bug was exactly that, one row getting a button the other did not.
+   *
+   * The bytes are ENCRYPTED into the notebook, not linked: an /api/files/ artifact is temporary and
+   * needs this session's cookie, so a note pointing at one is a broken image by tomorrow and on
+   * every other device. A Notes attachment survives both, because it IS the note.
+   */
+  async function saveFileToNotes(file, title, btn){
+    if(!window.PCNotes || !window.PCNotes.save){ toast('Notes is not loaded'); return; }
+    if(btn){ btn.disabled=true; _btnText(btn,'saving…'); }
+    try{
+      const r=await window.PCNotes.save({ title: title || 'Saved from PosterChan AI',
+                                          body: '', tags:['saved-ai'], files:[file] });
+      toast(r.queued ? '📓 saved to Notes — will sync when you are back online' : '📓 saved to Notes');
+      if(btn){ _btnText(btn,'✓ in Notes'); btn.disabled=false; }
+    }catch(e){
+      toast('could not save to Notes: '+((e&&e.message)||'error'));
+      if(btn){ btn.disabled=false; _btnText(btn,'Save to Notes'); }
+    }
+  }
+  // An artifact lives behind the session cookie, so it has to be fetched before it can be a note.
+  async function notesFromFileUrl(u, btn){
+    if(btn){ btn.disabled=true; _btnText(btn,'fetching…'); }
+    try{
+      const blob=await fetch(u, { credentials:'include' }).then(r=>{ if(!r.ok) throw new Error('fetch '+r.status); return r.blob(); });
+      const ext=((u.split(/[?#]/)[0].split('.').pop())||'bin').toLowerCase();
+      const name='posterchan-'+Date.now()+'.'+ext;
+      await saveFileToNotes(new File([blob], name, { type: blob.type || 'application/octet-stream' }),
+                            'PosterChan AI — '+name, btn);
+    }catch(e){
+      toast('could not save to Notes: '+((e&&e.message)||e));
+      if(btn){ btn.disabled=false; _btnText(btn,'Save to Notes'); }
+    }
+  }
+  // A base64 payload is already here; no fetch, just bytes.
+  async function notesFromEffectMedia(mid, btn){
+    const m=_ai.fxMedia && _ai.fxMedia[mid];
+    if(!m){ toast('that result is no longer in this conversation'); return; }
+    try{
+      const bin = m.b64 ? Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0))
+                        : new Uint8Array(await fetch(m.url, { credentials:'include' }).then(r=>r.arrayBuffer()));
+      const name='posterchan-'+Date.now()+'.'+(m.ext||'bin');
+      await saveFileToNotes(new File([bin], name, { type:m.mime||'application/octet-stream' }),
+                            'PosterChan AI — '+name, btn);
+    }catch(e){
+      toast('could not save to Notes: '+((e&&e.message)||e));
+      if(btn){ btn.disabled=false; _btnText(btn,'Save to Notes'); }
+    }
+  }
   async function downloadFileUrl(u, btn){
     if(btn){ btn.disabled=true; _btnText(btn,'downloading…'); }
     try{
@@ -15992,13 +16047,14 @@
     const copy=`<button class="btn btn-cyan small ai-copy-fx" data-mid="${mid}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy link</button>`;
     const post=`<button class="btn btn-neon small ai-post-fx" data-mid="${mid}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Post</button>`;
     const save=`<button class="btn btn-cyan small ai-save-fx" data-mid="${mid}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save to Blossom</button>`;
+    const nt=`<button class="btn btn-cyan small ai-note-fx" data-mid="${mid}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-note"></use></svg>Save to Notes</button>`;
     // Same "keep working on the result" button the ARTIFACT row (_aiFileActions) has carried all along.
     // It was missing here, which is the whole of "no Meme Builder after geni": a generated image arrives
     // as a base64 PAYLOAD and never becomes an /api/files/ artifact, so it only ever renders this row.
     // Not for audio — addMedia only seeds image/video layers.
     const mb=/^audio\//i.test(mime||'')?'':`<button class="btn btn-cyan small ai-meme-fx" data-mid="${mid}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>Meme Builder</button>`;
     const reply=_ai.replyTo?`<button class="btn btn-cyan small ai-reply-fx" data-mid="${mid}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg>Send the Reply</button>`:'';
-    return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${mp3}${post}${save}${mb}${dl}${copy}</div>`;
+    return `<div class="fx-reply-row">${reply}${mp3}${post}${save}${nt}${mb}${dl}${copy}</div>`;
   }
   // ⬇ Save the bytes to the device. Chat media is base64 in the message, so build a Blob and click an
   // object URL — NOT an <a href="data:…">, which Chrome blocks past a few MB (a 3-minute song or a
