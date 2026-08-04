@@ -49,13 +49,23 @@ def test_only_same_origin_paths_survive(raw, want):
     assert _safe_next(raw) == want
 
 
-def test_admin_sends_a_logged_out_visitor_to_sign_in_carrying_the_destination():
+def test_admin_no_longer_refuses_a_logged_out_visitor():
+    """SUPERSEDED, deliberately. /admin used to redirect an anonymous visitor to /client?next=/admin,
+    which fixed the dead end but kept the page itself as the thing being authorised — and that is
+    exactly what made the panel impossible in a bundled app: the framed page can only be authorised by
+    a cookie, and a bundled app's cookie is cross-site (SameSite=None → Secure → HTTPS), so against a
+    .onion there was no way in at all.
+
+    The page now arrives unauthenticated and is handed a bearer token by the client, so it MUST render
+    for a visitor with no session. A human who lands here without one is not abandoned: the page's own
+    gate shows a sign-in message with a link carrying the same ?next= (see admin-auth.js), which is
+    more informative than the silent redirect it replaces. The `next` plumbing below is unchanged and
+    still used by that link and by /login."""
     r = asyncio.run(admin_page(request=None, db=None, current_user=None))
-    loc = r.headers["location"]
-    assert loc.startswith("/client"), (
-        f"/admin sent a logged-out visitor to {loc!r}; /login only redirects to /client again, so that "
-        "is two hops to the timeline with no sign-in prompt and no way back")
-    assert "next=%2Fadmin" in loc, f"the destination was dropped: {loc!r}"
+    assert "location" not in r.headers, (
+        "/admin redirected an anonymous visitor; the framed panel then never loads, so it can never "
+        "receive the token that authorises it")
+    assert getattr(r, "status_code", 200) == 200
 
 
 def test_login_keeps_where_you_were_going():

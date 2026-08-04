@@ -1043,21 +1043,29 @@ async def admin_page(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_optional)
 ):
-    if not current_user:
-        # Straight to the sign-in surface, CARRYING the destination. This used to redirect to /login,
-        # which redirects to /client, which dropped the request on the floor: two hops to end up on the
-        # timeline with no hint that a sign-in was wanted or where you had been headed.
-        #
-        # It reads as "admin is broken over Tor" because a .onion is a SEPARATE ORIGIN — the cookie from
-        # the clearnet host is never sent to it, so every visit there is logged-out and hits this path,
-        # while on the domain you already hold a session and never see it. Same for a new browser, a
-        # second device, or cleared cookies.
-        return RedirectResponse(url="/client?next=%2Fadmin", status_code=302)
-    if not current_user.is_admin:
+    """The admin panel SHELL. It holds no data — every value in it is fetched from /api/admin/* by
+    admin.js — so it is served without a session, and the credentials are checked on those calls.
+
+    That inversion is the point. The panel is framed by the Nostr client, an iframe's document load
+    carries only COOKIES, and in a bundled app that cookie is cross-site: SameSite=None, which needs
+    Secure, which needs HTTPS. Against a .onion (plain HTTP by design) no cookie can ever be sent, so
+    as long as the PAGE was the thing being authorised, the panel could not work there at all — /admin
+    saw no session, redirected to the client, and the app rendered the website in the admin pane.
+
+    Now the page arrives unauthenticated and the CLIENT hands it a bearer token over postMessage
+    (static/js/admin-auth.js), which is scheme-agnostic. A visitor with no token and no cookie gets the
+    same skeleton and a "sign in" message from the page itself — the fields are empty, because they are
+    filled by requests that 401.
+
+    A browser visit with a real session still renders exactly as before; the non-admin redirect is kept
+    so a signed-in non-admin is not left staring at a panel they cannot use.
+    """
+    if current_user and not current_user.is_admin:
         return RedirectResponse(url="/", status_code=302)
+    # No `user` in the context on purpose: nothing renders it any more, and leaving it available is an
+    # invitation to put an identity back into a page that is now served to anyone.
     resp = templates.TemplateResponse("admin.html", {
         "request": request,
-        "user": current_user,
         "cache_bust": int(datetime.now().timestamp())
     })
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"

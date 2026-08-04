@@ -93,10 +93,11 @@
     </div>
 </div>
 
-<script>
-// Set isAdmin flag for JavaScript
-window.isAdmin = {{ 'true' if user.is_admin else 'false' }};
-</script>
+<!-- FIRST: installs the fetch wrapper that authenticates this page, before anything can call an API.
+     It also removes the last server-rendered value from this template (a `window.isAdmin` flag that
+     nothing has read in a long time), which is what lets /admin be served without a session at all —
+     see static/js/admin-auth.js. -->
+<script src="/static/js/admin-auth.js?v={{ cache_bust }}"></script>
 <script src="/static/js/admin.js?v={{ cache_bust }}"></script>
 <script src="/static/js/admin-bots.js?v={{ cache_bust }}"></script>
 <script src="/static/js/admin-emoji.js?v={{ cache_bust }}"></script>

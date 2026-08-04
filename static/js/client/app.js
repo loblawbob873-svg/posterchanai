@@ -14697,7 +14697,10 @@
   // Kept in MEMORY only, deliberately: persisting it would leave a working 30-day credential for the
   // previous identity in localStorage on a shared install, and it buys nothing — ensureAiSession() mints
   // one on demand, which is why the authed callers already await it (news.js, settings, budget).
-  function _setAiToken(t){ _aiToken = t || ''; try{ window.__PC_TOKEN__ = _aiToken; }catch(_){} }
+  function _setAiToken(t){ _aiToken = t || ''; try{ window.__PC_TOKEN__ = _aiToken; }catch(_){}
+    // The admin frame may already be loaded and waiting (it is preloaded hidden), so push rather than
+    // making it poll — its own request for one may have arrived before we had anything to give.
+    try{ _sendAdminToken(); }catch(_){} }
   async function ensureAiSession(){
     if(_aiAuth) return _aiAuth;
     if(_aiAuthP) return _aiAuthP;   // dedupe concurrent callers (e.g. the 2.5s warm + a click) → one sign(), one login
@@ -14720,6 +14723,35 @@
   // The iframe is shown only after it has loaded (opacity 0→1 on onload, spinner until then), so you
   // never see a blank/half-rendered frame. Preloaded at startup (see _preloadAdmin) so the first
   // open from home/global is instant instead of timeline→spinner→blank-iframe→content (the flicker).
+  /* Handing the admin panel its credential.
+   *
+   * The panel is a page from the instance, framed here. An iframe's DOCUMENT load carries only cookies,
+   * so as long as the page was what got authorised, the panel needed a cookie — and in a bundled app
+   * that cookie is cross-site (SameSite=None → Secure → HTTPS only), so against a .onion, which is
+   * plain HTTP by design, no cookie could ever reach it. The panel simply could not work there.
+   *
+   * So the page asks US for the token instead, over postMessage. Nothing is in the URL, so no secret
+   * lands in history, a Referer or a log; the reply goes to the frame's EXACT origin, which we know
+   * because we built its src. Scheme-agnostic, so an onion instance works like any other.
+   */
+  let _adminFrameEl=null, _adminBridge=false;
+  function _adminOrigin(){
+    try{ return new URL(_adminFrameEl.src, location.href).origin; }catch(_){ return ''; }
+  }
+  function _sendAdminToken(){
+    if(!_adminFrameEl || !_aiToken) return;
+    const o=_adminOrigin(); if(!o) return;
+    try{ _adminFrameEl.contentWindow.postMessage({ type:'pc-admin-token', token:_aiToken }, o); }catch(_){ }
+  }
+  function _bindAdminTokenBridge(){
+    if(_adminBridge) return; _adminBridge=true;
+    window.addEventListener('message', e=>{
+      if(!_adminFrameEl || e.source!==_adminFrameEl.contentWindow) return;
+      if(!e.data || e.data.type!=='pc-admin-hello') return;
+      // It may have loaded before we had a token; _setAiToken pushes it when one arrives.
+      _sendAdminToken();
+    });
+  }
   function _ensureAdminHost(){
     let host=document.getElementById('admin-host');
     if(!host){
@@ -14731,27 +14763,26 @@
       // /admin sets no X-Frame-Options so framing is allowed). PWA: __PC_API_BASE__ undefined → plain '/admin'.
       const ifr=document.createElement('iframe'); ifr.className='admin-frame'; ifr.src=(window.__PC_API_BASE__||'')+'/admin?t='+Date.now(); ifr.title='Admin'; ifr.style.opacity='0';
       ifr.addEventListener('load', ()=>{ ifr.dataset.loaded='1'; ifr.style.opacity='1'; const sp=host.querySelector('.spinner'); if(sp) sp.remove(); });
+      _adminFrameEl=ifr;
+      _bindAdminTokenBridge();
       host.appendChild(ifr);
       (document.querySelector('.main')||document.body).appendChild(host);
     }
     return host;
   }
-  function _preloadAdmin(){ _ensureAdminHost(); }   // load /admin hidden so the first open is instant
-  /* The admin panel is an IFRAME of the instance's own /admin page, and an iframe document load can
-   * only carry COOKIES — the Authorization bearer the bundled fetch shim attaches applies to XHR and
-   * nothing else. In a bundled app that cookie is CROSS-SITE, so it needs SameSite=None, which browsers
-   * accept only with Secure, which is only sent over HTTPS.
-   *
-   * Against a plain-HTTP instance (a .onion — hidden services are http by design — or a LAN box) there
-   * is therefore no way for the app to hold that session, and the panel would show the instance's
-   * TIMELINE instead: /admin sees no cookie and redirects to the client. Say so, rather than rendering
-   * a website where the admin panel should be and leaving the user to work out why. */
-  function _adminUncookieable(){
-    if(!BUNDLED) return '';
-    const base=_instanceBase();
-    if(!base || /^https:/i.test(base)) return '';
-    return base;
-  }
+  /* Load /admin hidden so the first open is instant. NOT called at startup, and that now matters: the
+   * frame asks us for a token as soon as it loads, and if we have none yet its own gate concludes
+   * (after 2.5s) that nobody is signed in and paints "Admin sign-in needed" over itself. Today the
+   * frame is only created from _adminFrame(), i.e. AFTER ensureAiSession() has produced a token, so
+   * the answer is always ready. Wire this into startup and that stops being true — push the token on
+   * arrival (see _setAiToken) and have the page re-check, or it will preload itself into a dead end. */
+  function _preloadAdmin(){ _ensureAdminHost(); }
+  /* The admin panel is still an IFRAME of the instance's own /admin page — but the PAGE is no longer
+   * what gets authorised. It arrives unauthenticated (it holds no data, only fields) and we hand it
+   * the bearer token over postMessage; its own requests carry it. That is what removed the cookie,
+   * and with it the reason the panel could not work against a .onion: an iframe document load carries
+   * only cookies, a bundled app's cookie is cross-site, and cross-site needs Secure, which needs
+   * HTTPS. See _bindAdminTokenBridge above and static/js/admin-auth.js. */
   function _adminFrame(feed){
     // The iframe is created + loaded ONCE (post-auth, see _ensureAdminHost / _preloadAdmin) and kept
     // alive — re-entering admin just REVEALS it, never reloads it. (Reloading on every enter made the
@@ -14769,12 +14800,6 @@
     // /admin needs the session cookie nostr-login sets. If it's already established, render the
     // iframe SYNCHRONOUSLY (no await → no window for a re-render to clobber it). Otherwise show a
     // spinner and render when it resolves.
-    { const b=_adminUncookieable();
-      if(b){ feed.innerHTML='<div class="empty">The admin panel needs a browser session on <b>'
-          + enc(b.replace(/^https?:\/\//,'')) + '</b>, and this app cannot hold one over a plain-HTTP '
-          + 'address — the panel is a page from your server, and the cookie it needs may only be sent '
-          + 'cross-site over HTTPS.<br><br>Open <code>' + enc(b) + '/admin</code> in Tor Browser (for a '
-          + '.onion) or point this app at the HTTPS address of your server.</div>'; return; } }
     if(_aiAuth && _aiAuth.is_admin){ _adminFrame(feed); return; }
     feed.innerHTML='<div class="spinner"></div>';
     ensureAiSession().then(a=>{
