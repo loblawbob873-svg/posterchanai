@@ -979,7 +979,12 @@
     const resBytes = notes.reduce((n,x)=> n + (x.res||[]).reduce((m,r)=> m + (r.size||0), 0), 0);
     const canStream = typeof window.showSaveFilePicker === 'function';
 
-    const withFiles = resCount > 0 && canStream;
+    // Whether attachments CAN go in is decided twice: here, to word the confirm, and again below
+    // once we know whether a writable file handle was actually obtained. Deciding it once, on
+    // `canStream` (which only means the API EXISTS), is what turned a refused save dialog into an
+    // attempt to assemble a multi-gigabyte archive in memory — the exact failure the streaming path
+    // was written to avoid, reached by the fallback that was supposed to be the safe one.
+    let withFiles = resCount > 0 && canStream;
     const msg = `Back up ${notes.length} note${notes.length===1?'':'s'}` +
       (resCount ? (withFiles
         ? ` and ${resCount} attachment${resCount===1?'':'s'} (${(resBytes/1073741824).toFixed(2)} GB)`
@@ -988,16 +993,32 @@
       'whoever holds the file. Keep it somewhere you trust.';
     if(!await uiConfirm(msg, {ok:'Back up'})) return;
 
-    let writer = null, parts = null, handle = null;
+    let writer = null, parts = null, handle = null, pickerErr = '';
     const stamp = new Date().toISOString().slice(0,10);
     if(canStream){
       try{
         handle = await window.showSaveFilePicker({ suggestedName:`posterchan-notes-${stamp}.jex`,
           types:[{ description:'Joplin export', accept:{'application/x-tar':['.jex']} }] });
         writer = await handle.createWritable();
-      }catch(e){ if(e && e.name === 'AbortError') return; writer = null; }
+      }catch(e){
+        if(e && e.name === 'AbortError') return;          // they closed the dialog — not a failure
+        pickerErr = (e && e.message) || 'the save dialog could not be opened';
+        writer = null;
+      }
     }
-    if(!writer) parts = [];
+    if(!writer){
+      parts = [];
+      // No file handle → everything is held in memory until the end, so attachments are OUT. Say so
+      // rather than producing an archive that is quietly missing the files, and say WHY when there
+      // was a real error (a denied permission reads exactly like an unsupported browser otherwise).
+      if(withFiles){
+        withFiles = false;
+        toast(`backing up the notes WITHOUT the ${resCount} attachment(s)` +
+              (pickerErr ? ` — this device refused the save dialog (${pickerErr})` : ''));
+      } else if(pickerErr){
+        toast('this device refused the save dialog — saving to your downloads instead');
+      }
+    }
     const put = async (u8) => { if(writer) await writer.write(u8); else parts.push(u8); };
     const enc8 = new TextEncoder();
     const entry = async (name, bytes) => {

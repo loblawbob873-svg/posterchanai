@@ -53,6 +53,9 @@ Assertions, each corresponding to a way this specific screen breaks on a phone:
                        the attachment strip crushed the note's own text. It is a wrapping flex row
                        whose automatic minimum size is its content, so thirty thumbnails claimed
                        fifteen rows and left the note 36px on a phone.
+  backup-unsaveable    a REFUSED save dialog (Electron denied the fileSystem permission until the
+                       shell granted it; any browser can block the picker) made the backup attempt
+                       to assemble every attachment in memory, or drop them without saying so.
   offline-write-lost   THE data-loss one, and not a layout question at all: with publishing failing
                        (offline), a typed note must still be in the library and queued, never gone.
                        publish() rolls its optimistic cache save BACK when the relay refuses, so a
@@ -176,7 +179,8 @@ window.__PC = {
   window.__events = [
     mk('pcai:notefolder:f1', {v:1, id:'f1', name:'Work', created:1, updated:1}),
     mk('pcai:note:n1', {v:1, id:'n1', title:'Quarterly plan', body:'line one\nline two', folder:'f1', tags:['work'], created:1, updated:1700000000, res:[]}),
-    mk('pcai:note:n2', {v:1, id:'n2', title:'Groceries', body:'milk', folder:'', tags:[], created:1, updated:1699000000, res:[]}),
+    mk('pcai:note:n2', {v:1, id:'n2', title:'Groceries', body:'milk', folder:'', tags:[], created:1, updated:1699000000,
+                        res:[{sha:'ab'.repeat(32), name:'receipt.png', mime:'image/png', size:5242880}]}),
     mk('pcai:note:n3', {v:1, id:'n3', title:'Screenshots', body:picBody, folder:'', tags:[], created:1, updated:1698000000,
                         res: shas.map((s,i) => ({sha:s, name:`shot${i}.png`, mime:'image/png', size:1024}))}),
   ];
@@ -370,6 +374,27 @@ STALLED_QUEUE = _PIC_NOTE + r"""
   if(pane) pane.scrollTop = pane.scrollHeight;
   await new Promise(r => setTimeout(r, 1500));
   return { early, later: loaded(), calls: new Set(window.__encCalls).size };
+})()"""
+
+# A REFUSED save dialog must degrade honestly. showSaveFilePicker is the only way to write a library
+# with attachments (they are gigabytes), so when the picker is denied the backup has to fall back to
+# notes-only AND say so — never quietly attempt to assemble every attachment in memory, which is the
+# failure the streaming path exists to avoid and which the fallback used to walk straight into.
+BACKUP_REFUSED = r"""(async () => {
+  window.__encCalls = [];
+  window.__toasts = [];
+  // The API EXISTS but refuses — a denied permission, not a cancelled dialog.
+  window.showSaveFilePicker = async () => { const e = new Error('permission denied'); e.name = 'NotAllowedError'; throw e; };
+  let clicked = 0;
+  const realClick = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = function(){ if(this.download) clicked++; else realClick.call(this); };
+  const btn = document.querySelector('.nt-export');
+  if(!btn) return {error:'no backup button'};
+  btn.click();
+  await new Promise(r => setTimeout(r, 1500));      // uiConfirm auto-confirms in this harness
+  HTMLAnchorElement.prototype.click = realClick;
+  return { attachmentReads: window.__encCalls.length, downloaded: clicked,
+           said: (window.__toasts||[]).join(' | ') };
 })()"""
 
 # The offline write. Types into the open editor with publishing failing, waits out the 700ms
@@ -649,6 +674,25 @@ async def drive(url):
                         problems.append((label, "queue-wedged",
                                          f"{sq['calls']} reads stalled and nothing loaded afterwards — "
                                          "a dead socket takes every picture in every note with it"))
+
+                # A refused save dialog must not try to hold the whole library in memory.
+                if label == "390px":
+                    bk = await js(BACKUP_REFUSED, awaited=True)
+                    if not bk or bk.get("error"):
+                        problems.append((label, "backup-unsaveable",
+                                         f"could not run the backup test ({(bk or {}).get('error')})"))
+                    else:
+                        if bk["attachmentReads"]:
+                            problems.append((label, "backup-unsaveable",
+                                             f"the save dialog was refused and it still read "
+                                             f"{bk['attachmentReads']} attachment(s) into memory — "
+                                             "a real library is gigabytes"))
+                        if not bk["downloaded"]:
+                            problems.append((label, "backup-unsaveable",
+                                             "the save dialog was refused and nothing was saved at all"))
+                        if "WITHOUT" not in (bk["said"] or ""):
+                            problems.append((label, "backup-unsaveable",
+                                             f"the backup silently dropped the attachments (said: {bk['said']!r})"))
 
                 # And the one that isn't about layout at all.
                 w3 = await js(OFFLINE_WRITE, awaited=True)

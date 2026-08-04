@@ -313,8 +313,15 @@ function wireDownloads() {
 // The client is a real app: calls need camera/mic, notifications need permission, screen share needs
 // display-capture. Grant those to the instance origin only; deny everything else by default.
 function wirePermissions() {
+  // 'fileSystem' is the File System Access API — window.showSaveFilePicker/showOpenFilePicker.
+  // Without it, Electron denies the picker and every "save a file" path in the client silently
+  // degrades or fails: the Notes BACKUP is the one people hit, because a library with attachments is
+  // gigabytes and the only way to write it is to stream it to a file handle. In a browser the same
+  // code works, which is what made this look like a Windows-only bug. Scoped to our own origin by
+  // isOurs() below, exactly like every other grant here — and the user still gets the OS save dialog,
+  // so nothing is written anywhere they did not choose.
   const ALLOW = new Set(['media', 'notifications', 'fullscreen', 'clipboard-read',
-    'clipboard-sanitized-write', 'display-capture', 'pointerLock', 'background-sync']);
+    'clipboard-sanitized-write', 'display-capture', 'pointerLock', 'background-sync', 'fileSystem']);
   const ses = session.defaultSession;
 
   ses.setPermissionRequestHandler(async (wc, permission, cb, details) => {
