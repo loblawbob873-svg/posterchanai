@@ -42,7 +42,13 @@
   // needs none: `pcai:note…` under kind 30078 is by construction this user's own notes and folders.
   function _isPinned(ev){
     if (!ev || ev.kind !== 30078) return false;
-    for (const t of ev.tags || []) if (t && t[0] === 'd' && typeof t[1] === 'string' && t[1].startsWith('pcai:note')) return true;
+    // `pcai:note*` (Notes) and `pcai:pw*` (the password vault — items, folders and the vault key
+    // event itself). Both are documents only their author can decrypt, so evicting one by the
+    // newest-N rule that is right for the firehose means it is simply GONE from this device until a
+    // relay hands it back — and for the vault key, "until a relay hands it back" is the difference
+    // between a working password manager on a plane and an empty one.
+    for (const t of ev.tags || []) if (t && t[0] === 'd' && typeof t[1] === 'string' &&
+        (t[1].startsWith('pcai:note') || t[1].startsWith('pcai:pw'))) return true;
     return false;
   }
   // Split a list into [pinned, rest-newest-first] — shared by the three places that trim a cache so

@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<header class="top">
+  <b>PosterChan</b>
+  <span id="status" class="muted"></span>
+  <button id="tab-gen" class="tab" title="Password generator">Generate</button>
+</header>
+
+<!-- Not paired -->
+<section id="pane-pair" class="pane hidden">
+  <p class="muted">
+    Open <b>PosterChan → Passwords → Pair a device</b>, choose read-only or full access, and paste the
+    code here. It carries the key that decrypts your passwords — don't send it over chat.
+  </p>
+  <textarea id="pair-code" rows="4" placeholder="paste the pairing code"></textarea>
+  <button id="pair-go" class="primary">Pair</button>
+  <div id="pair-err" class="err"></div>
+</section>
+
+<!-- Logins -->
+<section id="pane-list" class="pane hidden">
+  <input id="q" type="search" placeholder="Search…" autocomplete="off">
+  <div id="list"></div>
+</section>
+
+<!-- Generator -->
+<section id="pane-gen" class="pane hidden">
+  <div class="genout"><code id="gen-out"></code><button id="gen-again" title="Again">↻</button></div>
+  <div id="gen-bits" class="muted small"></div>
+  <label class="lbl">Length <b id="gen-len">20</b></label>
+  <input id="gen-range" type="range" min="8" max="64" value="20">
+  <div class="opts">
+    <label><input type="checkbox" id="g-lower" checked> a-z</label>
+    <label><input type="checkbox" id="g-upper" checked> A-Z</label>
+    <label><input type="checkbox" id="g-digits" checked> 0-9</label>
+    <label><input type="checkbox" id="g-symbols" checked> !@#$</label>
+    <label><input type="checkbox" id="g-amb"> no 1lI0O</label>
+  </div>
+  <div class="row">
+    <button id="gen-copy" class="primary">Copy</button>
+    <button id="gen-fill">Fill this page</button>
+  </div>
+</section>
+
+<footer class="bot">
+  <button id="sync">Sync</button>
+  <button id="unpair" class="danger">Unpair</button>
+</footer>
+
+<script src="vaultcore.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>

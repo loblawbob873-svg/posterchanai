@@ -1,0 +1,87 @@
+/* Sized for a phone first: on Firefox for Android the popup is a full-screen sheet, so nothing here
+   is laid out in columns, and every button is a real tap target rather than a 20px desktop chip. */
+:root{ color-scheme: dark; }
+*{ box-sizing:border-box; }
+body{
+  margin:0; width:min(380px, 100vw); min-height:220px;
+  background:#141220; color:#edeefa;
+  font:13.5px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+}
+.hidden{ display:none !important; }
+.muted{ opacity:.62; }
+.small{ font-size:11.5px; }
+.pad{ padding:14px; }
+.err{ color:#ff7a95; font-size:12px; margin-top:6px; min-height:14px; }
+
+.top{
+  display:flex; align-items:center; gap:8px; padding:10px 12px;
+  border-bottom:1px solid rgba(140,200,255,.18); position:sticky; top:0; background:inherit; z-index:2;
+}
+.top b{ font-weight:700; letter-spacing:.02em; }
+.top .muted{ flex:1 1 auto; font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tab{
+  flex:none; padding:6px 10px; border-radius:8px; border:1px solid rgba(140,200,255,.3);
+  background:rgba(140,200,255,.1); color:inherit; font:inherit; cursor:pointer; min-height:32px;
+}
+.pane{ padding:10px 12px; }
+
+input[type="search"], textarea{
+  width:100%; padding:9px 11px; border-radius:9px; border:1px solid rgba(140,200,255,.25);
+  background:rgba(255,255,255,.04); color:inherit; font:inherit; outline:none;
+}
+input[type="search"]:focus, textarea:focus{ border-color:rgba(140,200,255,.6); }
+textarea{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; word-break:break-all; }
+
+button{ font:inherit; }
+.primary{
+  width:100%; margin-top:8px; padding:10px; border-radius:9px; border:1px solid rgba(140,200,255,.45);
+  background:rgba(140,200,255,.22); color:inherit; cursor:pointer; font-weight:600; min-height:40px;
+}
+.danger{ color:#ff7a95; }
+
+#list{ margin-top:8px; display:flex; flex-direction:column; gap:4px; max-height:60vh; overflow-y:auto; }
+.item{ padding:8px 9px; border-radius:10px; border:1px solid rgba(140,200,255,.14); }
+.item:hover{ border-color:rgba(140,200,255,.34); }
+.it-t{ display:flex; flex-direction:column; gap:1px; min-width:0; }
+.it-t b{ font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.it-t span{ font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.it-a{ display:flex; gap:6px; margin-top:7px; flex-wrap:wrap; }
+.it-a button{
+  flex:1 1 auto; min-width:58px; min-height:34px; padding:6px 8px; border-radius:8px;
+  border:1px solid rgba(140,200,255,.28); background:rgba(140,200,255,.1); color:inherit; cursor:pointer;
+}
+.it-a button:hover{ background:rgba(140,200,255,.22); }
+.otp{ display:flex; align-items:center; gap:8px; margin-top:6px; min-height:0; }
+.otp code{ font-family:ui-monospace,monospace; font-size:16px; letter-spacing:.12em; color:#8fd2ff; }
+.otp .low{ color:#ffbe5c; }
+
+.genout{ display:flex; align-items:center; gap:8px; }
+.genout code{
+  flex:1 1 auto; min-width:0; overflow-wrap:anywhere; padding:10px 11px; border-radius:9px;
+  border:1px solid rgba(140,200,255,.25); background:rgba(255,255,255,.04);
+  font-family:ui-monospace,monospace; font-size:14px;
+}
+#gen-again{
+  flex:none; width:38px; height:38px; border-radius:9px; border:1px solid rgba(140,200,255,.3);
+  background:rgba(140,200,255,.12); color:inherit; cursor:pointer; font-size:16px;
+}
+#gen-bits{ margin:6px 0 10px; }
+.lbl{ display:block; margin-bottom:4px; }
+#gen-range{ width:100%; }
+.opts{ display:flex; flex-wrap:wrap; gap:10px; margin:10px 0; }
+.opts label{ display:inline-flex; align-items:center; gap:5px; }
+.row{ display:flex; gap:8px; }
+.row .primary{ margin-top:0; }
+#gen-fill{
+  flex:1 1 auto; padding:10px; border-radius:9px; border:1px solid rgba(140,200,255,.3);
+  background:rgba(140,200,255,.1); color:inherit; cursor:pointer; min-height:40px;
+}
+
+.bot{
+  display:flex; gap:8px; padding:8px 12px calc(8px + env(safe-area-inset-bottom));
+  border-top:1px solid rgba(140,200,255,.18);
+}
+.bot button{
+  flex:1 1 0; padding:8px; border-radius:8px; border:1px solid rgba(140,200,255,.22);
+  background:none; color:inherit; cursor:pointer; min-height:36px;
+}

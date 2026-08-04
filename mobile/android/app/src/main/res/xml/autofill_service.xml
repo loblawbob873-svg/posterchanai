@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Declared so Android's autofill picker shows PosterChan with a way back into the app. There is
+     no settings activity of its own: the vault's own screen is where you manage entries, and a
+     second half-settings screen in the OS picker is a place for the two to disagree. -->
+<autofill-service xmlns:android="http://schemas.android.com/apk/res/android" />

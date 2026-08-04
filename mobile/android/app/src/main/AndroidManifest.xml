@@ -89,6 +89,24 @@
             android:name=".screenshare.ScreenShareService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection|microphone" />
+
+        <!-- Password autofill. exported + the BIND_AUTOFILL_SERVICE permission is what lets the
+             SYSTEM bind it and nothing else; the permission is held by the platform alone, so this
+             is not an entry point any other app can reach. AutofillService is API 26 and minSdk is
+             23 — on 23-25 the system simply never binds it, so no guard is needed here beyond the
+             @RequiresApi on the class. -->
+        <service
+            android:name=".vault.PosterChanAutofillService"
+            android:exported="true"
+            android:label="PosterChan Passwords"
+            android:permission="android.permission.BIND_AUTOFILL_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.autofill.AutofillService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.autofill"
+                android:resource="@xml/autofill_service" />
+        </service>
     </application>
 
     <!-- NIP-55: which other apps we are allowed to SEE. Android 11+ hides the package list by default, so

@@ -245,6 +245,40 @@ def test_datastore_docs_survive_a_stray_expiration_tag(store_factory):
     _run(go)
 
 
+def test_the_password_vault_survives_every_cleaner(store_factory):
+    """A password is the least reconstructable thing this relay holds.
+
+    The vault is kind 30078 (`d = pcai:pw:<id>`, plus the `pcai:pwkey` event that is the ONLY key
+    able to decrypt any of them). It is already safe by construction — every prune rule is an
+    allowlist, `_PRUNABLE_KINDS`, and 30078 is not in it — but "safe by construction" is exactly
+    what stops being true when somebody adds a kind to that tuple to clean up something else.
+
+    So this asserts it BY NAME, against all four rules at once: age, the NIP-40 expiration sweep,
+    the bridge-DM rule and the count cap. If it ever fails, the fix is to take 30078 back out of
+    `_PRUNABLE_KINDS`, never to relax this test.
+    """
+    async def go(loop):
+        # retention_days=0 → the age rule prunes everything it is ALLOWED to prune; max_events=1
+        # forces the count cap to run too, on a store holding far more than one event.
+        store = store_factory(loop, retention_days=0, max_events=1)
+        soon = int(time.time()) + 1
+        vault = [_ev(i, kind=30078, age_days=400, expiration=soon, pubkey=f"{i:064x}")
+                 for i in range(1, 6)]
+        noise = [_ev(i, kind=1, age_days=400) for i in range(100, 120)]
+        await store.add_events_bulk(vault + noise)
+
+        await asyncio.sleep(1.6)
+        await store.prune(chunk=3)
+        await store.prune(chunk=3)
+
+        left = await store.query([{"kinds": [30078], "limit": 50}])
+        assert len(left) == 5, (
+            "the password vault was pruned — every entry and the key that decrypts them are "
+            "unrecoverable; 30078 must never be in _PRUNABLE_KINDS")
+
+    _run(go)
+
+
 def test_default_chunk_is_bounded():
     """A 0/None default would silently restore the single-transaction prune this file exists to
     prevent — the ingestion stall was the whole reason for chunking."""

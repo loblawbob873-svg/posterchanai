@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "PosterChan Passwords",
+  "version": "1.0.0",
+  "description": "Autofill, one-time codes and a password generator for your PosterChan vault. Your passwords are decrypted on this device and never sent to any server.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "passwords@poster.place",
+      "strict_min_version": "115.0"
+    },
+    "gecko_android": {
+      "strict_min_version": "115.0"
+    }
+  },
+  "background": {
+    "scripts": ["vendor/nostr.bundle.js", "vaultcore.js", "background.js"]
+  },
+  "action": {
+    "default_title": "PosterChan Passwords",
+    "default_popup": "popup.html",
+    "default_icon": { "48": "icons/icon-48.png", "96": "icons/icon-96.png" }
+  },
+  "icons": { "48": "icons/icon-48.png", "96": "icons/icon-96.png" },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "permissions": ["storage", "activeTab", "clipboardWrite"],
+  "host_permissions": ["<all_urls>"]
+}

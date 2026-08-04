@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The row Android draws in the autofill dropdown. It has to be OUR layout: a RemoteViews may only
+     inflate a layout from the package it names, so android.R.layout.simple_list_item_1 — which reads
+     as the obvious shortcut and appears in plenty of sample code — throws at fill time on a real
+     device, where nothing in CI would have caught it. -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/autofill_label"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:paddingTop="14dp"
+    android:paddingBottom="14dp"
+    android:textSize="16sp"
+    android:singleLine="true"
+    android:ellipsize="end" />

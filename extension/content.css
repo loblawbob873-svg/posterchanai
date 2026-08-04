@@ -1,0 +1,40 @@
+/* Injected into every page, so every rule is namespaced and every value is absolute: a page's own
+   CSS must not be able to move these, and these must not be able to disturb the page. No custom
+   properties (the page may define the same names) and no inherited fonts. */
+.pcpw-badge{
+  position:absolute; z-index:2147483646; width:20px; height:20px; line-height:20px;
+  text-align:center; font-size:13px; cursor:pointer; border-radius:5px;
+  background:rgba(20,18,32,.92); border:1px solid rgba(140,200,255,.35);
+  box-shadow:0 1px 4px rgba(0,0,0,.4); display:none; user-select:none;
+}
+.pcpw-panel{
+  position:absolute; z-index:2147483647; display:none; min-width:230px; max-width:320px;
+  max-height:280px; overflow-y:auto; padding:4px; border-radius:10px;
+  background:#141220; color:#edeefa; border:1px solid rgba(140,200,255,.3);
+  box-shadow:0 8px 26px rgba(0,0,0,.5);
+  font:13px/1.35 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+}
+.pcpw-item{
+  display:flex; flex-direction:column; gap:1px; width:100%; padding:7px 9px; border:none;
+  border-radius:7px; background:none; color:inherit; cursor:pointer; text-align:left; font:inherit;
+}
+.pcpw-item:hover{ background:rgba(140,200,255,.14); }
+.pcpw-item b{ font-weight:600; }
+.pcpw-item span{ opacity:.6; font-size:11.5px; }
+.pcpw-row{ padding:8px 10px; }
+.pcpw-muted{ opacity:.65; }
+.pcpw-savebar{
+  position:fixed; z-index:2147483647; right:16px; bottom:16px; display:flex; align-items:center;
+  gap:10px; padding:11px 14px; border-radius:12px; background:#141220; color:#edeefa;
+  border:1px solid rgba(140,200,255,.3); box-shadow:0 8px 26px rgba(0,0,0,.5);
+  font:13px/1.3 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; max-width:min(92vw,420px);
+}
+.pcpw-savebar button{
+  padding:6px 12px; border-radius:8px; border:1px solid rgba(140,200,255,.35);
+  background:rgba(140,200,255,.12); color:inherit; cursor:pointer; font:inherit;
+}
+.pcpw-savebar .pcpw-yes{ background:rgba(140,200,255,.28); font-weight:600; }
+@media (max-width:520px){
+  .pcpw-savebar{ left:12px; right:12px; bottom:12px; }
+  .pcpw-panel{ max-width:calc(100vw - 24px); }
+}
