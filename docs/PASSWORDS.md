@@ -130,6 +130,13 @@ submission (or a self-distributed signed build, which AMO also issues). Until th
 
 Nothing here signs anything: it needs credentials and an account decision.
 
+**AMO requires a data-collection declaration.** Without
+`browser_specific_settings.gecko.data_collection_permissions` the submission is rejected with *"The
+data_collection_permissions property is missing"*. It is declared as `authenticationInfo`: this
+add-on handles credentials and syncs them — encrypted, to the relay you paired it with — and
+under-declaring is what gets an add-on pulled after the fact. `optional` is empty because there is no
+telemetry of any kind. `tests/test_vault_extension.py` fails if the key goes missing again.
+
 The extension connects to your relay itself, decrypts with the paired vault key, and caches the
 decrypted set so the popup opens instantly and works offline. It offers a badge in login fields, an
 "is this new?" save bar on submit, one-time codes with a countdown, and the same generator as the app.
@@ -176,6 +183,14 @@ deciding whether a password is offered on the right site.
 
 Saving from an autofill prompt hands you back to the app: the service cannot sign vault events,
 because the signing key deliberately isn't there.
+
+## Getting a code on Firefox for Android
+
+The in-page badge needs host permissions, and **Firefox MV3 does not grant those at install** — until
+you allow them, the content script never runs and nothing appears in the page. The popup works
+regardless: open it, type any part of the entry's name, and the row shows a live code with its
+countdown and a button to copy it. That path needs no page access at all, which is why the popup
+searches the WHOLE vault rather than only what matches the current tab.
 
 ## Matching, and what it refuses
 

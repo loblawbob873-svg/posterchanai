@@ -58,6 +58,19 @@ class ExtensionCore(unittest.TestCase):
         self.assertIn("id", bss["gecko"])
         self.assertIn("gecko_android", bss)
 
+    def test_it_declares_what_data_it_handles(self):
+        """Mozilla rejects a submission outright without this key — "The 'data_collection_permissions'
+        property is missing" — and it is not something a build step can infer. Declared as
+        `authenticationInfo` because that is what a password manager handles and syncs; under-
+        declaring is what gets an add-on pulled after the fact, and there is nothing to gain by being
+        coy about it here."""
+        with open(MANIFEST, encoding="utf-8") as fh:
+            man = json.load(fh)
+        dcp = man["browser_specific_settings"]["gecko"].get("data_collection_permissions")
+        self.assertIsNotNone(dcp, "AMO will reject the submission without this")
+        self.assertIn("required", dcp)
+        self.assertTrue(dcp["required"], "an empty list is not a declaration; use ['none'] if truly none")
+
     def test_it_asks_for_no_more_permissions_than_it_uses(self):
         """A password manager asking for permissions it does not use is one nobody should install.
         Every entry here has to be justified by a call in the source."""

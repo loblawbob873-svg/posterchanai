@@ -77,6 +77,10 @@
       // view stack — the same hook Notes needed, for the same reason.
       drawerOpen: () => _drawerOpen,
       closeDrawer: () => _drawer(false),
+      /* Plant an item without publishing it. Used by scripts/check_vault_mobile.py to reproduce a
+       * vault as an OLDER build left it — there is no other way to test a migration, and testing
+       * one by hand is how a migration ships broken. */
+      __seed: (obj) => { if(_lib) _lib.items.set(obj.id, obj); },
     };
     window.addEventListener('online', () => { flushPending(); });
     setInterval(() => { if(navigator.onLine && pending().length) flushPending(); }, 45000);

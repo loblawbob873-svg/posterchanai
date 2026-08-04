@@ -73,6 +73,11 @@ window.browser = {
   runtime: { sendMessage: async (m) => {
     if(m.type === 'state')   return { paired:true, mode:'ro', count:2, status:'ready', lastSync:0 };
     if(m.type === 'matches') return { items: ITEMS };
+    // Everything in the vault, including an entry for a DIFFERENT site — reachable only by
+    // searching, which on Firefox for Android is how a code is obtained at all when the in-page
+    // integration has no host permission.
+    if(m.type === 'all') return { items: ITEMS.concat(
+      [{ id:'c', title:'Bank', username:'acct', host:'bank.example.com', hasTotp:true }]) };
     if(m.type === 'reveal')  return { ok:true, username:'me', password:'pw', totp:'123456', left:22 };
     return { ok:true };
   }},
@@ -103,7 +108,16 @@ def render_problems():
                         "                  .map(x => Math.round(x.getBoundingClientRect().height));\n"
                         "  const out = { w: Math.round(b.width), h: Math.round(b.height), panes, items,\n"
                         "                btns, core: typeof PCVaultCore, errors: window.__errors };\n"
-                        "  document.title = 'RESULT' + JSON.stringify(out);\n"
+                        "  // Search the WHOLE vault for an entry this page does not match, and read its code.\n"
+                        "  const q = document.getElementById('q');\n"
+                        "  q.value = 'bank'; q.dispatchEvent(new Event('input', {bubbles:true}));\n"
+                        "  setTimeout(() => {\n"
+                        "    const rows = [...document.querySelectorAll('.item')];\n"
+                        "    out.searchFound = rows.length;\n"
+                        "    out.searchHasTotpButton = rows.some(r => !!r.querySelector('[data-a=totp]'));\n"
+                        "    out.searchShowsCode = rows.some(r => /\\d{3}/.test((r.querySelector('.otp')||{}).textContent||''));\n"
+                        "    document.title = 'RESULT' + JSON.stringify(out);\n"
+                        "  }, 1400);\n"
                         "}, 700);</script>")
 
     d = tempfile.mkdtemp()
@@ -151,6 +165,16 @@ def main():
             problems.append(("popup-collapses", f"the popup is {got['h']}px tall"))
         if not got["items"]:
             problems.append(("popup-empty", "the matching logins did not render"))
+        # The Android path: no host permission means no in-page badge, so the popup's search has to
+        # be able to produce a code on its own for an entry this page does not match.
+        if not got.get("searchFound"):
+            problems.append(("search-dead", "searching the vault from the popup found nothing"))
+        if not got.get("searchHasTotpButton"):
+            problems.append(("totp-unreachable",
+                             "a searched entry offers no 2FA button — on Firefox for Android that is "
+                             "the only way to get a code when the page integration has no permission"))
+        if not got.get("searchShowsCode"):
+            problems.append(("totp-unreachable", "a searched entry shows no live code"))
         if got["btns"] and min(got["btns"]) < 32:
             problems.append(("tiny-tap-target",
                              f"a row button is {min(got['btns'])}px tall — this is a phone popup too"))

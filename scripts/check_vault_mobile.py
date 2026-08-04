@@ -267,7 +267,18 @@ IMPORT_DEDUPE = r"""(async () => { try {
     await new Promise(r => setTimeout(r, 200));
   };
 
+  /* THE MIGRATION. An entry imported before the multi-URI split was fixed holds one mangled URI
+     whose host is `blackhillsenergy.com,https` — it matches nothing, which is how this was reported
+     ("autofill not working on blackhillsenergy.com"). The fix only changes NEW imports, so the
+     answer is to run the import again — and that must UPDATE the broken entry, not add a second
+     copy beside it. Seeded here exactly as the old importer would have left it. */
+  const broken = { v:1, id:'brk', kind:'login', title:'Amazon', username:'me@x.com',
+                   password:'old', totp:'', notes:'', tags:[], folder:'', created:1, updated:1,
+                   uris:['https://amazon.com,https://amazon.co.uk'] };
+  await window.PCVault.__seed(broken);
+
   await runImport();
+  const migrated = window.PCVault.snapshot().items.filter(i => i.id === 'brk')[0];
   const after1 = window.PCVault.snapshot().items
     .filter(i => /Amazon|Wifi/.test(i.title || ''))
     .map(i => [i.kind, i.title, i.username, i.password, (i.notes||'').slice(0,4)].join('/')).sort();
@@ -277,7 +288,9 @@ IMPORT_DEDUPE = r"""(async () => { try {
   const after2 = window.PCVault.snapshot().items
     .filter(i => /Amazon|Wifi/.test(i.title || '')).length;
 
-  return { rows: after1, count: after1.length, afterSecond: after2 };
+  return { rows: after1, count: after1.length, afterSecond: after2,
+           migratedUris: migrated ? migrated.uris : null,
+           migratedPw: migrated ? migrated.password : null };
 } catch(e) { return { error: String(e && e.message || e) }; } })()"""
 
 # THE data-loss one. With the relay unreachable and no local key, opening the vault must FAIL rather
@@ -449,6 +462,16 @@ async def drive(url):
                         if imp["count"] != 4:
                             problems.append((label, "import-merged-entries",
                                              f"4 distinct entries imported as {imp['count']}: {imp['rows']}"))
+                        # The mangled entry must have been UPDATED in place, not left behind
+                        # while a duplicate was created next to it.
+                        if imp.get("migratedUris") is None:
+                            problems.append((label, "import-merged-entries",
+                                             "the pre-fix entry was not updated by the re-import — "
+                                             "it would sit there matching nothing, beside a duplicate"))
+                        elif any("," in u for u in imp["migratedUris"]):
+                            problems.append((label, "import-merged-entries",
+                                             f"the re-import left the mangled URI in place, so the "
+                                             f"entry still matches nothing: {imp['migratedUris']}"))
                         if imp["afterSecond"] != imp["count"]:
                             problems.append((label, "import-merged-entries",
                                              f"re-importing the same file changed the count "
