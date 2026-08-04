@@ -115,7 +115,11 @@ function openConn(url){
     let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
     if(m[0] === 'EVENT' && m[2]) absorb(m[2]);
     else if(m[0] === 'OK'){ const w = okWaiters.get(m[1]); if(w) w(m[2] === true); }
-    else if(m[0] === 'EOSE'){ c.ready = true; lastSync = Date.now(); saveItems(); flushOutbox(); refreshStatus(); }
+    else if(m[0] === 'EOSE'){ c.ready = true; lastSync = Date.now(); saveItems(); flushOutbox(); refreshStatus();
+      /* A relay has now answered, so anything that could not be published while the socket was down
+       * can go. union() only sends what it has no record of having sent, and never deletes, so
+       * running it here is a retry rather than a re-sync. */
+      if(BM && BM.engine && BM.engine.enabled()) BM.engine.union().catch(()=>{}); }
   };
   c.ws.onclose = () => { c.ready = false; if(ws === c.ws) ws = _anyOpen(); refreshStatus(); retry(url); };
   c.ws.onerror = () => { try{ c.ws.close(); }catch(_){ } };
@@ -202,8 +206,26 @@ async function absorbBookmark(id, ev){
   try{ await BM.engine.absorb(id, ev); }catch(_){ }
 }
 
+/* Wait for a live socket, briefly. publishAndWait resolves FALSE the instant nothing is open, and
+ * nothing IS open in the moment a service worker (or a just-woken event page) starts handling the
+ * popup's message — the relay connection is still being made. So "enable sync" ran its whole merge
+ * against a closed socket, published nothing, and said so. It was not the pairing mode, which is what
+ * I first blamed it on; a FULL pairing had exactly the same problem. */
+function waitOpen(ms){
+  return new Promise((resolve) => {
+    if(_anyOpen()) return resolve(true);
+    connect();                                   // idempotent; brings the sockets up if they are down
+    const t0 = Date.now();
+    const tick = setInterval(() => {
+      if(_anyOpen()){ clearInterval(tick); return resolve(true); }
+      if(Date.now() - t0 > (ms || 8000)){ clearInterval(tick); return resolve(false); }
+    }, 150);
+  });
+}
+
 async function publishBookmark(syncId, item){
   if(!(cfg && cfg.mode === 'full' && cfg.sk)) return false;      // read-only: receive only
+  if(!await waitOpen()) return false;                            // nothing open, and none arrived
   const at = Math.floor(Date.now()/1000);
   try{
     // A tombstone is an EMPTY content, never an absent event: "I don't have it" and "it was deleted"

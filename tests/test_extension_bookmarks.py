@@ -175,3 +175,24 @@ def test_a_union_pairs_only_within_the_same_container():
     assert [c["id"] for c in got["create"]] == ["s1"], \
         "the toolbar copy should be created; it is not the same bookmark as the one in 'other'"
     assert [p["id"] for p in got["publish"]] == ["b1"]
+
+
+def test_publishing_waits_for_a_relay_socket():
+    """"I clicked sync and nothing happened."
+
+    publishAndWait resolves FALSE the instant no socket is open — and none is, in the moment a service
+    worker (or a just-woken event page) starts handling the popup's message: the relay connection is
+    still being established. So enabling sync ran the whole merge against a closed socket and published
+    nothing, whatever the pairing mode. It waits for one now, and retries on EOSE when a relay actually
+    answers, because a merge that silently sends nothing is indistinguishable from a broken feature.
+    """
+    src = open(os.path.join(ROOT, "extension", "background.js"), encoding="utf-8").read()
+    i = src.index("async function publishBookmark(")
+    body = src[i:i + 700]
+    assert "await waitOpen()" in body, \
+        "publishBookmark does not wait for a socket; the first merge after a wake sends nothing"
+    assert "function waitOpen(" in src
+    # And the retry, so a failure while offline is not permanent until the user clicks again.
+    j = src.index("'EOSE'")
+    assert "BM.engine.union()" in src[j:j + 600], \
+        "nothing retries the unpublished bookmarks when a relay finally answers"
