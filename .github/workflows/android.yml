@@ -37,9 +37,15 @@ jobs:
 
       - uses: android-actions/setup-android@v3
 
+      # No `|| npm install` fallback. That fallback defeated the whole point: mobile/package-lock.json was
+      # missing @capacitor/clipboard, so `npm ci` failed on EVERY run and the build silently re-resolved
+      # the entire tree from the registry — the same exposure as an unlocked build, but disguised as a
+      # locked one. The lock is now in sync (regenerated with `--before` a known-good date, after the
+      # Shai-Hulud npm worm), so ci succeeds; if it ever fails again the build must STOP, because a
+      # failure here means the lock no longer describes what would be installed.
       - name: Install Capacitor deps
         working-directory: mobile
-        run: npm ci || npm install
+        run: npm ci
 
       - name: Version from run number
         run: |

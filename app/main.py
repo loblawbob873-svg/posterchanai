@@ -86,9 +86,15 @@ class _ScopedCORS(CORSMiddleware):
 
 app.add_middleware(
     _ScopedCORS,
-    # Capacitor app origins only (androidScheme=https → https://localhost). NOT http://localhost: with
+    # Native-app origins only. Capacitor (androidScheme=https → https://localhost) and the desktop
+    # Electron build, which serves its bundled client from its own privileged app:// scheme so the page
+    # gets a secure context (crypto.subtle) and a real tuple origin. NOT http://localhost: with
     # allow_credentials it would let any plaintext-http localhost page read the victim's authed responses.
-    allow_origins=["https://localhost", "capacitor://localhost"],
+    #
+    # An instance that has not shipped `app://posterchan` here refuses the desktop app's credentialed
+    # calls, so a self-hoster upgrading their node is what re-enables AI/media/streams for desktop users
+    # pointed at it. The relays-only mode needs nothing from this list — it makes no cross-origin call.
+    allow_origins=["https://localhost", "capacitor://localhost", "app://posterchan"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

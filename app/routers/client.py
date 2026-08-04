@@ -175,8 +175,24 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
     # npubs of admin accounts — the client shows admin-only controls (block) for these. The
     # block endpoint still verifies a signed request server-side, so this list isn't a trust gate.
     admin_npubs = [u.nostr_npub for u in db.query(User).filter(User.is_admin == True, User.nostr_npub.isnot(None)).all()]  # noqa: E712
+    # Relays to OFFER when someone turns on "use my own relays". The point of that switch is to stop
+    # depending on this instance, so handing them an empty box is the least useful possible answer —
+    # they have to already know which relays exist. This node's own relay first (it is the one their
+    # data is on right now), then the public set it syncs with.
+    _own = _relay_url(request, db)
+    _ups = nostr_service.relay.normalize_relays(
+        _setting(db, "nostr_relay_upstream_relays", "")) or list(nostr_service.DEFAULT_RELAYS)
+    _defaults = [u for u in ([_own] + _ups) if u]
+    _seen, _default_relays = set(), []
+    for _u in _defaults:
+        if _u in _seen:
+            continue
+        _seen.add(_u)
+        _default_relays.append(_u)
+
     return JSONResponse({
         "relay_url": _relay_url(request, db),
+        "default_relays": _default_relays[:8],
         "blossom_url": _blossom_url(request, db),
         "blossom_enabled": _setting(db, "blossom_enabled", "false").lower() == "true",
         # Whether this node runs the built-in media server. The client uses it only to decide whether
@@ -196,6 +212,12 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         # (solves the chicken/egg: nobody can grant AI access until an admin exists).
         "admin_unclaimed": len(admin_npubs) == 0,
         "gif_enabled": bool(_setting(db, "tenor_api_key") or _setting(db, "giphy_api_key")),
+        # Whether this node runs the AI-backed surfaces (AI tab, Translate, Markets, summarize/narrate).
+        # The web page bakes this into the template, but a BUNDLED client (desktop/APK) ships one HTML
+        # for every instance and can only learn it here — and when there is no instance at all it is
+        # simply true, which is what makes a relays-only install coherent rather than full of buttons
+        # that 404.
+        "nostr_only": os.getenv("POSTERCHANAI_NOSTR_ONLY", "0").lower() in ("1", "true", "yes", "on"),
         # Public source link shown on the logged-out guest card. Overridable so a fork points at
         # its own repo instead of ours.
         "source_url": _setting(db, "source_url", "https://github.com/loblawbob873-svg/posterchanai"),

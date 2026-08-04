@@ -512,6 +512,42 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
     (`looks_fetchable`/`is_safe_host`, `follow_redirects=False`).
   - **`fedi_normalize.py`** is extracted VERBATIM from the old bridge and is **proven** code —
     change it only with a very good reason; every bridge service depends on it.
+- **Native apps run WITHOUT an instance** (`desktop/`, `mobile/`): both BUNDLE the web client, and the
+  desktop build (`desktop/build-www.sh` → `desktop/main.js`) can run with **no PosterChan server at all** —
+  relays + a key. See `desktop/README.md`. Three things this changed, each a trap:
+  - **`BUNDLED` and "has an instance" are different questions.** `typeof window.__PC_API_BASE__ !==
+    'undefined'` means bundled; its VALUE being empty means no server. Conflating them registered the web
+    PWA's `/client/sw.js` inside a bundle that only ships `/sw.js` (404 → no SW → no media cache) and
+    removed the instance picker on exactly the installs that needed it. `_standalone()` = both.
+  - **Standalone hides every server-backed surface** (`applyInstanceGating`, `INSTANCE_VIEWS`,
+    `INSTANCE_SETTINGS_TABS` in `app.js`) and forces `PC_NOSTR_ONLY` at RUNTIME — one bundle serves every
+    instance, so the template's baked value is either wrong or permanent, hence `nostr_only` in
+    `/client/config`. Anything reading a server must ALSO tolerate its absence: `renderUserSettings` spent
+    ~2.4s failing `/api/auth/settings` then dead-ended on "Couldn't load your settings" — on the one
+    screen a server-less user cannot do without, since it is where relays and the instance are set. Its
+    Save read `#us-email` unguarded and threw BEFORE the client-side saves, so the relay and media edits
+    silently did nothing.
+  - **Relay pre-fill is the feature, not a nicety.** `defaultRelays()` offers this node's relay +
+    `default_relays` from the server, and falls back to a HARDCODED copy of OUR relay set — the case that
+    matters, because "I want no instance" and "the instance is down" look identical from the client. Keep
+    `FALLBACK_RELAYS` in step with `nostr_service.DEFAULT_RELAYS`. `connectRelays()` used to call
+    `Relay.connect(undefined)` with no instance, which opens a socket to the page's own origin and can
+    only fail — "reconnecting…" forever in an app that needs no server to read Nostr.
+  - Desktop loads the bundle over a privileged **`app://`** scheme, NOT `file://`: a file page is not a
+    secure context, so Chromium deletes `crypto.subtle` and the client cannot sign anything. That origin
+    (`app://posterchan`) must stay on the CORS allowlist in `app/main.py`.
+  - **`build-www.sh` must copy `static/fonts/*.woff2`.** `client.css` `@font-face`s them at root-relative
+    urls INSIDE a stylesheet, which the fetch shim never sees — so a bundle without them 404s and the
+    whole app drops to a system font, silently. Both build scripts were missing them.
+  - **Native Tor is desktop-only and bundled** (`desktop/tor.js`; Android can only ask Orbot). The window
+    is HELD on `boot.html` until the circuit is up (the client opens relay sockets on evaluation, so
+    loading first leaks), and it **fails closed** — tor dying must not clear the session proxy.
+    `GeoIPFile` is load-bearing: without it `ExitNodes {cc}` cannot be resolved and the country picker
+    silently does nothing while tor reports 100%. `StrictNodes 1` goes with `ExitNodes` and nowhere else.
+    Ports are ephemeral (9050 collides with the system tor a Tor user already runs).
+    `tests/test_desktop_tor.py` + `scripts/check_desktop_standalone.py` cover all of it; Electron itself
+    cannot be driven here (it needs an X display), so the preload bridge is STUBBED the way preload
+    injects it.
 
 ## Conventions / gotchas
 

@@ -6,8 +6,10 @@
 <style>
   :root{ --bg:#0a0a10; --panel:#12121c; --line:#262636; --text:#e8e8f0; --muted:#8b8ba3; --neon:#00f0ff }
   *{box-sizing:border-box}
-  body{margin:0;height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--text);
-       font:15px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
+  /* min-height, not height: the card grew a third button and a paragraph, and a fixed 100vh clips it
+     with no way to scroll on a short window (a laptop with the window half-height). */
+  body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--text);
+       font:15px/1.5 system-ui,Segoe UI,Roboto,sans-serif;padding:20px}
   .card{width:min(460px,90vw);background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:26px;text-align:center}
   img{width:72px;height:72px;border-radius:18px;margin-bottom:14px}
   h1{margin:0 0 6px;font-size:19px}
@@ -20,53 +22,46 @@
          color:var(--text);font-size:14px;cursor:pointer}
   button:hover{border-color:var(--neon);color:var(--neon)}
   button.go{background:rgba(0,240,255,.12);border-color:var(--neon);color:var(--neon)}
+  .fine{margin:16px 0 0;font-size:12px;color:var(--muted);text-align:left}
 </style>
 </head>
 <body>
   <div class="card">
     <img src="icon.png" onerror="this.style.display='none'">
-    <h1 id="title">Can't reach your instance</h1>
+    <h1 id="title">Choose your instance</h1>
     <p id="msg"></p>
     <input id="inst" placeholder="https://poster.place" spellcheck="false">
     <div class="row">
-      <button id="retry">Retry</button>
+      <button id="back">Back to the app</button>
       <button class="go" id="save">Connect</button>
     </div>
+    <div class="row" style="margin-top:9px">
+      <button id="none">Use relays only — no server</button>
+    </div>
+    <p class="fine">A server adds AI, media rendering, streams and the file manager. Your key, your
+      posts and your encrypted Notes, Passwords and Budget live on relays and never depend on one.</p>
   </div>
 <script>
-  const q = new URLSearchParams(location.search);
-  const pick = q.get('pick') === '1';
-  const seen = q.get('seen') === '1';        // this machine has loaded the instance successfully before
+  /* Reachable from File → Switch instance…. It is no longer an OFFLINE page: the client ships inside the
+     app now, so there is nothing to be unable to reach — the app always opens. What is left is the
+     choice itself, and the choice has three answers, not two: this instance, another instance, or none. */
   const inst = document.getElementById('inst');
-  document.getElementById('title').textContent = pick ? 'Choose your instance' : "Can't reach your instance";
-  // Reaching this page at all means the network AND the app's own offline cache came up empty, so say
-  // which of the two situations it is. "Check your connection" is useless advice to someone who has never
-  // opened this instance on this machine — there is nothing saved to fall back to, and that is the fact
-  // that explains why they're looking at a card instead of their timeline.
-  document.getElementById('msg').textContent = pick
-    ? 'PosterChan can point at any self-hosted instance. Enter its address.'
-    : (q.get('url') || '') + (q.get('err') ? ' — ' + q.get('err') : '')
-      + (seen ? '. You are offline and the saved copy could not be opened either.'
-              : '. Nothing is saved for this instance yet, so there is no offline copy to open.')
-      + ' It will open by itself when the connection is back.';
-
-  // Heal without being asked. The window sits here doing nothing while the wifi comes back, and making
-  // someone click Retry at a page that already knows the network returned is busywork. Chromium fires
-  // 'online' on the file:// page too, so this needs nothing from the main process.
-  // Not on the picker: someone who opened "Switch instance…" is mid-edit, and navigating out from under
-  // them because the wifi blinked would throw away what they were typing.
-  let healed = false;
-  const heal = () => { if (healed || pick || !window.pcShell) return; healed = true; window.pcShell.retry(); };
-  if (!pick) window.addEventListener('online', () => setTimeout(heal, 800));   // let the interface settle first
+  document.getElementById('msg').textContent =
+    'PosterChan can point at any self-hosted instance — or at none at all.';
 
   (async () => { try { inst.value = await window.pcShell.getInstance(); } catch (_) {} inst.focus(); inst.select(); })();
 
-  document.getElementById('retry').onclick = () => window.pcShell.retry();
+  document.getElementById('back').onclick = () => window.pcShell.retry();
   document.getElementById('save').onclick = async () => {
     let v = inst.value.trim();
-    if (v && !/^https?:\/\//i.test(v)) v = 'https://' + v;      // typing "my.server" should just work
+    if (!v) { inst.style.borderColor = '#e0245e'; return; }   // blank here is a typo; "none" is its own button
+    // A bare .onion gets http://, not https:// — a hidden service is plain HTTP (Tor itself is the
+    // encryption and the authentication) and our own onion publishes port 80 only, so defaulting to
+    // https there produces an address that can never connect.
+    if (!/^https?:\/\//i.test(v)) v = (/\.onion$/i.test(v.split('/')[0].split(':')[0]) ? 'http://' : 'https://') + v;
     if (!(await window.pcShell.setInstance(v))) { inst.style.borderColor = '#e0245e'; }
   };
+  document.getElementById('none').onclick = () => window.pcShell.setInstance('');
   inst.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('save').click(); });
 </script>
 </body>

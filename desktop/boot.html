@@ -1,0 +1,78 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>PosterChan</title>
+<style>
+  /* Deliberately self-contained and themeless-dark: this page is shown BEFORE the bundle loads, so it
+     cannot borrow client.css, and it must not flash white against the window's #0a0a10 background. */
+  :root{ --bg:#0a0a10; --panel:#12121c; --line:#262636; --text:#e8e8f0; --muted:#8b8ba3; --neon:#00f0ff; --danger:#e0245e }
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--text);
+       font:15px/1.55 system-ui,Segoe UI,Roboto,sans-serif;padding:20px}
+  .card{width:min(460px,92vw);background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:26px;text-align:center}
+  .onion{font-size:40px;line-height:1;margin-bottom:10px}
+  h1{margin:0 0 8px;font-size:19px;font-weight:600}
+  p{margin:0 0 16px;color:var(--muted);font-size:13.5px}
+  .bar{height:7px;border-radius:99px;background:#0d0d16;border:1px solid var(--line);overflow:hidden;margin:0 0 8px}
+  .fill{height:100%;width:0;background:linear-gradient(90deg,#7a4dff,var(--neon));transition:width .35s ease}
+  .pct{font-variant-numeric:tabular-nums;color:var(--text);font-size:12.5px;margin-bottom:16px}
+  .row{display:flex;gap:9px}
+  button{flex:1;padding:11px 14px;border-radius:11px;border:1px solid var(--line);background:#191926;
+         color:var(--text);font-size:14px;cursor:pointer}
+  button:hover{border-color:var(--neon);color:var(--neon)}
+  .err{color:var(--danger);font-size:13.5px;margin:0 0 16px;text-align:left}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="onion">🧅</div>
+    <h1 id="title">Connecting to Tor…</h1>
+    <p id="sub">Building a circuit. This usually takes a few seconds — longer on a slow link or the first run.</p>
+    <div class="bar"><div class="fill" id="fill"></div></div>
+    <div class="pct" id="pct">starting…</div>
+    <div class="err hidden" id="err"></div>
+    <div class="row">
+      <button id="skip" class="hidden">Continue without Tor</button>
+      <button id="retry" class="hidden">Try again</button>
+    </div>
+  </div>
+<script>
+  /* Nothing here decides anything — the main process owns tor and the proxy, and this page only draws
+     what it is told. It exists because "everything through Tor" means the window must not load the app
+     until the circuit is up: a page that loads first and fails every request would look broken, and a
+     page that loads first and succeeds would have leaked. */
+  const $ = (id) => document.getElementById(id);
+  let settled = false;
+
+  function paint(s){
+    s = s || {};
+    const p = (s.progress == null) ? 0 : s.progress;
+    $('fill').style.width = p + '%';
+    if (s.error){
+      $('title').textContent = 'Tor could not connect';
+      $('sub').textContent = 'Your traffic has not been sent anywhere.';
+      $('err').textContent = s.error;
+      $('err').classList.remove('hidden');
+      $('pct').textContent = '';
+      $('skip').classList.remove('hidden');
+      $('retry').classList.remove('hidden');
+      return;
+    }
+    $('err').classList.add('hidden');
+    $('pct').textContent = s.bootstrapped ? 'connected' : (p ? p + '%' : 'starting…');
+    // Offer the escape hatch only once waiting has stopped feeling brief. Showing it immediately invites
+    // a click a second before the circuit completes, which is the one moment it does the wrong thing.
+    if (!settled) setTimeout(()=>$('skip').classList.remove('hidden'), 12000);
+  }
+
+  if (window.pcShell && window.pcShell.tor){
+    window.pcShell.tor.status().then(paint).catch(()=>{});
+    if (window.pcShell.tor.onStatus) window.pcShell.tor.onStatus(paint);
+    $('skip').onclick = () => { settled = true; window.pcShell.tor.set({ enabled:false }); };
+    $('retry').onclick = () => { $('err').classList.add('hidden'); $('pct').textContent='starting…'; window.pcShell.tor.restart(); };
+  }
+</script>
+</body>
+</html>

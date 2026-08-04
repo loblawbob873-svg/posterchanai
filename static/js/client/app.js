@@ -144,6 +144,93 @@
   };
 
   let CFG = {}, ME = null, FOLLOWS = new Set(), FOLLOWERS = new Set(), MUTED = new Set(), MUTED_WORDS = new Set(), MUTED_THREADS = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false, GUEST = false;
+
+  /* ---------- how this copy of the client is running ----------
+   *
+   * Three shapes, and they are not the same question:
+   *
+   *   BUNDLED   — the HTML/JS came off disk inside an app (the Android APK, the desktop Electron
+   *               build) instead of being served by an instance. `__PC_API_BASE__` is defined by the
+   *               shim those builds inject, which is what makes it the reliable marker even when its
+   *               value is empty.
+   *   INSTANCE  — a PosterChan server we talk to for AI, media, streams, admin. The web PWA is always
+   *               served BY one, so its base is its own origin; a bundled app has whichever the user
+   *               chose, or none.
+   *   STANDALONE— bundled AND no instance: relays and a key, nothing else. Everything server-shaped
+   *               is hidden rather than left to 404, and the relay list is the user's own by default.
+   *
+   * `_standalone()` is deliberately a function, not a constant: the instance can be set and cleared
+   * from Settings without a reload path that guarantees a fresh script evaluation. */
+  const BUNDLED = (typeof window.__PC_API_BASE__ !== 'undefined');
+  function _instanceBase(){ return String((BUNDLED ? window.__PC_API_BASE__ : (self.location && self.location.origin)) || '').replace(/\/+$/, ''); }
+  function _standalone(){ return BUNDLED && !_instanceBase(); }
+  /* The desktop app ships its own tor and proxies the whole session through it, so Tor there is a
+   * switch and a country, not an errand. Android can only ASK Orbot (a separate app) — a different
+   * control surface, which is why Settings draws one or the other and never both. `pcShell` is the
+   * Electron preload bridge; `tor` on it is the capability test, so an older shell simply shows nothing
+   * rather than a panel whose buttons do nothing. */
+  function _hasNativeTor(){ return !!(window.pcShell && window.pcShell.tor); }
+
+  /* Views that CANNOT work without an instance, because the server does the work: AI, media
+   * rendering, RSS/scraping proxies, the torrent client, the node's own stats. Everything absent from
+   * this list is relay-and-key only and stays exactly as it is — Social, Notifications, Messages,
+   * Bookmarks, Calls, Notes, Passwords, Drafts, Budget, Articles, Communities, Chat, Streams, the
+   * games, profiles and Settings itself.
+   *
+   * Hidden, not disabled. A greyed row still invites a click and still has to explain itself; a
+   * standalone install is not a degraded PosterChan, it is a Nostr client, and it should read like
+   * one. Anyone who wants the rest can name an instance in Settings and they all come back. */
+  const INSTANCE_VIEWS = new Set(['ai', 'translate', 'markets', 'news', 'torrents', '4chan',
+                                  'stats', 'meme', 'admin']);
+  // Settings panes with nothing behind them without a server: server-side mail, the Telegram bridge,
+  // the fediverse links, and API keys for the instance's AI API.
+  const INSTANCE_SETTINGS_TABS = new Set(['mail', 'telegram', 'social', 'keys']);
+  function _viewNeedsInstance(v){
+    if(!_standalone()) return false;
+    if(v === 'blossom') return !_ownMediaServer();   // listable only with a server of their own
+    return INSTANCE_VIEWS.has(v);
+  }
+  // A media server the USER named, as opposed to an instance's built-in one or the nostr.build fallback.
+  // Deliberately not mediaServer(), which always answers with something uploadable.
+  function _ownMediaServer(){
+    return !!(ClientSettings.get('blossomEnabled') && String(ClientSettings.get('mediaServer') || '').trim());
+  }
+
+  /* Apply the above to the DOM. Runs after CFG loads (boot) and again whenever the instance changes,
+   * because both directions have to work: naming an instance must bring Meme Builder back, not only
+   * clearing one must take it away.
+   *
+   * PC_NOSTR_ONLY is folded in here rather than left to the template. The web page bakes it in at
+   * render time, but a bundled app ships ONE HTML for every instance, so the only place it can be
+   * known is at runtime — from CFG.nostr_only, or unconditionally when there is no instance at all. */
+  function applyInstanceGating(){
+    const solo = _standalone();
+    if(solo || (CFG && CFG.nostr_only)) window.PC_NOSTR_ONLY = true;
+    document.body.classList.toggle('standalone', solo);
+    try{
+      $$('.nav-item[data-view]').forEach(b => {
+        if(INSTANCE_VIEWS.has(b.dataset.view)) b.classList.toggle('hidden', solo);
+      });
+      const music = $('#nav-music'); if(music) music.classList.toggle('hidden', solo);
+      // Files → Blossom is not simply server-backed: it lists blobs on whatever media server is
+      // configured, and a standalone user CAN name their own. What it cannot do is list the default
+      // fallback — nostr.build is NIP-96 and has no listing API — so the view is kept exactly when
+      // there is something for it to list. Read live rather than baked, so naming a server in Settings
+      // (which reloads) brings it back.
+      const files = $('.nav-item[data-view="blossom"]');
+      if(files) files.classList.toggle('hidden', solo && !_ownMediaServer());
+      // "Get the app" points at /apk and /desktop/* on an instance. With none, there is no host to
+      // download from — and the person is already IN the app.
+      const apps = document.querySelector('.rb-apps'); if(apps) apps.classList.toggle('hidden', solo);
+      // A nav group whose every child is gone is an empty disclosure triangle. Fold the whole group.
+      $$('.nav-group').forEach(g => {
+        const kids = [...g.querySelectorAll('.nav-item.sub')];
+        if(kids.length) g.classList.toggle('hidden', kids.every(k => k.classList.contains('hidden')));
+      });
+    }catch(_){}
+    // Standing on a view that just went away → go somewhere that exists.
+    if(solo && INSTANCE_VIEWS.has(VIEW)){ try{ switchView('global'); }catch(_){} }
+  }
   let _myFollowersLoaded = false;
   let signer = null;
   const subs = {};                 // view -> subId
@@ -970,8 +1057,13 @@
   function _cfgCache(c){ try{ if(c && c.relay_url) localStorage.setItem(_CFG_KEY, JSON.stringify(c)); }catch(_){} }
 
   async function boot(){
-    CFG = (await fetch('/client/config').then(r=>r.json()).catch(()=>null)) || _cfgCached() || {};
+    // Standalone has no /client/config to ask, and asking anyway costs a failed request and a cached
+    // answer from whichever instance this install used to point at — which would then re-enable every
+    // server-backed surface for a session with no server. Skip straight to {}.
+    CFG = _standalone() ? {}
+        : (await fetch('/client/config').then(r=>r.json()).catch(()=>null)) || _cfgCached() || {};
     _cfgCache(CFG);
+    applyInstanceGating();
     // Custom branding (Admin → Site): override the logo used as the avatar fallback + brand
     // marks, and point the favicon/splash at it. Blank → keep the built-in PosterChan logo.
     if (CFG.logo_url){
@@ -993,8 +1085,10 @@
       // /sw.js, whereas the web PWA serves it at /client/sw.js under the /client scope. Registering the
       // web path/scope inside the app 404s (no /client/sw.js in the bundle) and wouldn't cover the app's
       // root pages anyway — so the SW never ran there and NOTHING was cached (media re-downloaded every
-      // view). Detect the app via the injected __PC_API_BASE__ and register the root sw.js at root scope.
-      const _isApp = !!window.__PC_API_BASE__;
+      // view). BUNDLED, not a truthy API base: the desktop build serves the same root layout with NO
+      // instance at all, and testing the base sent it looking for /client/sw.js inside a bundle that has
+      // only /sw.js — a 404, no service worker, and no media cache, on exactly the builds that ship one.
+      const _isApp = BUNDLED;
       // The whole updater hangs off ONE event: controllerchange. sw.js self-skipWaiting()s on install and
       // clients.claim()s on activate (robust across the Firefox-PWA "never activates" quirk), so a new build
       // takes control ON ITS OWN — and controllerchange fires only AFTER it's the controller and has
@@ -1799,10 +1893,41 @@
   // Decide which relays to connect: the user's own list when they've enabled it (untrusted, so the
   // pool verifies signatures), otherwise the single built-in WoT relay (trusted).
   function userRelays(){ return (ClientSettings.get('relays')||[]).map(u=>String(u||'').trim()).filter(Boolean); }
+  /* What to offer when someone has no relay list of their own yet.
+   *
+   * From the server when it answered, and from a hardcoded set when it did not — which is the case
+   * that matters, because "I want to run without a PosterChan instance" and "the instance is not
+   * reachable" are the same situation from here. A desktop or phone build that can only suggest
+   * relays while a server is up has not actually made anyone independent of it.
+   *
+   * These are OUR relays, not an arbitrary pick of popular ones: `wss://relay.poster.place` is this
+   * project's public relay, and the rest are the head of the upstream set every PosterChan node syncs
+   * with (`nostr_service.DEFAULT_RELAYS`) — so someone who switches off this instance keeps reading
+   * the same firehose they were reading a moment ago instead of landing somewhere unfamiliar. Keep
+   * the two lists in step when that one changes. */
+  const FALLBACK_RELAYS = ['wss://relay.poster.place/', 'wss://relay.snort.social/', 'wss://nos.lol/',
+                           'wss://relay.primal.net/', 'wss://nostr.mom/', 'wss://offchain.pub/'];
+  function defaultRelays(){
+    const fromCfg = (CFG && Array.isArray(CFG.default_relays) ? CFG.default_relays : [])
+      .map(u=>String(u||'').trim()).filter(Boolean);
+    const own = (CFG && CFG.relay_url) ? [String(CFG.relay_url)] : [];
+    const out = [...new Set([...own, ...fromCfg, ...FALLBACK_RELAYS])].slice(0, 6);
+    return out.length ? out : [''];
+  }
+  /* Which relays this session actually talks to.
+   *
+   * Three cases, and the third is the one that makes a standalone build work at all:
+   *   1. the user turned on their own relays  → those, signature-verified (they aren't ours to trust);
+   *   2. an instance told us its relay        → that one, trusted (the built-in WoT relay);
+   *   3. NO instance, or one that never answered → the defaults above, verified.
+   * Case 3 used to call Relay.connect(undefined), which opens a socket to the page's own origin and
+   * can only fail — so a client with no reachable server sat at "reconnecting…" forever even though
+   * it needs nothing from a server to read Nostr. */
   function connectRelays(){
-    const list = ClientSettings.get('relaysEnabled') ? userRelays() : [];
+    let list = ClientSettings.get('relaysEnabled') ? userRelays() : [];
+    if (!list.length && CFG && CFG.relay_url) return Relay.connect(CFG.relay_url);
+    if (!list.length) list = defaultRelays().filter(Boolean);
     if (list.length) Relay.configure({ urls: list, verify: true });
-    else Relay.connect(CFG.relay_url);
   }
 
   function renderConn(s){
@@ -2572,6 +2697,9 @@
   function _clearNav(){ $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); _syncRightbar(); }
   function switchView(v){
     if(window.PC_NOSTR_ONLY && (v==='ai' || v==='markets')) v='home';   // AI-backed views disabled in Nostr-only deployments
+    // Deep links, a restored last-view and the keyboard can all name a view the nav no longer shows —
+    // hiding the button is not the same as closing the door.
+    if(_viewNeedsInstance(v)) v='global';
     // Leaving Messages clears the open conversation so RE-entering Messages shows the list (not the last
     // thread). The profile "message @user" action sets dmActive THEN calls switchView (from a non-messages
     // view), so this guard won't wipe it. Without it, fix for the mobile thread-overlay would auto-open.
@@ -10572,6 +10700,11 @@
     // RELATIVE path and POST to poster.place instead of the user's server.
     if (s && !/^https?:\/\//i.test(s)) s = 'https://' + s;
     if (s) return s.replace(/\/+$/, '');         // user's own server (their CORS rules apply)
+    // No instance = no built-in Blossom to fall back to. `_serverOrigin() + '/blossom'` would resolve
+    // against the app's own bundle origin, so every upload would POST into the app itself and fail with
+    // nothing to point at. nostr.build is the public NIP-96 host the client already falls back to for
+    // users without upload permission, so it is the honest default here too.
+    if (_standalone()) return NOSTR_BUILD;
     // Built-in server: hit it SAME-ORIGIN via /blossom (the app that serves this client also mounts
     // the Blossom router), so uploads/list/delete need NO CORS preflight. blossom_public_url (e.g.
     // media.poster.place) is only the PUBLIC url the server returns for each blob — used for sharing,
@@ -10587,7 +10720,11 @@
   // Server origin for ABSOLUTE URLs we hand out (blossom media, shareable web links). In the bundled app
   // self.location.origin is https://localhost — useless off-device (the AI/relay/other users can't fetch it)
   // — so prefer the real server base injected by the app shim. PWA: __PC_API_BASE__ undefined → own origin.
-  function _serverOrigin(){ return (window.__PC_API_BASE__) || (self.location&&self.location.origin) || ''; }
+  // Standalone deliberately returns '' rather than the bundle's own origin: an app:// or
+  // https://localhost URL is meaningless to every other reader on the network, and handing one out as
+  // if it were a media link produces notes with permanently broken images. Empty makes each caller's
+  // own guard fire instead.
+  function _serverOrigin(){ if(_standalone()) return ''; return (window.__PC_API_BASE__) || (self.location&&self.location.origin) || ''; }
   // True when the bundled app talks to a PLAIN-HTTP instance (an .onion, or a LAN box). The page origin
   // is https://localhost, so every API call is cross-origin → the session cookie must be SameSite=None,
   // which browsers only honour with Secure, which they in turn refuse to set over http. There is simply
@@ -10611,7 +10748,10 @@
       u += (u.indexOf('?')<0?'?':'&') + 't=' + encodeURIComponent(_fileTok);
     return _serverOrigin()+u;
   }
-  function _blossomBuiltin(){ return { url:_serverOrigin()+'/blossom', proto:'blossom' }; }
+  function _blossomBuiltin(){
+    if(_standalone()) return { url:NOSTR_BUILD, proto:'nip96' };   // no instance → no built-in server
+    return { url:_serverOrigin()+'/blossom', proto:'blossom' };
+  }
   function uploadTarget(){
     if(ClientSettings.get('blossomEnabled')){
       let s=(ClientSettings.get('mediaServer')||'').trim();
@@ -11440,11 +11580,14 @@
     const feed=$('#feed');
     feed.innerHTML=`<div class="files-tabs">
         <button class="ftab${_filesTab==='public'?' active':''}" data-ft="public"><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg>Public</button>
-        <button class="ftab${_filesTab==='ai'?' active':''}" data-ft="ai"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>AI Chat</button>
+        ${_standalone()?'':`<button class="ftab${_filesTab==='ai'?' active':''}" data-ft="ai"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>AI Chat</button>`}
         ${IS_ADMIN?`<button class="ftab${_filesTab==='admin'?' active':''}" data-ft="admin"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shield"></use></svg>Admin</button>`:''}
       </div><div id="files-pane"></div>`;
     $$('.ftab',feed).forEach(b=> b.onclick=()=>{ _filesAdminPk=null; _filesTab=b.dataset.ft; renderBlossom(); });
     const pane=$('#files-pane',feed);
+    // A remembered tab can name one that is no longer drawn (the AI tab, with no server) — the same
+    // reason switchView re-checks a view the nav has stopped offering.
+    if(_standalone() && _filesTab==='ai') _filesTab='public';
     if(_filesTab==='admin') return renderBlossomAdmin(pane);
     if(_filesTab==='ai') return renderAiFiles(pane);
     return renderPublicFiles(pane);
@@ -13180,9 +13323,13 @@
   // ---------- NIP-17 DM relay list (kind 10050) — discovery + outbox delivery ----------
   // The relays where WE receive gift-wrapped DMs: our own list when enabled, else the built-in relay.
   // Other clients (0xchat/Amethyst/Coracle) read our kind-10050 to know where to deliver DMs to us.
+  // With no instance at all, CFG.relay_url is undefined and this returned [] — an EMPTY inbox list,
+  // which is the one answer that must never be published (nobody could deliver us a DM again). Fall
+  // back to the same defaults connectRelays() dialled, so the list always names somewhere real.
   function myInboxRelays(){
-    const list = ClientSettings.get('relaysEnabled') ? userRelays() : [];
-    return [...new Set((list.length ? list : [CFG.relay_url]).map(u=>normalizeRelay(u)).filter(Boolean))];
+    let list = ClientSettings.get('relaysEnabled') ? userRelays() : [];
+    if(!list.length) list = (CFG && CFG.relay_url) ? [CFG.relay_url] : defaultRelays().filter(Boolean);
+    return [...new Set(list.map(u=>normalizeRelay(u)).filter(Boolean))];
   }
   // Publish our kind-10050 DM-inbox list so other clients can discover where to gift-wrap-DM us. Called
   // LAZILY — the first time the user actually uses DMs (opens Messages / sends a DM), NOT on login: a
@@ -16668,7 +16815,13 @@
     // an empty form, which we still refuse below.
     let _cachedS=null; try{ const _c=localStorage.getItem('pc_settings_cache'); if(_c){ const p=JSON.parse(_c); if(p && typeof p==='object') _cachedS=p; } }catch(_){}
     let s=null;
-    for(let attempt=0; attempt<3; attempt++){
+    // Standalone: there is no /api/auth/settings, so the loop below would spend ~2.4s failing and then
+    // show "Couldn't load your settings" — on the ONE screen a server-less user cannot do without, since
+    // it is where relays and the instance are set. An empty object is the correct answer, not a fallback:
+    // every field that lives on a server is a pane that INSTANCE_SETTINGS_TABS has already dropped, and
+    // the wipe this guard exists to prevent needs a server to wipe.
+    const _solo = _standalone();
+    for(let attempt=0; _solo ? false : attempt<3; attempt++){
       await ensureAiSession();
       if(VIEW!=='settings') return;   // navigated away during the (first-time) sign/login
       try{ const r=await fetch('/api/auth/settings'); if(r.ok){ s=await r.json(); break; }
@@ -16685,7 +16838,8 @@
       await new Promise(r=>setTimeout(r, 400*(attempt+1)));   // brief backoff before re-warming + refetching
     }
     if(!host || VIEW!=='settings') return;
-    if(s && typeof s==='object'){ try{ localStorage.setItem('pc_settings_cache', JSON.stringify(s)); }catch(_){} }
+    if(_solo) s={};                    // no server to hold account settings — the client-side ones still apply
+    else if(s && typeof s==='object'){ try{ localStorage.setItem('pc_settings_cache', JSON.stringify(s)); }catch(_){} }
     else if(_cachedS){ s=_cachedS; }   // network failed but we have last-good settings → show them, not an error
     if(!s || typeof s!=='object'){
       host.innerHTML='<section class="set-card"><div class="set-body"><div class="muted">Couldn’t load your settings.</div><button class="btn btn-ghost small" id="us-retry">Retry</button></div></section>';
@@ -16703,8 +16857,13 @@
     let _cachedTheme; try{ _cachedTheme=localStorage.getItem('pc_theme'); }catch(_){}
     let _curTheme=s.theme||_cachedTheme||siteDefaultTheme();
     if(!THEME_SLUGS.has(_curTheme)) _curTheme=siteDefaultTheme();   // stale/removed slug → don't desync the dropdown
-    const tabs=[['profile','Profile'],['relays','Relays'],['media','Media'],['zaps','Zaps'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']];
-    const relaysOn=!!ClientSettings.get('relaysEnabled'), blossomOn=!!ClientSettings.get('blossomEnabled');
+    // Panes that need a server drop out entirely with no instance — see INSTANCE_SETTINGS_TABS.
+    const tabs=[['profile','Profile'],['relays','Relays'],['media','Media'],['zaps','Zaps'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']]
+      .filter(t => !(_standalone() && INSTANCE_SETTINGS_TABS.has(t[0])));
+    // Standalone has no built-in relay for the switch to fall back TO, so "use my own relays" is not a
+    // choice there — the list IS the relay config, always on. The switch is hidden and forced checked
+    // rather than removed, so the one Save path below still reads it and needs no second branch.
+    const relaysOn=_standalone() || !!ClientSettings.get('relaysEnabled'), blossomOn=!!ClientSettings.get('blossomEnabled');
     // Media destination as a 3-way choice (hydrated from the saved server): 'default' = automatic
     // (built-in server, or the nostr.build fallback for accounts without upload access), 'nostrbuild'
     // = always the public nostr.build, 'custom' = your own Blossom/NIP-96 URL. _isNb spots a saved
@@ -16714,7 +16873,11 @@
     const mediaMode = !blossomOn ? 'default' : (_isNb ? 'nostrbuild' : 'custom');
     // init the relay rows ONCE — renderUserSettings re-runs on connect/disconnect actions in other
     // tabs; re-seeding from saved values each time would wipe in-progress relay edits.
-    if(!_nostrPrefsLoaded){ _setRelays=userRelays(); if(!_setRelays.length) _setRelays=['']; }
+    // An EMPTY BOX is the least useful thing to show someone who just chose to stop depending on
+    // this instance: they would have to already know which relays exist. Seeded with this node's own
+    // relay (where their data is right now) plus the public set it syncs with, so the switch is one
+    // click and an edit rather than research.
+    if(!_nostrPrefsLoaded){ _setRelays=userRelays(); if(!_setRelays.length) _setRelays=defaultRelays(); }
     host.innerHTML=`<section class="set-card us">
       <div class="set-head"><div class="set-title">User Settings</div></div>
       <div class="us-tabs">${tabs.map((t,i)=>`<button class="us-tab${i===0?' active':''}" data-tab="${t[0]}">${t[1]}</button>`).join('')}</div>
@@ -16739,20 +16902,32 @@
           </label>
           <div class="muted small">How much offline media (avatars, images, played videos) to keep cached on THIS device. Larger = fewer re-downloads on a slow/throttled link, but more storage used. Per-device.</div>
           <div class="muted small" id="media-cache-stat" style="margin-top:4px">Checking device storage…</div>
-          ${(window.Capacitor && window.__PC_API_BASE__) ? `<label class="fld">🌐 Instance
+          ${BUNDLED ? `<label class="fld">🌐 Instance
             <div class="instance-pick" id="us-instance-pick"></div>
-            <span class="input-row" style="display:flex;gap:6px;margin-top:6px"><input class="input" id="us-instance-inp" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="https://your-instance" value="${enc(window.__PC_API_BASE__)}"><button class="btn btn-ghost small" id="us-instance-go">Connect</button></span>
+            <span class="input-row" style="display:flex;gap:6px;margin-top:6px"><input class="input" id="us-instance-inp" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="https://your-instance" value="${enc(_instanceBase())}"><button class="btn btn-ghost small" id="us-instance-go">Connect</button></span>
+            <span class="input-row" style="display:flex;gap:6px;margin-top:6px"><button class="btn btn-ghost small${_standalone()?' active':''}" id="us-instance-none">${_standalone()?'✓ Relays only — no server':'Use relays only (no server)'}</button></span>
           </label>
-          <div class="muted small">Which PosterChan server this app talks to (your Nostr key stays the same — it's portable). Switching reloads the app. Tap a quick-pick or type a domain, or paste a <code>.onion</code> address to connect over Tor.</div>
-          <div class="fld" id="us-tor-row" style="margin-top:10px">🧅 Tor
+          <div class="muted small">Which PosterChan server this app talks to for AI, media rendering and streams — your Nostr key and your posts never depend on it, they live on relays. Tap a quick-pick or type a domain, or paste a <code>.onion</code> address to connect over Tor. <b>Relays only</b> runs the app with no server at all: you keep Social, Messages, Notes, Passwords, Budget and the games, and the server-backed features are hidden until you name an instance again. Switching reloads the app.</div>
+          ${window.Capacitor ? `<div class="fld" id="us-tor-row" style="margin-top:10px">🧅 Tor
             <div class="muted small" id="us-tor-state" style="margin-top:4px">Checking for Orbot…</div>
             <span class="input-row" style="display:flex;gap:6px;margin-top:6px">
               <button class="btn btn-ghost small" id="us-tor-start">Start Orbot</button>
               <button class="btn btn-ghost small" id="us-tor-open">Open Orbot</button>
             </span>
+          </div>` : ''}` : ''}
+          ${_hasNativeTor() ? `<div class="fld" id="us-ntor-row" style="margin-top:10px">🧅 Tor
+            <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center;margin:6px 0 0">Route everything through Tor<label class="switch"><input type="checkbox" id="us-ntor-on"><span class="slider"></span></label></label>
+            <div class="muted small" id="us-ntor-state" style="margin-top:4px">Checking…</div>
+            <label class="fld" style="margin-top:8px">Exit country
+              <select class="input" id="us-ntor-cc"></select>
+            </label>
+            <div class="muted small">Where your traffic leaves the Tor network — sites see an address in this country. <b>Any</b> is fastest and the most private; pinning one country narrows the pool of exits, so it is slower and more identifying. Not a guarantee: if no exit is available there, Tor will not connect rather than quietly use another.</div>
+            <span class="input-row" style="display:flex;gap:6px;margin-top:8px">
+              <button class="btn btn-ghost small" id="us-ntor-new">New circuit</button>
+            </span>
           </div>` : ''}
-          <label class="fld">Notification email<input class="input" id="us-email" value="${enc(s.notification_email||'')}" placeholder="you@example.com"></label>
-          <label class="fld">News sources <span class="muted small">(one per line: url|name) — used by the <code>news</code> command</span><textarea class="input" id="us-news-src" rows="4">${enc(s.news_sources||'')}</textarea></label>
+          ${_standalone() ? '' : `<label class="fld">Notification email<input class="input" id="us-email" value="${enc(s.notification_email||'')}" placeholder="you@example.com"></label>
+          <label class="fld">News sources <span class="muted small">(one per line: url|name) — used by the <code>news</code> command</span><textarea class="input" id="us-news-src" rows="4">${enc(s.news_sources||'')}</textarea></label>`}
         </div>
         <div class="us-pane" data-pane="mail">
           <div class="muted small">IMAP/SMTP accounts for the <code>mail</code> command. First account is the default sender.</div>
@@ -16790,8 +16965,10 @@
           <div id="us-key-list"></div>
         </div>
         <div class="us-pane" data-pane="relays">
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Use my own relays<label class="switch"><input type="checkbox" id="set-relays-on" ${relaysOn?'checked':''}><span class="slider"></span></label></label>
-          <div class="muted small">By default this app uses the built-in relay. Turn this on to connect to your own relays instead — events from them are signature-verified.</div>
+          <label class="fld${_standalone()?' hidden':''}" style="flex-direction:row;justify-content:space-between;align-items:center">Use my own relays<label class="switch"><input type="checkbox" id="set-relays-on" ${relaysOn?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">${_standalone()
+            ? 'These are the relays this app reads and publishes to. They are pre-filled with the ones PosterChan uses, so it works as it is — replace them with your own at any time. Events are signature-verified either way.'
+            : 'By default this app uses the built-in relay. Turn this on to connect to your own relays instead — pre-filled with the relays PosterChan uses, so you are not starting from a blank box. Events from them are signature-verified.'}</div>
           <div class="set-body ${relaysOn?'':'disabled'}" id="set-relays-body">
             <div id="set-relay-list"></div>
             <div class="set-actions">
@@ -17008,9 +17185,11 @@
     _fillMediaCacheStat();
     // Instance quick-pick (native app only). Chips for the default + recently-used instances; tapping one (or
     // Connect) switches the server the app talks to. The Nostr key is portable, so only the session re-establishes.
-    { const pick=$('#us-instance-pick'), inp=$('#us-instance-inp'), go=$('#us-instance-go');
-      if(pick && inp && go && window.__PC_API_BASE__){
-        const cur=window.__PC_API_BASE__;
+    { const pick=$('#us-instance-pick'), inp=$('#us-instance-inp'), go=$('#us-instance-go'), non=$('#us-instance-none');
+      // Gated on BUNDLED, not on the base being non-empty: in standalone the base IS empty, and testing
+      // it removed the picker precisely when it was the only way back to an instance.
+      if(pick && inp && go && BUNDLED){
+        const cur=_instanceBase();
         // Normalise to https://host, and REJECT anything that isn't a plausible domain — otherwise a typo
         // ('asdf') would become https://asdf and the app would switch/reload to a dead instance. Returns '' if
         // the input isn't a valid host (needs a dot + a TLD, or is localhost/an IP).
@@ -17035,6 +17214,48 @@
           else { try{ localStorage.setItem('pc_instance', u); }catch(_){} location.reload(); } };
         pick.querySelectorAll('.instance-chip').forEach(b=> b.onclick=()=>_switch(b.dataset.u));
         go.onclick=()=>_switch(inp.value);
+        // "Relays only" — clear the instance entirely. Confirmed, because the features that disappear are
+        // not obvious from a button ("where did Meme Builder go?"), and it is one tap from Connect.
+        if(non) non.onclick=async()=>{
+          if(_standalone()){ toast('already running on relays only'); return; }
+          if(!await uiConfirm('Run on relays only? AI, Meme Builder, News, Torrents, 4chan and Server Stats need a server and will be hidden. Your key, posts, Notes, Passwords and Budget are on relays and are unaffected — you can name an instance again at any time.')) return;
+          if(window.__PC_SET_INSTANCE__) window.__PC_SET_INSTANCE__('');
+          else { try{ localStorage.setItem('pc_instance',''); }catch(_){} location.reload(); }
+        };
+      } }
+    // Native Tor (desktop app). One switch and a country; the shell owns the tor process, the SOCKS proxy
+    // and the fail-closed behaviour, so all this does is read and set.
+    { const row=$('#us-ntor-row');
+      if(row && _hasNativeTor()){
+        const cb=$('#us-ntor-on'), st=$('#us-ntor-state'), cc=$('#us-ntor-cc'), nb=$('#us-ntor-new');
+        const paint=(s)=>{
+          s=s||{};
+          if(cb) cb.checked=!!s.enabled;
+          if(cc){
+            const list=[['','Any country (fastest)'], ...((s.countries)||[])];
+            cc.innerHTML=list.map(([v,n])=>`<option value="${enc(v)}"${(s.country||'')===v?' selected':''}>${enc(n)}</option>`).join('');
+            cc.disabled=!s.enabled;
+          }
+          if(nb) nb.disabled=!(s.enabled && s.running);
+          if(!st) return;
+          if(!s.enabled){ st.textContent='Off — traffic goes out normally.'; return; }
+          if(s.error){ st.innerHTML='⚠ '+enc(s.error); return; }
+          if(!s.running){ st.textContent='Starting Tor…'; return; }
+          st.textContent = s.bootstrapped
+            ? ('Connected through Tor' + (s.country ? ' — exiting in ' + (s.countryName||s.country.toUpperCase()) : '') + '.')
+            : ('Connecting to the Tor network… ' + (s.progress==null?'':s.progress + '%'));
+        };
+        window.pcShell.tor.status().then(paint).catch(()=>{ if(st) st.textContent='Tor is unavailable in this build.'; });
+        // The shell pushes progress as it bootstraps — otherwise the panel would sit on "Connecting…"
+        // until the user reopened Settings, which is when they are most likely to be watching it.
+        if(window.pcShell.tor.onStatus) window.pcShell.tor.onStatus(paint);
+        if(cb) cb.onchange=()=>{ if(st) st.textContent=cb.checked?'Starting Tor…':'Turning Tor off…';
+          window.pcShell.tor.set({ enabled:cb.checked }).then(paint).catch(()=>{ if(st) st.textContent='could not change Tor'; }); };
+        if(cc) cc.onchange=()=>{ if(st) st.textContent='Rebuilding circuits…';
+          window.pcShell.tor.set({ country:cc.value }).then(paint).catch(()=>{ if(st) st.textContent='could not set the exit country'; }); };
+        if(nb) nb.onclick=()=>{ nb.disabled=true;
+          window.pcShell.tor.newCircuit().then(()=>{ toast('new Tor circuit'); }).catch(()=>toast('could not get a new circuit'))
+            .finally(()=>window.pcShell.tor.status().then(paint).catch(()=>{})); };
       } }
     // Tor / Orbot (native app only). We never claim traffic IS on Tor — an app can't honestly know that
     // without an external request, which would defeat the point. We report what's installed, whether the
@@ -17148,12 +17369,18 @@
         _prefTouched.add('zapPresets'); _prefTouched.add('xmrPresets'); _prefTouched.add('bchPresets');
         await saveClientPrefsNostr({ zapPresets: zpStr, xmrPresets: xpStr, bchPresets: bpStr });
       }
-      const body={ notification_email:$('#us-email').value.trim(), news_sources:$('#us-news-src').value,
-        telegram_notifications:$('#us-tg-notif').value.trim(), social_notif_enabled:$('#us-social-notif').checked,
-                fedi_bridge_enabled:(($('#us-fedi-bridge')||{}).checked)||false,
-        fedi_crosspost_enabled:(($('#us-fedi-crosspost')||{}).checked)||false,
-        pleroma_instance_url:$('#us-plr-url').value.trim(),
-        nitter_feeds:$('#us-nitter').value,
+      // Every field here belongs to a pane that only exists when there IS a server, and with no
+      // instance those panes are gone — so read them defensively. Unguarded `.value` on a missing
+      // #us-email threw here, and because this runs BEFORE the client-side saves below it took the
+      // relay and media edits down with it: the Save button did nothing at all, silently.
+      const _fv=(id)=>{ const el=$(id); return el ? String(el.value||'').trim() : ''; };
+      const _fc=(id)=>{ const el=$(id); return el ? !!el.checked : false; };
+      const body={ notification_email:_fv('#us-email'), news_sources:($('#us-news-src')||{}).value||'',
+        telegram_notifications:_fv('#us-tg-notif'), social_notif_enabled:_fc('#us-social-notif'),
+                fedi_bridge_enabled:_fc('#us-fedi-bridge'),
+        fedi_crosspost_enabled:_fc('#us-fedi-crosspost'),
+        pleroma_instance_url:_fv('#us-plr-url'),
+        nitter_feeds:($('#us-nitter')||{}).value||'',
         theme:($('#us-theme')&&$('#us-theme').value)||'cyberpunk',
         mail_accounts:usCollectMail() };
       const st=$('#us-save-status'); if(st) st.textContent='saving…';
@@ -17191,6 +17418,14 @@
         }
       }
       if($('#set-nwc')){ const u=($('#set-nwc').value||'').trim(); if(!u || Nwc.parse(u)) ClientSettings.set('nwc', u); }
+      // With no instance there is no account to PUT to, and reporting "save failed" over a save that
+      // fully succeeded (relays, media, theme, presets are all client-side) would be a lie.
+      if(_standalone()){
+        applyTheme(body.theme); toast('settings saved');
+        if(st) st.textContent=needReload?'✓ Saved — reloading':'✓ Saved';
+        if(needReload) setTimeout(()=>location.reload(),600);
+        return;
+      }
       try{ const r=await fetch('/api/auth/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
         if(r.ok){ applyTheme(body.theme); toast('settings saved');
           if(st) st.textContent=needReload?'✓ Saved — reloading':'✓ Saved';

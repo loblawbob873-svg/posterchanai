@@ -109,3 +109,11 @@ streamserver/
 # directory). Operator content — hundreds of MB of images, per-node, never committed.
 assets/emoji/
 .cache/
+
+# Desktop app build outputs. www/ is assembled from static/js/client by desktop/build-www.sh on every
+# build, and resources/tor is the Tor Expert Bundle the CI workflow downloads per platform — both are
+# derived, and the tor binaries are tens of MB of third-party build artifacts.
+desktop/www/
+desktop/resources/
+# The Capacitor bundle, same story (mobile/build-www.sh assembles it per build).
+mobile/www/

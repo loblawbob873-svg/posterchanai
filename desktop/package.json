@@ -5,11 +5,13 @@
   "description": "PosterChan desktop app (Electron) — a native window onto a PosterChan instance",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
+    "start": "npm run www && electron .",
+    "www": "bash build-www.sh",
     "icon": "node -e \"require('fs').mkdirSync('build',{recursive:true});require('fs').copyFileSync('../static/icon-512.png','build/icon.png');require('fs').copyFileSync('../static/icon-512.png','icon.png')\"",
-    "build:win": "npm run icon && electron-builder --win nsis --publish never",
-    "build:linux": "npm run icon && electron-builder --linux AppImage --publish never",
-    "build:mac": "npm run icon && electron-builder --mac dmg --x64 --arm64 --publish never"
+    "prebuild": "npm run icon && npm run www",
+    "build:win": "npm run prebuild && electron-builder --win nsis --publish never",
+    "build:linux": "npm run prebuild && electron-builder --linux AppImage --publish never",
+    "build:mac": "npm run prebuild && electron-builder --mac dmg --x64 --arm64 --publish never"
   },
   "dependencies": {
     "electron-updater": "^6.3.9"
@@ -23,7 +25,9 @@
     "productName": "PosterChan",
     "copyright": "PosterChan",
     "directories": { "output": "dist", "buildResources": "build" },
-    "files": ["main.js", "preload.js", "shell.html", "picker.html", "icon.png", "package.json"],
+    "files": ["main.js", "preload.js", "tor.js", "boot.html", "shell.html", "picker.html",
+              "icon.png", "package.json", "www/**/*"],
+    "extraResources": [{ "from": "resources/tor", "to": "tor" }],
     "win": {
       "icon": "build/icon.png",
       "target": [{ "target": "nsis", "arch": ["x64"] }]

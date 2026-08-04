@@ -4,9 +4,11 @@ name: Desktop apps
 # publishes every artifact to the rolling "desktop-latest" GitHub Release. poster.place/desktop serves
 # those assets (and the electron-updater feed) — see the /desktop routes in app/main.py.
 #
-# The desktop app is a THIN shell that loads <instance>/client live, so a web-client change ships to
-# desktop users on their next reload — this workflow only needs to run when the shell itself changes.
-# (The Android APK is the opposite: it BUNDLES the client, so android.yml is gated on static/js/client.)
+# The desktop app BUNDLES the web client (desktop/build-www.sh), so a static/js/client change has to be
+# built and released before desktop users see it — which is why the path filter below watches those files
+# too, exactly as android.yml does. It used to be a thin shell that loaded <instance>/client live; that
+# is what made it depend on a server being reachable, and the whole point of bundling is that it no
+# longer does.
 #
 # Signing: Windows and Linux artifacts are unsigned — SmartScreen shows a "more info" prompt on first
 # run. macOS is unsigned too, which additionally means NO auto-update there (Squirrel.Mac requires a
@@ -17,8 +19,17 @@ on:
     branches: [ main ]
     paths:
       - 'desktop/**'
+      - 'static/js/client/**'
+      - 'static/css/client.css'
+      - 'templates/client.html'
       - '.github/workflows/desktop.yml'
   workflow_dispatch:
+
+env:
+  # Tor Expert Bundle version. Bump deliberately — a bad value fails the build (see "Bundle Tor"), which
+  # is the intended behaviour: shipping an installer whose Tor switch does nothing is worse than not
+  # shipping one.
+  TOR_VERSION: '14.5.8'
 
 permissions:
   contents: write
@@ -32,12 +43,19 @@ jobs:
           - os: windows-latest
             name: windows
             script: build:win
+            tor: windows-x86_64
           - os: ubuntu-latest
             name: linux
             script: build:linux
+            tor: linux-x86_64
           - os: macos-latest
             name: mac
             script: build:mac
+            # The .dmg is universal (x64 + arm64) and electron-builder packs ONE extraResources tree into
+            # both, so the bundle has to work on either arch. macos-aarch64 would break Intel Macs, so
+            # x86_64 it is — Rosetta covers Apple Silicon, and tor is a short-lived local proxy where the
+            # translation cost is irrelevant next to network latency.
+            tor: macos-x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -46,15 +64,51 @@ jobs:
         with:
           node-version: '20'
 
+      # Tor, bundled. The app advertises native Tor, so this must be a HARD failure: an installer that
+      # ships the switch without the binary is a promise the app cannot keep, and the user has no way to
+      # tell. Extracted verbatim into desktop/resources/tor, whose layout tor.js expects —
+      #   tor/tor(.exe)   the binary + its shared libraries
+      #   data/geoip{,6}  the country database, WITHOUT WHICH the exit-country picker silently does
+      #                   nothing (tor bootstraps, reports 100%, and ignores ExitNodes)
+      - name: Bundle Tor
+        working-directory: desktop
+        shell: bash
+        run: |
+          set -euo pipefail
+          V="${TOR_VERSION}"
+          P="${{ matrix.tor }}"
+          URL="https://archive.torproject.org/tor-package-archive/torbrowser/${V}/tor-expert-bundle-${P}-${V}.tar.gz"
+          echo "Fetching $URL"
+          mkdir -p resources/tor
+          curl -fsSL --retry 3 --retry-delay 5 "$URL" -o tor.tar.gz
+          tar -xzf tor.tar.gz -C resources/tor
+          rm -f tor.tar.gz
+          # Prove the two things tor.js needs are actually there. `find` rather than a fixed path because
+          # the archive has moved the binary between releases; tor.js accepts either shape.
+          BIN="$(find resources/tor -maxdepth 2 -name 'tor' -o -maxdepth 2 -name 'tor.exe' | head -1)"
+          test -n "$BIN" || { echo "::error::no tor binary in the expert bundle"; ls -R resources/tor; exit 1; }
+          GEO="$(find resources/tor -maxdepth 2 -name 'geoip' | head -1)"
+          test -n "$GEO" || { echo "::error::no geoip database — the exit-country picker would be a no-op"; ls -R resources/tor; exit 1; }
+          chmod +x "$BIN" || true
+          echo "tor: $BIN"; echo "geoip: $GEO"
+
       # Version == the run number, like the APK's versionCode. electron-updater compares this against
       # the feed's `version`, so it MUST increase on every build or no client ever sees an update.
       - name: Version from run number
         working-directory: desktop
         run: npm version 1.0.${{ github.run_number }} --no-git-tag-version --allow-same-version
 
+      # `npm ci`, NEVER `npm install`. install re-resolves every caret range against the registry on
+      # every build, so a dependency compromised between two builds ships in the next installer with
+      # nothing in the diff to show it — and electron-builder pulls the whole got/keyv/cacheable-request
+      # chain the Shai-Hulud npm worm went after (keyv 6.0.0 was published and unpublished inside one
+      # day, 2026-08-04). ci installs desktop/package-lock.json verbatim, verifies every integrity hash,
+      # and FAILS if package.json and the lock disagree instead of quietly picking something newer.
+      # The lock is committed for exactly this reason — see desktop/.gitignore.
+      # (`npm version` above rewrites the version in both files, so they stay in sync for this step.)
       - name: Install deps
         working-directory: desktop
-        run: npm install
+        run: npm ci
 
       - name: Build
         working-directory: desktop

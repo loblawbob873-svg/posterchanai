@@ -1,28 +1,36 @@
-/* PosterChan desktop (Windows .exe / Linux AppImage) — a deliberately THIN Electron shell around the
- * SAME web client the site serves: the window just loads <instance>/client.
+/* PosterChan desktop (Windows .exe / macOS .dmg / Linux AppImage).
  *
- * Thin on purpose. Because the window is same-origin with the server, cookies, CORS, WebRTC and the
- * service worker all behave exactly as they do in a browser — none of the bundled-mode plumbing the
- * Android APK needs (mobile/build-www.sh) exists here. It also means a UI change ships with the site,
- * so users get it on the next reload and the .exe/AppImage only ever needs rebuilding when THIS shell
- * changes. The shell owns only what a browser tab can't:
- *   - window state, an instance picker (any self-hosted PosterChan, not just poster.place)
- *   - routing off-site links to the real browser
- *   - the permission grants the client needs (camera/mic for calls, notifications, screen share)
- *   - auto-update (electron-updater, generic feed at https://poster.place/desktop/)
+ * The app BUNDLES the web client (desktop/www, assembled by build-www.sh from the same
+ * static/js/client files the site serves) and loads it from disk over a privileged app:// scheme. An
+ * instance — if the user names one — is a DATA endpoint only: AI, media rendering, streams, admin.
+ * With no instance the app is a Nostr client and nothing is missing except the things a server does.
+ *
+ * That is the whole point: relays and a key are enough. Everything below follows from it.
+ *
+ * Why app:// and not file:// — a file:// page is not a secure context, and Chromium then removes
+ * crypto.subtle and navigator.mediaDevices. The client SIGNS with crypto.subtle (NIP-44, the vault,
+ * every event), so on file:// it could not log in, let alone make a call. A scheme registered as
+ * `secure` + `standard` gets a real origin, a working WebCrypto, service workers and IndexedDB.
+ *
+ * The shell still owns only what a page can't: window state, the tor process and the session proxy,
+ * routing off-site links to the real browser, the permission grants the client needs, and auto-update.
  */
-const { app, BrowserWindow, shell, session, Menu, clipboard, dialog, ipcMain, desktopCapturer, systemPreferences } = require('electron');
+const { app, BrowserWindow, shell, session, Menu, clipboard, dialog, ipcMain, desktopCapturer,
+        systemPreferences, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const tor = require('./tor');
 
 const DEFAULT_INSTANCE = 'https://poster.place';
-const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;   // re-check every 6h for long-running windows
+const APP_ORIGIN = 'app://posterchan';                  // the bundle's own origin
+const APP_URL = APP_ORIGIN + '/index.html';
+const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;             // re-check every 6h for long-running windows
+const WWW = path.join(__dirname, 'www');
 
 let win = null;
 let cfg = {};
-let insecureInstance = false;   // true when we started with the http-instance switch below applied
 
-// ---- tiny JSON config in userData (instance + window geometry) --------------------------------
+// ---- tiny JSON config in userData (instance + window geometry + tor) ---------------------------
 function cfgPath() { return path.join(app.getPath('userData'), 'config.json'); }
 function loadCfg() { try { cfg = JSON.parse(fs.readFileSync(cfgPath(), 'utf8')) || {}; } catch (_) { cfg = {}; } }
 function saveCfg() {
@@ -31,57 +39,118 @@ function saveCfg() {
     fs.writeFileSync(cfgPath(), JSON.stringify(cfg, null, 2));
   } catch (_) {}
 }
-function instance() { return String(cfg.instance || DEFAULT_INSTANCE).replace(/\/+$/, ''); }
-function clientUrl() { return instance() + '/client'; }
+/* The configured instance, or '' for "relays only".
+ *
+ * '' and undefined are DIFFERENT and the difference is the whole feature: undefined means a fresh
+ * install that has never chosen (→ poster.place, which is what every existing install has been doing),
+ * while '' means the user deliberately turned the server off and must not be quietly reconnected to
+ * one on the next launch. `cfg.instance == null` is the only test that keeps them apart.
+ */
+function instance() {
+  if (cfg.instance == null) return DEFAULT_INSTANCE;
+  return String(cfg.instance).replace(/\/+$/, '');
+}
 function originOf(u) { try { return new URL(u).origin; } catch (_) { return ''; } }
-function isOurs(url) { const o = originOf(url); return !!o && o === originOf(instance()); }
+// "Ours" = the bundle, plus the instance's own pages (the client frames <instance>/admin). With no
+// instance only the bundle qualifies, which is exactly right.
+function isOurs(url) {
+  const o = originOf(url);
+  if (!o) return false;
+  if (o === APP_ORIGIN) return true;
+  const inst = instance();
+  return !!inst && o === originOf(inst);
+}
 
 // ---- the sign-in round trip is not an off-site link -------------------------------------------
 // "Sign in with Google / a fediverse account" leaves our origin BY DESIGN and comes back carrying a
-// one-time code that /client swaps for the account's key. Handing that trip to the system browser —
+// one-time code that the client swaps for the account's key. Handing that trip to the system browser —
 // which the off-site rule below otherwise does — spends the single-use code THERE: the person ends up
-// signed in in Firefox while the app they clicked in stays logged out. That is what shipped.
+// signed in in Firefox while the app they clicked in stays logged out.
 //
-// Recognised without a hardcoded provider list: an off-site URL whose `redirect_uri` points back at
-// this instance IS the round trip, which is equally true of Google and of any fediverse instance
-// someone types. While one is open, navigation WITHIN that provider stays in the app; it closes as
-// soon as we are back on our own origin, or after OAUTH_MAX_MS, so this can never become a general
-// off-site allowance.
-let oauth = null;   // { origin, until } while a sign-in is in flight
+// Recognised without a hardcoded provider list: an off-site URL whose `redirect_uri` points back at the
+// instance IS the round trip, which is equally true of Google and of any fediverse instance someone
+// types. While one is open, navigation WITHIN that provider stays in the app; it closes as soon as we
+// are back on our own origin, or after OAUTH_MAX_MS, so this can never become a general allowance.
+let oauth = null;
 const OAUTH_MAX_MS = 5 * 60 * 1000;
 
 function comesBackToUs(url) {
   try {
     const back = new URL(url).searchParams.get('redirect_uri') || '';
-    return !!back && originOf(back) === originOf(instance());
+    const inst = instance();
+    return !!back && !!inst && originOf(back) === originOf(inst);
   } catch (_) { return false; }
 }
 function isSignInNav(url) {
   const o = originOf(url);
   if (!o) return false;
-  if (o === originOf(instance())) { oauth = null; return false; }   // home again: the trip is over
+  if (isOurs(url)) { oauth = null; return false; }        // home again: the trip is over
   if (comesBackToUs(url)) { oauth = { origin: o, until: Date.now() + OAUTH_MAX_MS }; return true; }
   return !!(oauth && oauth.origin === o && Date.now() < oauth.until);
 }
 
-// ---- media prerequisites (must run BEFORE app ready — Chromium reads these once, at startup) ----
-// A self-hosted instance reached over plain http is not a SECURE CONTEXT, and Chromium then removes
-// navigator.mediaDevices entirely: mic, camera and screen share all report "not supported" even though
-// the very same instance works over https. Trust the one origin the user configured — nothing else.
-function wireInsecureInstance() {
-  const o = originOf(instance());
-  if (!/^http:\/\//i.test(o)) return;
-  app.commandLine.appendSwitch('unsafely-treat-insecure-origin-as-secure', o);
-  // Chromium ignores that switch unless a user-data-dir is on the command line. Passing the path
-  // Electron already uses keeps the profile exactly where it was.
-  app.commandLine.appendSwitch('user-data-dir', app.getPath('userData'));
-  insecureInstance = true;
+// ---- the app:// scheme -------------------------------------------------------------------------
+// registerSchemesAsPrivileged MUST run before app ready — Chromium reads the scheme registry once, at
+// startup. `secure` is what gives the page WebCrypto (see the header note); `standard` is what gives it
+// a real tuple origin, which is what the instance's CORS allowlist matches and what makes the service
+// worker registerable.
+protocol.registerSchemesAsPrivileged([{
+  scheme: 'app',
+  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true,
+                stream: true, allowServiceWorkers: true },
+}]);
+
+const _MIME = {
+  '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+  '.svg': 'image/svg+xml', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
+  '.woff': 'font/woff', '.ttf': 'font/ttf', '.map': 'application/json', '.mp4': 'video/mp4',
+  '.webm': 'video/webm', '.wasm': 'application/wasm',
+};
+
+function serveBundle() {
+  protocol.handle('app', async (request) => {
+    let rel;
+    try { rel = decodeURIComponent(new URL(request.url).pathname); } catch (_) { rel = '/'; }
+    if (rel === '/' || rel === '') rel = '/index.html';
+    // Contain every request inside www/. path.normalize collapses ../ BEFORE the prefix test, so a
+    // crafted app://posterchan/../../etc/passwd resolves and is then rejected — testing the raw
+    // pathname for '..' would miss encoded and mixed-separator forms.
+    const full = path.normalize(path.join(WWW, rel));
+    if (!full.startsWith(WWW + path.sep) && full !== WWW) {
+      return new Response('forbidden', { status: 403 });
+    }
+    try {
+      const body = await fs.promises.readFile(full);
+      const type = _MIME[path.extname(full).toLowerCase()] || 'application/octet-stream';
+      return new Response(body, {
+        status: 200,
+        headers: {
+          'Content-Type': type,
+          // The shell is what carries the ?v= tokens for the JS/CSS, and it ships INSIDE the installer,
+          // so a cached copy could only ever be staler than the file on disk. Reading it is a local
+          // read; there is nothing to save.
+          'Cache-Control': 'no-store',
+        },
+      });
+    } catch (_) {
+      return new Response('not found', { status: 404 });
+    }
+  });
 }
 
-// Google refuses OAuth from a user agent it can identify as an embedded browser (disallowed_useragent),
-// and Electron's default UA advertises exactly that: `posterchan/1.0.3 ... Electron/x.y.z`. Underneath it
-// is plain Chromium of the stated Chrome/NNN version, so drop the two tokens and present that. Nothing
-// else keys off the UA — the client picks its layout from viewport/pointer, never this string.
+// A cleartext instance (an .onion — plain HTTP by design — or a LAN box) is mixed content to our
+// secure app:// page, and Chromium blocks it. The app is allowed to speak cleartext on purpose, the
+// same way the APK sets usesCleartextTraffic. Must be set before ready.
+function wireInsecureContent() {
+  app.commandLine.appendSwitch('allow-running-insecure-content');
+}
+
+// Google refuses OAuth from a user agent it can identify as an embedded browser
+// (disallowed_useragent), and Electron's default UA advertises exactly that:
+// `posterchan/1.0.3 ... Electron/x.y.z`. Underneath it is plain Chromium of the stated Chrome/NNN
+// version, so drop the two tokens and present that. Nothing else keys off the UA — the client picks
+// its layout from viewport/pointer, never this string.
 function wirePlainUserAgent() {
   try {
     app.userAgentFallback = app.userAgentFallback
@@ -98,17 +167,52 @@ function wireWaylandCapture() {
   app.commandLine.appendSwitch('enable-features', 'WebRTCPipeWireCapturer');
 }
 
+// ---- Tor ---------------------------------------------------------------------------------------
+/* One place decides what the session's proxy is, and it is derived from tor's state rather than set
+ * from the two places that change it — so "on" and "off" cannot disagree.
+ *
+ * FAIL CLOSED. While Tor is enabled the proxy stays pointed at its SOCKS port even when the process
+ * has died: every request then fails, which is the promise the switch makes. The tempting bug is to
+ * "recover" by clearing the proxy, which silently drops someone onto the clear net at the exact moment
+ * they were relying on it not to.
+ */
+async function applyProxy() {
+  const s = tor.status();
+  try {
+    if (s.enabled) {
+      // socks5:// (not socks4/http) is what makes Chromium resolve hostnames AT the proxy. With local
+      // DNS the browsing is anonymous but every lookup still names the site to the local resolver —
+      // and .onion cannot resolve locally at all, so it is also what makes onion addresses work.
+      await session.defaultSession.setProxy({ proxyRules: tor.proxyRules() });
+    } else {
+      await session.defaultSession.setProxy({ mode: 'direct' });
+    }
+  } catch (e) { console.warn('[tor] setProxy', (e && e.message) || e); }
+}
+
+function pushTorStatus() {
+  const s = tor.status();
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) { try { w.webContents.send('pc:tor:status', s); } catch (_) {} }
+  }
+}
+
 // ---- auto-update -------------------------------------------------------------------------------
 // Feed is our own domain (https://poster.place/desktop/), which 302s to the GitHub release assets —
 // see app/main.py. Going through the server rather than electron-updater's GitHub provider keeps the
 // feed stable: the repo carries TWO rolling releases (apk-latest, desktop-latest) and the GitHub
 // provider picks whichever was published last, which would break update checks after an APK build.
-// Skipped in dev.
+//
+// Now that the UI ships INSIDE the installer, this is how a client change reaches desktop users at
+// all — it is no longer only about the shell.
 function initUpdater() {
   if (!app.isPackaged) return;
   // macOS: Squirrel.Mac refuses to swap in an app that isn't code-signed, and these builds are
   // unsigned (no Apple Developer ID). Don't even check — download the new .dmg from poster.place.
   if (process.platform === 'darwin') return;
+  // Over Tor the update check would go through the SOCKS proxy from a Node http stack that does not
+  // use it, so it would either leak or hang. Skip it; the user can update by choice.
+  if (tor.status().enabled) return;
   let autoUpdater;
   try { ({ autoUpdater } = require('electron-updater')); } catch (_) { return; }
   autoUpdater.autoDownload = true;
@@ -142,16 +246,14 @@ function createWindow() {
     minWidth: 480,
     minHeight: 520,
     backgroundColor: '#0a0a10',            // matches the client's dark shell — no white flash on open
-    // Menu bar stays VISIBLE: "File → Switch instance…" is how a user points the app at their own
-    // self-hosted PosterChan, and behind an Alt-press nobody would ever find it.
+    // Menu bar stays VISIBLE: it carries "Switch instance…" and "Tor…", and behind an Alt-press nobody
+    // would ever find them.
     autoHideMenuBar: false,
     icon: path.join(__dirname, 'icon.png'),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: true,
-      // preload.js exposes its bridge ONLY to the bundled file:// page (offline / instance picker) —
-      // the remote client gets a plain window, so a compromised instance can't repoint the app.
       preload: path.join(__dirname, 'preload.js'),
     },
   });
@@ -192,7 +294,6 @@ function createWindow() {
       });
       items.push({ type: 'separator' });
     }
-    // A link under the cursor: the client opens off-site links externally, so offer the same for copying.
     if (params.linkURL) {
       items.push({ label: 'Open link in browser', click: () => shell.openExternal(params.linkURL) });
       items.push({ label: 'Copy link address', click: () => clipboard.writeText(params.linkURL) });
@@ -206,60 +307,64 @@ function createWindow() {
     Menu.buildFromTemplate(items).popup({ window: win });
   });
 
-  // Off-site links (and target=_blank to another host) belong in the user's real browser; the instance's
-  // own pages — plus blob:/data: (media the client builds locally) — open as a normal app window.
+  // Off-site links (and target=_blank to another host) belong in the user's real browser; our own pages —
+  // plus blob:/data: (media the client builds locally) — open as a normal app window.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (originOf(url) === originOf(instance()) || /^blob:|^data:/.test(url)) return { action: 'allow' };
+    if (isOurs(url) || /^blob:|^data:/.test(url)) return { action: 'allow' };
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
   // A 302 out to the provider fires will-redirect, not will-navigate, so watch it too — but only to
-  // NOTICE the trip starting. Rerouting a redirect is deliberately not done here: redirects already
-  // stayed in the window before this change and that is not what broke.
+  // NOTICE the trip starting.
   win.webContents.on('will-redirect', (e, url) => { isSignInNav(url); });
   win.webContents.on('will-navigate', (e, url) => {
-    const o = originOf(url);
-    if (!o || url.startsWith('file://') || o === originOf(instance())) { if (isOurs(url)) oauth = null; return; }
+    if (isOurs(url) || url.startsWith('file://')) { oauth = null; return; }
     if (isSignInNav(url)) return;                     // the sign-in round trip comes back to us
     e.preventDefault(); shell.openExternal(url);      // everything else belongs in the real browser
   });
 
-  // Can't reach the instance (offline, wrong domain, server down) → our own page, not Chromium's.
-  //
-  // Note what has to be TRUE before this fires at all: the client's service worker answers an in-scope
-  // navigation from its cache, so a normal offline launch of an instance this machine has opened before
-  // never reaches here — it opens the saved app. Getting here means the network AND the cache both had
-  // nothing, which is a different situation and deserves different words (see `seen` below).
-  //
-  // Retry once, silently, first. A cold start races the OS network stack: on a laptop resuming from sleep
-  // or a machine that just booted, the first navigation can fail a second before the interface is up, and
-  // flashing an error card at someone whose network is one heartbeat away is the least app-like thing the
-  // shell can do.
-  let failRetried = false;
+  // The bundle is on disk, so "can't load the app" is no longer a network condition — it means the
+  // packaged www/ is missing or unreadable, which is a broken install and nothing a retry fixes. Say
+  // that rather than showing Chromium's error page.
   win.webContents.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
     if (!isMainFrame || code === -3) return;   // -3 = aborted (a normal in-app navigation)
-    if (!failRetried) {
-      failRetried = true;
-      setTimeout(() => { if (win && !win.isDestroyed()) win.loadURL(clientUrl()); }, 1500);
-      return;
-    }
-    win.loadFile(path.join(__dirname, 'shell.html'), {
-      query: { err: desc || String(code), url: instance(), seen: cfg.everLoaded ? '1' : '' },
-    });
-  });
-  win.webContents.on('did-finish-load', () => {
-    failRetried = false;
-    // Record that this machine has successfully loaded the instance at least once. That is what lets the
-    // offline page distinguish "nothing has ever been saved here, so there is nothing to show you" from
-    // "you have used this before and even the saved copy failed", which point at different fixes.
-    try {
-      if (win && !win.isDestroyed() && isOurs(win.webContents.getURL()) && !cfg.everLoaded) {
-        cfg.everLoaded = true; saveCfg();
-      }
-    } catch (_) {}
+    console.warn('[load]', code, desc, url);
+    dialog.showErrorBox('PosterChan could not start',
+      'The app files could not be read (' + (desc || code) + ').\n\nReinstalling should fix it.');
   });
 
-  win.loadURL(clientUrl());
+  loadApp();
+}
+
+/* What the window shows, and in what order.
+ *
+ * With Tor on, the boot card comes FIRST and the bundle is not loaded until the circuit is up. That
+ * ordering is the feature: the client opens relay sockets and fetches media the moment it evaluates,
+ * so loading it first would put real traffic on the clear net during the seconds before the proxy took
+ * effect — the exact leak the switch is meant to prevent.
+ */
+// Re-entrancy is real here, not theoretical: this awaits a bootstrap that can take a minute, and
+// "Continue without Tor" (or Reload, or a menu action) calls it again from inside that window. Two
+// concurrent runs would both eventually loadURL, and the LOSER could apply a stale proxy decision
+// after the winner's. A generation counter lets the older run notice it has been superseded and stop.
+let loadGen = 0;
+async function loadApp() {
+  if (!win || win.isDestroyed()) return;
+  const gen = ++loadGen;
+  const current = () => gen === loadGen && win && !win.isDestroyed();
+  if (tor.status().enabled) {
+    await win.loadFile(path.join(__dirname, 'boot.html'));
+    if (!current()) return;
+    pushTorStatus();
+    const ok = await tor.waitBootstrapped(120000);
+    if (!current()) return;
+    // Not bootstrapped → stay on the card. It is showing the reason and offering both ways out
+    // ("Continue without Tor" flips the switch, which comes back through here).
+    if (!ok && tor.status().enabled) { pushTorStatus(); return; }
+  }
+  await applyProxy();
+  if (!current()) return;
+  win.loadURL(APP_URL);
 }
 
 // ---- downloads ---------------------------------------------------------------------------------
@@ -274,8 +379,6 @@ function createWindow() {
 //   2. what Electron parsed out of Content-Disposition;
 //   3. the URL's basename (our Blossom URLs carry the extension now);
 //   4. the MIME type of the response.
-// Whatever wins is then guaranteed an extension, and the filter for that extension is what makes
-// Windows keep it.
 const _DL_MIME_EXT = {
   'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'image/jpeg': 'jpg',
   'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'audio/mpeg': 'mp3',
@@ -311,15 +414,13 @@ function wireDownloads() {
 }
 
 // The client is a real app: calls need camera/mic, notifications need permission, screen share needs
-// display-capture. Grant those to the instance origin only; deny everything else by default.
+// display-capture. Grant those to our own pages only; deny everything else by default.
 function wirePermissions() {
   // 'fileSystem' is the File System Access API — window.showSaveFilePicker/showOpenFilePicker.
   // Without it, Electron denies the picker and every "save a file" path in the client silently
   // degrades or fails: the Notes BACKUP is the one people hit, because a library with attachments is
-  // gigabytes and the only way to write it is to stream it to a file handle. In a browser the same
-  // code works, which is what made this look like a Windows-only bug. Scoped to our own origin by
-  // isOurs() below, exactly like every other grant here — and the user still gets the OS save dialog,
-  // so nothing is written anywhere they did not choose.
+  // gigabytes and the only way to write it is to stream it to a file handle. The user still gets the
+  // OS save dialog, so nothing is written anywhere they did not choose.
   const ALLOW = new Set(['media', 'notifications', 'fullscreen', 'clipboard-read',
     'clipboard-sanitized-write', 'display-capture', 'pointerLock', 'background-sync', 'fileSystem']);
   const ses = session.defaultSession;
@@ -348,8 +449,7 @@ function wirePermissions() {
 
   // Screen share. getDisplayMedia does NOT go through the handlers above: Electron rejects it outright
   // unless a display-media handler is set (a browser has a picker built in; an Electron app has to
-  // supply one). That's why "share screen" failed in the app while the same client works in Chrome.
-  // On macOS 15+ the native picker takes over and this handler is never called (useSystemPicker).
+  // supply one). On macOS 15+ the native picker takes over and this handler is never called.
   ses.setDisplayMediaRequestHandler(async (req, cb) => {
     if (!isOurs((req && req.frame && req.frame.url) || (req && req.securityOrigin) || '')) return cb({});
     let source = null;
@@ -398,12 +498,25 @@ function pickScreenSource() {
 }
 
 function buildMenu() {
+  const inst = instance();
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
       label: 'File',
       submenu: [
-        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => win && win.loadURL(clientUrl()) },
-        { label: 'Switch instance…', click: () => win && win.loadFile(path.join(__dirname, 'shell.html'), { query: { pick: '1', url: instance() } }) },
+        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => loadApp() },
+        { type: 'separator' },
+        { label: 'Switch instance…', click: () => win && win.loadFile(path.join(__dirname, 'shell.html'), { query: { pick: '1', url: inst } }) },
+        {
+          label: inst ? 'Use relays only (no server)' : 'Using relays only ✓',
+          enabled: !!inst,
+          click: () => setInstance(''),
+        },
+        { type: 'separator' },
+        {
+          label: tor.status().enabled ? 'Turn Tor off' : 'Turn Tor on…',
+          enabled: tor.available(),
+          click: () => setTor({ enabled: !tor.status().enabled }),
+        },
         { type: 'separator' },
         { role: 'quit' },
       ],
@@ -419,41 +532,79 @@ function buildMenu() {
     {
       label: 'Help',
       submenu: [
-        { label: 'Open in browser', click: () => shell.openExternal(clientUrl()) },
+        { label: inst ? 'Open this instance in browser' : 'No instance configured', enabled: !!inst,
+          click: () => inst && shell.openExternal(inst + '/client') },
         { label: `Version ${app.getVersion()}`, enabled: false },
       ],
     },
   ]));
 }
 
-// ---- IPC from shell.html (offline page / instance picker) ---------------------------------------
-ipcMain.handle('pc:instance:get', () => instance());
-ipcMain.handle('pc:instance:set', (_e, url) => {
-  const clean = String(url || '').trim().replace(/\/+$/, '');
-  if (!/^https?:\/\/[^\s/]+$/i.test(clean)) return false;
-  cfg.instance = clean; saveCfg();
-  // The insecure-origin switch is read once at startup, so moving to (or off) an http instance only
-  // takes effect after a relaunch — without it that instance would have no mic/camera/screen share.
-  if (/^http:\/\//i.test(clean) !== insecureInstance) { app.relaunch(); app.exit(0); return true; }
-  if (win) win.loadURL(clientUrl());
+// ---- instance + tor changes ---------------------------------------------------------------------
+/* Setting the instance reloads the app, because __PC_API_BASE__ is read once at page evaluation and
+ * every relay socket, media URL and auth path hangs off it. '' is a legitimate value — see instance(). */
+function setInstance(url) {
+  const clean = String(url == null ? '' : url).trim().replace(/\/+$/, '');
+  if (clean && !/^https?:\/\/[^\s/]+$/i.test(clean)) return false;
+  cfg.instance = clean;
+  saveCfg();
+  buildMenu();                      // the File menu names the current instance
+  loadApp();
   return true;
-});
-ipcMain.on('pc:retry', () => { if (win) win.loadURL(clientUrl()); });
-// Clipboard for the loaded instance. BOTH web paths are dead in this shell: navigator.clipboard is
-// removed outright when the instance is reached over plain http (not a secure context — see the note at
-// the top of this file), and execCommand('copy') is refused as well, so the Go Live stream key simply
-// could not be copied. Writing text is a far narrower capability than the file:-only instance controls,
-// but it is still gated on the instance origin so an embedded third party can't scribble on the
-// clipboard. Write-only by design: nothing here can READ what the user has copied.
-ipcMain.handle('pc:clip:write', (e, text) => {
+}
+
+async function setTor(opts) {
+  const before = tor.status().enabled;
+  const s = await tor.set(opts || {});
+  cfg.tor = { enabled: s.enabled, country: s.country };
+  saveCfg();
+  buildMenu();
+  await applyProxy();
+  // Turning Tor on or off changes which network every open socket uses, and the page holds plenty of
+  // them (relay WebSockets above all). Only a reload re-opens them through the new route; leaving them
+  // up would keep the old path alive under a UI claiming otherwise.
+  if (s.enabled !== before) loadApp();
+  pushTorStatus();
+  return s;
+}
+
+// ---- IPC ----------------------------------------------------------------------------------------
+// The bundle IS our own page, so the bridge is legitimately available to it — unlike the old shell,
+// where the client was remote and a compromised instance could otherwise have repointed the app. Every
+// handler still checks isOurs(), so a framed third party gets nothing.
+function fromOurPage(e) {
   const from = (e && e.senderFrame && e.senderFrame.url) || (e && e.sender && e.sender.getURL()) || '';
-  if (!isOurs(from)) { console.warn('[clip] denied', from); return false; }
+  return from.startsWith('file://') || isOurs(from);   // file:// = boot.html / shell.html / picker.html
+}
+
+ipcMain.on('pc:instance:sync', (e) => { e.returnValue = instance(); });
+ipcMain.handle('pc:instance:get', () => instance());
+ipcMain.handle('pc:instance:set', (e, url) => fromOurPage(e) ? setInstance(url) : false);
+ipcMain.on('pc:retry', (e) => { if (fromOurPage(e)) loadApp(); });
+
+ipcMain.handle('pc:tor:status', () => tor.status());
+ipcMain.handle('pc:tor:set', (e, opts) => fromOurPage(e) ? setTor(opts) : tor.status());
+ipcMain.handle('pc:tor:new-circuit', (e) => fromOurPage(e) ? tor.newCircuit() : false);
+ipcMain.handle('pc:tor:restart', async (e) => {
+  if (!fromOurPage(e)) return tor.status();
+  await tor.start();
+  await applyProxy();
+  loadApp();
+  return tor.status();
+});
+
+// Clipboard for the page. Both web paths are dead in an Electron window over a cleartext instance
+// (navigator.clipboard is removed outside a secure context and execCommand('copy') is refused), so the
+// Go Live stream key simply could not be copied. Write-only by design: nothing here can READ what the
+// user has copied.
+ipcMain.handle('pc:clip:write', (e, text) => {
+  if (!fromOurPage(e)) { console.warn('[clip] denied'); return false; }
   const s = String(text == null ? '' : text);
   if (!s || s.length > 8192) return false;    // a stream key/url is short; refuse to be a bulk channel
   clipboard.writeText(s);
   return true;
 });
-// Screen picker: thumbnails as data URLs so the page stays a plain, network-free file:// document.
+// Screen picker: thumbnails as data URLs so the page stays a plain, network-free document.
 ipcMain.handle('pc:screen:list', () => pendingSources.map((s) => ({
   id: s.id,
   name: s.name || 'Screen',
@@ -463,14 +614,19 @@ ipcMain.handle('pc:screen:list', () => pendingSources.map((s) => ({
 
 // Second launch → focus the running window instead of opening a duplicate.
 if (!app.requestSingleInstanceLock()) { app.quit(); } else {
-  // Config first: both switches below depend on which instance we're pointed at, and Chromium only
-  // reads them before ready.
+  // Config first: the switches below depend on it, and Chromium only reads them before ready.
   loadCfg();
-  wireInsecureInstance();
+  wireInsecureContent();
   wireWaylandCapture();
   wirePlainUserAgent();
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    serveBundle();
+    tor.setOnChange(pushTorStatus);
+    // Before the window: with Tor on, applyProxy() must have run before anything can request a byte,
+    // and loadApp() (called by createWindow) is what waits for the circuit.
+    await tor.init(cfg.tor || {});
+    await applyProxy();
     wireDownloads();
     wirePermissions();
     buildMenu();
@@ -479,4 +635,5 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+  app.on('before-quit', () => { try { tor.stop(); } catch (_) {} });
 }

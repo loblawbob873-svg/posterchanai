@@ -2,4 +2,10 @@ node_modules/
 dist/
 build/
 icon.png
-package-lock.json
+# package-lock.json is COMMITTED on purpose — do not add it back here.
+# Without it, CI's `npm install` re-resolves every caret range from the registry on every build, so a
+# dependency compromised between two builds ships in the next installer with nothing in the diff to show
+# it. electron-builder alone pulls the got/keyv/cacheable-request chain that the Shai-Hulud npm worm
+# targeted (keyv 6.0.0 was published and unpublished inside one day, 2026-08-04). The lock pins exact
+# versions AND integrity hashes, and CI uses `npm ci`, which installs the lock verbatim and fails rather
+# than silently resolving something newer.

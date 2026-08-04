@@ -8,10 +8,15 @@ cd "$(dirname "$0")"
 SRC="$(cd .. && pwd)"
 
 rm -rf www
-mkdir -p www/static/js/client www/static/css www/static/vendor/nostr
+mkdir -p www/static/js/client www/static/css www/static/fonts www/static/vendor/nostr
 
 cp "$SRC"/static/js/client/*.js       www/static/js/client/
 cp "$SRC"/static/css/client.css       www/static/css/
+# client.css @font-face's Inter and Orbitron from /static/fonts. Those root-relative urls live INSIDE a
+# stylesheet, so the fetch shim never sees them — the WebView resolves them against the page origin and
+# they 404 against the bundle, silently dropping the whole app to a system font. Present on the web (the
+# server serves them) and missing in the app, which is why it went unnoticed.
+cp "$SRC"/static/fonts/*.woff2        www/static/fonts/ 2>/dev/null || true
 # The service worker must sit at the bundle ROOT so it can register with root scope (the app loads the
 # client at / — not /client like the web PWA). Without this the SW never registered in the app and the
 # media cache never ran (media re-downloaded every view). app.js registers /sw.js when in-app.
