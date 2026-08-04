@@ -437,12 +437,24 @@ async function _ask(origin, method, kind, params){
   return decision;
 }
 
-// Only the approval window may drive these. Nothing routes a page's message here today, but the
-// bridge and this switch share one listener, so the guard is what keeps a future edit from turning
-// "a site asked" into "the user allowed".
-function _fromApproval(sender){
-  return !!sender && !sender.tab &&
-         typeof sender.url === 'string' && sender.url.startsWith(B.runtime.getURL('approve.html'));
+/* Only OUR OWN pages may drive the approval flow and the permission store. Nothing routes a page's
+ * message to these cases today, but the NIP-07 bridge and this switch share one listener, so the
+ * guard is what keeps a future edit from turning "a site asked" into "the user allowed".
+ *
+ * The test is the URL, and ONLY the URL. `!sender.tab` was the obvious-looking extra belt and it is
+ * wrong: windows.create({type:'popup'}) still puts the page in a TAB, so the approval window failed
+ * its own guard and every sign-in came back "that request has expired". A moz-extension:// URL under
+ * our own ID is not something a web page can present — a content script's sender.url is the page it
+ * runs in — so the URL alone is the whole check. */
+function _fromOurPage(sender, page){
+  return !!sender && typeof sender.url === 'string' &&
+         sender.url.startsWith(B.runtime.getURL(page));
+}
+function _fromApproval(sender){ return _fromOurPage(sender, 'approve.html'); }
+// The browser-action popup has no tab at all, so it has no sender.url in some builds; a message
+// with neither a tab nor a URL cannot have come from a web page either.
+function _fromPopup(sender){
+  return _fromOurPage(sender, 'popup.html') || (!!sender && !sender.tab && !sender.url);
 }
 
 function _pendingApproval(id, sender){
@@ -595,10 +607,10 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
         case 'approve-answer':
           return reply(await _answerApproval(msg, sender));
         case 'nostr-perms':
-          if(sender.tab) return reply({ ok:false });   // the popup asks this, never a page
+          if(!_fromPopup(sender)) return reply({ ok:false });   // the popup asks this, never a page
           return reply({ ok:true, perms: await _perms() });
         case 'nostr-forget': {
-          if(sender.tab) return reply({ ok:false });
+          if(!_fromPopup(sender)) return reply({ ok:false });
           const perms = await _perms();
           for(const k of Object.keys(perms)) if(k.split('|')[0] === msg.origin) delete perms[k];
           await B.storage.local.set({ [NOSTR_OK]: perms });

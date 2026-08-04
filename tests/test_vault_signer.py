@@ -189,12 +189,11 @@ def test_the_page_cannot_reach_the_approval_flow():
     """
     src = _src("background.js")
     assert "function _fromApproval(sender)" in src
-    assert "sender.url.startsWith(B.runtime.getURL('approve.html'))" in src
+    assert "sender.url.startsWith(B.runtime.getURL(page))" in src
     for case in ("_pendingApproval(msg.id, sender)", "_answerApproval(msg, sender)"):
         assert case in src, "the approval handlers must see the sender"
-    # The popup-only handlers must refuse a tab too.
     perms = src[src.index("case 'nostr-perms':"):src.index("case 'approve-ask':")]
-    assert perms.count("sender.tab") == 2
+    assert perms.count("_fromPopup(sender)") == 2
 
 
 def test_the_content_script_relays_nothing_but_a_nostr_call():
@@ -295,3 +294,89 @@ def test_the_new_files_are_in_the_build():
     build = _src("build.sh")
     for f in ("inject.js", "approve.html", "approve.js"):
         assert f in build, "%s would be missing from the packaged extension" % f
+
+
+# --------------------------------------------------------------- the router, for real
+
+def _router_harness(sender_js, msg_js):
+    """Drive the REAL onMessage listener with a given sender, and print what it replied.
+
+    Source assertions could not catch the bug this exists for: `!sender.tab` LOOKS like a correct
+    extra check and reads fine, and the approval window failed it — because windows.create still
+    puts the page in a tab, so the extension refused its own prompt and every sign-in came back
+    "that request has expired". Only running the listener shows that.
+    """
+    return """
+      const fs = require('fs');
+      const store = {};
+      let listener = null;
+      const EXT = 'moz-extension://abc-123/';
+      global.WebSocket = function(){ this.readyState = 3; this.close = () => {}; };
+      global.browser = {
+        runtime: {
+          onMessage: { addListener: (f) => { listener = f; } },
+          getURL: (p) => EXT + p,
+          getManifest: () => ({ version: '9.9.9' }),
+        },
+        storage: { local: {
+          get: async (k) => { const out = {}; for (const key of [].concat(k)) if (key in store) out[key] = store[key]; return out; },
+          set: async (o) => { Object.assign(store, o); },
+          clear: async () => { for (const k in store) delete store[k]; },
+        } },
+        windows: { create: async () => ({ id: 7 }), remove: async () => {} },
+        tabs: { create: async () => ({ id: 7 }), remove: async () => {}, query: async () => [] },
+        alarms: { create: () => {}, onAlarm: { addListener: () => {} } },
+        action: { setBadgeText: () => {}, setBadgeBackgroundColor: () => {} },
+      };
+      global.chrome = global.browser;
+      global.self = global;
+      const load = (f) => (new Function(fs.readFileSync(f, 'utf8')))();
+      load('vaultcore.js');
+      load('vendor/nostr.bundle.js');
+      global.PCVaultCore = global.PCVaultCore || self.PCVaultCore;
+      load('background.js');
+      const ask = (msg, sender) => new Promise(res => {
+        const r = listener(msg, sender, res);
+        if (r && typeof r.then === 'function') r.then(v => { if (v !== undefined) res(v); });
+      });
+      // background.js keeps reconnect timers alive, so node would never exit on its own.
+      setTimeout(() => { console.log('ERR timeout'); process.exit(0); }, 15000).unref?.();
+      (async () => {
+        %s
+      })().catch(e => { console.log('ERR ' + (e && e.message || e)); })
+          .finally(() => process.exit(0));
+    """ % (
+        "const sender = %s; const msg = %s;\n"
+        "        const out = await ask(msg, sender);\n"
+        "        console.log(JSON.stringify(out));" % (sender_js, msg_js)
+    )
+
+
+def test_the_approval_window_can_reach_its_own_request():
+    """The regression: the prompt asked for its request and was told it had expired."""
+    out = _node(_router_harness(
+        "{ id: 7, url: EXT + 'approve.html#nope', tab: { id: 7, windowId: 3 } }",
+        "{ type: 'approve-ask', id: 'nope' }"))
+    assert "ERR" not in out, out
+    # 'nope' is not a live request, so ok:false is right — but the ERROR must be the expiry, not the
+    # blanket refusal the sender guard hands out.
+    assert '"that request has expired"' in out, \
+        "the approval window was refused by the sender guard: %s" % out.strip()
+
+
+def test_a_web_page_cannot_reach_the_approval_flow():
+    for msg in ("{ type: 'approve-ask', id: 'x' }",
+                "{ type: 'approve-answer', id: 'x', allow: true, remember: true }",
+                "{ type: 'nostr-perms' }",
+                "{ type: 'nostr-forget', origin: 'https://evil.com' }"):
+        out = _node(_router_harness(
+            "{ id: 7, url: 'https://evil.com/page', origin: 'https://evil.com', "
+            "tab: { id: 7, windowId: 3 } }", msg))
+        assert "ERR" not in out, out
+        assert '"ok":true' not in out, "a page reached %s: %s" % (msg, out.strip())
+
+
+def test_the_popup_can_read_and_clear_permissions():
+    out = _node(_router_harness(
+        "{ id: 7, url: EXT + 'popup.html' }", "{ type: 'nostr-perms' }"))
+    assert '"ok":true' in out, out
