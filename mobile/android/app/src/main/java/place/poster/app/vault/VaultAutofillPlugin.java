@@ -33,10 +33,42 @@ public class VaultAutofillPlugin extends Plugin {
         call.resolve(r);
     }
 
+    /**
+     * The apps that have asked for a login, so the UI can offer to associate one with an entry.
+     *
+     * Package names only — this never records which entry was used, or whether anything was.
+     */
+    @PluginMethod
+    public void recentApps(PluginCall call) {
+        JSObject r = new JSObject();
+        com.getcapacitor.JSArray arr = new com.getcapacitor.JSArray();
+        for (String p : VaultStore.apps(getContext()).split("\n")) {
+            p = p.trim();
+            if (!p.isEmpty()) arr.put(p);
+        }
+        r.put("apps", arr);
+        call.resolve(r);
+    }
+
+    /** A human name for a package, so the picker does not read as a list of reverse-DNS strings. */
+    @PluginMethod
+    public void appLabel(PluginCall call) {
+        String pkg = call.getString("package", "");
+        String label = pkg == null ? "" : pkg;
+        try {
+            android.content.pm.PackageManager pm = getContext().getPackageManager();
+            label = String.valueOf(pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)));
+        } catch (Throwable ignored) {}
+        JSObject r = new JSObject();
+        r.put("label", label);
+        call.resolve(r);
+    }
+
     /** Signing out, or unpairing: leave nothing behind. */
     @PluginMethod
     public void clear(PluginCall call) {
         VaultStore.clear(getContext());
+        VaultStore.forgetApps(getContext());
         call.resolve();
     }
 

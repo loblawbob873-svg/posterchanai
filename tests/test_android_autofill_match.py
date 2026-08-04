@@ -121,3 +121,123 @@ def test_the_service_asks_for_both_domains(tmp_path):
     assert "parse(node.getChildAt(i), out, inherited, depth + 1)" in s, \
         "the enclosing domain must be inherited by children"
     assert "out.webDomain" not in s, "the single latched domain is what caused the bug"
+
+
+def test_an_androidapp_uri_names_a_package(tmp_path):
+    out = _run("""
+        for (String u : new String[]{"androidapp://com.chase.sig.android",
+                                     "android://com.example", "ANDROIDAPP://Com.Example/x",
+                                     "https://chase.com", "com.chase", ""})
+          System.out.println("[" + VaultMatch.packageOfUri(u) + "]");
+    """, tmp_path)
+    # The scheme folds; the package does not — see the case-sensitivity test below.
+    assert out.splitlines() == ["[com.chase.sig.android]", "[com.example]", "[Com.Example]",
+                                "[]", "[]", "[]"]
+
+
+def test_an_association_is_an_exact_match(tmp_path):
+    """The user (or their Bitwarden import) said this entry belongs to this app."""
+    out = _run("""
+        List<String> uris = L("https://chase.com", "androidapp://com.chase.sig.android");
+        System.out.println(VaultMatch.appMatches(uris, "com.chase.sig.android"));
+        System.out.println(VaultMatch.appMatches(uris, "com.evil.chase"));
+        System.out.println(VaultMatch.appMatches(L("https://chase.com"), "com.chase.sig.android"));
+    """, tmp_path)
+    assert out.splitlines() == ["true", "false", "false"]
+
+
+@pytest.mark.parametrize("pkg,host,title,floor", [
+    ("com.chase.sig.android", "chase.com", "Chase", 3),
+    ("com.wellsfargo.mobile", "wellsfargo.com", "Wells Fargo", 3),
+    ("com.paypal.android.p2pmobile", "paypal.com", "PayPal", 3),
+    ("com.amazon.mShop.android.shopping", "amazon.com", "Amazon", 3),
+    ("com.chase.sig.android", "example.com", "Chase Bank", 1),   # title only
+    ("com.chase.sig.android", "example.com", "Netflix", 0),      # nothing at all
+])
+def test_suggestions_are_ranked_by_the_package_name(pkg, host, title, floor, tmp_path):
+    """ORDERING ONLY. Nothing fills on this — the user reads the entry name and picks it."""
+    out = _run('System.out.println(VaultMatch.appRank("%s", L("%s"), L("%s"), "%s"));'
+               % (pkg, host, host, title), tmp_path)
+    assert int(out) >= floor
+    if floor == 0:
+        assert int(out) == 0
+
+
+def test_noise_segments_do_not_score(tmp_path):
+    """`com`/`android`/`app` are in every package and identify nobody."""
+    out = _run('System.out.println(VaultMatch.appRank("com.android.app", L("com.com"), L("com.com"), "x"));',
+               tmp_path)
+    assert int(out) == 0
+
+
+def test_the_service_offers_the_vault_to_a_native_app(tmp_path):
+    svc = os.path.join(os.path.dirname(SRC), "PosterChanAutofillService.java")
+    with open(svc, encoding="utf-8") as f:
+        s = f.read()
+    assert "matchApp(snapshot, pkg)" in s, "a native app must reach the package path, not silence"
+    assert "VaultStore.noteApp(this, pkg)" in s, "the asking app must be recorded for association"
+    assert '"suggested  ·  " + label' in s, \
+        ("the marker must LEAD: the dataset row is singleLine+ellipsize, so a trailing one is the "
+         "first thing truncated — on exactly the rows whose safety is that they look different")
+    assert "if (!BROWSERS.contains(pkg)) VaultStore.noteApp(this, pkg);" in s, \
+        "associating a browser makes one entry an unlabelled match on every unreadable page"
+    assert "VaultMatch.appMatches(uris, pkg)" in s
+    # The browser-trust refusal must NOT fall through to the package shortlist: an app that lies
+    # about a web domain would be rewarded with one.
+    head = s[s.index("String pkg = packageOf(request);"):s.index("List<String> candidates")]
+    assert "callback.onSuccess(null);" in head and "return;" in head
+
+
+def test_package_names_are_compared_case_sensitively(tmp_path):
+    """Android package names are case-sensitive and uppercase is legal.
+
+    Folding lets a sideloaded `Com.Chase` inherit the association its owner made for `com.chase` —
+    and inherit it at association grade, which fills with no "suggested" marker at all.
+    """
+    out = _run("""
+        System.out.println(VaultMatch.appMatches(L("androidapp://com.chase"), "Com.Chase"));
+        System.out.println(VaultMatch.appMatches(L("androidapp://com.chase"), "com.chase"));
+        System.out.println("[" + VaultMatch.packageOfUri("ANDROIDAPP://Com.Chase") + "]");
+    """, tmp_path)
+    assert out.splitlines() == ["false", "true", "[Com.Chase]"]
+
+
+def test_a_noise_host_label_does_not_score(tmp_path):
+    """`com` as a host label substring-matches every package on earth.
+
+    It arrives whenever an `androidapp://com.…` URI leaks into the host list — which is fixed at the
+    source in _syncAndroid, but the ranker must not be one leak away from putting a Gmail entry
+    above the real Comcast one.
+    """
+    out = _run("""
+        System.out.println(VaultMatch.appRank("com.comcast.xfinity",
+            L("mail.google.com", "com.google.android.gm"), L("google.com", "android.gm"), "Gmail"));
+    """, tmp_path)
+    assert int(out) == 0
+
+
+def test_app_associations_never_become_web_host_keys(tmp_path):
+    """`androidapp://com.google.android.gm` has a registrable domain: `android.gm`, and .gm is real.
+
+    Register it, serve a login page at com.google.android.gm, and the Gmail credential is an EXACT
+    unlabelled match in the browser. The association belongs in `uris` and nowhere else.
+    """
+    vault = os.path.join(ROOT, "static", "js", "client", "vault.js")
+    with open(vault, encoding="utf-8") as f:
+        s = f.read()
+    assert "const web = rules.filter(r => !/^androidapps?:|^android:/i.test(r.uri || ''));" in s
+    assert "const hosts = web.map(r => V().hostOf(r.uri)).filter(Boolean);" in s
+    assert "const wide = web.filter(" in s
+
+
+def test_an_association_survives_editing_the_entry(tmp_path):
+    """The Websites box rebuilds `it.uris` wholesale and never showed the app associations.
+
+    Add an app, type one more character, and the debounced save wrote the list back without it —
+    chip still on screen, association gone, snapshot re-pushed without it.
+    """
+    vault = os.path.join(ROOT, "static", "js", "client", "vault.js")
+    with open(vault, encoding="utf-8") as f:
+        s = f.read()
+    assert "const apps = V().itemUriRules(it).filter(r => /^androidapps?:|^android:/i.test(r.uri || ''));" in s
+    assert ".concat(apps);" in s

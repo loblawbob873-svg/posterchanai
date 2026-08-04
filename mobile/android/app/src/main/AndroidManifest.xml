@@ -122,6 +122,16 @@
              one Orbot, and we look it up by name via getPackageInfo(), which package visibility gates the
              same way. Without this the Tor panel reports "Orbot not installed" on a phone that has it. -->
         <package android:name="org.torproject.android" />
+        <!-- Launchable apps, so the autofill association picker can show "Chase" instead of
+             "com.chase.sig.android". Android 11+ hides the package list, and getApplicationLabel()
+             for an app we cannot SEE throws NameNotFoundException — which the picker catches and
+             degrades to the raw package name, i.e. to the list of reverse-DNS strings the picker
+             exists to avoid. The MAIN/LAUNCHER intent (not QUERY_ALL_PACKAGES, which Play restricts)
+             is the narrow form: it reveals nothing beyond what the launcher already shows. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 
     <!-- Permissions: networking, camera + mic (getUserMedia / attach a photo), media read for attaching

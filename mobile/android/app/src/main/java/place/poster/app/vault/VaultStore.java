@@ -119,7 +119,55 @@ public final class VaultStore {
     }
 
     public static synchronized void clear(Context ctx) {
+        // The apps list is NOT dropped here. clear() is reached from reset(), which runs when the
+        // Keystore key is gone — the exact path this list is left unsealed to survive. Losing which
+        // apps have asked would silently empty the association picker after an unrelated key
+        // rotation. Signing out clears it explicitly (see forgetApps).
         prefs(ctx).edit().remove(KEY_BLOB).apply();
+    }
+
+    /** Signing out or unpairing: the association picker's history goes too. */
+    public static synchronized void forgetApps(Context ctx) {
+        prefs(ctx).edit().remove(KEY_APPS).apply();
+    }
+
+    /* ---------------------------------------------------------------- app associations
+     *
+     * Which apps have asked for a login, most recent first. That is all it is: package names and
+     * nothing else — no entry ids, no usernames, no passwords, and no record of what was filled.
+     *
+     * It exists so PosterChan can say "Chase asked for a login — which entry is that?" and write
+     * `androidapp://com.chase.sig.android` onto the one you pick, turning a ranked guess into a real
+     * association that fills silently forever after. The alternative is asking someone to type a
+     * package name, which nobody knows and nobody should have to look up.
+     *
+     * NOT sealed under the Keystore, unlike the vault: it holds no secret, and the whole point is
+     * that it must still be readable on the paths where the Keystore is the thing that failed.
+     */
+    private static final String KEY_APPS = "apps";
+    private static final int MAX_APPS = 40;
+
+    public static synchronized void noteApp(Context ctx, String pkg) {
+        if (pkg == null || pkg.isEmpty()) return;
+        try {
+            String cur = prefs(ctx).getString(KEY_APPS, "");
+            java.util.List<String> out = new java.util.ArrayList<>();
+            out.add(pkg);
+            for (String p : cur.split("\n")) {
+                p = p.trim();
+                // Deduplicated by moving to the front, so "most recent" stays true and the list
+                // does not fill with forty copies of the app you open every day.
+                if (!p.isEmpty() && !p.equals(pkg) && out.size() < MAX_APPS) out.add(p);
+            }
+            // TextUtils.join, not String.join: the latter is API 26 and minSdk here is 23, which
+            // lint treats as a FATAL NewApi error on the release build that CI publishes.
+            prefs(ctx).edit().putString(KEY_APPS, android.text.TextUtils.join("\n", out)).apply();
+        } catch (Throwable ignored) {}
+    }
+
+    /** Newline-separated, most recent first. "" when nothing has asked yet. */
+    public static synchronized String apps(Context ctx) {
+        try { return prefs(ctx).getString(KEY_APPS, ""); } catch (Throwable t) { return ""; }
     }
 
     /** Drop the stored snapshot AND the key that sealed it, so the next write starts clean. */

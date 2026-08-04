@@ -515,9 +515,18 @@
            * — honoured on the desktop and quietly ignored on the phone. */
           const rules = V().itemUriRules(i).filter(r => r.match !== 'never' && r.match !== 'regex');
           const uris = rules.map(r => r.uri);
-          const hosts = uris.map(u => V().hostOf(u)).filter(Boolean);
-          const wide = rules.filter(r => !r.match || r.match === 'domain')
-                            .map(r => V().hostOf(r.uri)).filter(Boolean);
+          /* WEB rules only become host/domain keys. `androidapp://com.google.android.gm` is an APP
+           * association, and hostOf() of one yields `com.google.android.gm` — a perfectly good web
+           * host as far as the matcher is concerned, whose registrable domain is `android.gm`.
+           * `.gm` is Gambia's ccTLD, so anyone who registers android.gm and serves a login page at
+           * com.google.android.gm gets that entry offered as an EXACT, unlabelled match in the
+           * browser. It also corrupts the app ranking: a host label of `com` substring-matches
+           * every package on earth. The association still travels in `uris`, which is where the
+           * app matcher reads it. */
+          const web = rules.filter(r => !/^androidapps?:|^android:/i.test(r.uri || ''));
+          const hosts = web.map(r => V().hostOf(r.uri)).filter(Boolean);
+          const wide = web.filter(r => !r.match || r.match === 'domain')
+                          .map(r => V().hostOf(r.uri)).filter(Boolean);
           return { id:i.id, title:i.title||'', username:i.username||'', password:i.password||'',
                    totp:i.totp||'', uris, hosts,
                    domains: Array.from(new Set(wide.map(h => V().baseDomain(h)).filter(Boolean))) };
@@ -525,6 +534,77 @@
       await plug.put({ items: JSON.stringify(items) });
       return true;
     }catch(_){ return false; }
+  }
+
+  /* ANDROID APPS this entry fills in.
+   *
+   * A phone hands the autofill service a PACKAGE NAME, never a URL, so nothing can prove that
+   * `com.chase.sig.android` is chase.com. The service shows a ranked shortlist and labels it
+   * "suggested"; this is where a guess becomes permanent. Once an entry carries
+   * `androidapp://<package>`, that app fills like an exact host match and never appears as a guess
+   * again — the same `androidapp://` URI Bitwarden writes, so an imported vault already knows some
+   * of these, and an export carries them onward.
+   *
+   * The list to choose from is the apps that have actually ASKED (VaultStore.noteApp). Nobody knows
+   * their bank's package name, and nobody should have to look it up.
+   */
+  function _appUris(it){
+    // NOT hostOf(): that lowercases, and an Android package name is case-sensitive. Folding here
+    // would show `Com.Chase` as `com.chase` and then compare the two as equal.
+    return V().itemUris(it)
+      .filter(u => /^androidapps?:\/\/|^android:\/\//i.test(u))
+      .map(u => String(u).split('://')[1].split('/')[0].trim())
+      .filter(Boolean);
+  }
+
+  async function _renderApps(it, host){
+    const box = $('.pv-apps', host);
+    if(!box) return;
+    const plug = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.VaultAutofill;
+    const mine = _appUris(it);
+    // Off Android there is no picker to show — but an entry that already carries app associations
+    // (imported from Bitwarden, or set on a phone) must still show and be removable on a desktop,
+    // or they are invisible state that only one device can see.
+    if(!plug && !mine.length) return;
+
+    let recent = [];
+    if(plug && plug.recentApps){
+      try{
+        const r = await plug.recentApps();
+        // Filter FIRST, then label the eight that are actually shown: appLabel is a bridge
+        // round-trip each, and the list holds forty.
+        const want = (r.apps||[]).filter(p => !mine.includes(p)).slice(0, 8);
+        recent = await Promise.all(want.map(async p => {
+          let label = p;
+          try{ label = (await plug.appLabel({ package:p })).label || p; }catch(_){ }
+          return { pkg:p, label };
+        }));
+      }catch(_){ }
+    }
+    if(!mine.length && !recent.length) return;
+
+    box.innerHTML = `<span>Android apps</span>
+      ${mine.length?`<div class="pv-applist">${mine.map(p=>`
+        <span class="pv-app"><b>${enc(p)}</b><button class="mini pv-app-del" data-p="${enc(p)}"
+          title="Stop filling in this app">✕</button></span>`).join('')}</div>`:''}
+      ${recent.length?`<div class="muted small" style="margin-top:6px">Apps that asked for a login:</div>
+        <div class="pv-applist">${recent.map(a=>`
+          <button class="mini pv-app-add" data-p="${enc(a.pkg)}"
+            title="${enc(a.pkg)}">+ ${enc(a.label)}</button>`).join('')}</div>`:''}`;
+
+    const setUris = async (list) => {
+      // Rebuilt from the item's own rules so a per-URI match rule is not lost — the same reason the
+      // Websites box rebuilds rather than replaces.
+      const web = V().itemUriRules(it).filter(r => !/^androidapp:/i.test(r.uri));
+      it.uris = web.concat(list.map(p => ({ uri:'androidapp://' + p })));
+      delete it.url;
+      const r = await save(it, 'item');
+      if(r && !r.ok && !r.queued){ toast('couldn’t save that app association'); return; }
+      _syncAndroid();
+      _renderApps(it, host);
+    };
+    $$('.pv-app-add', box).forEach(b => b.onclick = () => setUris(mine.concat([b.dataset.p])));
+    $$('.pv-app-del', box).forEach(b => b.onclick = () => setUris(mine.filter(p => p !== b.dataset.p)));
   }
 
   // ---------------------------------------------------------------- view helpers
@@ -763,8 +843,9 @@
           <span class="pv-code muted small"></span>
         </label>
         <label class="pv-fld">Websites
-          <textarea class="input pv-uris" rows="2" placeholder="https://example.com&#10;one per line" spellcheck="false">${enc(uris.join('\n'))}</textarea>
+          <textarea class="input pv-uris" rows="2" placeholder="https://example.com&#10;one per line" spellcheck="false">${enc(uris.filter(u=>!/^androidapps?:|^android:/i.test(u)).join('\n'))}</textarea>
         </label>
+        <div class="pv-fld pv-apps"></div>
         <div class="pv-row2">
           <label class="pv-fld pv-half">Folder
             <input class="input pv-folder-in" value="${enc(it.folder||'')}" list="pv-folders" placeholder="none">
@@ -783,6 +864,8 @@
         ${it.card?`<div class="pv-fld"><span>Card</span><div class="muted small">${enc(it.card.brand||'')} ••••${enc(String(it.card.number||'').slice(-4))} — exp ${enc(it.card.expMonth||'')}/${enc(it.card.expYear||'')}</div></div>`:''}
         <div class="pv-meta muted small">Updated ${_fmt(it.updated)}${it.src&&it.src.app?` · imported from ${enc(it.src.app)}`:''}</div>
       </div>`;
+
+    _renderApps(it, host);
 
     // Capture every field once. Same trap as the notes editor: a debounced save that re-queries the
     // DOM when it fires reads whichever entry is on screen THEN, and writes half of one onto the other.
@@ -803,8 +886,17 @@
        * address; a line the user changed loses its rule, which is right, because it is a different
        * address. */
       const wasRule = new Map(V().itemUriRules(it).filter(r => r.match).map(r => [r.uri, r.match]));
+      /* The APP associations are not in this textarea and must survive it. They are edited by their
+       * own chips, which write `it.uris` directly — and this rebuild replaces `it.uris` wholesale,
+       * from a box that never showed them. So: add an app, then type one more character in any
+       * field, and the debounced save rebuilt the list without it. The chip stayed on screen; the
+       * association was gone, and the Android snapshot was re-pushed without it. (Before the
+       * textarea stopped showing them, the mirror image happened too: removing a chip put it back
+       * on the next keystroke.) */
+      const apps = V().itemUriRules(it).filter(r => /^androidapps?:|^android:/i.test(r.uri || ''));
       it.uris = urisIn.value.split('\n').map(s=>s.trim()).filter(Boolean)
-        .map(u => wasRule.has(u) ? { uri:u, match:wasRule.get(u) } : u);
+        .map(u => wasRule.has(u) ? { uri:u, match:wasRule.get(u) } : u)
+        .concat(apps);
       it.folder = folderIn.value.trim();
       it.tags = tagIn.value.split(',').map(s=>s.trim()).filter(Boolean).slice(0,30);
       it.notes = notes.value;

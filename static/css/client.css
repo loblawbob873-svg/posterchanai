@@ -2885,6 +2885,19 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .fx-reply-row{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
 .fx-reply-row>*{flex:1 1 auto;min-width:136px;justify-content:center;white-space:nowrap}
 @media (max-width:460px){ .fx-reply-row>*{min-width:calc(50% - 4px)} }
+/* Android app associations on a vault entry. Chips, because they are a set you add to and remove
+   from, not a text field — a package name is not something anyone should have to type. */
+.pv-applist{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.pv-app{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border-radius:8px;
+  border:1px solid var(--line);background:rgba(var(--accent-rgb),.08);font-size:12px}
+.pv-app b{font-weight:600;word-break:break-all}
+/* 32px floor, same as every other tap target here — these are thumb-sized buttons on a phone, and
+   the mobile checker's scan list did not cover .pv-applist, so 22px passed unnoticed. */
+.pv-app .pv-app-del{min-height:32px;min-width:32px;padding:0 8px;line-height:1}
+.pv-app-add{min-height:32px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* An entry with no associations must not leave a gap: .pv-ed-body is a flex column with a 12px gap,
+   so an always-emitted empty slot costs 12px on every desktop entry. */
+.pv-apps:empty{display:none}
 .fx-reply-row .ai-reply-fx{min-height:42px;font-weight:700}
 /* Section header + inline hint + optional-add rows. */
 .fx-sec{font-size:13px;font-weight:700;color:var(--cyan);margin:12px 0 4px}

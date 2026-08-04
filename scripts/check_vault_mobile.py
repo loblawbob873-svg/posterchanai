@@ -191,7 +191,8 @@ AUDIT = r"""(() => {
   const ed = document.querySelector('.pv-ed-body');
   out.edBottom = (ed && vis(ed)) ? box(ed).bottom : 0;
   const small = [];
-  for(const el of document.querySelectorAll('.pv-item, .pv-folder, .pv-link, .pv-row .mini, .pv-ed-head .btn')){
+  for(const el of document.querySelectorAll('.pv-item, .pv-folder, .pv-link, .pv-row .mini, .pv-ed-head .btn, '
+                            + '.pv-applist button')){
     if(!vis(el)) continue;
     const b = box(el);
     if(b.h < 32) small.push({sel: el.className, h: Math.round(b.h), text:(el.textContent||'').trim().slice(0,20)});

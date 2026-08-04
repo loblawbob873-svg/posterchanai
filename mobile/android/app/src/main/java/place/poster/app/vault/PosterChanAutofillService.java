@@ -44,15 +44,26 @@ import java.util.Locale;
  * An EXACT host match fills. A same-registrable-domain match is OFFERED (it appears in the list with
  * its site named) but is never the silent answer — the same distinction the extension makes.
  *
- * NATIVE APPS GET NOTHING, and that is the deliberate answer. Android hands a native app's package
- * name, not a URL, and there is no way from here to know that `com.example.banking` really belongs to
- * `example.com` — that is what Digital Asset Links exists for, and this does not verify them.
+ * NATIVE APPS. Android hands over a package name, never a URL, so `com.chase.sig.android` cannot be
+ * PROVEN to be chase.com from inside this process. Two ways an entry reaches an app screen, and the
+ * difference between them is the whole design:
  *
- * A reversed-package guess (`com.paypal.x` -> `paypal.com`) was written and then removed: when there
- * is no web domain the guess is the ONLY thing in the list, so it does not read as a guess at all —
- * it renders exactly like a verified match, and any app that names itself after a bank would be
- * offered that bank's real credentials. Filling in a browser (any browser, including the one in an
- * app's WebView, via getWebDomain()) covers the case people actually hit, without that.
+ *   ASSOCIATED — the entry carries `androidapp://<package>` among its URIs. That is an association
+ *                the USER made, or one that came across in a Bitwarden export (which writes them),
+ *                so it is as good as an exact host match and is offered first, unlabelled.
+ *   SUGGESTED  — everything else, ordered by VaultMatch.appRank and labelled "suggested". A guess is
+ *                never dressed up as a match: the user reads their own entry's name and picks it,
+ *                which is the same act as opening PosterChan and copying it, minus the typing.
+ *
+ * This file used to return NOTHING for a native app, reasoning that an unverifiable guess is worse
+ * than no answer. The reasoning was right and the conclusion was wrong: refusing to show someone
+ * their own vault is not the safe version of guessing — it is a password manager that does not work
+ * in apps, which is where most people type most of their passwords. The safe version is to show it
+ * and let them choose. (What was rightly removed was a reversed-package guess presented as the ONLY
+ * row, which renders identically to a verified match; a labelled shortlist does not.)
+ *
+ * Every app request records the asking package (VaultStore.noteApp) so PosterChan can offer to turn
+ * a suggestion into a permanent association.
  */
 @RequiresApi(api = Build.VERSION_CODES.O)
 public class PosterChanAutofillService extends AutofillService {
@@ -96,16 +107,29 @@ public class PosterChanAutofillService extends AutofillService {
              * offering nothing is the correct answer. */
             String pkg = packageOf(request);
             if (!(parsed.fieldDomain + parsed.pageDomain).isEmpty() && !BROWSERS.contains(pkg)) {
+                // An app claiming a web domain it cannot be trusted for gets NOTHING, still — the
+                // package path below is for apps that make no such claim. Falling through to it here
+                // would reward the lie with a shortlist.
+
                 Log.i(TAG, "ignoring a webDomain claimed by " + pkg);
                 callback.onSuccess(null);
                 return;
             }
             List<String> candidates = VaultMatch.hostCandidates(parsed.fieldDomain, parsed.pageDomain);
-            List<JSONObject> matches = match(VaultStore.get(this), candidates);
+            String snapshot = VaultStore.get(this);
+            List<JSONObject> matches;
+            boolean fromPackage = candidates.isEmpty();
+            if (!fromPackage) {
+                matches = match(snapshot, candidates);
+            } else {
+                // A native app: no web domain to compare against, so this is the package path.
+                if (!BROWSERS.contains(pkg)) VaultStore.noteApp(this, pkg);
+                matches = matchApp(snapshot, pkg);
+            }
             if (matches.isEmpty()) {
-                // Named, because "no suggestions on this one site" is otherwise indistinguishable
-                // from a broken service, an unsaved login and a field we never found.
-                Log.i(TAG, "no match for " + candidates + " (" + pkg + ")");
+                // Named, because "no suggestions here" is otherwise indistinguishable from a broken
+                // service, an unsaved login and a field we never found.
+                Log.i(TAG, "no match for " + (fromPackage ? pkg : candidates.toString()));
                 callback.onSuccess(null);
                 return;
             }
@@ -114,7 +138,7 @@ public class PosterChanAutofillService extends AutofillService {
             int added = 0;
             for (JSONObject it : matches) {
                 if (added >= MAX_DATASETS) break;
-                Dataset ds = dataset(parsed, it);
+                Dataset ds = dataset(parsed, it, fromPackage && !it.optBoolean("_app", false));
                 if (ds != null) { resp.addDataset(ds); added++; }
             }
             // Counting DATASETS ADDED, not matches considered: an entry with no username and no
@@ -138,12 +162,19 @@ public class PosterChanAutofillService extends AutofillService {
         }
     }
 
-    private Dataset dataset(Parsed p, JSONObject it) {
+    private Dataset dataset(Parsed p, JSONObject it, boolean suggestion) {
         String user = it.optString("username", "");
         String pass = it.optString("password", "");
         String title = it.optString("title", "");
         String label = user.isEmpty() ? (title.isEmpty() ? "PosterChan" : title)
                                       : user + (title.isEmpty() ? "" : "  ·  " + title);
+        /* Say when it is a guess — and say it FIRST.
+         *
+         * The dataset row is singleLine + ellipsize="end" in a dropdown anchored to a text field,
+         * so a marker on the end is the first thing dropped: `christopher.anderson@gmail.com  ·
+         * Ch…` renders identically to a user-made association, which is precisely the property this
+         * whole design rests on. Leading, it survives every truncation. */
+        if (suggestion) label = "suggested  ·  " + label;
         // OUR layout, not android.R.layout.simple_list_item_1: a RemoteViews may only inflate a
         // layout belonging to the package it names, and the framework one throws at fill time on a
         // real device — the sort of failure that compiles, passes CI and breaks in someone's hand.
@@ -187,6 +218,45 @@ public class PosterChanAutofillService extends AutofillService {
         }
         exact.addAll(domain);
         return exact;
+    }
+
+    /**
+     * The entries to offer on a NATIVE app screen: associated first, then ranked suggestions.
+     *
+     * `_app` marks the ones the user (or their import) actually associated, so the dataset builder
+     * can label the rest honestly. Nothing is filled on a guess — the user reads their own entry's
+     * name and picks it.
+     */
+    private List<JSONObject> matchApp(String json, String pkg) {
+        List<JSONObject> out = new ArrayList<>();
+        List<List<JSONObject>> ranked = new ArrayList<>();
+        for (int i = 0; i < 4; i++) ranked.add(new ArrayList<JSONObject>());
+        if (json == null || json.isEmpty() || pkg == null || pkg.isEmpty()) return out;
+        try {
+            JSONArray arr = new JSONArray(json);
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject it = arr.optJSONObject(i);
+                if (it == null) continue;
+                List<String> uris = strings(it.optJSONArray("uris"));
+                if (VaultMatch.appMatches(uris, pkg)) {
+                    try { it.put("_app", true); } catch (Throwable ignored) {}
+                    out.add(it);
+                    continue;
+                }
+                int r = VaultMatch.appRank(pkg, strings(it.optJSONArray("hosts")),
+                                           strings(it.optJSONArray("domains")),
+                                           it.optString("title", ""));
+                ranked.get(r).add(it);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "unreadable snapshot", t);
+        }
+        for (int r = 3; r >= 1; r--) out.addAll(ranked.get(r));
+        // Rank 0 is everything else — the "search my logins" row every other manager shows. Offered
+        // only when nothing scored, so a screen with a real candidate is not buried under a hundred
+        // unrelated ones.
+        if (out.isEmpty()) out.addAll(ranked.get(0));
+        return out;
     }
 
     private static List<String> strings(JSONArray a) {
