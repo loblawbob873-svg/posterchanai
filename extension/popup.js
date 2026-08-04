@@ -331,3 +331,32 @@ function paintBm(){
     const st = await send({ type:'state' });
     _bmOn = !!(st && st.bmOn); _bmCount = (st && st.bmCount) || 0; paintBm();
   }; }
+
+
+/* ---- relays ---------------------------------------------------------------------------------
+ * Editable here because the pairing code's list is a snapshot of whatever the app had at that
+ * moment, and a bad one is invisible: nothing syncs and nothing says why. The line under the box
+ * shows what is ACTUALLY in use, which is the question being asked.
+ */
+{ const t = $('#relay-tab');
+  if(t) t.onclick = async () => {
+    show('pane-relays');
+    const r = await send({ type:'relays-get' });
+    if(!r) return;
+    $('#relay-list').value = (r.relays || []).join('\n');
+    $('#relay-note').textContent = 'In use: ' + ((r.paired || []).join(', ') || r.fallback);
+  }; }
+{ const b = $('#relay-save');
+  if(b) b.onclick = async () => {
+    b.disabled = true;
+    const lines = $('#relay-list').value.split(/[\s,]+/).filter(Boolean);
+    const r = await send({ type:'relays-set', relays: lines });
+    b.disabled = false;
+    if(!r || !r.ok){ $('#relay-note').textContent = 'could not save'; return; }
+    $('#relay-list').value = (r.relays || []).join('\n');
+    // Anything unusable was dropped by the normaliser rather than kept as decoration; say so, or a
+    // typo silently becomes "I set it and it still does not work".
+    const dropped = lines.length - (r.relays || []).length;
+    $('#relay-note').textContent = 'In use: ' + ((r.using || []).join(', ') || '(none)')
+      + (dropped > 0 ? `  ·  ${dropped} entr${dropped === 1 ? 'y' : 'ies'} ignored (not a relay address)` : '');
+  }; }

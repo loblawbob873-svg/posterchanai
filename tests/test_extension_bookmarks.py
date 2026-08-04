@@ -226,3 +226,42 @@ def test_bookmarks_are_sealed_and_uncleanable():
         "by a stray NIP-40 tag from any other client"
     assert 'assert not (set(_NEVER_EXPIRE_KINDS) & set(_PRUNABLE_KINDS))' in store, \
         "the never-expire/prunable overlap guard is gone"
+
+
+def test_relays_are_user_definable_with_a_working_default():
+    """The pairing code carries a snapshot of whatever the app's relay list was at that moment. If it
+    carried an unreachable relay — or none — the extension can never publish, and the failure is
+    invisible: nothing syncs and nothing says why. That is precisely what "I clicked sync and nothing
+    happened" looks like from inside the browser, and no amount of querying relays from outside can
+    tell it apart from a read-only pairing.
+
+    So the list is editable, and there is a default to fall back to rather than an empty set."""
+    bg = open(os.path.join(ROOT, "extension", "background.js"), encoding="utf-8").read()
+    assert "const DEFAULT_RELAY = 'wss://relay.poster.place'" in bg, \
+        "no default relay — a pairing code without one leaves the extension with nothing to talk to"
+    i = bg.index("function relayUrls()")
+    body = bg[i:i + 500]
+    assert "userRelays" in body and "DEFAULT_RELAY" in body, \
+        "relayUrls must prefer the user's list and fall back to the default"
+    assert "case 'relays-set'" in bg and "case 'relays-get'" in bg
+
+    pj = open(os.path.join(ROOT, "extension", "popup.js"), encoding="utf-8").read()
+    assert "type:'relays-set'" in pj, "the popup cannot save a relay list"
+
+
+def test_a_typo_is_dropped_not_stored():
+    """A relay list that silently keeps 'my relay' as an entry is a list that looks set and is not."""
+    got = subprocess.run(["node", "-e", """
+      const fs = require('fs');
+      const src = fs.readFileSync(process.argv[1], 'utf8');
+      const m = src.match(/function normRelay\\(u\\)\\{[\\s\\S]*?\\n\\}/);
+      const f = new Function('return ' + m[0])();
+      console.log(JSON.stringify(['relay.poster.place','https://r.example','not a relay','',
+                                  'ws://localhost:3052'].map(f)));
+    """, os.path.join(ROOT, "extension", "background.js")], capture_output=True, text=True, timeout=60)
+    assert got.returncode == 0, got.stderr
+    out = json.loads(got.stdout.strip())
+    assert out[0] == "wss://relay.poster.place", "a bare host must become a wss:// URL"
+    assert out[1] == "wss://r.example", "https must become wss"
+    assert out[2] == "" and out[3] == "", "junk must be dropped"
+    assert out[4] == "ws://localhost:3052", "a local relay must survive"

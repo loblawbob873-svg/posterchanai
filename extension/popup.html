@@ -57,6 +57,17 @@
   <button id="bm-sync">Merge now</button>
 </section>
 
+<!-- Relays. The pairing code carries whatever the app had; this overrides it, because a code that
+     carried an unreachable relay (or none) is otherwise a dead end that only a re-pair can fix, and
+     it looks exactly like "sync does nothing". Empty = use the pairing code's, falling back to
+     PosterChan's own relay. -->
+<section id="pane-relays" class="pane hidden">
+  <div class="muted small">One per line. Leave empty to use whatever the app paired with.</div>
+  <textarea id="relay-list" rows="4" spellcheck="false" autocapitalize="none"></textarea>
+  <div id="relay-note" class="muted small"></div>
+  <button id="relay-save">Save relays</button>
+</section>
+
 <section id="pane-sites" class="pane hidden">
   <div class="muted small" style="margin-bottom:8px">Sites you let use your Nostr key.</div>
   <div id="sites"></div>
@@ -66,6 +77,7 @@
   <span id="ver" class="muted small"></span>
   <button id="sites-tab">Sites</button>
   <button id="bm-tab">Bookmarks</button>
+  <button id="relay-tab">Relays</button>
   <button id="sync">Sync</button>
   <button id="unpair" class="danger">Unpair</button>
 </footer>

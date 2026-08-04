@@ -59,7 +59,8 @@ const okWaiters = new Map();     // event id -> resolver, for publishAndWait
 let lastSync = 0, status = 'not paired';
 
 async function loadCfg(){
-  const got = await B.storage.local.get(['cfg', 'items', 'outbox']);
+  const got = await B.storage.local.get(['cfg', 'items', 'outbox', 'relays']);
+  userRelays = Array.isArray(got.relays) ? got.relays : [];
   cfg = got.cfg || null;
   if(cfg && cfg.key) key = V.fromB64(cfg.key);
   if(key) initBookmarks();          // safe to call twice; the engine only wires its listeners once
@@ -77,9 +78,35 @@ async function saveItems(){
 
 // ---------------------------------------------------------------- relay
 
+/* Which relays this browser talks to.
+ *
+ * The user's own list wins when they have set one, then whatever the pairing code carried, and
+ * finally a hardcoded default — because "the pairing code carried no usable relay" is otherwise a
+ * dead end only a re-pair can fix, and it is invisible: the extension simply never syncs. That is
+ * exactly what "I clicked sync and nothing happened" looks like from here.
+ *
+ * DEFAULT_RELAY is this project's own relay, the same one the app and the clients fall back to. */
+const DEFAULT_RELAY = 'wss://relay.poster.place';
+let userRelays = [];        // set in the popup; empty = use the pairing code's
+
 function relayUrls(){
-  if(!cfg) return [];
-  return [...new Set([...(cfg.relays || []), cfg.relay].filter(Boolean))].slice(0, 6);
+  const mine = userRelays.filter(Boolean);
+  if(mine.length) return [...new Set(mine)].slice(0, 6);
+  if(!cfg) return [DEFAULT_RELAY];
+  const paired = [...new Set([...(cfg.relays || []), cfg.relay].filter(Boolean))].slice(0, 6);
+  return paired.length ? paired : [DEFAULT_RELAY];
+}
+
+/* Normalised, so a typo does not open a socket to nothing: a bare host becomes wss://, http(s)
+ * becomes ws(s), and anything without a plausible host is dropped rather than kept as decoration. */
+function normRelay(u){
+  u = String(u || '').trim();
+  if(!u) return '';
+  if(/^https?:\/\//i.test(u)) u = u.replace(/^http/i, 'ws');
+  if(!/^wss?:\/\//i.test(u)) u = 'wss://' + u.replace(/^\/+/, '');
+  try{ const x = new URL(u); if(!x.hostname || x.hostname.indexOf('.') < 0 &&
+       x.hostname !== 'localhost') return ''; return x.href.replace(/\/$/, ''); }
+  catch(_){ return ''; }
 }
 
 function connect(){
@@ -729,6 +756,19 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
         case 'pair': return reply(await pair(msg.code));
         case 'unpair': return reply(await unpair());
         case 'sync': connect(); return reply({ ok:true });
+        case 'relays-get':
+          return reply({ ok:true, relays: userRelays, paired: relayUrls(), fallback: DEFAULT_RELAY });
+        case 'relays-set': {
+          const list = [...new Set((msg.relays || []).map(normRelay).filter(Boolean))].slice(0, 6);
+          userRelays = list;
+          await B.storage.local.set({ relays: list });
+          // connect() already reconciles — it closes anything no longer wanted and opens what is
+          // new — so tearing every socket down first would drop a working relay for nothing. Called
+          // immediately rather than waiting for the 30s poll: somebody editing this is doing it
+          // BECAUSE the current list is not working.
+          connect();
+          return reply({ ok:true, relays: list, using: relayUrls() });
+        }
         default: return reply({ ok:false });
       }
     }catch(e){ reply({ ok:false, error: (e && e.message) || 'error' }); }
