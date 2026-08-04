@@ -768,6 +768,17 @@
    * So: take the tab synchronously, then point it at the blob. If the browser refused the tab, fall
    * back to a download, which needs no popup and no gesture. */
   async function openAttachment(getUrl, name){
+    /* ANDROID FIRST. In the APK neither browser route exists: the WebView has no PDF viewer, so
+     * window.open(blob:) shows nothing, and MainActivity registers no DownloadListener, so an
+     * <a download> is ignored outright. A tapped attachment therefore did nothing at all — the same
+     * symptom as the popup bug, from a completely different cause. The OS share sheet is how a file
+     * reaches an app that can open it, and both plugins are already bundled. */
+    if(PC.isNativeApp && PC.isNativeApp()){
+      const u = await getUrl();
+      try{ if(await PC.nativeOpenBlob(u, name)) return; }catch(e){ throw e; }
+      window.open(u, '_blank');           // a native path that declined: let the WebView try
+      return;
+    }
     let w = null;
     try{ w = window.open('', '_blank'); }catch(_){ w = null; }
     let u;

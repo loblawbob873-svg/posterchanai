@@ -18886,6 +18886,37 @@
     try{ await Share.share({ files:[w.uri], dialogTitle:'Save or share image' }); }catch(_){}   // Capacitor 6: images ride in `files`
     return true;
   }
+  /* Open an already-DECRYPTED attachment on the phone.
+   *
+   * In the APK neither route a browser offers exists: the Android WebView has no PDF viewer, so
+   * window.open(blob:) shows nothing, and MainActivity sets no DownloadListener, so an <a download>
+   * is silently ignored. A Notes attachment therefore did nothing at all when tapped — reported as
+   * "couldn't open attachment error" on the latest APK, after the same code had been fixed for
+   * Firefox and the desktop.
+   *
+   * The OS share sheet is how a file gets handed to whatever app can open it, and both plugins it
+   * needs are already bundled. Returns true when it handled the file, false to fall through to the
+   * web path. */
+  async function nativeOpenBlob(url, name){
+    if(!_isNativeApp()) return false;
+    const P=(window.Capacitor&&Capacitor.Plugins)||{}; const Filesystem=P.Filesystem, Share=P.Share;
+    if(!Filesystem||!Share) return false;
+    const blob = await (await fetch(url)).blob();
+    const b64 = await _blobToB64(blob);
+    // A file name the OS will accept, and an extension, because the app that opens it picks by
+    // extension far more often than by mime.
+    let n = String(name||'').replace(/[\/\\?%*:|"<>\x00-\x1f]/g,'_').trim().slice(0,80) || 'attachment';
+    if(!/\.[a-z0-9]{2,5}$/i.test(n)){
+      const mt = (blob.type||'').split(';')[0].trim().toLowerCase();
+      const ext = (mt.split('/')[1] || '').replace(/[^a-z0-9]/g,'').slice(0,5);
+      if(ext) n += '.' + (ext === 'plain' ? 'txt' : ext === 'jpeg' ? 'jpg' : ext);
+    }
+    const w = await Filesystem.writeFile({ path:n, data:b64, directory:'CACHE' });
+    // The sheet appearing IS the success; a dismissal rejects and is not a failure worth reporting.
+    try{ await Share.share({ files:[w.uri], dialogTitle:'Open with…' }); }catch(_){ }
+    return true;
+  }
+
   async function _lbCopyImg(src){
     if(_isNativeApp()){ try{ if(await _nativeShareMedia(src)) return; }catch(e){ toast('couldn’t share image'); return; } }
     try{
@@ -19647,6 +19678,9 @@
     // uiPrompt for the same reason (meme.js: naming a saved project) — window.prompt wedges focus
     // exactly like window.confirm, and it is the ONLY way a sub-module can ask for a line of text.
     uploadBlob, selfProof, uiConfirm, uiPrompt,
+    // Opening a decrypted file on Android: a WebView can neither view a PDF nor download a blob:,
+    // so a sub-module must be able to hand one to the OS instead (notes.js attachments).
+    isNativeApp: _isNativeApp, nativeOpenBlob,
     // NIP-10 reply tags + the cached profile, so a sub-module can reply to a post it was launched from
     // (meme.js: reply with the finished meme) using the SAME tagging as every other reply here — a
     // module rolling its own e/p tags is how a reply ends up detached from its thread.

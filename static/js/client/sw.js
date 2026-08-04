@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v758';
+const CACHE = 'pc-nostr-v759';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -272,59 +272,72 @@ function isDriveBlob(url, req){
     && req.mode !== 'navigate' && req.destination !== 'image' && req.destination !== 'video';
 }
 async function cacheFirstBlob(req){
-  /* THE CACHE MAY NEVER BREAK A READ. This is the invariant, and it was violated: caches.open() and
-   * cache.match() sat outside any try, so once the origin's storage came under pressure — which is
-   * exactly what caching gigabytes of attachments produces — their rejection propagated out of
-   * respondWith() and every drive blob failed. Reported as "why images no load, why no attachments
-   * load in notes" and "could not open attachment: operation failed for an operation-specific
-   * reason", which is a storage error, surfaced as though the file were gone.
+  /* THE PAGE'S RESPONSE IS NEVER DERIVED FROM ANYTHING THIS FUNCTION TOUCHES.
    *
-   * A cache is an optimisation. Anything it does wrong must cost speed, never the file. Every
-   * interaction with it is now guarded, and each failure falls through to the network. */
-  let cache = null;
+   * This cache has now broken reading attachments twice in one day, in two different ways, and both
+   * times it presented as "the file is gone" rather than "the cache is unwell":
+   *
+   *   1. caches.open()/match() outside a try — under storage pressure their rejection escaped
+   *      respondWith() and every blob failed.
+   *   2. the served Response was rebuilt from a buffer but carried the ORIGINAL headers, so its
+   *      declared Content-Length described the bytes on the wire rather than the bytes in the body.
+   *
+   * Both were caused by the response the page receives being something this code constructed. So it
+   * no longer constructs one. On a miss the ORIGINAL fetch Response is returned untouched — byte for
+   * byte what the page would get with no service worker at all — and the cached copy is fetched
+   * SEPARATELY, in the background, for small blobs only.
+   *
+   * That costs one extra download of a ≤8 MB blob the first time it is seen, and buys an invariant
+   * worth more than the saving: no future mistake in here can corrupt or block a read, because the
+   * read does not pass through here. A cache is an optimisation; it does not get to be load-bearing.
+   */
+  let hit = null;
   try {
-    cache = await caches.open(DRIVE_CACHE);
-    const hit = await cache.match(req);
-    if (hit) return hit;
-  } catch (_) { cache = null; }          // storage unavailable/full: go to the network, uncached
+    const cache = await caches.open(DRIVE_CACHE);
+    hit = await cache.match(req);
+  } catch (_) { hit = null; }             // storage unavailable: straight to the network
+  if (hit) return hit;
 
-  let res;
-  try { res = await fetch(req); } catch (_) { return Response.error(); }
-  if (!cache) return res;                // nothing to store into; hand the page its bytes
+  const res = await fetch(req);           // rejects like any fetch would; nothing swallows it
+  _cacheBlobLater(req);
+  return res;
+}
 
-  const len = +(res.headers.get('content-length') || 0);
-  // Ciphertext, and ONLY ciphertext. A 64-hex tail is not proof on its own: `/blossom/list/<pubkey>`
-  // is a live JSON listing of the user's whole drive whose path ends in exactly that shape, and
-  // cache-first would have frozen someone's file list forever. The encrypted drive is opaque bytes
-  // and always arrives as octet-stream; anything structured is somebody's API talking.
-  const ct = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-  const opaque = !ct || ct === 'application/octet-stream' || ct === 'binary/octet-stream';
-  // 200 only. A 206 is one RANGE of the blob; stored under the full URL it would be served later as
-  // the whole file — a truncated body that decrypts to nothing, cached forever.
-  if (!(res.status === 200 && opaque && !req.headers.get('range') && len > 0 && len <= DRIVE_MAX_BYTES))
-    return res;
-
-  /* READ ONCE, then serve and store from the same bytes. NOT res.clone().
-   *
-   * A clone tees the stream, so the browser must buffer whatever the slower consumer has not read —
-   * and the slower consumer here is a disk write into a cache holding gigabytes of attachments. Under
-   * that pressure the tee can ERROR the stream the page is reading, which surfaces as "couldn't load
-   * image" on a request the server logged as a clean 200. That is exactly what it did: 576 OK on the
-   * server, failures in the client, and the files all present.
-   *
-   * Buffering costs memory equal to the blob, which is bounded by DRIVE_MAX_BYTES and is memory the
-   * caller is about to allocate anyway (encFileUrl reads the whole thing to decrypt it). Nothing
-   * about the cache can now affect what the page receives. */
-  let buf;
-  try { buf = await res.arrayBuffer(); } catch (_) { return Response.error(); }
-  const headers = new Headers(res.headers);
-  const out = new Response(buf, { status: 200, headers });   // built FIRST — the page's copy is safe
+/* Fetch a second copy, purely to store it. Deliberately separate from the request the page is
+ * waiting on. Bounded by the same rules as before (200, octet-stream, no Range, size cap) and by a
+ * small queue, so opening a note with dozens of attachments cannot put dozens of extra downloads in
+ * flight at once. */
+const _blobQueue = [];
+let _blobFetching = 0;
+function _cacheBlobLater(req){
+  if (req.headers.get('range')) return;
+  if (_blobQueue.length > 60) return;                       // a burst is not worth unbounded memory
+  _blobQueue.push(req.url);
+  _pumpBlobCache();
+}
+async function _pumpBlobCache(){
+  if (_blobFetching >= 2 || !_blobQueue.length) return;
+  const url = _blobQueue.shift();
+  _blobFetching++;
   try {
-    cache.put(req, new Response(buf, { status: 200, headers }))
-      .then(() => trimCache(cache, DRIVE_MAX, 'drive'))
-      .catch(() => {});      // out of quota: the page already has its bytes
-  } catch (_) {}
-  return out;
+    const cache = await caches.open(DRIVE_CACHE);
+    if (!(await cache.match(url))) {
+      const r = await fetch(url);
+      const ct = (r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+      const len = +(r.headers.get('content-length') || 0);
+      const opaque = !ct || ct === 'application/octet-stream' || ct === 'binary/octet-stream';
+      // A missing Content-Type is NOT treated as ciphertext here: a third-party media host that
+      // omits it would otherwise get its JSON listing frozen in a cache-first store forever.
+      if (r.status === 200 && ct && opaque && len > 0 && len <= DRIVE_MAX_BYTES) {
+        await cache.put(url, r);          // r is consumed by the cache; nothing else reads it
+        trimCache(cache, DRIVE_MAX, 'drive');
+      }
+    }
+  } catch (_) {}                          // any failure: this blob is simply not cached
+  finally {
+    _blobFetching--;
+    if (_blobQueue.length) _pumpBlobCache();
+  }
 }
 
 // Web Share Target (POST): another app shared a file/text INTO us via the OS share sheet. The browser

@@ -223,7 +223,24 @@ class EncryptedDriveBlobs(unittest.TestCase):
         self.assertFalse(_route(APP_SW, "https://poster.place/static/js/client/app.js", "script"))
 
     def test_the_ciphertext_is_what_gets_kept(self):
+        """Stored by a SEPARATE background fetch — the page's response is the untouched original, so
+        `stored` here proves the copy happened, not that the read was routed through it."""
         self.assertEqual(_stored_in(WEB_SW, OWN_BLOB, "", CIPHERTEXT), "pc-drive-v1")
+
+    def test_the_read_is_never_the_thing_this_cache_built(self):
+        """The invariant after two outages: whatever the cache does, the page gets the original
+        fetch Response. A storage failure, a wrong header, a bad clone — none of them can reach it,
+        because the read does not pass through the cache on a miss."""
+        with open(SW, encoding="utf-8") as fh:
+            src = fh.read()
+        body = src[src.index("async function cacheFirstBlob"):src.index("async function _pumpBlobCache")]
+        # The miss path returns `res` itself. No Response is constructed on it, and nothing derived
+        # from the body is handed back.
+        self.assertIn("return res;", body)
+        self.assertNotIn("new Response(", body,
+                         "cacheFirstBlob must not build the response the page receives")
+        self.assertNotIn("res.clone()", body,
+                         "cloning tees the stream the page is reading — that was outage #1")
 
     def test_a_broken_cache_still_serves_the_file(self):
         """THE invariant, and the one this broke. caches.open()/match() sat outside any try, so once
