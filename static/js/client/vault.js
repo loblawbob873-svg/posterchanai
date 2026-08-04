@@ -256,6 +256,7 @@
       const before = _stamp();
       await _absorb(_lib, evs || [], true);
       if(_stamp() !== before){
+        _repairUris();                     // the vault may only now have arrived from the relay
         _syncAndroid();                    // a change from ANOTHER device has to reach autofill too
         if(PC.VIEW === 'vault' && !_dirty) _paint();
       }
@@ -336,10 +337,18 @@
    * instead of asking someone to re-run an import to fix a bug they did not cause. Only entries
    * that are actually damaged are touched, and each is republished as itself (a replaceable event),
    * so nothing is duplicated and nothing else is rewritten. */
-  let _repaired = false;
+  /* Runs after the cache load AND after every refresh, because on a device with no cache yet the
+   * first pass sees an EMPTY library — the vault has not arrived from the relay. A once-per-session
+   * latch there means the repair quietly never happens on exactly the device that most needs it: a
+   * fresh one. The guard is only against overlapping runs; the scan is cheap and writes nothing
+   * unless something is actually damaged. */
+  let _repairing = false;
   async function _repairUris(){
-    if(_repaired || !_lib) return;
-    _repaired = true;
+    if(_repairing || !_lib) return;
+    _repairing = true;
+    try{ await _repairUrisOnce(); } finally{ _repairing = false; }
+  }
+  async function _repairUrisOnce(){
     const broken = [];
     for(const it of _lib.items.values()){
       const uris = V().itemUris(it);

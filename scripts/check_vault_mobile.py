@@ -29,6 +29,11 @@ Assertions, each a way THIS screen breaks:
   totp-dead            a stored one-time code secret produces no code, or no countdown. The code is
                        the reason 2FA is in here at all.
   generator-broken     the generator produces nothing, or ignores the character classes.
+  damaged-entry-not-repaired
+                       an entry stored by an older build as one comma-joined URI (host
+                       `blackhillsenergy.com,https`, matching nothing) was not fixed on load. The
+                       damage is unambiguous, so the repair is automatic — nobody should have to
+                       re-import to recover from a parsing bug.
   import-merged-entries
                        a Bitwarden import merged two DIFFERENT credentials into one, destroying a
                        password — two logins for the same service in different regions, or a secure
@@ -143,6 +148,12 @@ window.__PC = {
                    password:'hunter2-hunter2', totp:'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ',
                    uris:['https://github.com'], notes:'', tags:[], folder:'Work',
                    created:1, updated:1700000000}),
+    // Damaged exactly as the pre-fix importer stored it: several URLs in one cell, so the parsed
+    // host is `blackhillsenergy.com,https` and the entry matches nothing on its own site. The repair
+    // must fix this on load, with no import and no user action.
+    await mk('dmg', {v:1, id:'dmg', kind:'login', title:'Black Hills', username:'me',
+                   password:'pw', totp:'', notes:'', tags:[], folder:'', created:1, updated:1,
+                   uris:['https://www.blackhillsenergy.com,https://blackhillsenergy.com/my-account/login']}),
     await mk('b', {v:1, id:'b', kind:'login', title:'Bank', username:'acct',
                    password:'short', totp:'', uris:['https://hsbc.co.uk'], notes:'', tags:[],
                    folder:'', created:1, updated:1700000000}),
@@ -239,6 +250,26 @@ GENERATOR = r"""(async () => {
       out.push(p);
   }
   return { bad: out.length, sample: V.generate({length:24}) };
+})()"""
+
+# The automatic repair. An entry damaged by the old comma-joined-URI parsing has a host containing a
+# comma, which cannot arise any other way — so it is fixed on load, without an import and without
+# asking. Fourteen of 117 entries in a real vault were in this state, including most of the banks.
+REPAIR = r"""(async () => {
+  const snap = window.PCVault.snapshot().items;
+  const it = snap.find(i => i.id === 'dmg');
+  if(!it) return { error: 'the damaged entry is not in the library' };
+  const V = window.PCVaultCore;
+  return {
+    uris: it.uris,
+    mangled: it.uris.some(u => (V.hostOf(u) || '').includes(',')),
+    matchesItsSite: V.matchLevel(it, 'https://www.blackhillsenergy.com/my-account/login'),
+    // …and the repair must have been PUBLISHED, not just held in memory: another device has to see it.
+    published: window.__events.some(e => {
+      const d = ((e.tags||[]).find(t => t[0] === 'd') || [])[1] || '';
+      return d === 'pcai:pw:dmg' && (e.created_at || 0) > 1700000000;
+    }),
+  };
 })()"""
 
 # A real import, through the real code. The dedupe key decides which incoming record UPDATES an
@@ -454,6 +485,22 @@ async def drive(url):
 
 
                 if label == "390px":
+                    rep = await js(REPAIR, awaited=True)
+                    if not rep or rep.get("error"):
+                        problems.append((label, "damaged-entry-not-repaired",
+                                         f"could not run the repair test ({(rep or {}).get('error')})"))
+                    else:
+                        if rep["mangled"]:
+                            problems.append((label, "damaged-entry-not-repaired",
+                                             f"the entry still has a mangled host: {rep['uris']}"))
+                        if rep["matchesItsSite"] != "exact":
+                            problems.append((label, "damaged-entry-not-repaired",
+                                             "the repaired entry still does not match its own site"))
+                        if not rep["published"]:
+                            problems.append((label, "damaged-entry-not-repaired",
+                                             "the repair was not published — other devices would "
+                                             "keep the broken copy"))
+
                     imp = await js(IMPORT_DEDUPE, awaited=True)
                     if not imp or imp.get("error"):
                         problems.append((label, "import-merged-entries",
