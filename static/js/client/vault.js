@@ -1213,6 +1213,23 @@
         enc(String(i))}. ${enc(f.text || '(no id/label)')}\n   ${enc(sig)}${role ? '  ' + enc(role) : ''}</div>`;
     }).join('');
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-gear"></use></svg>This device</h3>
+      ${lastFill ? `<div class="fld">Last autofill request
+        <div class="row" style="justify-content:space-between;align-items:center;gap:8px">
+          <span class="muted small">${enc(lastFill.pkg||'?')}</span>
+          <button class="btn btn-neon small" id="pd-copyfill">Copy report</button>
+        </div>
+        <div class="muted small">What the autofill service saw the last time another app asked it for a
+        login, and which box it chose. Nothing from your vault is in it and nothing you typed into those
+        boxes was read; the lines below are the field labels that app gave its own form.</div>
+        <div style="margin-top:8px;padding:8px;border-radius:8px;background:rgba(127,127,127,.12)">
+          <div class="muted small">${enc(lastFill.outcome||'')} · ${enc(new Date(+lastFill.at||0).toLocaleString())}${
+            lastFill.claimedWeb ? ' · claimed to be a web page' : ''}${
+            lastFill.hosts && lastFill.hosts !== '[]' ? ' · ' + enc(lastFill.hosts) : ''}</div>
+          <div style="margin-top:6px">${_fillRows() || '<div class="muted small">no editable fields were offered</div>'}</div>
+          ${(+lastFill.fieldCount||0) > (lastFill.fields||[]).length
+            ? `<div class="muted small">…and ${enc(String((+lastFill.fieldCount) - lastFill.fields.length))} more</div>` : ''}
+        </div>
+      </div>` : '<div class="fld">Last autofill request<div class="muted small">Nothing recorded yet. Open a login screen in another app so autofill runs, then come back here.</div></div>'}
       ${st && st.supported ? `
         <div class="fld">Android autofill
           <div class="muted small">${st.enabled
@@ -1221,23 +1238,7 @@
           ${st.enabled ? '' : '<button class="btn btn-neon small" id="pd-enable" style="margin-top:8px">Turn on autofill</button>'}
         </div>` : (plug ? `<div class="fld">Android autofill
           <div class="muted small">This version of Android has no autofill framework (it arrived in Android 8).</div></div>` : '')}
-      ${lastFill ? `<div class="fld">Last autofill request
-        <div class="muted small">What the autofill service saw the last time another app asked it for
-        a login, and which box it chose. Shown here because the service has no screen of its own —
-        when it fills the wrong field there is otherwise nothing to look at. Nothing from your vault
-        is in it and nothing you typed into those boxes was read; the lines below are the field
-        labels that app gave its own form. Worth a glance before you paste it anywhere.</div>
-        <div style="margin-top:8px;padding:8px;border-radius:8px;background:rgba(127,127,127,.12)">
-          <div class="muted small"><b>${enc(lastFill.pkg||'?')}</b> — ${enc(lastFill.outcome||'')}</div>
-          <div class="muted small">${enc(new Date(+lastFill.at||0).toLocaleString())}${
-            lastFill.claimedWeb ? ' · claimed to be a web page' : ''}${
-            lastFill.hosts && lastFill.hosts !== '[]' ? ' · ' + enc(lastFill.hosts) : ''}</div>
-          <div style="margin-top:6px">${_fillRows() || '<div class="muted small">no editable fields were offered</div>'}</div>
-          ${(+lastFill.fieldCount||0) > (lastFill.fields||[]).length
-            ? `<div class="muted small">…and ${enc(String((+lastFill.fieldCount) - lastFill.fields.length))} more</div>` : ''}
-        </div>
-        <button class="btn btn-ghost small" id="pd-copyfill" style="margin-top:8px">Copy this report</button>
-      </div>` : ''}
+
       <div class="fld">Unlocking
         <label class="nf-opt"><input type="checkbox" id="pd-stay" ${stayUnlocked()?'checked':''}>
           <b>Keep this device unlocked</b>

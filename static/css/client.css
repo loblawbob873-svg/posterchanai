@@ -1640,6 +1640,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* compose / modal */
 .modal-bg{position:fixed;inset:0;background:rgba(4,2,12,.72);backdrop-filter:blur(4px);z-index:100;display:grid;place-items:center;padding:24px 16px;overflow:auto}
 .modal{width:min(720px,96vw);max-height:92vh;overflow:auto;border-radius:18px;padding:22px}
+/* …and in DYNAMIC viewport units where they exist. On a phone `vh` is the viewport with the browser
+   chrome RETRACTED, so 92vh is taller than what you can actually see whenever the URL bar is showing:
+   the last section of a long modal sits under the chrome, and because the modal is what scrolls (not
+   the page) there is nothing to swipe to reach it. It reads as "the bottom of this dialog does not
+   exist". Declared as a second max-height so browsers without dvh keep the vh value. */
+.modal{max-height:92dvh}
 .modal.cmp-drop{outline:2px dashed var(--neon,#0ff);outline-offset:-8px;background:rgba(0,240,255,.06)}
 .modal h3{margin:0 0 12px;letter-spacing:1px;font-size:20px}
 .modal textarea{min-height:220px;resize:vertical;font-size:15px}
