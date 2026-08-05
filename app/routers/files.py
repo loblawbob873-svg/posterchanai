@@ -23,6 +23,7 @@ import secrets
 import asyncio
 
 from app.database import get_db
+from app.utils import lb_auth
 from app.auth import get_current_user, get_current_user_optional
 from app.models import User, SharedFile, ExternalStorage
 from app.services import settings_store
@@ -191,7 +192,9 @@ async def search_files(
     Accepts load-balanced requests from other posterchanai nodes (X-Posterchanai-Load-Balanced + username param).
     """
     # Resolve effective user: authenticated user or load-balanced request with username param
-    load_balanced = (request.headers.get("x-posterchanai-load-balanced", "").lower() == "true") if request else False
+    # A peer node, proven by the shared secret once `lb_shared_secret` is set — the bare header is
+    # settable by any caller, and this branch reads whatever `username` it names.
+    load_balanced = lb_auth.is_internal(request)
     if current_user is not None:
         effective_username = current_user.username
     elif load_balanced and username:
@@ -216,7 +219,7 @@ async def search_files(
                     import httpx
                     headers = {
                         "X-Username": effective_username,
-                        "X-Posterchanai-Load-Balanced": "true"
+                        **lb_auth.headers()
                     }
                     
                     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -347,9 +350,7 @@ async def get_all_images(
                 # Proxy to storage server
                 try:
                     import httpx
-                    headers = {
-                        "X-Posterchanai-Load-Balanced": "true"
-                    }
+                    headers = lb_auth.headers()
                     
                     async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minutes for large scans
                         response = await client.get(
@@ -1820,8 +1821,12 @@ async def get_thumbnail(
             else:
                 raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
         # No storage server: serve thumbnail from local user storage (single-server / Android Photos)
+        # Containment is _validate_path_within_base, NOT a bare startswith: a prefix compare with no
+        # separator lets `../<sibling>` out of the user's directory whenever one username is a prefix
+        # of another (dave -> dave.smith), which is a read of somebody else's files. Same helper the
+        # view_file endpoint above already uses.
         full_path = (user_path / file_path).resolve()
-        if not str(full_path).startswith(str(user_path.resolve())) or not full_path.exists() or not full_path.is_file():
+        if not _validate_path_within_base(full_path, user_path) or not full_path.exists() or not full_path.is_file():
             raise HTTPException(status_code=404, detail="File not found")
     
     # Handle external storage path
@@ -2477,9 +2482,7 @@ async def _proxy_upload_file(storage_server_url: str, username: str, filename: s
     try:
         # Server-to-server requests don't need authentication
         url = f"{storage_server_url.rstrip('/')}/api/storage/upload-file"
-        headers = {
-            "X-Posterchanai-Load-Balanced": "true"
-        }
+        headers = lb_auth.headers()
         
         files = {
             "file": (filename, content, content_type)
@@ -2512,7 +2515,7 @@ async def _proxy_list_files(storage_server_url: str, username: str, path: str, d
     
     try:
         url = f"{storage_server_url.rstrip('/')}/api/storage/list-files"
-        headers = {"X-Posterchanai-Load-Balanced": "true"}
+        headers = lb_auth.headers()
         params = {"username": username, "path": path}
 
         def _sync_proxy():
@@ -2538,9 +2541,7 @@ async def _proxy_delete_file(storage_server_url: str, username: str, file_path: 
     try:
         # Server-to-server requests don't need authentication
         url = f"{storage_server_url.rstrip('/')}/api/storage/delete-file"
-        headers = {
-            "X-Posterchanai-Load-Balanced": "true"
-        }
+        headers = lb_auth.headers()
         
         params = {
             "username": username,
@@ -2569,9 +2570,7 @@ async def _proxy_mkdir(storage_server_url: str, username: str, path: str, db: Se
     try:
         # Server-to-server requests don't need authentication
         url = f"{storage_server_url.rstrip('/')}/api/storage/mkdir"
-        headers = {
-            "X-Posterchanai-Load-Balanced": "true"
-        }
+        headers = lb_auth.headers()
         
         data = {
             "username": username,
@@ -2603,7 +2602,7 @@ async def _proxy_view_file(storage_server_url: str, username: str, file_path: st
     from fastapi.responses import Response
 
     url = f"{storage_server_url.rstrip('/')}/api/storage/view-file"
-    headers = {"X-Posterchanai-Load-Balanced": "true"}
+    headers = lb_auth.headers()
     params = {"username": username, "file_path": file_path}
     if download:
         params["download"] = "1"
@@ -2645,9 +2644,7 @@ async def _proxy_get_thumbnail(storage_server_url: str, username: str, file_path
     try:
         # Server-to-server requests don't need authentication
         url = f"{storage_server_url.rstrip('/')}/api/storage/thumbnail-file"
-        headers = {
-            "X-Posterchanai-Load-Balanced": "true"
-        }
+        headers = lb_auth.headers()
         
         params = {
             "username": username,
@@ -2706,9 +2703,7 @@ async def _proxy_move_files(storage_server_url: str, username: str, file_paths: 
     try:
         # Server-to-server requests don't need authentication
         url = f"{storage_server_url.rstrip('/')}/api/storage/move-files"
-        headers = {
-            "X-Posterchanai-Load-Balanced": "true"
-        }
+        headers = lb_auth.headers()
         
         data = {
             "username": username,
@@ -2738,9 +2733,7 @@ async def _proxy_delete_files_bulk(storage_server_url: str, username: str, file_
     try:
         # Server-to-server requests don't need authentication
         url = f"{storage_server_url.rstrip('/')}/api/storage/delete-files-bulk"
-        headers = {
-            "X-Posterchanai-Load-Balanced": "true"
-        }
+        headers = lb_auth.headers()
         
         data = {
             "username": username,

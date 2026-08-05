@@ -65,6 +65,7 @@ _DEFAULT_TOOL_GUIDANCE = (
 )
 
 from app.database import get_db
+from app.utils import lb_auth
 from app.models import User
 from app.services import settings_store
 from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
@@ -170,10 +171,10 @@ def verify_api_key(
     db: Session = Depends(get_db)
 ) -> Optional[User]:
     """Verify API key from Authorization header or X-API-Key header. Returns the user if authenticated."""
-    # Allow load-balanced requests from other posterchanai nodes without authentication
+    # A peer node, proven by the shared secret once `lb_shared_secret` is set. The bare header
+    # alone is settable by any caller — see app/utils/lb_auth.py.
     if request:
-        load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower()
-        if load_balanced_header == "true":
+        if lb_auth.is_internal(request):
             logger.debug(f"[OPENAI-API] ✓ Load-balanced request from another posterchanai node - allowing without auth")
             return None  # Authenticated but no specific user
     

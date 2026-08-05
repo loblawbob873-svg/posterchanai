@@ -14,6 +14,7 @@ serializes its own GPU via the shared `GPUResourceLock`. No dispatcher-wide lock
 MP4 bytes. Wired for the web UI + Telegram only (NOT the fedi bots — abuse surface).
 """
 import asyncio
+from app.utils import lb_auth
 import base64
 import logging
 from typing import List, Optional
@@ -98,7 +99,7 @@ async def _generate_local(db: Session, cfg: dict, prompt: str, negative: str) ->
 async def _generate_on_node(node_url: str, prompt: str, negative: str, timeout: float) -> bytes:
     url = node_url.rstrip("/") + "/api/generate-video"
     payload = {"prompt": prompt, "negative_prompt": negative}
-    headers = {"X-Posterchanai-Load-Balanced": "true"}
+    headers = lb_auth.headers()
     async with httpx.AsyncClient(timeout=httpx.Timeout(max(60.0, timeout) + 60.0, connect=15.0)) as client:
         try:
             r = await client.post(url, json=payload, headers=headers)

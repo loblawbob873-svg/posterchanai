@@ -12,6 +12,7 @@ Any peer failure falls through to the next candidate, and finally to local, so a
 only cost a round trip, never a render.
 """
 import asyncio
+from app.utils import lb_auth
 import base64
 import logging
 from typing import List, Optional
@@ -82,7 +83,7 @@ async def run_effect_on_node(node_url: str, command: str, arg: str, attachments:
     """Run one effect command on a peer node. Returns its command-result dict, or None to fall back."""
     import httpx
     payload = {"command": command, "arg": arg or "", "files": _encode(attachments)}
-    headers = {"X-Posterchanai-Load-Balanced": "true"}
+    headers = lb_auth.headers()
     async with httpx.AsyncClient(timeout=httpx.Timeout(_TIMEOUT_S, connect=8.0)) as c:
         r = await c.post("%s/api/effects/run" % node_url.rstrip("/"), json=payload, headers=headers)
     if r.status_code >= 400:

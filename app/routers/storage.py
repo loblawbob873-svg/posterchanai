@@ -18,6 +18,7 @@ from app.models import User
 from app.services import settings_store
 from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base, ascii_safe_header_filename
 from app.utils.image_validation import validate_and_clean_image_data, ensure_serializable_image
+from app.utils import lb_auth
 from typing import Optional
 import logging
 import asyncio
@@ -55,9 +56,8 @@ async def save_image(
     Supports load-balanced requests from other posterchanai nodes.
     """
     # Allow load-balanced requests from other posterchanai nodes without authentication
-    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
-    is_server_request = load_balanced_header == "true"
-    
+    is_server_request = lb_auth.is_internal(request)
+
     if is_server_request:
         # For load-balanced requests, only verify user exists. Do not create Conversation rows:
         # conversation_id is from the client node's DB; inserting it here can violate primary key
@@ -184,8 +184,9 @@ async def save_file(
     In that case, we trust the main server and skip conversation verification.
     """
     # Check if this is a server-to-server request (load-balanced from another posterchanai node)
-    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower()
-    is_server_request = current_user is None or load_balanced_header == "true"
+    is_server_request = lb_auth.is_internal(request)
+    if not is_server_request and current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     
     if not is_server_request:
         # Verify user owns this conversation (for user requests)
@@ -249,8 +250,9 @@ async def save_mail_attachment(
     Only accessible on storage server node.
     """
     # Check if this is a server-to-server request (load-balanced from another posterchanai node)
-    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
-    is_server_request = current_user is None or load_balanced_header == "true"
+    is_server_request = lb_auth.is_internal(request)
+    if not is_server_request and current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
     if not is_server_request:
         # Verify username matches for user requests
@@ -289,8 +291,9 @@ async def save_generated_image(
     Accepts form data (for compatibility with requests library).
     """
     # Check if this is a server-to-server request (load-balanced from another posterchanai node)
-    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
-    is_server_request = current_user is None or load_balanced_header == "true"
+    is_server_request = lb_auth.is_internal(request)
+    if not is_server_request and current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
     if not is_server_request:
         # Verify username matches for user requests
@@ -325,17 +328,13 @@ async def upload_file(
     In that case, we trust the main server and skip user verification.
     """
     # Check if this is a server-to-server request
-    is_server_request = current_user is None
+    is_server_request = lb_auth.is_internal(request)
+    if not is_server_request and current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     if not is_server_request:
-        # Check if this is a load-balanced request from another posterchanai node
-        load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower()
-        if load_balanced_header == "true":
-            is_server_request = True
-        
-        if not is_server_request:
-            # Verify username matches for user requests
-            if current_user.username != username:
-                raise HTTPException(status_code=403, detail="Access denied")
+        # Verify username matches for user requests
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
     
     # Read file content
     content = await file.read()
@@ -492,8 +491,9 @@ async def list_files(
     Only accessible on storage server node.
     """
     # Check if this is a server-to-server request (load-balanced from another posterchanai node)
-    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
-    is_server_request = current_user is None or load_balanced_header == "true"
+    is_server_request = lb_auth.is_internal(request)
+    if not is_server_request and current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -631,8 +631,9 @@ async def get_all_images(
     Only accessible on storage server node.
     """
     # Check if this is a server-to-server request (load-balanced from another posterchanai node)
-    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
-    is_server_request = current_user is None or load_balanced_header == "true"
+    is_server_request = lb_auth.is_internal(request)
+    if not is_server_request and current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -1128,8 +1129,9 @@ async def mkdir(
     Only accessible on storage server node.
     """
     # Check if this is a server-to-server request (load-balanced from another posterchanai node)
-    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
-    is_server_request = current_user is None or load_balanced_header == "true"
+    is_server_request = lb_auth.is_internal(request)
+    if not is_server_request and current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -1196,8 +1198,9 @@ async def delete_file(
     Only accessible on storage server node.
     """
     # Check if this is a server-to-server request (load-balanced from another posterchanai node)
-    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
-    is_server_request = current_user is None or load_balanced_header == "true"
+    is_server_request = lb_auth.is_internal(request)
+    if not is_server_request and current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -1285,8 +1288,9 @@ async def list_files(
     logger.info(f"[Storage API] list_files called: username={username}, path={path}, depth={depth}")
 
     # Check if this is a server-to-server request (load-balanced from another posterchanai node)
-    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
-    is_server_request = current_user is None or load_balanced_header == "true"
+    is_server_request = lb_auth.is_internal(request)
+    if not is_server_request and current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -1451,8 +1455,9 @@ async def view_file(
     Only accessible on storage server node.
     """
     # Check if this is a server-to-server request (load-balanced from another posterchanai node)
-    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
-    is_server_request = current_user is None or load_balanced_header == "true"
+    is_server_request = lb_auth.is_internal(request)
+    if not is_server_request and current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -1596,8 +1601,9 @@ async def thumbnail_file(
     Only accessible on storage server node.
     """
     # Check if this is a server-to-server request (load-balanced from another posterchanai node)
-    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
-    is_server_request = current_user is None or load_balanced_header == "true"
+    is_server_request = lb_auth.is_internal(request)
+    if not is_server_request and current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -1678,8 +1684,9 @@ async def move_files(
         raise HTTPException(status_code=400, detail=f"Invalid request body: {e}")
     
     # Check if this is a server-to-server request (load-balanced from another posterchanai node)
-    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
-    is_server_request = current_user is None or load_balanced_header == "true"
+    is_server_request = lb_auth.is_internal(request)
+    if not is_server_request and current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -1785,8 +1792,9 @@ async def save_text_file(
     Only accessible on storage server node.
     """
     # Check if this is a server-to-server request (load-balanced from another posterchanai node)
-    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
-    is_server_request = current_user is None or load_balanced_header == "true"
+    is_server_request = lb_auth.is_internal(request)
+    if not is_server_request and current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -1859,8 +1867,9 @@ async def delete_files_bulk(
         raise HTTPException(status_code=400, detail=f"Invalid request body: {e}")
     
     # Check if this is a server-to-server request (load-balanced from another posterchanai node)
-    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
-    is_server_request = current_user is None or load_balanced_header == "true"
+    is_server_request = lb_auth.is_internal(request)
+    if not is_server_request and current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -1966,8 +1975,9 @@ async def search_files_storage(
     """Search for files by name or path on storage server. Returns matching files with metadata."""
     # Check if this is a server-to-server request
     # Check if this is a server-to-server request (load-balanced from another posterchanai node)
-    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
-    is_server_request = current_user is None or load_balanced_header == "true"
+    is_server_request = lb_auth.is_internal(request)
+    if not is_server_request and current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     
     if not is_server_request:
         # Verify username matches for user requests

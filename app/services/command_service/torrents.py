@@ -1,5 +1,6 @@
 """Auto-split from the original command_service.py monolith (mixin pattern). No behavior change."""
 from ._common import _format_bt_list_from_dicts, _nyaa_cache, _torrent_cache, format_all_categories, format_nyaa_results, format_torrent_results, logger, re, scrape_all_categories, scrape_torrents, search_nyaa, search_torrents
+from app.utils import lb_auth
 
 
 class _TorrentsMixin:
@@ -19,9 +20,7 @@ class _TorrentsMixin:
 
         # Server-to-server requests don't need authentication
         url = f"{server_url.rstrip('/')}/api/torrent{endpoint}"
-        headers = {
-            "X-Posterchanai-Load-Balanced": "true"
-        }
+        headers = lb_auth.headers()
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:

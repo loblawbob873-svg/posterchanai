@@ -3,6 +3,7 @@ Load Balancer Service - Round-robin load balancing across posterchanai servers.
 With health checking to avoid sending requests to unhealthy/slow servers.
 """
 import asyncio
+from app.utils import lb_auth
 import httpx
 import json
 import logging
@@ -35,7 +36,7 @@ async def check_server_health(server: str) -> bool:
     Server-to-server requests use load-balanced header authentication.
     """
     # Server-to-server requests use load-balanced header
-    headers = {"X-Posterchanai-Load-Balanced": "true"}
+    headers = lb_auth.headers()
     try:
         async with httpx.AsyncClient(timeout=HEALTH_CHECK_TIMEOUT) as client:
             response = await client.get(f"{server}/v1/models", headers=headers)
@@ -324,7 +325,7 @@ class LoadBalancer:
         self.model = model
         # Server-to-server requests don't need authentication - use load-balanced header
         self.headers = {
-            "X-Posterchanai-Load-Balanced": "true"
+            **lb_auth.headers()
         }
 
     async def chat_stream(

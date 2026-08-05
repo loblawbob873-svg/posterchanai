@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.utils import lb_auth
 from app.auth import get_current_user_optional
 from app.services.video_factory import generate_video_for_user
 from app.services.video_service import VideoError
@@ -31,7 +32,9 @@ async def get_video_auth(
 ) -> bool:
     """Allow load-balanced requests from other posterchanai nodes without auth; otherwise accept
     API key / JWT (mirrors music_api.get_music_auth)."""
-    if request.headers.get("x-posterchanai-load-balanced", "").lower() == "true":
+    # A peer node, proven by the shared secret once `lb_shared_secret` is set. The bare header
+    # alone is settable by any caller — see app/utils/lb_auth.py.
+    if lb_auth.is_internal(request):
         return True
     for token in (x_api_key, (authorization[7:] if authorization and authorization.startswith("Bearer ") else None)):
         if not token:

@@ -5,6 +5,7 @@ VRAM manager for model swapping on a shared GPU, and supports load balancing acr
 posterchanai nodes (the unified chat_server_urls list).
 """
 import asyncio
+from app.utils import lb_auth
 import logging
 from typing import Optional, Protocol, runtime_checkable, TYPE_CHECKING
 from sqlalchemy.orm import Session
@@ -111,7 +112,7 @@ async def _generate_image_on_node(node_url: str, timeout: float, prompt: str, ne
         payload["steps"] = steps
     if cfg is not None:
         payload["cfg"] = cfg
-    headers = {"X-Posterchanai-Load-Balanced": "true"}
+    headers = lb_auth.headers()
     async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post(f"{node_url}/api/generate-image", json=payload, headers=headers)
     if r.status_code >= 400:

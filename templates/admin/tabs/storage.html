@@ -12,7 +12,12 @@
         <div class="form-group">
             <label for="storage_server_url">Storage Server URL</label>
             <input type="text" id="storage_server_url" name="storage_server_url" placeholder="http://storage-node:3051">
-            <small>Leave empty for local storage. Set URL to proxy file requests to a remote storage server (for load-balanced setups). Server-to-server requests use load-balanced header authentication.</small>
+            <small>Leave empty for local storage. Set URL to proxy file requests to a remote storage server (for load-balanced setups). Server-to-server requests authenticate with the node secret below.</small>
+        </div>
+        <div class="form-group">
+            <label for="lb_shared_secret">Node-to-node shared secret</label>
+            <input type="text" id="lb_shared_secret" name="lb_shared_secret" placeholder="a long random string">
+            <small><b>Set the same value on every node.</b> Nodes forward work to each other (image/music/video/voice generation, torrents, remote storage) with no user session, and used to prove they were a node by setting a header any caller can set — so anyone could use those endpoints, and read other users' files, without an account. With a secret set, peers must prove it. <b>Leave empty and the old header-only trust still applies</b>, so filling this in on every node is what actually closes it.</small>
         </div>
         <div class="form-group">
             <label for="ytdl_cookies_path">yt-dlp cookies path (optional)</label>

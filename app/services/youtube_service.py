@@ -1,6 +1,7 @@
 """YouTube Service - Fetch transcripts, summarize, and download as MP3"""
 
 import re
+from app.utils import lb_auth
 import logging
 import os
 import tempfile
@@ -610,7 +611,7 @@ async def _upload_file_to_storage_proxy(
     def _sync_upload():
         import requests
         url = f"{storage_server_url.rstrip('/')}/api/storage/upload-file"
-        headers = {"X-Posterchanai-Load-Balanced": "true"}
+        headers = lb_auth.headers()
         files = {"file": (filename, content, content_type)}
         data = {"username": username, "path": path}
         response = requests.post(url, headers=headers, files=files, data=data, timeout=300)

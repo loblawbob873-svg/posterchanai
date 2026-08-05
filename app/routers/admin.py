@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from datetime import datetime
 import logging
 from app.database import get_db
+from app.utils import lb_auth
 from app.models import User, ExternalStorage
 from app.schemas import UserCreate, UserResponse, SettingsUpdate, SettingsResponse
 from app.auth import get_admin_user, get_password_hash
@@ -965,9 +966,7 @@ async def rescan_storage(
             logger.info(f"[ADMIN] Proxying storage rescan to storage server: {url}")
             try:
                 import httpx
-                headers = {
-                    "X-Posterchanai-Load-Balanced": "true"
-                }
+                headers = lb_auth.headers()
                 access_token = request.cookies.get("access_token")
                 auth_header = request.headers.get("Authorization")
                 if auth_header:

@@ -3,6 +3,7 @@ Storage Proxy Service - Proxy storage requests to remote storage server.
 Similar to torrent proxy, but for file storage operations.
 """
 import logging
+from app.utils import lb_auth
 import re
 import httpx
 from fastapi import HTTPException
@@ -91,9 +92,7 @@ async def proxy_storage_request(
     
     url = f"{base_url.rstrip('/')}{sanitized_endpoint}"
     # Server-to-server requests don't need authentication - use load-balanced header
-    headers = {
-        "X-Posterchanai-Load-Balanced": "true"
-    }
+    headers = lb_auth.headers()
     
     # Forward other headers that might be needed
     if "accept" in request.headers:

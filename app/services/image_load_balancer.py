@@ -3,6 +3,7 @@ Image Load Balancer Service - Round-robin load balancing for image generation ac
 With health checking to avoid sending requests to failing servers.
 """
 import asyncio
+from app.utils import lb_auth
 import httpx
 import logging
 import time
@@ -251,9 +252,7 @@ class ImageLoadBalancer:
             payload["cfg"] = cfg
 
         # Server-to-server requests - no authentication needed
-        headers = {
-            "X-Posterchanai-Load-Balanced": "true"
-        }
+        headers = lb_auth.headers()
 
         # Try each server until one succeeds
         tried_servers = set()

@@ -1,5 +1,6 @@
 """Auto-split from the original command_service.py monolith (mixin pattern). No behavior change."""
 from ._common import datetime, fetch_news_from_source, get_user_news_sources, logger, proxy_image_register, re
+from app.utils import lb_auth
 
 
 class _SearchMixin:
@@ -105,9 +106,7 @@ class _SearchMixin:
             # Use remote storage API with async httpx (same as files router)
             url = storage_value.strip()
             try:
-                headers = {
-                    "X-Posterchanai-Load-Balanced": "true"
-                }
+                headers = lb_auth.headers()
                 
                 # Try both endpoints (same as files router)
                 search_urls = [

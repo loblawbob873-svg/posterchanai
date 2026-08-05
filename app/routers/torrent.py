@@ -12,6 +12,7 @@ import logging
 import httpx
 
 from app.database import get_db
+from app.utils import lb_auth
 from app.auth import get_current_user
 from app.models import User
 from app.services import settings_store
@@ -36,9 +37,9 @@ def get_torrent_user(
     - Load-balanced requests (X-Posterchanai-Load-Balanced header)
     """
     try:
-        # Allow load-balanced requests from other posterchanai nodes without authentication
-        load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower()
-        if load_balanced_header == "true":
+        # A peer node, proven by the shared secret once `lb_shared_secret` is set. The bare header
+        # alone is settable by any caller — see app/utils/lb_auth.py.
+        if lb_auth.is_internal(request):
             logger.debug("[TORRENT] ✓ Load-balanced request from another posterchanai node - allowing without auth")
             return None  # System access, no specific user
 
@@ -77,9 +78,7 @@ async def forward_to_remote(
 
     # Server-to-server requests don't need authentication
     url = f"{server_url.rstrip('/')}/api/torrent{endpoint}"
-    headers = {
-        "X-Posterchanai-Load-Balanced": "true"
-    }
+    headers = lb_auth.headers()
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:

@@ -36,6 +36,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.database import SessionLocal
 from app.models import BlossomBlob, User
+from app.utils import lb_auth
 from app.services import settings_store, keystore
 from app.services.nostr import nostr_service, event as nostr_event
 from app.services.proxy_utils import afallback_transport
@@ -474,7 +475,7 @@ def _local_path(blob_dir: str, sha256: str) -> str:
 
 
 def _proxy_headers() -> dict:
-    return {"X-Posterchanai-Load-Balanced": "true"}
+    return lb_auth.headers()
 
 
 async def _proxy_put(storage_url: str, sha256: str, data: bytes, mime: str) -> str:

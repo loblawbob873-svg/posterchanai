@@ -16,6 +16,7 @@ serializes its own GPU via the shared `GPUResourceLock` (so two songs landing on
 queue there, not OOM). No dispatcher-wide lock. Wired for the web UI + Telegram only.
 """
 import asyncio
+from app.utils import lb_auth
 import base64
 import logging
 from typing import List, Optional, Tuple
@@ -102,7 +103,7 @@ async def _generate_on_node(node_url: str, prompt: str, lyrics: str, duration, s
     OWN local path (GPU lock + VRAM swap + its local acestep), so it frees its GPU first."""
     url = node_url.rstrip("/") + "/api/generate-music"
     payload = {"prompt": prompt, "lyrics": lyrics, "duration": duration, "steps": steps, "format": fmt}
-    headers = {"X-Posterchanai-Load-Balanced": "true"}
+    headers = lb_auth.headers()
     # The remote node does the full generation, so allow generous time over our request timeout.
     async with httpx.AsyncClient(timeout=httpx.Timeout(max(60.0, timeout) + 60.0, connect=15.0)) as client:
         try:

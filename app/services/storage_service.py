@@ -3,6 +3,7 @@ import shutil
 import base64
 import logging
 import httpx
+from app.utils import lb_auth
 import socket
 from pathlib import Path
 from datetime import datetime
@@ -190,9 +191,7 @@ class StorageService:
         try:
             # Server-to-server requests don't need authentication
             url = f"{storage_server_url.rstrip('/')}/api/storage/save-image"
-            headers = {
-                "X-Posterchanai-Load-Balanced": "true"
-            }
+            headers = lb_auth.headers()
             
             image_data = base64.b64decode(image_base64)
             files = {
@@ -284,9 +283,7 @@ class StorageService:
         try:
             # Server-to-server requests don't need authentication
             url = f"{storage_server_url.rstrip('/')}/api/storage/save-avatar"
-            headers = {
-                "X-Posterchanai-Load-Balanced": "true"
-            }
+            headers = lb_auth.headers()
             
             files = {
                 "file": (f"avatar{ext}", image_data, f"image/{ext[1:]}")
@@ -403,9 +400,7 @@ class StorageService:
         try:
             # Server-to-server requests don't need authentication
             url = f"{storage_server_url.rstrip('/')}/api/storage/save-file"
-            headers = {
-                "X-Posterchanai-Load-Balanced": "true"
-            }
+            headers = lb_auth.headers()
             
             files = {
                 "file": (original_name, content.encode('utf-8'), "text/plain")
@@ -566,9 +561,7 @@ class StorageService:
                 try:
                     # Proxy the file request to storage server
                     import httpx
-                    headers = {
-                        "X-Posterchanai-Load-Balanced": "true"
-                    }
+                    headers = lb_auth.headers()
                     
                     # If image_url is already a full URL, use it directly (but still sanitize)
                     if image_url.startswith(('http://', 'https://')):
@@ -713,9 +706,7 @@ class StorageService:
             # Get server-to-server API token
             # Server-to-server requests don't need authentication
             url = f"{storage_server_url.rstrip('/')}/api/storage/save-mail-attachment"
-            headers = {
-                "X-Posterchanai-Load-Balanced": "true"
-            }
+            headers = lb_auth.headers()
             
             files = {
                 "file": (original_name, file_data, "application/octet-stream")
@@ -789,9 +780,7 @@ class StorageService:
         try:
             # Server-to-server requests don't need authentication
             url = f"{storage_server_url.rstrip('/')}/api/storage/save-generated-image"
-            headers = {
-                "X-Posterchanai-Load-Balanced": "true"
-            }
+            headers = lb_auth.headers()
             
             # Use form data (not JSON) to match the endpoint signature
             data = {
