@@ -4063,7 +4063,34 @@
   }
   let _redrawT=null;
   function scheduleRedraw(){ if(_redrawT) return; _redrawT=setTimeout(()=>{ _redrawT=null; _drawTimeline(true); }, 350); }
-  function isReply(ev){ return ev.kind===1 && ev.tags.some(t=>t[0]==='e'); }
+  /* Is this a REPLY, or a quote that merely references another note?
+   *
+   * "any `e` tag means a reply" is wrong, and wrong in a way you can see: NIP-10 gives an e-tag a
+   * MARKER, and `mention` means "I am pointing at this note", not "I am answering it". A quote post
+   * built the old way — an e-tag marked `mention` plus the inline `nostr:nevent` — was therefore
+   * rendered by feedNoteHtml with a "↩ replying to …" header ABOVE it, while the body embedded that
+   * same note again as a quote card. The referenced note appeared TWICE in one card, which is the
+   * "weird display" people were seeing constantly: plenty of clients still quote this way.
+   *
+   * The rules, in the order they can be trusted:
+   *   marker `reply`/`root` — the author said so. A reply.
+   *   marker `mention`      — the author said so. NOT a reply, whatever else is on the note.
+   *   no marker             — the deprecated POSITIONAL form, which does mean a reply — unless the
+   *                           tag names the event a `q` tag already claims as the quoted one, since
+   *                           NIP-18 quotes commonly carry both.
+   */
+  function isReply(ev){
+    if(!ev || ev.kind!==1 || !Array.isArray(ev.tags)) return false;
+    const es=ev.tags.filter(t=>Array.isArray(t) && t[0]==='e' && t[1]);
+    if(!es.length) return false;
+    const quoted=new Set(ev.tags.filter(t=>Array.isArray(t) && t[0]==='q' && t[1]).map(t=>t[1]));
+    return es.some(t=>{
+      const marker=String(t[3]||'').toLowerCase();
+      if(marker==='mention') return false;
+      if(marker==='reply' || marker==='root') return true;
+      return !quoted.has(t[1]);
+    });
+  }
   // True when a note carries inline media (image/video URL or a blossom 64-hex blob) — same
   // detection mediaParts() uses to pull a gallery out of the text. Drives the profile Media tab.
   function hasMedia(ev){
