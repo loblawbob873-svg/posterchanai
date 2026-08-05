@@ -220,3 +220,17 @@ def test_a_wrong_recording_tag_can_be_corrected():
     sweep = sweep[:sweep.index("\n  // Delete YOUR OWN stream")]
     assert "t[0]==='recording' && t[1])) continue" not in sweep, (
         "the sweep skips already-tagged events again, so a wrong tag can never be repaired")
+
+
+def test_vod_listings_hide_recordings_whose_blob_is_gone():
+    """A StreamVOD row outlives its bytes — the streamer deletes the recording (nothing removes the
+    row) or an upload never stored the blob. Measured live: 43 rows for one token, 42 dead. The client
+    picks from this list and STAMPS the choice onto the NIP-53 `recording` tag, so a dead row becomes a
+    permanent dead replay link in every other Nostr client."""
+    src = (ROOT / "app" / "routers" / "streams.py").read_text(encoding="utf-8")
+    assert "def _playable(" in src
+    body = src[src.index("@router.get(\"/vods\")"):]
+    body = body[:body.index("@router.post(\"/quality\")")]
+    assert body.count("_playable(db, rows)") == 2, (
+        "both /vods and /vods/by-token must filter — the stamper reads by-token")
+    assert "BlossomBlob" in src

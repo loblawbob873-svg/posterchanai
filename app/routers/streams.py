@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import APIKey, User, UserSetting, StreamVOD
+from app.models import BlossomBlob, APIKey, User, UserSetting, StreamVOD
 from app.services import settings_store, stream_end_service, stream_service, users_store
 from app.services.nostr.event import verify_event
 
@@ -680,12 +680,30 @@ def _vod_json(v: StreamVOD) -> dict:
     }
 
 
+def _playable(db, rows: list) -> list:
+    """Drop VODs whose Blossom blob is gone, because their URL is a guaranteed 404.
+
+    A StreamVOD row outlives its bytes in two ordinary ways: the streamer deletes the recording
+    (nothing removes the row), and an upload that never stored the blob still indexes one. Measured on
+    the live node: 43 rows for one token, 42 of them dead. Serving those is not cosmetic — the client
+    picks a recording out of this list and STAMPS IT onto the NIP-53 `recording` tag, so a dead row
+    becomes a permanent dead replay link in every other Nostr client. Filtering here fixes the player,
+    the stamper and the repair sweep at once, and is non-destructive: the row stays, so a blob restored
+    from a mirror brings its VOD back with it.
+    """
+    if not rows:
+        return []
+    have = {r[0] for r in db.query(BlossomBlob.sha256)
+            .filter(BlossomBlob.sha256.in_([v.sha256 for v in rows])).all()}
+    return [v for v in rows if v.sha256 in have]
+
+
 @router.get("/vods")
 def stream_vods(current_user: User = Depends(get_current_user), db=Depends(get_db)):
     """The signed-in user's saved past streams, newest first."""
     rows = (db.query(StreamVOD).filter(StreamVOD.user_id == current_user.id)
             .order_by(StreamVOD.started_at.desc()).limit(200).all())
-    return {"vods": [_vod_json(v) for v in rows]}
+    return {"vods": [_vod_json(v) for v in _playable(db, rows)]}
 
 
 @router.get("/vods/by-token/{token}")
@@ -694,7 +712,7 @@ def stream_vods_by_token(token: str, db=Depends(get_db)):
     public on the Blossom server). Lets a viewer watch streams that ended without needing an account."""
     rows = (db.query(StreamVOD).filter(StreamVOD.token == token)
             .order_by(StreamVOD.started_at.desc()).limit(200).all())
-    return {"vods": [_vod_json(v) for v in rows]}
+    return {"vods": [_vod_json(v) for v in _playable(db, rows)]}
 
 
 @router.post("/quality")
