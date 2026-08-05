@@ -42,8 +42,9 @@ function showVersion(){
  * these, boot() is called during script evaluation, and a `let` below that call is in its temporal
  * dead zone until evaluation reaches it. It happens to survive today only because the assignment sits
  * after an await — one edit moving it earlier turns the whole popup into a ReferenceError. */
-let _mode = null, _bmOn = false, _bmCount = 0;
-let _confirmRemovals = false;      // armed only by the "looks like a restore" prompt below
+let _mode = null, _bmOn = false, _bmCount = 0, _bmPending = 0;
+let _confirmRemovals = false;      // armed by the "looks like a restore" prompt, OR by a pending delete
+                                   // the engine remembered across a popup close (see paintBm)
 
 async function boot(){
   try{
@@ -54,7 +55,7 @@ async function boot(){
   if(!st || !st.paired){ show('pane-pair'); $('#status').textContent = ''; return; }
   vaultCount = st.count || 0;
   $('#status').textContent = `${st.count} · ${st.status}${st.mode === 'ro' ? ' · read-only' : ''}`;
-  _mode = st.mode; _bmOn = !!st.bmOn; _bmCount = st.bmCount || 0;
+  _mode = st.mode; _bmOn = !!st.bmOn; _bmCount = st.bmCount || 0; _bmPending = st.bmPending || 0;
   show('pane-list');
   await paint();
 }
@@ -304,6 +305,20 @@ function paintBm(){
   const box = $('#bm-on'); if(!box) return;
   box.checked = _bmOn;
   const ro = _mode === 'ro';
+  const sync = $('#bm-sync');
+  /* A bulk delete waiting to be confirmed SURVIVES the popup closing now — the engine remembers it, so
+   * reopening shows the armed "Delete N everywhere" button and ONE click finishes it. You no longer
+   * have to keep the popup open. Shown first because it is the thing to act on. */
+  if(_bmOn && _bmPending){
+    _confirmRemovals = true;
+    if(sync){ sync.textContent = `Delete ${_bmPending} everywhere`; sync.disabled = false; }
+    $('#bm-note').innerHTML = `<b>${_bmPending} bookmarks are missing here</b> that this browser had
+      synced. Press <b>Delete ${_bmPending} everywhere</b> to remove them from your other devices — you
+      can close and reopen this, it will remember. If this browser was restored or re-paired, turn sync
+      off instead: deleting would remove them everywhere.`;
+    return;
+  }
+  if(sync && sync.textContent !== 'Merge now'){ sync.textContent = 'Merge now'; sync.disabled = false; }
   $('#bm-note').innerHTML = _bmOn
     ? (ro ? `${_bmCount} synced · <b>receive only</b> — this pairing has no signing key, so bookmarks
              saved here stay here. Pair with full access to publish them.`
@@ -332,7 +347,9 @@ function paintBm(){
     b.disabled = true; b.textContent = 'merging…';
     const r = await send({ type:'bm-sync', confirmRemovals: _confirmRemovals });
     _confirmRemovals = false;
-    b.textContent = r && r.ok ? `+${r.created} here, +${r.published} sent` : (r && r.error) || 'failed';
+    b.textContent = r && r.ok
+      ? (r.removed ? `removed ${r.removed} everywhere` : `+${r.created} here, +${r.published} sent`)
+      : (r && r.error) || 'failed';
     // A merge that sent nothing states the reason under the button — the alternative is a bare 0 that
     // looks identical whether the pairing cannot sign, the relay is unreachable, or there was simply
     // nothing new to send.
@@ -340,18 +357,24 @@ function paintBm(){
      * thing to do — and so is restoring a backup, and they are indistinguishable from here. So the
      * merge stops and asks, rather than removing the same bookmarks from every other device. */
     if(r && r.ok && r.pendingRemovals){
-      _confirmRemovals = true;
-      $('#bm-note').innerHTML = `<b>${r.pendingRemovals} bookmarks are missing here</b> that this browser
-        had synced. If you deleted them on purpose, press Merge now again to remove them from your
-        other devices. If this browser was restored or re-paired, turn sync off instead — merging
-        would delete them everywhere.`;
+      /* The engine now REMEMBERS this pending delete (persisted), so it survives the popup closing:
+       * _bmPending drives paintBm, which arms the button on every open. You do NOT have to keep the
+       * popup open — close it, reopen, one click on "Delete N everywhere" finishes it.
+       *
+       * (The old code left the button DISABLED on "merging…" here and returned — so "press again" was
+       * physically impossible, and the confirm also died the instant the popup lost focus.) */
+      _bmPending = r.pendingRemovals;
+      paintBm();
       return;
     }
     if(r && r.ok && r.blocked) $('#bm-note').innerHTML =
       `<b>Sent nothing:</b> ${r.blocked}. ${r.wanted} bookmark${r.wanted === 1 ? '' : 's'} waiting.`;
-    setTimeout(() => { b.textContent = 'Merge now'; b.disabled = false; }, 3500);
     const st = await send({ type:'state' });
-    _bmOn = !!(st && st.bmOn); _bmCount = (st && st.bmCount) || 0; paintBm();
+    _bmOn = !!(st && st.bmOn); _bmCount = (st && st.bmCount) || 0; _bmPending = (st && st.bmPending) || 0;
+    // The result stays on the button for a moment, THEN paintBm restores the resting label. paintBm is
+    // the single authority on that label — it shows "Merge now", or re-arms "Delete N everywhere" if a
+    // bulk delete is still pending — so the button is never left stuck and the confirm is never lost.
+    setTimeout(() => { b.disabled = false; paintBm(); }, 2500);
   }; }
 
 

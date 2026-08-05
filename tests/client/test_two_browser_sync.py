@@ -132,3 +132,51 @@ def test_wholesale_loss_asks_first(results):
 
 def test_wholesale_loss_obeys_once_confirmed(results):
     _check(results, "…and obeys once confirmed")
+
+
+def test_deleting_a_folder_syncs_live(results):
+    """The bug a real user hit that no single-engine test could see. A browser fires ONE onRemoved for
+    a deleted folder — never one per bookmark inside it — so an engine that only tombstones the ids it
+    is handed leaves every bookmark in that folder alive on the relay and on the other browser. It
+    "synced" only if the user then pressed Merge, which is not what deleting means. The engine now
+    reconciles the tree against its map on any removal and tombstones what vanished, live.
+
+    This also depends on the sim's SHARED CLOCK: the old relay counter (1000+) against the engine's
+    real-Date.now() `_at` (~1.7e9) made a publisher reject every tombstone as "older", masking this as
+    a pass."""
+    _check(results, "deleting a folder syncs the bookmarks inside it, live")
+
+
+def test_folder_delete_leaves_tombstones_for_offline_devices(results):
+    """The sweep must TOMBSTONE the orphaned children, not merely forget them locally, or a device that
+    was offline during the delete never learns of it."""
+    _check(results, "a folder delete leaves tombstones, so an offline device also drops them")
+
+
+def test_a_move_does_not_duplicate(results):
+    """Dragging a bookmark to another folder is a location edit, not a new bookmark: no duplicate, and
+    it lands in the new folder on the other browser."""
+    _check(results, "a move does not duplicate and lands in the new folder")
+
+
+def test_editing_a_url_syncs_new_and_drops_old(results):
+    """The sync id is derived from the URL, so editing a URL is an add plus a delete — the old must go
+    and the new must arrive, with no orphan on either browser."""
+    _check(results, "editing a url syncs the new and drops the old")
+
+
+def test_confirming_bulk_delete_stays_deleted_two_browsers(results):
+    """"108 missing… comes back no matter how many times I click Merge." The confirm path (union's
+    removal loop) tombstoned only the one mapped id per URL, not the duplicate siblings — so a leftover
+    duplicate resurrected the bookmark and the second browser kept it alive, forever. Confirming a bulk
+    delete must kill EVERY event for each URL."""
+    _check(results, "confirming a bulk delete stays deleted with duplicate events and a second browser")
+
+
+def test_deleting_stays_deleted_with_stale_duplicate_events(results):
+    """"Brave brings back everything I delete." A relay polluted by older versions holds several live
+    events per URL (random ids). Three bugs conspired: absorbing each duplicate created another copy
+    (the duplicates + the lock-up); deleting tombstoned only the mapped id so a stale one recreated it;
+    and `forget` cleared the reverse mapping the merge had just handed the winning id, so a later delete
+    found no id to tombstone at all. A delete must kill EVERY event for the URL and stay dead."""
+    _check(results, "deleting stays deleted even with stale duplicate events on the relay")

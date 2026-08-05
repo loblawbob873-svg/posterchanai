@@ -20,18 +20,38 @@ const vm = require('vm');
 const SRC = fs.readFileSync(path.join(__dirname, '..', '..', 'extension', 'bookmarks.js'), 'utf8');
 const tick = () => new Promise(r => setTimeout(r, 0));
 
+/* ONE shared logical clock, on the real Unix-seconds scale, read by BOTH the engine (through a Date
+ * injected into its context) AND the relay when it stamps created_at.
+ *
+ * This is not a detail — it is the difference between a faithful sim and one that lies. In a real
+ * browser every `_at` the engine records and every `created_at` the relay stores is
+ * Math.floor(Date.now()/1000): one monotonic scale, so a tombstone published LATER genuinely outranks
+ * the create it removes. The first version of this file gave the relay its own counter starting at
+ * 1000 while the engine self-stamped items._at from the real Date.now() (~1.7e9) — so a browser that
+ * had PUBLISHED a bookmark would compare its ~1.7e9 `_at` against a ~1050 tombstone and reject it as
+ * "older", every time. That masked a real bug (a folder delete not propagating) as a pass and would
+ * have let any tombstone-vs-publisher regression through. A single shared clock is the fix, and every
+ * write advancing it by a second models "each write is a distinct instant" exactly as reality does. */
+const RealDate = Date;
+const CLOCK = { t: 1700000000 };
+function FakeDate(x) { return arguments.length ? new RealDate(x) : new RealDate(CLOCK.t * 1000); }
+FakeDate.now = () => CLOCK.t * 1000;
+
 /* A shared relay: syncId -> the latest event. Publishing replaces; every browser reads them all. */
 function makeRelay() {
   const events = new Map();
-  let clock = 1000;
   return {
     events,
     publishes: 0,
     publish(syncId, item) {
-      clock += 1; this.publishes += 1;
-      events.set(syncId, { created_at: clock, content: item === null ? '' : JSON.stringify(item) });
+      CLOCK.t += 1; this.publishes += 1;
+      events.set(syncId, { created_at: CLOCK.t, content: item === null ? '' : JSON.stringify(item) });
       return true;
     },
+    /* Plant a raw event under an ARBITRARY id — the way an older buggy version left a bookmark on the
+       relay under a random id. Several of these per URL is the mess a real profile is actually in. */
+    seed(id, item, at) { events.set(id, { created_at: at, content: JSON.stringify(item) }); },
+    liveCount() { return [...events.values()].filter(e => e.content).length; },
     all() { return [...events.entries()]; },
   };
 }
@@ -55,7 +75,7 @@ function makeBrowser(name, relay, rootDefs) {
   const listeners = { onCreated: [], onChanged: [], onMoved: [], onRemoved: [] };
   const reg = (k) => ({ addListener: (fn) => listeners[k].push(fn) });
   let fired = 0;
-  const calls = { getTree: 0, getChildren: 0 };
+  const calls = { getTree: 0, getChildren: 0, get: 0 };
   const fire = (k, id) => { fired++; for (const fn of listeners[k]) { try { fn(id, {}); } catch (_) {} } };
   const B = {
     storage: { local: {
@@ -67,7 +87,7 @@ function makeBrowser(name, relay, rootDefs) {
       onMoved: reg('onMoved'), onRemoved: reg('onRemoved'),
       getTree: async () => { calls.getTree++; await tick(); return [hydrate('r')]; },
       getChildren: async (id) => { calls.getChildren++; await tick(); return (nodes[id].children || []).map(c => nodes[c]); },
-      get: async (id) => { await tick(); return nodes[id] ? [nodes[id]] : []; },
+      get: async (id) => { calls.get++; await tick(); return nodes[id] ? [nodes[id]] : []; },
       /* A REAL BROWSER FIRES ITS LISTENERS for the extension's own writes too, and it fires them as
          part of the call resolving — before any code after `await create(...)` runs. That ordering is
          the whole point: an engine that registers "I am writing this id" AFTERWARDS has already lost
@@ -87,12 +107,25 @@ function makeBrowser(name, relay, rootDefs) {
         delete nodes[id];
         fire('onRemoved', id);
       },
+      /* Deleting a FOLDER, the way a real browser does it: the whole subtree disappears and ONE
+         onRemoved fires — for the folder, NOT once per descendant. An engine that only tombstones the
+         ids it is handed therefore never hears about the bookmarks inside a deleted folder, which is
+         its own class of bug and invisible to a mock that fires per leaf. */
+      removeTree: async (id) => {
+        await tick(); const n = nodes[id];
+        if (!n) return;
+        const kill = (x) => { for (const c of (nodes[x] && nodes[x].children || []).slice()) kill(c); delete nodes[x]; };
+        nodes[n.parentId].children = nodes[n.parentId].children.filter(c => c !== id);
+        kill(id);
+        fire('onRemoved', id);
+      },
     },
   };
 
-  // Its own module instance, in its own context.
+  // Its own module instance, in its own context. Date is the SHARED fake clock (see CLOCK) so the
+  // engine's self-stamped `_at` and the relay's `created_at` sit on one monotonic scale.
   const ctx = vm.createContext({ crypto: require('crypto').webcrypto, setTimeout, clearTimeout,
-                                 console, TextEncoder, TextDecoder });   // present in a worker and an event page
+                                 console, TextEncoder, TextDecoder, Date: FakeDate });   // present in a worker and an event page
   ctx.self = ctx;
   vm.runInContext(SRC, ctx);
   const engine = ctx.PCBookmarks.engine;
@@ -117,15 +150,35 @@ function makeBrowser(name, relay, rootDefs) {
     },
     /* Read everything off the relay, the way the subscription does. */
     async pull() { for (const [id, ev] of relay.all()) await engine.absorb(id, ev); },
+    /* Fire every absorb WITHOUT awaiting between them — exactly what the socket's onmessage does. The
+       engine must serialise internally, or concurrent absorbs of one URL each create before either maps
+       and it duplicates (and floods the bookmark backend, which is the lock-up). */
+    async pullConcurrent() { await Promise.all(relay.all().map(([id, ev]) => engine.absorb(id, ev))); },
     async merge(opts) { return engine.union(opts); },
     urls() { return Object.values(nodes).filter(n => n.url).map(n => n.url).sort(); },
     folders(title) { return Object.values(nodes).filter(n => !n.url && n.title === title).length; },
+    nodeByTitle(title) { return Object.values(nodes).find(n => n.title === title); },
+    nodeByUrl(url) { return Object.values(nodes).find(n => n.url === url); },
     /* Delete straight out of the tree, i.e. what a user does when nothing is listening. */
     rip(url) {
       const n = Object.values(nodes).find(x => x.url === url);
       if (!n) return;
       nodes[n.parentId].children = nodes[n.parentId].children.filter(c => c !== n.id);
       delete nodes[n.id];
+    },
+    /* Delete a whole FOLDER the way the UI does — one onRemoved for the subtree (see removeTree). */
+    ripFolder(title) { const n = this.nodeByTitle(title); if (n) return B.bookmarks.removeTree(n.id); },
+    /* Delete a single bookmark the way the UI does — fires onRemoved (unlike rip, which is silent). */
+    ripLive(url) { const n = this.nodeByUrl(url); if (n) return B.bookmarks.remove(n.id); },
+    /* Drag a bookmark into another folder, firing onMoved the way the browser does. */
+    moveTo(url, folderTitle) {
+      const n = this.nodeByUrl(url), p = this.nodeByTitle(folderTitle);
+      if (n && p) return B.bookmarks.move(n.id, { parentId: p.id });
+    },
+    /* Edit a bookmark's URL in place, firing onChanged the way the browser does. */
+    editUrl(oldUrl, newUrl) {
+      const n = this.nodeByUrl(oldUrl);
+      if (n) return B.bookmarks.update(n.id, { url: newUrl });
     },
   };
 }
@@ -367,6 +420,164 @@ const drain = () => new Promise(r => setTimeout(r, 600));
       relay.publishes === before.p && b.urls().length === 40,
       { childReads: b.calls.getChildren - before.c, treeReads: b.calls.getTree - before.t,
         publishes: relay.publishes - before.p, bookmarks: b.urls().length });
+  }
+
+  /* DELETING A FOLDER MUST SYNC — the bug a real user hit and the sim could not see. A browser fires
+   * ONE onRemoved for a deleted folder, never one per bookmark inside it, so an engine that only
+   * tombstones the ids it is handed leaves every bookmark in that folder alive on the relay and on the
+   * other browser. It "worked" only if the user then pressed Merge, which is not what deleting means.
+   * This is LIVE: the folder is deleted on Firefox and Chrome only pulls the subscription — no merge. */
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS), b = makeBrowser('f', relay, FIREFOX_ROOTS);
+    const w = a.mk('1', 'Work');
+    for (let i = 0; i < 6; i++) a.mk(w.id, 'W' + i, `https://w${i}.example/`);
+    a.mk('1', 'Loose', 'https://loose.example/');
+    await a.init(); await b.init();
+    await settle(a, b);
+    await b.ripFolder('Work');                          // one onRemoved, for the folder
+    await drain();                                       // the removal sweep is debounced
+    await a.pull(); await drain();                       // Chrome just receives — no merge
+    check('deleting a folder syncs the bookmarks inside it, live',
+      a.urls().length === 1 && a.urls()[0] === 'https://loose.example/' &&
+      b.urls().length === 1,
+      { chrome: a.urls(), firefox: b.urls() });
+  }
+
+  /* …and the sweep tombstones the CHILDREN, not merely forgets them: a second browser that was offline
+   * during the delete still learns of it from the relay when it comes back. */
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS), b = makeBrowser('f', relay, FIREFOX_ROOTS);
+    const w = a.mk('1', 'Trip');
+    for (let i = 0; i < 4; i++) a.mk(w.id, 'T' + i, `https://t${i}.example/`);
+    await a.init(); await b.init();
+    await settle(a, b);
+    await a.ripFolder('Trip'); await drain();            // deleted on Chrome while Firefox is idle
+    const tombstones = [...relay.events.values()].filter(e => !e.content).length;
+    await settle(a, b);
+    check('a folder delete leaves tombstones, so an offline device also drops them',
+      tombstones === 4 && b.urls().length === 0 && a.urls().length === 0,
+      { tombstones, chrome: a.urls().length, firefox: b.urls().length });
+  }
+
+  /* A MOVE between folders on one browser is a location edit, not a new bookmark. It must not
+   * duplicate, and it must land in the new folder on the other browser. */
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS), b = makeBrowser('f', relay, FIREFOX_ROOTS);
+    a.mk('1', 'Alpha'); a.mk('1', 'Beta');
+    a.mk(a.nodeByTitle('Alpha').id, 'M', 'https://m.example/');
+    await a.init(); await b.init();
+    await settle(a, b);
+    await a.moveTo('https://m.example/', 'Beta'); await drain();
+    await settle(a, b);
+    const bm = b.nodeByUrl('https://m.example/');
+    const parent = bm && b.nodes[bm.parentId];
+    check('a move does not duplicate and lands in the new folder',
+      a.urls().filter(u => u === 'https://m.example/').length === 1 &&
+      b.urls().filter(u => u === 'https://m.example/').length === 1 &&
+      parent && parent.title === 'Beta',
+      { chrome: a.urls(), firefox: b.urls(), firefoxParent: parent && parent.title });
+  }
+
+  /* EDITING A URL is an add plus a delete (the sync id is derived from the url). The old one must go
+   * and the new one must arrive — no orphan left behind on either browser. */
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS), b = makeBrowser('f', relay, FIREFOX_ROOTS);
+    a.mk('1', 'E', 'https://old.example/');
+    await a.init(); await b.init();
+    await settle(a, b);
+    await a.editUrl('https://old.example/', 'https://new.example/');   // in-place URL edit → onChanged
+    await drain(); await settle(a, b);
+    check('editing a url syncs the new and drops the old',
+      b.urls().includes('https://new.example/') && !b.urls().includes('https://old.example/') &&
+      a.urls().length === 1 && b.urls().length === 1,
+      { chrome: a.urls(), firefox: b.urls() });
+  }
+
+  /* THE REVENANT: "Brave brings back everything I delete." A relay polluted by older versions holds
+   * SEVERAL live events per URL (each published under a random id). Three separate bugs conspired:
+   *   - absorbing each duplicate event created ANOTHER copy of the bookmark (the duplicates you see,
+   *     and the pile of create() calls that locks the browser up);
+   *   - deleting the visible copy tombstoned only the ONE id it was mapped to, so the next stale event
+   *     recreated it;
+   *   - and a merge that mapped the winning id onto the bookmark and forgot the losing id wiped the
+   *     bookmark's reverse mapping (forget cleared rmap[b] even though b now belonged to the winner),
+   *     so a later delete found no id at all to tombstone.
+   * A delete must now kill EVERY event for the URL and actually stay dead. */
+  {
+    const relay = makeRelay();
+    const brave = makeBrowser('c', relay, CHROME_ROOTS);
+    const URLS = ['https://a.example/', 'https://b.example/', 'https://c.example/'];
+    URLS.forEach((u, i) => {
+      relay.seed('oldrandom_' + i, { title: 'Old ' + i, url: u, folder: '', root: 'toolbar' }, 1000 + i);
+      if (i === 0) relay.seed('another_' + i, { title: 'Dup ' + i, url: u, folder: '', root: 'toolbar' }, 1005 + i);
+    });
+    await brave.init();
+    for (let r = 0; r < 2; r++) { await brave.pull(); await brave.merge(); await drain(); }
+    const dupA = brave.urls().filter(u => u === 'https://a.example/').length;
+    for (const u of brave.urls().slice()) await brave.ripLive(u);   // live deletes, one onRemoved each
+    await drain();
+    for (let r = 0; r < 3; r++) { await brave.pull(); await brave.merge(); await drain(); }
+    check('deleting stays deleted even with stale duplicate events on the relay',
+      dupA === 1 && brave.urls().length === 0 && relay.liveCount() === 0,
+      { duplicateCopiesOfA: dupA, afterDelete: brave.urls(), liveEventsLeft: relay.liveCount() });
+  }
+
+  /* "108 bookmarks are missing… it comes back no matter how many times I click Merge." Two browsers,
+   * both on the fixed build, a relay polluted with duplicate events. The deletions are detected on
+   * MERGE (the MV3 worker was asleep when they were deleted, so no live tombstone fired) and confirmed
+   * with "Delete N everywhere" — but the confirm path (the union's removal loop) tombstoned only the
+   * ONE mapped id per URL, not the duplicate siblings. The surviving sibling resurrected the bookmark
+   * on the next sync, the other browser kept it alive, and the "N missing" prompt returned forever.
+   * Confirming a bulk delete must kill EVERY event for each URL, the same rule live-delete already uses. */
+  {
+    const relay = makeRelay();
+    const brave = makeBrowser('c', relay, CHROME_ROOTS), fox = makeBrowser('f', relay, FIREFOX_ROOTS);
+    const URLS = [];
+    for (let i = 0; i < 6; i++) { const u = `https://x${i}.example/`; URLS.push(u);
+      relay.seed('r1_' + i, { title: 'X' + i, url: u, folder: '', root: 'toolbar' }, 1000 + i * 4);
+      if (i % 2 === 0) relay.seed('r2_' + i, { title: 'X' + i, url: u, folder: '', root: 'toolbar' }, 1002 + i * 4); }
+    await brave.init(); await fox.init();
+    await settle(brave, fox);
+    const synced = [brave.urls().length, fox.urls().length];
+    // Delete every bookmark on Brave with NO onRemoved (models the MV3 worker asleep at delete time),
+    // so it shows up as "missing on merge" rather than a live tombstone.
+    for (const u of brave.urls().slice()) brave.rip(u);
+    // Confirm the bulk delete repeatedly while Firefox — which still holds them — keeps syncing.
+    for (let round = 0; round < 4; round++) {
+      await brave.pull(); await brave.merge({ confirmRemovals: true });
+      await fox.pull(); await fox.merge();
+      await drain();
+    }
+    check('confirming a bulk delete stays deleted with duplicate events and a second browser',
+      synced[0] === 6 && synced[1] === 6 &&
+      brave.urls().length === 0 && fox.urls().length === 0 && relay.liveCount() === 0,
+      { synced, braveAfter: brave.urls().length, foxAfter: fox.urls().length, relayLive: relay.liveCount() });
+  }
+
+  /* THE LOCK-UP AT REAL SCALE — "sync makes Brave quit." A relay left polluted by older versions holds
+   * SEVERAL events per URL. The dedupe that keeps it to one bookmark did an O(items) scan AND a
+   * bookmarks.get() for every duplicate event — O(n²) plus a get()-storm: ~1800 get() calls and tens of
+   * seconds on the UI thread for a real library, i.e. the browser freezing while it syncs. A URL index
+   * makes it O(1) with NO per-event get(). Absorbing a heavily-duplicated relay must stay cheap: no
+   * get()-storm, a handful of tree reads, and exactly one bookmark per URL. */
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS);
+    const N = 300, DUP = 3;
+    for (let i = 0; i < N; i++) { const u = `https://s${i}.example/p`;
+      for (let d = 0; d < DUP; d++) relay.seed(`rnd_${i}_${d}`, { title: 'B' + i, url: u, folder: 'F' + (i % 15), root: 'toolbar' }, 1000 + i * 10 + d); }
+    await a.init();
+    const before = { get: a.calls.get, tree: a.calls.getTree };
+    await a.pull();                              // absorb the whole polluted relay
+    await drain();
+    check('a polluted relay syncs without a get()-storm or quadratic work',
+      a.calls.get - before.get <= 5 && a.calls.getTree - before.tree <= 5 && a.urls().length === N,
+      { events: relay.liveCount(), getCalls: a.calls.get - before.get,
+        treeReads: a.calls.getTree - before.tree, bookmarks: a.urls().length });
   }
 
   console.log(JSON.stringify(results, null, 1));

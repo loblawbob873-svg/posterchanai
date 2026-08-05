@@ -59,7 +59,8 @@
     "storage",
     "activeTab",
     "clipboardWrite",
-    "bookmarks"
+    "bookmarks",
+    "alarms"
   ],
   "host_permissions": [
     "<all_urls>"

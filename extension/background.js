@@ -89,12 +89,27 @@ async function saveItems(){
 const DEFAULT_RELAY = 'wss://relay.poster.place';
 let userRelays = [];        // set in the popup; empty = use the pairing code's
 
+/* NORMALISE, THEN dedupe — the paired list came from the app as raw strings and was deduped by exact
+ * string, so `wss://relay.poster.place` and `wss://relay.poster.place/` (or `cfg.relay` plus the same
+ * host in `cfg.relays`) counted as TWO relays and opened TWO sockets to the SAME relay: double the
+ * traffic, every event and every EOSE delivered twice, and "2 relays" shown in the UI for what is one.
+ * normRelay collapses scheme/trailing-slash differences, so the same relay becomes one connection. */
+function _uniqRelays(list){
+  const out = [];
+  for(const u of list){ const n = normRelay(u); if(n && out.indexOf(n) < 0) out.push(n); }
+  return out.slice(0, 6);
+}
 function relayUrls(){
-  const mine = userRelays.filter(Boolean);
-  if(mine.length) return [...new Set(mine)].slice(0, 6);
-  if(!cfg) return [DEFAULT_RELAY];
-  const paired = [...new Set([...(cfg.relays || []), cfg.relay].filter(Boolean))].slice(0, 6);
-  return paired.length ? paired : [DEFAULT_RELAY];
+  // The user's explicit choice wins, deduped (they may deliberately want several).
+  const mine = _uniqRelays(userRelays);
+  if(mine.length) return mine;
+  /* DEFAULT IS EXACTLY ONE RELAY — this project's own. The pairing code carries the app's whole relay
+   * list, and that list routinely holds SEVERAL URLs for the SAME server (e.g. `relay.poster.place`
+   * and `poster.place`, or a node's own address) — different hostnames normRelay cannot know are one
+   * relay. Syncing to "two relays" that are really one doubled all traffic and, when they were genuinely
+   * two, made a delete that reached one relay reappear from the other. One relay by default, always;
+   * anyone who truly wants more sets them in Relays. */
+  return [DEFAULT_RELAY];
 }
 
 /* Normalised, so a typo does not open a socket to nothing: a bare host becomes wss://, http(s)
@@ -689,7 +704,10 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
         case 'state':
           return reply({ paired: !!cfg, mode: cfg && cfg.mode, count: items.size, status, lastSync,
                          bmOn: !!(BM && BM.engine && BM.engine.enabled()),
-                         bmCount: (BM && BM.engine) ? BM.engine.count() : 0 });
+                         bmCount: (BM && BM.engine) ? BM.engine.count() : 0,
+                         // The confirm a bulk delete is waiting on, so the popup can offer it on OPEN —
+                         // no more keeping the popup open to finish a delete.
+                         bmPending: (BM && BM.engine && BM.engine.pending) ? BM.engine.pending() : 0 });
         /* Bookmark sync, off until asked for. A read-only pairing can RECEIVE bookmarks and cannot
          * publish its own (no signing key) — the same line the vault draws, stated in the popup
          * rather than discovered when nothing leaves this browser. */
@@ -844,3 +862,22 @@ async function code(raw){
 const ready = loadCfg().then(async () => { if(cfg) connect(); await initBookmarks(); });
 // A phone suspends the whole extension; re-check the socket whenever anything talks to us.
 setInterval(() => { if(cfg && !_anyOpen()) connect(); }, 30000);
+
+/* KEEP SYNC ALIVE ACROSS SERVICE-WORKER SLEEP. On Chrome/Brave MV3 the worker is torn down after ~30s
+ * idle, which closes the relay socket AND stops setInterval — so a bookmark added on another device
+ * never arrives until something wakes the worker (opening the popup). setInterval cannot fix this: a
+ * suspended worker runs no timers. chrome.alarms is the one thing that DOES wake a dead worker. A
+ * one-minute alarm reconnects, re-subscribes (the subscription then delivers whatever was missed), and
+ * runs a merge so local changes made while asleep go out. ~1 minute is the floor MV3 allows; true
+ * instant push while idle is not possible in a service worker, and pretending otherwise is the bug.
+ * Firefox keeps its event page similarly, and honours the same alarm. */
+try {
+  if (B.alarms && B.alarms.create) {
+    B.alarms.create('pcvault-sync', { periodInMinutes: 1 });
+    B.alarms.onAlarm.addListener((a) => {
+      if (!a || a.name !== 'pcvault-sync' || !cfg) return;
+      connect();                                   // reopen the socket the sleep closed; re-subscribe
+      if (BM && BM.engine && BM.engine.enabled()) BM.engine.union().catch(() => {});
+    });
+  }
+} catch (_) { /* no alarms permission / API: fall back to sync-on-popup-open only */ }

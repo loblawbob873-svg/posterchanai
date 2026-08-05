@@ -322,7 +322,14 @@
   }
   function forget(syncId) {
     var b = map[syncId];
-    delete map[syncId]; if (b) delete rmap[b];
+    delete map[syncId];
+    /* ONLY clear the reverse entry if it still points back to US. When the relay holds several ids for
+     * one URL (older versions' random-id duplicates), a merge maps the winning id onto the bookmark
+     * and then forgets the losing id — and both briefly named the SAME browser bookmark. Deleting
+     * rmap[b] unconditionally then wiped the WINNER's reverse mapping, leaving the bookmark with no
+     * sync id: deleting it found nothing to tombstone, so the stale event resurrected it on the next
+     * sync. "Brave brings back everything I delete." */
+    if (b && rmap[b] === syncId) delete rmap[b];
     api.B.storage.local.set({ bmMap: map });
   }
 
@@ -338,12 +345,14 @@
    * protect nothing while making every popup wait on a relay. */
   async function init(handles) {
     api = handles;
-    var got = await api.B.storage.local.get(['bmMap', 'bmOn', 'bmItems']);
+    var got = await api.B.storage.local.get(['bmMap', 'bmOn', 'bmItems', 'bmPending']);
     map = got.bmMap || {}; on = !!got.bmOn;
     items = got.bmItems || {};
+    pendingRemovals = got.bmPending || 0;      // a bulk-delete confirm survives a popup close / SW restart
     loaded = true;
     rmap = {};
     Object.keys(map).forEach(function (s) { rmap[map[s]] = s; });
+    _reindex();                                // build the URL index from the restored items, once
     if (on) listen();
     return on;
   }
@@ -365,14 +374,38 @@
     on = !!v;
     await api.B.storage.local.set({ bmOn: on });
     if (on) { listen(); await union(); }
+    else { pendingRemovals = 0; try { await api.B.storage.local.set({ bmPending: 0 }); } catch (_) {} }
     return on;
   }
 
+  // The count a bulk-delete is waiting to confirm, 0 when there is nothing pending. Read by the popup
+  // so it can offer the confirm on OPEN — the reason you no longer have to keep the popup open.
+  function pending() { return pendingRemovals || 0; }
+
   // ---- remote -> here ---------------------------------------------------------------------------
+
+  /* EVENTS ARE ABSORBED ONE AT A TIME. The socket's onmessage fires absorb() for every EVENT WITHOUT
+   * awaiting it, so a relay dumping its backlog (worse still, one left polluted with thousands of
+   * duplicate events by older versions) runs thousands of absorbs CONCURRENTLY. Two things break at
+   * once, and both were the user's daily pain:
+   *   - the browser locks up / crashes: thousands of simultaneous bookmarks.create/get calls flood the
+   *     bookmark backend (in Firefox, the parent process) faster than it can serve them;
+   *   - it DUPLICATES: two events for one URL run in parallel, each checks the map, neither has mapped
+   *     the bookmark yet, so BOTH create it — the dedupe can only work if it sees the first one's
+   *     mapping, which needs the first to finish first.
+   * A promise chain serialises them: fired concurrently, applied in order, one at a time. A failure of
+   * one must not wedge the queue. (A single-engine sim never caught this — it awaited each absorb.) */
+  var _absorbChain = Promise.resolve();
+  function absorb(id, ev) {
+    var run = _absorbChain.then(function () { return _absorb(id, ev); },
+                                function () { return _absorb(id, ev); });
+    _absorbChain = run.catch(function () {});
+    return run;
+  }
 
   /* An event arrived. Newest wins, a tombstone removes — but ONLY something this browser previously
    * synced (see the header: a bookmark we never mapped is not ours to delete). */
-  async function absorb(id, ev) {
+  async function _absorb(id, ev) {
     if (!api || !loaded) return;
     var cur = items[id];
     /* >=, NOT >. A relay re-sends everything on every connection, and a replaceable event that
@@ -396,6 +429,7 @@
     try { obj = await api.open(ev.content); } catch (_) { return; }   // another key's — not ours
     obj._at = ev.created_at || 0;
     items[id] = obj;
+    _index(id, obj.url);
     saveSoon();
     if (on) await applyUpsert(id, obj);
   }
@@ -436,6 +470,28 @@
     forget(id);
   }
 
+  /* A URL -> [ids] INDEX, maintained incrementally, so finding every event for a URL is O(1) instead of
+   * a scan of the whole `items` map. Without it, the first sync of a relay left polluted by older
+   * versions (thousands of duplicate events) ran `_idsForUrl` — an O(items) scan — for EVERY event,
+   * which is O(n²): measured at 62 SECONDS for 900 URLs × 3 duplicates, on the UI thread. That is the
+   * browser locking up while it syncs, all over again. The index is append-only; `_idsForUrl` filters
+   * out ids whose item is now a tombstone, so a stale entry costs nothing but a skip. */
+  var _byUrl = {};          // normUrl -> [id, id, …]
+  function _index(id, url) {
+    if (!url) return;
+    var k = P.normUrl(url), a = _byUrl[k] || (_byUrl[k] = []);
+    if (a.indexOf(id) < 0) a.push(id);
+  }
+  function _reindex() {
+    _byUrl = {};
+    Object.keys(items).forEach(function (i) { var it = items[i]; if (it && it.url) _index(i, it.url); });
+  }
+  function _idsForUrl(url) {
+    var a = _byUrl[P.normUrl(url)] || [], out = [];
+    for (var i = 0; i < a.length; i++) { var it = items[a[i]]; if (it && !it.removed) out.push(a[i]); }
+    return out;
+  }
+
   async function applyUpsert(id, obj) {
     beginApply(); try { return await _applyUpsert(id, obj); } finally { endApply(); }
   }
@@ -462,8 +518,41 @@
       }
       forget(id);                            // the mapping is stale — fall through and re-create
     }
+    /* ONE LOCAL BOOKMARK PER URL, however many events the relay holds for it.
+     *
+     * Older versions published each bookmark under a fresh RANDOM id, so a single URL can have many
+     * live events on the relay. Without this, absorbing each of them creates ANOTHER copy of the same
+     * bookmark — that is the duplicates the user sees, and the pile of create() calls is the browser
+     * locking up on sync. Worse, deleting the visible copy only tombstones the id it was mapped to, so
+     * the next stale event recreates it: "Brave brings back everything I delete". If a live local
+     * bookmark for this URL already exists under another id, link nothing and create nothing — the
+     * existing one IS this bookmark, and the delete path (below) tombstones every id for the URL. */
+    var siblings = _idsForUrl(obj.url);
+    for (var s = 0; s < siblings.length; s++) {
+      var other = siblings[s];
+      // A live local bookmark for this URL already exists under another id → do NOT create a second.
+      // Trusting `map` here rather than a per-event bookmarks.get() is the whole point: the get() ran
+      // ~twice per duplicate URL and, across a polluted relay, was thousands of bookmark-API calls that
+      // froze the browser. A stale mapping (bookmark deleted out from under us) is the rare case, and
+      // it is reconciled by the mapping check at the top of this function and by the next merge — never
+      // worth an API round-trip on every single incoming event.
+      if (String(other) !== String(id) && map[other]) return;
+    }
     var _pl = P.placement(obj);
     var parent = await ensureFolder(_pl.folder, _pl.root);
+    /* The URL may already be a LOCAL bookmark this engine has not mapped yet — the SAME bookmark
+     * created independently in the other browser (a default like "Poster-Chan" present in both), or a
+     * local publish still in flight. The items/map check above cannot see it: it is not on the relay
+     * under a known id yet, and the local onCreated → publish is debounced, so absorb of the other
+     * browser's copy races ahead and creates a SECOND one. That is the duplicate two browsers make out
+     * of one bookmark. ONE search of the live tree catches it — adopt the existing bookmark instead of
+     * creating a duplicate. Only runs when about to create (the cheap items/map dedup handles the flood
+     * of re-delivered duplicate events first), so it is not the per-event get()-storm that was removed. */
+    try {
+      var hits = await api.B.bookmarks.search({ url: obj.url });
+      var twin = (hits || []).filter(function (n) { return n.url && P.normUrl(n.url) === P.normUrl(obj.url); })[0];
+      if (twin) { remember(id, twin.id); return; }
+    } catch (_) {}
     var made = null;
     try { made = await api.B.bookmarks.create({ parentId: parent, title: obj.title || '', url: obj.url }); }
     catch (_) { return; }
@@ -609,7 +698,7 @@
        * makes a read-only pairing (or a dropped socket) look synced forever: union() dedupes against
        * this map, so an entry that was never published would never be retried. The mapping above is
        * kept either way — a retry must reuse the same sync id, or it publishes a duplicate. */
-      if (ok) { items[syncId] = Object.assign({}, item, { _at: Math.floor(Date.now() / 1000) }); dirty = true; }
+      if (ok) { items[syncId] = Object.assign({}, item, { _at: Math.floor(Date.now() / 1000) }); _index(syncId, item.url); dirty = true; }
       } catch (_) { /* keep going: the next merge retries anything that never reached the relay */ }
     }
     if (dirty) saveSoon();
@@ -617,17 +706,105 @@
 
   /* A bookmark removed here becomes a tombstone, so the other devices drop it too — carrying the URL
    * it had, which is what lets the receiving side check it is removing the right thing. */
-  async function onLocalRemove(browserId) {
-    var q = pendingLocal.indexOf(browserId);
-    if (q >= 0) pendingLocal.splice(q, 1);          // queued publish for a node that no longer exists
-    if (!on || applying > 0 || writing.has(browserId)) return;
-    var syncId = rmap[browserId];
-    if (!syncId) return;                            // never synced — nothing to tell anyone
+  async function tombstoneOne(syncId) {
     var knew = items[syncId] || {};
     items[syncId] = { removed: true, _at: Math.floor(Date.now() / 1000), url: knew.url || '' };
     saveSoon();
     forget(syncId);
     await api.publish(syncId, null);                // null = tombstone
+  }
+
+  /* Delete EVERY event for this URL, not just the one this browser had mapped.
+   *
+   * The relay can hold several live events for one URL (older versions republished under random ids).
+   * Tombstoning only the mapped id leaves the others alive, and the next sync recreates the bookmark
+   * from one of them — "Brave brings back everything I delete". Killing every id for the URL is what
+   * makes a delete actually stick. Ids are collected BEFORE tombstoning, since tombstoneOne removes
+   * each from the live set as it goes. */
+  async function tombstoneWithSiblings(syncId) {
+    var url = (items[syncId] && items[syncId].url) || '';
+    var ids = url ? _idsForUrl(url) : [];
+    if (ids.indexOf(syncId) < 0) ids.push(syncId);
+    for (var i = 0; i < ids.length; i++) { try { await tombstoneOne(ids[i]); } catch (_) {} }
+  }
+
+  async function onLocalRemove(browserId) {
+    var q = pendingLocal.indexOf(browserId);
+    if (q >= 0) pendingLocal.splice(q, 1);          // queued publish for a node that no longer exists
+    /* `applying` — not `writing` — is the guard for "the engine is removing this, not the user":
+     * every engine removal (an incoming tombstone via applyRemoval, or tidy) runs inside beginApply.
+     * `writing` is a DIFFERENT thing: it parks the id of a node the engine just CREATED, for 2s, to
+     * swallow the onCreated echo. A folder the engine auto-creates as it syncs sits in `writing` for
+     * those 2s — and the old code, by also gating removals on `writing`, threw away a real user
+     * deletion of that folder if it happened inside the window. So gate only on `applying` here. */
+    if (!on || applying > 0) return;
+    if (!writing.has(browserId)) {
+      var syncId = rmap[browserId];
+      if (syncId) {
+        /* DELETING A DUPLICATE IS NOT DELETING THE BOOKMARK. If another LOCAL copy of this URL still
+         * exists, the user removed one of two duplicates — tombstoning the URL here would delete it on
+         * every OTHER device while this browser keeps its surviving copy ("I deleted the dupe and now
+         * it's only on Brave"). So when a copy survives, just drop this id's mapping and let the
+         * survivor keep the URL synced; only when NOTHING is left locally is it a real deletion that
+         * tombstones every relay copy of the URL. */
+        var url = (items[syncId] && items[syncId].url) || '';
+        var survivor = null;
+        if (url) { try {
+          var hits = await api.B.bookmarks.search({ url: url });
+          survivor = (hits || []).filter(function (n) {
+            return n.id !== browserId && !writing.has(n.id) && n.url && P.normUrl(n.url) === P.normUrl(url); })[0];
+        } catch (_) {} }
+        if (survivor) {
+          forget(syncId);
+          if (!rmap[survivor.id]) { remember(syncId, survivor.id); onLocalChange(survivor.id); }
+          return;
+        }
+        await tombstoneWithSiblings(syncId); return;   // no copy left — kill every relay copy of this URL
+      }
+    }
+
+    /* We reach here for either an UNMAPPED node (a folder — folders are never synced as items) or a
+     * node still parked in `writing` from a recent auto-create that the user has now deleted.
+     *
+     * Deleting a folder fires ONE onRemoved, for the folder — the browser does NOT fire onRemoved for
+     * each bookmark inside it. So the child bookmarks' tombstones would never be published, and
+     * deleting a folder of links silently failed to sync until the user happened to press "Merge now".
+     * That is exactly "I deleted a folder and it's still on my other browser". Reconcile the tree
+     * against the map and tombstone every mapped bookmark that just vanished. Debounced, so deleting a
+     * folder of a hundred links is ONE tree read, not a hundred. The sweep reads the CURRENT map, so
+     * it can never tombstone a bookmark the engine still holds — only ones genuinely gone from the tree. */
+    scheduleRemovalSweep();
+  }
+
+  /* A live removal can orphan mapped bookmarks (a deleted folder takes its children with it, silently).
+   * Sweep the tree once and tombstone any mapped bookmark that is no longer in it. Only ever triggered
+   * by a real onRemoved — a restore or re-pair fires onCreated, never onRemoved, so this cannot mistake
+   * "everything is being rebuilt" for "everything was deleted" (that ambiguity is the union's problem,
+   * and is why the wholesale-loss guard lives there and not here). */
+  var _sweepT = null;
+  function scheduleRemovalSweep() {
+    if (!on) return;
+    if (_sweepT) clearTimeout(_sweepT);
+    _sweepT = setTimeout(function () {
+      _sweepT = null;
+      sweepRemovals().catch(function (e) { try { console.warn('[pcai] bookmark removal sweep failed', e); } catch (_) {} });
+    }, LOCAL_BATCH_MS);
+  }
+
+  async function sweepRemovals() {
+    if (!on) return;
+    var present = {}, tree = await api.B.bookmarks.getTree();     // ONCE for the whole burst
+    (function walk(ns) { (ns || []).forEach(function (n) { present[n.id] = true; if (n.children) walk(n.children); }); })(tree);
+    var gone = [];
+    Object.keys(rmap).forEach(function (bid) { if (!present[bid]) gone.push(rmap[bid]); });
+    for (var i = 0; i < gone.length; i++) {
+      var sid = gone[i];
+      if (!map[sid]) continue;                       // already tombstoned by the direct path or a prior sweep
+      // ONE FAILURE MUST NOT STRAND THE REST — same reasoning as flushLocal's per-item guard.
+      // Siblings, so a deleted folder full of links that each have stale duplicate events on the relay
+      // has every copy killed, not just the mapped one.
+      try { await tombstoneWithSiblings(sid); } catch (_) {}
+    }
   }
 
   function listen() {
@@ -685,13 +862,21 @@
     var bulk = removals.length > Math.max(5, Math.round(local.length * 0.5));
     if (bulk && !opts.confirmRemovals) {
       pendingRemovals = removals.length;
+      // PERSIST it, so reopening the popup can offer the confirm again. Without this the confirm lived
+      // only in the popup's memory and died the instant the popup lost focus — so the user had to keep
+      // the popup open to finish a delete, and clicking away silently reset it to "Merge now".
+      try { api.B.storage.local.set({ bmPending: pendingRemovals }); } catch (_) {}
     } else {
       pendingRemovals = 0;
+      try { api.B.storage.local.set({ bmPending: 0 }); } catch (_) {}
       for (var d = 0; d < removals.length; d++) {
-        var sid = removals[d], knew = items[sid] || {};
-        items[sid] = { removed: true, _at: Math.floor(Date.now() / 1000), url: knew.url || '' };
-        forget(sid);
-        await publishOne(sid, null);
+        // tombstoneWithSiblings, NOT a single tombstone: a URL can have several live events on the relay
+        // (older versions' random-id duplicates). Killing only the one mapped id here left the duplicate
+        // alive, and it resurrected the bookmark on the next sync — so "Delete N everywhere" never stuck
+        // and the "N missing" prompt came back no matter how many times it was confirmed. This is the
+        // SAME rule the live-delete path and the folder sweep already use; the merge-confirm path had
+        // been missed.
+        await tombstoneWithSiblings(removals[d]);
       }
       saveSoon();
     }
@@ -702,7 +887,7 @@
       remember(sid, l.id);
       var body = { title: l.title, url: l.url, folder: l.folder, root: l.root };
       var ok = await publishOne(sid, body);
-      if (ok) { items[sid] = Object.assign({}, body, { _at: Math.floor(Date.now() / 1000) }); saveSoon(); }
+      if (ok) { items[sid] = Object.assign({}, body, { _at: Math.floor(Date.now() / 1000) }); _index(sid, body.url); saveSoon(); }
       else sent--;                                     // report what actually left, not what was tried
     }
     // When there was something to send and none of it went, say WHY rather than reporting a bare 0.
@@ -790,5 +975,5 @@
   function count() { if (!api) return 0; return Object.keys(items).filter(function (k) { return !items[k].removed; }).length; }
 
   P.engine = { init: init, absorb: absorb, setEnabled: setEnabled, enabled: enabled,
-               union: union, count: count, tidy: tidy };
+               union: union, count: count, tidy: tidy, pending: pending };
 })(typeof self !== 'undefined' ? self : this);
