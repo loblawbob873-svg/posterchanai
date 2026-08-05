@@ -580,16 +580,20 @@ When asked to write or modify code or files:
         except Exception as _e:
             logger.warning("[INIT] settings cache init failed: %s", _e)
 
-        # Create default admin user if no users exist
-        from app.auth import get_password_hash
-        if db.query(User).count() == 0:
-            admin = User(
-                username="admin",
-                password_hash=get_password_hash("admin"),
-                is_admin=True
-            )
-            db.add(admin)
-
+        # NO SEEDED ADMIN. This used to create `admin` / `admin` — a full administrator, on every fresh
+        # install, with no forced password change, undocumented, and reachable because POST
+        # /api/auth/login is mounted unconditionally even though nothing in the UI calls it (this is a
+        # Nostr-only client; there is no password login form anywhere). That is a backdoor to an account
+        # that can run the `node` command, i.e. OS commands on every configured node.
+        #
+        # Nothing replaces it: the owner claims admin by signing in with their Nostr key, which is the
+        # only way in anyway (see nostr_login's first-login admin claim). Leaving the table empty is what
+        # makes that claim safe — it locks the moment ANY admin exists, and previously the seeded row was
+        # an admin with no npub, which the lock did not count, so the claim stayed open to strangers.
+        #
+        # Side benefit: the owner now becomes user id 1. The background reporters (logs_scheduler,
+        # uptime_service, nostr_dvm) all address `User.id == 1` as "the admin" — with the seeded row
+        # holding id 1, they were addressing an account nobody reads.
         db.commit()
     finally:
         db.close()

@@ -156,7 +156,13 @@ async def nostr_login(data: NostrLogin, response: Response, request: Request, db
     # AI / image / Blossom). Locked the moment any admin with an npub exists, so it can never take
     # over a configured instance. Disable with POSTERCHANAI_AUTO_ADMIN=0 (admin then granted manually).
     if os.environ.get("POSTERCHANAI_AUTO_ADMIN", "1").strip().lower() in ("1", "true", "yes", "on"):
-        if not db.query(User).filter(User.is_admin == True, User.nostr_npub.isnot(None)).first():  # noqa: E712
+        # ANY admin closes this, not just one with a linked npub. The old `nostr_npub.isnot(None)` clause
+        # meant an admin who signs in with a password (in particular the seeded `admin`/`admin` row, which
+        # never had an npub) did NOT count — so the claim stayed open forever on such a node, and the first
+        # stranger to POST a signed event to this public endpoint became a full admin, which includes the
+        # `node` command's deliberate OS-command execution. The seeded row is gone (see database.py), so a
+        # genuinely fresh node still has zero admins and the owner's first sign-in still claims it.
+        if not db.query(User).filter(User.is_admin == True).first():  # noqa: E712
             user.is_admin = True
             user.can_ai = True
             user.can_image = True
