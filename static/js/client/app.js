@@ -5762,7 +5762,14 @@
   function streamHost(e){ const h=e.tags.find(t=>t[0]==='p'&&(t[3]||'').toLowerCase()==='host'); return (h&&h[1])||e.pubkey; }
   // Public live-streaming relays (zap.stream et al.) so Discover → Streams shows the WIDER Nostr network,
   // not just what our local WoT relay happens to hold.
-  const STREAM_RELAYS = ['wss://relay.zap.stream', 'wss://nos.lol', 'wss://relay.damus.io'];
+  /* Where a broadcast is announced besides our own relay. MEASURED, not assumed — of the original
+   * three, exactly one accepted a stream event: nos.lol answers `OK false "pow: 28 bits needed"`
+   * (NIP-13) so every publish there has always failed silently, and relay.zap.stream refuses the
+   * WebSocket handshake from some networks entirely (TCP 443 opens, TLS never completes). Both are
+   * kept — they still WORK AS READS, which is how a zap.stream room is joined — but relay.primal.net
+   * is added because a stream announced only to relays that reject it is not announced at all. */
+  const STREAM_RELAYS = ['wss://relay.zap.stream', 'wss://nos.lol', 'wss://relay.damus.io',
+                         'wss://relay.primal.net'];
   /* Mirror a stream event to the PUBLIC stream relays.
    *
    * publish() only reaches OUR relay. That was fine for the recording backfill, which already
