@@ -6091,17 +6091,34 @@
     const seen=new Set(); const msgs=[];
     const render=()=>{ if(!msgs.length) return;
       box.innerHTML=msgs.slice(-200).map(m=>{ const pr=profOf(m.pubkey)||{}; needProfile(m.pubkey);
-        return `<div class="scm"><img class="scm-av" data-prof="${m.pubkey}" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><div class="scm-body"><b class="scm-name" data-prof="${m.pubkey}">${enc(pr.name||pr.display_name||'anon')}</b> <span class="scm-txt">${linkify(m.content||'')}</span></div></div>`; }).join('');
+        const nm=`<b class="scm-name" data-prof="${m.pubkey}">${enc(pr.name||pr.display_name||'anon')}</b>`;
+        const av=`<img class="scm-av" data-prof="${m.pubkey}" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'">`;
+        // NIP-25: "+" is a like and "-" a dislike; anything else is the emoji itself. A custom
+        // `:shortcode:` reaction carries its image in an `emoji` tag, so show that rather than the
+        // raw text — otherwise a reaction reads as literal ":pepe:".
+        if(m.kind===7){
+          const raw=(m.content||'').trim();
+          const sc=raw.replace(/^:|:$/g,'');
+          const et=(m.tags||[]).find(t=>t[0]==='emoji' && t[1]===sc);
+          const face = et ? `<img class="scm-emoji" src="${enc(et[2]||'')}" alt="${enc(sc)}">`
+                          : enc(raw==='+'||!raw ? '❤️' : raw==='-' ? '👎' : raw.slice(0,16));
+          return `<div class="scm scm-react">${av}<div class="scm-body">${nm} <span class="scm-txt">reacted ${face}</span></div></div>`;
+        }
+        return `<div class="scm">${av}<div class="scm-body">${nm} <span class="scm-txt">${linkify(m.content||'')}</span></div></div>`; }).join('');
       box.scrollTop=box.scrollHeight;
       box.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof)); };
-    const onEv=ev=>{ if(!ev || ev.kind!==1311 || seen.has(ev.id)) return; seen.add(ev.id);
+    /* Kind 7 belongs in the room too. The chat read 1311 ONLY, so every reaction sent to the stream
+     * — by us or by any other NIP-53 client — was fetched, matched and then dropped on the floor,
+     * while shosho and zap.stream showed a busy room and ours looked dead. A reaction to a live
+     * stream IS chat: it is addressed to the same `a` coordinate and it is what most viewers send. */
+    const onEv=ev=>{ if(!ev || (ev.kind!==1311 && ev.kind!==7) || seen.has(ev.id)) return; seen.add(ev.id);
       msgs.push(ev); msgs.sort((a,b)=>a.created_at-b.created_at);
       if(msgs.length>500) msgs.splice(0, msgs.length-500);   // bound memory on a long, busy chat
       if(VIEW==='stream') render(); };
-    try{ _streamChatSub=Relay.subscribe([{kinds:[1311], '#a':addrs, limit:100}], {onEvent:onEv, live:true}); }catch(_){}
+    try{ _streamChatSub=Relay.subscribe([{kinds:[1311,7], '#a':addrs, limit:150}], {onEvent:onEv, live:true}); }catch(_){}
     // Pull the same room from the public stream relays — this is what makes the chat cross-client rather
     // than poster.place-only. queryFrom is one-shot (no live external sub exists), so poll while it's open.
-    const pull=()=>{ Relay.queryFrom(relays, [{kinds:[1311], '#a':addrs, limit:100}])
+    const pull=()=>{ Relay.queryFrom(relays, [{kinds:[1311,7], '#a':addrs, limit:150}])
       .then(evs=>(evs||[]).forEach(onEv)).catch(()=>{}); };
     pull(); _streamChatPoll=setInterval(()=>{ if(VIEW!=='stream'){ _closeStreamChat(); return; } pull(); }, 10000);
     const inp=$('#st-chat-inp'), send=$('#st-chat-send');

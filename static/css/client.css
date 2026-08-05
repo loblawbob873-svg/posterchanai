@@ -3795,6 +3795,12 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .scm-body{min-width:0;font-size:15px;line-height:1.45;word-break:break-word}
 .scm-name{cursor:pointer;color:var(--neon,#0ff)}
 .scm-txt{color:var(--text)}
+/* A reaction is chat, but it is not a sentence — dimmed so a burst of 🤙 during a busy stream reads
+   as background noise instead of shouting over the people actually typing. A custom `:shortcode:`
+   reaction carries its image in an `emoji` tag, so it renders as that image rather than as the
+   literal text ":pepe:". */
+.scm-react .scm-txt{color:var(--muted)}
+.scm-emoji{height:1.15em;width:auto;vertical-align:-.18em}
 .scm-input{display:flex;gap:6px;padding:8px;border-top:1px solid var(--line,#2a2a3a)}
 .scm-input .input{flex:1;min-width:0}
 @media (max-width:820px){
