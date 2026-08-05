@@ -5747,7 +5747,20 @@
         if(dtag){ try{ vurl = await _vodUrlFor(_tokenOfD(dtag), _starts); }catch(_){} }
         if(VIEW!=='stream'||openStream._view!==_view) return;   // navigated away / opened another stream
         const playUrl=vurl||url; const n2=$('#st-note');
-        if(!playUrl){ if(n2) n2.textContent='This stream ended — no recording available.'; return; }
+        if(!playUrl){
+          /* "no recording available" was stated flatly from the instant a stream ended — but the
+           * recording does not exist for another ~60-90s (server-side concat + upload), so for that
+           * whole window this told the streamer their replay had failed when it was still being made.
+           * That is what made people think they had to sit and wait with the app open. Distinguish the
+           * two: recent = still saving (and re-check, so it appears without a manual reload). */
+          const _ends = parseInt((e.tags.find(t=>t[0]==='ends')||[])[1] || e.created_at, 10) || 0;
+          const _fresh = _ends && (Date.now()/1000 - _ends) < 15 * 60;
+          if(n2) n2.textContent = _fresh
+            ? 'Saving your recording — about a minute. You can close the app; it finishes on the server.'
+            : 'This stream ended — no recording available.';
+          if(_fresh) setTimeout(()=>{ if(VIEW==='stream' && openStream._view===_view) openStream(e); }, 20000);
+          return;
+        }
         if(n2) n2.textContent = vurl ? '▶ Recorded stream' : '';
         attachStream(playUrl);
         if(vurl) _backfillRecordingTag(e, vurl);
@@ -6185,7 +6198,10 @@
       $$('[data-copy]',root).forEach(b=> b.onclick=()=> _copyFrom($('#'+b.dataset.copy,root)));
       { const rc=$('#gl-record',root); if(rc) rc.onchange=()=>{ rc.disabled=true;
           _streamFetch('/api/streams/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:rc.checked})})
-            .then(()=>toast(rc.checked?'recording on':'recording off')).catch(()=>{ toast('couldn’t save'); rc.checked=!rc.checked; })
+            // Keep `info` in step: _publishLive stamps it onto the stream so the end-of-stream message
+            // only promises a recording when one is actually coming.
+            .then(()=>{ info.record_enabled = rc.checked; toast(rc.checked?'recording on':'recording off'); })
+            .catch(()=>{ toast('couldn’t save'); rc.checked=!rc.checked; })
             .finally(()=>{ rc.disabled=false; }); }; }
       // Quality: saved the moment you pick it, so it applies to the stream you are about to start (the
       // clamp reads the tier when the stream goes live, not when this sheet was opened).
@@ -6334,7 +6350,9 @@
     const cover=(image||'').trim() || (Store.profile(ME.pubkey)||{}).picture || '';
     // Prefer the id minted when the Go Live modal opened, so the watch link it already showed is the
     // one this stream actually publishes under. Fall back for callers that never opened that modal.
-    _liveStream={ token:info.token, d:(info.d || (info.token+'-'+starts)), title, hls:info.hls_url, starts, image:cover };
+    _liveStream={ token:info.token, d:(info.d || (info.token+'-'+starts)), title, hls:info.hls_url, starts, image:cover,
+                  // Only promise a replay when this node records AND this user opted in.
+                  record: !!(info.record_available && info.record_enabled) };
     const r = await publish(30311, '', _liveBase(_liveStream).concat([['status','live']]));
     // If the relay didn't store the "live" event, the stream is ingesting but INVISIBLE on Nostr. Throw so the
     // go-live callers' existing catch surfaces "live — but couldn't announce yet" instead of a silent no-show.
@@ -6942,7 +6960,20 @@
       // the `recording` tag when it lands, so the replay is visible to other clients without the
       // streamer having to come back and reopen their own stream. Deliberately not awaited.
       try{ _stampReplayWhenReady((s.d || s.token), s.token, s.starts); }catch(_){} }
-    toast('stream ended'); if(VIEW==='streams') renderStreams();
+    /* SAY WHAT HAPPENS NEXT, AND THAT LEAVING IS SAFE. "stream ended" alone left people watching a
+     * blank screen wondering whether they had to keep the app open for the replay to survive.
+     * They do not: the concat/compress/upload runs in a server-side reaper task
+     * (stream_end_service.start_stream_end_reaper -> stream_vod_service.process_pending), so closing
+     * the tab, backgrounding the app or losing the phone cannot interrupt it. MEASURED across seven
+     * real streams: 62-89s from end to the recording being live, and it does NOT track clip length
+     * (a 3s clip took 79s, a 15s clip 63s) because the 30s reaper sweep dominates, not the encode.
+     * Hence "about a minute" — honest for short streams; a long one is longer, so it is not promised
+     * as a deadline. Deliberately NOT a blocking modal: warning people off an action that is
+     * completely safe is both false and the fastest way to teach them to dismiss warnings. */
+    toast(s && s.record
+      ? 'Stream ended — saving your recording, about a minute. You can close the app; it finishes on the server.'
+      : 'stream ended');
+    if(VIEW==='streams') renderStreams();
   }
   // ---------- communities (NIP-72 moderated communities, kind 34550) ----------
   async function renderCommunities(){

@@ -234,3 +234,28 @@ def test_vod_listings_hide_recordings_whose_blob_is_gone():
     assert body.count("_playable(db, rows)") == 2, (
         "both /vods and /vods/by-token must filter — the stamper reads by-token")
     assert "BlossomBlob" in src
+
+
+def test_the_end_of_stream_message_is_reassuring_not_a_warning():
+    """The upload runs in a SERVER-SIDE reaper task, so closing the app cannot interrupt it. Measured
+    on seven real streams: 62-89s end-to-live, uncorrelated with clip length. So the copy states the
+    wait and that leaving is safe — a blocking "don't close the app" warning would be false, and false
+    warnings are how users learn to dismiss real ones."""
+    src = APP_JS.read_text(encoding="utf-8")
+    assert "You can close the app; it finishes on the server." in src
+    assert "about a minute" in src
+    # ...and it must only promise a replay when one is actually coming.
+    assert "s && s.record" in src, "the message promises a recording even when recording is off"
+    assert "record: !!(info.record_available && info.record_enabled)" in src
+
+
+def test_a_stream_that_just_ended_does_not_claim_it_has_no_recording():
+    """The recording does not exist for ~60-90s after the stream ends. Stating 'no recording available'
+    in that window told the streamer their replay had failed while it was still being made — which is
+    what made people think they had to sit and wait with the app open."""
+    src = APP_JS.read_text(encoding="utf-8")
+    branch = src[src.index("if(!playUrl){"):]
+    branch = branch[:branch.index("if(n2) n2.textContent = vurl")]
+    assert "_fresh" in branch and "15 * 60" in branch, "no recent-vs-really-absent distinction"
+    assert "Saving your recording" in branch
+    assert "setTimeout" in branch, "a stream still saving must re-check, not need a manual reload"
