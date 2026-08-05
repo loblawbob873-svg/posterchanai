@@ -29,6 +29,10 @@ Assertions, each a way THIS screen breaks:
   totp-dead            a stored one-time code secret produces no code, or no countdown. The code is
                        the reason 2FA is in here at all.
   generator-broken     the generator produces nothing, or ignores the character classes.
+  pairing-broken       Pair a device does not reach a pairing code at all.
+  copy-code-unusable   …or reaches one whose Copy button is off the side, under 34px, not the
+                       primary action, or a sliver on a phone. That code has to leave this window;
+                       Copy is the step, not a footnote to it.
   damaged-entry-not-repaired
                        an entry stored by an older build as one comma-joined URI (host
                        `blackhillsenergy.com,https`, matching nothing) was not fixed on load. The
@@ -347,6 +351,29 @@ IMPORT_DEDUPE = r"""(async () => { try {
            migratedPw: migrated ? migrated.password : null };
 } catch(e) { return { error: String(e && e.message || e) }; } })()"""
 
+# Pair a device. The code it produces is a one-shot value whose whole purpose is to be carried into
+# another application, so Copy IS the step — it shipped as a hairline .mini tucked under a four-row
+# textarea, which reads as an afterthought and is a poor target on the device you are pairing FROM.
+PAIR = r"""(async () => { try {
+  const open = document.querySelector('.pv-pair');
+  if(!open) return {error:'no Pair a device control'};
+  open.click();
+  await new Promise(r => setTimeout(r, 250));
+  const go = document.querySelector('#pv-pair-go');
+  if(!go) return {error:'the pairing screen did not open'};
+  go.click();
+  await new Promise(r => setTimeout(r, 700));
+  const btn = document.querySelector('#pv-code-copy'), ta = document.querySelector('#pv-code');
+  if(!btn || !ta) return {error:'no pairing code was produced'};
+  const r = btn.getBoundingClientRect();
+  const box = (document.querySelector('#modal-root .modal') || document.body).getBoundingClientRect();
+  const out = {code: (ta.value || '').length, h: Math.round(r.height), w: Math.round(r.width),
+               boxW: Math.round(box.width), right: Math.round(r.right), vw: window.innerWidth,
+               primary: /\bbtn-neon\b/.test(btn.className)};
+  const close = document.querySelector('#pv-pair-close'); if(close) close.click();
+  return out;
+} catch(e) { return {error: String(e && e.message || e)}; } })()"""
+
 # THE data-loss one. With the relay unreachable and no local key, opening the vault must FAIL rather
 # than mint a second key — a new key makes every existing item permanently unreadable, and the screen
 # would look like a working, empty vault.
@@ -505,6 +532,28 @@ async def drive(url):
                 if not g or g["bad"] or not g["sample"]:
                     problems.append((label, "generator-broken",
                                      f"{(g or {}).get('bad', '?')} of 40 generated passwords were wrong"))
+
+                pr = await js(PAIR, awaited=True)
+                if not pr or pr.get("error"):
+                    problems.append((label, "pairing-broken",
+                                     f"could not reach the pairing code ({(pr or {}).get('error')})"))
+                else:
+                    if not pr["code"]:
+                        problems.append((label, "pairing-broken", "the pairing code came out empty"))
+                    if pr["right"] > pr["vw"] + 1:
+                        problems.append((label, "copy-code-unusable",
+                                         f"the Copy button runs off the side ({pr['right']} of {pr['vw']})"))
+                    # Height only on a phone: at desktop widths the client scales the whole page down
+                    # (body{zoom}), so every button measures ~21px there and a floor would be noise.
+                    if phone and pr["h"] < 38:
+                        problems.append((label, "copy-code-unusable", f"Copy is {pr['h']}px tall"))
+                    if not pr["primary"]:
+                        problems.append((label, "copy-code-unusable",
+                                         "Copy is not the primary action of the step"))
+                    if phone and pr["w"] < pr["boxW"] * 0.5:
+                        problems.append((label, "copy-code-unusable",
+                                         f"Copy is {pr['w']}px of a {pr['boxW']}px sheet — the one button "
+                                         "on this screen should be easy to hit"))
 
 
                 if label == "390px":

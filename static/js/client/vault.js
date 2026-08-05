@@ -1332,7 +1332,7 @@
           }
           const code = V().toB64(new TextEncoder().encode(JSON.stringify(payload)));
           out.innerHTML = `<div class="pv-pair-code"><textarea class="input" id="pv-code" rows="4" readonly>${enc(code)}</textarea></div>
-            <div class="row" style="gap:8px"><button class="mini" id="pv-code-copy">Copy code</button></div>
+            <div class="pv-pair-copy"><button class="btn btn-neon small" id="pv-code-copy">Copy code</button></div>
             <div class="muted small">Paste this into the extension’s Pair screen. Anyone who has it has your
               ${mode==='full'?'passwords AND your identity':'passwords'} — don’t send it over chat.</div>`;
           $('#pv-code-copy', root).onclick = () => copy(code, 'pairing code copied', 300000);

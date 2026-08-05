@@ -2319,9 +2319,34 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:4px;color
 .rv-by .name{color:var(--text);cursor:pointer}.rv-by .name:hover{color:var(--neon)}
 .rv-desc{margin:12px 0 0;color:var(--text);line-height:1.45}
 .rv-clone{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap}
-.rv-clone-ico{color:var(--cyan);font-size:17px}
+/* A sprite branch mark, not the ⎇ character: U+2387 is in no font this ships or can assume, so it
+   drew as a tofu box — and once the clone URL took a line of its own on a phone, that box was alone
+   on the line above it. */
+.rv-clone-ico{color:var(--cyan);font-size:17px;flex:none;display:inline-flex;align-items:center}
 .rv-clone-url{flex:1;min-width:180px;font-family:var(--mono);font-size:12px;color:var(--text);
   background:rgba(var(--accent2-rgb),.08);border:1px solid var(--line);border-radius:8px;padding:8px 10px;overflow-x:auto;white-space:nowrap}
+/* Copy / Share / Web / Edit / Delete. Their own flex row so they stay TOGETHER when the clone URL is
+   long: as loose children of .rv-clone each wrapped independently, leaving a single orphaned button on
+   a line of its own. On a phone the URL takes the first line and the buttons take the next.
+   min-width, NOT flex-grow: `button:has(> svg.ic.b-ic:only-child)` up at the top of this file sets
+   `flex:none` on every one of these (`:only-child` counts ELEMENTS, so a button's text label does not
+   exempt it the way that rule's comment assumes), and it outweighs anything selector-shaped like
+   `.rv-acts>.btn`. So they sit at their natural width with a floor under the short labels, which keeps
+   Edit and Delete the same size instead of Delete being a phone-wide red-hot target. */
+.rv-acts{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:none}
+/* The repo Announce/Edit sheet's description box. `.modal textarea` (0,1,1) forces min-height:220px,
+   which is a post composer's height: it buried Save below the fold on a phone for a field whose
+   whole job is one or two lines. */
+.modal textarea.rp-ta{min-height:76px}
+@media(max-width:560px){
+  .repo-view{padding:16px 14px 60px}
+  .rv-clone-url{flex:1 1 auto;min-width:0}
+  .rv-acts{flex:1 1 100%}
+  /* One size for all five. Left alone they come out 31/33/34px tall — a plain button, an icon+label
+     button and an <a> pad differently — which reads as a wobbly row and gives the shortest one the
+     worst tap target of the set. */
+  .rv-acts>.btn{min-width:92px;min-height:34px;display:inline-flex;align-items:center;justify-content:center;text-align:center}
+}
 .rv-tabs{display:flex;gap:4px;margin:20px 0 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .rv-tab{background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);cursor:pointer;font:inherit;
   font-weight:600;padding:10px 14px;margin-bottom:-1px;border-radius:8px 8px 0 0;transition:color .15s}
@@ -5271,7 +5296,17 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
 .pv-h-item{display:flex;gap:8px;align-items:baseline;padding:5px 8px;border-radius:7px;border:none;
   background:none;color:inherit;cursor:pointer;text-align:left;font-size:13px}
 .pv-h-item:hover{background:rgba(var(--accent-rgb),.10)}
+/* `.modal textarea` (0,1,1) forces min-height:220px — right for a post composer, wrong for a code
+   box with rows="4", which it stretched to two thirds of a phone sheet and pushed Copy toward the
+   fold. Same trick as .gen-prompt: qualify the element so it wins. */
+.modal textarea#pv-code{min-height:0}
 .pv-pair-code textarea{font-family:var(--mono,ui-monospace,monospace);font-size:11px;word-break:break-all}
+/* The pairing code exists to be carried to another app, so Copy is the primary action of that step —
+   a lone hairline .mini under a 4-row textarea read as an afterthought. Full width on a phone (where
+   it is the button you actually press), sized to its label on a desktop. */
+.pv-pair-copy{display:flex;margin-top:8px}
+.pv-pair-copy .btn{flex:1 1 auto;min-height:40px}
+@media(min-width:561px){ .pv-pair-copy .btn{flex:0 0 auto} }
 .pv-dim{opacity:.55}
 .pv-imp-pick{margin:10px 0}
 .pv-imp-done{display:flex;flex-direction:column;gap:5px;margin-top:8px}

@@ -4905,35 +4905,66 @@
     }
     toast('repo deleted'); switchView('repos');
   }
+  // The tags this form OWNS. Everything else already on an announcement is carried over VERBATIM when
+  // editing, because 30617 is replaceable and a re-publish overwrites the whole event: emitting only the
+  // fields shown here would silently drop `maintainers` (which holds the hosting node's operator key —
+  // the signer of the 30618 state witness, and half the push ACL), `relays` (the advertised push
+  // endpoint) and NIP-34's `r`/euc. Editing a description must not quietly break pushing.
+  const _REPO_OWN_TAGS=new Set(['d','name','description','clone','web','alt']);
   // Publish a NIP-34 repo announcement (kind 30617) signed by the user, so it shows here + in other
-  // Nostr git clients (gitworkshop, ngit, …). d-tag = repo id (replaceable per identifier).
+  // Nostr git clients (gitworkshop, ngit, …). d-tag = repo id (replaceable per identifier) — which is
+  // also what makes this the EDIT path: re-publishing with the same d replaces the announcement.
   function publishRepo(existing){
-    const tag=(e,k)=>(existing&&Array.isArray(existing.tags))?((existing.tags.find(t=>t[0]===k)||[])[1]||''):'';
-    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-git"></use></svg>Announce a git repo</h3>
-      <p class="muted small">Publishes a NIP-34 repo announcement (kind 30617) signed by your key.</p>
-      <label class="fld">Repo id <span class="muted small">(short slug, e.g. posterchanai)</span><input class="input" id="rp-d" value="${enc(tag(existing,'d'))}" placeholder="my-app"></label>
-      <label class="fld">Name<input class="input" id="rp-name" value="${enc(tag(existing,'name'))}" placeholder="My App"></label>
-      <label class="fld">Description<textarea class="input" id="rp-desc" rows="2">${enc(tag(existing,'description'))}</textarea></label>
-      <label class="fld">Clone URL<input class="input" id="rp-clone" value="${enc(tag(existing,'clone'))}" placeholder="https://git.example.com/me/my-app.git"></label>
-      <label class="fld">Web URL<input class="input" id="rp-web" value="${enc(tag(existing,'web'))}" placeholder="https://git.example.com/me/my-app"></label>
-      <div class="set-actions"><button class="btn btn-neon small" id="rp-pub">Publish</button><button class="btn btn-ghost small" id="rp-cancel">Cancel</button></div>
+    const editing=!!(existing&&Array.isArray(existing.tags));
+    if(editing && (!ME || existing.pubkey!==ME.pubkey)){
+      // A replaceable event is keyed by (kind, pubkey, d) — signing someone else's repo with your key
+      // doesn't edit it, it mints a SECOND announcement of the same repo under you.
+      toast('only the repo owner can edit its details'); return;
+    }
+    const tag=k=>editing?((existing.tags.find(t=>t[0]===k)||[])[1]||''):'';
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-git"></use></svg>${editing?'Edit repo details':'Announce a git repo'}</h3>
+      <p class="muted small">${editing
+        ? 'Republishes this repo’s NIP-34 announcement (kind 30617) with your changes. Its maintainers and relays are kept exactly as they are.'
+        : 'Publishes a NIP-34 repo announcement (kind 30617) signed by your key.'}</p>
+      <label class="fld">Repo id <span class="muted small">${editing?'(fixed — it identifies the repo)':'(short slug, e.g. posterchanai)'}</span><input class="input" id="rp-d" value="${enc(tag('d'))}" placeholder="my-app"${editing?' readonly':''}></label>
+      <label class="fld">Name<input class="input" id="rp-name" value="${enc(tag('name'))}" placeholder="My App"></label>
+      <label class="fld">Description<textarea class="input rp-ta" id="rp-desc" rows="3" placeholder="What this project is, in a line or two.">${enc(tag('description'))}</textarea></label>
+      <label class="fld">Clone URL<input class="input" id="rp-clone" value="${enc(tag('clone'))}" placeholder="https://git.example.com/me/my-app.git"></label>
+      <label class="fld">Web URL<input class="input" id="rp-web" value="${enc(tag('web'))}" placeholder="https://git.example.com/me/my-app"></label>
+      <div class="set-actions"><button class="btn btn-neon small" id="rp-pub">${editing?'Save changes':'Publish'}</button><button class="btn btn-ghost small" id="rp-cancel">Cancel</button></div>
       <div class="muted small" id="rp-status"></div>`,
       root=>{
         $('#rp-cancel',root).onclick=closeModal;
+        { const f=$(editing?'#rp-name':'#rp-d',root); if(f) f.focus(); }
         $('#rp-pub',root).onclick=async()=>{
           const v=id=>($('#'+id,root).value||'').trim();
           const d=v('rp-d'); const st=$('#rp-status',root);
           if(!d){ st.textContent='Repo id is required.'; return; }
           const tags=[['d',d]];
-          if(v('rp-name')) tags.push(['name',v('rp-name')]);
-          if(v('rp-desc')) tags.push(['description',v('rp-desc')]);
-          if(v('rp-clone')) tags.push(['clone',v('rp-clone')]);
-          if(v('rp-web')) tags.push(['web',v('rp-web')]);
+          // A NIP-34 tag can carry SEVERAL values (["clone", url, url2]) and this form shows only the
+          // first, so an untouched field re-emits the ORIGINAL tag rather than a one-value rewrite of
+          // it — otherwise editing the description alone would quietly drop a repo's second clone URL.
+          const put=(k,val)=>{
+            const o=editing?existing.tags.find(t=>t[0]===k):null;
+            if(o && (o[1]||'')===val) tags.push(o.slice());
+            else if(val) tags.push([k,val]);
+          };
+          put('name',v('rp-name')); put('description',v('rp-desc'));
+          put('clone',v('rp-clone')); put('web',v('rp-web'));
           tags.push(['alt',`git repository: ${v('rp-name')||d}`]);
-          st.textContent='publishing…';
+          if(editing) existing.tags.forEach(t=>{ if(Array.isArray(t)&&t.length&&!_REPO_OWN_TAGS.has(t[0])) tags.push(t.slice()); });
+          st.textContent=editing?'saving…':'publishing…';
           try{ const r=await publish(30617,'',tags);
-            if(r && r.ok===false){ st.textContent='relay: '+(r.msg||'rejected'); }
-            else { toast('repo announced'); closeModal(); switchView('repos'); }
+            if(r && r.ok===false){ st.textContent='relay: '+(r.msg||'rejected'); return; }
+            closeModal();
+            if(editing){
+              toast('repo details saved');
+              // Re-open on the event we just signed — publish() saved it, and Store.query collapses a
+              // replaceable kind to its latest version, so this is the real signed event (id + sig),
+              // not a hand-built stand-in. Painting it now beats waiting on a relay round-trip.
+              const fresh=(Store.query([{kinds:[30617],authors:[ME.pubkey],'#d':[d],limit:1}])||[])[0];
+              openRepo(fresh || {...existing, id:'', created_at:Math.floor(Date.now()/1000), tags});
+            } else { toast('repo announced'); switchView('repos'); }
           }catch(e){ st.textContent='failed: '+((e&&e.message)||e); }
         };
       });
@@ -5073,13 +5104,16 @@
         </div>
         ${desc?`<div class="rv-desc">${enc(desc)}</div>`:''}
         ${cloneUrl?`<div class="rv-clone">
-          <span class="rv-clone-ico">⎇</span>
+          <span class="rv-clone-ico"><svg class="ic b-ic" aria-hidden="true"><use href="#i-branch"></use></svg></span>
           <code class="rv-clone-url">${enc(cloneUrl)}</code>
-          <button class="btn btn-neon small repo-clone" data-clone="${enc(cloneUrl)}" title="Copy clone URL">⧉ Copy</button>
-          ${shareUrl?`<button class="btn btn-ghost small rv-share" data-share="${enc(shareUrl)}" title="Copy a shareable link to this project"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg>Share</button>`:''}
-          ${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Web</a>`:''}
-          ${isOwner?`<button class="btn btn-ghost small rv-delete" title="Delete this repository (owner only)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}
-        </div>`:`<div class="rv-clone">${shareUrl?`<button class="btn btn-neon small rv-share" data-share="${enc(shareUrl)}" title="Copy a shareable link to this project"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg>Share</button>`:''}${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Open web</a>`:''}${isOwner?`<button class="btn btn-ghost small rv-delete" title="Delete this repository (owner only)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}</div>`}
+          <div class="rv-acts">
+            <button class="btn btn-neon small repo-clone" data-clone="${enc(cloneUrl)}" title="Copy clone URL">⧉ Copy</button>
+            ${shareUrl?`<button class="btn btn-ghost small rv-share" data-share="${enc(shareUrl)}" title="Copy a shareable link to this project"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg>Share</button>`:''}
+            ${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Web</a>`:''}
+            ${isOwner?`<button class="btn btn-ghost small rv-edit" title="Edit this repository’s name and description (owner only)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Edit</button>`:''}
+            ${isOwner?`<button class="btn btn-ghost small rv-delete" title="Delete this repository (owner only)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}
+          </div>
+        </div>`:`<div class="rv-clone"><div class="rv-acts">${shareUrl?`<button class="btn btn-neon small rv-share" data-share="${enc(shareUrl)}" title="Copy a shareable link to this project"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg>Share</button>`:''}${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Open web</a>`:''}${isOwner?`<button class="btn btn-ghost small rv-edit" title="Edit this repository’s name and description (owner only)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Edit</button>`:''}${isOwner?`<button class="btn btn-ghost small rv-delete" title="Delete this repository (owner only)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}</div></div>`}
         ${isGrasp?`<div class="rv-refbar">
           <button class="btn btn-ghost small rv-refbtn" id="rv-refpick" title="Switch branch or tag"><svg class="ic b-ic" aria-hidden="true"><use href="#i-branch"></use></svg><span id="rv-refname">default</span> ▾</button>
           <span class="muted small" id="rv-refnote"></span>
@@ -5110,6 +5144,7 @@
     $$('[data-prof]',feed).forEach(el=> el.onclick=ev=>{ ev.stopPropagation(); renderProfileView(el.dataset.prof); });
     { const cb=$('.repo-clone',feed); if(cb) cb.onclick=async()=>{ try{ await navigator.clipboard.writeText(cb.dataset.clone); toast('clone URL copied'); }catch(_){ await uiPrompt('Clone URL', {value:cb.dataset.clone}); } }; }
     { const sb=$('.rv-share',feed); if(sb) sb.onclick=async()=>{ try{ await navigator.clipboard.writeText(sb.dataset.share); toast('project link copied — share it anywhere'); }catch(_){ await uiPrompt('Project link', {value:sb.dataset.share}); } }; }
+    { const eb=$('.rv-edit',feed); if(eb) eb.onclick=()=>publishRepo(e); }
     { const xb=$('.rv-delete',feed); if(xb) xb.onclick=()=>deleteRepo(e); }
     { const ni=$('#rv-newissue',feed); if(ni) ni.onclick=()=>newRepoIssue(e); }
     // Tabs: swap the visible panel. README loads eagerly; issues/patches were already fetched below;
