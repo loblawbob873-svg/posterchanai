@@ -1916,7 +1916,9 @@
     // Deep-linked entity: spinner until onReady routes it (the relay must be connected to fetch the
     // profile/note); otherwise land on the global feed immediately.
     if(_deepLink){ VIEW='thread'; $('#feed').innerHTML='<div class="spinner"></div>'; }
-    else if(!_consumeLaunchParams()) switchView('global');   // PWA shortcut/share, else land on Nostrverse (global feed)
+    // PWA shortcut/share, else land on the user's chosen timeline (Nostrverse by default, Home if set).
+    // _onLandingView is set AFTER the switch — switchView clears it, so it must be armed last.
+    else if(!_consumeLaunchParams()){ switchView(_startTimeline()); _onLandingView = true; }
     // Drain a file/text shared IN from another app (a fresh OS-share launch, OR a guest who has just
     // logged in with a share still waiting). Self-guards on GUEST (prompts + keeps the stash) and on an
     // empty stash (no-op). Runs AFTER a view is set, so the composer opens over a real backdrop — never a
@@ -2955,6 +2957,7 @@
   let _navPushed=0;
   function _clearNav(){ $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); _syncRightbar(); }
   function switchView(v){
+    _onLandingView = false;   // an explicit navigation — a late pref restore must not move them now
     if(window.PC_NOSTR_ONLY && (v==='ai' || v==='markets')) v='home';   // AI-backed views disabled in Nostr-only deployments
     // Deep links, a restored last-view and the keyboard can all name a view the nav no longer shows —
     // hiding the button is not the same as closing the door.
@@ -3108,6 +3111,18 @@
   // position, so the feed only ever moves when the user asks it to. Per-device for instant use, and
   // synced to Nostr (kind-30078 client-prefs) so it follows across devices.
   let AUTO_NEW_POSTS = ClientSettings.get('autoNewPosts', true) !== false;
+  // Which timeline the app LANDS on: Nostrverse (the global feed) by default, or Home (people you
+  // follow). Per-device for instant use on the very first paint — the boot view is chosen long before
+  // the relay can answer — and synced to Nostr (kind-30078 client-prefs) so it follows across devices.
+  // A GUEST is always sent to Nostrverse: nobody is followed yet, so Home would be an empty screen.
+  function _startTimeline(){
+    if(GUEST) return 'global';
+    return ClientSettings.get('startTimeline','global')==='home' ? 'home' : 'global';
+  }
+  // True while the app is still sitting on the timeline it CHOSE at boot, i.e. the user has not
+  // navigated yet. A late-arriving synced pref may move that landing view; once they've picked a view
+  // themselves, it must not (see restoreClientPrefsNostr).
+  let _onLandingView = false;
   // Media-cache size (GB) → write the chosen byte budget to the SW-read config cache (per-device). The SW's
   // trimMedia reads pc-config-v1/media-budget to cap the offline media cache; default 4 GB if never set.
   function _applyMediaCacheBudget(gb){
@@ -11185,6 +11200,17 @@
         ClientSettings.set('hideFediBridge', pr.hideFediBridge);
         if(VIEW==='home'||VIEW==='global'){ try{ renderView(true); }catch(_){} }
       }
+      // Landing timeline. The boot view is picked from the LOCAL cache (the relay hasn't answered yet),
+      // so a device that has never opened Settings lands on the default and only learns the synced
+      // choice here — adopt it, and move them if they're still sitting on that landing view and haven't
+      // navigated. Anything else would repaint a view they deliberately opened.
+      if(!_prefTouched.has('startTimeline') && (pr.startTimeline==='home'||pr.startTimeline==='global')){
+        const was = ClientSettings.get('startTimeline','global');
+        ClientSettings.set('startTimeline', pr.startTimeline);
+        if(pr.startTimeline!==was && _onLandingView && (VIEW==='home'||VIEW==='global') && VIEW!==pr.startTimeline){
+          try{ switchView(pr.startTimeline); _onLandingView = true; }catch(_){}
+        }
+      }
       if(!_prefTouched.has('vimKeys') && typeof pr.vimKeys==='boolean') ClientSettings.set('vimKeys', pr.vimKeys);
       if(!_prefTouched.has('xmrTip') && pr.xmrTip!=null && String(pr.xmrTip)) ClientSettings.set('xmrLastAmt', String(pr.xmrTip));
       if(!_prefTouched.has('bchTip') && pr.bchTip!=null && String(pr.bchTip)) ClientSettings.set('bchLastAmt', String(pr.bchTip));
@@ -17273,6 +17299,13 @@
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">📉 Data saver<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Holds images &amp; videos until you tap them, skips link previews, and loads lighter feed pages — turn it on when you're low on data. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">🆕 Auto-show new posts<label class="switch"><input type="checkbox" id="set-auto-new-posts" ${AUTO_NEW_POSTS?'checked':''}><span class="slider"></span></label></label>
+          <label class="fld">🏠 Timeline the app opens on
+            <select class="input" id="set-start-timeline">
+              <option value="global"${ClientSettings.get('startTimeline','global')==='home'?'':' selected'}>Nostrverse (default)</option>
+              <option value="home"${ClientSettings.get('startTimeline','global')==='home'?' selected':''}>Home — people you follow</option>
+            </select>
+          </label>
+          <div class="muted small">Which feed you land on when the app starts. Nostrverse is everything the relays carry; Home is only the people you follow. You can still switch any time with the tabs above the timeline. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide replies in timelines<label class="switch"><input type="checkbox" id="set-hide-replies" ${ClientSettings.get('hideReplies',false)?'checked':''}><span class="slider"></span></label></label>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide fediverse posts in timelines<label class="switch"><input type="checkbox" id="set-hide-fedi" ${ClientSettings.get('hideFediBridge',true)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">On by default. The bridge mirrors whole fediverse timelines onto Nostr under stand-in keys — this keeps them out of Home and Nostrverse. Mentions, replies and DMs from fediverse people still reach you either way.</div>
@@ -17541,6 +17574,13 @@
       }; }
     // Auto-show new posts: persist + sync to Nostr. Turning it ON adopts whatever is already buffered
     // (the pill would otherwise sit there until the next live note); turning it OFF leaves the feed as-is.
+    // Landing timeline: per-device (the boot view is chosen before the relay answers) + synced to Nostr.
+    // Nothing to re-render — it only decides where the NEXT start lands.
+    { const st=$('#set-start-timeline'); if(st) st.onchange=()=>{
+        const v = st.value==='home' ? 'home' : 'global';
+        ClientSettings.set('startTimeline', v); _prefTouched.add('startTimeline'); saveClientPrefsNostr({ startTimeline: v });
+        toast(v==='home'?'opening on Home from now on':'opening on Nostrverse from now on');
+      }; }
     { const hr=$('#set-hide-replies'); if(hr) hr.onchange=()=>{
         ClientSettings.set('hideReplies', hr.checked);
         _prefTouched.add('hideReplies'); saveClientPrefsNostr({ hideReplies: hr.checked });
