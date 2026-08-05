@@ -4,7 +4,14 @@ PosterChan AI (the app on `:3051` and the built-in Nostr relay on `:3052`) speak
 by design — put **nginx** in front to terminate TLS and serve it on `443` like a real product.
 This applies to **both** a full (AI) deployment and a **Nostr-only** deployment.
 
-A ready-to-edit template lives at [`nginx/posterchanai.conf.example`](../nginx/posterchanai.conf.example).
+Two ready-to-edit templates:
+
+| Template | Use it for |
+|---|---|
+| [`nginx/posterchanai.conf.example`](../nginx/posterchanai.conf.example) | a **full (AI) node**, usually bare-metal — adds the OpenAI-compatible `/v1` API and serves `/static` off the checkout. |
+| [`nginx/nostr-docker.conf.example`](../nginx/nostr-docker.conf.example) | a **Nostr-only node in Docker** (`docker compose --profile nostr`) — relay + NIP-05 + Blossom + the web client, no `/v1`, no on-disk `/static`, and the container-specific traps spelled out. |
+
+Same idea either way; pick the closer starting point and the rest of this page applies to both.
 
 ## Quick start
 
@@ -39,6 +46,18 @@ Then:
   a bare-HTTP origin.
 - **Large uploads / Blossom blobs / generated media:** `client_max_body_size 0` (set a cap if you
   want) and long (`3600s`) proxy timeouts for slow LLM/image/video generations.
+- **`X-Real-IP`** — the relay trusts this one for the client address (it prefers it over the
+  client-forgeable `X-Forwarded-For`). Without it every connection is attributed to the proxy's own
+  address, which in Docker means all of them collapse onto one bridge-gateway IP.
+
+**If you edit a `location`, don't add a `proxy_set_header` to it.** All of the above are declared
+once at the `server` level, *including* `Upgrade`/`Connection`, because `proxy_set_header` is an
+nginx **array** directive: a location that sets one header inherits **none** of the outer ones. The
+usual shape — common headers at the server level, `Upgrade`/`Connection` down in the WebSocket
+locations — silently drops `Host`, `X-Real-IP` and `X-Forwarded-Proto` on exactly the locations that
+need them most, and nothing errors; the relay just starts publishing the nginx *upstream name* as
+its NIP-11 host. Declaring the WebSocket pair at the server level is safe for ordinary requests, as
+the `map` yields `close` whenever a client didn't ask to upgrade.
 
 ## Git-over-Nostr (GRASP) smart-HTTP
 
@@ -66,14 +85,22 @@ dumb pass-through, the same shape as the Blossom storage proxy.
 
 ## Notes
 
-- **Relay on its own hostname:** prefer `wss://relay.example.com/`? Copy the `/relay` block into a
-  second `server { server_name relay.example.com; ... }` with `proxy_pass http://127.0.0.1:3052/relay;`
-  at `location /`. Get a cert for that name too. See [RELAY.md](RELAY.md).
+- **Relay on its own hostname:** prefer `wss://relay.example.com/`? `nostr-docker.conf.example` ships
+  that second `server { server_name relay.example.com; ... }` block ready to use — copy it into either
+  template and get a cert for the name (`certbot --nginx -d example.com -d relay.example.com`). Note
+  its `proxy_pass http://posterchanai_relay;` carries **no URI**: the relay takes the WebSocket
+  upgrade on any path, and passing `/` straight through is what makes its welcome page and NIP-11
+  document advertise `wss://relay.example.com/` — rewriting to `/relay` hands visitors a URL that
+  hostname doesn't serve. See [RELAY.md](RELAY.md).
 - **Blossom media** is served by the app at `/blossom` (same origin), so it's already covered by the
   catch-all `location /`. For a dedicated media host, proxy that subdomain to `:3051` as well — see
   [BLOSSOM.md](BLOSSOM.md).
-- **Docker:** the compose stack publishes `3051` and `3052` on the host, so the exact same nginx
-  config works — just keep nginx on the host (or another container) pointing at `127.0.0.1:3051/3052`.
+- **Docker:** the compose stack publishes `3051` and `3052` on the host, so an nginx **on that host**
+  proxies to `127.0.0.1:3051/3052` unchanged. nginx **in a container** must use the compose service
+  name instead (`nostr:3051`) — `127.0.0.1` there is nginx itself, and every request fails with
+  `connect() failed (111: Connection refused)`.
+  [`nostr-docker.conf.example`](../nginx/nostr-docker.conf.example) covers both, plus how to move the
+  published ports onto loopback so `http://<public-ip>:3051` stops answering around your TLS.
 - **WAF / Cloudflare:** the chat + relay WebSockets use **token auth, not cookies** — don't filter
   `/ws/`, `/api/`, `/v1`, or `/relay` by User-Agent, or they'll 403.
 - **Firewall:** once nginx fronts everything, you usually want only `80`/`443` open to the world and

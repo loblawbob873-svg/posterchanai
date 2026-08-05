@@ -218,11 +218,12 @@ server {
     # ... ssl_certificate / ssl_certificate_key ...
 
     location / {
-        proxy_pass http://127.0.0.1:3052/relay;
+        proxy_pass http://127.0.0.1:3052;   # no URI — see below
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;   # the relay trusts this for the client address
         proxy_read_timeout 3600s;   # long-lived subscriptions
     }
 }
@@ -231,7 +232,13 @@ server {
 A path also works (e.g. `location = /relay` on an existing host → `wss://yourdomain/relay`).
 The same location serves the NIP-11 JSON (`Accept: application/nostr+json`) and the browser
 welcome page — the relay decides from the request headers, and the welcome page advertises the
-exact path it was reached on.
+exact path it was reached on. That last part is why the `proxy_pass` above carries **no URI**: the
+relay accepts the upgrade on any path, so passing `/` through unchanged makes it advertise
+`wss://relay.yourdomain/`, while rewriting to `/relay` would advertise a path this hostname doesn't
+serve. Full copy-and-edit configs (both layouts, plus NIP-05 and Blossom):
+[`nginx/nostr-docker.conf.example`](../nginx/nostr-docker.conf.example) for a Nostr-only/Docker node,
+[`nginx/posterchanai.conf.example`](../nginx/posterchanai.conf.example) for a full one — see
+[NGINX.md](NGINX.md).
 
 ### NIP-05 identities (`/.well-known/nostr.json`)
 

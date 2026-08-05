@@ -59,22 +59,34 @@ server {
 
     # Headers every proxied location needs. X-Forwarded-Proto=$scheme is REQUIRED: the app uses it
     # to know it's behind HTTPS (sets the upgrade-insecure-requests CSP + secure cookies).
+    # X-Real-IP is what the RELAY trusts for the client address (it prefers this over the forgeable
+    # X-Forwarded-For); without it every relay connection is logged as the proxy's own address.
+    #
+    # Upgrade/Connection are hoisted UP HERE with them, and no `location` below sets a header of its
+    # own. proxy_set_header is an nginx ARRAY directive: a location that sets one header inherits
+    # NONE of these. With the two WebSocket headers declared per-location instead, /relay, /ws/,
+    # /api/ and `location /` all silently lost Host + X-Forwarded-Proto + X-Real-IP — and nothing
+    # errors, the relay just starts publishing the nginx upstream name as its NIP-11 host. Declaring
+    # them here is safe for ordinary requests: the `map` above yields `close` when there's no upgrade.
     proxy_http_version 1.1;
     proxy_set_header Host              $host;
     proxy_set_header X-Real-IP         $remote_addr;
     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-Host  $http_host;
+    proxy_set_header Upgrade           $http_upgrade;
+    proxy_set_header Connection        $connection_upgrade;
     proxy_buffering off;
 
     # ---- Built-in Nostr relay (wss://example.com/relay) --------------------
     # The relay listens on ws://127.0.0.1:3052/relay. This makes it reachable as a normal
     # secure relay URL. (To give the relay its own hostname instead, copy this into a second
-    # server block for relay.example.com with `proxy_pass http://posterchanai_relay/relay;`.)
+    # server block for relay.example.com as `location / { proxy_pass http://posterchanai_relay; }`
+    # — with NO URI on the proxy_pass, so the relay's welcome page and NIP-11 doc advertise
+    # wss://relay.example.com/ rather than a /relay path that name doesn't serve. A ready-made
+    # version of that block is in nostr-docker.conf.example.)
     location = /relay {
         proxy_pass http://posterchanai_relay/relay;
-        proxy_set_header Upgrade    $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
     }
@@ -86,8 +98,6 @@ server {
     # ---- Chat WebSocket (/ws/chat/<id>) ------------------------------------
     location ^~ /ws/ {
         proxy_pass http://posterchanai_app;
-        proxy_set_header Upgrade    $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
     }
@@ -95,16 +105,13 @@ server {
     # ---- API (+ websockets used by some endpoints) -------------------------
     location ^~ /api/ {
         proxy_pass http://posterchanai_app;
-        proxy_set_header Upgrade    $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
         proxy_read_timeout 3600s;   # long LLM / media generations
         proxy_send_timeout 3600s;
     }
 
-    # ---- OpenAI-compatible API (/v1/...) — keep the Authorization header ----
+    # ---- OpenAI-compatible API (/v1/...) -----------------------------------
     location ^~ /v1 {
-        proxy_pass http://posterchanai_app;
-        proxy_set_header Authorization $http_authorization;
+        proxy_pass http://posterchanai_app;   # nginx forwards Authorization as-is
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
     }
@@ -123,7 +130,6 @@ server {
     # both roles — only the upstream port differs by node.
     location ^~ /git/ {
         proxy_pass http://127.0.0.1:3053;    # PROXY node: use http://127.0.0.1:3051 (the app) instead
-        proxy_set_header Host $host;
         proxy_buffering off;                 # stream clone packfiles
         client_max_body_size 0;              # large pushes (bounded by git_server_repo_max_mb)
         proxy_read_timeout 3600s;
@@ -148,8 +154,6 @@ server {
     # ---- Everything else: web client, /client, /blossom, admin -------------
     location / {
         proxy_pass http://posterchanai_app;
-        proxy_set_header Upgrade    $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
     }

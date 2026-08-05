@@ -126,6 +126,14 @@ The app boots fine without the AI libraries (every ML import is lazy); the AI ta
 `POSTERCHANAI_NOSTR_ONLY=1`. You can switch a node to a full GPU profile later without losing data
 (same volumes).
 
+**Put it behind HTTPS before anyone else uses it.** A relay on `ws://` is a relay most clients
+refuse to connect to, and `/.well-known/nostr.json` (NIP-05) only counts on the name people put
+after the `@`. [`nginx/nostr-docker.conf.example`](../nginx/nostr-docker.conf.example) is a
+copy-and-edit config for exactly this stack — the relay at both `wss://example.com/relay` and
+`wss://relay.example.com/`, NIP-05, Blossom uploads, the web client — with the Docker-specific
+traps called out (which upstream address to use, and how to stop `http://<ip>:3051` answering
+around your TLS). See [NGINX.md](NGINX.md) for the walkthrough.
+
 ## Git server (git-over-nostr)
 
 The built-in git host is off by default. Turn it on with one flag:
@@ -195,8 +203,16 @@ units and flips the main unit to `--role app` in one step (`--revert` undoes it)
 ## Production (HTTPS / TLS)
 
 The container serves plain HTTP/WS — front it with **nginx** to get HTTPS, your own domain, and a
-proper `wss://…/relay`. A ready-to-edit template + guide:
-[`nginx/posterchanai.conf.example`](../nginx/posterchanai.conf.example) and [NGINX.md](NGINX.md).
+proper `wss://…/relay`. Two ready-to-edit templates, both walked through in [NGINX.md](NGINX.md):
+
+| Template | Use it for |
+|---|---|
+| [`nginx/nostr-docker.conf.example`](../nginx/nostr-docker.conf.example) | the **`nostr` profile** — relay (on a path *and* its own subdomain), NIP-05, Blossom, the web client. Written for a container: upstream addressing, closing off the published ports, an optional nginx-in-compose block. |
+| [`nginx/posterchanai.conf.example`](../nginx/posterchanai.conf.example) | the **AI profiles** — everything above plus the OpenAI-compatible `/v1` API and serving `/static` off a bare-metal checkout. |
+
+Either way, keep nginx on the host (or in its own container) and point it at `3051`/`3052` — and
+once it's up, set the public URLs in the admin UI (Relay → NIP-05 domain, Blossom → public base)
+so the app stops advertising `http://<ip>:3051` to other relays and clients.
 
 Open `http://<host>:3051/client` and log in with your **Nostr key** (NIP-07 browser extension or
 NIP-46 remote signer like Amber). The first admin is configured in Admin → Users.
