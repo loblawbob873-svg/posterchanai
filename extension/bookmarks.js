@@ -573,6 +573,22 @@
    *
    * A burst collapses into one tree read and one pass. The wait also coalesces the create-then-move
    * pair a drag produces, so a dragged bookmark is published once, at its final location. */
+  /* PACING. Applying or publishing a library is hundreds of bookmark writes, and in both engines
+   * every one is an IPC to the BROWSER process — the same process that draws the window. The work
+   * is not slow; it is UNBROKEN, and that is what makes the window stop repainting for the length
+   * of a first sync ("locks up right after enabling, then recovers"). A short yield every so often
+   * hands the thread back. The sync takes marginally longer and the browser stays usable, which is
+   * the right trade for something that runs in the background and that nobody is watching.
+   *
+   * Yields are counted so a test can prove the pacing is still there: a loop that lost it looks
+   * identical in every other respect. */
+  var PACE_EVERY = 20, PACE_MS = 12, _paced = 0;
+  function pace(n) {
+    if (!n || n % PACE_EVERY !== 0) return null;
+    _paced++;
+    return new Promise(function (r) { setTimeout(r, PACE_MS); });
+  }
+
   var pendingLocal = [], localTimer = null;
   var LOCAL_BATCH_MS = 400;
   function onLocalChange(browserId) {
@@ -592,6 +608,7 @@
     (function walk(ns) { (ns || []).forEach(function (n) { byId[n.id] = n; if (n.children) walk(n.children); }); })(tree);
     var dirty = false;
     for (var i = 0; i < ids.length; i++) {
+      var _pf = pace(i); if (_pf) await _pf;
       // ONE BAD ONE MUST NOT TAKE THE BATCH DOWN. Before batching, each event was published on its
       // own and a failure cost that bookmark only; letting a throw escape the loop would silently
       // drop every bookmark queued behind it — worst on exactly the bulk imports this exists for.
@@ -688,6 +705,7 @@
     } else {
       pendingRemovals = 0;
       for (var d = 0; d < removals.length; d++) {
+        var _pd = pace(d); if (_pd) await _pd;
         var sid = removals[d], knew = items[sid] || {};
         items[sid] = { removed: true, _at: Math.floor(Date.now() / 1000), url: knew.url || '' };
         forget(sid);
@@ -695,9 +713,13 @@
       }
       saveSoon();
     }
-    for (var i = 0; i < plan.create.length; i++) await applyUpsert(plan.create[i].id, plan.create[i]);
+    for (var i = 0; i < plan.create.length; i++) {
+      var _pc = pace(i); if (_pc) await _pc;
+      await applyUpsert(plan.create[i].id, plan.create[i]);
+    }
     var sent = plan.publish.length;
     for (var j = 0; j < plan.publish.length; j++) {
+      var _pp = pace(j); if (_pp) await _pp;
       var l = plan.publish[j], sid = rmap[l.id] || await idFor(l.url);
       remember(sid, l.id);
       var body = { title: l.title, url: l.url, folder: l.folder, root: l.root };
@@ -748,7 +770,7 @@
   }
   async function _tidy() {
     if (!api) throw new Error('bookmark sync is not ready yet');
-    var merged = 0, removed = 0;
+    var merged = 0, removed = 0, dupes = 0;
 
     async function pass(parentId) {
       var kids = [];
@@ -774,6 +796,35 @@
         }
         merged++;
       }
+      /* DUPLICATE BOOKMARKS, not just duplicate folders. Two copies of one URL sitting in one
+       * folder is what a browser is left with when the sync ids change under it — every event
+       * published under the old scheme materialises again alongside its new-scheme twin — and
+       * nobody is going to clear hundreds of those by hand.
+       *
+       * Two things make this safe rather than another way to lose bookmarks. The removal is
+       * suppressed (`writing`), so it is not read back as a user deletion and published as a
+       * tombstone that would delete the URL on every other device. And the loser's MAPPING is
+       * dropped: a mapping left pointing at a bookmark that no longer exists is exactly what the
+       * next merge reads as "the user deleted this", which does the same damage a step later. The
+       * survivor takes the mapping over if it had none, so the pair collapses to one identity. */
+      var seen = {}, again = [];
+      try { again = await api.B.bookmarks.getChildren(parentId); } catch (_) {}
+      for (var u = 0; u < again.length; u++) {
+        var bm = again[u];
+        if (!bm.url) continue;
+        var nu = P.normUrl(bm.url);
+        if (!seen[nu]) { seen[nu] = bm; continue; }
+        var _pt = pace(dupes); if (_pt) await _pt;
+        writing.add(bm.id);
+        (function (id) { setTimeout(function () { writing.delete(id); }, 2000); })(bm.id);
+        if (rmap[bm.id]) forget(rmap[bm.id]);
+        try { await api.B.bookmarks.remove(bm.id); dupes++; } catch (_) {}
+      }
+      for (var nk in seen) {
+        var win = seen[nk];
+        if (!rmap[win.id]) { try { remember(await idFor(win.url), win.id); } catch (_) {} }
+      }
+
       // Recurse AFTER merging, so the surviving folder is walked once with everything in it.
       var after = [];
       try { after = await api.B.bookmarks.getChildren(parentId); } catch (_) {}
@@ -784,11 +835,12 @@
     var tops = (roots[0] && roots[0].children) || [];
     for (var r = 0; r < tops.length; r++) await pass(tops[r].id);
     _folder = {};                                         // ids may have moved under us
-    return { merged: merged, removed: removed };
+    return { merged: merged, removed: removed, dupes: dupes };
   }
 
   function count() { if (!api) return 0; return Object.keys(items).filter(function (k) { return !items[k].removed; }).length; }
 
   P.engine = { init: init, absorb: absorb, setEnabled: setEnabled, enabled: enabled,
-               union: union, count: count, tidy: tidy };
+               union: union, count: count, tidy: tidy,
+               stats: function () { return { paced: _paced }; } };
 })(typeof self !== 'undefined' ? self : this);

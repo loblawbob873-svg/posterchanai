@@ -383,17 +383,26 @@ function paintBm(){
       + (dropped > 0 ? `  ·  ${dropped} entr${dropped === 1 ? 'y' : 'ies'} ignored (not a relay address)` : '');
   }; }
 
-/* Cleanup for the duplicate folders an earlier build created (folder creation was not serialised, so
- * a burst of arriving bookmarks each made their own copy). Explicit, because nothing can tell those
- * apart from two folders somebody named the same deliberately. */
+/* Cleanup for what earlier builds left behind: duplicate FOLDERS (folder creation was not
+ * serialised, so a burst of arriving bookmarks each made their own copy) and duplicate BOOKMARKS
+ * (the sync ids changed, so every event published under the old scheme materialised beside its
+ * new-scheme twin). Explicit, because nothing can tell either apart from two the user made
+ * deliberately. Nothing is published: this tidies THIS browser, and the other devices are left
+ * exactly as they are. */
 { const b = $('#bm-tidy');
   if(b) b.onclick = async () => {
     b.disabled = true; b.textContent = 'tidying…';
     const r = await send({ type:'bm-tidy' });
-    b.textContent = 'Tidy duplicate folders';
+    b.textContent = 'Tidy duplicates';
     b.disabled = false;
+    const bits = [];
+    if(r && r.ok){
+      if(r.merged) bits.push(`merged ${r.merged} duplicate folder${r.merged === 1 ? '' : 's'} (${r.removed} removed)`);
+      if(r.dupes) bits.push(`removed ${r.dupes} duplicate bookmark${r.dupes === 1 ? '' : 's'}`);
+    }
     $('#bm-note').innerHTML = (r && r.ok)
-      ? `Merged ${r.merged} duplicate folder${r.merged === 1 ? '' : 's'} (${r.removed} removed). No bookmarks were deleted.`
+      ? (bits.length ? `Tidied: ${bits.join(', ')}. Nothing was published — your other devices are untouched.`
+                     : 'Nothing to tidy — no duplicates found.')
       : `<b>Could not tidy:</b> ${(r && r.error) || 'no answer'}`;
   }; }
 
