@@ -4,9 +4,9 @@
 
 # Poster-chan AI
 
-### Your own AI assistant — self-hosted, private, and ridiculously capable.
+### A self-hosted, Nostr-native AI assistant & bot platform — private, and ridiculously capable.
 
-**Nostr-native at the core:** a built-in web-of-trust relay (on PostgreSQL) *is* the datastore — your settings, accounts, and AI chats are **encrypted Nostr events you own**, and the app's face is a full cyberpunk **Nostr web client**. One FastAPI backend that also does chat, image generation, voice, email, news, torrents, and runs autonomous bots on **Telegram, Pleroma & Nostr**. Cloud LLMs or fully local. Your hardware, your keys, your rules.
+**Nostr-native at the core:** a built-in web-of-trust relay (on PostgreSQL) *is* the datastore — your settings, accounts, and AI chats are **encrypted Nostr events you own**, and the app's face is a full cyberpunk **Nostr web client**. One FastAPI backend that also does chat, image/voice/video generation, a browser **password manager & bookmark sync**, **OBS live streaming**, email, news, torrents, and runs autonomous bots on **Telegram, Pleroma & Nostr**. Cloud LLMs or the built-in native `llama.cpp`. Your hardware, your keys, your rules.
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -29,8 +29,10 @@
 ## Why Poster-chan?
 
 - 🟣 **Nostr-native datastore** — the built-in **web-of-trust relay** (backed by PostgreSQL) is the source of truth. Settings, accounts, API keys, and AI chats live as **NIP-44-encrypted `kind-30078` events** signed by your node — not rows in some app DB. Log in with your **Nostr key** (NIP-07/NIP-46), and the web UI is a full Nostr client. No SQLite, no proprietary schema you don't control.
+- 🔐 **Passwords & bookmarks, as Nostr events** — a companion **Firefox / Chrome / Brave** extension turns your own relay into an end-to-end-encrypted **password manager** and **cross-browser bookmark sync**. Every login and bookmark is an **AES-GCM-encrypted `kind-30078` event** decrypted only on your device — the relay holds ciphertext, never your data. Autofill, **TOTP** one-time codes, a password generator, and a built-in **NIP-07 signer** so you sign into Nostr apps without pasting your `nsec`.
+- 🔴 **Go live from OBS** — stream over RTMP to the bundled **MediaMTX** (RTMP → HLS), announced on Nostr via **NIP-53** so it appears in the wider stream directories too — see [Live streaming](#nostr-web-client).
 - 🏠 **Truly self-hosted** — runs on your own box, no telemetry, single-admin multi-user. Your conversations and keys never leave your network; the only local secret is a gitignored keyfile.
-- 🔌 **Bring any model** — cloud (any OpenAI-compatible API) or local: **Ollama** or **llama.cpp** (CPU / CUDA / HIP / **Intel Arc SYCL**). Round-robin load-balance across several backends.
+- 🔌 **Bring any model** — cloud (any OpenAI-compatible API) or the **built-in native `llama.cpp`** backend (CPU / CUDA / HIP / **Intel Arc SYCL**). Round-robin load-balance across several backends.
 - 🤖 **It's also a bot platform** — drive everything from **Telegram**, and run autonomous **Pleroma / Nostr** bots from a single admin tab.
 - 🎨 **More than chat** — image generation, TTS/STT, website screenshots, YouTube/X summarize & download, media tools, interactive study flashcards, email, news, budget, torrents — all behind one chat box.
 - 🛠️ **Hackable & honest** — thin routers, services for logic, an interactive installer, and an OpenAI-compatible `/v1/` endpoint that agentic coding clients (e.g. opencode) can drive against your local models.
@@ -45,8 +47,8 @@
 
 - **Streaming chat** with multiple conversations, history, and optional markdown/formatting
 - **OpenAI-compatible API** at `/v1/` for compatible clients and tools, including **function/tool calling** so agentic coding clients (e.g. opencode) can drive your local models
-  - **Recommended coding model:** [Qwen3-Coder-30B-A3B-Instruct](https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF) (`IQ4_XS`, MoE ~3B active, ~16GB) — by far the most reliable local model here for multi-step agentic builds; it 1-shots small apps where 8–14B models stall. Needs a 12GB+ GPU (partial CPU offload on 12–16GB cards; leave `ollama_num_ctx` on `auto`). For smaller GPUs, `Qwen3.5-9B-Claude-Code` is the lightweight fallback. Set it once server-wide in **Admin → AI Settings → Agentic / Tools Model** (`llm_tools_model`) — used for every tool-bearing `/v1` request *and* the `node agent` command (web UI + Telegram), while plain chat stays on the default model.
-- **Local or remote LLM**: Ollama, or llama-cpp-python (CPU / CUDA / HIP / Intel Arc SYCL)
+  - **Recommended coding model:** [Qwen3-Coder-30B-A3B-Instruct](https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF) (`IQ4_XS`, MoE ~3B active, ~16GB) — by far the most reliable local model here for multi-step agentic builds; it 1-shots small apps where 8–14B models stall. Needs a 12GB+ GPU (partial CPU offload on 12–16GB cards; leave the context size on `auto`). For smaller GPUs, `Qwen3.5-9B-Claude-Code` is the lightweight fallback. Set it once server-wide in **Admin → AI Settings → Agentic / Tools Model** (`llm_tools_model`) — used for every tool-bearing `/v1` request *and* the `node agent` command (web UI + Telegram), while plain chat stays on the default model.
+- **Local or remote LLM**: the built-in native **llama-cpp-python** backend (CPU / CUDA / HIP / Intel Arc SYCL), or any remote OpenAI-compatible server
 - **Load balancing**: round-robin across multiple chat servers
 - **Intent detection** and slash-style **commands** (e.g. `/mail`, `/image`, `/search`)
 
@@ -61,9 +63,20 @@ The app's face is a full cyberpunk **Nostr web client** (PWA at `/client`, plus 
 - **Effects studio** — one-tap image → MP4 effects: photo treatments (`glow`, `alive` 3-D parallax), meme/caption formats, character overlays, and a large library of audio-gag reaction clips — all also usable as commands in the web UI, Telegram, and the fediverse bots, and now composable as Meme Builder layers.
 - **Git over Nostr (NIP-34)** — a **Discover → Git** view: browse announced repos, and open one to read its **README, issues and patches** right in the app (README fetched from the repo's clone/web URL). Optionally, your instance can **host repos itself** over Nostr via a self-contained **GRASP** git server that runs as its own supervised subprocess — **off by default / experimental**; see [docs/GIT_OVER_NOSTR.md](docs/GIT_OVER_NOSTR.md).
 
+### Passwords, bookmarks & signing (browser extension)
+
+A companion **browser extension** (Firefox, and Chrome / Brave via MV3) makes your self-hosted relay double as a private **password manager** and **cross-browser bookmark sync** — with nothing readable server-side. Pair a browser to your vault (a QR/paste code) as **read-only** (fill only) or **full** (also save & publish):
+
+- **Password vault** — logins are **`kind-30078` events, AES-GCM-encrypted to your key**; the relay only ever holds ciphertext, and it's decrypted on-device. Autofill on the matching site (**exact-origin only** — never a sibling subdomain), **TOTP** one-time codes, and a **password generator**. New logins saved from a read-only browser queue locally until the app publishes them.
+- **Bookmark sync** — one encrypted event per bookmark, sealed with the same vault key, **kept in sync across your browsers**: adds, moves and deletes propagate (and deletions *stay* deleted), toolbar-vs-menu placement and folders are preserved, and duplicates are de-duped by URL. `chrome.alarms` keeps an idle browser syncing.
+- **NIP-07 signer** — the extension can sign for Nostr web apps, with **per-origin, per-event-kind approval** shown in a real extension window (not a page overlay) — so you log into Nostr sites **without pasting your `nsec`** into a page.
+
+Build both bundles with `bash extension/build.sh` (Firefox `.xpi` + Chrome unpacked-`dist/chrome`); CI publishes fresh artifacts to **poster.place/extension**.
+
 ### Voice & media
 
 - **Text-to-speech (TTS)** and **speech-to-text (STT)**; Edge TTS and configurable backends
+- **Voice cloning** (`voice`): **zero-shot** — attach a few seconds of someone speaking, then `voice <text>` and it says your words **in that voice**, learned from the clip (no training step). Runs **native in-process** (no sidecar), on the app's own GPU lock and VRAM swap like image/music/video gen. The same cloned voice also drives **`talk`** — a still face lip-syncing a line in that voice. Web UI + Telegram.
 - **Image generation**: native diffusers (SDXL); multiple image servers supported
 - **Music generation** (`musicgeni`): text-to-song via a self-hosted [ACE-Step](https://github.com/ace-step/ACE-Step-1.5) server (fits a 12 GB GPU); load-balanced + VRAM-swapped like image gen, with a spoken watermark. Web UI + Telegram. See [docs/MUSIC.md](docs/MUSIC.md)
 - **Video generation** (`videogeni`): native in-process text-to-video via **diffusers** — point it at *any* model (Wan2.1 / LTX / CogVideoX, auto-detected) to match your GPU; runs on CUDA / Intel Arc (XPU) / AMD (ROCm), load-balanced + VRAM-swapped across nodes like image gen, with a branded watermark and optional 720p/1080p upscale. Web UI + Telegram. See [docs/VIDEO.md](docs/VIDEO.md)
@@ -113,7 +126,7 @@ The app's face is a full cyberpunk **Nostr web client** (PWA at `/client`, plus 
 ## Requirements
 
 - **Python 3.10+**
-- (Optional) **GPU** and backends for local LLM (Ollama, llama-cpp-python, IPEX-LLM) and native diffusers image generation
+- (Optional) **GPU** and backends for local LLM (native llama-cpp-python / IPEX-LLM) and native diffusers image generation
 - (Optional) **Headless Chrome/Chromium** for the `screenshot` command (driven over the DevTools protocol — full-page and JS-aware, so SPAs render instead of coming out blank; no Selenium/chromedriver). Firefox is used as a fallback if Chrome is absent:
   - Gentoo: `emerge www-client/google-chrome` (or `www-client/chromium`)
   - Debian/Ubuntu: `apt install chromium` (or install `google-chrome-stable`)
@@ -170,8 +183,8 @@ The **installer** sets up the virtual environment, dependencies, optional GPU ba
    ./install.sh
    ```
    Follow the prompts: it first asks **Full** vs **Nostr-only** (relay + Nostr web client +
-   Blossom, *no AI* — light, no GPU). For Full it then detects your GPU, lets you choose LLM
-   backend (Ollama, llama-cpp, etc.) and native diffusers image generation, creates the venv,
+   Blossom, *no AI* — light, no GPU). For Full it then detects your GPU, sets up the native
+   **llama-cpp** LLM backend and native diffusers image generation, creates the venv,
    installs Python deps, and optionally sets up a systemd service.
 
 3. **Start the server** (if not using systemd):
@@ -216,8 +229,8 @@ The **installer** sets up the virtual environment, dependencies, optional GPU ba
 ## Configuration
 
 - Copy **`.env.example`** to **`.env`** and adjust (optional).
-- First run creates a **SQLite** database; use the **web UI** and **Admin** panel to configure:
-  - LLM backend (Ollama, llama-cpp, IPEX) and model
+- Everything else is configured from the **web UI** and **Admin** panel — settings, accounts and API keys are stored as **encrypted Nostr events on the built-in relay** (PostgreSQL-backed), not a local config DB:
+  - LLM model (native llama-cpp backend; IPEX on Intel Arc)
   - Image generation (native diffusers model)
   - TTS/STT, email, plugins
 - See **`docs/`** for detailed setup (IPEX, nginx, etc.).
