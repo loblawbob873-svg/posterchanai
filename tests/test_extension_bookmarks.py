@@ -78,7 +78,10 @@ def test_a_mapped_bookmark_is_left_alone():
       const remote = [{id:'s1', title:'T', url:'https://a.example/', folder:'', _at:5}];
       out(P.planUnion(local, remote, {s1:'b1'}));
     """)
-    assert got == {"publish": [], "create": [], "link": [], "remove": [], "skipRemoved": 0}
+    # `superseded` joined the plan when sync ids became URL-derived: it lists duplicate EVENTS for a
+    # URL, which older builds could create and which are dropped rather than acted on.
+    assert got == {"publish": [], "create": [], "link": [], "remove": [], "superseded": [],
+                   "skipRemoved": 0}
 
 
 def test_only_web_urls_sync():
@@ -168,15 +171,41 @@ def test_the_same_url_in_two_containers_is_two_bookmarks():
     assert got["same"] is False, "a toolbar bookmark and an 'other' one collided in the match key"
 
 
-def test_a_union_pairs_only_within_the_same_container():
+def test_the_same_url_on_two_browsers_is_ONE_bookmark():
+    """SUPERSEDED, and this is the duplication between two browsers.
+
+    This used to assert that a toolbar copy and an "other" copy of one URL were different bookmarks,
+    so a union created the missing one. That is what two browsers ALWAYS look like: a link on Chrome's
+    toolbar lives in Firefox's Bookmarks Menu, which has no Chrome equivalent at all. Each browser
+    therefore created the other's copy and published its own — two copies everywhere, from one
+    bookmark, with nobody having done anything wrong.
+
+    Identity is the URL now. Place is data about a bookmark, not what makes it that bookmark; it only
+    disambiguates between several local copies of the same URL. And a link across a placement
+    difference does NOT move anything: re-filing somebody's toolbar because another machine keeps it
+    elsewhere is an opinion, not a sync."""
     got = run("""
-      const local  = [{id:'b1', title:'T', url:'https://a.example/', folder:'', root:'other'}];
-      const remote = [{id:'s1', title:'T', url:'https://a.example/', folder:'', root:'toolbar', _at:5}];
+      const local  = [{id:'b1', title:'News', url:'https://news.example/', folder:'', root:'menu'}];
+      const remote = [{id:'s1', title:'News', url:'https://news.example/', folder:'', root:'toolbar', _at:5}];
       out(P.planUnion(local, remote, {}));
     """)
-    assert [c["id"] for c in got["create"]] == ["s1"], \
-        "the toolbar copy should be created; it is not the same bookmark as the one in 'other'"
-    assert [p["id"] for p in got["publish"]] == ["b1"]
+    assert got["create"] == [], "the same URL was created a second time because it is filed elsewhere"
+    assert got["publish"] == [], "…and published again, so the duplicate spreads"
+    assert got["link"] == [{"syncId": "s1", "browserId": "b1"}], "the two copies must be linked"
+
+
+def test_the_same_url_filed_twice_still_disambiguates_by_place():
+    """Identity being the URL must not merge two copies somebody keeps on purpose: with several
+    candidates, the one already in the same spot wins."""
+    got = run("""
+      const local  = [{id:'b1', title:'N', url:'https://news.example/', folder:'', root:'menu'},
+                      {id:'b2', title:'N', url:'https://news.example/', folder:'', root:'toolbar'}];
+      const remote = [{id:'s1', title:'N', url:'https://news.example/', folder:'', root:'toolbar', _at:5}];
+      out(P.planUnion(local, remote, {}));
+    """)
+    assert got["link"] == [{"syncId": "s1", "browserId": "b2"}], \
+        "the toolbar copy should claim the toolbar item, not the menu one"
+    assert [p["id"] for p in got["publish"]] == ["b1"], "the other copy is still its own bookmark"
 
 
 def test_publishing_waits_for_a_relay_socket():

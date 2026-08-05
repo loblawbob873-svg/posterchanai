@@ -1,0 +1,221 @@
+/* Two browsers, one relay — the situation every bookmark-sync bug has actually been in.
+ *
+ * Every earlier test drove ONE engine. The failures were all in the interaction between two: a
+ * bookmark on Chrome's toolbar lives in Firefox's Bookmarks Menu, a delete on one has to reach the
+ * other, and merging repeatedly must not grow anything. None of that is visible with a single engine
+ * and a hand-written list of "remote" items, which is why it kept reaching a real browser instead.
+ *
+ * The module keeps its state in module scope, so two engines cannot coexist in one context. Each
+ * browser therefore gets its OWN vm context with its own copy of bookmarks.js — genuinely
+ * independent maps, items and listeners — and they exchange events through a shared relay object,
+ * exactly as they do through a real one (newest created_at wins, empty content is a tombstone).
+ *
+ * Usage: node two_browser_sim.js   → prints one JSON line per scenario, non-zero exit on failure.
+ */
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+const SRC = fs.readFileSync(path.join(__dirname, '..', '..', 'extension', 'bookmarks.js'), 'utf8');
+const tick = () => new Promise(r => setTimeout(r, 0));
+
+/* A shared relay: syncId -> the latest event. Publishing replaces; every browser reads them all. */
+function makeRelay() {
+  const events = new Map();
+  let clock = 1000;
+  return {
+    events,
+    publish(syncId, item) {
+      clock += 1;
+      events.set(syncId, { created_at: clock, content: item === null ? '' : JSON.stringify(item) });
+      return true;
+    },
+    all() { return [...events.entries()]; },
+  };
+}
+
+/* One browser: its own bookmark tree, its own storage, its own copy of the engine. */
+function makeBrowser(name, relay, rootDefs) {
+  const nodes = { r: { id: 'r', children: [] } };
+  for (const [id, title] of rootDefs) {
+    nodes[id] = { id, title, parentId: 'r', children: [] };
+    nodes.r.children.push(id);
+  }
+  let seq = 0;
+  const mk = (parentId, title, url) => {
+    const n = { id: `${name}${++seq}`, title, url, parentId, children: [] };
+    nodes[n.id] = n; nodes[parentId].children.push(n.id); return n;
+  };
+  const hydrate = (id) => Object.assign({}, nodes[id],
+    { children: (nodes[id].children || []).map(hydrate) });
+
+  const store = {};
+  const listeners = { onCreated: [], onChanged: [], onMoved: [], onRemoved: [] };
+  const reg = (k) => ({ addListener: (fn) => listeners[k].push(fn) });
+  const B = {
+    storage: { local: {
+      get: async (keys) => { const out = {}; for (const k of [].concat(keys)) if (k in store) out[k] = store[k]; return out; },
+      set: async (o) => { Object.assign(store, o); },
+    } },
+    bookmarks: {
+      onCreated: reg('onCreated'), onChanged: reg('onChanged'),
+      onMoved: reg('onMoved'), onRemoved: reg('onRemoved'),
+      getTree: async () => { await tick(); return [hydrate('r')]; },
+      getChildren: async (id) => { await tick(); return (nodes[id].children || []).map(c => nodes[c]); },
+      get: async (id) => { await tick(); return nodes[id] ? [nodes[id]] : []; },
+      create: async (o) => { await tick(); return mk(o.parentId, o.title, o.url); },
+      update: async (id, o) => { await tick(); Object.assign(nodes[id], o); },
+      move: async (id, o) => {
+        await tick(); const n = nodes[id];
+        nodes[n.parentId].children = nodes[n.parentId].children.filter(c => c !== id);
+        n.parentId = o.parentId; nodes[o.parentId].children.push(id);
+      },
+      remove: async (id) => {
+        await tick(); const n = nodes[id];
+        if (!n) return;
+        nodes[n.parentId].children = nodes[n.parentId].children.filter(c => c !== id);
+        delete nodes[id];
+      },
+    },
+  };
+
+  // Its own module instance, in its own context.
+  const ctx = vm.createContext({ crypto: require('crypto').webcrypto, setTimeout, clearTimeout,
+                                 console, TextEncoder, TextDecoder });   // present in a worker and an event page
+  ctx.self = ctx;
+  vm.runInContext(SRC, ctx);
+  const engine = ctx.PCBookmarks.engine;
+
+  return {
+    name, nodes, mk, engine, store,
+    async init() {
+      await engine.init({
+        B,
+        open: async (ct) => JSON.parse(ct),
+        publish: async (syncId, item) => relay.publish(syncId, item),
+        isFull: () => true,
+        why: () => '',
+      });
+      await engine.setEnabled(true);
+    },
+    /* Read everything off the relay, the way the subscription does. */
+    async pull() { for (const [id, ev] of relay.all()) await engine.absorb(id, ev); },
+    async merge(opts) { return engine.union(opts); },
+    urls() { return Object.values(nodes).filter(n => n.url).map(n => n.url).sort(); },
+    folders(title) { return Object.values(nodes).filter(n => !n.url && n.title === title).length; },
+    /* Delete straight out of the tree, i.e. what a user does when nothing is listening. */
+    rip(url) {
+      const n = Object.values(nodes).find(x => x.url === url);
+      if (!n) return;
+      nodes[n.parentId].children = nodes[n.parentId].children.filter(c => c !== n.id);
+      delete nodes[n.id];
+    },
+  };
+}
+
+const CHROME_ROOTS = [['1', 'Bookmarks bar'], ['2', 'Other bookmarks']];
+const FIREFOX_ROOTS = [['toolbar_____', 'Bookmarks Toolbar'], ['menu________', 'Bookmarks Menu'],
+                       ['unfiled_____', 'Other Bookmarks']];
+
+const results = [];
+function check(name, ok, detail) {
+  results.push({ name, ok: !!ok, detail });
+  if (!ok) process.exitCode = 1;
+}
+
+/* A full round: both browsers read everything, then merge, twice each, so that anything one of them
+ * publishes is seen by the other and the pair reaches a fixed point. */
+async function settle(a, b, opts) {
+  for (let i = 0; i < 2; i++) {
+    await a.pull(); await a.merge(opts);
+    await b.pull(); await b.merge(opts);
+  }
+}
+
+(async () => {
+  // ---- 1. The same URL, filed differently on each browser --------------------------------------
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS), b = makeBrowser('f', relay, FIREFOX_ROOTS);
+    a.mk('1', 'News', 'https://news.example/');           // Chrome: on the toolbar
+    b.mk('menu________', 'News', 'https://news.example/'); // Firefox: in the menu
+    await a.init(); await b.init();
+    await settle(a, b);
+    check('same url filed differently stays one bookmark each',
+      a.urls().length === 1 && b.urls().length === 1, { chrome: a.urls(), firefox: b.urls() });
+  }
+
+  // ---- 2. Adding on one appears on the other ----------------------------------------------------
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS), b = makeBrowser('f', relay, FIREFOX_ROOTS);
+    a.mk('1', 'Only here', 'https://new.example/');
+    await a.init(); await b.init();
+    await settle(a, b);
+    check('an add propagates', b.urls().includes('https://new.example/'), { firefox: b.urls() });
+  }
+
+  // ---- 3. Merging repeatedly changes nothing (the duplication report) ---------------------------
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS), b = makeBrowser('f', relay, FIREFOX_ROOTS);
+    a.mk('1', 'A', 'https://a.example/');
+    a.mk('1', 'B', 'https://b.example/');
+    b.mk('menu________', 'C', 'https://c.example/');
+    await a.init(); await b.init();
+    await settle(a, b);
+    const first = [a.urls().length, b.urls().length];
+    for (let i = 0; i < 4; i++) await settle(a, b);       // eight more merges
+    check('merging repeatedly is idempotent',
+      a.urls().length === first[0] && b.urls().length === first[1] && first[0] === 3,
+      { after1: first, after9: [a.urls().length, b.urls().length] });
+  }
+
+  // ---- 4. A folder full of bookmarks makes ONE folder ------------------------------------------
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS), b = makeBrowser('f', relay, FIREFOX_ROOTS);
+    const f = a.mk('1', 'Work');
+    for (let i = 0; i < 12; i++) a.mk(f.id, 'W' + i, `https://w${i}.example/`);
+    await a.init(); await b.init();
+    await settle(a, b);
+    check('a folder arrives once, not once per bookmark',
+      b.folders('Work') === 1 && b.urls().length === 12, { folders: b.folders('Work'), urls: b.urls().length });
+  }
+
+  // ---- 5. Deleting on one removes it on the other ----------------------------------------------
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS), b = makeBrowser('f', relay, FIREFOX_ROOTS);
+    a.mk('1', 'Keep', 'https://keep.example/');
+    a.mk('1', 'Gone', 'https://gone.example/');
+    await a.init(); await b.init();
+    await settle(a, b);
+    a.rip('https://gone.example/');                       // deleted with nothing listening
+    await settle(a, b);
+    check('a delete propagates instead of coming back',
+      !a.urls().includes('https://gone.example/') && !b.urls().includes('https://gone.example/') &&
+      b.urls().includes('https://keep.example/'), { chrome: a.urls(), firefox: b.urls() });
+  }
+
+  // ---- 6. Wholesale loss is not obeyed without confirmation ------------------------------------
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS), b = makeBrowser('f', relay, FIREFOX_ROOTS);
+    for (let i = 0; i < 10; i++) a.mk('1', 'X' + i, `https://x${i}.example/`);
+    await a.init(); await b.init();
+    await settle(a, b);
+    for (const u of a.urls().slice()) a.rip(u);           // the whole tree disappears here
+    await a.pull(); const stopped = await a.merge();
+    await b.pull(); await b.merge();
+    check('a wholesale disappearance asks before deleting everywhere',
+      stopped.pendingRemovals === 10 && b.urls().length === 10,
+      { pending: stopped.pendingRemovals, firefox: b.urls().length });
+    await a.merge({ confirmRemovals: true });             // the user says they meant it
+    await settle(a, b, { confirmRemovals: true });
+    check('…and obeys once confirmed', b.urls().length === 0, { firefox: b.urls().length });
+  }
+
+  console.log(JSON.stringify(results, null, 1));
+})();

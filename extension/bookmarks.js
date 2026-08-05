@@ -49,9 +49,6 @@
     return parts.filter(Boolean).join('/');
   }
 
-  /* What identifies "the same bookmark" across browsers when the mapping is gone: its URL inside its
-   * folder. Not the title — a title is renamed far more often than a bookmark is re-filed, and
-   * matching on it re-creates duplicates every time someone tidies one up. */
   /* WHICH top-level container a bookmark lives in. The toolbar is the one people notice: a bookmark
    * put on the toolbar in one browser belongs on the toolbar in the other, and dumping everything into
    * "other bookmarks" quietly loses the arrangement that made it worth syncing.
@@ -130,9 +127,11 @@
 
   function cleanFolder(path) { return placement({ folder: path }).folder; }
 
+  /* A bookmark's PLACE, as a comparable string. This is no longer identity — see planUnion, where the
+   * URL is — it only disambiguates between several local copies of the same URL: the one already in
+   * the same spot is preferred before any other unclaimed copy. Not the title, which gets renamed far
+   * more often than a bookmark is re-filed. */
   function matchKey(item) {
-    // The root is part of identity: the same URL on the toolbar and in "other bookmarks" is two
-    // bookmarks, and merging them would silently move one of them.
     var pl = placement(item);
     return pl.root + '\n' + pl.folder + '\n' + normUrl(item.url);
   }
@@ -175,13 +174,58 @@
     map = map || {};
     var byBrowserId = {};
     local.forEach(function (l) { byBrowserId[l.id] = l; });
+    /* Which remote id OWNS each URL, decided before anything is claimed.
+     *
+     * On a first enable each browser publishes its own copy of a bookmark BEFORE it has seen the
+     * other's — there is nothing to match against yet — so the relay ends up holding two ids for one
+     * URL. Every browser then creates the copy it is missing and both end up with two, permanently.
+     *
+     * One URL, one winner, chosen by the SMALLEST sync id: every browser makes that choice
+     * independently and reaches the same answer without coordinating, which is the only way this
+     * converges. The losers are computed HERE, before claims are assigned, because a local bookmark
+     * still mapped to a losing id must be free to be re-linked to the winner. Working that out after
+     * the fact made it worse, not better: the winner found the local copy "claimed", created a
+     * THIRD, and dropping the loser's mapping then republished the original under a new id.
+     *
+     * Nothing is deleted for a superseded id. The bookmark is real; only the extra event is not. */
+    var bestByUrl = {};
+    remote.forEach(function (r) {
+      if (r.removed) return;
+      var k = normUrl(r.url);
+      var cur = bestByUrl[k];
+      if (!cur || String(r.id) < String(cur.id)) bestByUrl[k] = r;
+    });
+    var loser = {};
+    remote.forEach(function (r) {
+      if (r.removed) return;
+      var win = bestByUrl[normUrl(r.url)];
+      if (win && win.id !== r.id) loser[r.id] = true;
+    });
+
     var claimed = {};                                   // browser ids already accounted for
-    Object.keys(map).forEach(function (sid) { claimed[map[sid]] = sid; });
+    Object.keys(map).forEach(function (sid) {
+      if (!loser[sid]) claimed[map[sid]] = sid;         // a losing id holds no claim on anything
+    });
 
-    var localByKey = {};
-    local.forEach(function (l) { localByKey[matchKey(l)] = l; });
+    /* IDENTITY IS THE URL. Location is data ABOUT a bookmark, not what makes it that bookmark, and
+     * two browsers almost never agree on it: a link on Chrome's toolbar lives in Firefox's Bookmarks
+     * Menu, which has no Chrome equivalent at all. Keying identity on root+folder+url meant those two
+     * copies did not match, so each browser created the other's and published its own — two copies
+     * everywhere, from one bookmark, with nobody having done anything wrong. That is the duplication
+     * between two browsers, and no amount of care further down could have fixed it.
+     *
+     * Place still disambiguates when it has to: the same URL filed twice on purpose gives several
+     * candidates, and the one in the matching spot is preferred before falling back to any unclaimed
+     * copy. And a link made across a placement difference does NOT move anything — it records that
+     * these are the same bookmark and leaves each browser's arrangement alone. Re-filing somebody's
+     * toolbar because another machine keeps it elsewhere is not a sync, it is an opinion. */
+    var byUrl = {};
+    local.forEach(function (l) {
+      var k = normUrl(l.url);
+      (byUrl[k] = byUrl[k] || []).push(l);
+    });
 
-    var out = { publish: [], create: [], link: [], remove: [], skipRemoved: 0 };
+    var out = { publish: [], create: [], link: [], remove: [], superseded: [], skipRemoved: 0 };
 
     /* GONE FROM HERE = DELETED HERE. The mapping is what this browser believed the shared state was
      * the last time it looked, so a sync id whose local bookmark has vanished is a deletion that
@@ -194,13 +238,17 @@
     var localIds = {};
     local.forEach(function (l) { localIds[l.id] = true; });
     Object.keys(map).forEach(function (sid) {
-      if (!localIds[map[sid]]) out.remove.push(sid);
+      // A superseded id is dropped, not deleted: its bookmark is still here under the winner.
+      if (!loser[sid] && !localIds[map[sid]]) out.remove.push(sid);
     });
 
     var removing = {};
     out.remove.forEach(function (sid) { removing[sid] = true; });
 
+    out.superseded = Object.keys(loser);
+
     remote.forEach(function (r) {
+      if (loser[r.id]) return;                           // a duplicate event for a URL already handled
       if (r.removed) { out.skipRemoved++; return; }      // an existing tombstone is not ours to apply
       /* Deleted here a moment ago — do NOT recreate it. Without this an item lands in BOTH lists:
        * its mapping exists but its local bookmark is gone, so the create pass sees "remote item I do
@@ -209,7 +257,9 @@
       if (removing[r.id]) return;
       var mapped = map[r.id] && byBrowserId[map[r.id]];
       if (mapped) return;                                // already present and paired
-      var hit = localByKey[matchKey(r)];
+      var cands = (byUrl[normUrl(r.url)] || []).filter(function (c) { return !claimed[c.id]; });
+      var exact = cands.filter(function (c) { return matchKey(c) === matchKey(r); })[0];
+      var hit = exact || cands[0];
       if (hit) { out.link.push({ syncId: r.id, browserId: hit.id }); claimed[hit.id] = r.id; return; }
       out.create.push(r);                                // this browser has never seen it
     });
@@ -478,7 +528,7 @@
     if (!node || !P.isSyncable(node)) return;
     var byId = {}, tree = await api.B.bookmarks.getTree();
     (function walk(ns) { (ns || []).forEach(function (n) { byId[n.id] = n; if (n.children) walk(n.children); }); })(tree);
-    var syncId = rmap[browserId] || newId();
+    var syncId = rmap[browserId] || await idFor(node.url);
     var item = { title: node.title || '', url: node.url,
                  folder: P.pathOf(byId, node), root: P.rootOf(byId, node) };
     remember(syncId, browserId);                       // identity first, and permanently
@@ -525,6 +575,9 @@
     });
     var plan = P.planUnion(local, remote, map);
     plan.link.forEach(function (l) { remember(l.syncId, l.browserId); });
+    // A superseded id is a duplicate EVENT, not a duplicate bookmark: drop the mapping so this
+    // browser tracks one id per URL, and leave the bookmark alone — it belongs to the winner now.
+    (plan.superseded || []).forEach(function (sid) { if (map[sid]) forget(sid); });
 
     /* A deletion here becomes a tombstone there — unless it looks like a RESTORE rather than a
      * decision. A profile reset, a backup restore or a re-paired browser all present as "everything I
@@ -549,7 +602,7 @@
     for (var i = 0; i < plan.create.length; i++) await applyUpsert(plan.create[i].id, plan.create[i]);
     var sent = plan.publish.length;
     for (var j = 0; j < plan.publish.length; j++) {
-      var l = plan.publish[j], sid = rmap[l.id] || newId();
+      var l = plan.publish[j], sid = rmap[l.id] || await idFor(l.url);
       remember(sid, l.id);
       var body = { title: l.title, url: l.url, folder: l.folder, root: l.root };
       var ok = await publishOne(sid, body);
@@ -563,9 +616,25 @@
              removed: pendingRemovals ? 0 : removals.length, pendingRemovals: pendingRemovals };
   }
 
-  function newId() {
-    var b = crypto.getRandomValues(new Uint8Array(16)), s = '';
-    for (var i = 0; i < b.length; i++) s += b[i].toString(16).padStart(2, '0');
+  /* THE SYNC ID IS DERIVED FROM THE URL, and that is the whole answer to duplication.
+   *
+   * It used to be random. Two browsers enabling sync both publish their copy of the same bookmark
+   * before either has seen the other's — there is nothing to match against yet — so the relay ended
+   * up holding TWO events for one bookmark, and every browser created the copy it was missing. No
+   * amount of matching afterwards fixes that: the duplicate events already exist, and three separate
+   * attempts to reconcile them after the fact made it worse (two copies, then three, then eight).
+   *
+   * A derived id means both browsers compute the SAME `d` tag for the same bookmark without ever
+   * coordinating, so the relay — where these are replaceable events — keeps exactly one. The
+   * duplicate cannot be created, rather than being detected and cleaned up.
+   *
+   * The consequence is deliberate: one URL is one synced bookmark. Changing a bookmark's URL is an
+   * add plus a delete, which is what it is anyway. */
+  async function idFor(url) {
+    var data = new TextEncoder().encode('pcai-bm:' + P.normUrl(url));
+    var buf = await crypto.subtle.digest('SHA-256', data);
+    var b = new Uint8Array(buf), s = '';
+    for (var i = 0; i < 16; i++) s += b[i].toString(16).padStart(2, '0');
     return s;
   }
 
