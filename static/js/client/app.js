@@ -2052,7 +2052,14 @@
       // referrerpolicy overrides the page's <meta name="referrer" content="no-referrer"> for THIS iframe
       // only: YouTube's embed player rejects a referrer-less embed on play (error 153), so send it our
       // origin. The no-referrer default stays for image CDNs. origin= param echoes it for the embed check.
-      f.innerHTML=`<iframe src="https://www.youtube.com/embed/${yt.dataset.yt}?autoplay=1&origin=${encodeURIComponent(location.origin)}" allow="autoplay; encrypted-media; fullscreen" allowfullscreen loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+      /* `origin` ONLY from a real https web origin. YouTube validates it and refuses anything else
+       * with "Video player configuration error" — Error 153 — which is every case this app actually
+       * runs in besides the plain website: `app://posterchan` in the desktop build, `https://localhost`
+       * in the APK, and `http://<hidden-service>.onion` over Tor. Omitting the parameter is allowed
+       * and plays fine; sending a wrong one is fatal. */
+      const _yorigin = (location.protocol === 'https:' && !/\.onion$/i.test(location.hostname))
+        ? '&origin=' + encodeURIComponent(location.origin) : '';
+      f.innerHTML=`<iframe src="https://www.youtube.com/embed/${yt.dataset.yt}?autoplay=1${_yorigin}" allow="autoplay; encrypted-media; fullscreen" allowfullscreen loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
       yt.replaceWith(f);
     }, true);
     // Data-saver: a "tap to load" placeholder → swap in the real image/video on click (nothing

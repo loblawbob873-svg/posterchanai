@@ -181,10 +181,32 @@
     var localByKey = {};
     local.forEach(function (l) { localByKey[matchKey(l)] = l; });
 
-    var out = { publish: [], create: [], link: [], skipRemoved: 0 };
+    var out = { publish: [], create: [], link: [], remove: [], skipRemoved: 0 };
+
+    /* GONE FROM HERE = DELETED HERE. The mapping is what this browser believed the shared state was
+     * the last time it looked, so a sync id whose local bookmark has vanished is a deletion that
+     * happened while nothing was listening — with sync off, or the browser closed, or before the
+     * listeners existed.
+     *
+     * Without this a union can only ever ADD, so deleting locally and merging RESTORES everything
+     * from the relay: "I delete everything on Firefox, click merge, and Firefox gets them back".
+     * That is not a sync, it is a one-way download with extra steps. */
+    var localIds = {};
+    local.forEach(function (l) { localIds[l.id] = true; });
+    Object.keys(map).forEach(function (sid) {
+      if (!localIds[map[sid]]) out.remove.push(sid);
+    });
+
+    var removing = {};
+    out.remove.forEach(function (sid) { removing[sid] = true; });
 
     remote.forEach(function (r) {
-      if (r.removed) { out.skipRemoved++; return; }      // a union never deletes — see the header
+      if (r.removed) { out.skipRemoved++; return; }      // an existing tombstone is not ours to apply
+      /* Deleted here a moment ago — do NOT recreate it. Without this an item lands in BOTH lists:
+       * its mapping exists but its local bookmark is gone, so the create pass sees "remote item I do
+       * not have" and puts it straight back. The merge then deletes and restores the same bookmark,
+       * which is indistinguishable from the deletion never having worked. */
+      if (removing[r.id]) return;
       var mapped = map[r.id] && byBrowserId[map[r.id]];
       if (mapped) return;                                // already present and paired
       var hit = localByKey[matchKey(r)];
@@ -291,7 +313,9 @@
     var cur = items[id];
     if (cur && (cur._at || 0) > (ev.created_at || 0)) return;
     if (!ev.content) {
-      items[id] = { removed: true, _at: ev.created_at || 0 };
+      // Keep the URL we last knew for this id: applyRemoval checks the local bookmark still MATCHES
+      // it before removing anything. Dropping it here would leave nothing to verify against.
+      items[id] = { removed: true, _at: ev.created_at || 0, url: (cur && cur.url) || '' };
       saveSoon();
       if (on) await applyRemoval(id);
       return;
@@ -304,23 +328,37 @@
     if (on) await applyUpsert(id, obj);
   }
 
-  /* DELETION IS DISABLED. This function used to remove the local bookmark a tombstone named.
+  /* Remove the local bookmark a tombstone names — ONLY when it is still the same bookmark.
    *
-   * It cost somebody their Firefox bookmarks, and the path is worth stating exactly, because the
-   * guard that was supposed to bound it ("only remove what THIS browser previously synced") was
-   * intact and still not enough. An earlier bug republished the whole tree under fresh sync ids, so
-   * every browser ended up mapping ITS OWN real bookmarks to those new ids. Cleaning up the
-   * resulting duplicates on one machine then published tombstones for ids that, on the other
-   * machine, pointed at the originals. Every deletion was "legitimate" by the rule; the rule was
-   * reasoning about identity that a previous bug had already corrupted.
+   * This cost somebody their Firefox tree once. The guard then was "only remove what THIS browser
+   * previously synced", which was intact and not enough: an earlier bug republished everything under
+   * fresh sync ids, so every browser mapped its OWN real bookmarks onto those ids, and cleaning up
+   * the duplicates on one machine published tombstones that were "legitimate" for bookmarks they had
+   * never been about. The rule reasoned about an identity a previous bug had already corrupted.
    *
-   * So the feature is ADDITIVE ONLY: a tombstone is recorded so newest-wins still works and the
-   * bookmark is not re-created, and nothing is removed from anyone's browser. A sync that can only
-   * add cannot destroy an afternoon's work. Re-enabling this needs an identity model that cannot be
-   * poisoned by a republish — not a smaller version of the same trust.
-   */
+   * So identity is no longer taken on trust. The URL we last held for this id must still match the
+   * URL of the bookmark in the tree; if it does not, the mapping is stale or wrong and the answer is
+   * to forget it, never to delete. A confused id can then cost a link between two records — which
+   * re-links on the next merge — instead of somebody's bookmarks.
+   *
+   * (The republish that poisoned the ids came from a union running before the engine had loaded its
+   * state. That is now refused outright — see `loaded` — which is what makes this safe to turn back
+   * on rather than merely smaller.) */
   async function applyRemoval(id) {
-    forget(id);              // stop tracking it here; do NOT touch the browser's copy
+    var bid = map[id];
+    if (!bid) return;                       // never synced here — not ours to touch
+    var knew = (items[id] && items[id].url) || '';
+    var node = null;
+    try { node = (await api.B.bookmarks.get(bid))[0]; } catch (_) {}
+    if (!node) { forget(id); return; }      // already gone
+    if (!knew || P.normUrl(node.url) !== P.normUrl(knew)) {
+      forget(id);                           // not the bookmark this tombstone is about
+      return;
+    }
+    writing.add(bid);
+    try { await api.B.bookmarks.remove(bid); } catch (_) {}
+    setTimeout(function () { writing.delete(bid); }, 2000);
+    forget(id);
   }
 
   async function applyUpsert(id, obj) {
@@ -452,15 +490,17 @@
     if (ok) { items[syncId] = Object.assign({}, item, { _at: Math.floor(Date.now() / 1000) }); saveSoon(); }
   }
 
-  /* Removing a bookmark here tells nobody. See applyRemoval: while deletion is disabled, publishing
-   * a tombstone would be asking OTHER installs — including ones still running an older build that
-   * does act on them — to delete something. The mapping is dropped so this browser stops tracking
-   * it, and the copy on every other device stays where its owner put it. */
+  /* A bookmark removed here becomes a tombstone, so the other devices drop it too — carrying the URL
+   * it had, which is what lets the receiving side check it is removing the right thing. */
   async function onLocalRemove(browserId) {
     if (!on || writing.has(browserId)) return;
     var syncId = rmap[browserId];
-    if (!syncId) return;
+    if (!syncId) return;                            // never synced — nothing to tell anyone
+    var knew = items[syncId] || {};
+    items[syncId] = { removed: true, _at: Math.floor(Date.now() / 1000), url: knew.url || '' };
+    saveSoon();
     forget(syncId);
+    await api.publish(syncId, null);                // null = tombstone
   }
 
   function listen() {
@@ -474,7 +514,10 @@
   }
 
   /* The first sync, and any manual rebuild: a UNION. Deletes nothing, in either direction. */
-  async function union() {
+  var pendingRemovals = 0;
+
+  async function union(opts) {
+    opts = opts || {};
     if (!api || !loaded) throw new Error('bookmark sync is not ready yet — reopen this in a moment');
     var local = await snapshot();
     var remote = Object.keys(items).map(function (id) {
@@ -482,6 +525,27 @@
     });
     var plan = P.planUnion(local, remote, map);
     plan.link.forEach(function (l) { remember(l.syncId, l.browserId); });
+
+    /* A deletion here becomes a tombstone there — unless it looks like a RESTORE rather than a
+     * decision. A profile reset, a backup restore or a re-paired browser all present as "everything I
+     * had mapped is gone", and publishing that would delete the same bookmarks on every other device:
+     * the failure this feature has already caused once. Past the threshold it refuses and REPORTS,
+     * and the popup offers to go ahead — so deleting everything on purpose still works, deliberately.
+     */
+    var removals = plan.remove.slice();
+    var bulk = removals.length > Math.max(5, Math.round(local.length * 0.5));
+    if (bulk && !opts.confirmRemovals) {
+      pendingRemovals = removals.length;
+    } else {
+      pendingRemovals = 0;
+      for (var d = 0; d < removals.length; d++) {
+        var sid = removals[d], knew = items[sid] || {};
+        items[sid] = { removed: true, _at: Math.floor(Date.now() / 1000), url: knew.url || '' };
+        forget(sid);
+        await publishOne(sid, null);
+      }
+      saveSoon();
+    }
     for (var i = 0; i < plan.create.length; i++) await applyUpsert(plan.create[i].id, plan.create[i]);
     var sent = plan.publish.length;
     for (var j = 0; j < plan.publish.length; j++) {
@@ -495,7 +559,8 @@
     // When there was something to send and none of it went, say WHY rather than reporting a bare 0.
     var blocked = (plan.publish.length && !sent && api.why) ? api.why() : '';
     return { created: plan.create.length, published: sent, wanted: plan.publish.length,
-             linked: plan.link.length, ignoredTombstones: plan.skipRemoved, blocked: blocked };
+             linked: plan.link.length, ignoredTombstones: plan.skipRemoved, blocked: blocked,
+             removed: pendingRemovals ? 0 : removals.length, pendingRemovals: pendingRemovals };
   }
 
   function newId() {

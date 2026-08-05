@@ -701,7 +701,9 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
         }
         case 'bm-sync': {
           if(!(BM && BM.engine) || !BM.engine.enabled()) return reply({ ok:false, error:'bookmark sync is off' });
-          const r = await BM.engine.union();
+          // confirmRemovals: the user answered the "this looks like a restore" question with "no, I
+          // meant it". Nothing else may bypass that check.
+          const r = await BM.engine.union({ confirmRemovals: !!msg.confirmRemovals });
           return reply({ ok:true, ...r });
         }
         /* EVERY login, for searching. The popup used to hold only the matches for the current tab

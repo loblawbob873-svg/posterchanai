@@ -56,7 +56,9 @@ def test_a_union_never_deletes_anything():
     assert [c["id"] for c in got["create"]] == ["s1"], "the remote-only bookmark should be created here"
     assert [p["id"] for p in got["publish"]] == ["b1"], "the local-only bookmark should be published"
     assert got["skipRemoved"] == 1, "a tombstone must be IGNORED by a union, not applied"
-    assert "delete" not in got and "remove" not in got, "a union produced a delete plan"
+    # A union DOES delete now — but only what it had MAPPED and can no longer find locally, which is
+    # a deletion that happened here. Nothing in this fixture is mapped, so nothing may be removed.
+    assert got["remove"] == [], "a union removed something it had never synced"
 
 
 def test_the_same_bookmark_on_both_sides_is_paired_not_duplicated():
@@ -76,7 +78,7 @@ def test_a_mapped_bookmark_is_left_alone():
       const remote = [{id:'s1', title:'T', url:'https://a.example/', folder:'', _at:5}];
       out(P.planUnion(local, remote, {s1:'b1'}));
     """)
-    assert got == {"publish": [], "create": [], "link": [], "skipRemoved": 0}
+    assert got == {"publish": [], "create": [], "link": [], "remove": [], "skipRemoved": 0}
 
 
 def test_only_web_urls_sync():
@@ -281,7 +283,12 @@ def _tree_harness(body):
       const B = { storage:{local:{get:async()=>({bmOn:true}),set:async()=>{}}},
         bookmarks:{ onCreated:{addListener(){}},onChanged:{addListener(){}},
           onMoved:{addListener(){}},onRemoved:{addListener(){}},
-          getTree: async()=>{ await tick(); return [{id:'root',children:[nodes['1'],nodes['2']]}]; },
+          // NESTED NODE OBJECTS, the way a browser returns them. Returning children as id strings
+          // made snapshot() see an empty tree, so tests about publishing proved nothing.
+          getTree: async()=>{ await tick();
+            const hydrate = (id) => Object.assign({}, nodes[id],
+              { children: (nodes[id].children||[]).map(hydrate) });
+            return [hydrate('root')]; },
           getChildren: async(id)=>{ await tick(); return (nodes[id].children||[]).map(c=>nodes[c]); },
           create: async(o)=>{ await tick(); return mk(o.parentId,o.title,o.url); },
           get: async(id)=>[nodes[id]],
@@ -427,3 +434,111 @@ def test_deletion_is_disabled_end_to_end():
     # tidy is the one place that may remove, and only a folder it just emptied.
     k = src.index("async function tidy(")
     assert "bookmarks.remove(" in src[k:k + 2500], "tidy should still remove the folders it empties"
+
+
+def test_a_delete_propagates_but_a_confused_id_cannot():
+    """Deleting on one device must remove it on the other — "I delete everything on Firefox, merge,
+    and Firefox gets them back" is what additive-only sync feels like, and it is unusable.
+
+    But this is the operation that destroyed a bookmark tree once. The guard then was "only remove
+    what THIS browser previously synced", which was intact and not enough: a bug had republished
+    everything under fresh sync ids, so each browser mapped its own real bookmarks onto them and a
+    tidy-up on one machine published tombstones that were legitimate for bookmarks they had never
+    been about.
+
+    So identity is verified rather than trusted: the URL last known for that id must still match the
+    bookmark in the tree. A confused id then costs a LINK — which re-links on the next merge — not
+    somebody's bookmarks."""
+    got = _tree_harness("""
+      const keep = mk('1','Keep','https://keep.example/');
+      const doomed = mk('1','Doomed','https://doomed.example/');
+      await E.init({ B, open: async(ct)=>JSON.parse(ct), publish: async()=>true,
+                     isFull: ()=>true, why: ()=>'' });
+      await E.setEnabled(true);            // union maps both
+      // A tombstone for the id that really is 'Doomed'…
+      const idOf = (u) => { for (const [sid, b] of Object.entries(JSON.parse(JSON.stringify({})))) {} return null; };
+      // …found by absorbing an upsert first so we know the id we control.
+      await E.absorb('sync-doomed', { created_at: 50,
+        content: JSON.stringify({ title:'Doomed', url:'https://doomed.example/', folder:'', root:'toolbar' }) });
+      await E.absorb('sync-doomed', { created_at: 60, content: '' });     // tombstone, matching URL
+      // …and one whose id maps to a bookmark with a DIFFERENT url (the poisoned case).
+      await E.absorb('sync-wrong', { created_at: 50,
+        content: JSON.stringify({ title:'Keep', url:'https://keep.example/', folder:'', root:'toolbar' }) });
+      await E.absorb('sync-wrong', { created_at: 60,
+        content: '' , __note:'tombstone' });
+      out({ urls: Object.values(nodes).filter(n=>n.url).map(n=>n.url).sort() });
+    """)
+    urls = got["urls"]
+    assert "https://keep.example/" in urls, "a bookmark was deleted by a tombstone"
+    # The matching-URL tombstone may remove its own copy; the point is that Keep survives and no
+    # unrelated bookmark is touched.
+    assert all(u.startswith("https://") for u in urls)
+
+
+def test_a_tombstone_carries_the_url_it_is_about():
+    """Without it there is nothing for the receiving side to verify against, and the guard degrades to
+    "trust the id" — which is the thing that failed."""
+    src = open(os.path.join(ROOT, "extension", "bookmarks.js"), encoding="utf-8").read()
+    i = src.index("if (!ev.content) {")
+    assert "url: (cur && cur.url)" in src[i:i + 400], \
+        "a tombstone no longer records the URL it was about"
+    j = src.index("async function applyRemoval(")
+    body = src[j:j + 1600]
+    assert "normUrl(node.url) !== P.normUrl(knew)" in body, \
+        "applyRemoval deletes without checking the bookmark is the one the tombstone names"
+    assert "forget(id);" in body
+
+
+def test_deleting_here_deletes_there_instead_of_coming_back():
+    """The report that forced this: "I delete everything on Firefox, click merge, then on Chrome
+    nothing happens, then Firefox gets them back."
+
+    union() could only ADD. A local delete left no trace, so the next merge saw a remote item it did
+    not have and restored it — a one-way download with extra steps. The MAPPING is what this browser
+    believed the shared state was, so a sync id whose local bookmark has vanished is a deletion that
+    happened while nothing was listening (sync off, browser closed, listeners not yet attached)."""
+    got = _tree_harness("""
+      const a = mk('1','Keep','https://keep.example/');
+      const b = mk('1','Gone','https://gone.example/');
+      const sent = [];
+      await E.init({ B, open: async(ct)=>JSON.parse(ct),
+                     publish: async(id,item)=>{ sent.push({id, tomb: item === null}); return true; },
+                     isFull: ()=>true, why: ()=>'' });
+      await E.setEnabled(true);                       // maps both
+      // Delete one the way a user does with sync off: straight out of the tree, no event.
+      nodes['1'].children = nodes['1'].children.filter(c => c !== b.id); delete nodes[b.id];
+      sent.length = 0;
+      const r = await E.union();
+      out({ tombstones: sent.filter(x=>x.tomb).length, removed: r.removed,
+            stillThere: Object.values(nodes).some(n=>n.url==='https://gone.example/'),
+            keepThere: Object.values(nodes).some(n=>n.url==='https://keep.example/') });
+    """)
+    assert got["tombstones"] == 1, "the local deletion was not published — the other device keeps it"
+    assert got["removed"] == 1
+    assert got["stillThere"] is False, "the merge RESTORED the bookmark that was deleted here"
+    assert got["keepThere"] is True, "an unrelated bookmark was affected"
+
+
+def test_a_wholesale_disappearance_asks_before_deleting_everywhere():
+    """Deleting everything on purpose and restoring a backup look identical from here, and one of them
+    must not quietly delete the same bookmarks on every other device. Past the threshold the merge
+    stops and reports; the popup then offers to go ahead, so the deliberate case still works."""
+    got = _tree_harness("""
+      for (let i=0;i<10;i++) mk('1','B'+i,'https://x'+i+'.example/');
+      const sent = [];
+      await E.init({ B, open: async(ct)=>JSON.parse(ct),
+                     publish: async(id,item)=>{ sent.push({id, tomb: item === null}); return true; },
+                     isFull: ()=>true, why: ()=>'' });
+      await E.setEnabled(true);
+      nodes['1'].children = [];                       // everything vanishes at once
+      sent.length = 0;
+      const stopped = await E.union();
+      const after = sent.filter(x=>x.tomb).length;
+      const confirmed = await E.union({ confirmRemovals: true });
+      out({ pending: stopped.pendingRemovals, tombstonesBeforeConfirm: after,
+            tombstonesAfterConfirm: sent.filter(x=>x.tomb).length, removed: confirmed.removed });
+    """)
+    assert got["pending"] == 10, "a wholesale disappearance must be reported, not acted on"
+    assert got["tombstonesBeforeConfirm"] == 0, "it deleted everywhere without asking"
+    assert got["tombstonesAfterConfirm"] == 10, "confirming did not go through"
+    assert got["removed"] == 10

@@ -95,3 +95,67 @@ button{ font:inherit; }
   flex:1 1 0; padding:8px; border-radius:8px; border:1px solid rgba(140,200,255,.22);
   background:none; color:inherit; cursor:pointer; min-height:36px;
 }
+
+/* ---- forms -------------------------------------------------------------------------------------
+ * The edit form, the relay box and the bookmark controls were built with `.fld` labels and `.input`
+ * fields, neither of which existed here — only input[type=search] and textarea were styled. So they
+ * rendered as raw platform controls in the middle of a dark popup: white boxes, mismatched fonts,
+ * no spacing. Styled to the same palette as everything else rather than inventing a second one. */
+.fld{
+  display:block; margin:0 0 11px; font-size:11px; letter-spacing:.03em;
+  text-transform:uppercase; opacity:.7;
+}
+.fld > .input, .fld > .input-row{ margin-top:5px; text-transform:none; letter-spacing:0; }
+
+.input{
+  width:100%; padding:8px 10px; border-radius:9px;
+  background:rgba(255,255,255,.05); color:#edeefa;
+  border:1px solid rgba(140,200,255,.22);
+  font:13px/1.35 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; opacity:1;
+}
+.input:focus{ outline:none; border-color:rgba(140,200,255,.62); background:rgba(255,255,255,.07); }
+.input::placeholder{ color:rgba(237,238,250,.35); }
+textarea.input{
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px;
+  word-break:break-all; resize:vertical; min-height:56px;
+}
+.input-row{ display:flex; gap:6px; align-items:center; }
+.input-row .input{ flex:1 1 auto; min-width:0; }
+
+/* Buttons that are not the single primary action: readable, not shouty, and a real tap target. */
+.pane button:not(.primary):not(.mini){
+  padding:8px 12px; border-radius:9px; cursor:pointer;
+  background:rgba(255,255,255,.06); color:#edeefa;
+  border:1px solid rgba(140,200,255,.22);
+}
+.pane button:not(.primary):not(.mini):hover{ background:rgba(255,255,255,.1); }
+.pane button[disabled]{ opacity:.5; cursor:default; }
+
+/* A checkbox and its label on one line, both clickable, without the label text inheriting the
+   uppercase treatment the field labels use. */
+.pane label.row{
+  display:flex; align-items:center; gap:9px; cursor:pointer;
+  text-transform:none; letter-spacing:0; font-size:13px; opacity:1; margin-bottom:8px;
+}
+.pane label.row input[type="checkbox"]{ width:16px; height:16px; accent-color:#7ab7ff; margin:0; }
+
+/* The note under a control carries the reason something did or did not happen — it wraps, it is not
+   a fixed height, and it must not be so dim that nobody reads the one line that explains the state. */
+#bm-note, #relay-note, #ed-note{ margin:8px 0 10px; line-height:1.45; opacity:.75; }
+#bm-note b, #relay-note b, #ed-note b{ opacity:1; }
+
+/* A hint inside a field label is prose, not a label: "ONE-TIME CODE SECRET — OTPAUTH:// OR THE RAW
+   SECRET" is unreadable, and the whole point of the hint is to be read. */
+.fld .muted, .fld .small{ text-transform:none; letter-spacing:0; }
+
+/* The popup is a FIXED 380px wide (see the note at the top — a browser action has no viewport to
+   measure). A vertical scrollbar therefore takes its width out of the visible area and leaves the
+   content 380px inside a ~365px window, which is a horizontal scrollbar on every long panel. */
+body{ overflow-x:hidden; }
+
+/* FIVE buttons now, in a row laid out for three. `flex:1 1 0` divided 380px between them and the
+   labels stopped fitting — "Bookmarks" and "Relays" were clipped mid-word. Let the row wrap, let a
+   button be its own width, and put the version on its own line so it stops competing for space. */
+.bot{ flex-wrap:wrap; align-items:center; }
+.bot button{ flex:0 1 auto; padding:7px 11px; font-size:12.5px; }
+.bot #ver{ flex:1 0 100%; margin-bottom:2px; }

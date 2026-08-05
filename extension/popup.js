@@ -43,6 +43,7 @@ function showVersion(){
  * dead zone until evaluation reaches it. It happens to survive today only because the assignment sits
  * after an await — one edit moving it earlier turns the whole popup into a ReferenceError. */
 let _mode = null, _bmOn = false, _bmCount = 0;
+let _confirmRemovals = false;      // armed only by the "looks like a restore" prompt below
 
 async function boot(){
   try{
@@ -329,11 +330,23 @@ function paintBm(){
 { const b = $('#bm-sync');
   if(b) b.onclick = async () => {
     b.disabled = true; b.textContent = 'merging…';
-    const r = await send({ type:'bm-sync' });
+    const r = await send({ type:'bm-sync', confirmRemovals: _confirmRemovals });
+    _confirmRemovals = false;
     b.textContent = r && r.ok ? `+${r.created} here, +${r.published} sent` : (r && r.error) || 'failed';
     // A merge that sent nothing states the reason under the button — the alternative is a bare 0 that
     // looks identical whether the pairing cannot sign, the relay is unreachable, or there was simply
     // nothing new to send.
+    /* "That looks like a restore, not a decision." Deleting everything and merging is a legitimate
+     * thing to do — and so is restoring a backup, and they are indistinguishable from here. So the
+     * merge stops and asks, rather than removing the same bookmarks from every other device. */
+    if(r && r.ok && r.pendingRemovals){
+      _confirmRemovals = true;
+      $('#bm-note').innerHTML = `<b>${r.pendingRemovals} bookmarks are missing here</b> that this browser
+        had synced. If you deleted them on purpose, press Merge now again to remove them from your
+        other devices. If this browser was restored or re-paired, turn sync off instead — merging
+        would delete them everywhere.`;
+      return;
+    }
     if(r && r.ok && r.blocked) $('#bm-note').innerHTML =
       `<b>Sent nothing:</b> ${r.blocked}. ${r.wanted} bookmark${r.wanted === 1 ? '' : 's'} waiting.`;
     setTimeout(() => { b.textContent = 'Merge now'; b.disabled = false; }, 3500);
