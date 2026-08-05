@@ -97,8 +97,14 @@ function makeBrowser(name, relay, rootDefs) {
   vm.runInContext(SRC, ctx);
   const engine = ctx.PCBookmarks.engine;
 
+  /* What a backup restore or an HTML import looks like from in here: nodes appearing one at a time,
+     each with its own onCreated — NOT one bulk notification. */
+  const restore = (parentId, n, prefix) => {
+    for (let i = 0; i < n; i++) { const x = mk(parentId, `${prefix}${i}`, `https://${prefix}${i}.example/`); fire('onCreated', x.id); }
+  };
+
   return {
-    name, nodes, mk, engine, store, events: () => fired, calls,
+    name, nodes, mk, restore, engine, store, events: () => fired, calls,
     async init() {
       await engine.init({
         B,
@@ -140,8 +146,13 @@ async function settle(a, b, opts) {
   for (let i = 0; i < 2; i++) {
     await a.pull(); await a.merge(opts);
     await b.pull(); await b.merge(opts);
+    await drain();
   }
 }
+
+/* Local edits are published on a debounce, so a round is not over when the calls return. Without
+   this wait every check on what a local change did would pass by simply never having run. */
+const drain = () => new Promise(r => setTimeout(r, 600));
 
 (async () => {
   // ---- 1. The same URL, filed differently on each browser --------------------------------------
@@ -282,6 +293,80 @@ async function settle(a, b, opts) {
       b.calls.getTree <= 20 && a.calls.getTree <= 20,
       { chromeGetTree: a.calls.getTree, firefoxGetTree: b.calls.getTree,
         bookmarks: b.urls().length });
+  }
+
+  /* RESTORING A BACKUP, which is what the user actually did. The tree read above happens on the
+   * receiving side; this one is driven by the user's OWN bulk action, one event per bookmark, and it
+   * needs the path of each — so it used to serialise the entire tree 300 times, on the UI thread,
+   * with a blocking publish between each. Same symptom, worse trigger. */
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS), b = makeBrowser('f', relay, FIREFOX_ROOTS);
+    await a.init(); await b.init();
+    const before = b.calls.getTree;
+    b.restore('toolbar_____', 300, 'r');
+    await drain();
+    await settle(a, b);
+    check('restoring a backup does not read the whole tree per bookmark',
+      b.calls.getTree - before <= 20,
+      { treeReadsForRestore: b.calls.getTree - before, restored: 300,
+        reachedChrome: a.urls().length });
+  }
+
+  /* SEVERAL MERGES AT ONCE, which is the normal case rather than an edge one: EOSE fires per relay,
+   * again on every reconnect, and again from the periodic connect check. Overlapping merges each read
+   * the whole tree and each plan against a map the others are still mutating. */
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS), b = makeBrowser('f', relay, FIREFOX_ROOTS);
+    for (let i = 0; i < 20; i++) a.mk('1', 'M' + i, `https://m${i}.example/`);
+    await a.init(); await b.init();
+    const before = a.calls.getTree;
+    await Promise.all([a.merge(), a.merge(), a.merge(), a.merge(), a.merge()]);
+    await b.pull(); await b.merge(); await drain();
+    check('overlapping merges do not pile up or duplicate',
+      a.calls.getTree - before <= 5 && b.urls().length === 20 && relay.publishes <= 20,
+      { treeReads: a.calls.getTree - before, arrived: b.urls().length, publishes: relay.publishes });
+  }
+
+  /* THE OFF SWITCH IS REAL. Not "syncs less" — the engine must not call the bookmark API at all, so a
+   * user who does not want this cannot be slowed down by it. */
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS);
+    for (let i = 0; i < 50; i++) a.mk('1', 'Q' + i, `https://q${i}.example/`);
+    await a.init();
+    await a.engine.setEnabled(false);
+    /* Baseline AFTER init: init enables sync and merges, so it legitimately publishes the 50 that
+       already existed. Measuring from zero here reports that as the off switch leaking. */
+    const before = { t: a.calls.getTree, c: a.calls.getChildren, p: relay.publishes };
+    a.restore('1', 50, 'z');                     // a burst of user edits while sync is off
+    await drain();
+    await a.pull();
+    check('with sync off the engine never touches the bookmark api',
+      a.calls.getTree === before.t && a.calls.getChildren === before.c &&
+      relay.publishes === before.p,
+      { treeReads: a.calls.getTree - before.t, childReads: a.calls.getChildren - before.c,
+        publishes: relay.publishes - before.p });
+  }
+
+  /* A RECONNECT re-delivers everything the relay holds, with the timestamps it already had. Absorbing
+   * those again means decrypting each one and re-applying a bookmark that did not change — the whole
+   * library, per relay, every time the socket comes back. */
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS), b = makeBrowser('f', relay, FIREFOX_ROOTS);
+    for (let i = 0; i < 40; i++) a.mk('1', 'S' + i, `https://s${i}.example/`);
+    await a.init(); await b.init();
+    await settle(a, b);
+    const before = { c: b.calls.getChildren, t: b.calls.getTree, p: relay.publishes };
+    for (let round = 0; round < 3; round++) await b.pull();      // three reconnects, same events
+    await drain();
+    check('reconnecting does not re-apply the whole library',
+      b.calls.getChildren - before.c === 0 && b.calls.getTree - before.t === 0 &&
+      relay.publishes === before.p && b.urls().length === 40,
+      { childReads: b.calls.getChildren - before.c, treeReads: b.calls.getTree - before.t,
+        publishes: relay.publishes - before.p, bookmarks: b.urls().length });
   }
 
   console.log(JSON.stringify(results, null, 1));

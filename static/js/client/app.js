@@ -10050,6 +10050,16 @@
       if(!a.some(x=>x.id===id)) a.push({id, ts:now, del:true});
       a=a.filter(x=> !(x.del && now-(x.ts||0) > 2592000));
       this._save(a); },
+    /* Delete every live draft in ONE pass. Calling remove() in a loop re-reads, re-caps (which sorts
+     * twice) and rewrites the whole store per draft, and fires the debounced push each time — the
+     * same per-item full-read shape that made bookmark sync lock the browser up. Tombstones, not a
+     * drop, for the reason above: a plain delete comes back from the other device's copy. */
+    removeAll(){ const now=Math.floor(Date.now()/1000);
+      const a=this.all(), dead=new Set(this.live().map(d=>d.id));
+      if(!dead.size) return 0;
+      let out=a.map(x=> dead.has(x.id) ? {id:x.id, ts:now, del:true} : x);
+      out=out.filter(x=> !(x.del && now-(x.ts||0) > 2592000));
+      this._save(out); return dead.size; },
     // Sync to/from a single encrypted Nostr event (kind-30078 pcai:drafts under the storage key),
     // so drafts written on one device appear on another. Push is debounced.
     _sync(a){ if(typeof ME==='undefined'||!ME) return; clearTimeout(this._t); this._t=setTimeout(async()=>{
@@ -10157,7 +10167,19 @@
             <button class="btn btn-cyan small" data-act="send">Send ▶</button>
           </div></div></div>`;
     }).join('') : '<div id="drafts-empty" class="empty">No drafts. Write a post and tap 💾 Draft to save it for later.</div>';
-    feed.innerHTML = `<div id="sched-section"></div>` + draftsHtml;
+    // Delete-all only exists when there IS something to delete — a destructive button on an empty
+    // screen is just a way to mis-tap.
+    const clearHtml = list.length
+      ? `<div class="art-top"><button class="btn btn-red small" id="draft-clear"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete all drafts (${list.length})</button></div>`
+      : '';
+    feed.innerHTML = `<div id="sched-section"></div>` + clearHtml + draftsHtml;
+    { const clr=$('#draft-clear');
+      if(clr) clr.onclick=async()=>{
+        const n=Drafts.live().length; if(!n) return;
+        // in-app confirm, NOT native — a native dialog wedges the Electron renderer's focus
+        if(await uiConfirm(`Delete all ${n} draft${n===1?'':'s'}? This cannot be undone.`,{ok:'Delete all',danger:true})){
+          Drafts.removeAll(); renderDrafts(); toast('drafts deleted');
+        } }; }
     feed.querySelectorAll('.draft-card').forEach(card=>{
       const id=card.dataset.draft;
       card.querySelector('[data-act="edit"]').onclick=()=>{ const d=Drafts.get(id); if(d) compose({reply:d.reply,replyPk:d.replyPk,quote:d.quote,draftId:id,text:d.text,cw:d.cw,cwReason:d.cwReason}); };

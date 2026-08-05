@@ -146,7 +146,10 @@ function openConn(url){
       /* A relay has now answered, so anything that could not be published while the socket was down
        * can go. union() only sends what it has no record of having sent, and never deletes, so
        * running it here is a retry rather than a re-sync. */
-      if(BM && BM.engine && BM.engine.enabled()) BM.engine.union().catch(()=>{}); }
+      if(BM && BM.engine && BM.engine.enabled() && Date.now() - lastUnionAt > 60000){
+        lastUnionAt = Date.now();
+        BM.engine.union().catch(()=>{});
+      } }
   };
   c.ws.onclose = () => { c.ready = false; if(ws === c.ws) ws = _anyOpen(); refreshStatus(); retry(url); };
   c.ws.onerror = () => { try{ c.ws.close(); }catch(_){ } };
@@ -187,6 +190,13 @@ function send(msg){
 }
 
 const dOf = ev => ((ev.tags||[]).find(t => t[0] === 'd') || [])[1] || '';
+
+/* A merge on EOSE is a RETRY, so it is rate-limited. EOSE arrives once per relay and again on every
+ * reconnect, and each merge reads the whole bookmark tree — on a flapping connection that was a
+ * full-tree read every few seconds, forever, on the browser's UI thread. Anything genuinely
+ * unpublished is still picked up by the next one, or by the popup's Merge button, which is not
+ * rate-limited because the user asked for it. */
+let lastUnionAt = 0;
 
 /* Newest wins per item. This is also the only defence against a relay replaying an old copy: an
  * older created_at can never overwrite a newer one that is already held. */

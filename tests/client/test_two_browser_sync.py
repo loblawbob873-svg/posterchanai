@@ -99,6 +99,33 @@ def test_a_large_tree_is_not_quadratic(results):
     _check(results, "a large tree does not read the whole tree per bookmark")
 
 
+def test_restoring_a_backup_is_not_quadratic(results):
+    """The same full-tree read, driven by the USER's own bulk action instead of the far side's. The
+    browser fires one event per bookmark and publishing one needs its path, so restoring a backup
+    serialised the whole tree 300 times on the UI thread — 302 reads measured, against 3 batched."""
+    _check(results, "restoring a backup does not read the whole tree per bookmark")
+
+
+def test_overlapping_merges_do_not_pile_up(results):
+    """Concurrent merges are the NORMAL case, not an edge one: EOSE fires once per relay, again on
+    every reconnect, and again from the periodic connect check. Overlapping merges each read the whole
+    tree and each plan against a map the others are still mutating."""
+    _check(results, "overlapping merges do not pile up or duplicate")
+
+
+def test_the_off_switch_is_real(results):
+    """A user who does not want this must not be able to be slowed down by it: with the toggle off the
+    engine makes NO bookmark API calls at all, however much the user edits."""
+    _check(results, "with sync off the engine never touches the bookmark api")
+
+
+def test_reconnecting_does_not_reapply_everything(results):
+    """A relay re-sends everything it holds on every connection, with the timestamps it already had.
+    The engine dropped those on a strict newer-than, so each re-delivered event was decrypted and
+    re-applied for a bookmark that had not changed — the whole library, per relay, every reconnect."""
+    _check(results, "reconnecting does not re-apply the whole library")
+
+
 def test_wholesale_loss_asks_first(results):
     _check(results, "a wholesale disappearance asks before deleting everywhere")
 

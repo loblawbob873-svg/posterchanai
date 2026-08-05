@@ -375,7 +375,15 @@
   async function absorb(id, ev) {
     if (!api || !loaded) return;
     var cur = items[id];
-    if (cur && (cur._at || 0) > (ev.created_at || 0)) return;
+    /* >=, NOT >. A relay re-sends everything on every connection, and a replaceable event that
+     * arrives again carries the SAME created_at — so a strict > let every one of them fall through
+     * to a decrypt and a full re-apply (a get, a folder lookup, a comparison) for a bookmark that
+     * had not changed. On a real library that is the whole collection re-applied on every reconnect,
+     * per relay, on the browser's UI thread, forever. Nothing is lost by ignoring it: an event with
+     * the same address and the same timestamp is the same event, and a genuine edit gets a newer one.
+     * Enabling sync does not depend on this path either — setEnabled() merges from what is already
+     * stored. */
+    if (cur && (cur._at || 0) >= (ev.created_at || 0)) return;
     if (!ev.content) {
       // Keep the URL we last knew for this id: applyRemoval checks the local bookmark still MATCHES
       // it before removing anything. Dropping it here would leave nothing to verify against.
@@ -554,28 +562,64 @@
     return api.publish(syncId, item);        // background.js owns signing, the outbox and the OK-wait
   }
 
-  async function onLocalChange(browserId) {
+  /* Local edits are BATCHED, and that is a performance requirement, not tidiness.
+   *
+   * Publishing a bookmark needs its PATH, which means reading the tree — and the browser fires one
+   * event per bookmark. Restoring a backup, importing an HTML file or dragging in a folder therefore
+   * used to cost one full-tree serialisation per bookmark, each one walking the whole tree again,
+   * plus a publish that blocks the next event behind it. That is the other half of "the browser goes
+   * unresponsive while it syncs", and it is the worse half, because it fires on the user's own bulk
+   * actions — exactly when the tree is at its biggest.
+   *
+   * A burst collapses into one tree read and one pass. The wait also coalesces the create-then-move
+   * pair a drag produces, so a dragged bookmark is published once, at its final location. */
+  var pendingLocal = [], localTimer = null;
+  var LOCAL_BATCH_MS = 400;
+  function onLocalChange(browserId) {
     if (!on || applying > 0 || writing.has(browserId)) return;      // our own write coming back — never republish
-    var node = null;
-    try { node = (await api.B.bookmarks.get(browserId))[0]; } catch (_) {}
-    if (!node || !P.isSyncable(node)) return;
-    var byId = {}, tree = await api.B.bookmarks.getTree();
+    if (pendingLocal.indexOf(browserId) < 0) pendingLocal.push(browserId);
+    if (localTimer) clearTimeout(localTimer);
+    localTimer = setTimeout(function () {
+      localTimer = null;
+      flushLocal().catch(function (e) { try { console.warn('[pcai] bookmark publish failed', e); } catch (_) {} });
+    }, LOCAL_BATCH_MS);
+  }
+
+  async function flushLocal() {
+    if (!on || !pendingLocal.length) return;
+    var ids = pendingLocal; pendingLocal = [];
+    var byId = {}, tree = await api.B.bookmarks.getTree();       // ONCE for the whole burst
     (function walk(ns) { (ns || []).forEach(function (n) { byId[n.id] = n; if (n.children) walk(n.children); }); })(tree);
-    var syncId = rmap[browserId] || await idFor(node.url);
-    var item = { title: node.title || '', url: node.url,
-                 folder: P.pathOf(byId, node), root: P.rootOf(byId, node) };
-    remember(syncId, browserId);                       // identity first, and permanently
-    var ok = await publishOne(syncId, item);
-    /* Only record it as KNOWN-ON-THE-RELAY when the relay said so. Recording it regardless is what
-     * makes a read-only pairing (or a dropped socket) look synced forever: union() dedupes against
-     * this map, so an entry that was never published would never be retried. The mapping above is
-     * kept either way — a retry must reuse the same sync id, or it publishes a duplicate. */
-    if (ok) { items[syncId] = Object.assign({}, item, { _at: Math.floor(Date.now() / 1000) }); saveSoon(); }
+    var dirty = false;
+    for (var i = 0; i < ids.length; i++) {
+      // ONE BAD ONE MUST NOT TAKE THE BATCH DOWN. Before batching, each event was published on its
+      // own and a failure cost that bookmark only; letting a throw escape the loop would silently
+      // drop every bookmark queued behind it — worst on exactly the bulk imports this exists for.
+      try {
+      var browserId = ids[i];
+      if (writing.has(browserId)) continue;            // became ours while it waited
+      var node = byId[browserId];                      // gone from the tree = removed; onLocalRemove has it
+      if (!node || !P.isSyncable(node)) continue;
+      var syncId = rmap[browserId] || await idFor(node.url);
+      var item = { title: node.title || '', url: node.url,
+                   folder: P.pathOf(byId, node), root: P.rootOf(byId, node) };
+      remember(syncId, browserId);                     // identity first, and permanently
+      var ok = await publishOne(syncId, item);
+      /* Only record it as KNOWN-ON-THE-RELAY when the relay said so. Recording it regardless is what
+       * makes a read-only pairing (or a dropped socket) look synced forever: union() dedupes against
+       * this map, so an entry that was never published would never be retried. The mapping above is
+       * kept either way — a retry must reuse the same sync id, or it publishes a duplicate. */
+      if (ok) { items[syncId] = Object.assign({}, item, { _at: Math.floor(Date.now() / 1000) }); dirty = true; }
+      } catch (_) { /* keep going: the next merge retries anything that never reached the relay */ }
+    }
+    if (dirty) saveSoon();
   }
 
   /* A bookmark removed here becomes a tombstone, so the other devices drop it too — carrying the URL
    * it had, which is what lets the receiving side check it is removing the right thing. */
   async function onLocalRemove(browserId) {
+    var q = pendingLocal.indexOf(browserId);
+    if (q >= 0) pendingLocal.splice(q, 1);          // queued publish for a node that no longer exists
     if (!on || applying > 0 || writing.has(browserId)) return;
     var syncId = rmap[browserId];
     if (!syncId) return;                            // never synced — nothing to tell anyone
@@ -599,7 +643,26 @@
   /* The first sync, and any manual rebuild: a UNION. Deletes nothing, in either direction. */
   var pendingRemovals = 0;
 
-  async function union(opts) {
+  /* Merges run ONE AT A TIME, and that is a correctness rule as much as a performance one.
+   *
+   * union() is triggered by a relay's EOSE — which fires once PER RELAY, again on every reconnect,
+   * and again from the 30-second connect check — so several could be in flight at once. Each one
+   * reads the whole tree, plans against a map the others are still mutating, and publishes what the
+   * others have not finished recording: duplicates, and a pile of full-tree reads landing on the
+   * browser's UI thread at the same moment (in Firefox the bookmarks API is served by the parent
+   * process, so that is the window lagging, not just the extension).
+   *
+   * Queued rather than dropped: a caller that asked to merge gets a merge, and the popup's Merge
+   * button still resolves with its own result. */
+  var chain = Promise.resolve();
+  function union(opts) {
+    var run = chain.then(function () { return _union(opts); },
+                         function () { return _union(opts); });
+    chain = run.catch(function () {});          // one failure must not wedge every later merge
+    return run;
+  }
+
+  async function _union(opts) {
     opts = opts || {};
     if (!api || !loaded) throw new Error('bookmark sync is not ready yet — reopen this in a moment');
     var local = await snapshot();
