@@ -1065,16 +1065,16 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .tl-cmp-tools{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:10px}   /* wrap, so a very narrow phone drops Post to its own line instead of overflowing */
 /* Borderless icon buttons (📎 / ＋): the .btn outline boxed each one in and made the row look like a
    toolbar. Bigger hit area too — these were .btn.small, which is a text-button size, not an icon one. */
-.tl-cmp-btn{display:inline-flex;align-items:center;justify-content:center;width:46px;height:46px;padding:0;
+.tl-cmp-btn,.cmp-ico{display:inline-flex;align-items:center;justify-content:center;width:46px;height:46px;padding:0;
   border:0;border-radius:50%;background:transparent;color:var(--muted);cursor:pointer;
   font-family:inherit;font-size:24px;line-height:1;transition:.15s}
-.tl-cmp-btn:hover{background:rgba(var(--accent-rgb),.12);color:var(--cyan)}
+.tl-cmp-btn:hover,.cmp-ico:hover{background:rgba(var(--accent-rgb),.12);color:var(--cyan)}
 /* Post (submit) stays the prominent glossy btn-neon CTA — only the NEW-POST trigger (the ＋ FAB) goes
    flat to match the navbar; the button that actually publishes should stand out. */
 .tl-cmp-post{margin:0;padding:12px 30px;font-size:17px;font-weight:700;border-radius:24px}
 /* (Post's right-alignment lives further down, AFTER `.tl-cmp-tools .btn{margin:0}` — see there.) */
 /* Inline panels — the timeline composer never opens the modal, so poll + content-warning live here. */
-.tl-cmp-btn.on{background:rgba(var(--accent-rgb),.18);color:var(--cyan)}
+.tl-cmp-btn.on,.cmp-ico.on{background:rgba(var(--accent-rgb),.18);color:var(--cyan)}
 .tl-cmp-cw{margin-top:8px}
 .tl-cmp-cw .input{margin:0}
 .tl-cmp-poll{margin-top:8px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel2)}
@@ -1669,6 +1669,21 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    Buttons size to their own label here and never stretch, at any width. The tools are also all
    LABELLED now — a row that mixed "Attach"/"React" pills with two bare icon pills read as broken. */
 .cmp-tools{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-2);margin-bottom:var(--sp-2)}
+/* The modal composer's tools are the SAME borderless round icons as the timeline composer's, not a
+   row of labelled .btn pills. That row was 8 labelled buttons over THREE lines at 360px — the exact
+   thing this file already says about the inline row: "the .btn outline boxed each one in and made
+   the row look like a toolbar". Two patterns for one control, and the chunky one cost three rows of
+   chrome above the text you were writing. Now: four icons + ⋯, one line at every width.
+   .cmp-of are the overflow actions. They stay in the DOM and are only HIDDEN, because the .on class
+   on Sensitive and Background IS the composer's state — four other places read it — so moving them
+   into a menu would mean re-homing that state. ⋯ clicks them instead: same handlers, same state.
+   It wraps them in a SPAN rather than hiding each button, because `button:has(> svg.ic.b-ic:
+   only-child)` at the top of this file sets display on every icon-only button in the app and its
+   :has() argument gives it ~(0,4,2) — a class on the button loses to it outright, and the buttons
+   stayed visible. The rule matches `button`, so it cannot reach the wrapper. Same lesson as the
+   .rv-acts note above: these global icon rules beat anything selector-shaped. */
+.cmp-of{display:none}   /* a SPAN, not the buttons — see below */
+.cmp-tools .cmp-ico{font-size:22px}
 /* Only Schedule + Post live here — Draft sits with the tools, because it saves rather than submits.
    Two buttons read as a submit bar, so they are CENTRED rather than split left/right; on a phone that
    leaves Draft on the middle tool row and the two submit buttons alone across the bottom. */

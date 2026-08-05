@@ -90,7 +90,13 @@ AUDIT = r"""(() => {
     const row = document.querySelector('.' + cls);
     if (!row) { out.problems.push(cls + ': not rendered'); continue; }
     const rr = row.getBoundingClientRect();
-    const btns = [...row.querySelectorAll('button')].map(b => {
+    // Only VISIBLE controls. The modal keeps its overflow actions in the DOM (their .on class is the
+    // composer's state) and merely hides them, so an unfiltered pass measures a pile of 0x0 buttons
+    // at y=0 and reports them as an extra row that is not on screen.
+    const btns = [...row.querySelectorAll('button')].filter(b => {
+      const r = b.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    }).map(b => {
       const r = b.getBoundingClientRect();
       const sv = b.querySelector('svg.ic');
       const sr = sv ? sv.getBoundingClientRect() : null;

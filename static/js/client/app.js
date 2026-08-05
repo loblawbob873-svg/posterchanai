@@ -10820,7 +10820,7 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="cmp-tools"><button class="btn btn-ghost small needs-net" id="cmp-attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Attach</button><button class="btn btn-ghost small" id="cmp-react"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg>React</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-poll"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chart"></use></svg>Poll</button>'}<button class="btn btn-ghost small needs-net" id="cmp-ai" title="AI tools"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>AI</button><button class="btn btn-ghost small" id="cmp-clean" title="remove tracking parameters from every link (offline — no AI, no network)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-broom"></use></svg>Clean links</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-nsfw"></use></svg>Sensitive</button>${(quote||community||articleComment)?'':`<button class="btn btn-ghost small needs-net" id="cmp-bg-btn" title="background — post short text as a nice image"><svg class="ic b-ic" aria-hidden="true"><use href="#i-palette"></use></svg>Background</button>`}<button class="btn btn-ghost small" id="cmp-draft"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Draft</button><input type="file" id="cmp-file" multiple hidden></div>
+      <div class="cmp-tools"><button class="cmp-ico needs-net" id="cmp-attach" title="Attach an image or file" aria-label="Attach an image or file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg></button><button class="cmp-ico" id="cmp-react" title="Emoji or GIF" aria-label="Emoji or GIF"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg></button>${(reply||quote||community||articleComment)?'':'<button class="cmp-ico" id="cmp-poll" title="Poll" aria-label="Poll"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chart"></use></svg></button>'}<button class="cmp-ico needs-net" id="cmp-ai" title="AI tools" aria-label="AI tools"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button><button class="cmp-ico" id="cmp-more" title="More" aria-label="More options">⋯</button><span class="cmp-of"><button class="cmp-ico" id="cmp-clean" title="Clean links — remove tracking from every link" aria-label="Clean links — remove tracking from every link"><svg class="ic b-ic" aria-hidden="true"><use href="#i-broom"></use></svg></button><button class="cmp-ico" id="cmp-cw-btn" title="Mark sensitive / NSFW" aria-label="Mark sensitive / NSFW"><svg class="ic b-ic" aria-hidden="true"><use href="#i-nsfw"></use></svg></button>${(quote||community||articleComment)?'':`<button class="cmp-ico needs-net" id="cmp-bg-btn" title="Background — post short text as an image" aria-label="Background — post short text as an image"><svg class="ic b-ic" aria-hidden="true"><use href="#i-palette"></use></svg></button>`}<button class="cmp-ico" id="cmp-draft" title="Save to drafts" aria-label="Save to drafts"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg></button></span><input type="file" id="cmp-file" multiple hidden></div>
       ${(quote||community||articleComment)?'':`<div id="cmp-bg-strip" class="cmp-bg-strip hidden" aria-label="post background"></div>
       <div id="cmp-cardprev" class="cmp-cardprev hidden" aria-label="card preview"></div>`}
       <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
@@ -10965,6 +10965,23 @@
             else if(a==='emoji') _aiEmojiSuggest(ta, m=>{ const s=$('#cmp-status',root); if(s) s.textContent=m; });
             else if(a==='card') doCard(); else if(a==='translate') composeTranslate(ta, aiBtn); }); };
       }
+      /* ⋯ overflow. The items CLICK the hidden buttons rather than re-implementing them: Sensitive
+       * and Background are toggles whose `.on` class IS the composer's state (read by _cwState, by
+       * the draft restore, and by the bg strip), so re-homing them into a menu would mean moving
+       * that state too. This way there is exactly one handler and one source of truth per action,
+       * and the menu only decides what is VISIBLE. The ✓ mirrors that state back, the same way the
+       * AI menu marks Framed card — a menu that closes on pick otherwise says nothing about what is
+       * already armed. */
+      { const mb=$('#cmp-more',root);
+        if(mb) mb.onclick=e=>{ e.stopPropagation();
+          const has=id=>!!$(id,root), on=id=>{ const b=$(id,root); return !!b && b.classList.contains('on'); };
+          const items=[];
+          if(has('#cmp-clean'))  items.push(['clean','🧹 Clean links']);
+          if(has('#cmp-cw-btn')) items.push(['cw', on('#cmp-cw-btn')?'🔞 Sensitive ✓':'🔞 Sensitive']);
+          if(has('#cmp-bg-btn')) items.push(['bg', on('#cmp-bg-btn')?'🎨 Background ✓':'🎨 Background']);
+          if(has('#cmp-draft'))  items.push(['draft','☁️ Save to drafts']);
+          const sel={clean:'#cmp-clean', cw:'#cmp-cw-btn', bg:'#cmp-bg-btn', draft:'#cmp-draft'};
+          openMenuPopover(mb, items, a=>{ const b=sel[a] && $(sel[a],root); if(b) b.click(); }); }; }
       /* 🧹 Clean links — its OWN button, not an item in the 🤖 AI menu. It never calls the model or
        * the network (see _cleanLinksCmd / urlclean.js), and filing it under AI both misdescribed it
        * and made it unreachable offline, since the AI button carries `needs-net`. This one does not. */
