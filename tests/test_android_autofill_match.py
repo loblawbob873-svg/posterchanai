@@ -469,3 +469,51 @@ def test_the_diagnostic_carries_nothing_from_the_vault():
     with open(store, encoding="utf-8") as f:
         st = f.read()
     assert "remove(KEY_LASTFILL)" in st, "signing out must not leave the last screen behind"
+
+
+def test_wells_fargo_the_real_screen(tmp_path):
+    """THE ACTUAL BUG, from the device's own report — not a reconstruction.
+
+    The autofill diagnostic on com.wf.wellsfargomobile returned, verbatim:
+
+        pickUser: -1, pickPass: 0
+        [0] hints="username passwordauto"  realPw=false visPw=true   text="username username null"
+        [1] hints="password passwordauto"  realPw=true  visPw=false  text="password password null"
+
+    Field 0 is the USERNAME box. Its hints were joined into one string and searched with
+    `contains("password")`, which matches inside `passwordAuto` — so the username box scored 4, the
+    highest there is, and took the password slot. Field 1, the real password box, scored the same 4
+    and could not displace it because the comparison is `>`. Hence password into the box you can
+    read, nothing into the one you cannot.
+
+    Three previous fixes all adjusted the visible-password path. Execution never reached it: field 0
+    was decided at the hint rule, two branches earlier. A hint is an enumerated constant, so it is
+    now compared as a whole TOKEN, and `passwordAuto` is simply not one of them.
+    """
+    assert _pick((("username passwordauto", False, True, "username username null"),
+                  ("password passwordauto", True, False, "password password null")), tmp_path) == (0, 1)
+
+
+def test_a_hint_is_matched_whole_not_as_a_substring(tmp_path):
+    """The general rule behind it. An app may invent any hint string it likes; only the enumerated
+    Android constants and the W3C autocomplete values mean what they say."""
+    # invented tokens that merely CONTAIN a real one must not be believed
+    for bogus in ("passwordauto", "passwordhint", "notpassword", "password2fa"):
+        with subtest_hint(bogus):
+            u, p = _pick(((f"username {bogus}", False, True, ""),
+                          ("password", True, False, "")), tmp_path)
+            assert (u, p) == (0, 1), f"{bogus} was treated as a password hint"
+    # and the real ones, including the W3C spellings a WebView reports, still are
+    for real in ("password", "current-password", "new-password"):
+        u, p = _pick((("username", False, False, ""), (real, False, False, "")), tmp_path)
+        assert (u, p) == (0, 1), f"{real} should be a password hint"
+
+
+class subtest_hint:
+    """Tiny context manager so a failing token names itself (these are plain asserts, not unittest)."""
+    def __init__(self, name): self.name = name
+    def __enter__(self): return self
+    def __exit__(self, et, ev, tb):
+        if ev is not None:
+            ev.args = (f"[hint={self.name}] " + str(ev.args[0] if ev.args else ""),) + tuple(ev.args[1:])
+        return False

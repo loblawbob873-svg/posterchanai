@@ -185,14 +185,43 @@ public final class VaultMatch {
         public boolean visiblePassword;
         /** idEntry + hint + contentDescription, lowercased. */
         public String text = "";
+        /**
+         * The autofill hints as DISCRETE TOKENS — never as a substring of the joined string.
+         *
+         * Wells Fargo's username box declares `["username", "passwordAuto"]`. Joined and searched
+         * with contains("password"), `passwordAuto` matches, so the USERNAME box scored as a
+         * declared password — the highest score there is — and won the password slot outright. The
+         * real password field beside it scored the same 4 and could not displace it (the comparison
+         * is `>`), so it received nothing. That is the whole bug, and it never went near the
+         * visible-password path that the previous three attempts kept adjusting.
+         *
+         * A hint is an enumerated constant, not prose. It gets compared as one.
+         */
+        public final java.util.Set<String> hintTokens = new java.util.HashSet<>();
 
         public FieldInfo(String hints, boolean realPassword, boolean visiblePassword, String text) {
             this.hints = hints == null ? "" : hints.toLowerCase(Locale.ROOT);
             this.realPassword = realPassword;
             this.visiblePassword = visiblePassword;
             this.text = text == null ? "" : text.toLowerCase(Locale.ROOT);
+            for (String t : this.hints.split("[\\s,]+")) {
+                if (!t.isEmpty()) hintTokens.add(t);
+            }
+        }
+
+        boolean hasHint(java.util.Set<String> any) {
+            for (String t : hintTokens) if (any.contains(t)) return true;
+            return false;
         }
     }
+
+    /* The hints that MEAN password / username, matched whole. Both the Android constants and the
+     * W3C autocomplete values, because a WebView reports the latter. Anything else an app invents —
+     * `passwordAuto` — is not one of these and is treated as the unknown token it is. */
+    private static final java.util.Set<String> _PASS_HINTS = new java.util.HashSet<>(java.util.Arrays.asList(
+            "password", "newpassword", "new-password", "current-password"));
+    private static final java.util.Set<String> _USER_HINTS = new java.util.HashSet<>(java.util.Arrays.asList(
+            "username", "emailaddress", "email", "new-username", "user-name"));
 
     private static final java.util.regex.Pattern _USER_RE = java.util.regex.Pattern.compile(
             "user|e-?mail|login|account|identifier|\\bid\\b|customer|member|signon|userid");
@@ -232,13 +261,14 @@ public final class VaultMatch {
             FieldInfo f = fields.get(i);
             if (f == null) continue;
             int ps = 0, us = 0;
-            // 4: the app declared it. An autofillHint is a statement, not a guess.
-            if (f.hints.contains("password")) ps = 4;
+            // 4: the app declared it. An autofillHint is a statement, not a guess — but it is a
+            // TOKEN, so it is compared as one. `contains("password")` also matched Wells Fargo's
+            // `passwordAuto` on the USERNAME box; see FieldInfo.hintTokens.
             // NOT "phone". A shipping-address or checkout screen declares phone hints and has no
             // login on it at all — scoring it made the vault drop down over a phone-number box,
             // fill an email into it, and arm the "save this login?" prompt on an address form.
-            else if (f.hints.contains("username") || f.hints.contains("emailaddress")
-                     || f.hints.contains("email")) us = 4;
+            if (f.hasHint(_PASS_HINTS)) ps = 4;
+            else if (f.hasHint(_USER_HINTS)) us = 4;
             // 3: a real password inputType — the keyboard is masking it, so it is a secret.
             if (ps == 0 && us == 0 && f.realPassword) ps = 3;
             // 2: it says so on the label.
