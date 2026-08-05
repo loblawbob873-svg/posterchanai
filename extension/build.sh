@@ -72,9 +72,15 @@ for f in ('approve.html', 'approve.js'):
         sys.exit(f + ' is missing from the bundle; the approval prompt cannot open')
 EOF
 
-rm -rf dist/posterchan-passwords.zip dist/posterchan-passwords-unpacked.tar.gz \
+rm -rf dist/posterchan-passwords.zip dist/posterchan-passwords.xpi \
+       dist/posterchan-passwords-unpacked.tar.gz \
        dist/posterchan-passwords-chrome.zip dist/chrome
 zip -qr dist/posterchan-passwords.zip $FILES -x '*.DS_Store'
+# An .xpi IS the .zip under a name Firefox will "Install Add-on From File". Ship it so Firefox
+# Nightly / Developer Edition / ESR (with xpinstall.signatures.required=false) can install this
+# PERMANENTLY — not just as a temporary add-on that unloads on restart. The AMO-upload artifact is
+# the same bytes, kept as .zip.
+cp dist/posterchan-passwords.zip dist/posterchan-passwords.xpi
 tar czf dist/posterchan-passwords-unpacked.tar.gz $FILES
 
 # ---- Chrome ------------------------------------------------------------------------------------

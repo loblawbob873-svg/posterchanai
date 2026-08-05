@@ -95,9 +95,14 @@ jobs:
             (Chrome will not install a zip directly, and an unpacked extension stays until removed —
             it does not unload on restart the way Firefox's temporary add-ons do.)
 
-            **Permanent / Android:** install the Mozilla-signed build from addons.mozilla.org.
-            A build from here is unsigned, and release Firefox (desktop and Android) will only
-            install it temporarily. See docs/PASSWORDS.md.
+            **Firefox Nightly / Developer Edition / ESR (permanent, unsigned):** in `about:config`
+            set `xpinstall.signatures.required` to `false`, then `about:addons` → ⚙ → **Install
+            Add-on From File** → pick `posterchan-passwords.xpi`. It survives restarts. (Release
+            Firefox ignores that pref, so this path is Nightly/Dev/ESR only.)
+
+            **Release Firefox / Android:** install the Mozilla-signed build from addons.mozilla.org —
+            a build from here is unsigned, so release Firefox (desktop and Android) will only install
+            it temporarily. See docs/PASSWORDS.md.
 
             **Nostr sign-in (NIP-07):** once paired with full access, this provides `window.nostr`,
             so a Nostr site can log you in with your key. Each site is asked for once, per event
@@ -107,6 +112,7 @@ jobs:
 
             Version ${{ steps.ver.outputs.v }} (build ${{ github.run_number }}).
           files: |
+            extension/dist/posterchan-passwords.xpi
             extension/dist/posterchan-passwords.zip
             extension/dist/posterchan-passwords-unpacked.tar.gz
             extension/dist/posterchan-passwords-chrome.zip
