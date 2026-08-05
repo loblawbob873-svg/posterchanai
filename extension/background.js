@@ -713,12 +713,20 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
          * rather than discovered when nothing leaves this browser. */
         case 'bm-enable': {
           if(!(BM && BM.engine)) return reply({ ok:false, error:'bookmark sync unavailable in this build' });
-          /* The permission is the one prerequisite the extension cannot arrange for itself: a browser
-           * that has not granted `bookmarks` gives us no API at all, and every call below would throw
-           * from inside a merge, where the message reads like a bug in the merge. */
-          if(!B.bookmarks) return reply({ ok:false,
-            error:'this browser has not granted the bookmarks permission — open the extension\'s ' +
-                  'details page and allow it, then try again' });
+          /* No bookmarks API = no bookmark sync, and WHY differs by platform. Firefox for ANDROID does
+           * not implement the bookmarks WebExtension API at all — there is no permission to grant and
+           * nothing the user can do, so saying "grant the permission" sends them hunting for a setting
+           * that does not exist. Desktop with the permission actually withheld is the other case. Say
+           * which one it is. (Passwords and the NIP-07 signer do not use this API and work on Android.) */
+          if(!B.bookmarks){
+            let android = false;
+            try{ android = ((await B.runtime.getPlatformInfo()).os === 'android'); }catch(_){}
+            return reply({ ok:false, error: android
+              ? 'Firefox for Android doesn’t support the bookmarks API, so bookmark sync is ' +
+                'desktop-only. Your passwords and Nostr sign-in still work here.'
+              : 'this browser has not granted the bookmarks permission — open the extension’s ' +
+                'details page and allow it, then try again' });
+          }
           const v = await BM.engine.setEnabled(!!msg.on);
           return reply({ ok:true, on:v, count: BM.engine.count() });
         }
