@@ -87,3 +87,54 @@ class TestMemeLayerAllowlist(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPoseAliases(unittest.TestCase):
+    """A character's NICKNAME must reach the same artwork its canonical name does.
+
+    Every pose has them — `seinfeldjerry` for jerry, `brutananadilewski` for carl, `soyjak`,
+    `oldman`, `rabbi`, `unclerukus` — and they live in one table, `_CHARACTERS`, which maps each to a
+    PNG. The catalogue is keyed by the CANONICAL name, so `canonical_alpha_effect` used to hand an
+    alias straight back and every check that compared it against the catalogue then failed on a name
+    whose artwork was right there: `render_alpha_effect` raised "unknown effect: seinfeldjerry" and
+    `_pose_art_path` returned "", which reads as "this character cannot be made to talk" for a
+    character that can. Same shape as the effect-alias rule in CLAUDE.md: resolve BEFORE the
+    allowlist check, because clients cache a catalogue and keep sending the old name.
+    """
+
+    def _poses(self):
+        from app.services import meme_builder_service as mb
+        return {e["name"] for e in mb.alpha_effect_catalog() if e.get("pose")}
+
+    def test_every_nickname_of_a_pose_is_a_pose(self):
+        from app.services import meme_builder_service as mb
+        from app.services.effects_service import _common as _c
+        poses = self._poses()
+        art = getattr(_c, "_CHARACTERS", {})
+        canon_files = {art[p] for p in poses if p in art}
+        for alias, f in art.items():
+            if f not in canon_files:
+                continue                     # not a pose's artwork (lookingaway's two panels)
+            with self.subTest(alias=alias):
+                self.assertIn(mb.canonical_alpha_effect(alias), poses,
+                              f"{alias} draws {f}, which IS a pose — it must resolve to one")
+
+    def test_the_talk_resolver_accepts_an_alias(self):
+        """_pose_art_path is what the mouth picker, its detection seed and the render all go
+        through, so an alias failing here is the whole feature missing for that name."""
+        from app.routers.client import _pose_art_path
+        for alias in ("seinfeldjerry", "brutananadilewski", "soyjak", "oldman", "unclerukus"):
+            with self.subTest(alias=alias):
+                self.assertTrue(_pose_art_path(alias), f"{alias} has artwork but resolved to nothing")
+
+    def test_an_audio_effect_is_still_not_a_pose(self):
+        """`seinfeld` is the theme over your OWN untouched image — there is no character drawing to
+        lip-sync, so it must keep failing the pose check rather than being swept in by the alias fix.
+        `lookingaway` is the two-panel turn: an animation, however still each panel is."""
+        from app.services import meme_builder_service as mb
+        from app.routers.client import _pose_art_path
+        poses = self._poses()
+        for name in ("seinfeld", "lookingaway", "anyways", "lookaway"):
+            with self.subTest(name=name):
+                self.assertNotIn(mb.canonical_alpha_effect(name), poses)
+                self.assertFalse(_pose_art_path(name))

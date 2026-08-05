@@ -336,11 +336,52 @@ def alpha_effect_catalog() -> list:
 # keep resolving — mirrors CommandService.COMMAND_ALIASES for the command path.
 _ALPHA_ALIASES = {"anyways": "lookingaway", "lookaway": "lookingaway"}
 
+_alpha_alias_cache: dict = None
+
+
+def _alpha_aliases() -> dict:
+    """alias -> the catalogue name that draws the SAME artwork.
+
+    Every character pose has nicknames (`seinfeldjerry` for jerry, `brutananadilewski` for carl,
+    `soyjak`, `oldman`, `rabbi`, `unclerukus`, …) and they live in ONE place: `_CHARACTERS` in
+    effects_service/_common.py, which maps each of them to a PNG. The catalogue, though, is keyed by
+    the canonical name — so `canonical_alpha_effect` used to hand an alias straight back and every
+    check that then compared it against the catalogue failed on a name whose artwork was sitting
+    right there. `render_alpha_effect` raised "unknown effect: seinfeldjerry", and `_pose_art_path`
+    returned "" — which is exactly "this character cannot be made to talk", for a character that can.
+    This is the alias-before-the-allowlist rule CLAUDE.md states for effects, applied to poses.
+
+    DERIVED from the artwork rather than hand-listed, so a nickname added to `_CHARACTERS` cannot
+    fall out of step with this. The explicit `_ALPHA_ALIASES` entries stay on top: `anyways` and
+    `lookingaway` are DIFFERENT files (the one-panel still vs the two-panel turn), so no file
+    comparison can relate them."""
+    global _alpha_alias_cache
+    if _alpha_alias_cache is not None:
+        return _alpha_alias_cache
+    out = {}
+    try:
+        from app.services.effects_service import _common as _c
+        art = getattr(_c, "_CHARACTERS", {}) or {}
+        canon = {}
+        for key, _label in list(_ALPHA_CHARACTERS) + [("shrug", "")]:
+            f = art.get(key)
+            if f:
+                canon.setdefault(f, key)
+        for alias, f in art.items():
+            target = canon.get(f)
+            if target and target != alias:
+                out[alias] = target
+    except Exception:
+        out = {}
+    out.update(_ALPHA_ALIASES)   # the hand-written ones win — they relate different files on purpose
+    _alpha_alias_cache = out
+    return out
+
 
 def canonical_alpha_effect(name: str) -> str:
     """An effect name resolved to the one the catalogue actually lists."""
     n = (name or "").strip().lower()
-    return _ALPHA_ALIASES.get(n, n)
+    return _alpha_aliases().get(n, n)
 
 
 def render_alpha_effect(name: str, dur: float = None) -> tuple:

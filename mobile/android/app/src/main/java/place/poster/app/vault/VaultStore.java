@@ -128,7 +128,45 @@ public final class VaultStore {
 
     /** Signing out or unpairing: the association picker's history goes too. */
     public static synchronized void forgetApps(Context ctx) {
-        prefs(ctx).edit().remove(KEY_APPS).apply();
+        prefs(ctx).edit().remove(KEY_APPS).remove(KEY_LASTFILL).apply();
+    }
+
+    /* ---------------------------------------------------------------- last fill, for diagnosis
+     *
+     * WHY THIS EXISTS. The autofill service runs in its own process, woken by another app, with no
+     * UI of its own — so when it does the wrong thing on somebody's bank login there is NOTHING to
+     * look at. The only way to see inside it was `adb logcat`, which means owning a computer, a
+     * cable and developer mode, on a bug that by definition happens on a phone in someone's hand.
+     * "The password went into the username box" was diagnosed twice from a description, and the
+     * second fix did not hold, because a description cannot say which fields the screen actually
+     * offered — which is the whole question.
+     *
+     * So the service writes down what it SAW and what it CHOSE, and the app shows it back.
+     *
+     * WHAT IT MAY NOT CONTAIN: nothing typed, nothing filled, and nothing out of the vault — not the
+     * entry, not the username, not the password, not even how many matched. Only the shape of the
+     * screen the phone was asked about: the asking package, and per field the autofill hints, the two
+     * input-type booleans, and the field's own id/label text (which the APP chose, and which is what
+     * the picker scores). That is app metadata, it is what the decision is made from, and it is the
+     * minimum that makes the decision reviewable.
+     *
+     * NOT sealed under the Keystore, for the same reason the app list is not: it holds no secret, and
+     * its whole value is being readable on the paths where something else has already gone wrong.
+     */
+    private static final String KEY_LASTFILL = "lastfill";
+    private static final int MAX_LASTFILL = 8000;
+
+    public static synchronized void noteFill(Context ctx, String json) {
+        if (json == null) return;
+        try {
+            if (json.length() > MAX_LASTFILL) json = json.substring(0, MAX_LASTFILL);
+            prefs(ctx).edit().putString(KEY_LASTFILL, json).apply();
+        } catch (Throwable ignored) {}
+    }
+
+    /** The last fill request's shape as JSON, or "" if none has happened since install/sign-in. */
+    public static synchronized String lastFill(Context ctx) {
+        try { return prefs(ctx).getString(KEY_LASTFILL, ""); } catch (Throwable t) { return ""; }
     }
 
     /* ---------------------------------------------------------------- app associations

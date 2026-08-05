@@ -10,6 +10,7 @@ form convinced the phone it was on the analytics domain — no match, nothing of
 "autofill just doesn't work on that one site" while the same login filled fine on the desktop.
 """
 import os
+import re
 import shutil
 import subprocess
 import textwrap
@@ -391,3 +392,48 @@ def test_an_untrusted_web_surface_is_not_offered_the_whole_vault(tmp_path):
         s = f.read()
     assert "if (out.isEmpty() && !claimedWeb) out.addAll(ranked.get(0));" in s
     assert "matchApp(snapshot, pkg, claimedWeb)" in s
+
+
+# --------------------------------------------------------------- the fill diagnostic
+
+def test_every_exit_from_a_fill_request_is_recorded():
+    """The service has no UI and runs in its own process, so a wrong pick left nothing to look at
+    short of `adb logcat` — a computer, a cable and developer mode, for a bug that only happens on a
+    phone in someone's hand. "The password went into the username box" was fixed twice from a
+    description and came back both times, because a description cannot say which fields the screen
+    offered. Every way out of onFillRequest must say what it saw, INCLUDING the ones that fill
+    nothing: "no field found" and "nothing matched" are exactly the outcomes that look identical to
+    autofill not being installed at all.
+    """
+    svc = os.path.join(os.path.dirname(SRC), "PosterChanAutofillService.java")
+    with open(svc, encoding="utf-8") as f:
+        s = f.read()
+    body = s[s.index("public void onFillRequest"):s.index("private Dataset dataset(")]
+    # Each early return pairs an onSuccess(null) with a note(); the success path notes before it.
+    assert body.count("callback.onSuccess(null)") == body.count("note(parsed,"), \
+        "an exit that records nothing is the exit you cannot diagnose"
+    assert 'note(parsed, pkg, claimedWeb, candidates, "offered "' in s, \
+        "the path that DOES fill has to be reportable too"
+    assert "out.pickUser = pick[0];" in s and "out.pickPass = pick[1];" in s, \
+        "the report is useless without which field it chose"
+
+
+def test_the_diagnostic_carries_nothing_from_the_vault():
+    """It exists to be read and pasted into a bug report, so what it may hold is the whole design:
+    the shape of the screen, and nothing else. Not the entry, not the username, not the password,
+    not what was typed, and not how many entries matched."""
+    svc = os.path.join(os.path.dirname(SRC), "PosterChanAutofillService.java")
+    with open(svc, encoding="utf-8") as f:
+        s = f.read()
+    note = s[s.index("private void note(Parsed p"):s.index("private static String clip(")]
+    for banned in ("optString(\"username\"", "optString(\"password\"", "optString(\"title\"",
+                   "matches", "snapshot", "getText("):
+        assert banned not in note, f"the fill diagnostic must not carry {banned}"
+    # Only these keys, so adding one is a deliberate act with this test in the way.
+    keys = set(re.findall(r'\.put\("([a-zA-Z]+)"', note))
+    assert keys == {"at", "pkg", "outcome", "claimedWeb", "hosts", "pickUser", "pickPass",
+                    "fields", "fieldCount", "hints", "realPw", "visPw", "text"}, keys
+    store = os.path.join(os.path.dirname(SRC), "VaultStore.java")
+    with open(store, encoding="utf-8") as f:
+        st = f.read()
+    assert "remove(KEY_LASTFILL)" in st, "signing out must not leave the last screen behind"

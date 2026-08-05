@@ -2050,18 +2050,42 @@
     document.addEventListener('click', e=>{
       const yt=e.target.closest && e.target.closest('.yt-embed[data-yt]'); if(!yt) return;
       e.preventDefault(); e.stopPropagation();
+      const vid=yt.dataset.yt;
+      /* THE EMBED NEEDS AN http(s) DOCUMENT, and the desktop app does not have one.
+       *
+       * YouTube's player refuses to start unless the embedding page identifies itself — Error 153,
+       * "Video player configuration error". It reads that from the Referer header, with the `origin`
+       * parameter as a cross-check. The desktop build runs from `app://posterchan` (see
+       * desktop/README.md — a file: page is not a secure context, so it cannot be file: either), and
+       * Chromium sends NO Referer from a non-http scheme and there is no valid origin to declare.
+       * There is nothing to pass: the referrer is missing at the network layer, not omitted by us.
+       *
+       * Dropping the bad `origin` param was the previous fix and it was not enough — it fixed the
+       * cross-check while the Referer, which is the actual gate, was still absent. So on a non-web
+       * origin do not build a player that can only ever show an error: open the video in the real
+       * browser, which is what the error card's own "Watch on YouTube" button does anyway.
+       * window.open is enough — desktop/main.js's setWindowOpenHandler already routes https out to
+       * shell.openExternal, so this needs no new IPC and no preload surface. */
+      if(location.protocol !== 'https:' && location.protocol !== 'http:'){
+        try{ window.open('https://www.youtube.com/watch?v='+encodeURIComponent(vid), '_blank', 'noopener'); }
+        catch(_){ toast('couldn’t open YouTube'); }
+        return;
+      }
       const f=document.createElement('div'); f.className='yt-frame';
       // referrerpolicy overrides the page's <meta name="referrer" content="no-referrer"> for THIS iframe
       // only: YouTube's embed player rejects a referrer-less embed on play (error 153), so send it our
       // origin. The no-referrer default stays for image CDNs. origin= param echoes it for the embed check.
-      /* `origin` ONLY from a real https web origin. YouTube validates it and refuses anything else
-       * with "Video player configuration error" — Error 153 — which is every case this app actually
-       * runs in besides the plain website: `app://posterchan` in the desktop build, `https://localhost`
-       * in the APK, and `http://<hidden-service>.onion` over Tor. Omitting the parameter is allowed
-       * and plays fine; sending a wrong one is fatal. */
-      const _yorigin = (location.protocol === 'https:' && !/\.onion$/i.test(location.hostname))
-        ? '&origin=' + encodeURIComponent(location.origin) : '';
-      f.innerHTML=`<iframe src="https://www.youtube.com/embed/${yt.dataset.yt}?autoplay=1${_yorigin}" allow="autoplay; encrypted-media; fullscreen" allowfullscreen loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+      /* `origin` ONLY from a real, PUBLIC https web origin. YouTube validates it and refuses anything
+       * else with Error 153 — and `https://localhost`, which is where the Android APK serves its
+       * bundle from, is one of the refused ones. The old test was `protocol === 'https:'` minus
+       * .onion, which let localhost through and sent the APK an origin YouTube rejects: the comment
+       * already named the APK as a case to exclude, and the condition did not implement it.
+       * Omitting the parameter is allowed and plays fine; sending a wrong one is fatal. */
+      const _yhost = location.hostname;
+      const _yweb = location.protocol === 'https:' && !/\.onion$/i.test(_yhost)
+                    && _yhost !== 'localhost' && _yhost !== '127.0.0.1' && _yhost !== '[::1]';
+      const _yorigin = _yweb ? '&origin=' + encodeURIComponent(location.origin) : '';
+      f.innerHTML=`<iframe src="https://www.youtube.com/embed/${vid}?autoplay=1${_yorigin}" allow="autoplay; encrypted-media; fullscreen" allowfullscreen loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
       yt.replaceWith(f);
     }, true);
     // Data-saver: a "tap to load" placeholder → swap in the real image/video on click (nothing
@@ -3419,6 +3443,41 @@
       InstEmoji.load();   // warm the map so publish() can tag them without a round trip
     }catch(_){ setSt('emoji suggestion failed'); }
   }
+  // AI → 🧹 Clean links: strip tracking parameters (utm_*, fbclid, si, …) out of every URL in the
+  // draft and unwrap click-wrappers (google /url?q=, l.facebook.com/l.php?u=, Outlook safelinks).
+  // It sits in the AI menu with the rest of the compose tools, but it runs ENTIRELY OFFLINE in
+  // static/js/client/urlclean.js — the decision "is this parameter a tracker" is a published list,
+  // not a judgement, and a model that guesses wrong rewrites a link into a 404. Shared by both
+  // composers (timeline inline + the New post / Reply modal).
+  function _cleanLinksIn(ta){
+    if(!window.PCUrlClean) return null;
+    const r = window.PCUrlClean.cleanText(ta.value || '');
+    if(!r.count) return r;
+    ta.value = r.text;
+    ta.dispatchEvent(new Event('input', {bubbles:true}));
+    return r;
+  }
+  function _aiCleanLinks(ta, setSt){
+    if(!window.PCUrlClean){ setSt('link cleaner not loaded'); return; }
+    if(!/https?:\/\//i.test(ta.value||'')){ setSt('no links in this post'); return; }
+    const r = _cleanLinksIn(ta);
+    if(!r || !r.count){ setSt('🧹 no trackers found — links are already clean'); return; }
+    setSt(`🧹 cleaned ${r.count} link${r.count===1?'':'s'}`);
+    // Say WHAT changed, not just how many: this rewrites the thing you pasted, so the one case that
+    // matters is being able to see it did the right thing (and Ctrl+Z the textarea if it didn't).
+    // Elided in the middle — a cleaned URL is still often long enough to fill a phone's toast.
+    const _short=u=> u.length<=64 ? u : (u.slice(0,40)+'…'+u.slice(-20));
+    toast(r.count===1 ? ('🧹 '+_short(r.changes[0][1])) : `🧹 cleaned ${r.count} links`);
+  }
+  // Auto-clean at post time, when the user has turned it on in Settings. Runs on the TEXTAREA (not
+  // on the built event) so the cleaned text is what you see, and so imeta/mention tags are derived
+  // from the URLs that actually get published — computing them first would leave imeta pointing at
+  // a URL no longer in the content.
+  function _autoCleanOnPost(ta){
+    if(!ClientSettings.get('cleanLinks', false)) return 0;
+    const r = _cleanLinksIn(ta);
+    return (r && r.count) || 0;
+  }
   // Guests get this where the composer would be: whose instance this is, and the two things they might
   // want to do about it. It sits ABOVE the timeline rather than in a corner because that is the moment
   // someone decides whether to join — the old bottom bar said "log in to interact" without ever saying
@@ -3576,10 +3635,12 @@
         // The label carries the state: this is a toggle in a menu that closes on pick, so without the ✓
         // there is nothing anywhere telling you the next post will be framed.
         openMenuPopover(ab, [['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['emoji','😀 Suggest emoji'],['translate','🌐 Translate'],
+                             ['clean','🧹 Clean links'],
                              ['card', (_tlBgFramed?'🖼️ Framed card ✓':'🖼️ Framed card')]], a=>{
           const setSt=m=>{ st.textContent=m; };
           if(a==='enhance') _aiEnhance(ta, setSt);
           else if(a==='tags') _aiHashtags(ta, setSt);
+          else if(a==='clean') _aiCleanLinks(ta, setSt);
           else if(a==='emoji') _aiEmojiSuggest(ta, setSt);
           else if(a==='card') _aiFramedCard(ta, setSt, {
             framed: _tlBgFramed, hasBg: !!_tlBg, set: v=>{ _tlBgFramed=v; _tlBgPreview(); },
@@ -3627,6 +3688,9 @@
     // One builder for Post / 🎨 / ⏰ so a scheduled or styled post is byte-identical to an immediate one.
     // Returns null (after setting a status message) when the input isn't publishable.
     const buildEvent=async()=>{
+      // Strip trackers BEFORE anything reads the text — imeta/mention tags are derived from the URLs
+      // in it, so cleaning afterwards would leave them pointing at a URL that is no longer there.
+      { const n=_autoCleanOnPost(ta); if(n) toast(`🧹 cleaned ${n} link${n===1?'':'s'}`); }
       const text=ta.value.trim(); if(!text){ st.textContent='write something first'; return null; }
       const isPoll=!pollBox.classList.contains('hidden');
       const tags=[];
@@ -10893,9 +10957,10 @@
           reveal: ()=>{ const strip=$('#cmp-bg-strip',root), b=$('#cmp-bg-btn',root);
             if(strip && strip.classList.contains('hidden')){ strip.classList.remove('hidden'); if(b) b.classList.add('active'); } } });
         if(aiBtn) aiBtn.onclick=(e)=>{ e.stopPropagation();
-          const items=[['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['emoji','😀 Suggest emoji'],['translate','🌐 Translate']];
+          const items=[['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['emoji','😀 Suggest emoji'],['translate','🌐 Translate'],['clean','🧹 Clean links']];
           if($('#cmp-bg-strip',root)) items.push(['card', (_bgFramed?'🖼️ Framed card ✓':'🖼️ Framed card')]);
           openMenuPopover(aiBtn, items, a=>{ if(a==='enhance') doEnhance(); else if(a==='tags') doTags();
+            else if(a==='clean') _aiCleanLinks(ta, m=>{ const s=$('#cmp-status',root); if(s) s.textContent=m; });
             else if(a==='emoji') _aiEmojiSuggest(ta, m=>{ const s=$('#cmp-status',root); if(s) s.textContent=m; });
             else if(a==='card') doCard(); else if(a==='translate') composeTranslate(ta, aiBtn); }); };
       }
@@ -10972,6 +11037,10 @@
       // so there is no per-composer timer or listener to leak.
       _syncSendLabel(root);
       $('#cmp-send',root).onclick=async()=>{
+        // Auto-clean (Settings → 🧹 Remove link trackers) runs here, ahead of every branch below —
+        // a reply, a poll, a community post and an article comment all read ta.value from this one
+        // spot, and all of them derive imeta/mention tags from the URLs in it.
+        { const n=_autoCleanOnPost(ta); if(n) toast(`🧹 cleaned ${n} link${n===1?'':'s'}`); }
         const text=ta.value.trim(); if(!text && !quote)return;   // a quote-repost may have no comment
         committed=true; document.removeEventListener('keydown',_escSave);   // posting → don't auto-save; drop the Escape hook
         // 📊 Poll (NIP-88 kind-1068) — only for top-level posts; question = text, options from the builder.
@@ -11079,6 +11148,7 @@
             if(show){ sat.min=_dtLocal(new Date(Date.now()+60*1000)); if(!sat.value) sat.value=_dtLocal(new Date(Date.now()+10*60*1000)); _updWhen(); sat.focus(); } };   // default: +10 min (short, and the readout shows it)
           $('#cmp-sched-go',root).onclick=async()=>{
             const st=$('#cmp-status',root), go=$('#cmp-sched-go',root);
+            { const n=_autoCleanOnPost(ta); if(n) toast(`🧹 cleaned ${n} link${n===1?'':'s'}`); }
             const text=ta.value.trim();
             const whenTs=Math.floor(new Date(sat.value).getTime()/1000);
             if(!sat.value || isNaN(whenTs)){ st.textContent='pick a date & time'; return; }
@@ -11427,6 +11497,7 @@
         }
       }
       if(!_prefTouched.has('vimKeys') && typeof pr.vimKeys==='boolean') ClientSettings.set('vimKeys', pr.vimKeys);
+      if(!_prefTouched.has('cleanLinks') && typeof pr.cleanLinks==='boolean') ClientSettings.set('cleanLinks', pr.cleanLinks);   // 🧹 link-tracker removal follows across devices
       if(!_prefTouched.has('xmrTip') && pr.xmrTip!=null && String(pr.xmrTip)) ClientSettings.set('xmrLastAmt', String(pr.xmrTip));
       if(!_prefTouched.has('bchTip') && pr.bchTip!=null && String(pr.bchTip)) ClientSettings.set('bchLastAmt', String(pr.bchTip));
       if(!_prefTouched.has('zapPresets') && pr.zapPresets!=null) ClientSettings.set('zapPresets', String(pr.zapPresets));   // user-defined amount presets follow across devices
@@ -17529,6 +17600,8 @@
           <div class="muted small"><code>h j k l</code> to move, <code>gg</code> / <code>G</code> for top and bottom. <code>h</code> and <code>l</code> also cross between the nav rail, the feed and notifications. While on, <code>l</code> is movement, so React is <code>f</code> — <code>Alt</code>+<code>L</code> always works either way. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">🎉 Post effects<label class="switch"><input type="checkbox" id="set-post-effects" ${_postEffectsOn()?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Celebratory animations on notes: confetti on congrats, a sunrise on <code>gm</code>, and drifting tears on 😭 reactions. Off by default. Syncs across your devices.</div>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">🧹 Remove link trackers when I post<label class="switch"><input type="checkbox" id="set-clean-links" ${ClientSettings.get('cleanLinks',false)?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">Strips tracking parameters (<code>utm_*</code>, <code>fbclid</code>, <code>gclid</code>, YouTube's <code>si</code>…) out of every link in a post or reply, and unwraps click-wrappers like <code>google.com/url?q=</code> and Outlook safelinks, so what you share can't be tied back to you. Runs on this device with no network call — it's a published list of tracker names, not a guess. Off by default; you can always run it by hand from <b>🤖 AI → 🧹 Clean links</b> in the composer. Syncs across your devices.</div>
           <label class="fld">💾 Media cache size
             <select class="input" id="set-media-cache">${[1,2,4,8,16,32].map(g=>`<option value="${g}"${(+ClientSettings.get('mediaCacheGB',4)===g)?' selected':''}>${g} GB${g===4?' (default)':''}</option>`).join('')}</select>
           </label>
@@ -17815,6 +17888,12 @@
         toast(AUTO_NEW_POSTS?'new posts appear automatically':'new posts wait behind the ↑ button');
         if(AUTO_NEW_POSTS){ const feed=$('#feed');
           if(feed && (VIEW==='home'||VIEW==='global') && _livePending.length && feed.scrollTop <= _LIVE_READ_PX) _flushPending(); }
+      }; }
+    // 🧹 Remove link trackers: per-device (it takes effect on the next post, so there is nothing to
+    // re-render) and synced to Nostr so it follows you to your phone.
+    { const cl=$('#set-clean-links'); if(cl) cl.onchange=()=>{
+        const on = cl.checked; ClientSettings.set('cleanLinks', on); _prefTouched.add('cleanLinks'); saveClientPrefsNostr({ cleanLinks: on });
+        toast(on?'🧹 link trackers removed from your posts':'links posted exactly as you write them');
       }; }
     // Post effects (celebratory note animations): persist + sync to Nostr, then re-render so the change
     // shows immediately (turning OFF drops data-celebrate from notes; the sweep stops on its own).

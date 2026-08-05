@@ -50,6 +50,17 @@ public class VaultAutofillPlugin extends Plugin {
         call.resolve(r);
     }
 
+    /**
+     * The shape of the last screen autofill was asked about — for showing the user why it did what
+     * it did. See VaultStore.noteFill: no vault content, nothing typed, nothing filled.
+     */
+    @PluginMethod
+    public void lastFill(PluginCall call) {
+        JSObject r = new JSObject();
+        r.put("json", VaultStore.lastFill(getContext()));
+        call.resolve(r);
+    }
+
     /** A human name for a package, so the picker does not read as a list of reverse-DNS strings. */
     @PluginMethod
     public void appLabel(PluginCall call) {

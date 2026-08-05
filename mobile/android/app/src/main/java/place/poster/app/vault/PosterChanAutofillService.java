@@ -105,7 +105,16 @@ public class PosterChanAutofillService extends AutofillService {
                 }
             }
             resolve(parsed);
-            if (parsed.password == null && parsed.username == null) { callback.onSuccess(null); return; }
+            // Recorded even here — "the service found no field at all" is an outcome the diagnostic
+            // has to be able to report, and it is the one that looks identical to autofill not being
+            // installed. packageOf() is re-read rather than hoisted above this branch: the tests
+            // anchor the webDomain rules on the pkg declaration below being the START of that
+            // region, and hoisting it drags this early return's onSuccess(null) inside it.
+            if (parsed.password == null && parsed.username == null) {
+                note(parsed, packageOf(request), false, null, "no username or password field on this screen");
+                callback.onSuccess(null);
+                return;
+            }
 
             String pkg = packageOf(request);
             // Whether this app told us it was showing a web page. It is not trusted to say WHICH
@@ -147,6 +156,7 @@ public class PosterChanAutofillService extends AutofillService {
                 // Named, because "no suggestions here" is otherwise indistinguishable from a broken
                 // service, an unsaved login and a field we never found.
                 Log.i(TAG, "no match for " + (fromPackage ? pkg : candidates.toString()));
+                note(parsed, pkg, claimedWeb, candidates, "no entry matched this app or site");
                 callback.onSuccess(null);
                 return;
             }
@@ -161,7 +171,12 @@ public class PosterChanAutofillService extends AutofillService {
             // Counting DATASETS ADDED, not matches considered: an entry with no username and no
             // password builds no dataset, and a response with zero datasets is rejected by the
             // framework. The earlier version incremented per match, so this guard never fired.
-            if (added == 0) { callback.onSuccess(null); return; }
+            if (added == 0) {
+                note(parsed, pkg, claimedWeb, candidates, "matched, but no entry had anything to fill");
+                callback.onSuccess(null);
+                return;
+            }
+            note(parsed, pkg, claimedWeb, candidates, "offered " + added + " login" + (added == 1 ? "" : "s"));
 
             // Offer to save what the user types when it is NOT already one of ours.
             List<AutofillId> ids = new ArrayList<>();
@@ -282,6 +297,53 @@ public class PosterChanAutofillService extends AutofillService {
         return out;
     }
 
+    /**
+     * Write down the SHAPE of this request, so the app can show it back.
+     *
+     * The service has no UI and runs in another process when another app wakes it, so until this
+     * existed the only window into a wrong decision was `adb logcat` — a computer, a cable and
+     * developer mode, for a bug that only ever happens on a phone in someone's hand. Two rounds of
+     * "the password went into the username box" were diagnosed from a description alone, and the
+     * second fix did not hold, because a description cannot say which fields the screen offered.
+     *
+     * NOTHING FROM THE VAULT GOES IN HERE, and nothing that was typed or filled: not the entry, not
+     * the username, not the password, not even how many matched. Only what the DECISION was made
+     * from — the asking package, and per field the declared hints, the two input-type booleans and
+     * the field's own id/label text, which the app itself chose. `outcome` is why it ended where it
+     * did. That is the minimum that makes a wrong pick reviewable, and it is all of it.
+     */
+    private void note(Parsed p, String pkg, boolean claimedWeb, List<String> candidates, String outcome) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("at", System.currentTimeMillis());
+            o.put("pkg", pkg);
+            o.put("outcome", outcome);
+            o.put("claimedWeb", claimedWeb);
+            o.put("hosts", candidates == null ? "" : candidates.toString());
+            o.put("pickUser", p.pickUser);
+            o.put("pickPass", p.pickPass);
+            JSONArray fs = new JSONArray();
+            for (int i = 0; i < p.fields.size() && i < 16; i++) {
+                VaultMatch.FieldInfo f = p.fields.get(i);
+                if (f == null) continue;
+                JSONObject jf = new JSONObject();
+                jf.put("hints", clip(f.hints, 40));
+                jf.put("realPw", f.realPassword);
+                jf.put("visPw", f.visiblePassword);
+                jf.put("text", clip(f.text, 60));
+                fs.put(jf);
+            }
+            o.put("fields", fs);
+            o.put("fieldCount", p.fields.size());
+            VaultStore.noteFill(this, o.toString());
+        } catch (Throwable ignored) {}   // a diagnostic must never be the thing that breaks a fill
+    }
+
+    private static String clip(String s, int n) {
+        String v = String.valueOf(s == null ? "" : s).trim();
+        return v.length() <= n ? v : v.substring(0, n) + "…";
+    }
+
     private static List<String> strings(JSONArray a) {
         List<String> out = new ArrayList<>();
         if (a == null) return out;
@@ -293,6 +355,9 @@ public class PosterChanAutofillService extends AutofillService {
 
     private static final class Parsed {
         AutofillId username, password;
+        /** Which entries of `fields` became the username and password slots; -1 for neither. Kept
+         *  only so the diagnostic can report the DECISION alongside what it was made from. */
+        int pickUser = -1, pickPass = -1;
         /** The domain of the document the field we are filling lives in — an SSO iframe, usually. */
         String fieldDomain = "";
         /** The outermost document's domain: the one that is actually in the address bar. */
@@ -385,6 +450,8 @@ public class PosterChanAutofillService extends AutofillService {
     /** Turn the collected fields into a username slot and a password slot. */
     private static void resolve(Parsed out) {
         int[] pick = VaultMatch.pickFields(out.fields);
+        out.pickUser = pick[0];
+        out.pickPass = pick[1];
         if (pick[0] >= 0) {
             out.username = out.ids.get(pick[0]);
             if (out.fieldDomain.isEmpty()) out.fieldDomain = out.domains.get(pick[0]);
