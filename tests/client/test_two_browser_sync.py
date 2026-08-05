@@ -70,6 +70,24 @@ def test_a_delete_propagates(results):
     _check(results, "a delete propagates instead of coming back")
 
 
+def test_a_settled_pair_goes_quiet(results):
+    """Stable counts are not enough: two browsers can republish the same bookmarks at each other
+    forever while the numbers never move."""
+    _check(results, "a settled pair publishes nothing further")
+
+
+def test_no_write_storm(results):
+    """THE LOCK-UP, as a number. A browser fires its listeners for the extension's OWN writes, and it
+    fires them as part of the write resolving — before the line that records "I am writing this id".
+    So the engine republished its own creations as though the user had made them: every apply caused
+    a publish, every publish caused an apply on the other browser, and the pair saturated the relay
+    and the bookmark database until the browser had to be force-quit.
+
+    Ten bookmarks means ten publishes. Measured at twenty before the fix, and it compounds with tree
+    size and with every subscription round."""
+    _check(results, "no write storm")
+
+
 def test_wholesale_loss_asks_first(results):
     _check(results, "a wholesale disappearance asks before deleting everywhere")
 

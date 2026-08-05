@@ -26,8 +26,9 @@ function makeRelay() {
   let clock = 1000;
   return {
     events,
+    publishes: 0,
     publish(syncId, item) {
-      clock += 1;
+      clock += 1; this.publishes += 1;
       events.set(syncId, { created_at: clock, content: item === null ? '' : JSON.stringify(item) });
       return true;
     },
@@ -53,6 +54,8 @@ function makeBrowser(name, relay, rootDefs) {
   const store = {};
   const listeners = { onCreated: [], onChanged: [], onMoved: [], onRemoved: [] };
   const reg = (k) => ({ addListener: (fn) => listeners[k].push(fn) });
+  let fired = 0;
+  const fire = (k, id) => { fired++; for (const fn of listeners[k]) { try { fn(id, {}); } catch (_) {} } };
   const B = {
     storage: { local: {
       get: async (keys) => { const out = {}; for (const k of [].concat(keys)) if (k in store) out[k] = store[k]; return out; },
@@ -64,18 +67,24 @@ function makeBrowser(name, relay, rootDefs) {
       getTree: async () => { await tick(); return [hydrate('r')]; },
       getChildren: async (id) => { await tick(); return (nodes[id].children || []).map(c => nodes[c]); },
       get: async (id) => { await tick(); return nodes[id] ? [nodes[id]] : []; },
-      create: async (o) => { await tick(); return mk(o.parentId, o.title, o.url); },
-      update: async (id, o) => { await tick(); Object.assign(nodes[id], o); },
+      /* A REAL BROWSER FIRES ITS LISTENERS for the extension's own writes too, and it fires them as
+         part of the call resolving — before any code after `await create(...)` runs. That ordering is
+         the whole point: an engine that registers "I am writing this id" AFTERWARDS has already lost
+         the race, and its own creation comes back as a user edit to be republished. */
+      create: async (o) => { await tick(); const n = mk(o.parentId, o.title, o.url); fire('onCreated', n.id); return n; },
+      update: async (id, o) => { await tick(); Object.assign(nodes[id], o); fire('onChanged', id); },
       move: async (id, o) => {
         await tick(); const n = nodes[id];
         nodes[n.parentId].children = nodes[n.parentId].children.filter(c => c !== id);
         n.parentId = o.parentId; nodes[o.parentId].children.push(id);
+        fire('onMoved', id);
       },
       remove: async (id) => {
         await tick(); const n = nodes[id];
         if (!n) return;
         nodes[n.parentId].children = nodes[n.parentId].children.filter(c => c !== id);
         delete nodes[id];
+        fire('onRemoved', id);
       },
     },
   };
@@ -88,7 +97,7 @@ function makeBrowser(name, relay, rootDefs) {
   const engine = ctx.PCBookmarks.engine;
 
   return {
-    name, nodes, mk, engine, store,
+    name, nodes, mk, engine, store, events: () => fired,
     async init() {
       await engine.init({
         B,
@@ -156,6 +165,24 @@ async function settle(a, b, opts) {
     check('an add propagates', b.urls().includes('https://new.example/'), { firefox: b.urls() });
   }
 
+  // ---- 2b. A SETTLED PAIR MUST GO QUIET ---------------------------------------------------------
+  // Not "the counts stop growing" — the counts can be stable while the two browsers republish the
+  // same bookmarks at each other forever, which is a write storm: thousands of bookmark writes and
+  // relay publishes, and a browser that stops responding. Nothing has ever asserted this.
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS), b = makeBrowser('f', relay, FIREFOX_ROOTS);
+    for (let i = 0; i < 5; i++) a.mk('1', 'A' + i, `https://a${i}.example/`);
+    for (let i = 0; i < 5; i++) b.mk('menu________', 'B' + i, `https://b${i}.example/`);
+    await a.init(); await b.init();
+    await settle(a, b);
+    const before = relay.publishes;
+    await settle(a, b);
+    await settle(a, b);
+    check('a settled pair publishes nothing further',
+      relay.publishes === before, { afterSettle: before, afterTwoMore: relay.publishes });
+  }
+
   // ---- 3. Merging repeatedly changes nothing (the duplication report) ---------------------------
   {
     const relay = makeRelay();
@@ -215,6 +242,28 @@ async function settle(a, b, opts) {
     await a.merge({ confirmRemovals: true });             // the user says they meant it
     await settle(a, b, { confirmRemovals: true });
     check('…and obeys once confirmed', b.urls().length === 0, { firefox: b.urls().length });
+  }
+
+  /* THE LOCK-UP, as a number. A browser fires its listeners for the extension's OWN writes, so an
+   * engine that republishes them feeds itself: every apply causes a publish, every publish causes an
+   * apply on the other browser, and the pair saturates the relay and the bookmark database until the
+   * browser stops responding. Counting writes makes that a failed assertion instead of a force-quit.
+   *
+   * Ten bookmarks between two browsers is a handful of writes each; hundreds means it is looping. */
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS), b = makeBrowser('f', relay, FIREFOX_ROOTS);
+    for (let i = 0; i < 5; i++) a.mk('1', 'S' + i, `https://s${i}.example/`);
+    for (let i = 0; i < 5; i++) b.mk('menu________', 'T' + i, `https://t${i}.example/`);
+    await a.init(); await b.init();
+    for (let i = 0; i < 5; i++) await settle(a, b);
+    const writes = a.events() + b.events();
+    /* Ten bookmarks means ten publishes and ten writes: each one is created once on the far side and
+       published once. Twenty publishes is the engine republishing its own writes — measured at
+       exactly that before the fix — and it compounds with tree size and with every subscription
+       round, so the limit is just above correct rather than merely "not catastrophic". */
+    check('no write storm', writes <= 20 && relay.publishes <= 12,
+      { browserWrites: writes, relayPublishes: relay.publishes });
   }
 
   console.log(JSON.stringify(results, null, 1));

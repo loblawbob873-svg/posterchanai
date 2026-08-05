@@ -301,6 +301,20 @@
    * OUR OWN writes too, and republishing those is an echo: two devices then bounce one bookmark back
    * and forth, each edit newer than the last, forever. */
   var writing = new Set();
+  /* Depth counter for "the engine is writing to the tree right now".
+   *
+   * `writing` alone is a race it always loses: the browser fires onCreated as part of create()
+   * RESOLVING, so the listener runs before the line that registers the new id — and the engine
+   * republishes its own write as though the user had made it. That republish is newer than whatever
+   * caused it, so it overrides tombstones (a deleted bookmark comes back) and lands on the other
+   * browser, which applies it, which fires ITS listeners, and so on: a write storm across the relay
+   * and the bookmark database, which is what locked up a browser badly enough to need force-quitting.
+   *
+   * A flag around the whole apply cannot lose that race — it is set before the first write and held
+   * until after the last, with a short tail because an event can arrive a tick late. */
+  var applying = 0;
+  function beginApply() { applying++; }
+  function endApply() { setTimeout(function () { applying = Math.max(0, applying - 1); }, 250); }
 
   function remember(syncId, browserId) {
     map[syncId] = browserId; rmap[browserId] = syncId;
@@ -395,6 +409,9 @@
    * state. That is now refused outright — see `loaded` — which is what makes this safe to turn back
    * on rather than merely smaller.) */
   async function applyRemoval(id) {
+    beginApply(); try { return await _applyRemoval(id); } finally { endApply(); }
+  }
+  async function _applyRemoval(id) {
     var bid = map[id];
     if (!bid) return;                       // never synced here — not ours to touch
     var knew = (items[id] && items[id].url) || '';
@@ -412,6 +429,9 @@
   }
 
   async function applyUpsert(id, obj) {
+    beginApply(); try { return await _applyUpsert(id, obj); } finally { endApply(); }
+  }
+  async function _applyUpsert(id, obj) {
     if (!P.isSyncable(obj)) return;
     var bid = map[id];
     if (bid) {
@@ -522,7 +542,7 @@
   }
 
   async function onLocalChange(browserId) {
-    if (!on || writing.has(browserId)) return;      // our own write coming back — never republish
+    if (!on || applying > 0 || writing.has(browserId)) return;      // our own write coming back — never republish
     var node = null;
     try { node = (await api.B.bookmarks.get(browserId))[0]; } catch (_) {}
     if (!node || !P.isSyncable(node)) return;
@@ -543,7 +563,7 @@
   /* A bookmark removed here becomes a tombstone, so the other devices drop it too — carrying the URL
    * it had, which is what lets the receiving side check it is removing the right thing. */
   async function onLocalRemove(browserId) {
-    if (!on || writing.has(browserId)) return;
+    if (!on || applying > 0 || writing.has(browserId)) return;
     var syncId = rmap[browserId];
     if (!syncId) return;                            // never synced — nothing to tell anyone
     var knew = items[syncId] || {};
@@ -648,6 +668,9 @@
    * It only moves children and deletes a folder that is EMPTY after the move. No bookmark is removed
    * by this in any branch. */
   async function tidy() {
+    beginApply(); try { return await _tidy(); } finally { endApply(); }
+  }
+  async function _tidy() {
     if (!api) throw new Error('bookmark sync is not ready yet');
     var merged = 0, removed = 0;
 
