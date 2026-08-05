@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import logging
 import time
 from typing import Optional
@@ -75,8 +76,20 @@ def _tag_of(data: dict, name: str) -> str:
 
 
 def token_of(data: dict) -> str:
-    """The stream's publish token — read straight off the parked event's `d` tag."""
-    return _tag_of(data, "d")
+    """The stream's MediaMTX publish token, recovered from the parked event's `d` tag.
+
+    The `d` is NOT the token any more. It used to be, and that was the bug: the token is stable for a
+    user's whole life (it's the MediaMTX path in their OBS config), so kind 30311 being a parameterized
+    replaceable event meant every broadcast REPLACED the previous one at `30311:<pubkey>:<token>` —
+    last week's stream silently overwritten by this week's. A broadcast now gets `<token>-<starts>`.
+
+    This must keep returning the TOKEN, because that is what `is_publishing()` probes MediaMTX with:
+    hand it the full `d` and the probe finds no such path, reads it as "feed gone", and the reaper ends
+    every live stream it sweeps. A token is hex (never contains `-`) and `starts` is a 10-digit unix
+    time, so stripping one trailing `-<digits>` recovers it — and leaves an OLD parked event, whose `d`
+    really is the bare token, untouched.
+    """
+    return re.sub(r"-\d{9,}$", "", _tag_of(data, "d"))
 
 
 def _session_of(data: dict) -> str:

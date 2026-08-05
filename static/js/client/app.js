@@ -5645,6 +5645,9 @@
       const rank=e=>({live:0,planned:1,ended:2}[streamStatus(e)] ?? 3);
       const streams=_dedupAddr(evs.filter(e=>!_isDeletedStream(e))).sort((a,b)=> rank(a)-rank(b) || b.created_at-a.created_at);
       try{ _adoptOwnLive(streams); }catch(_){}   // never let self-adopt break the list render
+      // Catch up any of YOUR ended streams whose recording finished while this tab was closed, so the
+      // replay becomes visible to other clients. Once per view open, never awaited, never fatal.
+      if(!_sweptReplays){ _sweptReplays = true; try{ _sweepUnstampedReplays(); }catch(_){} }
       const top=`<div class="streams-top">${_liveStream
         ? `<span class="live-badge">● LIVE</span><span class="muted small" id="stream-viewers">👁 …</span><button class="btn btn-ghost small" id="stream-end"><svg class="ic b-ic" aria-hidden="true"><use href="#i-stop"></use></svg>End stream</button>`
         : (!GUEST ? `<button class="btn btn-neon small" id="stream-golive"><svg class="ic b-ic" aria-hidden="true"><use href="#i-live"></use></svg>Go Live</button>` : '')}</div>`;
@@ -5736,9 +5739,12 @@
     if(st==='ended'){
       const _view=e.id; { const n0=$('#st-note'); if(n0) n0.textContent='Loading recording…'; }
       (async()=>{
+        // Resolve THIS broadcast's recording. Was `vods[0]` — the newest VOD for the publish token,
+        // which on a token that has streamed more than once is somebody else's session: opening an old
+        // stream played (and would have stamped) the latest recording.
         let vurl='';
-        if(dtag){ try{ const r=await _streamFetch('/api/streams/vods/by-token/'+encodeURIComponent(dtag));
-          if(r&&r.ok){ const j=await r.json(); const v=(j.vods||[])[0]; if(v&&v.url) vurl=v.url; } }catch(_){} }
+        const _starts=(e.tags.find(t=>t[0]==='starts')||[])[1]||'';
+        if(dtag){ try{ vurl = await _vodUrlFor(_tokenOfD(dtag), _starts); }catch(_){} }
         if(VIEW!=='stream'||openStream._view!==_view) return;   // navigated away / opened another stream
         const playUrl=vurl||url; const n2=$('#st-note');
         if(!playUrl){ if(n2) n2.textContent='This stream ended — no recording available.'; return; }
@@ -5750,6 +5756,13 @@
     { const pb=$('#st-pop'); if(pb) pb.onclick=()=>popOutStream(e); }
     if(!ClientSettings.get('streamChatHidden',false)) _streamChat(saddr);   // don't start the sub if chat is hidden
   }
+
+  /* The MediaMTX publish token behind a 30311 `d` tag.
+   * The `d` was historically the token itself, which is stable for a user's whole life — so every
+   * broadcast replaced the previous one at the same address. New broadcasts use `<token>-<starts>`.
+   * A hex token never contains `-`, and `starts` is a 10-digit unix time, so stripping a trailing
+   * `-<digits>` recovers the token from either form (old events keep resolving). */
+  function _tokenOfD(d){ return String(d||'').replace(/-\d{9,}$/, ''); }
 
   // NIP-53 `recording`: republish YOUR OWN ended kind-30311 with the VOD url on it, once the VOD exists.
   //
@@ -5773,11 +5786,93 @@
       tags.push(['recording', vurl]);
       const r = await publish(30311, ev.content || '', tags, { quiet: true });
       if(r && r.ok){
+        // THE STAMPED EVENT MUST REACH THE RELAYS THE OTHER CLIENTS READ. publish() only hits our own
+        // relay, and the stream is on the external STREAM_RELAYS too (that is where zap.stream/shosho
+        // found it in the first place). Without this the `recording` tag existed only on poster.place:
+        // every other client kept the older, untagged copy and showed the stream as unreplayable —
+        // exactly the bug. _deleteStream already compensates the same way, for the same reason.
+        try{ if(r.ev) await Relay.publishTo(STREAM_RELAYS, r.ev); }catch(_){ }
         toast('replay linked on your stream — other clients can find it now');
         // Reflect it locally so reopening the view does not try again before the relay read catches up.
         try{ ev.tags = tags; }catch(_){ }
       }
+      return !!(r && r.ok);
     }catch(err){ /* never block playback on this — the replay already plays for us */ }
+    return false;
+  }
+
+  /* STAMP THE REPLAY WITHOUT WAITING TO BE LOOKED AT.
+   *
+   * _backfillRecordingTag used to run from exactly ONE place: opening your own ended stream in this
+   * client, with a VOD already finished. End a stream and never reopen it — which is what normally
+   * happens — and no `recording` tag was ever published, so shosho had nothing to mark replayable no
+   * matter how long it waited. The VOD is not instant either (concat + Blossom upload), so stamping
+   * once at End would usually find nothing and give up.
+   *
+   * So: poll for this broadcast's VOD after the stream ends, with a bounded backoff, and stamp the
+   * moment it appears. Cheap (one small JSON GET per tick, only while the tab is open and only for a
+   * stream we just ended) and it stops at the first success. _sweepUnstampedReplays covers the tab
+   * that was closed before the VOD finished. */
+  async function _stampReplayWhenReady(addr, token, starts){
+    const DELAYS = [15, 30, 60, 60, 120, 120, 300, 300, 600];   // ~28 min, then give up to the sweep
+    for(const wait of DELAYS){
+      await new Promise(r => setTimeout(r, wait * 1000));
+      if(!ME) return;
+      let vurl = '';
+      try{ vurl = await _vodUrlFor(token, starts); }catch(_){ }
+      if(!vurl) continue;
+      // Re-read the event rather than trusting a stale copy: End, the viewer-count update and the
+      // parked sentinel all re-sign this address, so the newest version is the only safe base.
+      let ev = null;
+      try{ ev = (await Relay.query([{ kinds:[30311], authors:[ME.pubkey], '#d':[addr], limit:1 }]))[0]; }catch(_){ }
+      if(!ev) continue;
+      if((ev.tags||[]).some(t => t[0]==='recording' && t[1])) return;   // someone already stamped it
+      if(await _backfillRecordingTag(ev, vurl)) return;
+    }
+  }
+
+  /* The VOD for ONE broadcast, not "the newest VOD this streamer has".
+   * /vods/by-token returns every session for the publish token (it is stable for life), newest first,
+   * so picking [0] attributes the latest recording to whichever old stream you happened to open. Match
+   * on the session's start time — the same key stream_vod_service uses for its one-VOD-per-session
+   * uniqueness index — and only fall back to newest when the event carries no `starts`. */
+  async function _vodUrlFor(token, starts){
+    if(!token) return '';
+    const r = await _streamFetch('/api/streams/vods/by-token/' + encodeURIComponent(token));
+    if(!(r && r.ok)) return '';
+    const vods = ((await r.json()) || {}).vods || [];
+    if(!vods.length) return '';
+    const s = parseInt(starts, 10);
+    if(!s) return vods[0].url || '';
+    // The recording starts when the feed does, which is at/after the announce — never before it by more
+    // than a clock skew, so allow a small window back and take the closest.
+    let best = null, bestGap = Infinity;
+    for(const v of vods){
+      const gap = Math.abs((parseInt(v.started_at, 10) || 0) - s);
+      if(gap < bestGap){ best = v; bestGap = gap; }
+    }
+    return (bestGap <= 6 * 3600 && best) ? (best.url || '') : '';
+  }
+
+  /* The tab that was closed before the VOD finished never got to stamp. On startup, look at YOUR OWN
+   * ended streams, and stamp any that have a finished recording and no `recording` tag yet. Bounded to
+   * the recent ones so this is a handful of requests, not a crawl of your whole history. */
+  async function _sweepUnstampedReplays(){
+    try{
+      if(!ME || GUEST) return;
+      let mine = [];
+      try{ mine = await Relay.query([{ kinds:[30311], authors:[ME.pubkey], limit:30 }]); }catch(_){ return; }
+      for(const ev of mine){
+        if(streamStatus(ev) !== 'ended') continue;
+        if((ev.tags||[]).some(t => t[0]==='recording' && t[1])) continue;
+        const d = (ev.tags.find(t=>t[0]==='d')||[])[1] || '';
+        const starts = (ev.tags.find(t=>t[0]==='starts')||[])[1] || '';
+        if(!d) continue;
+        let vurl = '';
+        try{ vurl = await _vodUrlFor(_tokenOfD(d), starts); }catch(_){ }
+        if(vurl) await _backfillRecordingTag(ev, vurl);
+      }
+    }catch(_){ }
   }
   // Delete YOUR OWN stream: NIP-09 kind-5 addressed to the 30311's `a` (removes all versions) + its event id.
   async function _deleteStream(e){
@@ -5796,7 +5891,7 @@
       // RESURRECTS the stream we just deleted (a fresh event at the same address, after the kind-5).
       _clearEndSentinel();
       if(d) _endedStreams.add(d);   // don't let _adoptOwnLive resurrect a deleted stream from stale cache
-      if(_liveStream && _liveStream.token===d){ _stopLiveHb(); _liveStream=null; }
+      if(_liveStream && ((_liveStream.d||_liveStream.token)===d)){ _stopLiveHb(); _liveStream=null; }
       // Same teardown as _endLive: a deleted stream must still release the camera / native screen capture.
       // (The old inline version deref'd .pc unconditionally, which threw for a native share — leaving the
       // screen capture running with no overlay left to stop it.)
@@ -5858,6 +5953,7 @@
   // kind-5, but an external one may lag or ignore it, and renderStreams/the profile re-FETCH from those relays
   // and re-cache the event, resurrecting it. Keyed by 30311 address `30311:<pubkey>:<d>`.
   let _deletedStreams = new Set((()=>{ try{ return ClientSettings.get('deletedStreams', []) || []; }catch(_){ return []; } })());
+  let _sweptReplays=false;   // the startup replay-stamp sweep runs once per session
   function _streamAddr(e){ const d=(e.tags.find(t=>t[0]==='d')||[])[1]||''; return `30311:${e.pubkey}:${d}`; }
   function _isDeletedStream(e){ return e && _deletedStreams.has(_streamAddr(e)); }
   function _markStreamDeleted(addr){ if(!addr) return; _deletedStreams.add(addr);
@@ -5930,15 +6026,18 @@
     const mine=(streams||[]).find(e=>e.pubkey===ME.pubkey && streamStatus(e)==='live'
                                      && !_endedStreams.has((e.tags.find(t=>t[0]==='d')||[])[1]));
     if(!mine) return;
-    const tok=(mine.tags.find(t=>t[0]==='d')||[])[1];
-    if(!tok || _endedStreams.has(tok)) return;
+    // `d` is the SESSION id now; the MediaMTX token (what the HLS url and the VOD lookup need) is the
+    // part before the `-<starts>` suffix. _tokenOfD also passes through an old event whose d IS the token.
+    const sid=(mine.tags.find(t=>t[0]==='d')||[])[1];
+    const tok=_tokenOfD(sid);
+    if(!tok || _endedStreams.has(tok) || _endedStreams.has(sid)) return;
     // Carry `starts` over from the adopted event. Without it every later republish of this replaceable 30311
     // (the viewer count, the ended event) would invent a new start time — the stream would look like it began
     // seconds ago and its duration would reset for every client.
     const starts=(mine.tags.find(t=>t[0]==='starts')||[])[1]||String(mine.created_at);
     // Carry `image` over for the same reason as `starts` — re-adopting after a reload and then re-signing
     // (viewer count / end) would otherwise drop the cover we announced with.
-    _liveStream={ token:tok, title:(mine.tags.find(t=>t[0]==='title')||[])[1]||'Live stream',
+    _liveStream={ token:tok, d:sid, title:(mine.tags.find(t=>t[0]==='title')||[])[1]||'Live stream',
                   hls:(mine.tags.find(t=>t[0]==='streaming')||[])[1]||'', starts,
                   image:(mine.tags.find(t=>t[0]==='image')||[])[1]||'' };
     if(_liveStream.hls) _startLiveHb();
@@ -6004,7 +6103,11 @@
     let watchUrl='';
     try{
       const _r=[CFG && CFG.relay_url].filter(Boolean);
-      watchUrl=_webLink(NT().nip19.naddrEncode({identifier:info.token, pubkey:ME.pubkey, kind:30311, relays:_r}));
+      // Mint this broadcast's `d` NOW, so the copyable watch link points at the event we are about to
+      // publish. It has to happen here: the naddr identifier IS the `d`, and that is no longer the
+      // (stable) token, so a link built from the token would address the wrong — or a stale — stream.
+      info.d = info.token + '-' + Math.floor(Date.now()/1000);
+      watchUrl=_webLink(NT().nip19.naddrEncode({identifier:info.d, pubkey:ME.pubkey, kind:30311, relays:_r}));
     }catch(_){ }
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-live"></use></svg>Go Live</h3>
       <label class="fld">Title<input class="input" id="gl-title" placeholder="What are you streaming?" maxlength="120" autofocus></label>
@@ -6190,7 +6293,12 @@
       [ (CFG && CFG.relay_url) || '', ...STREAM_RELAYS ].map(u=>String(u||'').trim()).filter(Boolean)
     ));
     return [
-      ['d', s.token], ['title', s.title], ['streaming', s.hls],
+      // ONE BROADCAST, ONE ADDRESS. This was `s.token` — the MediaMTX publish token, which is stable
+      // for the user's whole life. kind 30311 is parameterized-REPLACEABLE, so every stream landed on
+      // `30311:<pubkey>:<token>` and silently overwrote the previous one: last week's stream, its
+      // recording link and its chat address all replaced by this week's. `s.d` is `<token>-<starts>`,
+      // unique per go-live and still reducible to the token (_tokenOfD / stream_end_service.token_of).
+      ['d', s.d || s.token], ['title', s.title], ['streaming', s.hls],
       ...(s.image ? [['image', s.image]] : []),
       ...(s.starts ? [['starts', s.starts]] : []),
       ['p', ME.pubkey, '', 'host'],
@@ -6203,7 +6311,9 @@
     // Default the cover to your own avatar when none was given, so the announced event carries a real
     // `image` tag rather than relying on every client's fallback — zap.stream/Amethyst won't guess one.
     const cover=(image||'').trim() || (Store.profile(ME.pubkey)||{}).picture || '';
-    _liveStream={ token:info.token, title, hls:info.hls_url, starts, image:cover };
+    // Prefer the id minted when the Go Live modal opened, so the watch link it already showed is the
+    // one this stream actually publishes under. Fall back for callers that never opened that modal.
+    _liveStream={ token:info.token, d:(info.d || (info.token+'-'+starts)), title, hls:info.hls_url, starts, image:cover };
     const r = await publish(30311, '', _liveBase(_liveStream).concat([['status','live']]));
     // If the relay didn't store the "live" event, the stream is ingesting but INVISIBLE on Nostr. Throw so the
     // go-live callers' existing catch surfaces "live — but couldn't announce yet" instead of a silent no-show.
@@ -6249,9 +6359,10 @@
   async function _announceStreamPost(info, title){
     try{
       const relays=[CFG && CFG.relay_url].filter(Boolean);   // include our relay so external clients can resolve the naddr
-      const naddr=NT().nip19.naddrEncode({identifier:info.token, pubkey:ME.pubkey, kind:30311, relays});
+      const _d = info.d || info.token;   // same address the 30311 was published under
+      const naddr=NT().nip19.naddrEncode({identifier:_d, pubkey:ME.pubkey, kind:30311, relays});
       await publish(1, `🔴 I’m live now: ${title}\n\n▶ Watch: ${_webLink(naddr)}\n\nnostr:${naddr}`,
-        [['t','livestream'], ['a', `30311:${ME.pubkey}:${info.token}`, '', 'root']]);
+        [['t','livestream'], ['a', `30311:${ME.pubkey}:${_d}`, '', 'root']]);
     }catch(_){}
   }
   // WebRTC gathers ICE, then we send the complete offer (non-trickle WHIP). Bounded so it never hangs;
@@ -6805,7 +6916,11 @@
     const s=_liveStream; _liveStream=null;
     if(s){ _endedStreams.add(s.token);   // never auto-re-adopt this one — the End was intentional
       try{ await publish(30311, '', _liveBase(s).concat([['status','ended'], ['ends', String(Math.floor(Date.now()/1000))]]));
-        _clearEndSentinel(); }catch(_){} }
+        _clearEndSentinel(); }catch(_){}
+      // The recording does not exist yet (concat + Blossom upload take a while). Watch for it and stamp
+      // the `recording` tag when it lands, so the replay is visible to other clients without the
+      // streamer having to come back and reopen their own stream. Deliberately not awaited.
+      try{ _stampReplayWhenReady((s.d || s.token), s.token, s.starts); }catch(_){} }
     toast('stream ended'); if(VIEW==='streams') renderStreams();
   }
   // ---------- communities (NIP-72 moderated communities, kind 34550) ----------
