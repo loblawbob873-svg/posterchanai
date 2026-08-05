@@ -482,13 +482,26 @@
    * falls back to `other`. */
   var _folder = {};        // parentId + '\n' + name -> Promise<id>
 
+  /* The top-level container ids, read ONCE.
+   *
+   * getTree() serialises the WHOLE bookmark tree across the extension boundary, and this used to run
+   * for every arriving bookmark — twice, via ensureFolder. Measured at 603 full-tree reads for 300
+   * bookmarks: quadratic work whose cost is invisible on the ten-node trees a test uses and which,
+   * on a real profile, is the browser locking up while it syncs.
+   *
+   * The roots are fixed for the life of a profile — Chrome's '1'/'2'/'3', Firefox's toolbar_____ and
+   * friends — so they are cached for the session. Nothing else here needs the whole tree. */
+  var _roots = null;
   async function rootId(root) {
-    var roots = await api.B.bookmarks.getTree();
-    var kids = (roots[0] && roots[0].children) || [];
-    var byRoot = {};
-    kids.forEach(function (k) { byRoot[P.classifyRoot(k)] = k.id; });
-    return byRoot[root || 'other'] || byRoot.other || byRoot.toolbar ||
-           (kids[kids.length - 1] || kids[0] || {}).id;
+    if (!_roots) {
+      var roots = await api.B.bookmarks.getTree();
+      var kids = (roots[0] && roots[0].children) || [];
+      var byRoot = {};
+      kids.forEach(function (k) { byRoot[P.classifyRoot(k)] = k.id; });
+      byRoot._fallback = (kids[kids.length - 1] || kids[0] || {}).id;
+      _roots = byRoot;
+    }
+    return _roots[root || 'other'] || _roots.other || _roots.toolbar || _roots._fallback;
   }
 
   function ensureChild(parentId, name) {

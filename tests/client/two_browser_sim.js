@@ -55,6 +55,7 @@ function makeBrowser(name, relay, rootDefs) {
   const listeners = { onCreated: [], onChanged: [], onMoved: [], onRemoved: [] };
   const reg = (k) => ({ addListener: (fn) => listeners[k].push(fn) });
   let fired = 0;
+  const calls = { getTree: 0, getChildren: 0 };
   const fire = (k, id) => { fired++; for (const fn of listeners[k]) { try { fn(id, {}); } catch (_) {} } };
   const B = {
     storage: { local: {
@@ -64,8 +65,8 @@ function makeBrowser(name, relay, rootDefs) {
     bookmarks: {
       onCreated: reg('onCreated'), onChanged: reg('onChanged'),
       onMoved: reg('onMoved'), onRemoved: reg('onRemoved'),
-      getTree: async () => { await tick(); return [hydrate('r')]; },
-      getChildren: async (id) => { await tick(); return (nodes[id].children || []).map(c => nodes[c]); },
+      getTree: async () => { calls.getTree++; await tick(); return [hydrate('r')]; },
+      getChildren: async (id) => { calls.getChildren++; await tick(); return (nodes[id].children || []).map(c => nodes[c]); },
       get: async (id) => { await tick(); return nodes[id] ? [nodes[id]] : []; },
       /* A REAL BROWSER FIRES ITS LISTENERS for the extension's own writes too, and it fires them as
          part of the call resolving — before any code after `await create(...)` runs. That ordering is
@@ -97,7 +98,7 @@ function makeBrowser(name, relay, rootDefs) {
   const engine = ctx.PCBookmarks.engine;
 
   return {
-    name, nodes, mk, engine, store, events: () => fired,
+    name, nodes, mk, engine, store, events: () => fired, calls,
     async init() {
       await engine.init({
         B,
@@ -264,6 +265,23 @@ async function settle(a, b, opts) {
        round, so the limit is just above correct rather than merely "not catastrophic". */
     check('no write storm', writes <= 20 && relay.publishes <= 12,
       { browserWrites: writes, relayPublishes: relay.publishes });
+  }
+
+  /* A REALISTIC TREE. Everything above uses ten bookmarks, where an O(tree) call per arriving
+   * bookmark costs nothing and is invisible. A real profile has hundreds, and getTree() serialises
+   * the WHOLE tree across the extension boundary every time — so "one full-tree read per bookmark"
+   * is quadratic work that presents as the browser locking up while it syncs. */
+  {
+    const relay = makeRelay();
+    const a = makeBrowser('c', relay, CHROME_ROOTS), b = makeBrowser('f', relay, FIREFOX_ROOTS);
+    const folder = a.mk('1', 'Big');
+    for (let i = 0; i < 300; i++) a.mk(folder.id, 'N' + i, `https://n${i}.example/`);
+    await a.init(); await b.init();
+    await settle(a, b);
+    check('a large tree does not read the whole tree per bookmark',
+      b.calls.getTree <= 20 && a.calls.getTree <= 20,
+      { chromeGetTree: a.calls.getTree, firefoxGetTree: b.calls.getTree,
+        bookmarks: b.urls().length });
   }
 
   console.log(JSON.stringify(results, null, 1));

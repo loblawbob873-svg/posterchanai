@@ -88,6 +88,17 @@ def test_no_write_storm(results):
     _check(results, "no write storm")
 
 
+def test_a_large_tree_is_not_quadratic(results):
+    """WHY THE BROWSER HUNG. getTree() serialises the WHOLE bookmark tree across the extension
+    boundary, and the engine called it for every arriving bookmark — twice, via the folder lookup.
+    Measured at 603 full-tree reads for 300 bookmarks, against 4 now.
+
+    Ten-node trees are why no test saw it: the cost is invisible until the tree is real, and then it
+    is the browser locking up while it syncs. The roots are fixed for the life of a profile, so they
+    are read once."""
+    _check(results, "a large tree does not read the whole tree per bookmark")
+
+
 def test_wholesale_loss_asks_first(results):
     _check(results, "a wholesale disappearance asks before deleting everywhere")
 
