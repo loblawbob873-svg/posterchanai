@@ -280,6 +280,14 @@ class DiffusersService:
         self.model_type = settings.get("image_model_type", "sdxl")  # sd15, sdxl, sd3, flux
 
         # Generation defaults
+        # The negative prompt's monochrome terms are LOAD-BEARING — see schemas.py. The anime path
+        # loads a Danbooru-tagged checkpoint whose training set is full of monochrome manga tagged
+        # exactly these words, so without them an ordinary coloured-illustration prompt kept coming
+        # back as a colourless line sketch.
+        self.default_negative = (settings.get("image_negative_prompt", "") or "").strip() or (
+            "bad quality, blurry, distorted, ugly, deformed, low resolution, "
+            "monochrome, greyscale, grayscale, sketch, lineart, line art, "
+            "unfinished, rough sketch, flat color")
         self.default_steps = int(settings.get("image_default_steps", "20"))
         self.default_cfg = float(settings.get("image_default_cfg", "7.0"))
         self.default_width = int(settings.get("image_default_width", "1024"))
@@ -684,9 +692,14 @@ class DiffusersService:
                 # Update last used at START of generation to prevent idle timeout during long generations
                 self._last_used = time.time()
 
-                # Default negative prompt
+                # Default negative prompt, from settings (Admin → Image Generation).
+                #
+                # Its default now negates monochrome/sketch, and that is the whole reason this is not
+                # a literal any more: the anime path loads a Danbooru-tagged checkpoint whose training
+                # set is full of monochrome manga tagged exactly those words, so without them an
+                # ordinary "cute girl, anime" prompt kept returning a COLOURLESS LINE SKETCH.
                 if not negative_prompt:
-                    negative_prompt = "bad quality, blurry, distorted, ugly, deformed, low resolution"
+                    negative_prompt = self.default_negative
 
                 result = self._pipe(
                     prompt=prompt,

@@ -48,6 +48,17 @@
             </div>
         </div>
         <div class="form-row">
+            <div class="form-group" style="flex:1 1 100%">
+                <label for="image_negative_prompt">Negative Prompt</label>
+                <textarea id="image_negative_prompt" name="image_negative_prompt" rows="2"></textarea>
+                <small>Used whenever a request doesn't supply its own. The <code>monochrome, greyscale,
+                sketch, lineart</code> terms matter more than they look: the anime model is a
+                Danbooru-tagged checkpoint whose training set is full of monochrome manga tagged
+                exactly those words, so without them an ordinary coloured-illustration prompt comes
+                back as a colourless line sketch.</small>
+            </div>
+        </div>
+        <div class="form-row">
             <div class="form-group">
                 <label for="image_default_width">Default Width</label>
                 <input type="number" id="image_default_width" name="image_default_width" value="1024" min="256" max="2048" step="64">

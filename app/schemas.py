@@ -107,6 +107,18 @@ class SettingsResponse(BaseModel):
     image_model_path: str = ""
     image_anime_model_path: str = ""  # Optional anime model for style switching
     image_model_type: str = "sdxl"  # "sd15", "sdxl", "sd3", "flux"
+    # The negative prompt used when a request does not supply its own.
+    #
+    # THE MONOCHROME TERMS ARE LOAD-BEARING, not padding. The anime path routes to Danbooru-tagged
+    # SDXL checkpoints (Illustrious / NoobAI / Pony), and a large slice of that training data is
+    # monochrome manga art tagged `monochrome`, `greyscale`, `sketch`, `lineart`. Nothing in the old
+    # default ("bad quality, blurry, distorted, ugly, deformed, low resolution") steers away from it,
+    # so those models routinely landed there and returned COLOURLESS LINE SKETCHES for an ordinary
+    # coloured-illustration prompt — reported as "geni always produces colorless sketches". It is a
+    # conditioning problem, not a broken checkpoint.
+    image_negative_prompt: str = ("bad quality, blurry, distorted, ugly, deformed, low resolution, "
+                                  "monochrome, greyscale, grayscale, sketch, lineart, line art, "
+                                  "unfinished, rough sketch, flat color")
     image_default_steps: str = "20"
     image_default_cfg: str = "7.0"
     image_default_width: str = "1024"
