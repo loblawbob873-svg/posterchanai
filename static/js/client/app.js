@@ -5779,7 +5779,12 @@
   async function _backfillRecordingTag(ev, vurl){
     try{
       if(!ME || !ev || ev.pubkey !== ME.pubkey) return;        // only the author can re-sign their own event
-      if((ev.tags||[]).some(t => t[0] === 'recording' && t[1])) return;   // already tagged
+      /* A WRONG tag has to be correctable, not just a missing one. This used to bail on any existing
+       * `recording`, which made a bad stamp permanent — and the matcher above did produce bad stamps,
+       * pointing four separate broadcasts at one older recording whose blob no longer existed, so every
+       * replay 404'd with no way back. Bail only when the tag ALREADY says what we would write. */
+      const _cur = ((ev.tags||[]).find(t => t[0] === 'recording') || [])[1] || '';
+      if(_cur === vurl) return;
       // Rebuild the SAME addressable event (same `d`), tags carried over verbatim so nothing else about the
       // stream changes — title, image, participants, status:ended all stay exactly as published.
       const tags = (ev.tags||[]).filter(t => t[0] !== 'recording').map(t => t.slice());
@@ -5844,14 +5849,27 @@
     if(!vods.length) return '';
     const s = parseInt(starts, 10);
     if(!s) return vods[0].url || '';
-    // The recording starts when the feed does, which is at/after the announce — never before it by more
-    // than a clock skew, so allow a small window back and take the closest.
+    /* A RECORDING CANNOT START BEFORE THE BROADCAST WAS ANNOUNCED, and "no recording yet" must return
+     * NOTHING rather than the nearest other one.
+     *
+     * This was Math.abs() over a 6-hour window, which is how four separate streams all ended up tagged
+     * with the SAME recording — one belonging to a broadcast two hours earlier, whose blob no longer
+     * existed, so every replay 404'd. The VOD is not written until the concat+upload finishes (~90s
+     * after the stream ends), so at stamping time the only candidates were older streams, and an
+     * absolute-difference match happily reached back and took one.
+     *
+     * The feed arrives at or after the announce, so a VOD that began before it (past a little clock
+     * skew) is a DIFFERENT broadcast, always. Anything left is scored by how soon after the announce it
+     * began, and it must begin within the hour — a recording that starts long after the announce
+     * belongs to a later go-live on the same token. No candidate = '', and the caller retries. */
+    const SKEW = 120, MAX_WAIT = 3600;
     let best = null, bestGap = Infinity;
     for(const v of vods){
-      const gap = Math.abs((parseInt(v.started_at, 10) || 0) - s);
-      if(gap < bestGap){ best = v; bestGap = gap; }
+      const gap = (parseInt(v.started_at, 10) || 0) - s;   // signed: negative = started BEFORE the announce
+      if(gap < -SKEW || gap > MAX_WAIT) continue;
+      if(Math.abs(gap) < Math.abs(bestGap)){ best = v; bestGap = gap; }
     }
-    return (bestGap <= 6 * 3600 && best) ? (best.url || '') : '';
+    return best ? (best.url || '') : '';
   }
 
   /* The tab that was closed before the VOD finished never got to stamp. On startup, look at YOUR OWN
@@ -5864,13 +5882,16 @@
       try{ mine = await Relay.query([{ kinds:[30311], authors:[ME.pubkey], limit:30 }]); }catch(_){ return; }
       for(const ev of mine){
         if(streamStatus(ev) !== 'ended') continue;
-        if((ev.tags||[]).some(t => t[0]==='recording' && t[1])) continue;
         const d = (ev.tags.find(t=>t[0]==='d')||[])[1] || '';
         const starts = (ev.tags.find(t=>t[0]==='starts')||[])[1] || '';
         if(!d) continue;
+        // Deliberately NOT skipping events that already carry a `recording`: the sweep is also the
+        // repair path for one that points at the wrong (or a since-deleted) VOD. _backfillRecordingTag
+        // no-ops when the tag already matches, so a correct one costs a comparison and no publish.
+        const cur = ((ev.tags||[]).find(t=>t[0]==='recording')||[])[1] || '';
         let vurl = '';
         try{ vurl = await _vodUrlFor(_tokenOfD(d), starts); }catch(_){ }
-        if(vurl) await _backfillRecordingTag(ev, vurl);
+        if(vurl && vurl !== cur) await _backfillRecordingTag(ev, vurl);
       }
     }catch(_){ }
   }

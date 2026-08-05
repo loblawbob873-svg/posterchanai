@@ -168,3 +168,55 @@ def test_node_can_parse_the_client_after_these_edits():
     if r.returncode != 0 and "not found" in (r.stderr or ""):
         pytest.skip("node not available")
     assert r.returncode == 0, r.stderr
+
+
+def test_a_replay_is_never_matched_to_an_earlier_broadcasts_recording(tmp_path):
+    """Regression, from production: four separate broadcasts were all stamped with ONE recording that
+    belonged to a stream two hours earlier — whose blob no longer existed, so every replay 404'd.
+
+    The VOD row is not written until concat+upload finishes (~90s after the stream ends), so at stamping
+    time the only candidates are OLDER streams on the same token. The matcher scored on absolute
+    difference over a six-hour window, so it reached back and took one. A recording cannot begin before
+    the broadcast was announced; "no recording yet" must yield nothing so the caller retries.
+    """
+    src = APP_JS.read_text(encoding="utf-8")
+    body = src[src.index("async function _vodUrlFor"):]
+    body = body[:body.index("\n  /* The tab that was closed")]
+    assert "Math.abs((parseInt(v.started_at" not in body, "scoring on |difference| again"
+    assert "6 * 3600" not in body, "the six-hour window is back"
+
+    harness = tmp_path / "m.js"
+    harness.write_text(
+        body.replace("async function _vodUrlFor(token, starts){", "function pick(vods, starts){")
+            .replace("if(!token) return '';", "")
+            .replace("const r = await _streamFetch('/api/streams/vods/by-token/' + encodeURIComponent(token));", "")
+            .replace("if(!(r && r.ok)) return '';", "")
+            .replace("const vods = ((await r.json()) || {}).vods || [];", "")
+        + """
+const GOOD={url:'GOOD',started_at:1785955398}, BAD={url:'BAD',started_at:1785948486};
+const STARTS=[1785955397,1785955420,1785955454,1785955477];
+let out=[];
+for(const s of STARTS) out.push(pick([GOOD,BAD], s));
+for(const s of STARTS) out.push(pick([BAD], s) || 'NONE');
+console.log(JSON.stringify(out));
+""", encoding="utf-8")
+    r = subprocess.run(["node", str(harness)], capture_output=True, text=True)
+    if r.returncode != 0 and "not found" in (r.stderr or ""):
+        pytest.skip("node not available")
+    assert r.returncode == 0, r.stderr
+    got = json.loads(r.stdout)
+    assert got[:4] == ["GOOD"] * 4, f"wrong recording chosen when the right one exists: {got[:4]}"
+    assert got[4:] == ["NONE"] * 4, f"reached back to an earlier broadcast's recording: {got[4:]}"
+
+
+def test_a_wrong_recording_tag_can_be_corrected():
+    """The stamp bailed on ANY existing `recording`, so a bad one was permanent — which is how four
+    events stayed pointed at a dead blob. The sweep is now also the repair path."""
+    src = APP_JS.read_text(encoding="utf-8")
+    fn = src[src.index("async function _backfillRecordingTag"):]
+    fn = fn[:fn.index("\n  /* STAMP THE REPLAY")]
+    assert "if(_cur === vurl) return;" in fn, "no longer a no-op only when the tag already matches"
+    sweep = src[src.index("async function _sweepUnstampedReplays"):]
+    sweep = sweep[:sweep.index("\n  // Delete YOUR OWN stream")]
+    assert "t[0]==='recording' && t[1])) continue" not in sweep, (
+        "the sweep skips already-tagged events again, so a wrong tag can never be repaired")
