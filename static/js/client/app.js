@@ -3457,7 +3457,7 @@
     ta.dispatchEvent(new Event('input', {bubbles:true}));
     return r;
   }
-  function _aiCleanLinks(ta, setSt){
+  function _cleanLinksCmd(ta, setSt){
     if(!window.PCUrlClean){ setSt('link cleaner not loaded'); return; }
     if(!/https?:\/\//i.test(ta.value||'')){ setSt('no links in this post'); return; }
     const r = _cleanLinksIn(ta);
@@ -3635,12 +3635,10 @@
         // The label carries the state: this is a toggle in a menu that closes on pick, so without the ✓
         // there is nothing anywhere telling you the next post will be framed.
         openMenuPopover(ab, [['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['emoji','😀 Suggest emoji'],['translate','🌐 Translate'],
-                             ['clean','🧹 Clean links'],
                              ['card', (_tlBgFramed?'🖼️ Framed card ✓':'🖼️ Framed card')]], a=>{
           const setSt=m=>{ st.textContent=m; };
           if(a==='enhance') _aiEnhance(ta, setSt);
           else if(a==='tags') _aiHashtags(ta, setSt);
-          else if(a==='clean') _aiCleanLinks(ta, setSt);
           else if(a==='emoji') _aiEmojiSuggest(ta, setSt);
           else if(a==='card') _aiFramedCard(ta, setSt, {
             framed: _tlBgFramed, hasBg: !!_tlBg, set: v=>{ _tlBgFramed=v; _tlBgPreview(); },
@@ -3769,10 +3767,14 @@
         };
       } }
     // ⋯ overflow — keeps the icon row at five so Post stays on one line at 360px.
+    // 🧹 Clean links lives HERE rather than in 🤖 AI (it does not use the model — see _cleanLinksCmd)
+    // and rather than as a sixth icon, which is the exact regression the row's own comment records.
     { const mb=$('#tl-cmp-more',box); if(mb) mb.onclick=e=>{ e.stopPropagation();
-        openMenuPopover(mb, [['bg','🎨 Background'],['sched','⏰ Schedule'],['cw','🔞 Sensitive']], a=>{
+        openMenuPopover(mb, [['bg','🎨 Background'],['sched','⏰ Schedule'],['cw','🔞 Sensitive'],
+                             ['clean','🧹 Clean links']], a=>{
           if(a==='bg') toggleBg();
           else if(a==='sched') toggleSched();
+          else if(a==='clean') _cleanLinksCmd(ta, m=>{ st.textContent=m; });
           else if(a==='cw') toggleCw(); }); }; }
   }
   // THE timeline predicate — who gets to appear in Home/Global. There used to be two copies of this,
@@ -10818,7 +10820,7 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="cmp-tools"><button class="btn btn-ghost small needs-net" id="cmp-attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Attach</button><button class="btn btn-ghost small" id="cmp-react"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg>React</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-poll"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chart"></use></svg>Poll</button>'}<button class="btn btn-ghost small needs-net" id="cmp-ai" title="AI tools"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>AI</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-nsfw"></use></svg>Sensitive</button>${(quote||community||articleComment)?'':`<button class="btn btn-ghost small needs-net" id="cmp-bg-btn" title="background — post short text as a nice image"><svg class="ic b-ic" aria-hidden="true"><use href="#i-palette"></use></svg>Background</button>`}<button class="btn btn-ghost small" id="cmp-draft"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Draft</button><input type="file" id="cmp-file" multiple hidden></div>
+      <div class="cmp-tools"><button class="btn btn-ghost small needs-net" id="cmp-attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Attach</button><button class="btn btn-ghost small" id="cmp-react"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg>React</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-poll"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chart"></use></svg>Poll</button>'}<button class="btn btn-ghost small needs-net" id="cmp-ai" title="AI tools"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>AI</button><button class="btn btn-ghost small" id="cmp-clean" title="remove tracking parameters from every link (offline — no AI, no network)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-broom"></use></svg>Clean links</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-nsfw"></use></svg>Sensitive</button>${(quote||community||articleComment)?'':`<button class="btn btn-ghost small needs-net" id="cmp-bg-btn" title="background — post short text as a nice image"><svg class="ic b-ic" aria-hidden="true"><use href="#i-palette"></use></svg>Background</button>`}<button class="btn btn-ghost small" id="cmp-draft"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Draft</button><input type="file" id="cmp-file" multiple hidden></div>
       ${(quote||community||articleComment)?'':`<div id="cmp-bg-strip" class="cmp-bg-strip hidden" aria-label="post background"></div>
       <div id="cmp-cardprev" class="cmp-cardprev hidden" aria-label="card preview"></div>`}
       <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
@@ -10957,13 +10959,17 @@
           reveal: ()=>{ const strip=$('#cmp-bg-strip',root), b=$('#cmp-bg-btn',root);
             if(strip && strip.classList.contains('hidden')){ strip.classList.remove('hidden'); if(b) b.classList.add('active'); } } });
         if(aiBtn) aiBtn.onclick=(e)=>{ e.stopPropagation();
-          const items=[['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['emoji','😀 Suggest emoji'],['translate','🌐 Translate'],['clean','🧹 Clean links']];
+          const items=[['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['emoji','😀 Suggest emoji'],['translate','🌐 Translate']];
           if($('#cmp-bg-strip',root)) items.push(['card', (_bgFramed?'🖼️ Framed card ✓':'🖼️ Framed card')]);
           openMenuPopover(aiBtn, items, a=>{ if(a==='enhance') doEnhance(); else if(a==='tags') doTags();
-            else if(a==='clean') _aiCleanLinks(ta, m=>{ const s=$('#cmp-status',root); if(s) s.textContent=m; });
             else if(a==='emoji') _aiEmojiSuggest(ta, m=>{ const s=$('#cmp-status',root); if(s) s.textContent=m; });
             else if(a==='card') doCard(); else if(a==='translate') composeTranslate(ta, aiBtn); }); };
       }
+      /* 🧹 Clean links — its OWN button, not an item in the 🤖 AI menu. It never calls the model or
+       * the network (see _cleanLinksCmd / urlclean.js), and filing it under AI both misdescribed it
+       * and made it unreachable offline, since the AI button carries `needs-net`. This one does not. */
+      { const cb=$('#cmp-clean',root);
+        if(cb) cb.onclick=()=>_cleanLinksCmd(ta, m=>{ const s=$('#cmp-status',root); if(s) s.textContent=m; }); }
       $('#cmp-file',root).onchange=async e=>{ const files=[...e.target.files]; if(!files.length)return;
         for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading ${i+1}/${files.length}…`;
           try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; }

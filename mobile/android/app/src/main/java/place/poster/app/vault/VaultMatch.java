@@ -202,6 +202,13 @@ public final class VaultMatch {
     private static final java.util.regex.Pattern _NOT_USER_RE = java.util.regex.Pattern.compile(
             "search|query|amount|zip|postal|address|city|state|phone|card|cvv|expiry|otp|code|"
             + "\\bdob\\b|birth|comment|message|note");
+    /**
+     * POSITIVE evidence that a box holds a secret, for a field whose only other signal is
+     * `textVisiblePassword`. Deliberately not _PASS_RE: anything _PASS_RE matches already scores
+     * higher, so this is the set that does NOT — a one-time code, a verification box, a token.
+     */
+    private static final java.util.regex.Pattern _CODE_RE = java.util.regex.Pattern.compile(
+            "\\bcode\\b|\\botp\\b|verification|verify|\\btoken\\b|\\bsecret\\b|authenticator");
 
     /**
      * Decide which field takes the username and which takes the password, over the WHOLE screen.
@@ -251,6 +258,37 @@ public final class VaultMatch {
          * AutofillId both values writes the password into the box the user can read. */
         if (user >= 0 && user == pass) {
             if (passScore >= userScore) user = -1; else pass = -1;
+        }
+        /* THE WELLS FARGO BUG, and why scoring it low did not fix it.
+         *
+         * `textVisiblePassword` scores 1 — "below every real signal" — which only protects you when
+         * there IS another signal. Wells Fargo's real password box does not reach this service at
+         * all (it is not in the structure the platform hands over), so score 1 is simultaneously the
+         * lowest and the HIGHEST score on that screen: the customer-ID box wins the password slot
+         * unopposed, the secret is typed into the box the user can read, and the field they cannot
+         * see gets nothing. Ranking it below other evidence can never fix a screen with no other
+         * evidence on it. It has to stop counting as evidence of a secret.
+         *
+         * So it is not one. `textVisiblePassword` means "no suggestions, no autocorrect, do not
+         * learn what is typed here" — which a bank wants on an account number every bit as much as
+         * on a password, and is the ONLY thing it means. A box carries the password on this evidence
+         * only when its label positively says so (a one-time code, a verification box). Otherwise:
+         *
+         *   - never the password. Filling a secret into a readable box that the app then submits as
+         *     a username is the worst thing this file can do, and it is unrecoverable — it is in
+         *     their logs before the user can react. Filling nothing costs one typed password.
+         *   - and if it is the FIRST box with no username slot found, it IS the username box. That
+         *     is the whole bank pattern (no keyboard suggestions on the customer ID), so this fills
+         *     the username correctly on the very screen that used to be filled catastrophically
+         *     wrong. Only at index 0: further in it is a guess about layout, and the right answer
+         *     to a guess about a secret is to leave it alone.
+         */
+        if (pass >= 0 && passScore == 1) {
+            FieldInfo f = fields.get(pass);
+            if (f == null || !_CODE_RE.matcher(f.text).find()) {
+                if (user < 0 && pass == 0) user = pass;
+                pass = -1;
+            }
         }
         /* A screen with a password and no named username field: take the editable field just BEFORE
          * it. That is where a username lives on a two-box login, and it is why a form whose boxes

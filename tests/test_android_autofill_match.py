@@ -301,9 +301,29 @@ def test_wells_fargo_visible_password_on_the_username_field(tmp_path):
     assert _pick(((" ", False, True, "userid"), (" ", True, False, "password")), tmp_path) == (0, 1)
 
 
-def test_visible_password_alone_is_still_a_password(tmp_path):
-    """A screen with nothing else — scoring it below every real signal must not mean ignoring it."""
+def test_visible_password_alone_is_a_password_only_when_the_label_says_so(tmp_path):
+    """A one-time-code box: `textVisiblePassword` plus a label that positively says "code". That IS
+    a secret, and scoring it below every real signal must not mean ignoring it."""
     assert _pick(((" ", False, True, "enter code"),), tmp_path) == (-1, 0)
+
+
+def test_the_lone_unlabelled_visible_password_box_is_the_username(tmp_path):
+    """THE WELLS FARGO BUG, second round — and why scoring it low never fixed it.
+
+    Wells Fargo's real password box does not reach the service at all: it is not in the structure
+    the platform hands over. So the customer-ID box (textVisiblePassword, neutral id) is the ONLY
+    field on the screen, and "scored below every real signal" is meaningless when there is no other
+    signal — score 1 is simultaneously the lowest and the highest, so it won the password slot
+    unopposed. The password was typed into the box the user can read, and the field they could not
+    see got nothing. That is the exact symptom, reported twice after two fixes that both only
+    RE-RANKED this evidence instead of rejecting it.
+
+    So the lone neutral box is the username box, which is what it actually is — the bank pattern is
+    "no keyboard suggestions on the customer ID". The screen that used to be filled catastrophically
+    wrong now fills correctly.
+    """
+    assert _pick(((" ", False, True, "userid"),), tmp_path) == (0, -1)
+    assert _pick(((" ", False, True, ""),), tmp_path) == (0, -1)
 
 
 def test_a_declared_hint_beats_every_inference(tmp_path):
@@ -327,9 +347,21 @@ def test_the_box_above_the_password_is_the_username(tmp_path):
     assert _pick(((" ", False, False, ""), (" ", True, False, "")), tmp_path) == (0, 1)
 
 
-def test_no_username_is_inferred_next_to_a_guessed_password(tmp_path):
-    """Inferring a username beside a field we ourselves only guessed is two guesses stacked."""
-    assert _pick(((" ", False, False, ""), (" ", False, True, "")), tmp_path) == (-1, 1)
+def test_an_unlabelled_visible_password_box_is_never_handed_the_password(tmp_path):
+    """Two unlabelled boxes, the second `textVisiblePassword`. This used to fill the PASSWORD into
+    box 1 on that evidence alone.
+
+    It no longer fills anything, and that asymmetry is the point. Typing a secret into a readable
+    box the app then submits as a username is unrecoverable — it is in their logs before the user
+    can react — while filling nothing costs one typed password. `textVisiblePassword` means "no
+    suggestions, no autocorrect, do not learn what is typed here", which a bank wants on an account
+    number every bit as much as on a password; it is not evidence of a secret and is no longer
+    treated as any. Nor is a username inferred beside it: that would be two guesses stacked.
+
+    A genuinely unlabelled two-box login still fills — via the REAL password inputType and the
+    positional rule above, which is the case that has actual evidence behind it.
+    """
+    assert _pick(((" ", False, False, ""), (" ", False, True, "")), tmp_path) == (-1, -1)
 
 
 def test_a_labelled_username_is_found_anywhere_on_the_screen(tmp_path):
