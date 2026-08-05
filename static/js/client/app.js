@@ -5763,6 +5763,24 @@
   // Public live-streaming relays (zap.stream et al.) so Discover → Streams shows the WIDER Nostr network,
   // not just what our local WoT relay happens to hold.
   const STREAM_RELAYS = ['wss://relay.zap.stream', 'wss://nos.lol', 'wss://relay.damus.io'];
+  /* Mirror a stream event to the PUBLIC stream relays.
+   *
+   * publish() only reaches OUR relay. That was fine for the recording backfill, which already
+   * compensated here — and was missing from the three that matter most: go-live, the viewer-count
+   * refresh, and END. So a broadcast existed on poster.place and NOWHERE else: zap.stream, shosho and
+   * Amethyst could not discover it, nobody outside could open it, and therefore nobody could chat or
+   * react to it. Reported as "live now, I see no chats or reacts" — and there genuinely were none,
+   * because to every other client the stream did not exist.
+   *
+   * END matters just as much as go-live: an ended stream whose `ended` event never left our relay
+   * stays ● LIVE forever on every client that saw the `live` one, pointing at a dead feed.
+   *
+   * Best-effort and never awaited by the caller — a slow external relay must not delay going live. */
+  function _mirrorStream(r){
+    try{ if(r && r.ok && r.ev) return Relay.publishTo(STREAM_RELAYS, r.ev).catch(()=>{}); }
+    catch(_){ }
+    return Promise.resolve();
+  }
   async function renderStreams(){
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     let evs=[]; try{ evs=await Relay.query([{ kinds:[30311], limit:80 }]); }catch(_){}
@@ -6515,6 +6533,7 @@
     // If the relay didn't store the "live" event, the stream is ingesting but INVISIBLE on Nostr. Throw so the
     // go-live callers' existing catch surfaces "live — but couldn't announce yet" instead of a silent no-show.
     if(!(r && r.ok)) throw new Error('stream announce not stored');
+    _mirrorStream(r);          // …and to the relays every OTHER client reads, or nobody can find it
     _parkEndSentinel(_liveStream);
   }
   // Ghost-LIVE guard. Our 30311 can only be signed HERE (the key never leaves the browser), so if this tab
@@ -6726,7 +6745,8 @@
   // see it too — not just this app. Best-effort: a failure here must never disturb the broadcast.
   async function _publishViewers(n){
     const s=_liveStream; if(!s||!s.token||!ME) return;
-    try{ await publish(30311, '', _liveBase(s).concat([['status','live'], ['current_participants', String(n)]])); }catch(_){ return; }
+    try{ const r=await publish(30311, '', _liveBase(s).concat([['status','live'], ['current_participants', String(n)]]));
+         _mirrorStream(r); }catch(_){ return; }
     // The stream can END while that publish is in flight. Re-parking afterwards would POST a fresh sentinel
     // (created_at = now+5, carrying NO `ends`) for a stream that's already over — outranking the accurate
     // ended event _endLive just published and erasing its end time. Only re-park if this is STILL the live
@@ -7112,7 +7132,8 @@
     _teardownPhoneStream();
     const s=_liveStream; _liveStream=null;
     if(s){ _endedStreams.add(s.token);   // never auto-re-adopt this one — the End was intentional
-      try{ await publish(30311, '', _liveBase(s).concat([['status','ended'], ['ends', String(Math.floor(Date.now()/1000))]]));
+      try{ const r=await publish(30311, '', _liveBase(s).concat([['status','ended'], ['ends', String(Math.floor(Date.now()/1000))]]));
+        _mirrorStream(r);      // or the stream sits ● LIVE forever on every client that saw go-live
         _clearEndSentinel(); }catch(_){}
       // The recording does not exist yet (concat + Blossom upload take a while). Watch for it and stamp
       // the `recording` tag when it lands, so the replay is visible to other clients without the
