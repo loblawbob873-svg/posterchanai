@@ -85,11 +85,21 @@ git commit -a -m fix || true
 # a non-interactive ssh and from sudo, not just from an interactive login shell.
 git push origin master
 
-# Also push to the public `github` mirror (master → main). This TRIGGERS the Android app build:
-# GitHub Actions (.github/workflows/android.yml) rebuilds the bundled web UI, compiles + signs the APK,
-# and publishes it to the rolling `apk-latest` Release — which poster.place/apk serves. The workflow's
-# `paths` filter only rebuilds when the client / mobile project actually changed, so it's a no-op build
-# on unrelated deploys. NOTE: this publishes every commit to the PUBLIC mirror on each deploy.
+# Also push to the public `github` mirror (master → main). This is what TRIGGERS the release builds —
+# there is nothing to add here for them, and adding it would be wrong: both artifacts are generated
+# from files the repo deliberately does not commit, so building them on a dev box would publish
+# whatever that box happened to have.
+#
+#   .github/workflows/android.yml    → rebuilds the bundled web UI, compiles + signs the APK, and
+#                                      publishes it to the rolling `apk-latest` Release (poster.place/apk).
+#   .github/workflows/extension.yml  → runs extension/build.sh and publishes the rolling
+#                                      `extension-latest` Release: the Firefox .xpi (permanent install),
+#                                      the unpacked tarball (about:debugging), and the Chrome zip.
+#
+# Both have a `paths` filter, so an unrelated deploy is a no-op build. The corollary is that an
+# extension change reaches users ONLY through this push — skip the mirror and the .xpi on
+# poster.place/extension silently stays at the previous build.
+# NOTE: this publishes every commit to the PUBLIC mirror on each deploy.
 git push github master:main || echo "[sync] WARN: github push (Android APK build trigger) failed"
 
 # NOTE: scripts/grasp_mirror.py is no longer called from here. It existed to copy commits from a
