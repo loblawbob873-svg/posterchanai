@@ -90,10 +90,51 @@
     return classifyRoot(last);
   }
 
+  /* Drop a leading path segment that is a browser's OWN top-level container.
+   *
+   * No legitimate folder path starts with one: pathOf strips it, because those names differ per
+   * browser and per locale. But events published by the FIRST build of this feature kept it, and
+   * those events are still on the relay — so every sync recreated a literal folder called "Other
+   * bookmarks" (or "Bookmarks Menu") and filed the bookmark inside it instead of on the toolbar.
+   * Deleting the folder locally could never win: the event still said that is where it lives.
+   *
+   * Applied on the way IN as well as on the way out, because the fix has to work against events
+   * already published by a version that is no longer running anywhere. */
+  function _isContainerName(name) {
+    var t = String(name || '').trim();
+    if (!t) return false;
+    if (classifyRoot({ id: '', title: t }) !== 'other') return true;      // toolbar / menu / mobile
+    return /^(other bookmarks|unfiled bookmarks|bookmarks)$/i.test(t);    // 'other' by name
+  }
+
+  /* Where a bookmark belongs: a container NAME plus a path inside it.
+   *
+   * Two jobs, and the second is why this is not just a strip. No legitimate path starts with a
+   * browser's own container — pathOf removes it, because those names differ per browser and locale.
+   * But the FIRST build of this feature kept it and published no `root` at all, and those events are
+   * still on the relay. Left alone they recreate a literal folder called "Other bookmarks"; merely
+   * stripped, every toolbar bookmark ever published by that build lands in "Other" instead, which is
+   * exactly the "it synced the folders but not the bookmarks on the toolbar" report.
+   *
+   * So a leading container segment is CONSUMED, and where the item carries no root it supplies one.
+   * Old events land where they were meant to; new ones are unaffected. */
+  function placement(item) {
+    var parts = String((item && item.folder) || '').split('/').filter(Boolean);
+    var root = (item && item.root) || '';
+    while (parts.length && _isContainerName(parts[0])) {
+      if (!root) root = classifyRoot({ id: '', title: parts[0] });
+      parts.shift();
+    }
+    return { folder: parts.join('/'), root: root || 'other' };
+  }
+
+  function cleanFolder(path) { return placement({ folder: path }).folder; }
+
   function matchKey(item) {
     // The root is part of identity: the same URL on the toolbar and in "other bookmarks" is two
     // bookmarks, and merging them would silently move one of them.
-    return (item.root || 'other') + '\n' + (item.folder || '') + '\n' + normUrl(item.url);
+    var pl = placement(item);
+    return pl.root + '\n' + pl.folder + '\n' + normUrl(item.url);
   }
 
   function normUrl(u) {
@@ -161,7 +202,7 @@
   root.PCBookmarks = {
     D_BM: D_BM, L_BM: L_BM,
     pathOf: pathOf, matchKey: matchKey, normUrl: normUrl,
-    rootOf: rootOf, classifyRoot: classifyRoot,
+    rootOf: rootOf, classifyRoot: classifyRoot, cleanFolder: cleanFolder, placement: placement,
     isSyncable: isSyncable, newer: newer, planUnion: planUnion,
   };
 })(typeof self !== 'undefined' ? self : this);
@@ -263,13 +304,23 @@
     if (on) await applyUpsert(id, obj);
   }
 
+  /* DELETION IS DISABLED. This function used to remove the local bookmark a tombstone named.
+   *
+   * It cost somebody their Firefox bookmarks, and the path is worth stating exactly, because the
+   * guard that was supposed to bound it ("only remove what THIS browser previously synced") was
+   * intact and still not enough. An earlier bug republished the whole tree under fresh sync ids, so
+   * every browser ended up mapping ITS OWN real bookmarks to those new ids. Cleaning up the
+   * resulting duplicates on one machine then published tombstones for ids that, on the other
+   * machine, pointed at the originals. Every deletion was "legitimate" by the rule; the rule was
+   * reasoning about identity that a previous bug had already corrupted.
+   *
+   * So the feature is ADDITIVE ONLY: a tombstone is recorded so newest-wins still works and the
+   * bookmark is not re-created, and nothing is removed from anyone's browser. A sync that can only
+   * add cannot destroy an afternoon's work. Re-enabling this needs an identity model that cannot be
+   * poisoned by a republish — not a smaller version of the same trust.
+   */
   async function applyRemoval(id) {
-    var bid = map[id];
-    if (!bid) return;                       // never synced here — leave the user's tree alone
-    writing.add(bid);
-    try { await api.B.bookmarks.remove(bid); } catch (_) {}
-    setTimeout(function () { writing.delete(bid); }, 2000);
-    forget(id);
+    forget(id);              // stop tracking it here; do NOT touch the browser's copy
   }
 
   async function applyUpsert(id, obj) {
@@ -279,7 +330,8 @@
       var existing = null;
       try { existing = (await api.B.bookmarks.get(bid))[0]; } catch (_) {}
       if (existing) {
-        var want = await ensureFolder(obj.folder || '', obj.root);
+        var _p2 = P.placement(obj);
+        var want = await ensureFolder(_p2.folder, _p2.root);
         var sameText = existing.title === obj.title && P.normUrl(existing.url) === P.normUrl(obj.url);
         var samePlace = existing.parentId === want;
         if (sameText && samePlace) return;
@@ -294,7 +346,8 @@
       }
       forget(id);                            // the mapping is stale — fall through and re-create
     }
-    var parent = await ensureFolder(obj.folder || '', obj.root);
+    var _pl = P.placement(obj);
+    var parent = await ensureFolder(_pl.folder, _pl.root);
     var made = null;
     try { made = await api.B.bookmarks.create({ parentId: parent, title: obj.title || '', url: obj.url }); }
     catch (_) { return; }
@@ -399,14 +452,15 @@
     if (ok) { items[syncId] = Object.assign({}, item, { _at: Math.floor(Date.now() / 1000) }); saveSoon(); }
   }
 
+  /* Removing a bookmark here tells nobody. See applyRemoval: while deletion is disabled, publishing
+   * a tombstone would be asking OTHER installs — including ones still running an older build that
+   * does act on them — to delete something. The mapping is dropped so this browser stops tracking
+   * it, and the copy on every other device stays where its owner put it. */
   async function onLocalRemove(browserId) {
     if (!on || writing.has(browserId)) return;
     var syncId = rmap[browserId];
-    if (!syncId) return;                            // never synced — nothing to tell anyone
-    items[syncId] = { removed: true, _at: Math.floor(Date.now() / 1000) };
-    saveSoon();
+    if (!syncId) return;
     forget(syncId);
-    await api.publish(syncId, null);                // null = tombstone
   }
 
   function listen() {

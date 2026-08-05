@@ -51,6 +51,28 @@
 <!-- Bookmark sync. OFF until asked for, because turning it on writes into the browser's bookmark
      tree, and a sync nobody chose is the one that surprises somebody. The line under it says which
      direction it can go: a read-only pairing has no signing key, so it can receive and not send. -->
+<!-- Editing an entry. Reuses the SAVE path (merge, publish or queue) rather than a second writer,
+     so a read-only pairing queues an edit exactly as it queues a new login. -->
+<section id="pane-edit" class="pane hidden">
+  <label class="fld">Title<input class="input" id="ed-title" autocomplete="off"></label>
+  <label class="fld">Username<input class="input" id="ed-user" autocomplete="off" spellcheck="false"></label>
+  <label class="fld">Password
+    <span class="input-row" style="display:flex;gap:6px">
+      <input class="input" id="ed-pass" type="password" autocomplete="off" spellcheck="false">
+      <button id="ed-show" type="button">show</button>
+    </span></label>
+  <label class="fld">Website<input class="input" id="ed-url" autocomplete="off" spellcheck="false"
+    placeholder="https://example.com"></label>
+  <label class="fld">One-time code secret <span class="muted small">— otpauth:// or the raw secret</span>
+    <input class="input" id="ed-totp" autocomplete="off" spellcheck="false"></label>
+  <label class="fld">Notes<textarea class="input" id="ed-notes" rows="3"></textarea></label>
+  <div id="ed-note" class="muted small"></div>
+  <div class="row" style="gap:8px">
+    <button id="ed-save" class="primary">Save changes</button>
+    <button id="ed-cancel">Cancel</button>
+  </div>
+</section>
+
 <section id="pane-bm" class="pane hidden">
   <label class="row"><input type="checkbox" id="bm-on"> <b>Sync bookmarks</b></label>
   <div id="bm-note" class="muted small"></div>

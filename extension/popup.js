@@ -97,6 +97,7 @@ function render(){
         <button data-a="fill" title="Fill this page">Fill</button>
         <button data-a="user" title="Copy username">User</button>
         <button data-a="pass" title="Copy password">Pass</button>
+        <button data-a="edit" title="Edit this entry">Edit</button>
         ${i.hasTotp ? '<button data-a="totp" title="Copy the one-time code">2FA</button>' : ''}
       </div>
       <div class="otp" data-otp="${esc(i.id)}"></div>
@@ -135,6 +136,7 @@ function startTicker(list){
 }
 
 async function act(id, what){
+  if(what === 'edit'){ return openEdit(id); }
   if(what === 'fill'){
     try{
       const tabs = await B.tabs.query({ active:true, currentWindow:true });
@@ -380,4 +382,57 @@ function paintBm(){
     $('#bm-note').innerHTML = (r && r.ok)
       ? `Merged ${r.merged} duplicate folder${r.merged === 1 ? '' : 's'} (${r.removed} removed). No bookmarks were deleted.`
       : `<b>Could not tidy:</b> ${(r && r.error) || 'no answer'}`;
+  }; }
+
+
+/* ---- editing an entry -----------------------------------------------------------------------
+ * The gap this closes: the popup could fill, generate and show a one-time code, but correcting a
+ * username or a rotated password meant opening the app. It writes through the SAME save path as the
+ * save bar — merge, publish, or queue when the pairing is read-only — so there is one writer and one
+ * set of rules, not a second one that can disagree with it.
+ *
+ * `full: true` marks it authoritative: an emptied box means CLEAR. The save bar's backfill exists
+ * because that bar knows only a username and a password, and applying it here would make deleting a
+ * note impossible — you clear it, save, and it comes back.
+ */
+let _editId = null;
+
+async function openEdit(id){
+  const r = await send({ type:'item', id });
+  if(!r || !r.ok){ return; }
+  const it = r.item || {};
+  _editId = id;
+  $('#ed-title').value = it.title || '';
+  $('#ed-user').value  = it.username || '';
+  $('#ed-pass').value  = it.password || '';
+  $('#ed-pass').type   = 'password';
+  $('#ed-url').value   = (it.uris && it.uris[0]) || it.url || '';
+  $('#ed-totp').value  = it.totp || '';
+  $('#ed-notes').value = it.notes || '';
+  $('#ed-note').textContent = _mode === 'ro'
+    ? 'This pairing is read-only, so the change waits here until the app publishes it.'
+    : '';
+  show('pane-edit');
+}
+
+{ const b = $('#ed-show');
+  if(b) b.onclick = () => { const p = $('#ed-pass');
+    p.type = p.type === 'password' ? 'text' : 'password'; b.textContent = p.type === 'password' ? 'show' : 'hide'; }; }
+{ const b = $('#ed-cancel'); if(b) b.onclick = () => { _editId = null; show('pane-list'); }; }
+{ const b = $('#ed-save');
+  if(b) b.onclick = async () => {
+    if(!_editId) return;
+    b.disabled = true; b.textContent = 'saving…';
+    const url = $('#ed-url').value.trim();
+    const item = { id: _editId, title: $('#ed-title').value.trim(),
+                   username: $('#ed-user').value, password: $('#ed-pass').value,
+                   uris: url ? [url] : [], totp: $('#ed-totp').value.trim(),
+                   notes: $('#ed-notes').value };
+    const r = await send({ type:'save', item, full:true });
+    b.disabled = false; b.textContent = 'Save changes';
+    if(!r || !r.ok){ $('#ed-note').textContent = (r && r.error) || 'could not save'; return; }
+    // Queued is a real outcome, not a failure — say which happened.
+    $('#ed-note').textContent = r.published ? 'saved and published' : 'saved — waiting for the app to publish it';
+    _editId = null;
+    setTimeout(() => { show('pane-list'); boot(); }, 900);
   }; }

@@ -378,3 +378,52 @@ def test_enabling_before_load_does_not_republish_everything():
     assert got["refused"], "setEnabled ran against a half-loaded engine instead of refusing"
     assert got["published"] == 0, \
         f"{got['published']} events published from an unloaded engine — that is the duplicate storm"
+
+
+def test_legacy_events_land_where_they_were_meant_to():
+    """The FIRST build of this feature published the browser's own container inside the folder path
+    ("Bookmarks bar", "Other bookmarks") and no `root` at all. Those events are still on the relay and
+    cannot be rewritten, so they have to be understood rather than trusted:
+
+      * left alone they recreate a literal folder called "Other bookmarks" — reported as "every time I
+        remove Other bookmarks it comes back during sync";
+      * merely STRIPPED, every toolbar bookmark that build published lands in "Other" instead —
+        reported as "it synced the folders but not the bookmarks on the toolbar".
+
+    So a leading container segment is consumed AND, when the item carries no root, supplies one."""
+    got = run("""
+      out({
+        legacyBar:    P.placement({folder:'Bookmarks bar'}),
+        legacyNested: P.placement({folder:'Bookmarks Toolbar/Work'}),
+        legacyOther:  P.placement({folder:'Other bookmarks'}),
+        legacyMenu:   P.placement({folder:'Bookmarks Menu/A'}),
+        current:      P.placement({folder:'Work', root:'toolbar'}),
+        currentBare:  P.placement({folder:'', root:'toolbar'}),
+      });
+    """)
+    assert got["legacyBar"] == {"folder": "", "root": "toolbar"}, \
+        "a legacy toolbar bookmark must land ON the toolbar, not in Other"
+    assert got["legacyNested"] == {"folder": "Work", "root": "toolbar"}
+    assert got["legacyOther"] == {"folder": "", "root": "other"}, \
+        "'Other bookmarks' must be consumed, or it is recreated as a folder every sync"
+    assert got["legacyMenu"] == {"folder": "A", "root": "menu"}
+    assert got["current"] == {"folder": "Work", "root": "toolbar"}, "current events must be untouched"
+    assert got["currentBare"] == {"folder": "", "root": "toolbar"}
+
+
+def test_deletion_is_disabled_end_to_end():
+    """After the data loss: a tombstone must not remove anything, and removing a bookmark here must
+    not publish one. The guard that was meant to bound deletion ("only what this browser previously
+    synced") was intact and still not enough — an earlier republish storm had corrupted the identity
+    it reasons about, so every deletion was 'legitimate' by the rule. A sync that can only ADD cannot
+    do that."""
+    src = open(os.path.join(ROOT, "extension", "bookmarks.js"), encoding="utf-8").read()
+    i = src.index("async function applyRemoval(")
+    body = src[i:i + 400]
+    assert "bookmarks.remove(" not in body, "a tombstone still deletes a local bookmark"
+    j = src.index("async function onLocalRemove(")
+    body2 = src[j:j + 400]
+    assert "publish(" not in body2, "removing a bookmark still publishes a tombstone to other devices"
+    # tidy is the one place that may remove, and only a folder it just emptied.
+    k = src.index("async function tidy(")
+    assert "bookmarks.remove(" in src[k:k + 2500], "tidy should still remove the folders it empties"

@@ -299,7 +299,7 @@ function saveItemsSoon(){ clearTimeout(_saveT); _saveT = setTimeout(saveItems, 4
 /* A new login saved from the browser. In full mode it is signed and published here. In read-only
  * mode it goes to a local OUTBOX and stays there, visibly, until the app publishes it — which is
  * exactly what "read-only" was chosen to mean, and is said in the UI rather than failing silently. */
-async function saveItem(item){
+async function saveItem(item, full){
   /* MERGE onto what is already there. The save bar can only know a username, a password and the
    * page it is on — so replacing the stored entry with that wiped the TOTP secret, the notes, the
    * folder, the tags and every other URI. On an "Update" after rotating a password that is a
@@ -307,10 +307,27 @@ async function saveItem(item){
   const prev = item.id ? items.get(item.id) : null;
   if(prev){
     const merged = Object.assign({}, prev, item);
-    merged.uris = [...new Set([...(prev.uris || []), ...(item.uris || [])])];
-    for(const k of ['totp','notes','folder','tags','fields','created','src'])
-      if(prev[k] !== undefined && (item[k] === undefined || item[k] === '' ||
-         (Array.isArray(item[k]) && !item[k].length))) merged[k] = prev[k];
+    /* `full` = this came from the EDIT form, which shows every field it is changing, so an emptied
+     * box means CLEAR. The backfill below exists for the SAVE BAR, which knows only a username and a
+     * password: without it, updating a rotated password wiped the TOTP secret, the notes and the
+     * folder. Applying that rule to an edit makes clearing a field impossible — you delete the
+     * notes, save, and they come back.
+     *
+     * BRACED. Without them the `else` binds to the INNER if, inside the loop — the dangling-else —
+     * so "full" did nothing at all and a partial save reassigned created/src once per key. It
+     * happened to be harmless and it was not what it said. */
+    if(full){
+      // The website list is authoritative too, or a typo in a URL can never be corrected: the union
+      // below would keep the wrong one forever alongside the fix.
+      merged.uris = (item.uris || []).slice();
+      merged.created = prev.created;               // provenance is not editable
+      merged.src = prev.src;
+    } else {
+      merged.uris = [...new Set([...(prev.uris || []), ...(item.uris || [])])];
+      for(const k of ['totp','notes','folder','tags','fields','created','src'])
+        if(prev[k] !== undefined && (item[k] === undefined || item[k] === '' ||
+           (Array.isArray(item[k]) && !item[k].length))) merged[k] = prev[k];
+    }
     item = merged;
   }
   item.id = item.id || randomId();
@@ -764,7 +781,15 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
         }
         case 'approve-ask':
           return reply(_pendingApproval(msg.id, sender));
-        case 'save': return reply(await saveItem(msg.item));
+        case 'save': return reply(await saveItem(msg.item, !!msg.full));
+        /* The whole item, for the edit form. Same rule as `reveal`: the POPUP only — `sender.tab` is
+         * set for a content script, and this hands back a password with no site check at all. */
+        case 'item': {
+          if(sender && sender.tab) return reply({ ok:false, error:'not available to a page' });
+          const it = items.get(msg.id);
+          if(!it) return reply({ ok:false, error:'not found' });
+          return reply({ ok:true, item: it });
+        }
         case 'pair': return reply(await pair(msg.code));
         case 'unpair': return reply(await unpair());
         case 'sync': connect(); return reply({ ok:true });

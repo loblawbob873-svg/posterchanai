@@ -170,3 +170,66 @@ def test_every_tab_reveals_its_pane():
             f"saving relays did not message the background (messages seen: {sent})")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_the_edit_pane_exists_and_is_wired():
+    """Editing was the gap: the popup could fill, generate and show a one-time code, but correcting a
+    username meant opening the app.
+
+    The browser test above proves the panes are reachable; these are the two things about EDITING that
+    fail silently — a form that never sends, and a save that is not authoritative. `full: true` is what
+    tells the writer an emptied box means CLEAR: the save bar's backfill exists because that bar knows
+    only a username and a password, and applying it to an edit makes deleting a note impossible (you
+    clear it, save, and it comes back)."""
+    html = open(os.path.join(EXT, "popup.html"), encoding="utf-8").read()
+    js = open(os.path.join(EXT, "popup.js"), encoding="utf-8").read()
+    bg = open(os.path.join(EXT, "background.js"), encoding="utf-8").read()
+
+    for el in ("pane-edit", "ed-title", "ed-user", "ed-pass", "ed-url", "ed-totp", "ed-notes", "ed-save"):
+        assert f'id="{el}"' in html, f"the edit form is missing #{el}"
+    assert 'data-a="edit"' in js or 'data-a="edit"' in html, "no Edit action on a row"
+    assert "type:'save', item, full:true" in js, "the edit form does not save authoritatively"
+    assert "async function saveItem(item, full){" in bg
+    # Braced branches, checked by behaviour in the test below; here just that the split exists.
+    assert "if(full){" in bg and "} else {" in bg, \
+        "saveItem no longer distinguishes an authoritative edit from a save-bar update"
+
+
+def test_an_edit_clears_and_a_save_bar_preserves():
+    """The two writers share one merge, and they need opposite behaviour from it.
+
+    The save bar knows only a username and a password, so an empty field there means "I don't know
+    it" — backfilled, or updating a rotated password wipes the TOTP secret. The edit form shows every
+    field it changes, so an empty field means CLEAR, and the website list is authoritative or a typo
+    in a URL can never be corrected (the union keeps the wrong one forever).
+
+    Reviewing this found a dangling `else`: unbraced, it bound to the inner `if` inside the loop, so
+    `full` did nothing and a partial save reassigned created/src once per key. Harmless, and not what
+    the code said — which is the kind of thing that is true until somebody edits near it."""
+    import subprocess as sp
+    src = open(os.path.join(EXT, "background.js"), encoding="utf-8").read()
+    assert "if(full){" in src and "} else {" in src, "the merge branches are unbraced again"
+
+    out = sp.run(["node", "-e", """
+      const fs = require('fs');
+      const src = fs.readFileSync(process.argv[1], 'utf8');
+      const m = src.match(/const merged = Object\\.assign\\(\\{\\}, prev, item\\);[\\s\\S]*?item = merged;/);
+      const merge = new Function('prev','item','full',
+        'const merged=Object.assign({},prev,item);' +
+        m[0].replace('const merged = Object.assign({}, prev, item);','') + 'return merged;');
+      const prev = { uris:['https://old.example/'], totp:'SECRET', notes:'keep', created:1, src:'app' };
+      const edit = { uris:['https://new.example/'], totp:'', notes:'' };
+      console.log(JSON.stringify({ bar: merge(prev, edit, false), full: merge(prev, edit, true) }));
+    """, os.path.join(EXT, "background.js")], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    r = json.loads(out.stdout)
+
+    assert r["bar"]["totp"] == "SECRET", "the save bar wiped a TOTP secret it never knew about"
+    assert r["bar"]["notes"] == "keep"
+    assert len(r["bar"]["uris"]) == 2, "the save bar should ADD a URL, not replace the known one"
+
+    assert r["full"]["totp"] == "", "an edit could not clear the one-time code secret"
+    assert r["full"]["notes"] == "", "an edit could not clear the notes"
+    assert r["full"]["uris"] == ["https://new.example/"], \
+        "an edit could not correct a wrong website — the old one is kept alongside it"
+    assert r["full"]["created"] == 1 and r["full"]["src"] == "app", "provenance must not be editable"
