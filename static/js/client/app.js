@@ -5734,7 +5734,18 @@
     // `streaming` unconditionally meant every external replay silently played a dead URL.
     const url = st==='ended' ? (_tag('recording')||_tag('streaming')) : (_tag('streaming')||_tag('recording'));
     const dtag=_tag('d');
-    const saddr=`30311:${hpk}:${dtag}`;   // NIP-53 stream address — the live-chat (kind-1311) `a` tag
+    // The live-chat (kind-1311) `a` tag. An addressable coordinate is ALWAYS kind:<author>:<d> — the
+    // `p …host` tag is metadata about who is on camera, not an address — and this used the host, which
+    // is the same key only when the streamer published their own event. It isn't for 31% of the live
+    // streams on the network: a bot account (Shobot, radio/TV relays) posts the 30311 for a host. Every
+    // one of those showed an EMPTY chat here while 40 messages sat on the author coordinate, and our
+    // own replies went into a room nobody else was reading. A few clients chat on the host coordinate
+    // as well, so READ both and PUBLISH to the one the spec addresses.
+    const saddr=`30311:${e.pubkey}:${dtag}`;
+    const haddr=(hpk && hpk!==e.pubkey) ? `30311:${hpk}:${dtag}` : '';
+    // The stream's own `relays` tag is where its client says the chat lives — poll those too, since a
+    // fixed list can't know where an unfamiliar client put the room.
+    const sRelays=(e.tags.filter(t=>t[0]==='relays')[0]||[]).slice(1).filter(u=>/^wss?:\/\//i.test(u));
     const isMine = !!(ME && e.pubkey===ME.pubkey);
     feed.innerHTML=`<div class="stream-view">
       <div class="row" style="justify-content:space-between"><button class="btn btn-ghost small" id="st-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Streams</button><span style="display:flex;gap:6px">${isMine?'':`<button class="btn btn-neon small" id="st-tip"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Tip</button>`}<button class="btn btn-cyan small" id="st-chat-toggle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chat"></use></svg>Chat</button>${isMine?`<button class="btn btn-ghost small" id="st-del" style="color:var(--danger,#e0245e)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}</span></div>
@@ -5759,7 +5770,7 @@
         const hidden=lay.classList.toggle('chat-hidden'); ClientSettings.set('streamChatHidden', hidden);
         // Actually stop the kind-1311 sub + poll when hidden (not just CSS-hide it) so 'hidden' means 'off'
         // — no background relay traffic — and re-open it when shown again.
-        if(hidden) _closeStreamChat(); else _streamChat(saddr); }; }
+        if(hidden) _closeStreamChat(); else _streamChat(saddr, haddr, sRelays); }; }
     { const db=$('#st-del'); if(db) db.onclick=()=>_deleteStream(e); }
     // Tip the stream creator — ⚡ Lightning / ɱ Monero / 🟢 BCH chooser (doTip picks by what the host advertises).
     { const tb=$('#st-tip'); if(tb) tb.onclick=()=>doTip(e.id, hpk); }
@@ -5802,7 +5813,7 @@
       })();
     } else if(url){ attachStream(url); }
     { const pb=$('#st-pop'); if(pb) pb.onclick=()=>popOutStream(e); }
-    if(!ClientSettings.get('streamChatHidden',false)) _streamChat(saddr);   // don't start the sub if chat is hidden
+    if(!ClientSettings.get('streamChatHidden',false)) _streamChat(saddr, haddr, sRelays);   // don't start the sub if chat is hidden
   }
 
   /* The MediaMTX publish token behind a 30311 `d` tag.
@@ -5979,8 +5990,10 @@
     if(_streamChatSub){ try{ Relay.close(_streamChatSub); }catch(_){} _streamChatSub=null; }
     if(_streamChatPoll){ clearInterval(_streamChatPoll); _streamChatPoll=null; }
   }
-  function _streamChat(saddr){
+  function _streamChat(saddr, haddr, sRelays){
     _closeStreamChat();
+    const addrs=[saddr, haddr].filter(Boolean);
+    const relays=[...new Set([...STREAM_RELAYS, ...(sRelays||[])])];
     const box=$('#st-chat-msgs'); if(!box) return;
     const seen=new Set(); const msgs=[];
     const render=()=>{ if(!msgs.length) return;
@@ -5992,17 +6005,17 @@
       msgs.push(ev); msgs.sort((a,b)=>a.created_at-b.created_at);
       if(msgs.length>500) msgs.splice(0, msgs.length-500);   // bound memory on a long, busy chat
       if(VIEW==='stream') render(); };
-    try{ _streamChatSub=Relay.subscribe([{kinds:[1311], '#a':[saddr], limit:100}], {onEvent:onEv, live:true}); }catch(_){}
+    try{ _streamChatSub=Relay.subscribe([{kinds:[1311], '#a':addrs, limit:100}], {onEvent:onEv, live:true}); }catch(_){}
     // Pull the same room from the public stream relays — this is what makes the chat cross-client rather
     // than poster.place-only. queryFrom is one-shot (no live external sub exists), so poll while it's open.
-    const pull=()=>{ Relay.queryFrom(STREAM_RELAYS, [{kinds:[1311], '#a':[saddr], limit:100}])
+    const pull=()=>{ Relay.queryFrom(relays, [{kinds:[1311], '#a':addrs, limit:100}])
       .then(evs=>(evs||[]).forEach(onEv)).catch(()=>{}); };
     pull(); _streamChatPoll=setInterval(()=>{ if(VIEW!=='stream'){ _closeStreamChat(); return; } pull(); }, 10000);
     const inp=$('#st-chat-inp'), send=$('#st-chat-send');
     const doSend=async()=>{ const t=(inp.value||'').trim(); if(!t) return;
       if(GUEST){ _guestPrompt(); return; } inp.value='';
       try{ const r=await publish(1311, t, [['a', saddr, (CFG&&CFG.relay_url)||'', 'root']]);
-        if(r&&r.ok&&r.ev){ onEv(r.ev); Relay.publishTo(STREAM_RELAYS, r.ev).catch(()=>{}); }   // render only if stored (else a rejected line would ghost)
+        if(r&&r.ok&&r.ev){ onEv(r.ev); Relay.publishTo(relays, r.ev).catch(()=>{}); }   // render only if stored (else a rejected line would ghost)
         else if(inp) inp.value=t; }   // failed → restore the text (publish() toasted); don't render a ghost
       catch(_){ toast('couldn’t send'); if(inp) inp.value=t; } };
     if(send) send.onclick=doSend;
