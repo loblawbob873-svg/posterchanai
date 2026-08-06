@@ -389,9 +389,13 @@ window.addEventListener('load', function(){
   var b = document.createElement('div');
   b.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;padding:12px 16px;'
     + 'background:#7f1d1d;color:#fff;font:13px/1.5 system-ui,sans-serif;text-align:center';
-  b.innerHTML = 'This instance is not serving <code>/static/vendor/nostr/nostr.bundle.js</code>, '
-    + 'so posts, signing and search can\'t work. It is usually a reverse proxy or CDN rule in front '
-    + 'of the app — check that the file returns 200 as application/javascript.';
+  // State the OBSERVATION, never a cause. All this check knows is that the global is absent — the file
+  // could be unserved, truncated in transit, rewritten by a CDN, or have failed to parse. Naming one of
+  // those would send whoever reads it off fixing the wrong layer.
+  b.innerHTML = '<code>nostr-tools</code> did not load, so posts, signing and search can\'t work. '
+    + 'Open <code>/static/vendor/nostr/nostr.bundle.js</code> directly: it should be 212239 bytes of '
+    + 'JavaScript. Anything else — a 404, a page, a short file — is the fault. If it is intact, the '
+    + 'browser console has the parse error.';
   document.body.appendChild(b);
 });
 </script>
