@@ -3708,6 +3708,10 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 }
 .calls-view{max-width:none;margin:0 auto;padding:22px 18px}
 .call-start{margin:14px 0 22px}
+/* Missed calls sit above the contact grid and need to read as a separate section, not as more
+   contacts — same tile shape, its own spacing and a rule under it. */
+.call-missed{margin:12px 0 4px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.call-missed .call-contact{position:relative}
 .call-contacts{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:10px}
 .call-contact{display:flex;flex-direction:column;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:10px 6px;cursor:pointer;color:var(--text);font-size:12px}
 .call-contact img{width:48px;height:48px;border-radius:50%;object-fit:cover}

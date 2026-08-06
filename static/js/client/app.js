@@ -17555,7 +17555,6 @@
         ? "On — calls, messages, mentions, replies, reactions and zaps. Press Test to prove it reaches this device."
         : (iosTab ? 'On iPhone, add this app to your Home Screen first — Safari tabs cannot receive notifications.' : '');
     };
-    { const mc=$('#missed-clear',feed); if(mc) mc.onclick=(e)=>{ e.stopPropagation(); _missedClear(); }; }
     if(tb) tb.onclick=async()=>{ tb.disabled=true; try{ await testPush(); } finally { tb.disabled=false; } };
     let cur = await pushState();
     render(cur);
@@ -20897,17 +20896,30 @@
    * call"), it must work with no network, and publishing it would leak who calls you to the relay.
    * Capped hard — a log nobody prunes is a log that eventually breaks the page it lives on. */
   const MISSED_MAX = 30;
+  // Calls another of my devices already dealt with. Ephemeral signaling has no retry, so a `handled`
+  // that arrives late (or a timer that fires first) would otherwise record a MISSED call for one that
+  // was answered — the log lying is worse than the log being empty.
+  const _handledIds = new Set();
   function _missedList(){ try{ return JSON.parse(localStorage.getItem('pc_missed_calls')||'[]'); }catch(_){ return []; } }
-  function _missedAdd(pk){
-    if(!pk) return;
+  function _missedAdd(pk, callId){
+    if(!pk || (callId && _handledIds.has(callId))) return;
     try{
       const l=_missedList();
       l.unshift({pk, at: Math.floor(Date.now()/1000)});
       localStorage.setItem('pc_missed_calls', JSON.stringify(l.slice(0, MISSED_MAX)));
-      if(VIEW==='calls') renderCalls();
+      _redrawCallsIfIdle();
     }catch(_){}
   }
-  function _missedClear(){ try{ localStorage.removeItem('pc_missed_calls'); if(VIEW==='calls') renderCalls(); }catch(_){} }
+  function _missedClear(){ try{ localStorage.removeItem('pc_missed_calls'); _redrawCallsIfIdle(); }catch(_){} }
+  /* Redraw the Calls view only when the user is not mid-interaction. renderCalls() replaces innerHTML
+   * wholesale, so an unguarded redraw — and a missed call can land at any moment — throws away a
+   * half-typed npub, the focus, and any ticked group-call boxes. */
+  function _redrawCallsIfIdle(){
+    if(VIEW!=='calls') return;
+    const inp=$('#call-npub'), gp=$('#grp-panel');
+    if((inp && (inp.value || document.activeElement===inp)) || (gp && gp.style.display!=='none')) return;
+    renderCalls();
+  }
   function _declineCall(){ if(_call){
     _callSend(_call.peer, {v:1, callId:_call.id, t:'bye'});
     // Same reason as accepting: declining on one device must silence the others, or the phone in your
@@ -20932,7 +20944,9 @@
       // Another of MY devices answered (or declined) this call — stop ringing here. Only ever sent
       // by me to me, so a stranger cannot silence someone else's phone with it.
       if(msg.t==='handled'){
-        if(from===ME.pubkey && _call && _call.id===msg.callId && _call.state==='ringing'){
+        if(from!==ME.pubkey) return;
+        if(msg.callId){ _handledIds.add(msg.callId); if(_handledIds.size>200) _handledIds.clear(); }
+        if(_call && _call.id===msg.callId && _call.state==='ringing'){
           _ringtone(false); _callTeardown(); toast('answered on another device');
         }
         return;
@@ -20957,7 +20971,7 @@
         if(_call){ _callSend(from, {v:1, callId:msg.callId, t:'bye'}); return; }   // busy with someone else → auto-decline
         _call = { id:msg.callId, peer:from, pc:null, local:null, remote:null, video:!!msg.video, state:'ringing', caller:false, invite:msg, pendingIce:[] };
         // Stop ringing if the caller vanishes without a 'bye' (crash/offline) — ephemeral events can be lost.
-        _call.timeout = setTimeout(()=>{ if(_call && _call.state==='ringing'){ _ringtone(false); _missedAdd(_call.peer); _callTeardown(); } }, 60000);
+        _call.timeout = setTimeout(()=>{ if(_call && _call.state==='ringing'){ _ringtone(false); _missedAdd(_call.peer, _call.id); _callTeardown(); } }, 60000);
         try{ needProfile(from); }catch(_){}
         _ringtone(true); _callUI();
         try{ if('Notification' in window && Notification.permission==='granted'){ const p=profOf(from)||{}; new Notification('📞 '+(p.name||'Incoming call'), {body:'tap to answer', tag:'pc-call'}); } }catch(_){}
@@ -20984,7 +20998,7 @@
         }catch(_){}
       }
       else if(msg.t==='reanswer'){ if(_call.pc){ try{ await _call.pc.setRemoteDescription({type:'answer', sdp:msg.sdp}); _callUI(); }catch(_){} } }
-      else if(msg.t==='bye'){ if(_call.state==='ringing') _missedAdd(from);   // they gave up before we picked up
+      else if(msg.t==='bye'){ if(_call.state==='ringing') _missedAdd(from, _call.id);   // they gave up before we picked up
         if(_call.state!=='connected') toast('call ended'); _callTeardown(); }
     })();
   }
@@ -21119,9 +21133,7 @@
     // can land seconds later — straight into innerHTML, discarding a half-typed npub, the focus, and any
     // ticked group-call boxes. Redraw only when the form is untouched.
     if(!_narrowed) ensureMyFollowers().then(()=>{
-      const inp=$('#call-npub'), gp=$('#grp-panel');
-      const busy = (inp && (inp.value || document.activeElement===inp)) || (gp && gp.style.display!=='none');
-      if(VIEW==='calls' && !busy && [...FOLLOWS].some(pk=>FOLLOWERS.has(pk))) renderCalls();
+      if([...FOLLOWS].some(pk=>FOLLOWERS.has(pk))) _redrawCallsIfIdle();
     }).catch(()=>{});
     const go=async(pk)=>{ if(pk) startCall(pk, {video:false}); };   // audio-first; add video mid-call with the in-call button
     // Autocomplete: as you type a name, suggest known profiles (like the DM composer); click one to call.
@@ -21143,6 +21155,8 @@
       if(!pk && v.includes('@')){ try{ pk=await nip05Resolve(v.toLowerCase()); }catch(_){} }
       if(!pk){ toast('could not find that person'); return; } go(pk); };
     $$('.call-contact',feed).forEach(b=> b.onclick=()=> go(b.dataset.pk));
+    // Sibling of the contact buttons, not nested in one, so stopPropagation is belt-and-braces.
+    { const mc=$('#missed-clear',feed); if(mc) mc.onclick=(e)=>{ e.stopPropagation(); _missedClear(); }; }
     const gt=$('#grp-toggle'), gp=$('#grp-panel'); if(gt&&gp) gt.onclick=()=>{ const on=gp.style.display==='none'; gp.style.display=on?'':'none'; gt.textContent=on?'✕ Cancel group call':'👥 Start a group call'; };
     if($('#grp-start')) $('#grp-start').onclick=()=>{ const pks=$$('.grp-pick',feed).filter(c=>c.checked).map(c=>c.value); if(!pks.length){ toast('pick at least one person'); return; } startGroupCall(pks, false); };
     contacts.forEach(pk=>needProfile(pk));
