@@ -60,8 +60,10 @@ Create a file called `.env` next to `docker-compose.yml`:
 
 ```bash
 cat > .env <<EOF
-# Which parts of the stack to run: the Nostr-only backend + the TLS proxy.
-# Setting it here means plain \`docker compose ...\` commands work without --profile flags.
+# Which parts of the stack to run: nostr = app + relay + Blossom, tls = the HTTPS proxy.
+# Both are needed. Setting them here lets you drop the --profile flags from day-to-day
+# commands (\`docker compose logs -f\`, \`docker compose ps\`); the steps that set the stack
+# up spell them out anyway, so a typo in this line can't leave you with a half-started node.
 COMPOSE_PROFILES=nostr,tls
 
 # Database password. Change it — this is the only place you set it.
@@ -82,11 +84,19 @@ EOF
 ## Step 4 — Start it
 
 ```bash
-docker compose up -d --build
+docker compose --profile nostr --profile tls up -d --build
 ```
 
-First run builds the image and starts PostgreSQL, the app, the relay and the TLS proxy. Watch it
-come up with `docker compose logs -f`.
+Both profiles are required and do different jobs: **`nostr`** is the app + relay + Blossom (the
+Nostr-only image, no AI), and **`tls`** is the nginx+certbot proxy that puts HTTPS in front of it.
+
+The profiles are spelled out here on purpose. `COMPOSE_PROFILES` in your `.env` means you can drop
+the flags from every later command — but if that line is missing or misspelled, a bare
+`docker compose up -d` silently starts **only the `postgres` service** (everything else is behind a
+profile) and you get no app, no relay, and no obvious error. Passing them explicitly once removes
+that failure mode; after this, `docker compose ps` should list `postgres`, `nostr` and `proxy`.
+
+First run builds the image and starts all three. Watch it come up with `docker compose logs -f`.
 
 Open **`https://your-domain.com/client`**. Your browser will warn about the certificate — it's
 self-signed until Step 6. Click through; the connection is encrypted, it just isn't vouched for by
@@ -113,8 +123,8 @@ hand admin to whoever signs in first.
    automatically.
 
 Confirm you see the **Admin** entry in the menu. If someone beat you to it, the fastest fix is to
-start over: `docker compose down -v` wipes the volumes (including all data) and you can claim it on
-the next boot.
+start over: `docker compose --profile nostr --profile tls down -v` wipes the volumes (including all
+data) and you can claim it on the next boot.
 
 ---
 
@@ -123,8 +133,8 @@ the next boot.
 Your DNS must already point at this server, and ports 80 and 443 must be reachable.
 
 ```bash
-docker compose exec proxy certbot --nginx -d your-domain.com
-docker compose exec proxy nginx -s reload
+docker compose --profile nostr --profile tls exec proxy certbot --nginx -d your-domain.com
+docker compose --profile nostr --profile tls exec proxy nginx -s reload
 ```
 
 certbot edits the proxy's config for you and the change persists on a volume. Reload the client —
@@ -134,7 +144,9 @@ the browser warning is gone.
 
 ```bash
 # crontab -e   (twice a day is the conventional cadence; it's a no-op until renewal is due)
-0 3,15 * * * cd /path/to/posterchanai && docker compose exec -T proxy certbot renew --quiet && docker compose exec -T proxy nginx -s reload
+# Profiles spelled out because cron runs unattended — a silent "no such service" here means the
+# certificate quietly expires 90 days later.
+0 3,15 * * * cd /path/to/posterchanai && docker compose --profile nostr --profile tls exec -T proxy certbot renew --quiet && docker compose --profile nostr --profile tls exec -T proxy nginx -s reload
 ```
 
 ---
@@ -222,7 +234,7 @@ docker compose exec -T postgres pg_dump -U posterchan posterchan_relay | gzip > 
 
 ```bash
 git pull
-docker compose up -d --build
+docker compose --profile nostr --profile tls up -d --build
 ```
 
 Your data lives on volumes and survives. One exception: the proxy's nginx config is seeded on first
@@ -235,6 +247,8 @@ not reach an existing install — see [DOCKER.md](DOCKER.md#production-https--tl
 
 | Symptom | Cause |
 |---|---|
+| `docker compose ps` shows only `postgres` | The profiles weren't passed. Every other service is behind `nostr` or `tls` — re-run the Step 4 command with both `--profile` flags, or fix the `COMPOSE_PROFILES` line in `.env` |
+| `no such service: proxy` / `nostr` | Same cause, for `exec`/`logs`/`down`. Add the two `--profile` flags to that command |
 | Browser still warns about the certificate | Step 6 hasn't run, or ran against a domain that doesn't resolve to this box yet |
 | `502 Bad Gateway` right after `up -d` | The backend is still starting. The proxy retries on its own — no restart needed |
 | Timeline is empty | Almost always a wrong system clock (the relay's queries are time-windowed) or DNS. Check `date` on the host |
