@@ -379,6 +379,17 @@ async def subscribe(relay: str, filters: list, handler, stop: asyncio.Event, dir
                             and msg[1] == sub_id):
                         gated = False       # backlog delivered; everything after this is live
                         continue
+                    # CLOSED ends the SUBSCRIPTION but leaves the socket up (NIP-01: "too many
+                    # subscriptions", a rejected filter, a restarting relay). Ignored, that is the
+                    # worst failure this loop can have: the connection still answers pings, so nothing
+                    # reconnects, and we sit forever on a subscription the relay has already forgotten
+                    # — DM and call notifications simply stop, node-wide, until someone restarts the
+                    # process. Break out and let the reconnect loop re-REQ.
+                    if (isinstance(msg, list) and len(msg) >= 2 and msg[0] == "CLOSED"
+                            and msg[1] == sub_id):
+                        logger.warning("[nostr] %s CLOSED our subscription (%s) — resubscribing",
+                                       relay, (msg[2] if len(msg) > 2 else ""))
+                        break
                     if (isinstance(msg, list) and len(msg) >= 3 and msg[0] == "EVENT"
                             and msg[1] == sub_id and isinstance(msg[2], dict)):
                         if gated:

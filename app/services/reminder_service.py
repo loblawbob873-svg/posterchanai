@@ -14,6 +14,7 @@ user has Telegram configured.
 Times are handled in UTC (the model convention, matching `datetime.utcnow()`); relative phrases
 ("in 10m", "in 2 hours") are exact in any timezone, which is the common case.
 """
+import asyncio
 import json
 import logging
 import re
@@ -275,6 +276,32 @@ async def deliver(db: Session, reminder: Reminder) -> None:
         })
     except Exception as e:
         logger.info(f"live push skipped: {e}")
+
+    # Web Push / UnifiedPush — the only path that reaches a phone whose screen is OFF.
+    #
+    # The websocket above only lands if the app is open, and the chat row only if the user goes
+    # looking. So a reminder set on a phone, for a phone, arrived nowhere at the moment it was due
+    # unless Telegram happened to be linked — which is the one job a reminder has.
+    #
+    # Best-effort and last, deliberately: the reminder has already been claimed and recorded by this
+    # point, so a push service having a bad day must not cost the delivery.
+    npub = (getattr(user, "nostr_npub", "") or "").strip()
+    if npub:
+        try:
+            from app.models import PushSubscription
+            from app.services import push_service
+            from app.services.nostr import nostr_service
+            pk = nostr_service.to_pubkey_hex(npub)
+            rows = db.query(PushSubscription).filter(PushSubscription.pubkey == pk).all() if pk else []
+            payload = {"title": "⏰ Reminder", "body": reminder.text, "type": "reminder"}
+            for row in rows:
+                sub = {"endpoint": row.endpoint, "keys": {"p256dh": row.p256dh, "auth": row.auth}}
+                if not await asyncio.to_thread(push_service.send, sub, payload):
+                    db.delete(row)        # endpoint is gone for good — prune it
+            if rows:
+                db.commit()
+        except Exception as e:
+            logger.warning(f"reminder push failed for user {user.id}: {e}")
 
     # Telegram (only if configured for this user). Plain parse_mode + a bold, bordered banner so it
     # stands out in the chat list (and avoids Markdown parse errors on arbitrary reminder text).

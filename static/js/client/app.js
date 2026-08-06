@@ -14675,6 +14675,10 @@
       <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button><button class="prof-tab" data-tab="media">Media</button><button class="prof-tab" data-tab="articles">Articles</button><button class="prof-tab" data-tab="streams">Streams</button></div>
       <div id="prof-list"></div>`;
     let pinnedHtml = '';   // filled by the deferred pinned query below; listFor() reads it live
+    // Ids shown in the Pinned section, so the timeline below can leave them out. Without this every
+    // pinned note renders TWICE on the profile — once pinned, once in its chronological place — which
+    // reads as duplicate posts rather than as a highlight.
+    let pinnedIds = new Set();
     const listFor=(tab)=>{
       const lim=_prof.limit;
       if(tab==='replies'){ const r=Store.feed(e=>e.pubkey===pk && isReply(e)).slice(0,lim);
@@ -14688,7 +14692,7 @@
         return a.length ? a.map(articleCard).join('') : `<div class="empty">${_prof.artLoaded?'No articles yet.':'Loading…'}</div>`; }
       if(tab==='streams'){ const s=_dedupAddr(Store.byKind(30311).filter(e=> (e.pubkey===pk || streamHost(e)===pk) && !_isDeletedStream(e))).slice(0,lim);   // NOT Store.feed() — that allowlists kinds 1/6/1068/30023/34550/40, so it silently drops every 30311
         return s.length ? `<div class="stream-grid prof-streams">${s.map(streamCard).join('')}</div>` : `<div class="empty">${_prof.streamsLoaded?'No streams yet.':'Loading…'}</div>`; }
-      const n=Store.feed(e=>e.pubkey===pk && !isReply(e)).slice(0,lim);
+      const n=Store.feed(e=>e.pubkey===pk && !isReply(e) && !pinnedIds.has(e.id)).slice(0,lim);
       return pinnedHtml + (n.length ? n.map(e=>noteHtml(e)).join('') : '<div class="empty">No posts yet.</div>');
     };
     // Guard against redundant re-renders: the lazy-fetch (+ hydrate/live-event churn) can call fillList
@@ -14791,6 +14795,7 @@
         const got=await Relay.query([{ids:pinIds}]).catch(()=>[]); got.forEach(e=>Store.saveEvent(e));
         const pinned=pinIds.map(id=>Store.get(id)).filter(Boolean);
         if(pinned.length && VIEW==='profile' && _prof.pk===pk){
+          pinnedIds = new Set(pinned.map(e=>e.id));   // set BEFORE fillList below, or the first paint duplicates
           pinnedHtml='<div class="search-section-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pin"></use></svg>Pinned</div>'+pinned.map(e=>noteHtml(e)).join('');
           if(_prof.tab==='notes'){ fillList('notes'); hydrate(feed); }
         }
