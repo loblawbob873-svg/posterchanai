@@ -122,6 +122,10 @@ agreeing, or if a background script starts using something a worker does not hav
 
 ### Getting it
 
+> Installing it on your own machine, store-free? **[extension/README.md](../extension/README.md)** is
+> the step-by-step for that — Chrome/Edge/Brave and both Firefox routes, pairing, and turning on
+> bookmark sync. The rest of this section is why it's built the way it is.
+
     https://poster.place/extension        the unpacked bundle (.tar.gz) — for about:debugging
     https://poster.place/extension/zip    the packed .zip — for signing / AMO submission
 

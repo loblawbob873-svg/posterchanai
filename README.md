@@ -17,12 +17,40 @@
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20GPU%20optional-FCC624?logo=linux&logoColor=black)](#requirements)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
+[Try it](#try-it-in-one-command) ·
 [Quick start](#quick-start-backend-and-web-ui) ·
 [Features](#features) ·
 [Bots & social](#bots--social) ·
 [Documentation](#documentation)
 
 </div>
+
+---
+
+## Try it in one command
+
+Docker, no configuration, nothing to sign up for:
+
+```bash
+git clone https://github.com/loblawbob873-svg/posterchanai.git && cd posterchanai
+docker compose --profile nostr up -d --build
+```
+
+Then open **<http://localhost:3051/client>** — a self-hosted **Nostr relay + full web client +
+Blossom media server**, with no AI stack (a ~2 GB image, not ~70 GB). Sign in with a browser
+extension like Alby, or let the app generate you a key. Postgres comes up alongside it
+automatically; you don't need a `.env`, a domain or a certificate to look around.
+
+Then, when you want more:
+
+| | |
+|---|---|
+| **Put it on a server** other people use | **[docs/NOSTR_DOCKER.md](docs/NOSTR_DOCKER.md)** — empty VPS to public instance: HTTPS with one extra profile, claiming admin, relay config, backups |
+| **Add the AI** | swap `--profile nostr` for `cpu`, `cuda`, `rocm` or `intel` — [docs/DOCKER.md](docs/DOCKER.md) |
+| **Bare metal instead** | the interactive installer — [Option B](#option-b-installer-linux-recommended-for-bare-metal) |
+
+> Local trials skip HTTPS because browsers treat `localhost` as a secure origin — so the client can
+> sign events there. On any other address you need TLS, which is what the `tls` profile is for.
 
 ---
 
@@ -71,7 +99,7 @@ A companion **browser extension** (Firefox, and Chrome / Brave via MV3) makes yo
 - **Bookmark sync** — one encrypted event per bookmark, sealed with the same vault key, **kept in sync across your browsers**: adds, moves and deletes propagate (and deletions *stay* deleted), toolbar-vs-menu placement and folders are preserved, and duplicates are de-duped by URL. `chrome.alarms` keeps an idle browser syncing.
 - **NIP-07 signer** — the extension can sign for Nostr web apps, with **per-origin, per-event-kind approval** shown in a real extension window (not a page overlay) — so you log into Nostr sites **without pasting your `nsec`** into a page.
 
-Build both bundles with `bash extension/build.sh` (Firefox `.xpi` + Chrome unpacked-`dist/chrome`); CI publishes fresh artifacts to **poster.place/extension**.
+**Install it without an app store** — Load unpacked on Chrome/Edge/Brave, or either of the two Firefox routes — in **[extension/README.md](extension/README.md)**, which also covers pairing and switching on bookmark sync. Build both bundles with `bash extension/build.sh` (Firefox `.xpi` + Chrome unpacked-`dist/chrome`); CI publishes fresh artifacts to **poster.place/extension**.
 
 ### Voice & media
 

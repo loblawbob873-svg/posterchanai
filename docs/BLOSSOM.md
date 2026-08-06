@@ -18,13 +18,19 @@ default**.
 Blobs are **public by hash** — anyone with the sha256 can fetch them. Only **uploading**
 and **deleting** are gated.
 
-## Access control (per-user, not a global list)
+## Access control
 
-There is no npub whitelist setting. A user may upload iff:
+A pubkey may upload (and delete) if **any** of these hold — `is_pubkey_allowed()` in
+`app/services/blossom_service.py`:
 
-1. they've **linked a Nostr key** (User Settings → Nostr — we store their `npub`), **and**
-2. an admin has ticked **🌸 Blossom** for them in **Admin → Users → Access** (the
-   `can_blossom` privilege). Admins are always allowed.
+1. It belongs to a **web user with the 🌸 Blossom privilege**: they've linked a Nostr key (User
+   Settings → Nostr — we store their `npub`) and an admin has ticked **🌸 Blossom** in
+   **Admin → Users → Access** (`can_blossom`). Admins are always allowed.
+2. It's in the **`blossom_whitelist` setting** — an npub/hex allowlist in **Admin → Blossom**, for
+   granting upload rights without creating an account at all.
+3. It's one of the **node's own operator or bot keys**, so the bots can post effect media.
+4. It's a configured **DVM peer** npub. Cluster peers upload their image/music/video job results to
+   the shared Blossom, so no per-node grant is needed.
 
 Upload auth is the standard Blossom flow: `Authorization: Nostr <base64 kind-24242 event>`
 with a `t upload` tag, a future `expiration` tag, and an `x <sha256>` tag matching the body.
