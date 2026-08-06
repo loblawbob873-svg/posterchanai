@@ -3255,13 +3255,13 @@
       // A CHARACTER POSE places the mouth on the pose's ARTWORK rather than on the layer's source,
       // because the layer's source is the rendered clip and the artwork is what gets animated.
       const pose = (l.type !== 'image' && l.fxPose) ? l.fxPose : '';
-      // If the layer was ERASED, talk must animate the edited picture, not the raw upload. The erase is
-      // a separate alpha overlay (l.mask), not baked into l.src the way effects and background-removal
-      // are — so it is the one edit talk would otherwise miss, showing the original face in the picker
-      // AND rendering it un-erased. Bake it into a transparent PNG up front and drive the picker, the
-      // face-detect and the render from THAT one url. Prefer the mask blob this tab already holds
-      // (_maskSrc) so a cross-origin fetch can't defeat it. Bake failure is non-fatal: fall back to the
-      // un-erased source rather than blocking talk.
+      // If the layer was ERASED, the mouth PICKER should show the edited picture — otherwise you place
+      // the mouth on a face the erase may have changed. Bake l.src + the mask into a transparent PNG for
+      // the picker's preview and its face-detect seed (prefer the mask blob this tab already holds so a
+      // cross-origin fetch can't defeat it). This is picker-ONLY: the render below feeds talk the OPAQUE
+      // original and keeps the erase as the layer's mask, because a transparent talk input yields a
+      // VP9-alpha WebM that Firefox previews as a black box (see the render call). Bake failure is
+      // non-fatal — the picker falls back to the un-erased source.
       let bakedUrl = '';
       if(!pose && l.mask){
         const st0 = document.getElementById('mb-status'); if(st0) st0.textContent = 'preparing the picture…';
@@ -3292,9 +3292,13 @@
             const r = await fetch('/client/meme/talk',{ method:'POST', headers:{'Content-Type':'application/json'},
               body: JSON.stringify(pose
                 ? { pubkey: ME.pubkey, auth, audio, character: pose, mouth }
-                // The baked (erased) picture when there was an erase, else the layer's own source —
-                // the same image the mouth was placed on, so placement and render can't disagree.
-                : { pubkey: ME.pubkey, auth, url: (bakedUrl || cur.src), audio, mouth }) });
+                // Feed talk the OPAQUE original and KEEP the erase as the layer's mask (below), NOT the
+                // transparent baked PNG: a transparent input makes add_talk emit a VP9-alpha WebM, which
+                // composites fine on EXPORT but renders as a BLACK rectangle in a Firefox <video> —
+                // hiding whatever is beneath it. An opaque MP4 + the layer's own mask previews correctly
+                // everywhere (a CSS mask on the <video>) and exports identically (the renderer
+                // alphaextracts the same mask). `bakedUrl` is only the picker's preview, above.
+                : { pubkey: ME.pubkey, auth, url: cur.src, audio, mouth }) });
             const j = await r.json().catch(()=>({}));
             if(!r.ok || !j.url) throw new Error(j.detail || j.error || ('HTTP '+r.status));
             // Swap the layer's source IN PLACE, keeping its box and timeline position — same one-way-
@@ -3305,9 +3309,13 @@
               cur.origName = cur.name || ''; cur.origDur = +cur.dur || 0;
             }
             cur.src = j.url; cur.type = 'video'; cur.trim = 0;
-            // Same reason as applyMemeEffect: the mask was drawn on the still, and this is a different
-            // clip — often a different shape, since a talking take is rendered to its own frame.
-            cur.mask = '';
+            // KEEP the erase mask — unlike applyMemeEffect, which clears it because an effect resamples
+            // the picture to a NEW shape. A talking take does not: add_talk renders each frame at the
+            // source's own size (base.copy(), aspect preserved), so the still's mask still lines up with
+            // the clip under the same object-fit. Keeping it is what makes the erase SHOW: the layer
+            // becomes an ordinary masked video — previewed by CSS mask and exported by the renderer's
+            // alphaextract, exactly like erasing a video directly. A pose/cut-out carries no mask, so
+            // this is a no-op there (and a genuine cut-out still talks transparent via j.alpha below).
             if(+j.dur > 0) cur.dur = +j.dur;
             cur.name = name;
             sel = cur.id;
