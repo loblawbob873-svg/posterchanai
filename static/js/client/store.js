@@ -55,6 +55,27 @@
          t[1] === 'pcai:budget')) return true;
     return false;
   }
+  /* ONE event with no `tags` used to take down every timeline in the app, permanently.
+   *
+   * `tags` is REQUIRED by NIP-01, so nothing well-formed loses anything here — but this cache is fed
+   * from places that cannot promise it. A kind-6 repost carries its original as arbitrary JSON in
+   * `content`, and whatever that parsed to was saved as an event on the strength of having an `id`.
+   * Readers then split into two camps: the defensive ones (`ev.tags || []` — which is why a bad event
+   * stores SILENTLY, indexes fine, and looks harmless) and the ones that just walk it. buildCounts()
+   * is the second kind, it is the shared count index EVERY note card asks for, and it assigns CIDX
+   * only at the END — so one tag-less event threw "Cannot read properties of undefined (reading
+   * 'length')" once per card, and the whole feed became "couldn't render this post" while the
+   * reply-context line above each stub (which does guard) kept rendering perfectly. That combination
+   * — every timeline dead, notifications and the "replying to X" labels fine — is the signature.
+   *
+   * Normalising HERE, at the boundary, is also the only fix that heals the people it already happened
+   * to: the bad event is on their disk, so it is restored into memory on every reload and the feed
+   * stays broken no matter how many times they refresh. init()'s hydrate normalises for that reason. */
+  function _normEvent(ev){
+    if (!Array.isArray(ev.tags)) ev.tags = [];
+    else if (!ev.tags.every(Array.isArray)) ev.tags = ev.tags.filter(Array.isArray);
+    return ev;
+  }
   // Split a list into [pinned, rest-newest-first] — shared by the three places that trim a cache so
   // they cannot drift on what "keep" means.
   function _splitPinned(list){
@@ -175,8 +196,10 @@
         // would leave a large notebook on disk but out of memory — and query() only ever reads
         // memory, so those notes would be invisible in the app while sitting right there in IDB.
         const [pin, rest] = _splitPinned(evs);
-        for (const ev of pin) mem.events.set(ev.id, ev);
-        for (const ev of rest.slice(0, 2000)) mem.events.set(ev.id, ev);
+        // Normalise on the way IN, not just on save: a cache poisoned before this shipped is on disk,
+        // and without this it is restored intact on every reload and the timeline never comes back.
+        for (const ev of pin) mem.events.set(ev.id, _normEvent(ev));
+        for (const ev of rest.slice(0, 2000)) mem.events.set(ev.id, _normEvent(ev));
         _reindex();   // build the local query indexes over the hydrated events
         const profs = await pr(tx('profiles','readonly').getAll());
         for (const p of profs) mem.profiles.set(p.pubkey, p);
@@ -186,6 +209,8 @@
     has(id){ return mem.events.has(id); },
     get(id){ return mem.events.get(id); },
     saveEvent(ev){
+      if (!ev || typeof ev.id !== 'string') return false;   // nothing downstream can use an event with no id
+      _normEvent(ev);
       if (mem.events.has(ev.id)) return false;
       mem.events.set(ev.id, ev);
       _indexAdd(ev);

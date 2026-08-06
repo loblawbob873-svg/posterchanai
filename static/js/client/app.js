@@ -8709,7 +8709,7 @@
   // A NIP-18 quote post carries both a `q` tag (rendered by quoteHtml) AND usually the same
   // nostr:nevent inline — strip the inline one so the quoted note doesn't embed twice.
   function stripQuoteRef(text, ev){
-    const q=(ev.tags.find(t=>t[0]==='q')||[])[1]; if(!q) return text;
+    const q=(((ev&&ev.tags)||[]).find(t=>t&&t[0]==='q')||[])[1]; if(!q) return text;
     return (text||'').replace(/(?:nostr:)?(?:nevent1|note1)[0-9a-z]{20,}/gi, m=>{
       try{ const d=NT().nip19.decode(m.replace(/^nostr:/i,'')); const id=d.type==='note'?d.data:(d.data&&d.data.id); return id===q?'':m; }catch(_){ return m; }
     }).replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').trim();
@@ -8876,10 +8876,18 @@
   // re-scanning the whole store for every rendered note (was O(notes × store)).
   let CIDX = null;
   function invalidateCounts(){ CIDX = null; }
+  let _cidxErrs = 0;
   function buildCounts(){
     const c = { replies:{}, reactions:{}, reposts:{}, zaps:{}, zapN:{}, myRt:new Set(), myReact:{}, myReactIds:{}, sob:{}, tips:{}, tipN:{} };
-    const lastE = e => { for(let i=e.tags.length-1;i>=0;i--) if(e.tags[i][0]==='e') return e.tags[i][1]; return null; };
+    const lastE = e => { const tg=(e&&e.tags)||[]; for(let i=tg.length-1;i>=0;i--) if(tg[i]&&tg[i][0]==='e') return tg[i][1]; return null; };
+    // This index is what EVERY note card asks for (countsFor/myReaction), and CIDX is only assigned at
+    // the end — so anything that throws in here doesn't cost one post's like count, it costs the whole
+    // timeline, on every render, until the offending event leaves the cache. Store now normalises tags
+    // at the boundary; per-event containment is the second lock, so a shape nobody has thought of yet
+    // can only ever lose ITS OWN counts. Same reason ME is checked rather than assumed: a guest reading
+    // the public feed has no key, and `ME.pubkey` on a kind-7 would take out every card for them too.
     for(const e of Store.all()){
+     try{
       const id = lastE(e); if(!id) continue;
       if(e.kind===1){
         // An ADDRESS tip (Monero `t:monerotip` / BCH `t:bchtip`) is a kind-1 carrying an `e` tag, so it
@@ -8898,10 +8906,16 @@
       // myReactIds keeps the EVENT ids too — un-reacting is a NIP-09 delete of them, and it collects
       // ALL of mine on a post (another client may have left several) so one tap clears the lot.
       else if(e.kind===7){ c.reactions[id]=(c.reactions[id]||0)+1;
-        if(e.pubkey===ME.pubkey){ c.myReact[id]=reactDisp(e); (c.myReactIds[id]=c.myReactIds[id]||[]).push(e.id); }
+        if(ME && e.pubkey===ME.pubkey){ c.myReact[id]=reactDisp(e); (c.myReactIds[id]=c.myReactIds[id]||[]).push(e.id); }
         if(_isSob(e.content)) c.sob[id]=(c.sob[id]||0)+1; }
-      else if(e.kind===6){ c.reposts[id]=(c.reposts[id]||0)+1; if(e.pubkey===ME.pubkey) c.myRt.add(id); }
+      else if(e.kind===6){ c.reposts[id]=(c.reposts[id]||0)+1; if(ME && e.pubkey===ME.pubkey) c.myRt.add(id); }
       else if(e.kind===9735){ const sats=zapAmount(e); if(sats){ c.zaps[id]=(c.zaps[id]||0)+sats; c.zapN[id]=(c.zapN[id]||0)+1; } }
+     }catch(err){
+      // Bounded and NOISY on purpose. Containment is what keeps the timeline alive, but a catch that
+      // says nothing is how the original took a week to find: the feed was visibly broken and the
+      // console was empty. Name the event so the next one is reproducible from a screenshot.
+      if((_cidxErrs=(_cidxErrs||0)+1) <= 3) try{ console.error('[buildCounts] skipped event', (e&&e.id)||'?', err); }catch(_){}
+     }
     }
     CIDX = c;
   }
@@ -13677,7 +13691,7 @@
     // they were fetched, toasted live, and then dropped from the list that actually renders.
     // 42 (NIP-28 chat) and 1111 (community comment) were subscribed to and had rows + a tab filter, but
     // were missing HERE, so they could never render either — the same gap 1621/1617 had.
-    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984,1621,1617,42,1111].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)
+    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984,1621,1617,42,1111].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && (e.tags||[]).some(t=>t&&t[0]==='p'&&t[1]===ME.pubkey)
       // A reaction or repost with no `e` tag says "someone liked something" and can't say what. The row
       // has nothing to open, and the handler's `ref||e.id` fallback opened the REACTION as a thread,
       // which renders as an empty one. Drop them here so a malformed event from any source — our fedi
