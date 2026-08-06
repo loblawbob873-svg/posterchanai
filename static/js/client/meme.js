@@ -3319,13 +3319,18 @@
             if(+j.dur > 0) cur.dur = +j.dur;
             cur.name = name;
             sel = cur.id;
-            // A TRANSPARENT result is silent, and has to be: MP4 carries no alpha at all (a cut-out
-            // rendered to MP4 comes back as a black rectangle with the subject on it), and an audio
-            // stream inside a VP9-alpha WebM corrupts the alpha. So when the server kept the layer's
-            // transparency it hands back a mute clip, and the spoken line goes on the timeline as its
-            // own audio layer — aligned to this one, at full volume and with no fade, because it is a
-            // VOICE, not a music bed.
-            if(j.alpha){
+            // The spoken line goes on the timeline as its OWN audio layer in two cases, both because the
+            // clip's own audio can't reach the output:
+            //   - a TRANSPARENT result (j.alpha) is silent by necessity — audio inside a VP9-alpha WebM
+            //     corrupts the alpha, so the server hands back a mute clip;
+            //   - an ERASED (masked) opaque clip DOES get the voice muxed in, but that track survives
+            //     neither the preview nor the export THROUGH the mask (mouth moves, no sound, both
+            //     places) — so mute the clip and voice it the reliable way instead.
+            // Either way the voice is a separate audio layer, aligned to this one, at full volume and no
+            // fade, because it is a VOICE, not a music bed.
+            const _voiceLayer = j.alpha || (!pose && !!cur.mask);
+            if(_voiceLayer && !j.alpha) cur.mute = true;   // so a browser that DOES play the muxed track can't double it
+            if(_voiceLayer){
               // Built from scratch, NOT copied off the video layer: a copy would inherit its speed,
               // crossfade ramps, effect and origSrc undo-state, none of which mean anything on an
               // audio layer and one of which (origSrc) would make ↺ offer to "restore" a photo onto
@@ -3346,8 +3351,8 @@
               else P.layers.splice(at < 0 ? P.layers.length : at + 1, 0, spoken);
             }
             save(); render();
-            toast(j.alpha ? '🗣️ it talks — the voice is its own layer, ↺ undoes the picture'
-                          : '🗣️ it talks — ↺ undo puts the photo back');
+            toast(_voiceLayer ? '🗣️ it talks — the voice is its own layer, ↺ undoes the picture'
+                              : '🗣️ it talks — ↺ undo puts the photo back');
           }catch(err){ toast('couldn’t make it talk: '+((err&&err.message)||err)); }
           finally{ _fxBusy = false; const s2=document.getElementById('mb-status'); if(s2) s2.textContent=''; }
         },
