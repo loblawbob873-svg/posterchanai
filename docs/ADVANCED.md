@@ -744,8 +744,6 @@ The web interface supports global shortcuts via the Media Session API and keyboa
 
 **Hyprland Configuration:**
 
-See **[docs/HYPRLAND_MUSIC_CONTROLS.md](docs/HYPRLAND_MUSIC_CONTROLS.md)** for detailed setup instructions.
-
 **Quick Setup (Automatic):**
 
 Run the setup script to automatically add keybinds:
@@ -787,7 +785,7 @@ bind = , XF86AudioPrev, exec, hyprctl dispatch focuswindow "class:.*[Bb]rowser.*
 
 **Advanced Setup (Global Control):**
 
-For true global control that works even when browser isn't focused, use `ydotool` or `xdotool` to send keyboard events. See the full guide in `docs/HYPRLAND_MUSIC_CONTROLS.md`.
+For true global control that works even when browser isn't focused, use `ydotool` or `xdotool` to send keyboard events.
 
 **Testing Your Setup:**
 
@@ -1499,7 +1497,7 @@ Poster-chan AI supports four LLM backends:
 
 IPEX-LLM provides the best performance on Intel Arc GPUs using Intel's optimized inference backend. This is the same technology used by Docker-based Ollama solutions for Intel Arc.
 
-**See [docs/IPEX-LLM-SETUP.md](docs/IPEX-LLM-SETUP.md) for complete setup instructions for Gentoo, Debian/Ubuntu, and Fedora.**
+**See [IPEX-LLM-SETUP.md](IPEX-LLM-SETUP.md) for complete setup instructions for Gentoo, Debian/Ubuntu, and Fedora.**
 
 **Quick Requirements:**
 - Python 3.11 (required - not compatible with Python 3.12+)

@@ -284,11 +284,20 @@ NIP-46 remote signer like Amber). The first admin is configured in Admin → Use
 
 ## Persistence
 
-Two volumes hold all mutable state:
+| Volume | Mounted at | Holds |
+|---|---|---|
+| `pc-pg` | `/var/lib/postgresql` | **The database.** One Postgres DB backs both the app *and* the Nostr relay — accounts, settings and every event the relay stores |
+| `pc-rag` | `/app/data` | The **operator key** (`keys.json`) and, on a Docker node, the **Blossom blobs** |
+| `pc-data` | `/var/lib/posterchanai` | Uploads, downloaded models, HF cache, **MIOpen cache**, torrents, Tor data |
+| `pc-proxy-conf`, `pc-proxy-ssl` | in the proxy | The `tls` profile's nginx config and certificates (see above) |
 
-- `/var/lib/posterchanai` — uploads, downloaded models, HF cache, **MIOpen cache**,
-  the **sqlite DB** (symlinked here), torrents, Tor data.
-- `/app/data` — app data directory.
+There is **no sqlite** anywhere — Postgres is the only supported database, and it is required in
+every setup.
+
+**If you back up one thing, back up `/app/data/keys.json`.** It's the operator key: it identifies
+this instance, and the encrypted settings/account documents the relay publishes to upstream relays
+can only be restored with it. Losing it is unrecoverable in a way losing the database is not.
+`docs/NOSTR_DOCKER.md` has the three backup commands.
 
 ## Configuration / opt-ins
 
