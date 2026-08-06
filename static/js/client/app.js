@@ -20584,10 +20584,29 @@
     try{ const own = (CFG && CFG.relay_url) ? [normalizeRelay(CFG.relay_url)].filter(Boolean) : [];   // empty on a standalone install (no instance)
       if(own.length) Relay.publishTo(own, ev).catch(()=>{}); }catch(_){}
   }
+  /* The ONE frame per call that should wake a phone, marked in the clear so the server can tell.
+   *
+   * The body is encrypted, so the push watcher cannot distinguish an invite from an ICE candidate or a
+   * hangup — it pushed on ANY 25050 that cleared its 30s cooldown. Two consequences, both bad: a caller
+   * giving up at 45s sends a `bye`, which is outside that window, so every unanswered call rang the
+   * callee a SECOND time 45s after the caller left; and every frame of every call cost a rate-limit
+   * check, a stats bump and a DB lookup for push subscriptions.
+   *
+   * `t=invite` leaks nothing the relay cannot already infer — it sees kind 25050 between these two
+   * pubkeys either way — and lets the server drop ~everything else before it does any work.
+   *
+   * EVERY frame carries a `t`, not just invites — that is what makes the marker usable. If only invites
+   * were tagged, a new client's ICE frame (no tag) would be byte-identical to an old client's invite
+   * (no tag), the server would have to ring for both, and nothing would be fixed. Tagging all of them
+   * makes ABSENCE mean exactly one thing: a client older than this change. */
+  const _RING_FRAMES = new Set(['invite', 'ginvite']);   // 1:1 and group; the only two that ring
+  function _callTags(peerHex, obj){
+    return [['p', peerHex], ['t', (obj && _RING_FRAMES.has(obj.t)) ? 'invite' : 'sig']];
+  }
   async function _callSend(peerHex, obj){
     try{
       const ct = await signer.nip44enc(peerHex, JSON.stringify(obj));
-      const ev = await sign(CALL_KIND, ct, [['p', peerHex]]);   // ephemeral, not stored, no client tag
+      const ev = await sign(CALL_KIND, ct, _callTags(peerHex, obj));   // ephemeral, not stored, no client tag
       _callPublish(ev);
     }catch(_){}
   }
@@ -20894,7 +20913,7 @@
   let _room = null;   // { id, video, local, peers:Map<hex,{pc,stream,pendingIce}>, members:Set<hex>, ringing, invite, timeout }
 
   async function _roomSend(peerHex, obj){
-    try{ const ct=await signer.nip44enc(peerHex, JSON.stringify(obj)); const ev=await sign(CALL_KIND, ct, [['p',peerHex]]); _callPublish(ev); }catch(_){}
+    try{ const ct=await signer.nip44enc(peerHex, JSON.stringify(obj)); const ev=await sign(CALL_KIND, ct, _callTags(peerHex, obj)); _callPublish(ev); }catch(_){}
   }
   function _roomPeer(hex){ let p=_room.peers.get(hex); if(!p){ p={pc:null,stream:null,pendingIce:[]}; _room.peers.set(hex,p); } return p; }
   function _roomNewPc(hex, iceServers){

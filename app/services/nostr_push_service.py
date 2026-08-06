@@ -301,7 +301,33 @@ _call_task = None
 _call_recent: dict = {}   # callee pubkey -> last-considered monotonic time
 
 
+def _rings(ev: dict) -> bool:
+    """Should this signaling frame wake a phone?
+
+    Only the invite does. The body is NIP-44 to the callee, so we cannot read it — the client marks the
+    ring-worthy frame with a cleartext `t=invite` instead (see _callTags in app.js). Everything else in
+    a call — the ICE burst, answers, and the `bye` — must NOT push.
+
+    That `bye` is the bug this exists for: a caller gives up at 45s and sends one, which lands OUTSIDE
+    the 30s cooldown, so every unanswered call rang the callee a second time long after the caller had
+    gone. Filtering here also drops the dozens of per-call frames before the rate-limit dict, the stats
+    bump and the subscription query — the DB work now happens once per call instead of once per frame.
+
+    A frame with NO `t` tag rings, because that is what a client older than this change sends; drop the
+    fallback once they have rolled over, or an old caller silently stops ringing anyone.
+
+    This works only because new clients tag EVERY frame (`invite` or `sig`). Tagging just the invites
+    would leave a new client's ICE frame indistinguishable from an old client's invite — both untagged —
+    so the fallback would have to ring for both and the second ring would survive. Absence has to mean
+    exactly one thing.
+    """
+    ts = [t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "t"]
+    return (not ts) or ("invite" in ts)
+
+
 async def _call_handler(ev: dict):
+    if not _rings(ev):
+        return                       # ice/answer/bye — cheapest possible exit, before any state or I/O
     author = ev.get("pubkey", "")
     ptags = [t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "p"]
     recips = [pk for pk in ptags if pk and pk != author]
