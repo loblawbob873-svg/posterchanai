@@ -8972,6 +8972,23 @@
       // this it fell through to renderThread below and opened the announcement as a thread. Let the author
       // name (data-prof) and the Copy-clone / ↗ Open controls keep their own handlers.
       const rc=e.target.closest('.repo-card'); if(rc){ if(e.target.closest('[data-prof]')){ renderProfileView(rc.dataset.pk); return; } if(e.target.closest('a,button')) return; const x=Store.get(rc.dataset.id); if(x) openRepo(x); return; }
+      // Draft + scheduled cards are class="note" for the STYLING only — they hold a local draft or a
+      // queued post, never a relay event, so they carry no `data-id`. The generic body-click below
+      // therefore called renderThread(undefined), which looked your own unsent post up on the relay and
+      // answered "Post not found on the relay." Tapping a draft opens it for editing, which is the only
+      // thing the card is for; a scheduled post keeps its own buttons. Same trap the article, community,
+      // channel and repo cards above each had to be dug out of individually.
+      const dc=e.target.closest('.draft-card');
+      if(dc){
+        if(e.target.closest('a,button,input,textarea,select,label')) return;   // Edit / Delete / Send own their clicks
+        if(dc.classList.contains('sched-card')) return;                        // queued: Edit/Cancel only
+        // Same rule the note path uses below: a drag-SELECT is someone copying their own text, not a tap.
+        if(window.getSelection && String(window.getSelection()).length>0) return;
+        const d=Drafts.get(dc.dataset.draft);
+        if(d) compose({reply:d.reply, replyPk:d.replyPk, quote:d.quote, draftId:dc.dataset.draft,
+                       text:d.text, cw:d.cw, cwReason:d.cwReason});
+        return;
+      }
       const btn=e.target.closest('.act');
       const art=e.target.closest('.note');
       // Click anywhere else on the card body opens the post's thread, so the user doesn't have to
@@ -8985,7 +9002,10 @@
       // hit the container, matched the exclusion, and did nothing at all. Exclude the media ITSELF instead:
       // an <img> already returned further up (lightbox), video/audio keep their controls via the tag names,
       // .mc-nav is a <button>, and the carousel dots are the one control that needs naming.
-      if(!btn){ if(art && !hasSelection && !e.target.closest('a,video,audio,button,input,textarea,select,label,.mc-dots,.link-card')) renderThread(art.dataset.id); return; }
+      // `art.dataset.id` guard: a .note-styled card with no event id must do NOTHING, not send the user
+      // to a thread view that can only report the post missing. That error is indistinguishable from a
+      // real relay problem, which is what made this look like data loss rather than a dead click.
+      if(!btn){ if(art && art.dataset.id && !hasSelection && !e.target.closest('a,video,audio,button,input,textarea,select,label,.mc-dots,.link-card')) renderThread(art.dataset.id); return; }
       if(!art) return;   // .act outside a note (article/stream view) binds its own handler
       const id=art.dataset.id; const pk=art.dataset.pk;
       const a=btn.dataset.a;
