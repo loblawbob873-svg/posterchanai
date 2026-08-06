@@ -17437,7 +17437,10 @@
     // The packaged Android app has no Web Push to ask for — take the native road instead.
     const P=_pushPlugin();
     if(P) return await _enablePushNative(P);
-    if((await Notification.requestPermission())!=='granted'){ toast('Notifications blocked'); return; }
+    // Permission is requested by the CLICK HANDLER, while user activation is still valid — asking
+    // again here would be a second prompt on Chromium and a rejection on WebKit.
+    if(Notification.permission!=='granted' && (await Notification.requestPermission())!=='granted'){
+      toast('Notifications blocked'); return; }
     const reg=await navigator.serviceWorker.ready;
     let publicKey; try{ publicKey=(await fetch('/api/push/vapid').then(r=>r.json())).publicKey; }catch(_){}
     if(!publicKey){ toast('Push not configured on the server'); return; }
@@ -17541,11 +17544,33 @@
         : (iosTab ? 'On iPhone, add this app to your Home Screen first — Safari tabs cannot receive notifications.' : '');
     };
     if(tb) tb.onclick=async()=>{ tb.disabled=true; try{ await testPush(); } finally { tb.disabled=false; } };
-    render(await pushState());
-    btn.onclick=async()=>{ btn.disabled=true;
-      try{ if((await pushState())==='on') await disablePush(); else await enablePush(); }
-      catch(e){ toast('push change failed: '+((e&&(e.name||e.message))||e)); }
-      render(await pushState()); };
+    let cur = await pushState();
+    render(cur);
+    /* Ask for permission on the SYNCHRONOUS part of the click, before any await.
+     *
+     * This handler used to `await pushState()` first — which awaits serviceWorker.ready and
+     * getSubscription() — and only then reached Notification.requestPermission(). WebKit requires
+     * TRANSIENT user activation for that prompt, and those async hops spend it, so on an installed
+     * iOS PWA the request was rejected before a prompt could appear: no permission, no subscription,
+     * no server row, and nothing to see. Chromium is lenient here, which is why it only ever failed
+     * on iPhone. `cur` is the state the button was last RENDERED with, so no await is needed to know
+     * which way the toggle goes. */
+    btn.onclick=()=>{
+      const turningOn = cur !== 'on';
+      const asked = (turningOn && typeof Notification !== 'undefined' && Notification.permission === 'default')
+        ? Notification.requestPermission()      // called with activation intact; NOT awaited yet
+        : Promise.resolve(typeof Notification !== 'undefined' ? Notification.permission : 'granted');
+      btn.disabled = true;
+      (async()=>{
+        try{
+          if(!turningOn) await disablePush();
+          else if((await asked) !== 'granted') toast('Notifications blocked — allow them for this app in iOS Settings');
+          else await enablePush();
+        }catch(e){ toast('push change failed: '+((e&&(e.name||e.message))||e)); }
+        cur = await pushState();
+        render(cur);
+      })();
+    };
   }
 
   // The running client build = the app.js ?v (mtime) the shell loaded. Lets us confirm a deploy actually
