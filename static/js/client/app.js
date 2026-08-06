@@ -14396,6 +14396,14 @@
     setTimeout(done, 4000);        // hard stop — never hold the pane hostage
   }
   let _dmLastPk='';   // which conversation the pane last rendered — a CHANGE means a fresh open
+  // What you have TYPED but not sent, per peer. renderDmThread rebuilds the pane — textarea included —
+  // and an incoming DM triggers exactly that 350ms after its toast (_scheduleDmRefresh), so mid-sentence
+  // the box went empty: the toast and the wipe are the same event. This survives a rebuild from ABOVE us
+  // (renderMessages replaces the whole #feed); the reuse path in renderDmThread avoids the rebuild
+  // entirely for the common case. It also holds any ATTACHMENT — the strip is derived from the image
+  // URLs sitting in this same text (wireImgAttach), so losing the text lost the upload too.
+  // MEMORY only, deliberately never ClientSettings/localStorage: an unsent DM must not outlive the tab.
+  const _dmDrafts = new Map();
   function _threadSig(pk){ const arr=dmPeers.get(pk)||[]; return pk+'|'+(arr.length?(arr[arr.length-1].id||''):'')+'|'+(_dmShown.get(pk)||_DM_INIT); }
   function _scheduleDmRefresh(){
     if(_dmRefreshTimer || VIEW!=='messages') return;
@@ -14516,8 +14524,26 @@
         + `<span class="b-txt">${body}</span>`
         + `<span class="b-meta">${enc(_dmClock(m.t))}${m.mine?'<span class="b-tick" title="sent">✓</span>':''}</span></div>`;
     };
-    wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back" aria-label="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button> <b class="dm-peer-name name" data-prof="${pk}" style="cursor:pointer">${emojiName(pk, p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,14)+'…'))}</b><span class="spacer"></span><button class="mini" id="dm-mute" title="Mute this sender">${MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'}</button></div>
-      <div class="dm-msgs" id="dm-msgs">${older}${msgs.map((m,i)=>bubble(m, msgs[i-1])).join('')}</div>
+    const _msgsHtml = `${older}${msgs.map((m,i)=>bubble(m, msgs[i-1])).join('')}`;
+    const _peerName = emojiName(pk, p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,14)+'…'));
+    const _muteLabel = MUTED.has(pk)?'🔊 Unmute':'🔇 Mute';
+    // A refresh of the conversation ALREADY on screen touches only the message list. Rebuilding the
+    // pane wholesale is what ate a half-typed message every time a DM arrived, and the draft is not
+    // the only casualty: the caret, the focus, the grown height of the box and the list scroll are
+    // all state the DOM holds and a rebuild throws away. So when the same peer is already mounted,
+    // swap the bubbles and leave everything else — chrome and composer — exactly where it is.
+    const _reuse = !!(_prev && _dmLastPk===pk && document.getElementById('dm-in'));
+    if(_reuse){
+      // Replace the CONTENTS of #dm-msgs, never the element: its long-press and lightbox handlers are
+      // bound to the container itself and are not re-bound below, so keeping it is what stops them
+      // double-firing. The topbar can still go stale (a mute toggled, a profile that just loaded), so
+      // repaint those two in place.
+      _prev.innerHTML = _msgsHtml;
+      { const mb=$('#dm-mute'); if(mb) mb.textContent=_muteLabel; }
+      { const nm=wrap.querySelector('.dm-peer-name'); if(nm) nm.innerHTML=_peerName; }
+    } else {
+    wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back" aria-label="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button> <b class="dm-peer-name name" data-prof="${pk}" style="cursor:pointer">${_peerName}</b><span class="spacer"></span><button class="mini" id="dm-mute" title="Mute this sender">${_muteLabel}</button></div>
+      <div class="dm-msgs" id="dm-msgs">${_msgsHtml}</div>
       <div class="dm-compose">
         <div class="dm-replybar" id="dm-replybar" hidden></div>
         <div class="dm-atts" id="dm-atts" hidden></div>
@@ -14526,7 +14552,7 @@
           <button class="mini" id="dm-files" title="your Blossom files"><svg class="ic x-ic" aria-hidden="true"><use href="#i-flower"></use></svg></button>
           ${CFG.gif_enabled?`<button class="mini" id="dm-gif" title="GIF"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg></button>`:''}
           <input type="file" id="dm-file" multiple hidden>
-          <textarea class="input dm-in" id="dm-in" rows="1" placeholder="Message…"></textarea>
+          <textarea class="input dm-in" id="dm-in" rows="1" placeholder="Message…">${enc(_dmDrafts.get(pk)||'')}</textarea>
           <button class="dm-sendbtn" id="dm-send" title="Send" aria-label="Send"><svg class="ic x-ic" aria-hidden="true"><use href="#i-send"></use></svg></button>
         </div></div>`;
     // Back must do something on DESKTOP too. It only removed `has-active`, which is what shows the
@@ -14560,8 +14586,21 @@
       const _body = _dmReply && _dmReply.text
         ? '> ' + _dmQuoteOf(_dmReply.text) + '\n\n' + t
         : t;
-      try{ ensureDmInboxList(); await sendDm(pk, _body); inp.value=''; _dmReply=null; _dmReplyBanner(); _syncAtts(); }   // clear ONLY on success — a failed send keeps the text + attachment
-      catch(e){ toast('dm failed: '+((e&&e.message)||e)); }
+      // Drop the draft BEFORE sending, not after: sendDm re-renders the pane the moment our own copy
+      // lands, so a draft still in the map at that point would be seeded straight back into the fresh
+      // box and the message you just sent would reappear as unsent text. A failure puts it back — the
+      // rule stays "clear ONLY on success, a failed send keeps the text + attachment".
+      _dmDrafts.delete(pk);
+      try{ ensureDmInboxList(); await sendDm(pk, _body); _dmReply=null; _dmReplyBanner();
+        // The re-render inside sendDm may have replaced the composer, so clear whichever box is LIVE.
+        const box=document.getElementById('dm-in')||inp; box.value=''; _syncAtts();
+        // Setting .value in code fires no 'input', so nothing shrank the grown box back to one row or
+        // dimmed the send button — 'dm-reset' was listened for and never dispatched.
+        box.dispatchEvent(new Event('dm-reset')); }
+      catch(e){
+        _dmDrafts.set(pk, t);
+        const box=document.getElementById('dm-in'); if(box && !box.value){ box.value=t; box.dispatchEvent(new Event('dm-reset')); }
+        toast('dm failed: '+((e&&e.message)||e)); }
       finally{ _dmSending=false; } };
     attachEmojiAutocomplete($('#dm-in'));   // `:shortcode` suggestions in DMs too (the rumor carries the tags)
     $('#dm-send').onclick=send; $('#dm-in').onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } };
@@ -14574,17 +14613,26 @@
         // (wireImgAttach owns it), and referencing a name that doesn't exist would throw.
         const hasAtt = !!(document.querySelector('#dm-atts') || {}).children?.length;
         if(sb) sb.classList.toggle('on', !!ta.value.trim() || hasAtt); };
-      ta.addEventListener('input', grow);
+      // Keep the draft current on every keystroke, so a rebuild from ABOVE this function (renderMessages
+      // replacing the whole #feed) still has it to seed the new box with.
+      const keep=()=>{ if(ta.value) _dmDrafts.set(pk, ta.value); else _dmDrafts.delete(pk); };
+      ta.addEventListener('input', ()=>{ grow(); keep(); });
       // after send() clears it, and on open
-      ta.addEventListener('dm-reset', grow);
+      ta.addEventListener('dm-reset', ()=>{ grow(); keep(); });
       grow(); }
-    { const ob=$('#dm-older'); if(ob) ob.onclick=()=>{ _dmShown.set(pk, Math.min((_dmShown.get(pk)||_DM_INIT)+_DM_STEP, all.length)); _dmScrollTop=true; renderDmThread(pk); }; }
-    _dmReplyBanner();
     _wireBubbleActions($('#dm-msgs'), pk);
-    const m=$('#dm-msgs'); if(m){ if(_dmScrollTop){ _dmScrollTop=false; m.scrollTop=0; } else if(_atBottom) _dmPinBottom(m);
+    { const m=$('#dm-msgs'); if(m)
       // Click a DM image to open it full-size (the feed lightbox handler is bound to #feed only, so DM
       // images otherwise had no way to enlarge — the reported "images too small, can't click" issue).
       m.addEventListener('click', ce=>{ const im=ce.target.closest('img'); if(im){ ce.preventDefault(); openLightbox(im.currentSrc||im.src); } }); }
+    }   // end of the fresh-render branch — its body is left at the original indentation on purpose, so
+        // the diff that introduced the reuse path shows the two lines that changed and not the 60 that
+        // moved sideways.
+    // Both paths: the "Load older" button lives INSIDE #dm-msgs, so it is destroyed by either update
+    // and has to be re-bound each time. The reply banner is idempotent (it assigns its handler).
+    { const ob=$('#dm-older'); if(ob) ob.onclick=()=>{ _dmShown.set(pk, Math.min((_dmShown.get(pk)||_DM_INIT)+_DM_STEP, all.length)); _dmScrollTop=true; renderDmThread(pk); }; }
+    _dmReplyBanner();
+    { const m=$('#dm-msgs'); if(m){ if(_dmScrollTop){ _dmScrollTop=false; m.scrollTop=0; } else if(_atBottom) _dmPinBottom(m); } }
     _dmLastPk=pk;
     _dmThreadSig=_threadSig(pk);   // mark what we just rendered so a debounced refresh won't re-render it
     // Decrypt the visible slice lazily and patch each bubble in place. document.querySelector targets the
