@@ -183,12 +183,33 @@
 
     _send(arr){ for (const c of this._conns.values()) c._send(arr); },
 
+    /* `tags` is REQUIRED by NIP-01, so this rewrites nothing well-formed — but a relay is untrusted
+     * input and the signature check cannot cover this: our OWN relay is `trusted`, so its events skip
+     * verification entirely. One event with no `tags` array is enough to throw inside whatever walks
+     * it, and the callers that take a result STRAIGHT from here without going through the Store are
+     * the replaceable-list loaders that hydrate a signed-in session — FOLLOWS, MUTED, PINNED,
+     * BOOKMARKS in app.js all do `ev.tags.filter(...)` on a raw query result. An exception there does
+     * not cost one card, it costs the follow list. (Store.saveEvent normalises for everything that
+     * DOES reach the cache; this is the same guarantee for everything that never does — which is why
+     * it lives at both ingest points, the pool below and the one-shot external read in queryFrom.)
+     * Safe before signature verification: a well-formed event is left untouched, and a tag-less one
+     * could never have verified anyway — its id is a hash over the tags. Adding `[]` cannot make an
+     * invalid event verify, only keep an already-doomed one from throwing on the way to being dropped.
+     *
+     * DELIBERATELY narrower than store.js's _normEvent, which ALSO drops non-array tag entries. Only
+     * the top-level shape can throw (`ev.tags.filter` on undefined); a junk ENTRY like `['e','x']`
+     * flattened to a string merely fails the `t[1]` test and is ignored. The Store normalises harder
+     * because it keeps events for weeks and feeds the count index; this is a wire guard, and touching
+     * less of an unverified event is the point. If one of these ever grows a rule, ask whether the
+     * other needs it — they are two normalisers and that is how they drift. */
+    _normTags(ev){ if (ev && !Array.isArray(ev.tags)) ev.tags = []; return ev; },
+
     _onMessage(conn, raw){
       let m; try { m = JSON.parse(raw); } catch(_){ return; }
       const typ = m[0];
       if (typ === 'EVENT'){
         const sub = this._subs.get(m[1]); if (!sub || !sub.onEvent) return;
-        const ev = m[2]; if (!ev || sub.seen.has(ev.id)) return;   // dedup across relays
+        const ev = this._normTags(m[2]); if (!ev || sub.seen.has(ev.id)) return;   // dedup across relays
         if (conn.trusted){ this._seenAdd(sub, ev.id); sub.onEvent(ev); }
         else { this._vq.push({ ev, sub }); if (!this._vt) this._vt = setTimeout(()=>this._flush(), 40); }
       } else if (typ === 'EOSE' || typ === 'CLOSED'){
@@ -465,7 +486,7 @@
         tm = setTimeout(fin, timeout);
         ws.onopen = () => { try{ ws.send(JSON.stringify(['REQ', subId, ...filters])); }catch(_){ fin(); } };
         ws.onmessage = (e) => { let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
-          if (m[0] === 'EVENT' && m[1] === subId && m[2]) got.push(m[2]);
+          if (m[0] === 'EVENT' && m[1] === subId && m[2]) got.push(Relay._normTags(m[2]));
           else if ((m[0] === 'EOSE' || m[0] === 'CLOSED') && m[1] === subId) fin(); };
         ws.onerror = () => fin();
         ws.onclose = () => fin();
