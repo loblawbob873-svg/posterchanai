@@ -191,6 +191,25 @@ def _run_migrations():
             except Exception as e:
                 logger.warning(f"[MIGRATE] could not create index {idx.name}: {e}")
 
+    # NOT NULL relaxations. Neither create_all nor ADD COLUMN alters an existing column's nullability,
+    # so a model that loosens one needs this or the old constraint silently outlives it.
+    # push_subscriptions.p256dh/auth are Web Push fields; a UnifiedPush subscription (the native APK,
+    # which has no Web Push at all) carries neither, and on an existing table the insert would fail
+    # with a NOT NULL violation — i.e. the APK could register nothing and stay silent, which is the
+    # exact symptom this whole transport exists to fix. Idempotent: skipped once already nullable.
+    for _tbl, _cols in (("push_subscriptions", ("p256dh", "auth")),):
+        try:
+            if not insp.has_table(_tbl):
+                continue
+            _nn = {c["name"] for c in insp.get_columns(_tbl) if not c.get("nullable", True)}
+            for _c in _cols:
+                if _c in _nn:
+                    with engine.begin() as conn:
+                        conn.execute(text(f'ALTER TABLE "{_tbl}" ALTER COLUMN "{_c}" DROP NOT NULL'))
+                    logger.info(f"[MIGRATE] {_tbl}.{_c} is now nullable (UnifiedPush subscriptions)")
+        except Exception as e:
+            logger.warning(f"[MIGRATE] could not relax NOT NULL on {_tbl}: {e}")
+
     # Column TYPE widenings on existing tables (create_all + ADD COLUMN never change a column's type).
     # blossom_blobs.size was INTEGER (32-bit, ~2.1 GB cap): a blob larger than that failed to insert
     # (psycopg2 NumericValueOutOfRange), which ALSO wedged stream-VOD finalize in a 30s retry loop.

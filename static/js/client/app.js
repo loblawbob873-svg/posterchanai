@@ -17416,6 +17416,12 @@
     return arr;
   }
   async function pushState(){   // 'unsupported' | 'denied' | 'off' | 'on'
+    // Check the native plugin FIRST. A Capacitor WebView has no PushManager, so the browser test
+    // below reports 'unsupported' and disables the button — on the one build that now has a working
+    // transport of its own. This ordering is the difference between the APK offering notifications
+    // and permanently claiming it cannot do them.
+    const P=_pushPlugin();
+    if(P){ try{ return ((await P.getEndpoint())||{}).endpoint ? 'on' : 'off'; }catch(_){ return 'off'; } }
     if(!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return 'unsupported';
     if(Notification.permission==='denied') return 'denied';
     try{ const reg=await navigator.serviceWorker.ready; return (await reg.pushManager.getSubscription()) ? 'on' : 'off'; }
@@ -17423,19 +17429,53 @@
   }
   async function enablePush(){
     if(GUEST||!ME.pubkey){ toast('Log in first'); return; }
+    // The packaged Android app has no Web Push to ask for — take the native road instead.
+    const P=_pushPlugin();
+    if(P) return await _enablePushNative(P);
     if((await Notification.requestPermission())!=='granted'){ toast('Notifications blocked'); return; }
     const reg=await navigator.serviceWorker.ready;
     let publicKey; try{ publicKey=(await fetch('/api/push/vapid').then(r=>r.json())).publicKey; }catch(_){}
     if(!publicKey){ toast('Push not configured on the server'); return; }
     const sub=await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:_urlB64ToUint8(publicKey) });
-    // Prove the key is ours. Without it the server took the pubkey on trust, so anyone could point
-    // THEIR browser's endpoint at YOUR npub and start receiving your notifications — which carry
-    // sender names and a slice of the message.
+    return await _registerPushSub(sub.toJSON());
+  }
+  /* The packaged Android app takes a different road to the same place.
+   * A WebView has NO push service, so pushManager.subscribe() above cannot work there at all — which
+   * is why the native build, the one users expect to be MORE capable, received nothing while closed.
+   * UnifiedPush gives us an endpoint from a distributor the user chose; the server treats it as just
+   * another subscription (no VAPID keys → it POSTs instead). */
+  // _capPlugin, NOT a bare Capacitor.Plugins lookup: for a NATIVELY-registered plugin that map is
+  // empty, so the direct read returns undefined, pushState() falls through to 'unsupported', and the
+  // APK reports it cannot do notifications at all. This repo has been bitten by that twice already.
+  function _pushPlugin(){ try{ return _capPlugin('PosterChanPush','register'); }catch(_){ return null; } }
+  async function _enablePushNative(P){
+    const r = await P.register();
+    if(r && r.needsDistributor){
+      toast('Install a UnifiedPush app (e.g. ntfy) to receive notifications');
+      return;
+    }
+    if(!(r && r.ok)){ toast('Could not turn notifications on'+((r&&r.error)?': '+r.error:'')); return; }
+    // The distributor answers a broadcast receiver on its own schedule, so the endpoint appears a
+    // moment later rather than being returned above. Poll briefly instead of guessing a fixed wait.
+    let ep = '';
+    for(let i=0;i<20 && !ep;i++){ ep = ((await P.getEndpoint())||{}).endpoint || ''; if(!ep) await new Promise(r=>setTimeout(r,250)); }
+    if(!ep){ toast('Your notification app did not respond — is it running?'); return; }
+    if(!await _registerPushSub({ endpoint: ep })) return;
+    // Now say whether the OS will actually let any of it through. Being force-stopped by a battery
+    // setting silences push AND password autofill, and reports nothing.
+    try{ const b=await P.batteryStatus();
+      if(b && !b.healthy) toast(b.backgroundRestricted
+        ? 'Notifications on — but this phone has the app on a battery restriction, which blocks them. Open settings to fix.'
+        : 'Notifications on — battery optimisation may delay them.');
+    }catch(_){}
+  }
+  async function _registerPushSub(subscription){
     const auth=await sign(27235,'push-subscribe',[['p',ME.pubkey]]);
     const r=await fetch('/api/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ pubkey:ME.pubkey, subscription:sub.toJSON(), auth:btoa(JSON.stringify(auth)) })}).then(r=>r.json()).catch(()=>null);
-    if(!(r&&r.ok)){ toast('Could not turn notifications on'+((r&&r.error)?': '+r.error:'')); return; }
+      body:JSON.stringify({ pubkey:ME.pubkey, subscription, auth:btoa(JSON.stringify(auth)) })}).then(r=>r.json()).catch(()=>null);
+    if(!(r&&r.ok)){ toast('Could not turn notifications on'+((r&&r.error)?': '+r.error:'')); return false; }
     toast('🔔 Push notifications on');
+    return true;
   }
   /* Send a real notification the whole way round — server → push service → this device.
    * A local showNotification() would only prove the browser can draw one, which is never the part
@@ -17444,10 +17484,8 @@
   async function testPush(){
     if(GUEST||!ME.pubkey){ toast('Log in first'); return; }
     try{
-      const reg=await navigator.serviceWorker.ready;
-      const sub=await reg.pushManager.getSubscription();
-      if(!sub){ toast('Notifications are off — turn them on first'); return; }
-      if(Notification.permission!=='granted'){ toast('This browser is blocking notifications'); return; }
+      if((await pushState())!=='on'){ toast('Notifications are off — turn them on first'); return; }
+      if(!_pushPlugin() && Notification.permission!=='granted'){ toast('This browser is blocking notifications'); return; }
       const auth=await sign(27235,'push-test',[['p',ME.pubkey]]);
       toast('sending…');
       const r=await fetch('/api/push/test',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -17457,6 +17495,11 @@
     }catch(e){ toast('test failed: '+(e&&e.message||e)); }
   }
   async function disablePush(){
+    const P=_pushPlugin();
+    if(P){ try{ const ep=((await P.getEndpoint())||{}).endpoint;
+        if(ep) await fetch('/api/push/unsubscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:ep})});
+        await P.unregister(); }catch(_){}
+      toast('Push notifications off'); return; }
     try{ const reg=await navigator.serviceWorker.ready; const sub=await reg.pushManager.getSubscription();
       if(sub){ await fetch('/api/push/unsubscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})});
         await sub.unsubscribe(); } }catch(_){}

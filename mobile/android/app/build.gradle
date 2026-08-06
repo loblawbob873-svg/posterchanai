@@ -44,6 +44,12 @@ repositories {
 }
 
 dependencies {
+    // UnifiedPush: the packaged app's ONLY way to be woken. A WebView has no Web Push, so without
+    // this the native build cannot receive a call or a message while closed — unlike the web PWA.
+    // Not Firebase: an endpoint is a plain HTTPS URL from a distributor the user chose, so nothing
+    // Google-owned enters a self-hosted app, and the distributor's single socket is shared by every
+    // app on the phone rather than us holding our own.
+    implementation 'org.unifiedpush.android:connector:2.4.0'
     implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"

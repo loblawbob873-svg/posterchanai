@@ -595,6 +595,9 @@ class PushSubscription(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     pubkey = Column(String(64), index=True, nullable=False)   # Nostr pubkey hex this device belongs to
     endpoint = Column(Text, unique=True, nullable=False)       # the push service endpoint URL
-    p256dh = Column(String(255), nullable=False)               # client public key (base64url)
-    auth = Column(String(255), nullable=False)                 # auth secret (base64url)
+    # NULLABLE, because two transports share this table: a Web Push subscription carries both keys,
+    # a UnifiedPush one carries neither (its endpoint URL is the whole capability). Absence of p256dh
+    # is what push_service.send() dispatches on.
+    p256dh = Column(String(255), nullable=True)                # client public key (base64url) — Web Push only
+    auth = Column(String(255), nullable=True)                  # auth secret (base64url) — Web Push only
     created_at = Column(DateTime, default=datetime.utcnow)

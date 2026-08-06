@@ -10,6 +10,8 @@ import base64
 import json
 import logging
 
+import requests
+
 from app.services import settings_store
 
 logger = logging.getLogger(__name__)
@@ -61,8 +63,23 @@ async def ensure_vapid(db) -> tuple[str, str]:
 
 
 def send(subscription: dict, payload: dict) -> bool:
-    """Send ONE web push (blocking — call via asyncio.to_thread). Returns False if the endpoint is
-    permanently gone (404/410) so the caller deletes it; True otherwise (sent, or transient failure)."""
+    """Send ONE notification (blocking — call via asyncio.to_thread). Returns False if the endpoint is
+    permanently gone (404/410) so the caller deletes it; True otherwise (sent, or transient failure).
+
+    Two transports behind one call, because every caller above this line — the call watcher, the DM
+    watcher, the pollers — should never care which kind of device it is talking to:
+
+    * **Web Push (VAPID)**, for browsers and the iOS/Android PWA.
+    * **UnifiedPush**, for the native APK. A WebView has no push service at all, so the packaged app
+      could not receive ANY of this; UnifiedPush endpoints are ordinary HTTPS URLs handed out by a
+      distributor the user chose (ntfy and friends), so delivering to one is a plain POST and needs
+      no Google account, no Firebase project and no proprietary SDK.
+
+    A subscription without VAPID keys is a UnifiedPush one — that is the whole discriminator, and it
+    is why the model's key columns became nullable.
+    """
+    if not (subscription.get("keys") or {}).get("p256dh"):
+        return _send_unifiedpush(subscription.get("endpoint") or "", payload)
     priv = settings_store.get("push_vapid_private")
     if not priv:
         return True
@@ -83,4 +100,32 @@ def send(subscription: dict, payload: dict) -> bool:
         return True
     except Exception as e:
         logger.warning(f"[push] send error: {e}")
+        return True
+
+
+def _send_unifiedpush(endpoint: str, payload: dict) -> bool:
+    """POST a notification to a UnifiedPush endpoint. Returns False only when the endpoint is
+    permanently gone, so the caller prunes it.
+
+    The distributor hands the bytes to the app unchanged, so we send the SAME JSON the service worker
+    already parses — one payload shape for every transport, and the Android receiver can reuse the
+    exact title/body/type contract rather than inventing a second one.
+
+    Deliberately no auth header and no VAPID: the endpoint URL IS the capability. That means it must
+    be treated as a secret, which is exactly how the Web Push endpoint is treated already.
+    """
+    if not endpoint.startswith(("http://", "https://")):
+        return True                      # nothing sane to do with it; don't churn the row
+    try:
+        r = requests.post(endpoint, json=payload, timeout=10,
+                          headers={"Content-Type": "application/json",
+                                   # ntfy would otherwise render our JSON as the message body.
+                                   "Urgency": "high" if payload.get("type") == "call" else "normal"})
+        if r.status_code in (404, 410):
+            return False                 # distributor dropped it / app uninstalled → prune
+        if r.status_code >= 400:
+            logger.warning("[push] unifiedpush %s -> %s", endpoint.split("/")[2], r.status_code)
+        return True
+    except Exception as e:
+        logger.warning(f"[push] unifiedpush send error: {e}")
         return True

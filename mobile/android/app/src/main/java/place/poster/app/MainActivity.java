@@ -39,6 +39,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(Nip55Plugin.class);
         registerPlugin(OrbotPlugin.class);
         registerPlugin(VaultAutofillPlugin.class);
+        registerPlugin(place.poster.app.push.PushPlugin.class);
         if (isSend(getIntent())) shareNonce++;   // cold-started BY a share
         super.onCreate(savedInstanceState);
         surviveRenderProcessDeath();

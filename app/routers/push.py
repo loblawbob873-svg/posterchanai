@@ -43,8 +43,16 @@ async def subscribe(request: Request, db: Session = Depends(get_db)):
     endpoint = (sub.get("endpoint") or "").strip()
     keys = sub.get("keys") or {}
     p256dh, auth = keys.get("p256dh"), keys.get("auth")
-    if not (pubkey and endpoint and p256dh and auth):
-        return {"ok": False, "error": "missing pubkey/endpoint/keys"}
+    # A UnifiedPush registration (the native APK) is an endpoint and nothing else — there are no
+    # VAPID keys to send, and requiring them is what would keep the packaged app silent.
+    if not (pubkey and endpoint):
+        return {"ok": False, "error": "missing pubkey/endpoint"}
+    # This is a URL the SERVER will POST to, so it goes through the same SSRF guard as user-supplied
+    # feed URLs. Without it, "register a subscription" is an arbitrary blind POST into the private
+    # network — http://192.168.x.y/admin/... — signed by nothing and reachable by any account.
+    from app.services.rss_service import is_safe_host
+    if not (endpoint.startswith(("http://", "https://")) and is_safe_host(endpoint)):
+        return {"ok": False, "error": "bad endpoint"}
     row = db.query(PushSubscription).filter(PushSubscription.endpoint == endpoint).first()
     if row:
         row.pubkey, row.p256dh, row.auth = pubkey, p256dh, auth   # device re-subscribed / rotated keys

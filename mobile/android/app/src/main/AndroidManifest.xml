@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Android 13+ will not show a notification without this being GRANTED at runtime. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Lets an incoming call take the screen rather than arrive as a quiet banner. Android 14+
+         grants this to calling apps; anywhere it is not granted the call degrades to a heads-up. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -107,6 +113,20 @@
                 android:name="android.autofill"
                 android:resource="@xml/autofill_service" />
         </service>
+    
+        <!-- Where a UnifiedPush distributor delivers. The two actions are the connector's contract;
+             without BOTH, registration appears to succeed and nothing is ever delivered. -->
+        <receiver
+            android:name="place.poster.app.push.UnifiedPushReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.MESSAGE" />
+                <action android:name="org.unifiedpush.android.connector.UNREGISTERED" />
+                <action android:name="org.unifiedpush.android.connector.NEW_ENDPOINT" />
+                <action android:name="org.unifiedpush.android.connector.REGISTRATION_FAILED" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
     <!-- NIP-55: which other apps we are allowed to SEE. Android 11+ hides the package list by default, so
