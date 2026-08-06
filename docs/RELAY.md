@@ -235,10 +235,10 @@ welcome page — the relay decides from the request headers, and the welcome pag
 exact path it was reached on. That last part is why the `proxy_pass` above carries **no URI**: the
 relay accepts the upgrade on any path, so passing `/` through unchanged makes it advertise
 `wss://relay.yourdomain/`, while rewriting to `/relay` would advertise a path this hostname doesn't
-serve. Full copy-and-edit configs (both layouts, plus NIP-05 and Blossom):
-[`nginx/nostr-docker.conf.example`](../nginx/nostr-docker.conf.example) for a Nostr-only/Docker node,
-[`nginx/posterchanai.conf.example`](../nginx/posterchanai.conf.example) for a full one — see
-[NGINX.md](NGINX.md).
+serve. A full copy-and-edit config with both layouts, plus NIP-05 and Blossom:
+[`nginx/posterchanai.conf.example`](../nginx/posterchanai.conf.example) — see [NGINX.md](NGINX.md).
+In Docker you can skip all of it and use the `tls` profile's proxy container
+([DOCKER.md](DOCKER.md#production-https--tls)).
 
 ### NIP-05 identities (`/.well-known/nostr.json`)
 

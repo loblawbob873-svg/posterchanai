@@ -160,12 +160,15 @@ GPU-compiled `llama-cpp` are baked into the image. Full matrix — GPU run flags
 auto-download, opt-ins (Tor/proxy/torrenting), and the opencode/OpenAI-client config —
 in **[docs/DOCKER.md](docs/DOCKER.md)**.
 
-> **🟣 Just want a Nostr relay + client, no AI?** `docker compose --profile nostr up -d --build`
+> **🟣 Just want a Nostr relay + client, no AI?** `docker compose --profile nostr --profile tls up -d --build`
 > builds a small (~2 GB) image with **no AI stack** — self-hosted relay + Nostr web client +
-> Blossom. See [docs/DOCKER.md](docs/DOCKER.md#nostr-only-no-ai).
+> Blossom — and serves it over HTTPS. Step-by-step from an empty VPS:
+> **[docs/NOSTR_DOCKER.md](docs/NOSTR_DOCKER.md)**.
 
-**Production:** front it with nginx for HTTPS + your own domain (and a real `wss://…/relay`) —
-template + guide in **[docs/NGINX.md](docs/NGINX.md)**.
+**Production:** add `--profile tls` and the stack brings up its own nginx+certbot container — HTTPS
+immediately on a self-signed cert, `certbot --nginx` when you have a domain
+([docs/DOCKER.md](docs/DOCKER.md#production-https--tls)). Prefer to run nginx yourself? Template +
+guide in **[docs/NGINX.md](docs/NGINX.md)**.
 
 ### Option B: Installer (Linux, recommended for bare metal)
 
@@ -348,7 +351,8 @@ the Arc environment.
 
 ## Documentation
 
-- **[docs/DOCKER.md](docs/DOCKER.md)** — Turnkey Docker image (CPU / NVIDIA / AMD / Intel Arc): build matrix, GPU run flags, model auto-download, opt-ins, and OpenAI-client/opencode setup
+- **[docs/DOCKER.md](docs/DOCKER.md)** — Turnkey Docker image (CPU / NVIDIA / AMD / Intel Arc): build matrix, GPU run flags, model auto-download, opt-ins, HTTPS via the `tls` profile, and OpenAI-client/opencode setup
+- **[docs/NOSTR_DOCKER.md](docs/NOSTR_DOCKER.md)** — Nostr-only instance, start to finish: empty VPS → HTTPS → claiming admin → relay/NIP-05/Blossom config → backups
 - **[docs/BOTS.md](docs/BOTS.md)** — Bot manager: the merged `botframework/`, Admin → Bots, per-bot config, the single server endpoint, and per-node cutover
 - **[docs/ADVANCED.md](docs/ADVANCED.md)** — LLM backends, image generation, load balancing, Intel IPEX
 - **docs/** — Email, nginx, and other feature documentation

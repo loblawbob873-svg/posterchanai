@@ -16,6 +16,24 @@
 #
 # WAF note: the chat/relay WebSockets use token auth, NOT cookies — do not block /ws/, /api/,
 # /v1 or /relay by User-Agent, or chat + the relay will 403.
+#
+# RUNNING IN DOCKER? You probably don't need this file at all: `docker compose --profile <backend>
+# --profile tls up -d` brings up a proxy container already configured, on a self-signed cert you
+# replace with `certbot --nginx` (see docs/DOCKER.md). Use this file when you'd rather run nginx
+# yourself. Two things change if you do:
+#
+#   * Upstreams. nginx ON THE HOST: compose publishes 3051/3052, so 127.0.0.1 below is correct.
+#     nginx IN A CONTAINER: 127.0.0.1 is then nginx ITSELF and every request fails with
+#     "connect() failed (111: Connection refused)" — use the compose service name instead
+#     (`server nostr:3051;`), which needs no published ports at all.
+#   * Published ports. Once TLS is up, move the two HTTP ports to loopback so http://<ip>:3051
+#     stops answering around it — in a `.env` beside docker-compose.yml:
+#         POSTERCHANAI_PORT=127.0.0.1:3051
+#         POSTERCHANAI_NOSTR_RELAY_PORT=127.0.0.1:3052
+#     ONLY those two. TURN (3478, 49160-49200/udp) and streaming (1935 RTMP from OBS, 8889 +
+#     8189/udp WHIP from phones) are spoken to DIRECTLY by peers and publishers — they are not
+#     HTTP, nginx does not front them, and moving them to loopback silently breaks voice/video
+#     calls and going live. Leave those published and port-forwarded.
 # =============================================================================
 
 # Map the Upgrade header so WebSocket connections (chat, the relay) proxy correctly.
@@ -168,6 +186,48 @@ server {
         proxy_send_timeout 3600s;
     }
 }
+
+# -----------------------------------------------------------------------------
+# Optional: the relay on its own hostname — wss://relay.example.com/
+# -----------------------------------------------------------------------------
+# Most Nostr clients expect a relay at the ROOT of a host, and some paste-a-relay boxes quietly drop
+# a path. Keeping both forms is free: the same relay process answers on both names. Add
+# relay.example.com to DNS, include it on the cert (`certbot --nginx -d example.com -d
+# relay.example.com`), and uncomment:
+#
+#   server {
+#       listen 443 ssl;
+#       listen [::]:443 ssl;
+#       http2 on;
+#       server_name relay.example.com;
+#
+#       ssl_certificate     /etc/letsencrypt/live/example.com/fullchain.pem;
+#       ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
+#       ssl_protocols       TLSv1.2 TLSv1.3;
+#
+#       # Every header at server level, none inside the location — same array-directive rule as above.
+#       proxy_http_version 1.1;
+#       proxy_set_header Host              $host;
+#       proxy_set_header X-Real-IP         $remote_addr;
+#       proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+#       proxy_set_header X-Forwarded-Proto $scheme;
+#       proxy_set_header Upgrade           $http_upgrade;
+#       proxy_set_header Connection        $connection_upgrade;
+#       proxy_buffering off;
+#
+#       # NOTE the proxy_pass carries NO URI. The relay accepts the WebSocket upgrade on any path and
+#       # echoes back the path it was reached on, so passing `/` through unchanged makes its welcome
+#       # page and NIP-11 document advertise wss://relay.example.com/ — the URL that works on this
+#       # name. Rewriting to /relay would hand every visitor a path this server block doesn't serve.
+#       location / {
+#           proxy_pass http://posterchanai_relay;
+#           proxy_read_timeout 3600s;
+#           proxy_send_timeout 3600s;
+#       }
+#
+#       # NIP-05 for name@relay.example.com (the relay answers it, and sets CORS itself).
+#       location = /.well-known/nostr.json { proxy_pass http://posterchanai_relay; }
+#   }
 
 # -----------------------------------------------------------------------------
 # Optional: survive an app restart with ZERO error page (advanced, behind a CDN)

@@ -107,13 +107,18 @@ docker run -d --gpus all -p 3051:3051 -v pc-data:/var/lib/posterchanai -v pc-rag
 
 ## Nostr-only (no AI)
 
+> ### 👉 Looking for Nostr only? Go to **[NOSTR_DOCKER.md](NOSTR_DOCKER.md)**.
+>
+> That's the complete step-by-step: empty VPS → HTTPS → claiming admin → configuring the relay →
+> backups. Start there rather than here.
+
 A self-hosted **Nostr relay + the web client + Blossom**, with **no AI stack** (no
-torch/llama/diffusers) — a small, fast image for people who don't care about AI. The relay and
-the AI-hidden UI are turned on for you.
+torch/llama/diffusers) — a ~2 GB image instead of ~70 GB, for people who don't care about AI. The
+relay and the AI-hidden UI are turned on for you.
 
 ```bash
-docker compose --profile nostr up -d --build
-# open http://<host>:3051/client  •  relay at ws://<host>:3052/relay
+docker compose --profile nostr --profile tls up -d --build
+# https://<host>/client  •  relay at wss://<host>/relay
 ```
 
 Or build/run by hand:
@@ -126,15 +131,10 @@ The app boots fine without the AI libraries (every ML import is lazy); the AI ta
 `POSTERCHANAI_NOSTR_ONLY=1`. You can switch a node to a full GPU profile later without losing data
 (same volumes).
 
-**Put it behind HTTPS before anyone else uses it** — add `--profile tls`:
-
-```bash
-docker compose --profile nostr --profile tls up -d --build
-```
-
-A relay on plain `ws://` is one most clients refuse to connect to, and the web client can't handle
-keys at all on a non-secure origin. Details, and how to replace the self-signed certificate with a
-real one: [Production (HTTPS / TLS)](#production-https--tls).
+Two things that bite people on a public Nostr-only node, both covered in
+[NOSTR_DOCKER.md](NOSTR_DOCKER.md): the **first key to sign in claims admin**, so sign in before you
+tell anyone the address; and the relay ships with the upstream project's **NIP-05 identities** baked
+in, which you should replace with your own in Admin → Relay.
 
 ## Git server (git-over-nostr)
 
@@ -262,13 +262,11 @@ Notes:
   if you enabled the git host. Blossom needs nothing: it derives its URLs from the forwarded headers
   the proxy sets.
 
-**Already run your own nginx, or want it on the host instead?** Skip the `tls` profile and use one
-of the two templates, both walked through in [NGINX.md](NGINX.md):
-
-| Template | Use it for |
-|---|---|
-| [`nginx/nostr-docker.conf.example`](../nginx/nostr-docker.conf.example) | the **`nostr` profile** — relay (on a path *and* its own subdomain), NIP-05, Blossom, the web client, plus the container-vs-host upstream addressing. |
-| [`nginx/posterchanai.conf.example`](../nginx/posterchanai.conf.example) | the **AI profiles** — everything above plus the OpenAI-compatible `/v1` API and serving `/static` off a bare-metal checkout. |
+**Already run your own nginx, or want it on the host instead?** Skip the `tls` profile and start
+from [`nginx/posterchanai.conf.example`](../nginx/posterchanai.conf.example), walked through in
+[NGINX.md](NGINX.md). Its header covers the two things Docker changes: which upstream address to use
+(the host's `127.0.0.1:3051` vs a compose service name if nginx is itself a container), and which
+published ports to close afterwards.
 
 Open `http://<host>:3051/client` and log in with your **Nostr key** (NIP-07 browser extension or
 NIP-46 remote signer like Amber). The first admin is configured in Admin → Users.
