@@ -6635,14 +6635,7 @@
       // Prefer H264 for the video: MediaMTX can only remux H264/H265/AV1 to HLS, so a VP8 stream is
       // unwatchable (no playlist). The server also enforces this by munging the offer, but setting it here
       // means the phone hardware-encodes H264 from the start. Best-effort — unsupported browsers just skip it.
-      try{
-        const caps=(window.RTCRtpSender&&RTCRtpSender.getCapabilities)?RTCRtpSender.getCapabilities('video'):null;
-        if(caps&&caps.codecs){
-          const h=caps.codecs.filter(c=>/h264/i.test(c.mimeType||'')), rest=caps.codecs.filter(c=>!/h264/i.test(c.mimeType||''));
-          const vt=pc.getTransceivers().find(t=>t.sender&&t.sender.track&&t.sender.track.kind==='video');
-          if(vt&&vt.setCodecPreferences&&h.length) vt.setCodecPreferences(h.concat(rest));
-        }
-      }catch(_){}
+      _preferH264(pc);   // shared with calls — one implementation, so the two cannot drift apart
       const offer=await pc.createOffer(); await pc.setLocalDescription(offer);
       await _iceGatherComplete(pc);
       try{ await ensureAiSession(); }catch(_){}
@@ -17490,7 +17483,20 @@
     }catch(_){}
   }
   async function _registerPushSub(subscription){
-    const auth=await sign(27235,'push-subscribe',[['p',ME.pubkey]]);
+    // A remote signer (NIP-46/Amber) can simply never answer — the phone is asleep, the bunker relay
+    // is down, the approval was never tapped. Awaited bare, that hangs here forever: the browser
+    // subscription exists, no row is ever written, the button sits disabled and nothing is said.
+    // A bounded wait turns the worst failure mode (silence) into a sentence.
+    let auth;
+    try{
+      auth = await Promise.race([
+        sign(27235,'push-subscribe',[['p',ME.pubkey]]),
+        new Promise((_,rej)=>setTimeout(()=>rej(new Error('signer timeout')), 30000)),
+      ]);
+    }catch(e){
+      toast('Your signer did not approve it: '+((e&&(e.name||e.message))||e));
+      return false;
+    }
     const r=await fetch('/api/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({ pubkey:ME.pubkey, subscription, auth:btoa(JSON.stringify(auth)) })}).then(r=>r.json()).catch(()=>null);
     if(!(r&&r.ok)){ toast('Could not turn notifications on'+((r&&r.error)?': '+r.error:'')); return false; }
@@ -20732,6 +20738,33 @@
       _callPublish(ev);
     }catch(_){}
   }
+  /* Prefer H.264 on the video sender, so BOTH ends use the hardware encoder/decoder.
+   *
+   * Nothing on the server can accelerate a call: media is peer-to-peer and the TURN relay forwards
+   * packets without ever decoding them, unlike the live-stream clamp which really does re-encode. The
+   * only lever is which codec the two browsers agree on — and that decides hardware-vs-software
+   * outright. H.264 has a dedicated block in essentially every phone SoC (and is the ONLY
+   * hardware-accelerated video codec on iPhone), while VP8/VP9 fall back to software on many of them:
+   * same call, several times the CPU, a hot phone and a flat battery.
+   *
+   * The live-streaming path has done this since WHIP shipped; calls were left on the browser's default
+   * SDP order, which is why a call could cost more battery than broadcasting to the world.
+   *
+   * Best-effort by design: an unsupported browser just keeps its default order, and leaving `rest`
+   * appended means we only ever REORDER the list — never remove a codec the peer might be the only
+   * one able to decode. */
+  function _preferH264(pc){
+    try{
+      const caps=(window.RTCRtpSender&&RTCRtpSender.getCapabilities)?RTCRtpSender.getCapabilities('video'):null;
+      if(!caps||!caps.codecs) return;
+      const h=caps.codecs.filter(c=>/h264/i.test(c.mimeType||'')), rest=caps.codecs.filter(c=>!/h264/i.test(c.mimeType||''));
+      if(!h.length) return;
+      pc.getTransceivers().forEach(t=>{
+        if(t.sender && t.sender.track && t.sender.track.kind==='video' && t.setCodecPreferences)
+          t.setCodecPreferences(h.concat(rest));
+      });
+    }catch(_){}
+  }
   function _newPc(iceServers){
     const pc = new RTCPeerConnection({ iceServers: iceServers||[], iceCandidatePoolSize: 1 });
     pc.onicecandidate = e => { if(e.candidate && _call) _callSend(_call.peer, {v:1, callId:_call.id, t:'ice', cand:e.candidate.toJSON()}); };
@@ -20803,6 +20836,7 @@
     if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }
     const pc = _newPc(ice.iceServers); _call.pc = pc;
     local.getTracks().forEach(t=> pc.addTrack(t, local));
+    _preferH264(pc);   // hardware encode/decode on both ends — see _preferH264
     // Guard the SDP dance: a createOffer/setLocalDescription rejection (SDP/codec/hardware quirk) or a
     // hangup during these awaits must tear down cleanly, not wedge _call in 'calling' forever.
     try{
@@ -20827,7 +20861,8 @@
     if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }
     const pc = _newPc(ice.iceServers); _call.pc = pc;
     try{ await pc.setRemoteDescription({type:'offer', sdp:invite.sdp}); }catch(_){ _hangup(false); return; }
-    local.getTracks().forEach(t=> pc.addTrack(t, local));   // attach our media onto the offer's m-lines (setRemote first)
+    local.getTracks().forEach(t=> pc.addTrack(t, local));
+    _preferH264(pc);   // hardware encode/decode on both ends — see _preferH264   // attach our media onto the offer's m-lines (setRemote first)
     for(const c of (_call.pendingIce||[])){ try{ await pc.addIceCandidate(c); }catch(_){} }
     _call.pendingIce=[];
     try{ const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
@@ -20986,10 +21021,24 @@
   function renderCalls(){
     const feed=$('#feed'); if(!feed) return;
     if(GUEST){ feed.innerHTML='<div class="empty">Log in to make calls.</div>'; return; }
-    const contacts=[...FOLLOWS].slice(0,60);
+    /* FRIENDS, not everyone you follow.
+     *
+     * This listed [...FOLLOWS].slice(0,60) — an arbitrary 60 of a list that is routinely hundreds of
+     * accounts, most of them people you read rather than people you would ring. A call only makes
+     * sense with someone who knows you, so the list is MUTUALS: you follow them and they follow you
+     * back. That is a far shorter list, so the 60-cap stops truncating anything real, and every row
+     * is a profile lookup + an avatar request that no longer has to happen for a stranger.
+     *
+     * FOLLOWERS loads lazily (ensureMyFollowers), so until it arrives fall back to plain follows —
+     * an empty Calls screen would be a worse answer than a broad one. The re-render below narrows it
+     * the moment the data lands. */
+    const mutuals=[...FOLLOWS].filter(pk=>FOLLOWERS.has(pk));
+    const contacts=(mutuals.length?mutuals:[...FOLLOWS]).slice(0,60);
+    const _narrowed=mutuals.length>0;
     feed.innerHTML=`<div class="calls-view">
       <h2 style="margin:0 0 4px"><svg class="ic h-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Calls</h2>
       <p class="muted small">Voice &amp; video over Nostr — peer-to-peer, works across instances. Audio-first; toggle video in-call.</p>
+      <p class="muted small">${_narrowed?'Showing friends — people you follow who follow you back. Anyone else: paste their npub or name below.':'Showing who you follow.'}</p>
       <div class="call-start">
         <input id="call-npub" class="input" placeholder="type a name, npub1…, or name@domain" autocapitalize="none" autocorrect="off" spellcheck="false">
         <div id="call-ac" class="mention-box hidden"></div>
@@ -21003,6 +21052,9 @@
       </div>
       <div class="call-contacts">${contacts.map(pk=>{ const p=profOf(pk)||{}; return `<button class="call-contact" data-pk="${pk}"><img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span>${enc(p.name||p.display_name||'anon')}</span></button>`; }).join('')}</div>
     </div>`;
+    // Followers arrive lazily; when they do, redraw ONCE so the list settles on friends. Guarded on
+    // _narrowed and on still being here, so it cannot loop or stomp a view the user has moved on from.
+    if(!_narrowed) ensureMyFollowers().then(()=>{ if(VIEW==='calls' && [...FOLLOWS].some(pk=>FOLLOWERS.has(pk))) renderCalls(); }).catch(()=>{});
     const go=async(pk)=>{ if(pk) startCall(pk, {video:false}); };   // audio-first; add video mid-call with the in-call button
     // Autocomplete: as you type a name, suggest known profiles (like the DM composer); click one to call.
     { const inp=$('#call-npub',feed), ac=$('#call-ac',feed);
@@ -21053,6 +21105,7 @@
     const ice=await _fetchIceServers(); if(!_room) return;
     p.pc=_roomNewPc(hex, ice.iceServers);
     _room.local.getTracks().forEach(t=>p.pc.addTrack(t,_room.local));
+    _preferH264(p.pc);   // mesh: one encode per peer, so software fallback hurts N times over
     try{ const o=await p.pc.createOffer(); if(!_room||_room.peers.get(hex)!==p) return; await p.pc.setLocalDescription(o);
       await _roomSend(hex,{v:1,room:_room.id,t:'roffer',video:_room.video,sdp:p.pc.localDescription.sdp}); }
     catch(_){ _roomDropPeer(hex,false); }
@@ -21061,7 +21114,7 @@
     if(!_room || !_room.local) return;
     const p=_roomPeer(hex);
     const ice=await _fetchIceServers(); if(!_room) return;
-    if(!p.pc){ p.pc=_roomNewPc(hex, ice.iceServers); _room.local.getTracks().forEach(t=>p.pc.addTrack(t,_room.local)); }
+    if(!p.pc){ p.pc=_roomNewPc(hex, ice.iceServers); _room.local.getTracks().forEach(t=>p.pc.addTrack(t,_room.local)); _preferH264(p.pc); }
     try{ await p.pc.setRemoteDescription({type:'offer',sdp:msg.sdp});
       for(const c of p.pendingIce){ try{ await p.pc.addIceCandidate(c); }catch(_){} } p.pendingIce=[];
       const a=await p.pc.createAnswer(); await p.pc.setLocalDescription(a);
