@@ -285,7 +285,8 @@ async def _poll():
 
 # ---- Ring-a-closed-app: push incoming voice/video call (kind-25050) invites to a closed PWA. -------------
 # Call signaling is EPHEMERAL (not stored), so we can't poll for it — keep a LIVE subscription to the local
-# relay and push the p-tagged callee. A per-(caller,callee) cooldown collapses the offer/ice/bye burst into
+# relay and push the p-tagged callee. A per-CALLEE cooldown (see _call_recent below — per-pair was the
+# first cut and is forgeable) collapses the offer/ice/bye burst into
 # one ring, and the SW suppresses the notification when the app is focused (it rings itself) — so only a
 # genuinely backgrounded/closed client gets the OS notification. (Web Push → PWA/web; the native APK's
 # WebView can't Web Push, so closed-app ringing there still needs a native piece.)

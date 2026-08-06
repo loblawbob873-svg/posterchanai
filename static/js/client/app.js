@@ -20530,8 +20530,16 @@
   // in its own file without bloating this core. Live getters for the mutable ME/CFG/VIEW.
   // ===== Voice/Video calls (WebRTC, P2P-first, signaled over Nostr) =====
   // Signaling = ephemeral kind-25050 events, NIP-44-encrypted {v,callId,t,sdp|cand|video} to the peer's
-  // p-tag (federates over Nostr → works CROSS-INSTANCE). Media = RTCPeerConnection with ICE servers from
+  // p-tag. Media = RTCPeerConnection with ICE servers from
   // /api/calls/turn-credentials (STUN → direct P2P; the built-in TURN relay is only the NAT fallback).
+  //
+  // EVERY signaling frame ALSO goes to this instance's own relay (_callPublish), and that is what makes
+  // ringing a CLOSED app possible: the server watches its own relay for kind-25050 and Web-Pushes the
+  // callee (nostr_push_service). A frame that only reaches the caller's personal relay list is invisible
+  // to that watcher, so the callee's phone never rings — and 25050 is EPHEMERAL, so nothing syncs it
+  // afterwards and there is no second chance. Calls are an instance feature; they do not depend on which
+  // relays either party has configured. (Two users on DIFFERENT instances still connect while both apps
+  // are open, but the closed-app push only fires on the instance whose relay carried the invite.)
   // 1:1, no mid-call renegotiation: media (audio ± video) is fixed at call start; mute/camera just toggle
   // track.enabled. Audio-first — video is opt-in per call.
   const CALL_KIND = 25050;
@@ -20559,11 +20567,28 @@
     }catch(_){}
     return { iceServers: [], defaultVideo:false };
   }
+  /* Send one signaling frame to the pool AND to this instance's relay.
+   *
+   * publishTo() SKIPS relays already in the pool, so when the instance relay is one of your configured
+   * relays (the normal case) this costs nothing — no second socket, no duplicate EVENT. It only opens a
+   * short-lived socket when the user has dropped our relay from their list, which is exactly the case
+   * that otherwise silently breaks ringing: the server's push watcher subscribes to its OWN relay, so a
+   * frame that never reaches it means the callee's closed phone is never woken. */
+  function _callPublish(ev){
+    try{ Relay.publish(ev); }catch(_){}
+    // normalizeRelay is REQUIRED, not tidiness: publishTo's skip is a raw string compare against the pool
+    // keys, and those are normalized (trailing slash stripped, scheme prepended) whenever relays are
+    // configured. Our own default list writes 'wss://relay.poster.place/' WITH the slash, so passing
+    // CFG.relay_url verbatim misses the match and opens a NEW SOCKET PER SIGNALING FRAME — and there is one
+    // frame per ICE candidate, i.e. ~8-20 sockets in two seconds per call, more for a group room.
+    try{ const own = (CFG && CFG.relay_url) ? [normalizeRelay(CFG.relay_url)].filter(Boolean) : [];   // empty on a standalone install (no instance)
+      if(own.length) Relay.publishTo(own, ev).catch(()=>{}); }catch(_){}
+  }
   async function _callSend(peerHex, obj){
     try{
       const ct = await signer.nip44enc(peerHex, JSON.stringify(obj));
       const ev = await sign(CALL_KIND, ct, [['p', peerHex]]);   // ephemeral, not stored, no client tag
-      Relay.publish(ev);
+      _callPublish(ev);
     }catch(_){}
   }
   function _newPc(iceServers){
@@ -20686,6 +20711,13 @@
       if(msg && msg.room){ try{ _onRoomEvent(from, msg); }catch(_){} return; }   // group-call (mesh) signaling
       if(msg.t==='invite'){
         if(MUTED.has(from)) return;   // a muted/blocked pubkey can't ring you
+        // Don't ring for an invite that is already over. The subscription's `since` cannot be relied on
+        // to bound this: relay.js re-REQs the filters VERBATIM on re-arm, so `since` is frozen at
+        // subscribe time and the window silently widens with uptime (an hour up = an hour of history
+        // requested). Our relay never stores an ephemeral kind so nothing comes back today, but a
+        // third-party relay that replays would ring the phone for a call that ended long ago — and
+        // _callSeen is in-memory, so a page load forgets every id it had already discarded.
+        if(Math.abs(Math.floor(Date.now()/1000) - (ev.created_at||0)) > 60) return;   // caller gave up at 45s
         if(_call && _call.caller && _call.peer===from && _call.state==='calling'){
           // GLARE — we're both calling each other. Deterministic tiebreak by pubkey so it doesn't fail:
           // the LOWER pubkey keeps its outgoing offer (ignore the incoming); the HIGHER drops its outgoing
@@ -20728,7 +20760,12 @@
   }
   function startCallSignaling(){
     if(_callSub || !ME || !window.RTCPeerConnection) return;
-    try{ _callSub = Relay.subscribe([{ '#p':[ME.pubkey], kinds:[CALL_KIND], since: Math.floor(Date.now()/1000)-5 }], { onEvent:_onCallEvent, live:true }); }catch(_){}
+    // since = the caller's 45s ring window, not 5s — and the reason is CLOCK SKEW, not catch-up. 25050 is
+    // ephemeral (the relay fans it out and never stores it), so this filter only ever sees LIVE frames and
+    // a socket that was down when the invite went out has missed it for good — that gap is what the
+    // server-side push exists for. But `since` is still applied to those live frames, so a caller whose
+    // clock ran >5s ahead had perfectly good invites dropped here. _callSeen dedups; a 45s-old call is over.
+    try{ _callSub = Relay.subscribe([{ '#p':[ME.pubkey], kinds:[CALL_KIND], since: Math.floor(Date.now()/1000)-45 }], { onEvent:_onCallEvent, live:true }); }catch(_){}
   }
   function _ringtone(on){
     try{
@@ -20857,7 +20894,7 @@
   let _room = null;   // { id, video, local, peers:Map<hex,{pc,stream,pendingIce}>, members:Set<hex>, ringing, invite, timeout }
 
   async function _roomSend(peerHex, obj){
-    try{ const ct=await signer.nip44enc(peerHex, JSON.stringify(obj)); const ev=await sign(CALL_KIND, ct, [['p',peerHex]]); Relay.publish(ev); }catch(_){}
+    try{ const ct=await signer.nip44enc(peerHex, JSON.stringify(obj)); const ev=await sign(CALL_KIND, ct, [['p',peerHex]]); _callPublish(ev); }catch(_){}
   }
   function _roomPeer(hex){ let p=_room.peers.get(hex); if(!p){ p={pc:null,stream:null,pendingIce:[]}; _room.peers.set(hex,p); } return p; }
   function _roomNewPc(hex, iceServers){
