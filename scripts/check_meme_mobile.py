@@ -383,8 +383,20 @@ ERASE_PROBE = r"""(async () => {
   document.getElementById('er-go').click();
   for (let i = 0; i < 40 && !layer().mask; i++) await new Promise(r => setTimeout(r, 50));
 
+  // Is the erase ON THE STAGE now — without waiting for anything to be fetched back? Reported as "I
+  // erased parts of the image, it does not show in the preview, but it appears in the final render".
+  // The mask is uploaded and the layer stores the REMOTE url, so the preview used to depend on loading
+  // back bytes this tab had just made. Any reason that fetch failed or lagged — a blob not servable
+  // yet, a cross-origin block, an offline moment — showed the layer un-erased while the export was
+  // perfect, and one failure latched for the whole session. Read it immediately, with no grace period:
+  // waiting here would hide exactly the regression this asserts.
+  const stageEl = document.querySelector(`.mb-item[data-id="${layer().id}"] > img`);
+  const stageMask = stageEl ? (getComputedStyle(stageEl).webkitMaskImage
+                               || getComputedStyle(stageEl).maskImage || 'none') : 'none';
+
   return {
     painted, corner,
+    stageMask, stageMasked: stageMask !== 'none' && stageMask !== '',
     touchAction,
     maskW: ov.width, maskH: ov.height,
     overflow: document.documentElement.scrollWidth > vw + 1,
@@ -614,8 +626,13 @@ async def drive(url):
                     problems.append((lbl, "erase-broken", "Apply did not put a mask on the layer"))
                 if er["stillOpen"]:
                     problems.append((lbl, "erase-broken", "Apply left the dialog open"))
+                if er["mask"] and not er["stageMasked"]:
+                    problems.append((lbl, "erase-invisible",
+                                     "Apply saved the mask but the stage is not showing it — the erase "
+                                     "is invisible in the preview and only appears in the export"))
                 print(f"{lbl}: mask={er['maskW']}x{er['maskH']} painted={er['painted']} "
-                      f"corner={er['corner']} saved={'yes' if er['mask'] else 'NO'}")
+                      f"corner={er['corner']} saved={'yes' if er['mask'] else 'NO'} "
+                      f"onStage={'yes' if er['stageMasked'] else 'NO'}")
 
             # ✂ ERASE MASK on the stage — the "black screen after erase" regression.
             await call("Page.navigate", {"url": url})

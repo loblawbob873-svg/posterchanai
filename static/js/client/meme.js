@@ -1175,6 +1175,21 @@
   // synchronous and declarative) and makes the failure mode "the erase isn't shown yet" instead of
   // "your layer disappeared".
   const _maskOk = Object.create(null);
+  // The mask we JUST painted, keyed by the URL it was uploaded to. The preview has no business asking
+  // the network for bytes the user made two seconds ago in this tab: a Blossom URL is often a different
+  // origin, so the probe below can fail for reasons that have nothing to do with the erase being right
+  // — the blob not being readable back yet, Firefox ETP or an ad blocker refusing a third-party fetch,
+  // a captive/offline moment. Every one of those produced the same report: "I erased it, the preview
+  // shows it un-erased, and the export is correct." The renderer fetches server-side and never cared.
+  // An object URL settles it locally and instantly; the layer still stores the REMOTE url, which is
+  // what gets saved and what the renderer is handed.
+  const _maskLocal = Object.create(null);
+  function _maskAdopt(url, blob){
+    if(!url || !blob) return;
+    try{ _maskLocal[url] = URL.createObjectURL(blob); _maskOk[url] = true; }catch(_){ }
+  }
+  // The URL the PREVIEW should paint with — local copy when we have one, else the stored remote URL.
+  const _maskSrc = url => _maskLocal[url] || url;
   // On success the mask is PATCHED onto the elements already on the board rather than triggering a
   // rebuild. render() re-creates every layer element, which restarts the <video>s and throws away an
   // in-progress drag — the reason so many edits here deliberately repaint in place. A mask arriving is
@@ -1185,21 +1200,37 @@
       const el = document.querySelector(`.mb-item[data-id="${l.id}"] > img, .mb-item[data-id="${l.id}"] > video`);
       if(!el) return;
       const ofit = (l.fit === 'cover') ? 'cover' : 'contain';   // mirrors object-fit; see _maskCss
-      const u = `url("${l.mask}")`;
+      const u = `url("${_maskSrc(l.mask)}")`;
       el.style.webkitMaskImage = u;  el.style.maskImage = u;
       el.style.webkitMaskSize = ofit; el.style.maskSize = ofit;
       el.style.webkitMaskPosition = 'center'; el.style.maskPosition = 'center';
       el.style.webkitMaskRepeat = 'no-repeat'; el.style.maskRepeat = 'no-repeat';
     });
   }
+  const _maskTries = Object.create(null);
+  const _MASK_TRIES = 3;
   function _maskProbe(url){
+    if(_maskLocal[url]) return true;          // painted here, in this tab — nothing to prove
     if(url in _maskOk) return _maskOk[url];
     _maskOk[url] = undefined;                 // in flight — don't start a second load per re-render
     const im = new Image();
     im.onload  = () => { _maskOk[url] = true; try{ _paintMask(url); }catch(_){ } };
-    im.onerror = () => { _maskOk[url] = false;   // stays false for the session: a mask that 404s now
-                                                 // will 404 on every repaint, and retrying per render
-                                                 // would be an unbounded request loop.
+    im.onerror = () => {
+      // Do NOT latch false on the first failure. Retrying per RENDER would be an unbounded request loop,
+      // which is what the old comment was guarding against — but never retrying is worse: a blob that is
+      // simply not readable back yet (the upload returns the url before the bytes are servable) fails
+      // once and the erase is then invisible for the rest of the session, on a project where it is
+      // already saved and already correct in the export. A few backed-off attempts cost nothing and
+      // cover the whole timing class; only after those does it give up and say so.
+      const n = (_maskTries[url] = (_maskTries[url] || 0) + 1);
+      if(n < _MASK_TRIES){
+        // Stay marked in-flight (undefined) so a repaint cannot start a SECOND probe while this one is
+        // waiting — the timer owns the retry. Clearing the entry here instead would put the retry back
+        // on the render path, which is the unbounded request loop the gate exists to avoid.
+        setTimeout(() => { delete _maskOk[url]; _maskProbe(url); }, 800 * n);
+        return;
+      }
+      _maskOk[url] = false;
       try{ toast('the erase on a layer could not be loaded — showing the layer un-erased'); }catch(_){ }
     };
     im.src = url;
@@ -1213,8 +1244,12 @@
     // in it — closing url(" early and letting the rest of the string be read as CSS. A project is a
     // shareable Blossom document (Save/Open), so its fields are not automatically ours. Allow only a
     // plain http(s) or root-relative URL with nothing that can terminate the literal.
+    // The safety check applies to the STORED url, which can come from a shared project. The local copy
+    // is a blob: URL this tab minted from its own canvas, so it is ours by construction and would only
+    // be rejected by a rule written for untrusted input.
     if(!/^(https?:\/\/|\/)[^\s"'()\\<>]+$/i.test(String(l.mask))) return '';
-    const u = `url("${enc(l.mask)}")`;
+    const src = _maskSrc(l.mask);
+    const u = `url("${src === l.mask ? enc(l.mask) : src}")`;
     return `;-webkit-mask-image:${u};mask-image:${u}`
          + `;-webkit-mask-size:${ofit};mask-size:${ofit}`
          + `;-webkit-mask-position:center;mask-position:center`
@@ -2439,6 +2474,9 @@
             try{
               if(!blob) throw new Error('could not read the mask');
               const url = await uploadBlob(new File([blob], 'erase.png', { type:'image/png' }));
+              // Adopt the bytes we already hold BEFORE the render, so the stage shows the erase without
+              // waiting on (or depending on) a fetch of what we just uploaded. See _maskLocal.
+              _maskAdopt(url, blob);
               snap(); live().mask = url; save(); render();
               PC.closeModal(); toast('erased — render to see it in the export');
             }catch(err){
