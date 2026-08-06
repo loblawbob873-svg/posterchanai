@@ -413,6 +413,17 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   synced row is a mirror AND its rule is the relay's only bound on firehose growth (keep pruning, fall
   back to the last successfully-read subscriber set; the master switch OFF drops that memory). The
   block purge is NOT exempt — paying doesn't buy immunity from moderation.
+  **Notifications** (`notify_lifecycle`, all via `system_dm` — never the operator key, which is a
+  self-DM on a single-admin node): payer on credit AND on a too-small payment (silence there reads as
+  "my money vanished"), the ADMIN on every payment (Nostr + Telegram if linked), the recipient of an
+  admin grant, and — the one that prevents a LOSS — the subscriber 7 days before expiry and at expiry,
+  since a lapse hands them back to the free window and the next auto-clean. The warn/end markers are
+  keyed on the EXPIRY TIMESTAMP (a renewal re-arms them for free) and `_normalize` must carry them or
+  both DMs re-send every 5-minute tick. The two paths order the write and the send OPPOSITELY, on
+  purpose: a PAYMENT DM asserts persisted state (never send unless the ledger write landed — and the
+  unsaved dedup id makes the next scan re-credit it anyway), a LAPSE WARNING asserts a fact about the
+  clock, so it sends FIRST and marks only what went out — marking first lets one transient publish
+  failure swallow the only warning a subscriber gets before their posts are deleted.
   See `docs/PAY_TO_STAY.md`; `tests/test_paid_retention.py`.
 - **Live-stream bitrate clamp** (`stream_service._write_clamp_script` + the `stream_clamp_*` settings,
   Admin → Live → OBS Streaming): MediaMTX is a pure remux, so without this whatever OBS sends is what

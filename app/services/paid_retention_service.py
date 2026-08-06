@@ -65,6 +65,7 @@ _TICK = 300                      # seconds between zap scans (a subscription is 
 _OVERLAP = 3600                  # re-scan this far behind the cursor (receipts arrive out of order)
 _MAX_HORIZON_DAYS = 3650         # ceiling on how far ahead one account can buy (a fat-fingered zap)
 _LNURL_TTL = 3600                # seconds an LNURL-pay lookup (its nostrPubkey) is cached
+_WARN_DAYS = 7                   # days before expiry a subscriber is warned (see notify_lifecycle)
 _READ_TTL = 15.0                 # seconds the app process serves one snapshot of the ledger
 _QUERY_LIMIT = 500               # receipts pulled per scan
 
@@ -272,7 +273,13 @@ def _normalize(doc) -> dict:
             out["subs"][pk.lower()] = {"until": int(rec.get("until") or 0),
                                        "msats": int(rec.get("msats") or 0),
                                        "bal": int(rec.get("bal") or 0),
-                                       "since": int(rec.get("since") or 0)}
+                                       "since": int(rec.get("since") or 0),
+                                       # Which expiry we've already warned about / announced the end
+                                       # of. Carried through normalize DELIBERATELY: dropping them
+                                       # would resend both DMs on every 5-minute tick. Keyed on the
+                                       # expiry timestamp, so a renewal re-arms them for free.
+                                       "warned": int(rec.get("warned") or 0),
+                                       "ended": int(rec.get("ended") or 0)}
     credited = doc.get("credited")
     if isinstance(credited, dict):
         out["credited"] = {k: int(v or 0) for k, v in credited.items() if isinstance(k, str)}
@@ -374,9 +381,17 @@ async def grant(pubkey: str, days: int) -> dict:
         if ledger is None:
             ledger = _empty()
         rec = _credit(ledger, pk, int(days) * 86400, msats=0)
+        if int(days) > 0:
+            rec["warned"] = rec["ended"] = 0     # re-arm the lapse notices, same as a renewal
         if not await save_ledger(ledger):
             raise RuntimeError("ledger write rejected by the relay")
         _read_cache.update(at=0.0, data=None)
+    # Tell them, outside the lock. An admin granting days is the same event as a payment from the
+    # recipient's side, and the access-grant DMs set the precedent: the one interaction where the
+    # answer is "yes" should not be something you discover by trying again later.
+    if int(days) > 0:
+        await _dm(pk, f"⚡ Your storage subscription on this relay has been extended by {days} "
+                      f"day(s) — your posts here are kept until {_day(rec['until'])}.")
     return rec
 
 
@@ -391,6 +406,147 @@ def _credit(ledger: dict, pubkey: str, seconds: int, *, msats: int) -> dict:
     rec["msats"] = int(rec.get("msats") or 0) + max(0, msats)
     rec.setdefault("since", now)
     return rec
+
+
+# ---- telling people ------------------------------------------------------
+
+def _day(ts: int) -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime(int(ts or 0)))
+
+
+async def _dm(recipient: str, text: str) -> bool:
+    """Send one notification DM. Via `system_dm` (a distinct SYSTEM identity), never the operator
+    key: on a single-admin node the operator key IS the admin's own, and a DM from you to you files
+    under note-to-self with no unread count — a notification nobody is notified by. Same reasoning as
+    uptime alerts and access grants. Never raises: a payment must not fail because a DM did."""
+    if not recipient:
+        return False
+    try:
+        from app.services import system_dm
+        return bool(await system_dm.send(recipient, text))
+    except Exception as e:
+        logger.warning("[paid-retention] DM to %s failed: %s", str(recipient)[:16], e)
+        return False
+
+
+async def _tell_admin(text: str) -> None:
+    """Money arriving is something the operator should hear about without going to look. Nostr DM to
+    the admin's npub, plus Telegram when the admin has one linked — the channel they actually watch.
+    No new settings: this fires only on a real payment, on a node that turned the feature on."""
+    from app.database import SessionLocal
+    from app.models import User
+    npub, chat_id, tg_on = "", None, False
+    try:
+        db = SessionLocal()
+        try:
+            admin = db.query(User).filter(User.id == 1).first()
+            npub = (getattr(admin, "nostr_npub", "") or "").strip() if admin else ""
+            chat_id = getattr(admin, "telegram_chat_id", None) if admin else None
+            tg_on = bool(admin and getattr(admin, "telegram_enabled", False) and chat_id)
+            if tg_on:
+                from app.services import settings_store
+                from app.services.telegram_service import telegram_service, configure_from_settings
+                token = settings_store.get("telegram_bot_token", "")
+                if token:
+                    telegram_service.set_token(token)
+                configure_from_settings(db)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("[paid-retention] could not resolve the admin to notify: %s", e)
+    if npub:
+        await _dm(npub, text)
+    if tg_on:
+        try:
+            from app.services.telegram_service import telegram_service
+            # parse_mode="" — the text carries an npub and arbitrary numbers; Markdown parsing of
+            # those is a round trip spent discovering the message won't send.
+            await telegram_service.send_message(chat_id, text, parse_mode="")
+        except Exception as e:
+            logger.warning("[paid-retention] Telegram alert failed: %s", e)
+
+
+async def notify_lifecycle() -> int:
+    """Warn subscribers before they lapse, and tell them when they have. Returns DMs sent.
+
+    This is the notification that MATTERS: when a subscription ends the free window applies again,
+    so the next auto-clean removes their older posts. Finding that out afterwards is finding out too
+    late — nobody would call that a service they'd renew.
+
+    Runs on every tick regardless of price/lightning address, because an admin-granted subscription
+    expires exactly like a bought one. Markers are keyed on the expiry timestamp, so renewing re-arms
+    both without any extra bookkeeping.
+
+    Two phases, and the order is the point: the marker is written only for a DM that actually went
+    out. Marking first would be safe against repeats but would let ONE transient publish failure
+    swallow a subscriber's only warning before their posts are deleted — the exact loss this exists
+    to prevent. A repeated DM is an annoyance; a missed one is the failure."""
+    if not enabled():
+        return 0
+    now = int(time.time())
+    async with _write_lock:
+        try:
+            ledger = await load_ledger()
+        except Exception as e:
+            logger.debug("[paid-retention] lifecycle read failed: %s", e)
+            return 0
+        if ledger is None:
+            return 0
+        free_days = policy()["free_days"]
+        plan: list = []           # (pubkey, marker, expiry, text) — nothing is mutated yet
+        for pk, rec in ledger["subs"].items():
+            until = int(rec.get("until") or 0)
+            if not until:
+                continue
+            if now < until <= now + _WARN_DAYS * 86400 and rec.get("warned") != until:
+                plan.append((pk, "warned", until,
+                             f"⏳ Your storage subscription on this relay ends on {_day(until)}"
+                             f" ({max(1, (until - now) // 86400)} day(s) left).\n\n"
+                             f"Zap the relay's profile again to extend it — renewing early adds "
+                             f"to the time you already have." + (
+                                 f"\n\nAfter it ends, posts you published here older than "
+                                 f"{free_days} days are removed by the usual clean-up."
+                                 if free_days else "")))
+            elif until <= now and rec.get("ended") != until:
+                # Only a RECENT ending is announced. The tick catches a real one within minutes, so
+                # anything older is history — a ledger written before this code existed, or a worker
+                # that was down for a week. Telling someone their subscription ended months ago is
+                # noise, and a backlog of them arriving at once reads as a malfunction.
+                if now - until <= _WARN_DAYS * 86400:
+                    plan.append((pk, "ended", until,
+                                 f"🔚 Your storage subscription on this relay ended on {_day(until)}."
+                                 + (f"\n\nYour posts here now follow the free {free_days}-day window,"
+                                    f" so older ones will be removed on the next clean-up. Zap the "
+                                    f"relay's profile to start a new subscription."
+                                    if free_days else
+                                    "\n\nNothing is being deleted — this relay currently keeps "
+                                    "everything — but a subscription is no longer active.")))
+    if not plan:
+        return 0
+    done = [(pk, marker, until) for pk, marker, until, text in plan if await _dm(pk, text)]
+    if not done:
+        return 0
+    async with _write_lock:
+        try:
+            ledger = await load_ledger()
+            if ledger is None:
+                raise RuntimeError("ledger vanished")
+            for pk, marker, until in done:
+                rec = ledger["subs"].get(pk)
+                # Skip a record that changed under us (a renewal landed mid-flight): its expiry is a
+                # different one now, so this marker would be about an event that no longer applies.
+                if rec and int(rec.get("until") or 0) == until:
+                    rec[marker] = until
+            if not await save_ledger(ledger):
+                raise RuntimeError("write rejected")
+            _read_cache.update(at=0.0, data=None)
+        except Exception as e:
+            # The DMs are already out. Losing the markers means the next tick may repeat them —
+            # visible, recoverable, and the right way round compared to never sending them.
+            logger.warning("[paid-retention] lifecycle markers not saved (%s) — %d DM(s) may repeat",
+                           e, len(done))
+    logger.info("[paid-retention] %d lifecycle DM(s) sent", len(done))
+    return len(done)
 
 
 # ---- the watcher --------------------------------------------------------
@@ -479,9 +635,12 @@ async def scan_once() -> int:
             bal -= int(days * price // 30)
             rec = _credit(ledger, payer, days * 86400, msats=msats)
             rec["bal"] = max(0, bal)
-            credited_days += days
+            # A renewal re-arms the expiry warning and the "it ended" notice, which are keyed on the
+            # expiry we last announced.
             if days:
-                notify.append((payer, days, rec["until"]))
+                rec["warned"] = rec["ended"] = 0
+            credited_days += days
+            notify.append((payer, days, rec["until"], msats, max(0, bal)))
             logger.info("[paid-retention] %s sats from %s → +%d day(s) (until %s)",
                         msats // 1000, payer[:12], days,
                         time.strftime("%Y-%m-%d", time.gmtime(rec["until"])))
@@ -496,16 +655,26 @@ async def scan_once() -> int:
             return 0
         _read_cache.update(at=0.0, data=None)
 
-    for payer, days, until in notify:
-        try:
-            from app.services import system_dm
-            await system_dm.send(
-                payer,
-                f"Thanks — your storage subscription on this relay is extended by {days} day(s). "
-                f"Your notes here are kept until "
-                f"{time.strftime('%Y-%m-%d', time.gmtime(until))}.")
-        except Exception as e:
-            logger.debug("[paid-retention] confirmation DM to %s failed: %s", payer[:12], e)
+    # DMs go out AFTER the ledger is written and the lock is released: a DM that fails must not roll
+    # back a payment, and holding the write lock across the network would stall the next scan.
+    for payer, days, until, msats, bal in notify:
+        sats = msats // 1000
+        if days:
+            await _dm(payer, f"⚡ Thanks — {sats} sats received. Your storage subscription on this "
+                             f"relay is extended by {days} day(s); your posts here are kept until "
+                             f"{_day(until)}." + (f"\n\n{bal // 1000} sats carried over towards the "
+                                                  f"next one." if bal >= 1000 else ""))
+        else:
+            # They paid and got no days. Silence here reads as "my money vanished", which is the
+            # worst thing this feature could say — so acknowledge it and show what it bought.
+            need = max(0, (price - bal) // 1000)
+            await _dm(payer, f"⚡ {sats} sats received — thank you. That's less than a full day of "
+                             f"storage at the current price, so it's banked: {bal // 1000} sats "
+                             f"towards your next day"
+                             + (f" ({need} more for a month)." if need else "."))
+        await _tell_admin(
+            f"⚡ Relay storage payment: {sats} sats from "
+            f"{nostr_service.npub_of(payer)[:20]}… → +{days} day(s), until {_day(until)}.")
     return credited_days
 
 
@@ -516,6 +685,12 @@ async def _tick() -> None:
         await scan_once()
     except Exception as e:
         logger.warning("[paid-retention] scan failed: %s", e)
+    try:
+        # Separate try: a scan that failed (LNURL down, relay busy) must not also stop people being
+        # warned that their subscription — already paid for — is about to lapse.
+        await notify_lifecycle()
+    except Exception as e:
+        logger.warning("[paid-retention] lifecycle notify failed: %s", e)
 
 
 # ---- scheduler ----------------------------------------------------------

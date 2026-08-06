@@ -492,7 +492,9 @@
             <span id="relayPaidStatus" style="margin-left:.5rem;"></span>
             <div id="relayPaidList" style="margin-top:.6rem;"></div>
             <small>Reads the ledger (one operator-signed relay document, <code>pcai:kv:paid_retention</code>). Grant days by hand
-            for a payment that arrived another way — negative days take them back.</small>
+            for a payment that arrived another way — negative days take them back; the recipient is DMed either way.
+            <strong>You</strong> get a DM (and a Telegram message, if your admin account has one linked) on every payment;
+            subscribers are DMed on payment, <strong>7 days before expiry</strong>, and when it expires.</small>
             <div style="margin-top:.5rem;display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;">
                 <input type="text" id="relayPaidGrantPk" placeholder="npub1… / hex" style="flex:1 1 18rem;min-width:0;">
                 <input type="number" id="relayPaidGrantDays" placeholder="days" style="width:7rem;">

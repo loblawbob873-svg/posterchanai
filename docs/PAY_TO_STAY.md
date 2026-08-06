@@ -140,14 +140,50 @@ same path `retention_days` takes.
 * `GET /client/retention?pubkey=<hex>` returns the policy plus that author's standing
   (`known: false` means the ledger couldn't be read — never render that as "not subscribed").
 
+## Who gets told what
+
+All DMs are NIP-17, sent from the node's **system identity** via `system_dm` — never the operator
+key, which on a single-admin node is the admin's own, making it a self-DM that files under
+note-to-self with no unread count. Same reasoning as uptime alerts and access grants.
+
+| event | who | why |
+|---|---|---|
+| payment credited | payer | confirms the zap landed and states the new expiry |
+| payment too small for a day | payer | they paid and got no days — silence reads as "my money vanished", so it says what was banked and what's needed |
+| any payment | **admin** — Nostr DM, plus Telegram if the admin has one linked | money arriving shouldn't need going to look for |
+| admin grant | recipient | the one interaction whose answer is "yes" shouldn't be discovered by trying again |
+| **7 days before expiry** | subscriber | **the one that prevents a loss** — after the lapse the free window applies and the next auto-clean takes their older posts |
+| expiry | subscriber | says exactly what happens now, and how to start again |
+
+The last two live in `notify_lifecycle()`, which runs every tick regardless of price or lightning
+address, because an admin-granted subscription expires exactly like a bought one. Three details that
+are load-bearing:
+
+* the warned/ended markers are keyed on the **expiry timestamp**, so renewing re-arms both with no
+  extra bookkeeping — and `_normalize` carries them deliberately, because dropping them on the next
+  read would re-send both DMs every five minutes;
+* the marker is written **only for a DM that actually went out** (plan under the lock → send →
+  re-read and mark). Marking first is safe against repeats but lets one transient publish failure
+  swallow a subscriber's only warning before their posts are deleted. A repeat is an annoyance; a
+  miss is the failure this exists to prevent. The re-read also skips a record whose expiry changed
+  mid-flight, so a renewal landing between the two phases doesn't inherit a stale marker;
+* an ending older than the warning window is marked but **not announced** — the tick catches a real
+  one within minutes, so anything older is a ledger predating this code or a worker that was down,
+  and a backlog of "your subscription ended" arriving at once reads as a malfunction;
+* DMs are sent outside the write lock, so a failed DM can't roll back a payment.
+
+The **payment** path is the deliberate opposite: there nothing is sent unless the ledger write
+succeeded. The asymmetry is principled — a payment DM asserts persisted state (announcing a credit
+that wasn't saved is a false promise, and the unsaved dedup id means the next scan re-credits it
+anyway), while a lapse warning asserts a fact about the clock, true whether or not the marker saved.
+
+There is no grace period: when a subscription lapses the free window applies again and the lapsed
+author's older posts go on the next auto-clean. The 7-day warning is what makes that fair.
+
 ## Ops
 
 Admin → Nostr Relay → **Subscribers** lists the ledger and grants days by hand (negative days take
-them back) — for a payment that arrived another way, a comp, or undoing a bad credit. A payer gets a
-NIP-17 DM confirming the extension.
-
-When a subscription lapses the free window applies again, so a lapsed author's older posts go on the
-next auto-clean. There is no separate grace period.
+them back) — for a payment that arrived another way, a comp, or undoing a bad credit.
 
 ## Dependencies
 

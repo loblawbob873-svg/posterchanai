@@ -54,17 +54,20 @@ def _key():
 
 
 def _receipt(zapper_sk, payer_sk, recv_pub, *, msats=1_000_000, e_tag=None,
-             request_override=None, amount_tag=True, invoice=None):
+             request_override=None, amount_tag=True, invoice=None, claim=None):
     """A well-formed NIP-57 receipt: a kind 9735 signed by the zapper service, carrying the payer's
-    signed kind-9734 request in its `description` tag."""
+    signed kind-9734 request in its `description` tag.
+
+    `msats` is what the INVOICE says (the `n` multiplier is 100 msats per unit, so it encodes the
+    figure exactly); `claim` overrides only what the request's `amount` tag asks for, which is how
+    the two are told apart."""
     tags = [["p", recv_pub], ["relays", "wss://x"]]
     if amount_tag:
-        tags.append(["amount", str(msats)])
+        tags.append(["amount", str(msats if claim is None else claim)])
     if e_tag:
         tags.append(["e", e_tag])
     req = request_override or build_event(payer_sk, 9734, "", tags=tags)
-    sats = msats // 1000
-    inv = invoice if invoice is not None else f"lnbc{sats}u1pvjluezpp5{'q' * 20}"
+    inv = invoice if invoice is not None else f"lnbc{msats // 100}n1pvjluezpp5{'q' * 20}"
     return build_event(zapper_sk, 9735, "", tags=[
         ["p", recv_pub], ["bolt11", inv], ["description", json.dumps(req)]]), req
 
@@ -73,12 +76,13 @@ def test_a_real_receipt_is_credited_to_the_payer():
     zap_sk, zap_pub = _key()
     payer_sk, payer_pub = _key()
     _, recv_pub = _key()
-    ev, _ = _receipt(zap_sk, payer_sk, recv_pub, msats=21_000_000)
+    # The invoice says 21k sats; the request CLAIMS ten times that. The invoice is what was paid.
+    ev, _ = _receipt(zap_sk, payer_sk, recv_pub, msats=21_000_000, claim=210_000_000)
     got = prs.verify_receipt(ev, zap_pub, recv_pub)
     assert got is not None, "a correctly signed profile zap must be credited"
     payer, msats = got
     assert payer == payer_pub
-    assert msats == 2_100_000_000, "the amount must come from the invoice, not the request's claim"
+    assert msats == 21_000_000, "the amount must come from the invoice, not the request's claim"
 
 
 def test_a_receipt_signed_by_anyone_but_our_zapper_service_is_worthless():
@@ -153,7 +157,7 @@ def test_an_unreadable_invoice_is_not_replaced_by_the_payers_own_claim():
     # Signed by the real zapper service WITH the unreadable invoice — so this fails on the amount
     # rule, not on the signature (which would make the test pass for the wrong reason).
     ev, req = _receipt(zap_sk, payer_sk, recv_pub, msats=1_000_000, invoice="not-an-invoice")
-    assert ("amount", "1000000") in [(t[0], t[1]) for t in req["tags"]]
+    assert ("amount", "1000000") in [(t[0], t[1]) for t in req["tags"]], "the claim is there to fall back to"
     from app.services.nostr.event import verify_event
     assert verify_event(ev), "the receipt itself must be validly signed for this test to mean anything"
     assert prs.verify_receipt(ev, zap_pub, recv_pub) is None
@@ -595,3 +599,291 @@ def test_the_count_cap_spares_a_subscriber_too(store_factory):
         assert preview["capped"] == removed
         assert len(await store.query([{"authors": [SUBSCRIBER], "limit": 500}])) == 60
     _run(go)
+
+
+# ---- who gets told what ------------------------------------------------
+
+class _Ledger:
+    """A stand-in for the relay-backed ledger: load/save in memory so the notification rules can be
+    driven without a relay. Mirrors the real contract — load raises on failure, returns None when the
+    document doesn't exist."""
+
+    def __init__(self, doc=None, fail=False, refuse_write=False):
+        self.doc, self.fail, self.refuse_write, self.writes = doc, fail, refuse_write, 0
+
+    async def load(self):
+        if self.fail:
+            raise RuntimeError("relay unreachable")
+        return None if self.doc is None else prs._normalize(self.doc)
+
+    async def save(self, ledger):
+        if self.refuse_write:
+            return False
+        self.writes += 1
+        self.doc = json.loads(json.dumps(ledger))
+        return True
+
+
+def _wire(monkeypatch, led, *, free_days=30):
+    sent = []
+    monkeypatch.setattr(prs, "load_ledger", led.load)
+    monkeypatch.setattr(prs, "save_ledger", led.save)
+    monkeypatch.setattr(prs, "enabled", lambda: True)
+    monkeypatch.setattr(prs, "policy", _fake_policy(free_days=free_days))
+
+    async def _dm(pk, text):
+        sent.append((pk, text))
+        return True
+    monkeypatch.setattr(prs, "_dm", _dm)
+    return sent
+
+
+def _sub(**kw):
+    rec = {"until": 0, "msats": 0, "bal": 0, "since": 0, "warned": 0, "ended": 0}
+    rec.update(kw)
+    return {"updated": 1, "cursor": 1, "credited": {}, "subs": {"a" * 64: rec}}
+
+
+def test_a_subscriber_is_warned_before_they_lapse(monkeypatch):
+    """The DM that actually prevents a loss: after the lapse, the free window applies and the next
+    auto-clean takes their older posts. Finding that out afterwards is finding out too late."""
+    until = int(time.time()) + 3 * DAY
+    led = _Ledger(_sub(until=until))
+    sent = _wire(monkeypatch, led)
+    assert asyncio.run(prs.notify_lifecycle()) == 1
+    pk, text = sent[0]
+    assert pk == "a" * 64 and "ends on" in text and "30 days" in text
+
+
+def test_nobody_is_warned_twice(monkeypatch):
+    """It ticks every 5 minutes. A marker that didn't persist — or that `_normalize` dropped on the
+    next read — would DM the same person 288 times a day."""
+    led = _Ledger(_sub(until=int(time.time()) + 3 * DAY))
+    sent = _wire(monkeypatch, led)
+    assert asyncio.run(prs.notify_lifecycle()) == 1
+    assert asyncio.run(prs.notify_lifecycle()) == 0, "the marker must survive a normalize round trip"
+    assert len(sent) == 1
+
+
+def test_renewing_re_arms_the_warning(monkeypatch):
+    led = _Ledger(_sub(until=int(time.time()) + 3 * DAY))
+    sent = _wire(monkeypatch, led)
+    asyncio.run(prs.notify_lifecycle())
+    # …they renew: a new expiry, so the marker no longer matches and the next lapse warns again.
+    led.doc["subs"]["a" * 64]["until"] = int(time.time()) + 2 * DAY
+    assert asyncio.run(prs.notify_lifecycle()) == 1
+    assert len(sent) == 2
+
+
+def test_the_end_is_announced_once_and_says_what_happens_next(monkeypatch):
+    led = _Ledger(_sub(until=int(time.time()) - DAY))
+    sent = _wire(monkeypatch, led)
+    assert asyncio.run(prs.notify_lifecycle()) == 1
+    assert "ended" in sent[0][1] and "30-day window" in sent[0][1]
+    assert asyncio.run(prs.notify_lifecycle()) == 0
+
+
+def test_a_ledger_that_cannot_be_read_sends_nothing(monkeypatch):
+    """Unreadable, or not there at all: there is nothing to notify anyone about."""
+    sent = _wire(monkeypatch, _Ledger(fail=True))
+    assert asyncio.run(prs.notify_lifecycle()) == 0 and sent == []
+    sent = _wire(monkeypatch, _Ledger(None))
+    assert asyncio.run(prs.notify_lifecycle()) == 0 and sent == []
+
+
+def test_a_refused_marker_write_still_warns_and_accepts_the_repeat(monkeypatch):
+    """The deliberate opposite of the PAYMENT path, and the asymmetry is principled: a payment DM
+    asserts persisted state, so it must not be sent unless the credit was saved. A lapse warning
+    asserts a fact about the clock, which is true whether or not the marker saved — so it goes out,
+    and a repeat is accepted as the price of never missing it."""
+    led = _Ledger(_sub(until=int(time.time()) + 2 * DAY), refuse_write=True)
+    sent = _wire(monkeypatch, led)
+    assert asyncio.run(prs.notify_lifecycle()) == 1
+    assert len(sent) == 1
+    assert asyncio.run(prs.notify_lifecycle()) == 1, "unsaved marker → it repeats, visibly, in the log"
+
+
+def test_lifecycle_says_nothing_while_the_feature_is_off(monkeypatch):
+    led = _Ledger(_sub(until=int(time.time()) - DAY))
+    sent = _wire(monkeypatch, led)
+    monkeypatch.setattr(prs, "enabled", lambda: False)
+    assert asyncio.run(prs.notify_lifecycle()) == 0 and sent == []
+
+
+def test_an_admin_grant_tells_the_recipient(monkeypatch):
+    led = _Ledger(_sub(until=0))
+    sent = _wire(monkeypatch, led)
+    rec = asyncio.run(prs.grant("b" * 64, 30))
+    assert rec["until"] > int(time.time())
+    assert len(sent) == 1 and "extended by 30" in sent[0][1]
+
+
+def test_taking_days_back_does_not_congratulate_anyone(monkeypatch):
+    led = _Ledger(_sub(until=int(time.time()) + 30 * DAY))
+    sent = _wire(monkeypatch, led)
+    asyncio.run(prs.grant("a" * 64, -30))
+    assert sent == [], "a revocation is not an extension"
+
+
+# ---- the credit loop, end to end ---------------------------------------
+
+def _wire_scan(monkeypatch, led, receipts, zap_pub, recv_pub, *, price_sats=1000):
+    """Drive scan_once with a stubbed relay + LNURL + ledger. Returns (payer DMs, admin messages)."""
+    from app.services import settings_store
+    from app.services.nostr import relay as relay_client
+    sent = _wire(monkeypatch, led)
+    admin = []
+    monkeypatch.setattr(prs, "receiving_pubkey", lambda: recv_pub)
+    monkeypatch.setattr(prs, "price_msats_per_month", lambda: price_sats * 1000)
+    monkeypatch.setattr(settings_store, "get",
+                        lambda k, d=None: "relay@example.com" if "lud16" in k else (d or ""))
+
+    async def _lnurl(addr):
+        return {"allowsNostr": True, "nostrPubkey": zap_pub}
+    monkeypatch.setattr(prs, "_lnurl_params", _lnurl)
+
+    async def _query(relays, filters, **kw):
+        return list(receipts)
+    monkeypatch.setattr(relay_client, "query", _query)
+
+    async def _adm(text):
+        admin.append(text)
+    monkeypatch.setattr(prs, "_tell_admin", _adm)
+    return sent, admin
+
+
+def _fresh_ledger():
+    return _Ledger({"updated": 1, "cursor": 1, "credited": {}, "subs": {}})
+
+
+def test_a_zap_buys_days_and_the_admin_hears_about_it(monkeypatch):
+    zap_sk, zap_pub = _key()
+    payer_sk, payer_pub = _key()
+    _, recv_pub = _key()
+    ev, _ = _receipt(zap_sk, payer_sk, recv_pub, msats=2_000_000)      # 2000 sats = 2 months
+    led = _fresh_ledger()
+    sent, admin = _wire_scan(monkeypatch, led, [ev], zap_pub, recv_pub, price_sats=1000)
+
+    assert asyncio.run(prs.scan_once()) == 60
+    assert led.doc["subs"][payer_pub]["until"] >= int(time.time()) + 59 * DAY
+    assert len(sent) == 1 and "extended by 60 day(s)" in sent[0][1]
+    assert len(admin) == 1 and "2000 sats" in admin[0]
+
+
+def test_the_same_receipt_is_never_credited_twice(monkeypatch):
+    """Scans overlap on purpose (receipts arrive out of order), so the same event WILL be seen again.
+    Crediting it twice would hand out storage for free, forever."""
+    zap_sk, zap_pub = _key()
+    payer_sk, payer_pub = _key()
+    _, recv_pub = _key()
+    ev, _ = _receipt(zap_sk, payer_sk, recv_pub, msats=1_000_000)
+    led = _fresh_ledger()
+    _wire_scan(monkeypatch, led, [ev], zap_pub, recv_pub, price_sats=1000)
+
+    first = asyncio.run(prs.scan_once())
+    until = led.doc["subs"][payer_pub]["until"]
+    assert asyncio.run(prs.scan_once()) == 0, "the second sighting must credit nothing"
+    assert led.doc["subs"][payer_pub]["until"] == until
+    assert first == 30
+
+
+def test_small_zaps_add_up_instead_of_rounding_to_nothing(monkeypatch):
+    """Two half-price zaps must buy what one full-price zap does — and the first one, which bought no
+    whole day, still gets an answer instead of silence."""
+    zap_sk, zap_pub = _key()
+    payer_sk, payer_pub = _key()
+    _, recv_pub = _key()
+    led = _fresh_ledger()
+    half, _ = _receipt(zap_sk, payer_sk, recv_pub, msats=15_000)       # 15 sats @ 1000/mo → 0 days
+    sent, _adm = _wire_scan(monkeypatch, led, [half], zap_pub, recv_pub, price_sats=1000)
+    assert asyncio.run(prs.scan_once()) == 0
+    assert led.doc["subs"][payer_pub]["bal"] == 15_000
+    assert len(sent) == 1 and "banked" in sent[0][1], "a payment that bought no day still gets a reply"
+
+    other, _ = _receipt(zap_sk, payer_sk, recv_pub, msats=20_000)      # …now over a day's worth
+    _wire_scan(monkeypatch, led, [other], zap_pub, recv_pub, price_sats=1000)
+    assert asyncio.run(prs.scan_once()) == 1
+    assert led.doc["subs"][payer_pub]["bal"] < 34_000, "the spent balance must be consumed"
+
+
+def test_a_forged_receipt_in_the_batch_credits_nobody(monkeypatch):
+    """The verified and the forged arrive on the same query. One must land, the other must not."""
+    zap_sk, zap_pub = _key()
+    good_sk, good_pub = _key()
+    liar_sk, liar_pub = _key()
+    _, recv_pub = _key()
+    real, _ = _receipt(zap_sk, good_sk, recv_pub, msats=1_000_000)
+    fake, _ = _receipt(liar_sk, liar_sk, recv_pub, msats=100_000_000)   # self-signed, not the zapper
+    led = _fresh_ledger()
+    _wire_scan(monkeypatch, led, [real, fake], zap_pub, recv_pub, price_sats=1000)
+    assert asyncio.run(prs.scan_once()) == 30
+    assert good_pub in led.doc["subs"] and liar_pub not in led.doc["subs"]
+
+
+def test_a_refused_ledger_write_credits_nothing_and_promises_nothing(monkeypatch):
+    """If the write didn't land, the credit doesn't exist — so no DM may claim it did."""
+    zap_sk, zap_pub = _key()
+    payer_sk, _ = _key()
+    _, recv_pub = _key()
+    ev, _ = _receipt(zap_sk, payer_sk, recv_pub, msats=1_000_000)
+    led = _fresh_ledger()
+    led.refuse_write = True
+    sent, admin = _wire_scan(monkeypatch, led, [ev], zap_pub, recv_pub, price_sats=1000)
+    assert asyncio.run(prs.scan_once()) == 0
+    assert sent == [] and admin == []
+
+
+def test_enabling_the_feature_does_not_credit_historical_tips(monkeypatch):
+    """First run creates the ledger with the cursor at NOW. Otherwise every tip the operator ever
+    received would retroactively buy storage nobody sold."""
+    zap_sk, zap_pub = _key()
+    payer_sk, _ = _key()
+    _, recv_pub = _key()
+    ev, _ = _receipt(zap_sk, payer_sk, recv_pub, msats=9_000_000)
+    led = _Ledger(None)                                   # no ledger document yet
+    sent, _adm = _wire_scan(monkeypatch, led, [ev], zap_pub, recv_pub, price_sats=1000)
+    assert asyncio.run(prs.scan_once()) == 0
+    assert led.doc["subs"] == {} and led.doc["cursor"] >= int(time.time()) - 5
+    assert sent == []
+
+
+def test_a_failed_dm_leaves_the_warning_to_be_retried(monkeypatch):
+    """The marker is written only for a DM that went out. Marking first would let one transient
+    publish failure swallow a subscriber's only warning before their posts are deleted — a repeated
+    DM is an annoyance, a missed one is the failure this exists to prevent."""
+    led = _Ledger(_sub(until=int(time.time()) + 3 * DAY))
+    _wire(monkeypatch, led)
+    fail = {"on": True}
+
+    async def _dm(pk, text):
+        return not fail["on"]
+    monkeypatch.setattr(prs, "_dm", _dm)
+
+    assert asyncio.run(prs.notify_lifecycle()) == 0
+    assert led.doc["subs"]["a" * 64]["warned"] == 0, "a DM that failed must not be marked as sent"
+    fail["on"] = False
+    assert asyncio.run(prs.notify_lifecycle()) == 1, "the retry gets through"
+
+
+def test_an_ending_from_long_ago_is_not_announced(monkeypatch):
+    """A ledger written before this code existed, or a worker down for a week, must not blast a
+    backlog of 'your subscription ended' DMs about endings nobody needs told about now."""
+    led = _Ledger(_sub(until=int(time.time()) - 90 * DAY))
+    sent = _wire(monkeypatch, led)
+    assert asyncio.run(prs.notify_lifecycle()) == 0 and sent == []
+
+
+def test_a_renewal_landing_mid_flight_does_not_get_a_stale_marker(monkeypatch):
+    """The DM is sent, then the marker is written against a re-read ledger. If a renewal changed the
+    expiry in between, marking it would suppress the warning for the NEW expiry too."""
+    until = int(time.time()) + 3 * DAY
+    led = _Ledger(_sub(until=until))
+    _wire(monkeypatch, led)
+
+    async def _dm(pk, text):
+        led.doc["subs"]["a" * 64]["until"] = until + 300 * DAY      # they renew mid-flight
+        return True
+    monkeypatch.setattr(prs, "_dm", _dm)
+
+    assert asyncio.run(prs.notify_lifecycle()) == 1
+    assert led.doc["subs"]["a" * 64]["warned"] == 0, "the marker belonged to an expiry that's gone"
