@@ -364,21 +364,24 @@ services:
   # certificates and account on pc-proxy-ssl. Renewals are manual by design (`certbot renew`) — put
   # it in a cron job or systemd timer on the host.
   #
-  # Once this is up you usually want the backend's own ports on loopback so http://<ip>:3051 stops
+  # Once this is up you usually want the two HTTP ports on loopback so http://<ip>:3051 stops
   # answering around your TLS. In .env:  POSTERCHANAI_PORT=127.0.0.1:3051
   #                                      POSTERCHANAI_NOSTR_RELAY_PORT=127.0.0.1:3052
+  # ONLY those two. TURN (3478 + 49160-49200/udp) and streaming (1935 RTMP, 8889/8189 WHIP) are
+  # reached DIRECTLY by phones, OBS and other peers — they are not HTTP and this proxy does not
+  # front them, so moving them to loopback silently kills calls and live streaming.
   proxy:
     logging: *logging
     profiles: ["tls"]
     image: posterchanai-proxy:${TAG:-local}
     build: docker/proxy
-    # Bring up a backend profile alongside this one. With no backend container the `posterchanai`
-    # alias doesn't resolve, nginx exits with "host not found in upstream", and this restarts until
-    # one appears — noisy, but it heals itself rather than needing a manual restart afterwards.
     restart: unless-stopped
+    # 80 and 443 are fixed on purpose: certbot's HTTP-01 challenge is only ever served on 80, and a
+    # browser only speaks TLS to 443 without a port in the URL. Behind another proxy, override in a
+    # docker-compose.override.yml rather than making these a knob nobody can use correctly.
     ports:
-      - "${POSTERCHANAI_HTTP_PORT:-80}:80"
-      - "${POSTERCHANAI_HTTPS_PORT:-443}:443"
+      - "80:80"
+      - "443:443"
     environment:
       # First boot only — it fills in server_name and the self-signed cert's CN. After that the
       # config file is yours (and certbot's); changing this variable later does nothing.

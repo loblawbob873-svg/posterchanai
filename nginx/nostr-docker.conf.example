@@ -42,15 +42,20 @@ upstream posterchanai_relay { server 127.0.0.1:3052; }
 #   upstream posterchanai_app   { server nostr:3051; }
 #   upstream posterchanai_relay { server nostr:3052; }
 #
-# Either way, once nginx fronts everything you want the published ports on loopback instead of
+# Either way, once nginx fronts everything you want these two published ports on loopback instead of
 # 0.0.0.0 — otherwise http://<public-ip>:3051 still answers, bypassing TLS. In a `.env` next to
 # docker-compose.yml (these two variables only set the host side of the port mapping):
 #
 #   POSTERCHANAI_PORT=127.0.0.1:3051
 #   POSTERCHANAI_NOSTR_RELAY_PORT=127.0.0.1:3052
 #
-# ...then `docker compose --profile nostr up -d`. With nginx in a container, drop those port
+# ...then `docker compose --profile nostr up -d`. With nginx in a container, drop those two port
 # mappings entirely and publish only nginx's 80/443.
+#
+# ONLY those two. The TURN ports (3478 tcp+udp, 49160-49200/udp) and the streaming ports (1935 RTMP
+# from OBS, 8889 + 8189/udp WHIP from phones) are spoken to DIRECTLY by peers and publishers — they
+# are not HTTP, nginx does not front them, and putting them on loopback silently breaks voice/video
+# calls and going live. Leave them published and forwarded.
 # ------------------------------------------------------------------------------
 
 # WebSocket upgrade plumbing — the relay AND the app's own sockets both need it.
@@ -91,13 +96,15 @@ server {
     ssl_session_cache   shared:SSL:10m;
     # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;  # once HTTPS is solid
 
-    # The client is a few hundred KB of JS/CSS. Blobs and media are already compressed — don't
-    # re-compress them.
+    # ~2.9 MB of JS/CSS per cold load (app.js alone is 1.6 MB -> 521 KB gzipped), re-paid on every
+    # deploy because of the `?v=` cache-buster. Blobs and media are already compressed, so they're
+    # left out. text/javascript is the entry that matters: that is what the app serves .js as, and a
+    # list with only application/javascript in it compresses nothing (only /sw.js uses that type).
     gzip            on;
     gzip_proxied    any;
     gzip_min_length 1024;
-    gzip_types      text/plain text/css application/javascript application/json
-                    application/manifest+json image/svg+xml;
+    gzip_types      text/plain text/css text/javascript text/xml application/javascript
+                    application/json application/manifest+json image/svg+xml;
 
     # Blossom uploads and Nostr media go through here. 0 = no limit; if you set a number, keep it
     # >= Admin → Blossom → Max upload MB, or uploads die at nginx with a 413 the client can't explain.
@@ -241,9 +248,10 @@ server {
 #         - ./certs:/etc/letsencrypt:ro        # certs issued on the host, or by a certbot sidecar
 #       depends_on: [nostr]
 #
-# Compose puts every service on one network, so `nostr` resolves by DNS. Note that certbot's
-# --nginx plugin cannot edit a config inside a container: issue with `certbot certonly --webroot`
-# (or DNS-01) and mount the result read-only.
+# Compose puts every service on one network, so `nostr` resolves by DNS. Note that certbot cannot
+# rewrite a config bind-mounted `:ro` like the one above, so `certbot --nginx` has nothing to edit —
+# issue with `certbot certonly --webroot` (or DNS-01) and mount the result in. (The `tls` profile's
+# proxy container keeps its config on a volume for exactly this reason, so there `--nginx` works.)
 # -----------------------------------------------------------------------------
 #
 # WAF / Cloudflare: the relay and the app's WebSockets authenticate with tokens, NOT cookies —

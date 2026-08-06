@@ -33,8 +33,4 @@ if [ ! -f "$CERTS/fullchain.pem" ]; then
     echo "[proxy] browsers WILL warn until you run: certbot --nginx -d <your-domain>"
 fi
 
-# Fail loudly and early on a broken config rather than dying inside nginx's own startup, where the
-# error is easy to miss in a compose log with five other services scrolling past.
-nginx -t
-
 exec "$@"

@@ -20,11 +20,14 @@ FROM nginx:1.29-alpine
 # certbot-nginx is the plugin behind `certbot --nginx`; openssl mints the self-signed cert.
 RUN apk add --no-cache certbot certbot-nginx openssl
 
+# entrypoint first, config second: the config is the file that actually gets edited, and this way an
+# edit to it doesn't invalidate the entrypoint layer as well. No `RUN chmod` — the file is committed
+# executable and COPY preserves the mode, which also keeps this building on the LEGACY builder
+# (`COPY --chmod` is BuildKit-only, and this repo still supports non-BuildKit docker).
+COPY entrypoint.sh /entrypoint.sh
 # The config is a SEED, copied to /etc/nginx/conf.d on first boot only (see entrypoint.sh) —
 # after that it belongs to the operator and to certbot, and this image never overwrites it.
 COPY posterchanai.conf /usr/share/posterchanai/posterchanai.conf
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
 
 EXPOSE 80 443
 ENTRYPOINT ["/entrypoint.sh"]

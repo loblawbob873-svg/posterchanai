@@ -57,6 +57,16 @@ server {
     # Uploads / Blossom blobs / generated media can be large. 0 = no limit; set a cap if you prefer.
     client_max_body_size 0;
 
+    # ~2.9 MB of client JS/CSS per cold load (app.js alone is 1.6 MB -> 622 KB), re-paid on every
+    # deploy by the `?v=` cache-buster — and free here, since the /static block below serves it off
+    # disk. text/javascript is the entry that does the work: that is what both nginx and the app
+    # type .js as, so a list carrying only application/javascript compresses nothing at all.
+    gzip            on;
+    gzip_proxied    any;
+    gzip_min_length 1024;
+    gzip_types      text/plain text/css text/javascript text/xml application/javascript
+                    application/json application/manifest+json image/svg+xml;
+
     # Headers every proxied location needs. X-Forwarded-Proto=$scheme is REQUIRED: the app uses it
     # to know it's behind HTTPS (sets the upgrade-insecure-requests CSP + secure cookies).
     # X-Real-IP is what the RELAY trusts for the client address (it prefers this over the forgeable

@@ -132,12 +132,9 @@ The app boots fine without the AI libraries (every ML import is lazy); the AI ta
 docker compose --profile nostr --profile tls up -d --build
 ```
 
-That adds an nginx+certbot container and serves the whole stack over HTTPS on a self-signed
-certificate right away, with the relay at `wss://<host>/relay` and NIP-05 at
-`/.well-known/nostr.json`. A relay on plain `ws://` is one most clients refuse to connect to, and
-the web client can't handle keys at all on a non-secure origin. See
-[Production (HTTPS / TLS)](#production-https--tls) for replacing the self-signed certificate with a
-real one.
+A relay on plain `ws://` is one most clients refuse to connect to, and the web client can't handle
+keys at all on a non-secure origin. Details, and how to replace the self-signed certificate with a
+real one: [Production (HTTPS / TLS)](#production-https--tls).
 
 ## Git server (git-over-nostr)
 
@@ -239,7 +236,7 @@ restarts:
 
 | Path in the container | Volume | What it is |
 |---|---|---|
-| `/etc/nginx/conf.d/posterchanai.conf` | `pc-proxy-conf` | the config — **seeded on first boot only**, then yours. Edit it with `docker compose exec proxy vi …`, check with `nginx -t`, apply with `nginx -s reload`. |
+| `/etc/nginx/conf.d/posterchanai.conf` | `pc-proxy-conf` | the config — **seeded on first boot only**, then yours. Edit it with `docker compose exec proxy vi …`, check with `nginx -t`, apply with `nginx -s reload`. A `git pull` + rebuild does **not** update it (that's what keeps certbot's edits); to take a newer shipped config, save your changes, then `docker compose down && docker volume rm posterchanai_pc-proxy-conf` and bring it back up. |
 | `/etc/letsencrypt` | `pc-proxy-ssl` | certificates: the self-signed pair under `selfsigned/`, plus whatever certbot issues. |
 
 Notes:
@@ -248,12 +245,19 @@ Notes:
   CN **on first boot only**. After that the config file is yours; change the file, not the variable.
 - The proxy reaches the backend through the `posterchanai` network alias, which every backend
   profile answers to — so one config works for `nostr`, `cuda`, `rocm`, `intel` or `cpu`. Run **one**
-  backend profile at a time.
-- Bring up a backend profile alongside `tls`. On its own, the alias doesn't resolve, nginx exits with
-  `host not found in upstream`, and the container restarts until a backend appears.
-- Once TLS is up you usually want the plaintext ports closed, or `http://<ip>:3051` still answers
+  backend profile at a time. (Running the `split` profile instead? Then `:3051` and `:3052` are in
+  different containers and the alias is on the app's — point the relay upstream at `relay:3052`, as
+  the comment in the config says.)
+- Order doesn't matter: the proxy resolves the backend per request, so it starts with no backend up
+  (serving 502) and starts working on its own once one appears. Same for a backend recreated by
+  `up -d --build` — no proxy restart needed.
+- Once TLS is up you usually want the two **HTTP** ports closed, or `http://<ip>:3051` still answers
   around it. In `.env`: `POSTERCHANAI_PORT=127.0.0.1:3051` and
   `POSTERCHANAI_NOSTR_RELAY_PORT=127.0.0.1:3052`.
+  **Only those two.** TURN (`3478`, `49160-49200/udp`) and streaming (`1935` RTMP from OBS, `8889` +
+  `8189/udp` WHIP from phones) are spoken to *directly* by peers and publishers — they aren't HTTP,
+  this proxy doesn't front them, and moving them to loopback silently breaks calls and going live.
+  Leave them published and port-forwarded.
 - Then set the public URLs in the admin UI — **Relay → NIP-05 domain**, and **Git → Public base URL**
   if you enabled the git host. Blossom needs nothing: it derives its URLs from the forwarded headers
   the proxy sets.
