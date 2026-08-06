@@ -285,6 +285,7 @@ def init_db():
             "blossom_blob_ttl_days": "0",
             "agent_artifact_ttl_days": "14",
             "blossom_max_upload_mb": "100",
+            "push_allow_private_endpoints": "false",
             # Single-node default: blobs live LOCALLY on the data volume. The "proxy" backend is
             # only for a multi-node setup with a shared storage server (set storage_server_url +
             # switch this to "proxy" in Admin → Blossom for that).

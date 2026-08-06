@@ -602,6 +602,11 @@ class SettingsResponse(BaseModel):
     blossom_public_url: Optional[str] = None
     blossom_blob_ttl_days: Optional[int] = None
     blossom_max_upload_mb: Optional[int] = None
+    # Allow a push endpoint on a PRIVATE address. Off by default: a UnifiedPush endpoint is a URL this
+    # server POSTs to, so accepting a LAN one lets any account aim it at an internal service. Turn on
+    # when the distributor (ntfy and friends) is self-hosted on your own network — which is a normal
+    # setup here, and otherwise fails with a flat "bad endpoint".
+    push_allow_private_endpoints: Optional[bool] = None
     blossom_user_quota_gb: Optional[int] = None   # per-user storage cap in GB (0/blank = unlimited).
     # Matters because blossom_blob_ttl_days=0 (keep forever) means nothing bounds growth by age.
     blossom_storage_backend: Optional[str] = None

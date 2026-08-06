@@ -48,7 +48,14 @@ async def subscribe(request: Request, db: Session = Depends(get_db)):
     if not (pubkey and endpoint):
         return {"ok": False, "error": "missing pubkey/endpoint"}
     if not endpoint.startswith(("http://", "https://")):
-        return {"ok": False, "error": "bad endpoint"}
+        # Name what was rejected. A distributor that hands out something other than an https URL
+        # (a nostr: URI, a bare host) is otherwise indistinguishable from a broken registration, and
+        # the scheme is the one detail that says which. The rest of the URL is a capability — it is
+        # deliberately NOT echoed back or logged.
+        from urllib.parse import urlparse
+        return {"ok": False,
+                "error": f"bad endpoint: expected an http(s) URL, got scheme "
+                         f"{(urlparse(endpoint).scheme or '(none)')!r}"}
     # SSRF guard, but ONLY for UnifiedPush — the transport where the endpoint is an arbitrary URL this
     # server POSTs to, i.e. the one that could be aimed at http://192.168.x.y/admin/...
     #
@@ -58,9 +65,16 @@ async def subscribe(request: Request, db: Session = Depends(get_db)):
     # 0.0.0.0 — which the guard correctly reads as unroutable, and which is every Chrome and Android
     # Chrome user. A protection that rejects the single most common push endpoint is a bug, not safety.
     if not (p256dh and auth):
+        from app.services import settings_store
         from app.services.rss_service import is_safe_host
-        if not is_safe_host(endpoint):
-            return {"ok": False, "error": "bad endpoint"}
+        # A self-hosted distributor lives on the LAN by definition, so on a node that runs one the
+        # guard rejects every registration with a flat "bad endpoint". Opt in per node rather than
+        # weakening it for everyone.
+        allow_private = str(settings_store.get("push_allow_private_endpoints", "false")).lower() in ("1", "true", "yes")
+        if not (allow_private or is_safe_host(endpoint)):
+            return {"ok": False,
+                    "error": "bad endpoint — if your notification app is self-hosted on your LAN, "
+                             "enable 'allow private push endpoints' in Admin settings"}
     row = db.query(PushSubscription).filter(PushSubscription.endpoint == endpoint).first()
     if row:
         row.pubkey, row.p256dh, row.auth = pubkey, p256dh, auth   # device re-subscribed / rotated keys
