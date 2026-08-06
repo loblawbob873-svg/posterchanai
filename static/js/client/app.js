@@ -155,6 +155,9 @@
     setTimeout(()=>{ el.src = base + (base.includes('?')?'&':'?') + '_r=' + Date.now(); if(el.tagName==='VIDEO') el.load(); }, Math.min(700 * (n + 1), 4000));
   };
 
+  // Timeline pause/resume while backgrounded — set by watchTimeline for the CURRENT view.
+  let _tlPause = null, _tlResume = null, _tlPaused = false, _tlHideTimer = null;
+  const _TL_HIDE_AFTER = 45000;   // don't churn on a glance at the notification shade
   let CFG = {}, ME = null, FOLLOWS = new Set(), FOLLOWERS = new Set(), MUTED = new Set(), MUTED_WORDS = new Set(), MUTED_THREADS = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false, GUEST = false;
 
   /* ---------- how this copy of the client is running ----------
@@ -1986,7 +1989,16 @@
     // per-user hydration + re-renders the feed view (see Relay.onReconnect in startApp).
     const _resumeRelay = ()=>{ if(Date.now() - _lastWake < 4000) return; _lastWake = Date.now(); try{ Relay.wake(); }catch(_){} };
     document.addEventListener('visibilitychange', ()=>{ document.body.classList.toggle('anim-off', document.hidden);
-      if(document.hidden){ _hiddenAt = Date.now(); return; }
+      if(document.hidden){
+        _hiddenAt = Date.now();
+        // Drop the timeline after a grace period — a glance at the notification shade should not churn
+        // the subscription, but a phone in a pocket should not be receiving the firehose.
+        clearTimeout(_tlHideTimer);
+        _tlHideTimer = setTimeout(()=>{ try{ _tlPause && _tlPause(); }catch(_){} }, _TL_HIDE_AFTER);
+        return;
+      }
+      clearTimeout(_tlHideTimer);
+      try{ _tlResume && _tlResume(); }catch(_){}
       // Resumed to the foreground. A mobile PWA's relay WebSocket is frozen while backgrounded and very
       // often comes back DEAD-but-"open" (zombie) — the feed then looks stuck / a query "relay timeouts".
       // If we were away long enough for the OS to have suspended the socket, force a fresh relay
@@ -3209,6 +3221,16 @@
     const myGen = ++_tlGen;
     const setSub = (s)=>{ if(myGen!==_tlGen || VIEW!==view){ try{ Relay.close(s); }catch(_){} } else subs[view]=s; };
     const fullSub = ()=>{ setSub(Relay.subscribe(timelineFilter(), { onEvent, onEose: markEosed })); };
+    /* Backgrounded, the timeline is pure waste: the relay keeps PUSHING every matching event down the
+     * socket — on a busy web-of-trust relay that is the firehose — and the phone wakes its radio to
+     * receive posts nobody is looking at. Calls, DMs and notifications must keep flowing, so the socket
+     * stays; only this subscription is dropped, and re-armed on return.
+     *
+     * Resuming is the same fullSub() a reconnect already runs, and markEosed only draws on the FIRST
+     * EOSE, so coming back cannot wipe the feed. The generation token makes a resume that lands after
+     * the user navigated a no-op rather than a leaked subscription for a dead view. */
+    _tlPause = ()=>{ const cur=subs[view]; if(cur && myGen===_tlGen){ try{ Relay.close(cur); }catch(_){} subs[view]=null; _tlPaused=true; } };
+    _tlResume = ()=>{ if(!_tlPaused) return; _tlPaused=false; if(myGen===_tlGen && VIEW===view && !subs[view]) fullSub(); };
     // Phase 2 (NIP-77): reconcile the HOME feed with the relay via negentropy and fetch ONLY the events
     // we're missing, then keep a live-only sub — far less bandwidth than re-pulling the page every
     // reconnect. Gated on a WARM cache: negentropy is bounded to a recent window, so a cold/low-volume
