@@ -4609,13 +4609,11 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
 
 
 def _verify_self_auth(auth_b64: str, pubkey_hex: str) -> bool:
-    """Verify a base64 signed Nostr event authored by `pubkey_hex` within the replay window."""
-    try:
-        ev = json.loads(base64.b64decode(auth_b64))
-    except Exception:
-        return False
-    return (nostr_event.verify_event(ev) and ev.get("pubkey") == pubkey_hex
-            and abs(int(ev.get("created_at", 0)) - int(time.time())) <= 300)
+    """Verify a base64 signed Nostr event authored by `pubkey_hex` within the replay window.
+
+    Lives in the service now — /api/push needs the identical check, and a second copy of an auth
+    rule is how the two drift until one of them is the weaker one."""
+    return nostr_event.verify_self_auth(auth_b64, pubkey_hex)
 
 
 def _nip05_domain(request: Request, db: Session) -> str:

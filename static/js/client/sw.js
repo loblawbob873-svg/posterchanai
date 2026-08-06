@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v796';
+const CACHE = 'pc-nostr-v797';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -495,11 +495,19 @@ self.addEventListener('push', e => {
     requireInteraction: isCall,     // an incoming call stays up until you act on it
     renotify: isCall || undefined,
   };
-  // For a call, if the app is already OPEN + focused it rings itself (and both peers exchange kind-25050
-  // during a call, which would otherwise spam the CALLER) — only show the OS notification when nothing's
-  // focused (backgrounded / closed), which is exactly the ring-a-closed-app case.
+  // Calls and DMs are suppressed while a window is focused; everything else always shows.
+  //
+  // Calls: the open app rings itself, and peers exchange kind-25050 all call long, which would
+  // otherwise spam the CALLER.
+  // DMs: NIP-17 requires the sender to publish a SECOND gift wrap addressed to THEMSELVES, so their
+  // own outgoing message is p-tagged to their own key and looks exactly like an incoming one to a
+  // server that cannot decrypt either. Without this check, sending a message notifies you about it —
+  // on the very tab you typed it in. (A second device that is closed still buzzes; distinguishing
+  // that would need a marker on the wrap, and tagging the outside of a gift wrap is the metadata
+  // leak NIP-17 exists to avoid.)
+  const suppressIfFocused = isCall || d.type === 'dm';
   e.waitUntil(
-    (isCall
+    (suppressIfFocused
       ? clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => {
           if (cs.some(c => c.focused || c.visibilityState === 'visible')) return;
           return self.registration.showNotification(title, opts);

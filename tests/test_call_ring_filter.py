@@ -18,7 +18,7 @@ restating either one here. A reimplementation would agree with itself while prod
 """
 import json
 import re
-import shutil
+
 import subprocess
 from pathlib import Path
 
@@ -28,14 +28,18 @@ from app.services.nostr_push_service import _rings
 
 _APP_JS = Path(__file__).resolve().parent.parent / "static" / "js" / "client" / "app.js"
 
-# Every frame type the call code sends, and whether it should ring. Group frames included: a group
-# invite rings too, and `rbye` is the group twin of the `bye` that caused the phantom ring.
-_FRAMES = {
-    "invite": True, "ginvite": True,
-    "ice": False, "answer": False, "reanswer": False, "bye": False,
-    "roffer": False, "ranswer": False, "rice": False, "rbye": False,
-    "rhere": False,
-}
+# Only these two ring. Everything else the call code sends must not — and the list of "everything
+# else" is DISCOVERED from app.js rather than typed here, because a hand-kept copy rots: this started
+# out missing `reoffer`, which the client sends and which would therefore never have been checked.
+_RINGS = {"invite", "ginvite"}
+
+
+def _frames_sent():
+    """Every `t:'...'` value app.js puts on the wire, straight from the source."""
+    src = _APP_JS.read_text(encoding="utf-8")
+    found = {m for m in re.findall(r"t:\s*'([a-z]+)'", src) if m}
+    assert _RINGS <= found, f"the ringing frames vanished from app.js: {_RINGS - found}"
+    return found
 
 
 def _client_tags(frames):
@@ -52,27 +56,30 @@ def _client_tags(frames):
     return dict(zip(frames, json.loads(out.stdout)))
 
 
-@pytest.mark.skipif(not shutil.which("node"), reason="node is needed to run the shipped client code")
 def test_only_invites_ring():
-    tags = _client_tags(_FRAMES)
-    for frame, should_ring in _FRAMES.items():
+    frames = _frames_sent()
+    tags = _client_tags(frames)
+    for frame in frames:
+        should_ring = frame in _RINGS
         assert _rings({"tags": tags[frame]}) is should_ring, (
             f"{frame!r} tagged {tags[frame]} → rings={_rings({'tags': tags[frame]})}, "
             f"expected {should_ring}. A false True re-rings a phone after the call is over; "
             f"a false False means the phone never rings at all.")
 
 
-@pytest.mark.skipif(not shutil.which("node"), reason="node is needed to run the shipped client code")
 def test_every_frame_is_tagged():
     """The load-bearing invariant: no new-client frame may be untagged, or `no tag` stops meaning
     `old client` and the compatibility fallback silently re-rings for ICE and hangups."""
-    for frame, tags in _client_tags(_FRAMES).items():
+    for frame, tags in _client_tags(_frames_sent()).items():
         assert any(t[0] == "t" for t in tags), f"{frame!r} has no t tag: {tags}"
 
 
 def test_untagged_frames_still_ring():
     """Clients older than this change tag nothing. Until they roll over they must keep ringing —
-    tightening this before then makes an old caller silently unable to reach anyone."""
+    tightening this before then makes an old caller silently unable to reach anyone.
+
+    DELETE THIS TEST together with the fallback in _rings. It pins deliberately temporary behaviour,
+    so whoever finally tightens it should read a failure here as the goal, not a regression."""
     assert _rings({"tags": [["p", "peer"]]}) is True
     assert _rings({"tags": []}) is True
 

@@ -17428,9 +17428,33 @@
     let publicKey; try{ publicKey=(await fetch('/api/push/vapid').then(r=>r.json())).publicKey; }catch(_){}
     if(!publicKey){ toast('Push not configured on the server'); return; }
     const sub=await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:_urlB64ToUint8(publicKey) });
-    await fetch('/api/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ pubkey:ME.pubkey, subscription:sub.toJSON() })});
+    // Prove the key is ours. Without it the server took the pubkey on trust, so anyone could point
+    // THEIR browser's endpoint at YOUR npub and start receiving your notifications — which carry
+    // sender names and a slice of the message.
+    const auth=await sign(27235,'push-subscribe',[['p',ME.pubkey]]);
+    const r=await fetch('/api/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ pubkey:ME.pubkey, subscription:sub.toJSON(), auth:btoa(JSON.stringify(auth)) })}).then(r=>r.json()).catch(()=>null);
+    if(!(r&&r.ok)){ toast('Could not turn notifications on'+((r&&r.error)?': '+r.error:'')); return; }
     toast('🔔 Push notifications on');
+  }
+  /* Send a real notification the whole way round — server → push service → this device.
+   * A local showNotification() would only prove the browser can draw one, which is never the part
+   * that breaks; the failures are permission, an uninstalled iOS PWA, a stale subscription, or the
+   * OS holding the app asleep. This reports which. */
+  async function testPush(){
+    if(GUEST||!ME.pubkey){ toast('Log in first'); return; }
+    try{
+      const reg=await navigator.serviceWorker.ready;
+      const sub=await reg.pushManager.getSubscription();
+      if(!sub){ toast('Notifications are off — turn them on first'); return; }
+      if(Notification.permission!=='granted'){ toast('This browser is blocking notifications'); return; }
+      const auth=await sign(27235,'push-test',[['p',ME.pubkey]]);
+      toast('sending…');
+      const r=await fetch('/api/push/test',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ pubkey:ME.pubkey, auth:btoa(JSON.stringify(auth)) })}).then(r=>r.json());
+      if(r&&r.ok) toast(`sent to ${r.delivered} device${r.delivered===1?'':'s'} — check your notifications`);
+      else toast((r&&r.error)||'the server could not send it');
+    }catch(e){ toast('test failed: '+(e&&e.message||e)); }
   }
   async function disablePush(){
     try{ const reg=await navigator.serviceWorker.ready; const sub=await reg.pushManager.getSubscription();
@@ -17439,13 +17463,24 @@
     toast('Push notifications off');
   }
   async function _wirePushToggle(){
-    const btn=$('#set-push-toggle'), st=$('#set-push-status'); if(!btn) return;
+    const btn=$('#set-push-toggle'), st=$('#set-push-status'), tb=$('#set-push-test'); if(!btn) return;
+    // iOS gives a Safari TAB no push at all — the PWA has to be installed to the Home Screen first.
+    // Nothing surfaces that: permission can be granted, the toggle can read "on", and no notification
+    // ever arrives. Say it here rather than let the Test button be the only clue.
+    const iosTab = /iP(hone|ad|od)/.test(navigator.userAgent||'')
+      && !(navigator.standalone===true || (matchMedia && matchMedia('(display-mode: standalone)').matches));
     const render=(s)=>{
-      if(s==='unsupported'){ btn.disabled=true; btn.textContent='🔔 Not supported on this browser'; return; }
+      if(tb) tb.style.display = s==='on' ? '' : 'none';
+      if(s==='unsupported'){ btn.disabled=true; btn.textContent='🔔 Not supported on this browser';
+        if(st && iosTab) st.textContent='On iPhone, add this app to your Home Screen first — Safari tabs cannot receive notifications.';
+        return; }
       if(s==='denied'){ btn.disabled=true; btn.textContent='🔔 Blocked in browser settings'; if(st) st.textContent='Re-enable notifications for this site in your browser settings.'; return; }
       btn.disabled=false; btn.textContent = s==='on' ? '🔕 Turn off push notifications' : '🔔 Enable push notifications';
-      if(st) st.textContent = s==='on' ? "On — you'll be pinged for mentions, replies, reactions and zaps." : '';
+      if(st) st.textContent = s==='on'
+        ? "On — calls, messages, mentions, replies, reactions and zaps. Press Test to prove it reaches this device."
+        : (iosTab ? 'On iPhone, add this app to your Home Screen first — Safari tabs cannot receive notifications.' : '');
     };
+    if(tb) tb.onclick=async()=>{ tb.disabled=true; try{ await testPush(); } finally { tb.disabled=false; } };
     render(await pushState());
     btn.onclick=async()=>{ btn.disabled=true;
       try{ if((await pushState())==='on') await disablePush(); else await enablePush(); }catch(e){ toast('push change failed'); }
@@ -17489,9 +17524,10 @@
       </section>
       <section class="set-card">
         <div class="set-head"><div><div class="set-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bell"></use></svg>Notifications</div>
-          <div class="muted small">Push notifications for mentions, replies, reactions and zaps — delivered even when the app is closed.</div></div></div>
+          <div class="muted small">Calls, messages, mentions, replies, reactions and zaps — delivered even when the app is closed.</div></div></div>
         <div class="set-body">
           <button class="btn btn-neon small" id="set-push-toggle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bell"></use></svg>Enable push notifications</button>
+          <button class="btn small" id="set-push-test" style="margin-left:6px">Test</button>
           <div class="muted small" id="set-push-status" style="margin-top:6px"></div>
         </div>
       </section>

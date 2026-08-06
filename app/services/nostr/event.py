@@ -56,6 +56,25 @@ def verify_event(event: dict) -> bool:
         return False
 
 
+def verify_self_auth(auth_b64: str, pubkey_hex: str) -> bool:
+    """Does `auth_b64` prove the caller holds the key for `pubkey_hex`, right now?
+
+    A base64 Nostr event, signed by that pubkey, stamped within a 5-minute window — the standard
+    "prove you own this npub" handshake for an endpoint that takes a pubkey as input and would
+    otherwise trust it. Without a check like this, anyone can name anyone else's key.
+
+    The window is what makes a captured proof useless a few minutes later; the signature is what
+    makes one impossible to forge in the first place.
+    """
+    import base64
+    try:
+        ev = json.loads(base64.b64decode(auth_b64))
+    except Exception:
+        return False
+    return (verify_event(ev) and ev.get("pubkey") == pubkey_hex
+            and abs(int(ev.get("created_at", 0)) - int(time.time())) <= 300)
+
+
 def reply_tags(parent: dict, root_id: str | None = None) -> list:
     """Build NIP-10 e/p tags for a reply to `parent`.
 

@@ -14,6 +14,7 @@ So the gate keys on arrival order, and these tests drive the real `relay.subscri
 relay that speaks the protocol, rather than asserting on its internals.
 """
 import asyncio
+import contextlib
 import json
 
 import websockets
@@ -51,8 +52,14 @@ async def _run(handler, stop_after, timeout=10):
         pass
     stop.set()
     task.cancel()
+    # Await the cancellation: an un-awaited cancel leaves "Task was destroyed but it is pending" and
+    # a leaked socket per test, which is how a suite starts failing only when run in a certain order.
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
     server.close()
-    await server.wait_closed()
+    # Bounded: a stub that misbehaves must fail this test, not hang CI forever.
+    with contextlib.suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(server.wait_closed(), 5)
     return seen
 
 
@@ -65,7 +72,7 @@ def test_backlog_is_dropped_and_live_events_are_handled():
                 await ws.send(json.dumps(["EVENT", sub, _ev(f"old{i}", 1)]))
             await ws.send(json.dumps(["EOSE", sub]))
             await ws.send(json.dumps(["EVENT", sub, _ev("live", 2)]))
-            await asyncio.sleep(5)
+            await ws.wait_closed()
 
         seen = await _run(handler, lambda s: "live" in s)
         assert seen == ["live"], f"backlog leaked into notifications: {seen}"
@@ -82,7 +89,7 @@ def test_a_backdated_gift_wrap_still_notifies():
             assert "since" not in (req[2] or {}), f"live_only must not send `since`: {req[2]}"
             await ws.send(json.dumps(["EOSE", sub]))
             await ws.send(json.dumps(["EVENT", sub, _ev("backdated", 1)]))   # created_at ~1970
-            await asyncio.sleep(5)
+            await ws.wait_closed()
 
         assert await _run(handler, lambda s: s) == ["backdated"]
     asyncio.run(go())
@@ -100,10 +107,11 @@ def test_no_eose_opens_the_gate_rather_than_staying_silent():
                 await ws.send(json.dumps(["EVENT", sub, _ev("first", 1)]))   # gated, and no EOSE follows
                 await asyncio.sleep(1.0)
                 await ws.send(json.dumps(["EVENT", sub, _ev("after", 2)]))
-                await asyncio.sleep(5)
+                await ws.wait_closed()
 
             seen = await _run(handler, lambda s: "after" in s)
-            assert "after" in seen, "gate never opened — DMs would be silent on this relay"
+            # Stronger than "after in seen": also proves the gated "first" never got through.
+            assert seen == ["after"], seen
         finally:
             relay_mod._EOSE_FALLBACK = orig
     asyncio.run(go())
@@ -128,7 +136,7 @@ def test_gate_recloses_on_reconnect():
             await ws.send(json.dumps(["EVENT", sub, _ev("replayed", 1)]))   # backlog again
             await ws.send(json.dumps(["EOSE", sub]))
             await ws.send(json.dumps(["EVENT", sub, _ev("live2", 3)]))
-            await asyncio.sleep(5)
+            await ws.wait_closed()
 
         seen = await _run(handler, lambda s: "live2" in s, timeout=15)
         assert "replayed" not in seen, f"backlog replayed as notifications after reconnect: {seen}"

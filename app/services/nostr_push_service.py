@@ -85,7 +85,7 @@ def _title(ev: dict, name: str) -> str:
 def _root_channel(ev: dict) -> str:
     """The kind-40 a chat message belongs to. Prefer the "root"-marked `e` tag — a REPLY inside a channel
     carries a second `e` (the message replied to), so taking the first blindly misfiles it."""
-    es = [t for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "e" and t[1]]
+    es = [t for t in (ev.get("tags") or []) if len(t) >= 2 and t[0] == "e" and t[1]]
     for t in es:
         if len(t) >= 4 and t[3] == "root":
             return t[1]
@@ -136,7 +136,7 @@ async def _refresh_joined(pubkeys: list[str]) -> None:
             continue
         if pk not in newest or ev.get("created_at", 0) > newest[pk].get("created_at", 0):
             newest[pk] = ev
-    _joined = {pk: {t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "e" and t[1]}
+    _joined = {pk: {t[1] for t in (ev.get("tags") or []) if len(t) >= 2 and t[0] == "e" and t[1]}
                for pk, ev in newest.items()}
     _joined_at = time.monotonic()
 
@@ -183,7 +183,7 @@ async def _poll_channels():
             cid = _root_channel(ev)
             if not cid:
                 continue
-            ptags = {t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "p"}
+            ptags = {t[1] for t in (ev.get("tags") or []) if len(t) >= 2 and t[0] == "p"}
             recips = []
             for pk in by_pk:
                 if pk == author or cid not in _joined.get(pk, ()):
@@ -253,7 +253,7 @@ async def _poll():
                 continue
             _seen.add(eid)
             author = ev.get("pubkey", "")
-            ptags = [t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "p"]
+            ptags = [t[1] for t in (ev.get("tags") or []) if len(t) >= 2 and t[0] == "p"]
             recips = [pk for pk in ptags if pk in by_pk and pk != author]   # not your own event
             if not recips:
                 continue
@@ -321,7 +321,7 @@ def _rings(ev: dict) -> bool:
     so the fallback would have to ring for both and the second ring would survive. Absence has to mean
     exactly one thing.
     """
-    ts = [t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "t"]
+    ts = [t[1] for t in (ev.get("tags") or []) if len(t) >= 2 and t[0] == "t"]
     return (not ts) or ("invite" in ts)
 
 
@@ -329,7 +329,7 @@ async def _call_handler(ev: dict):
     if not _rings(ev):
         return                       # ice/answer/bye — cheapest possible exit, before any state or I/O
     author = ev.get("pubkey", "")
-    ptags = [t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "p"]
+    ptags = [t[1] for t in (ev.get("tags") or []) if len(t) >= 2 and t[0] == "p"]
     recips = [pk for pk in ptags if pk and pk != author]
     if not recips:
         return
@@ -353,22 +353,8 @@ async def _call_handler(ev: dict):
     except Exception:
         pass
 
-    def _lookup_subs():
-        from app.database import SessionLocal
-        from app.models import PushSubscription
-        db = SessionLocal()
-        try:
-            out = {}
-            for pk in fresh:
-                rows = db.query(PushSubscription).filter(PushSubscription.pubkey == pk).all()
-                if rows:
-                    out[pk] = [{"endpoint": r.endpoint, "keys": {"p256dh": r.p256dh, "auth": r.auth}} for r in rows]
-            return out
-        finally:
-            db.close()
-
     try:
-        targets = await asyncio.to_thread(_lookup_subs)   # off the event loop
+        targets = await asyncio.to_thread(_subs_for, fresh)   # off the event loop
         if not targets:
             return
         name = await _name_for(author)
@@ -396,6 +382,59 @@ _DM_COOLDOWN = 10.0        # per recipient; collapses a burst into one buzz with
 _dm_recent: dict = {}
 _dm_stop = None
 _dm_task = None
+_sub_pks: set[str] = set()   # pubkeys with a push subscription — cached, see _subscriber_pks()
+_sub_pks_at = 0.0
+_SUB_PKS_TTL = 60.0
+
+
+def _subs_for(pks) -> dict:
+    """{pubkey: [web-push subscription dicts]} for `pks`. ONE query, not one per pubkey — the call
+    and DM handlers both feed this from an untrusted event's p tags. Blocking; call via to_thread."""
+    from app.database import SessionLocal
+    from app.models import PushSubscription
+    db = SessionLocal()
+    try:
+        out: dict = {}
+        for r in db.query(PushSubscription).filter(PushSubscription.pubkey.in_(list(pks))).all():
+            out.setdefault(r.pubkey, []).append(
+                {"endpoint": r.endpoint, "keys": {"p256dh": r.p256dh, "auth": r.auth}})
+        return out
+    finally:
+        db.close()
+
+
+async def _subscriber_pks() -> set[str]:
+    """Pubkeys that actually have a push subscription, cached for a minute.
+
+    This is a SECURITY boundary, not a cache for speed. Everything downstream is keyed on pubkeys
+    lifted from an untrusted event's `p` tags, so without an early membership test:
+
+      * a DB query fired per p-tag — an event carrying a hundred of them is a hundred queries;
+      * and the per-recipient cooldown was stamped for pubkeys that never subscribed, so anyone could
+        park a `p` tag on a victim every 10 seconds and silently suppress that victim's REAL message
+        notifications, indefinitely, while `_dm_recent` grew with attacker-chosen keys.
+
+    Filtering against this set first makes both cost nothing.
+    """
+    global _sub_pks, _sub_pks_at
+    if _sub_pks and (time.monotonic() - _sub_pks_at) < _SUB_PKS_TTL:
+        return _sub_pks
+
+    def _load():
+        from app.database import SessionLocal
+        from app.models import PushSubscription
+        db = SessionLocal()
+        try:
+            return {pk for (pk,) in db.query(PushSubscription.pubkey).distinct()}
+        finally:
+            db.close()
+
+    try:
+        _sub_pks = await asyncio.to_thread(_load)
+        _sub_pks_at = time.monotonic()
+    except Exception as e:
+        logger.debug("[nostr-push] subscriber refresh failed: %s", e)   # keep the previous set
+    return _sub_pks
 
 
 async def _dm_handler(ev: dict):
@@ -403,8 +442,11 @@ async def _dm_handler(ev: dict):
     author = ev.get("pubkey", "")
     # The gift wrap is signed by a THROWAWAY key and p-tags the real recipient, so this filter is
     # right for 1059 even though `author` is meaningless there. For kind 4 the author is the sender.
-    ptags = [t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "p"]
-    recips = [pk for pk in ptags if pk and pk != author]
+    ptags = [t[1] for t in (ev.get("tags") or []) if len(t) >= 2 and t[0] == "p"]
+    # Intersect with real subscribers BEFORE anything else touches these pubkeys — they come from an
+    # untrusted event, and both the cooldown map and the DB lookup below are per-pubkey.
+    known = await _subscriber_pks()
+    recips = [pk for pk in ptags if pk and pk != author and pk in known]
     if not recips:
         return
     now = time.monotonic()
@@ -417,22 +459,8 @@ async def _dm_handler(ev: dict):
     for pk in fresh:
         _dm_recent[pk] = now
 
-    def _lookup_subs():
-        from app.database import SessionLocal
-        from app.models import PushSubscription
-        db = SessionLocal()
-        try:
-            out = {}
-            for pk in fresh:
-                rows = db.query(PushSubscription).filter(PushSubscription.pubkey == pk).all()
-                if rows:
-                    out[pk] = [{"endpoint": r.endpoint, "keys": {"p256dh": r.p256dh, "auth": r.auth}} for r in rows]
-            return out
-        finally:
-            db.close()
-
     try:
-        targets = await asyncio.to_thread(_lookup_subs)
+        targets = await asyncio.to_thread(_subs_for, fresh)
         if not targets:
             return
         # NO content, and for 1059 no sender either — the server cannot decrypt, which is the point of
@@ -451,7 +479,10 @@ async def _dm_handler(ev: dict):
 
 async def _dm_sub_loop():
     try:
-        await relay.subscribe(_local_relay()[0], [{"kinds": _DM_KINDS}], _dm_handler,
+        # limit 0: we only ever act on what arrives AFTER EOSE, so asking for stored history means
+        # the relay serializes its default page (500 events, ~0.5-1 MB of gift wraps) on every
+        # reconnect purely to be discarded by the gate.
+        await relay.subscribe(_local_relay()[0], [{"kinds": _DM_KINDS, "limit": 0}], _dm_handler,
                               _dm_stop, live_only=True)
     except Exception as e:
         logger.warning(f"[nostr-push] dm subscription ended: {e}")
