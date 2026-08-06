@@ -1114,13 +1114,19 @@
     // they render as ☐ (or worse, as a colour emoji that fights the theme) — and the row is the one place
     // in the builder where a missing glyph reads as a broken layer rather than a missing decoration.
     const ic = n => `<svg class="ic" aria-hidden="true"><use href="#i-${n}"></use></svg>`;
+    // The row thumbnail must reflect an ERASE too, or the list shows the layer un-erased while the stage
+    // shows it cut out. Same mask CSS as the stage (`_maskCss`), sized to the tile's object-fit — which
+    // is `cover` (see .mb-tile img in client.css), NOT the layer's own fit. `_maskCss` returns '' until
+    // the mask is proven loadable, so it never turns a tile into a blank hole.
+    const tmk = (l.type==='image' || l.type==='video') ? _maskCss(l, 'cover') : '';
+    const tsty = tmk ? ` style="${tmk.replace(/^;/, '')}"` : '';
     const tile = l.type==='text'
       ? `<span class="mb-tile mb-tile-gl" aria-hidden="true">${ic('text')}</span>`
       : (l.type==='audio'
         ? `<span class="mb-tile mb-tile-gl mb-tile-aud" aria-hidden="true">${ic('music')}</span>`
         : l.type==='video'
-          ? `<span class="mb-tile"><video src="${enc(l.src)}#t=0.1" muted playsinline preload="metadata"></video><i class="mb-tvid">${ic('play')}</i></span>`
-          : `<span class="mb-tile"><img src="${enc(l.src)}" alt="" loading="lazy"></span>`);
+          ? `<span class="mb-tile"><video src="${enc(l.src)}#t=0.1" muted playsinline preload="metadata"${tsty}></video><i class="mb-tvid">${ic('play')}</i></span>`
+          : `<span class="mb-tile"><img src="${enc(l.src)}" alt="" loading="lazy"${tsty}></span>`);
     return `<div class="mb-track${l.id===sel?' sel':''}${l.type==='audio'?' mb-track-aud':''}" data-id="${l.id}">
       <div class="mb-trackname" title="${enc(name)}">
         ${/* Its OWN handle, not the whole row: the drag surface needs touch-action:none to be a drag at all
@@ -1205,6 +1211,16 @@
       el.style.webkitMaskSize = ofit; el.style.maskSize = ofit;
       el.style.webkitMaskPosition = 'center'; el.style.maskPosition = 'center';
       el.style.webkitMaskRepeat = 'no-repeat'; el.style.maskRepeat = 'no-repeat';
+      // Patch the ROW THUMBNAIL too, so a mask that arrives via the async probe (a reload, no local
+      // blob yet) shows in the list without waiting for a full re-render. The tile is object-fit:cover
+      // regardless of the layer's own fit, so its mask-size is always cover (see the tile in trackEl).
+      const tel = document.querySelector(`.mb-track[data-id="${l.id}"] .mb-tile > img, .mb-track[data-id="${l.id}"] .mb-tile > video`);
+      if(tel){
+        tel.style.webkitMaskImage = u;  tel.style.maskImage = u;
+        tel.style.webkitMaskSize = 'cover'; tel.style.maskSize = 'cover';
+        tel.style.webkitMaskPosition = 'center'; tel.style.maskPosition = 'center';
+        tel.style.webkitMaskRepeat = 'no-repeat'; tel.style.maskRepeat = 'no-repeat';
+      }
     });
   }
   const _maskTries = Object.create(null);

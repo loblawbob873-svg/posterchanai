@@ -394,9 +394,17 @@ ERASE_PROBE = r"""(async () => {
   const stageMask = stageEl ? (getComputedStyle(stageEl).webkitMaskImage
                                || getComputedStyle(stageEl).maskImage || 'none') : 'none';
 
+  // The LAYER-ROW THUMBNAIL must reflect the erase too — reported as "the layer preview image never
+  // gets updated on erase". It is a separate render path (trackEl's .mb-tile) from the stage, so a mask
+  // on the stage says nothing about the tile. Same immediacy requirement: no fetch, no grace period.
+  const tileEl = document.querySelector(`.mb-track[data-id="${layer().id}"] .mb-tile > img`);
+  const tileMask = tileEl ? (getComputedStyle(tileEl).webkitMaskImage
+                             || getComputedStyle(tileEl).maskImage || 'none') : 'none';
+
   return {
     painted, corner,
     stageMask, stageMasked: stageMask !== 'none' && stageMask !== '',
+    tileFound: !!tileEl, tileMask, tileMasked: tileMask !== 'none' && tileMask !== '',
     touchAction,
     maskW: ov.width, maskH: ov.height,
     overflow: document.documentElement.scrollWidth > vw + 1,
@@ -630,9 +638,14 @@ async def drive(url):
                     problems.append((lbl, "erase-invisible",
                                      "Apply saved the mask but the stage is not showing it — the erase "
                                      "is invisible in the preview and only appears in the export"))
+                if er["mask"] and er["tileFound"] and not er["tileMasked"]:
+                    problems.append((lbl, "erase-invisible-thumb",
+                                     "Apply saved the mask but the LAYER-ROW THUMBNAIL is not showing it "
+                                     "— the list preview stays un-erased"))
                 print(f"{lbl}: mask={er['maskW']}x{er['maskH']} painted={er['painted']} "
                       f"corner={er['corner']} saved={'yes' if er['mask'] else 'NO'} "
-                      f"onStage={'yes' if er['stageMasked'] else 'NO'}")
+                      f"onStage={'yes' if er['stageMasked'] else 'NO'} "
+                      f"onTile={'yes' if er['tileMasked'] else 'NO'}")
 
             # ✂ ERASE MASK on the stage — the "black screen after erase" regression.
             await call("Page.navigate", {"url": url})
