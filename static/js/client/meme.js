@@ -3309,13 +3309,17 @@
               cur.origName = cur.name || ''; cur.origDur = +cur.dur || 0;
             }
             cur.src = j.url; cur.type = 'video'; cur.trim = 0;
-            // KEEP the erase mask — unlike applyMemeEffect, which clears it because an effect resamples
-            // the picture to a NEW shape. A talking take does not: add_talk renders each frame at the
-            // source's own size (base.copy(), aspect preserved), so the still's mask still lines up with
-            // the clip under the same object-fit. Keeping it is what makes the erase SHOW: the layer
-            // becomes an ordinary masked video — previewed by CSS mask and exported by the renderer's
-            // alphaextract, exactly like erasing a video directly. A pose/cut-out carries no mask, so
-            // this is a no-op there (and a genuine cut-out still talks transparent via j.alpha below).
+            // A CHARACTER POSE animates its OWN artwork (a different-shaped clip than this layer's src),
+            // so a mask painted on the old clip would no longer line up — clear it, the way effects do.
+            // A pose can carry a mask: eraseParts runs on video layers too, and a pose is one.
+            if(pose){
+              cur.mask = '';
+            }
+            // For a plain ERASED image, KEEP the mask (unlike applyMemeEffect, which resamples to a new
+            // shape): add_talk renders each frame at the source's own size (base.copy(), aspect
+            // preserved), so the still's mask still lines up under the same object-fit. Keeping it is what
+            // makes the erase SHOW — the layer becomes an ordinary masked video, previewed by a CSS mask
+            // and exported by the renderer's alphaextract, exactly like erasing a video directly.
             if(+j.dur > 0) cur.dur = +j.dur;
             cur.name = name;
             sel = cur.id;
