@@ -4,6 +4,12 @@ PosterChan AI (the app on `:3051` and the built-in Nostr relay on `:3052`) speak
 by design — put **nginx** in front to terminate TLS and serve it on `443` like a real product.
 This applies to **both** a full (AI) deployment and a **Nostr-only** deployment.
 
+> **In Docker you don't have to do any of this.** `docker compose --profile <backend> --profile tls
+> up -d` brings up a proxy container (nginx + certbot) already configured for the stack, on a
+> self-signed certificate you replace with `certbot --nginx` when you have a domain — see
+> [DOCKER.md](DOCKER.md#production-https--tls). This page is for running nginx yourself, on the host
+> or on bare metal.
+
 Two ready-to-edit templates:
 
 | Template | Use it for |

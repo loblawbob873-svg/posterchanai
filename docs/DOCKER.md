@@ -126,13 +126,18 @@ The app boots fine without the AI libraries (every ML import is lazy); the AI ta
 `POSTERCHANAI_NOSTR_ONLY=1`. You can switch a node to a full GPU profile later without losing data
 (same volumes).
 
-**Put it behind HTTPS before anyone else uses it.** A relay on `ws://` is a relay most clients
-refuse to connect to, and `/.well-known/nostr.json` (NIP-05) only counts on the name people put
-after the `@`. [`nginx/nostr-docker.conf.example`](../nginx/nostr-docker.conf.example) is a
-copy-and-edit config for exactly this stack — the relay at both `wss://example.com/relay` and
-`wss://relay.example.com/`, NIP-05, Blossom uploads, the web client — with the Docker-specific
-traps called out (which upstream address to use, and how to stop `http://<ip>:3051` answering
-around your TLS). See [NGINX.md](NGINX.md) for the walkthrough.
+**Put it behind HTTPS before anyone else uses it** — add `--profile tls`:
+
+```bash
+docker compose --profile nostr --profile tls up -d --build
+```
+
+That adds an nginx+certbot container and serves the whole stack over HTTPS on a self-signed
+certificate right away, with the relay at `wss://<host>/relay` and NIP-05 at
+`/.well-known/nostr.json`. A relay on plain `ws://` is one most clients refuse to connect to, and
+the web client can't handle keys at all on a non-secure origin. See
+[Production (HTTPS / TLS)](#production-https--tls) for replacing the self-signed certificate with a
+real one.
 
 ## Git server (git-over-nostr)
 
@@ -202,17 +207,64 @@ units and flips the main unit to `--role app` in one step (`--revert` undoes it)
 
 ## Production (HTTPS / TLS)
 
-The container serves plain HTTP/WS — front it with **nginx** to get HTTPS, your own domain, and a
-proper `wss://…/relay`. Two ready-to-edit templates, both walked through in [NGINX.md](NGINX.md):
+Add `--profile tls` and you get a **`proxy` container** — nginx with certbot built in — so there's
+no web server to install and no config to write:
+
+```bash
+docker compose --profile nostr --profile tls up -d --build   # or cuda / rocm / intel / cpu
+# https://<host>/client   — works right away, on a self-signed certificate
+```
+
+It comes up on a **self-signed certificate for `example.com`**, so every browser shows a warning
+until you replace it. That is deliberately still worth having: the origin is `https://`, and the web
+client needs a secure origin to work at all — `crypto.subtle` (all key handling), the
+microphone/camera and service workers are unavailable on a plain `http://<ip>` address. A VPS
+install without TLS can't sign an event or take a call. (`http://localhost` is exempt, which is why
+a laptop test never hits this.)
+
+**Getting a real certificate is your job, and it's two commands.** Point a domain's DNS at the host,
+make sure 80 and 443 reach it, then:
+
+```bash
+docker compose exec proxy certbot --nginx -d your-domain.com
+docker compose exec proxy nginx -s reload
+```
+
+certbot rewrites `server_name` and the two `ssl_certificate` lines in the container's config for
+you. Renewal is manual too — `docker compose exec proxy certbot renew`, from a cron job or systemd
+timer on the host.
+
+Everything the proxy owns lives on volumes, so your edits and certbot's survive `up -d` and
+restarts:
+
+| Path in the container | Volume | What it is |
+|---|---|---|
+| `/etc/nginx/conf.d/posterchanai.conf` | `pc-proxy-conf` | the config — **seeded on first boot only**, then yours. Edit it with `docker compose exec proxy vi …`, check with `nginx -t`, apply with `nginx -s reload`. |
+| `/etc/letsencrypt` | `pc-proxy-ssl` | certificates: the self-signed pair under `selfsigned/`, plus whatever certbot issues. |
+
+Notes:
+
+- `POSTERCHANAI_DOMAIN=your-domain.com` in `.env` fills in `server_name` and the self-signed cert's
+  CN **on first boot only**. After that the config file is yours; change the file, not the variable.
+- The proxy reaches the backend through the `posterchanai` network alias, which every backend
+  profile answers to — so one config works for `nostr`, `cuda`, `rocm`, `intel` or `cpu`. Run **one**
+  backend profile at a time.
+- Bring up a backend profile alongside `tls`. On its own, the alias doesn't resolve, nginx exits with
+  `host not found in upstream`, and the container restarts until a backend appears.
+- Once TLS is up you usually want the plaintext ports closed, or `http://<ip>:3051` still answers
+  around it. In `.env`: `POSTERCHANAI_PORT=127.0.0.1:3051` and
+  `POSTERCHANAI_NOSTR_RELAY_PORT=127.0.0.1:3052`.
+- Then set the public URLs in the admin UI — **Relay → NIP-05 domain**, and **Git → Public base URL**
+  if you enabled the git host. Blossom needs nothing: it derives its URLs from the forwarded headers
+  the proxy sets.
+
+**Already run your own nginx, or want it on the host instead?** Skip the `tls` profile and use one
+of the two templates, both walked through in [NGINX.md](NGINX.md):
 
 | Template | Use it for |
 |---|---|
-| [`nginx/nostr-docker.conf.example`](../nginx/nostr-docker.conf.example) | the **`nostr` profile** — relay (on a path *and* its own subdomain), NIP-05, Blossom, the web client. Written for a container: upstream addressing, closing off the published ports, an optional nginx-in-compose block. |
+| [`nginx/nostr-docker.conf.example`](../nginx/nostr-docker.conf.example) | the **`nostr` profile** — relay (on a path *and* its own subdomain), NIP-05, Blossom, the web client, plus the container-vs-host upstream addressing. |
 | [`nginx/posterchanai.conf.example`](../nginx/posterchanai.conf.example) | the **AI profiles** — everything above plus the OpenAI-compatible `/v1` API and serving `/static` off a bare-metal checkout. |
-
-Either way, keep nginx on the host (or in its own container) and point it at `3051`/`3052` — and
-once it's up, set the public URLs in the admin UI (Relay → NIP-05 domain, Blossom → public base)
-so the app stops advertising `http://<ip>:3051` to other relays and clients.
 
 Open `http://<host>:3051/client` and log in with your **Nostr key** (NIP-07 browser extension or
 NIP-46 remote signer like Amber). The first admin is configured in Admin → Users.

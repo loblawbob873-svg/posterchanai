@@ -42,6 +42,13 @@ x-common: &common
   # share the host kernel clock, so this sets the HOST's time too — fine for a dedicated node.
   cap_add:
     - SYS_TIME
+  # One alias for every backend profile (cpu/cuda/rocm/intel/nostr), so the `proxy` service's nginx
+  # config can say `posterchanai:3051` and work whichever one you brought up — without it the
+  # upstream would have to name a specific profile's service. Only ever run ONE backend profile at
+  # a time (two would collide on the published ports anyway, and on this alias).
+  networks:
+    default:
+      aliases: [posterchanai]
   ports:
     - "${POSTERCHANAI_PORT:-3051}:3051"
     # Built-in Nostr relay (NIP-01). Only useful with POSTERCHANAI_NOSTR_RELAY=1 (binds 0.0.0.0).
@@ -343,7 +350,46 @@ services:
       - POSTERCHANAI_ROLE=media
       - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg2://posterchan:posterchan@postgres:5432/posterchan}
 
+  # TLS terminator: nginx + certbot, so a fresh VPS install serves HTTPS with no extra software to
+  # install and no config to write. It comes up on a SELF-SIGNED certificate for example.com —
+  # browsers warn, but the origin is https, which is what the web client actually needs (crypto.subtle,
+  # microphone/camera and service workers are all unavailable on a plain-http address). Swapping in a
+  # real certificate is then the operator's job, from inside the container:
+  #
+  #   docker compose --profile nostr --profile tls up -d --build
+  #   docker compose exec proxy certbot --nginx -d your-domain.com
+  #   docker compose exec proxy nginx -s reload
+  #
+  # Both volumes exist so that survives: the config certbot rewrites lives on pc-proxy-conf, its
+  # certificates and account on pc-proxy-ssl. Renewals are manual by design (`certbot renew`) — put
+  # it in a cron job or systemd timer on the host.
+  #
+  # Once this is up you usually want the backend's own ports on loopback so http://<ip>:3051 stops
+  # answering around your TLS. In .env:  POSTERCHANAI_PORT=127.0.0.1:3051
+  #                                      POSTERCHANAI_NOSTR_RELAY_PORT=127.0.0.1:3052
+  proxy:
+    logging: *logging
+    profiles: ["tls"]
+    image: posterchanai-proxy:${TAG:-local}
+    build: docker/proxy
+    # Bring up a backend profile alongside this one. With no backend container the `posterchanai`
+    # alias doesn't resolve, nginx exits with "host not found in upstream", and this restarts until
+    # one appears — noisy, but it heals itself rather than needing a manual restart afterwards.
+    restart: unless-stopped
+    ports:
+      - "${POSTERCHANAI_HTTP_PORT:-80}:80"
+      - "${POSTERCHANAI_HTTPS_PORT:-443}:443"
+    environment:
+      # First boot only — it fills in server_name and the self-signed cert's CN. After that the
+      # config file is yours (and certbot's); changing this variable later does nothing.
+      - POSTERCHANAI_DOMAIN=${POSTERCHANAI_DOMAIN:-example.com}
+    volumes:
+      - pc-proxy-conf:/etc/nginx/conf.d
+      - pc-proxy-ssl:/etc/letsencrypt
+
 volumes:
   pc-data:
   pc-rag:  # legacy name; mounts /app/data (uploads, generated media)
   pc-pg:   # PostgreSQL data (app + Nostr relay)
+  pc-proxy-conf:  # the proxy's nginx config — seeded once, then owned by the operator + certbot
+  pc-proxy-ssl:   # the proxy's certificates: /etc/letsencrypt (self-signed + anything certbot issues)
