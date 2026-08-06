@@ -1255,6 +1255,33 @@
          + `;-webkit-mask-position:center;mask-position:center`
          + `;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat`;
   }
+  // Bake a layer's picture together with its erase mask into a transparent PNG (opaque mask = keep,
+  // transparent = cut out), so a consumer that takes ONE image — Make it talk — animates the ERASED
+  // picture, not the raw upload. The stage and the renderer apply the mask themselves (mask-image /
+  // alphaextract); talk does not — it fetches one url and lip-syncs it — so without this an erased face
+  // both PREVIEWS un-erased in the mouth picker and RENDERS un-erased. `/meme/talk` already passes
+  // keep_alpha and add_talk only keeps alpha when the picture actually uses it, so the transparent PNG
+  // comes back as a silent alpha WebM the talk handler already knows how to place. Returns a Blob, or
+  // null when either image can't be read into a canvas (cross-origin taint, a dead url) — talk then
+  // falls back to the un-erased source rather than refusing to run.
+  function _bakeErase(srcUrl, maskUrl){
+    const load = u => new Promise((ok, no) => {
+      const im = new Image(); im.crossOrigin = 'anonymous';
+      im.onload = () => ok(im); im.onerror = no; im.src = u;
+    });
+    return load(srcUrl).then(im => load(maskUrl).then(mk => {
+      const c = document.createElement('canvas');
+      c.width = im.naturalWidth || im.width; c.height = im.naturalHeight || im.height;
+      const g = c.getContext('2d');
+      g.drawImage(im, 0, 0);
+      // The mask is painted in SOURCE space (same aspect ratio, capped resolution), so stretch it to
+      // the full picture — the renderer's order exactly: mask first, in source space, fit later.
+      g.globalCompositeOperation = 'destination-in';
+      g.drawImage(mk, 0, 0, c.width, c.height);
+      g.globalCompositeOperation = 'source-over';
+      return new Promise(res => c.toBlob(b => res(b || null), 'image/png'));
+    })).catch(() => null);
+  }
   // CSS equivalent of the renderer's flip+rotate for this layer ('' when it is untouched).
   function _xformCss(l){
     const t=_xform(l); return t ? `;transform:${t};transform-origin:center` : '';
@@ -3213,7 +3240,7 @@
     //
     // So the split is: speech = GPU, through the studio's own locked/load-balanced path; mouth = CPU,
     // through the meme render queue. Neither half reimplements the other's discipline.
-    on('mb-talk','click',()=>{
+    on('mb-talk','click',async ()=>{
       if(!PC.openVoiceStudio){ toast('voice cloning isn’t available on this build'); return; }
       // Place the mouth BEFORE spending a minute of GPU on the voice, not after: a marker you drag
       // is instant, and getting it wrong should cost a drag rather than another generation.
@@ -3228,7 +3255,23 @@
       // A CHARACTER POSE places the mouth on the pose's ARTWORK rather than on the layer's source,
       // because the layer's source is the rendered clip and the artwork is what gets animated.
       const pose = (l.type !== 'image' && l.fxPose) ? l.fxPose : '';
-      pickMouth(l.src, pose).then(mouth => {
+      // If the layer was ERASED, talk must animate the edited picture, not the raw upload. The erase is
+      // a separate alpha overlay (l.mask), not baked into l.src the way effects and background-removal
+      // are — so it is the one edit talk would otherwise miss, showing the original face in the picker
+      // AND rendering it un-erased. Bake it into a transparent PNG up front and drive the picker, the
+      // face-detect and the render from THAT one url. Prefer the mask blob this tab already holds
+      // (_maskSrc) so a cross-origin fetch can't defeat it. Bake failure is non-fatal: fall back to the
+      // un-erased source rather than blocking talk.
+      let bakedUrl = '';
+      if(!pose && l.mask){
+        const st0 = document.getElementById('mb-status'); if(st0) st0.textContent = 'preparing the picture…';
+        try{
+          const blob = await _bakeErase(l.src, _maskSrc(l.mask));
+          if(blob) bakedUrl = await uploadBlob(new File([blob], 'talk-src.png', { type:'image/png' }));
+        }catch(_){ }
+        if(st0) st0.textContent = '';
+      }
+      pickMouth(pose ? l.src : (bakedUrl || l.src), pose).then(mouth => {
         if(!mouth) return;                       // cancelled — no voice generated, nothing spent
         PC.openVoiceStudio({
         useLabel: '🗣️ Make the face say it',
@@ -3249,7 +3292,9 @@
             const r = await fetch('/client/meme/talk',{ method:'POST', headers:{'Content-Type':'application/json'},
               body: JSON.stringify(pose
                 ? { pubkey: ME.pubkey, auth, audio, character: pose, mouth }
-                : { pubkey: ME.pubkey, auth, url: cur.src, audio, mouth }) });
+                // The baked (erased) picture when there was an erase, else the layer's own source —
+                // the same image the mouth was placed on, so placement and render can't disagree.
+                : { pubkey: ME.pubkey, auth, url: (bakedUrl || cur.src), audio, mouth }) });
             const j = await r.json().catch(()=>({}));
             if(!r.ok || !j.url) throw new Error(j.detail || j.error || ('HTTP '+r.status));
             // Swap the layer's source IN PLACE, keeping its box and timeline position — same one-way-
