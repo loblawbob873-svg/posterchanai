@@ -7,7 +7,18 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.2.1'
+        // AGP 8.13, not 8.2.1. AGP pins the Kotlin compiler lint parses with (8.2.1 → 1.9.0) and the
+        // R8/D8 that rewrites Kotlin metadata (8.2.1 → 8.2.42), and BOTH hard-fail on a dependency
+        // whose metadata is newer than they understand:
+        //     Module was compiled with an incompatible version of Kotlin.
+        //     The binary version of its metadata is 2.3.0, expected version is 1.9.0.
+        //     WARNING: D8: Unexpected error during rewriting of Kotlin metadata … Should never be called
+        // Nothing in this repo changed to cause that — UnifiedPush 3.3.3 is built with Kotlin 2.1 and
+        // RootEncoder 2.7.2 with Kotlin 2.3, so pinning the DEPENDENCIES (as the RootEncoder comment in
+        // app/build.gradle tried to) only postpones it: the floor keeps rising and the toolchain has to
+        // meet it. Requires Gradle 8.13 (see gradle/wrapper/gradle-wrapper.properties) and JDK 17,
+        // which the workflow already uses.
+        classpath 'com.android.tools.build:gradle:8.13.0'
         classpath 'com.google.gms:google-services:4.4.0'
 
         // NOTE: Do not place your application dependencies here; they belong

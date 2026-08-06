@@ -61,7 +61,9 @@ dependencies {
     // Screen sharing: MediaProjection → H264/AAC → RTMP (Android WebView has no getDisplayMedia, so the
     // screen can't reach WebRTC/WHIP at all — we push to the same MediaMTX ingest OBS uses instead).
     // PINNED to 2.7.2 ON PURPOSE: 2.7.3+ sets minCompileSdk=36 in its aar-metadata and will not configure
-    // against compileSdk 35 / AGP 8.2.1. The API we use is identical in 2.7.2.
+    // against compileSdk 35. The API we use is identical in 2.7.2. (2.7.2 is itself built with Kotlin
+    // 2.3, which is why the AGP bump in the root build.gradle was needed to keep even this pin working —
+    // pinning the dependency down was never going to hold on its own.)
     implementation "com.github.pedroSG94.RootEncoder:library:2.7.2"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
