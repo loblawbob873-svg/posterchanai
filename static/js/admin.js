@@ -77,22 +77,52 @@ async function loadRelayIdentity() {
         else if (el) el.textContent = (r && r.error) || '(no operator key)';
     } catch (_) { if (el) el.textContent = '(failed to load)'; }
 }
+/* THE one copy path for the admin panel. Every Copy button here goes through it.
+ *
+ * The panel is usually EMBEDDED — the client frames <instance>/admin in an iframe (desktop app, PWA,
+ * APK), and that frame is cross-origin. `clipboard-write` defaults to a `self` allowlist, so unless
+ * the framer delegates it the async Clipboard API is DENIED in the frame and writeText() rejects.
+ * A rejection is asynchronous: `try { navigator.clipboard.writeText(v) } catch (_) {}` does not catch
+ * it. That is exactly how the .onion Copy button reported "copied" in the Windows app while the
+ * clipboard stayed empty — the sync catch never fired, so the execCommand fallback never ran either.
+ * The other half of the same fix delegates the permission (`allow="clipboard-write"` on the admin
+ * iframe in static/js/client/app.js), but that only ships with the next desktop build, and a plain
+ * HTTP instance (an .onion, a LAN box) has no navigator.clipboard at all — so this must stand alone.
+ *
+ * So: AWAIT the write, fall back to execCommand over a real focused selection, and if even that is
+ * refused leave the value SELECTED and say "press Ctrl+C" — never prompt(), which wedges keyboard
+ * focus in an Electron window. `srcEl` is the visible input holding the value, when there is one;
+ * without it there is nothing on screen to select, so a value the admin would otherwise lose
+ * (the relay nsec) still falls back to prompt(). Returns whether the clipboard actually got it.
+ */
+async function copyToClipboard(text, btn, srcEl) {
+    const v = String(text == null ? '' : text);
+    if (!v) return false;
+    let ok = false;
+    try { await navigator.clipboard.writeText(v); ok = true; }
+    catch (_) { /* insecure context, no API, or the frame was denied clipboard-write */ }
+    if (!ok) {
+        const el = srcEl || document.createElement('textarea');
+        if (!srcEl) { el.value = v; el.style.position = 'fixed'; el.style.top = '0'; el.style.opacity = '0'; document.body.appendChild(el); }
+        try { el.focus(); el.select(); ok = document.execCommand('copy'); } catch (_) { }
+        if (!srcEl) el.remove();
+    }
+    if (btn) {
+        const o = btn.dataset.copyLabel || btn.textContent;
+        btn.dataset.copyLabel = o;
+        btn.textContent = ok ? '✓ copied' : '⚠ press Ctrl+C';
+        setTimeout(() => { btn.textContent = o; }, 2000);
+    }
+    if (!ok && srcEl) { try { srcEl.focus(); srcEl.select(); } catch (_) { } }   // leave it ready for Ctrl+C
+    return ok;
+}
 async function copyRelayKey(which) {
     const btn = (typeof event !== 'undefined') && event.target;
     if (!_relayKeys) await loadRelayIdentity();   // load on demand if the tab fetch hasn't run
     const v = _relayKeys && _relayKeys[which];
     if (!v) { alert('No ' + which + ' available (no operator key).'); return; }
-    let ok = false;
-    try { await navigator.clipboard.writeText(v); ok = true; } catch (_) { /* insecure context / no API */ }
-    if (!ok) {
-        const t = document.createElement('textarea');
-        t.value = v; t.style.position = 'fixed'; t.style.opacity = '0';
-        document.body.appendChild(t); t.focus(); t.select();
-        try { ok = document.execCommand('copy'); } catch (_) { }
-        t.remove();
-    }
-    if (btn) { const o = btn.textContent; btn.textContent = ok ? '✓ copied' : '⚠ copy failed'; setTimeout(() => { btn.textContent = o; }, 1500); }
-    if (!ok) window.prompt('Copy the ' + which + ' manually:', v);   // last resort (http / locked-down clipboard)
+    const ok = await copyToClipboard(v, btn);
+    if (!ok) window.prompt('Copy the ' + which + ' manually:', v);   // nothing on screen to select
 }
 
 // On-demand model download (kind = chat | image | music). Models aren't auto-downloaded; this

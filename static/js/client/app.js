@@ -15331,6 +15331,12 @@
       // main timeline. Load it from the server (cross-origin, cookie is SameSite=None so it authenticates;
       // /admin sets no X-Frame-Options so framing is allowed). PWA: __PC_API_BASE__ undefined → plain '/admin'.
       const ifr=document.createElement('iframe'); ifr.className='admin-frame'; ifr.src=(window.__PC_API_BASE__||'')+'/admin?t='+Date.now(); ifr.title='Admin'; ifr.style.opacity='0';
+      // The frame is CROSS-ORIGIN (it comes from the instance, we are app://posterchan or the PWA), and
+      // `clipboard-write` defaults to a `self` allowlist — so without this delegation every Copy button
+      // in the panel has its writeText() rejected, which is what killed the .onion address copy in the
+      // Windows app. The panel also carries its own execCommand fallback (admin.js copyToClipboard),
+      // because a cleartext instance has no navigator.clipboard to permit in the first place.
+      ifr.allow='clipboard-write';
       ifr.addEventListener('load', ()=>{ ifr.dataset.loaded='1'; ifr.style.opacity='1'; const sp=host.querySelector('.spinner'); if(sp) sp.remove(); });
       _adminFrameEl=ifr;
       _bindAdminTokenBridge();

@@ -76,7 +76,14 @@
         }catch(e){ st.textContent='failed: '+e; }
         btn.disabled=false;
       };
-      copy.onclick=()=>{ addr.select(); try{ navigator.clipboard.writeText(addr.value); }catch(_){ document.execCommand('copy'); } st.textContent='copied'; setTimeout(()=>{st.textContent='';},1500); };
+      // copyToClipboard (admin.js) awaits the write and falls back — the old inline version wrapped the
+      // PROMISE in a sync try/catch, so in the framed panel (desktop app) it claimed "copied" and copied
+      // nothing. Pass `addr` so the last resort can leave the address selected for Ctrl+C.
+      copy.onclick=async()=>{
+        const ok=await copyToClipboard(addr.value, copy, addr);
+        st.textContent = ok ? '' : 'address selected — press Ctrl+C';
+        setTimeout(()=>{ st.textContent=''; }, 4000);
+      };
       load();
     })();
     </script>
