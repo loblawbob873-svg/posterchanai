@@ -157,7 +157,9 @@
 
   // Timeline pause/resume while backgrounded — set by watchTimeline for the CURRENT view.
   let _tlPause = null, _tlResume = null, _tlPaused = false, _tlHideTimer = null;
-  const _TL_HIDE_AFTER = 45000;   // don't churn on a glance at the notification shade
+  // Short enough to get the CLOSE frame out before the OS freezes the socket (after that the relay
+  // keeps streaming regardless), long enough to absorb a glance at the notification shade.
+  const _TL_HIDE_AFTER = 20000;
   let CFG = {}, ME = null, FOLLOWS = new Set(), FOLLOWERS = new Set(), MUTED = new Set(), MUTED_WORDS = new Set(), MUTED_THREADS = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false, GUEST = false;
 
   /* ---------- how this copy of the client is running ----------
@@ -3219,8 +3221,18 @@
     // Re-entrancy token: a slow async negSync that resolves AFTER the user re-navigated (or re-rendered)
     // must not install — and leak — a subscription for a superseded render. setSub closes such orphans.
     const myGen = ++_tlGen;
-    const setSub = (s)=>{ if(myGen!==_tlGen || VIEW!==view){ try{ Relay.close(s); }catch(_){} } else subs[view]=s; };
-    const fullSub = ()=>{ setSub(Relay.subscribe(timelineFilter(), { onEvent, onEose: markEosed })); };
+    const setSub = (s)=>{
+      if(myGen!==_tlGen || VIEW!==view){ try{ Relay.close(s); }catch(_){} return; }
+      // Close what we are replacing. Two installers can now run in ONE generation (a resume, plus a
+      // negSync that resolves afterwards), and a plain overwrite orphans the loser: still live, still
+      // in Relay._subs, re-REQ'd on every reconnect, and reachable by nothing that could close it.
+      if(subs[view] && subs[view]!==s){ try{ Relay.close(subs[view]); }catch(_){} }
+      subs[view]=s;
+    };
+    const fullSub = ()=>{
+      if(document.hidden && _tlPaused) return;   // stay paused; _tlResume re-arms on return
+      setSub(Relay.subscribe(timelineFilter(), { onEvent, onEose: markEosed }));
+    };
     /* Backgrounded, the timeline is pure waste: the relay keeps PUSHING every matching event down the
      * socket — on a busy web-of-trust relay that is the firehose — and the phone wakes its radio to
      * receive posts nobody is looking at. Calls, DMs and notifications must keep flowing, so the socket
@@ -3229,7 +3241,7 @@
      * Resuming is the same fullSub() a reconnect already runs, and markEosed only draws on the FIRST
      * EOSE, so coming back cannot wipe the feed. The generation token makes a resume that lands after
      * the user navigated a no-op rather than a leaked subscription for a dead view. */
-    _tlPause = ()=>{ const cur=subs[view]; if(cur && myGen===_tlGen){ try{ Relay.close(cur); }catch(_){} subs[view]=null; _tlPaused=true; } };
+    _tlPause = ()=>{ const cur=subs[view]; if(cur && myGen===_tlGen){ try{ Relay.close(cur); }catch(_){} subs[view]=null; } _tlPaused=true; };
     _tlResume = ()=>{ if(!_tlPaused) return; _tlPaused=false; if(myGen===_tlGen && VIEW===view && !subs[view]) fullSub(); };
     // Phase 2 (NIP-77): reconcile the HOME feed with the relay via negentropy and fetch ONLY the events
     // we're missing, then keep a live-only sub — far less bandwidth than re-pulling the page every
