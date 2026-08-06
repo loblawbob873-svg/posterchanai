@@ -184,10 +184,20 @@ class VoiceInstaller(unittest.TestCase):
         # build that DIDN'T while removing one that did.
         import yaml as _yaml
         _svcs = _yaml.safe_load(compose).get("services", {})
-        _builders = {n: sv for n, sv in _svcs.items() if isinstance(sv, dict) and "build" in sv}
+        # Only services that build THE APP IMAGE. A build stanza is not by itself an AI image — the
+        # `proxy` service builds nginx from docker/proxy/ and has no torch, no voice engine and no
+        # business being handed INSTALL_VOICE. Key off the build context being the repo root, which
+        # is what "this is the app Dockerfile" actually means here.
+        def _app_image(sv):
+            b = sv.get("build")
+            if isinstance(b, str):
+                return b in (".", "./")
+            return isinstance(b, dict) and str(b.get("context", "")).strip() in (".", "./")
+        _builders = {n: sv for n, sv in _svcs.items()
+                     if isinstance(sv, dict) and "build" in sv and _app_image(sv)}
         self.assertTrue(_builders, "no build sections found — has compose been restructured?")
         for _n, _sv in _builders.items():
-            _args = _sv["build"].get("args") or {}
+            _args = (_sv["build"].get("args") if isinstance(_sv["build"], dict) else {}) or {}
             # The `nostr` backend is the LEAN image on purpose — no torch/llama/diffusers, so no
             # voice engine to install. It is the one build that legitimately omits the arg, and the
             # old hardcoded count of 4 was silently encoding exactly that exclusion.

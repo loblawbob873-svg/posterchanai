@@ -374,7 +374,10 @@ services:
     logging: *logging
     profiles: ["tls"]
     image: posterchanai-proxy:${TAG:-local}
-    build: docker/proxy
+    build:
+      # Long form like every other service here: the short `build: <dir>` string breaks anything that
+      # introspects build.args across services (tests/test_voice_wiring.py does exactly that).
+      context: docker/proxy
     restart: unless-stopped
     # 80 and 443 are fixed on purpose: certbot's HTTP-01 challenge is only ever served on 80, and a
     # browser only speaks TLS to 443 without a port in the URL. Behind another proxy, override in a

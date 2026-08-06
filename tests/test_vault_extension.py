@@ -76,8 +76,10 @@ class ExtensionCore(unittest.TestCase):
         Every entry here has to be justified by a call in the source."""
         with open(MANIFEST, encoding="utf-8") as fh:
             man = json.load(fh)
+        # `alarms` earns its place: bookmark sync uses it to keep an IDLE browser syncing, which a
+        # background page cannot do on its own under MV3. Verified below rather than trusted.
         self.assertEqual(sorted(man.get("permissions", [])),
-                         ["activeTab", "bookmarks", "clipboardWrite", "storage"])
+                         ["activeTab", "alarms", "bookmarks", "clipboardWrite", "storage"])
         src = ""
         for f in ("background.js", "popup.js", "content.js", "bookmarks.js"):
             with open(os.path.join(REPO, "extension", f), encoding="utf-8") as fh:
