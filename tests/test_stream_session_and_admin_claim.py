@@ -56,6 +56,24 @@ def test_token_of_recovers_the_mediamtx_path_from_either_d_form():
     assert token_of(ev("a1b2c3d4e5f60718-42")) == "a1b2c3d4e5f60718-42"
 
 
+def test_parking_an_ended_event_is_authorized_by_the_token_not_the_raw_d():
+    """The third place the session suffix has to be stripped — and the one that was missed.
+
+    /api/streams/sentinel gates on "is this your stream". It compared the `d` tag straight against the
+    user's publish token, which the `<token>-<starts>` change made permanently unequal: every park 403'd,
+    so no pre-signed "ended" event was ever stored and every broadcast stayed ● LIVE on zap.stream and
+    shosho once the tab closed. The failure is silent from the app's side — only an access log shows it.
+    """
+    src = (ROOT / "app" / "routers" / "streams.py").read_text(encoding="utf-8")
+    assert '_tag("d") != _user_token' not in src, (
+        "the sentinel gate compares the raw `d` to the publish token again — `d` is `<token>-<starts>`, "
+        "so this can never match and no stream will ever be able to end itself"
+    )
+    assert 'stream_end_service.token_of({"event": event}) != _user_token' in src, (
+        "the sentinel gate must authorize on the TOKEN recovered from `d` (stream_end_service.token_of)"
+    )
+
+
 def test_client_and_server_agree_on_how_to_strip_the_session_suffix():
     """Two implementations of one rule; if they drift, the VOD lookup and the liveness probe disagree."""
     from app.services.stream_end_service import token_of

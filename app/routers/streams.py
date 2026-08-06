@@ -369,8 +369,13 @@ async def stream_sentinel(request: Request, current_user: User = Depends(get_cur
 
     if _tag("status") != "ended":
         return JSONResponse({"error": "not an ended event"}, status_code=400)
-    # It may only end the caller's OWN stream: the `d` tag has to be their publish token.
-    if _tag("d") != _user_token(db, current_user):
+    # It may only end the caller's OWN stream. Compare the TOKEN recovered from `d`, never `d` itself:
+    # a broadcast's `d` is `<token>-<starts>` (one address per go-live — the token is stable for the
+    # user's whole life, so using it directly made every stream replace the previous one). Comparing the
+    # raw `d` to the token could therefore never match, so EVERY park 403'd, no "ended" event was ever
+    # stored, and every stream stayed ● LIVE on zap.stream/shosho for good once the tab was closed. The
+    # log said so plainly — a 403 here every 30s for the length of the broadcast.
+    if stream_end_service.token_of({"event": event}) != _user_token(db, current_user):
         return JSONResponse({"error": "not your stream"}, status_code=403)
     stream_end_service.save_sentinel(db, current_user.id, event)
     return {"ok": True}
