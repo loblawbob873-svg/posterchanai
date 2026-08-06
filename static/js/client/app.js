@@ -21151,6 +21151,87 @@
       if(ic==='failed') return 'connection failed'; if(ic==='disconnected') return 'reconnecting…'; }
     return base;
   }
+  // ---- draggable self-view -------------------------------------------------------------------------
+  // The little "me" rectangle is parked bottom-right, which is exactly where the other person's face
+  // tends to be on a phone held in portrait — and where our own Hang-up row sits. Let it be moved.
+  //
+  // Position is stored as a FRACTION of the free space rather than pixels. A saved pixel offset from a
+  // landscape session lands off-screen in portrait, and a phone and a desktop share this setting; a
+  // fraction re-resolves correctly against whatever the window is now, which is also what makes the
+  // resize/rotate handler a one-liner.
+  //
+  // It moves with left/top and NEVER with transform: .call-local carries transform:scaleX(-1) to mirror
+  // the preview (so it reads like a mirror, the way every video app does it), and positioning by
+  // transform would either fight that or un-mirror the picture.
+  const _SELF_POS_KEY='callSelfPos';
+  const _SELF_M=8;                                     // keep it clear of the very edge
+  let _selfResizeWired=false;
+  function _selfPos(){
+    try{ const v=ClientSettings.get(_SELF_POS_KEY,null);
+      return (v && typeof v.fx==='number' && typeof v.fy==='number') ? v : null; }catch(_){ return null; }
+  }
+  function _placeSelfView(el){
+    const pos=_selfPos(); if(!el || !pos) return;
+    // _callUI() re-runs on EVERY call event — an ICE state change, a mute, the remote track arriving —
+    // and calls this. Re-placing mid-drag would yank the rectangle out from under the finger and back to
+    // its last saved spot, which on a connecting call is several times in the first few seconds.
+    if(el.classList.contains('dragging')) return;
+    const w=el.offsetWidth, h=el.offsetHeight;
+    if(!w || !h) return;                               // hidden / not laid out yet — nothing to clamp against
+    const maxL=Math.max(_SELF_M, window.innerWidth-w-_SELF_M);
+    const maxT=Math.max(_SELF_M, window.innerHeight-h-_SELF_M);
+    el.style.left=(_SELF_M+pos.fx*(maxL-_SELF_M))+'px';
+    el.style.top =(_SELF_M+pos.fy*(maxT-_SELF_M))+'px';
+    el.style.right='auto'; el.style.bottom='auto';
+  }
+  function _dragSelfView(el){
+    if(!el || el.dataset.drag) return; el.dataset.drag='1';
+    let id=null, dx=0, dy=0, moved=false;
+    el.addEventListener('pointerdown', e=>{
+      if(el.closest('.call-mini')) return;              // minimized: the whole overlay is one tap target
+      const r=el.getBoundingClientRect();
+      id=e.pointerId; dx=e.clientX-r.left; dy=e.clientY-r.top; moved=false;
+      // Switch from the CSS right/bottom anchoring to left/top at the CURRENT position, so the first
+      // drag doesn't teleport the rectangle before it starts following the finger.
+      el.style.left=r.left+'px'; el.style.top=r.top+'px';
+      el.style.right='auto'; el.style.bottom='auto';
+      el.classList.add('dragging');
+      try{ el.setPointerCapture(id); }catch(_){ }
+      e.preventDefault();
+    });
+    el.addEventListener('pointermove', e=>{
+      if(id===null || e.pointerId!==id) return;
+      const w=el.offsetWidth, h=el.offsetHeight;
+      const left=Math.min(window.innerWidth-w-_SELF_M,  Math.max(_SELF_M, e.clientX-dx));
+      const top =Math.min(window.innerHeight-h-_SELF_M, Math.max(_SELF_M, e.clientY-dy));
+      if(Math.abs(left-(parseFloat(el.style.left)||0))>2 || Math.abs(top-(parseFloat(el.style.top)||0))>2) moved=true;
+      el.style.left=left+'px'; el.style.top=top+'px';
+    });
+    const end=e=>{
+      if(id===null || (e && e.pointerId!==id)) return;
+      try{ el.releasePointerCapture(id); }catch(_){ }
+      id=null; el.classList.remove('dragging');
+      if(!moved) return;
+      const w=el.offsetWidth, h=el.offsetHeight;
+      const maxL=Math.max(_SELF_M, window.innerWidth-w-_SELF_M);
+      const maxT=Math.max(_SELF_M, window.innerHeight-h-_SELF_M);
+      const clamp01=n=>Math.min(1, Math.max(0, n));
+      try{ ClientSettings.set(_SELF_POS_KEY, {
+        fx: clamp01(maxL>_SELF_M ? ((parseFloat(el.style.left)||0)-_SELF_M)/(maxL-_SELF_M) : 1),
+        fy: clamp01(maxT>_SELF_M ? ((parseFloat(el.style.top) ||0)-_SELF_M)/(maxT-_SELF_M) : 1) }); }catch(_){ }
+    };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+    // A drag that ENDS on the video still fires a click, and the overlay's click handler restores a
+    // minimized call — so a drag would otherwise double as a tap on whatever is underneath.
+    el.addEventListener('click', e=>{ if(moved){ e.stopPropagation(); moved=false; } });
+    if(!_selfResizeWired){
+      _selfResizeWired=true;
+      const re=()=>{ const lv=document.getElementById('call-local'); if(lv) _placeSelfView(lv); };
+      window.addEventListener('resize', re);
+      window.addEventListener('orientationchange', re);
+    }
+  }
   function _callUI(){
     let el=document.getElementById('call-overlay');
     if(!_call){ if(el) el.remove(); _ringtone(false); _callWake(false); return; }
@@ -21178,7 +21259,10 @@
     const _mini=el.classList.contains('call-mini');
     el.className='call-overlay'+(showVid?' vid':' aud')+(_call.state==='ringing'?' ring':'')+(_call.state==='connected'?' on':'')+(_mini?' call-mini':'');
     const rv=document.getElementById('call-remote'); if(rv){ rv.style.display=hasRemoteVid?'':'none'; if(_call.remote && rv.srcObject!==_call.remote){ rv.srcObject=_call.remote; rv.play&&rv.play().catch(()=>{}); } }
-    const lv=document.getElementById('call-local'); if(lv){ lv.style.display=(hasLocalVid&&!_call.camOff)?'':'none'; if(_call.local && lv.srcObject!==_call.local){ lv.srcObject=_call.local; lv.play&&lv.play().catch(()=>{}); } }
+    const lv=document.getElementById('call-local'); if(lv){ lv.style.display=(hasLocalVid&&!_call.camOff)?'':'none'; if(_call.local && lv.srcObject!==_call.local){ lv.srcObject=_call.local; lv.play&&lv.play().catch(()=>{}); }
+      // Wire + restore AFTER display is set: offsetWidth is 0 while hidden, so placing it any earlier
+      // has nothing to clamp against and would silently leave it in the default corner.
+      _dragSelfView(lv); _placeSelfView(lv); }
     const acts=document.getElementById('call-actions');
     const act=(id,ic,label,cls)=>`<div class="call-act"><button class="call-btn ${cls||''}" id="${id}">${ic}</button><span>${label}</span></div>`;
     const sendingVid=hasLocalVid&&!_call.camOff;

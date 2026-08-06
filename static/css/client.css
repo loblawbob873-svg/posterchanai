@@ -3684,7 +3684,11 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .call-overlay.vid .call-name{font-size:17px}
 .call-status{font-size:15px;color:#9fb3c8}
 .call-overlay.ring .call-status{color:var(--neon,#0ff);animation:callpulse 1.2s infinite}
-.call-local{position:absolute;bottom:calc(100px + env(safe-area-inset-bottom));right:16px;width:104px;height:150px;object-fit:cover;border-radius:12px;border:1px solid #ffffff33;z-index:3;background:#000;transform:scaleX(-1)}
+/* Draggable (see _dragSelfView): touch-action:none so a drag on a phone is a drag and not a scroll/
+   zoom gesture, and cursor:grab so it reads as movable on a desktop. It is positioned with left/top
+   once moved — never transform, which is spent on the scaleX(-1) mirror. */
+.call-local{position:absolute;bottom:calc(100px + env(safe-area-inset-bottom));right:16px;width:104px;height:150px;object-fit:cover;border-radius:12px;border:1px solid #ffffff33;z-index:3;background:#000;transform:scaleX(-1);touch-action:none;cursor:grab}
+.call-local.dragging{cursor:grabbing;opacity:.9;border-color:var(--neon,#0ff);box-shadow:0 0 18px rgba(0,240,255,.35)}
 .call-overlay.aud .call-local{display:none}
 .call-actions{position:relative;z-index:3;margin-top:auto;display:flex;gap:16px;align-items:center;justify-content:center}
 .call-btn{width:60px;height:60px;border-radius:50%;border:none;font-size:24px;cursor:pointer;background:#2a2a3e;color:#fff;display:flex;align-items:center;justify-content:center;transition:filter .15s;-webkit-tap-highlight-color:transparent}
