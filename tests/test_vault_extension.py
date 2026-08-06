@@ -77,7 +77,9 @@ class ExtensionCore(unittest.TestCase):
         with open(MANIFEST, encoding="utf-8") as fh:
             man = json.load(fh)
         # `alarms` earns its place: bookmark sync uses it to keep an IDLE browser syncing, which a
-        # background page cannot do on its own under MV3. Verified below rather than trusted.
+        # background page cannot do on its own under MV3. Asserted, not asserted-in-a-comment.
+        with open(os.path.join(REPO, "extension", "background.js"), encoding="utf-8") as _fh:
+            self.assertIn("alarms.", _fh.read(), "the alarms permission is requested but never used")
         self.assertEqual(sorted(man.get("permissions", [])),
                          ["activeTab", "alarms", "bookmarks", "clipboardWrite", "storage"])
         src = ""

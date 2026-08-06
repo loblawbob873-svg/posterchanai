@@ -124,7 +124,13 @@ async def test_push(request: Request, db: Session = Depends(get_db)):
     # completely different fixes and both otherwise read as "notifications are broken". The second is
     # real and easy to miss: a node whose DNS sinkholes fcm.googleapis.com (ad-blocking resolvers do)
     # can never deliver to Chrome or an Android Chrome PWA, no matter what the phone does.
-    reachable = push_service.can_reach(rows[0].endpoint) if rows else True
+    # Only when something FAILED, and off the event loop: can_reach does a blocking getaddrinfo that
+    # can sit for ~10s against a dead resolver, and this process is a single uvicorn worker — every
+    # other request would wait behind a diagnostic nobody needs when delivery already worked.
+    reachable = True
+    if not delivered and rows:
+        from starlette.concurrency import run_in_threadpool
+        reachable = await run_in_threadpool(push_service.can_reach, rows[0].endpoint)
     if delivered:
         err = ""
     elif not reachable:

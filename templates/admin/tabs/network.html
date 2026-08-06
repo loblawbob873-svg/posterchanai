@@ -180,4 +180,14 @@
             <small>Port for incoming peer connections</small>
         </div>
     </fieldset>
+    <fieldset>
+        <legend>Push notifications</legend>
+        <div class="form-group">
+            <label for="push_allow_private_endpoints">
+                <input type="checkbox" id="push_allow_private_endpoints" name="push_allow_private_endpoints"> Allow push endpoints on private addresses
+            </label>
+            <small>Only needed when your UnifiedPush distributor (ntfy and friends) is <b>self-hosted on your own network</b>. A push endpoint is a URL this server POSTs to, so LAN addresses are refused by default — on a multi-user node, accepting one would let any account aim it at an internal service. Leave off unless registration fails with <code>bad endpoint</code>.</small>
+        </div>
+    </fieldset>
+
 </div>
