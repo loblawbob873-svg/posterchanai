@@ -17555,6 +17555,7 @@
         ? "On — calls, messages, mentions, replies, reactions and zaps. Press Test to prove it reaches this device."
         : (iosTab ? 'On iPhone, add this app to your Home Screen first — Safari tabs cannot receive notifications.' : '');
     };
+    { const mc=$('#missed-clear',feed); if(mc) mc.onclick=(e)=>{ e.stopPropagation(); _missedClear(); }; }
     if(tb) tb.onclick=async()=>{ tb.disabled=true; try{ await testPush(); } finally { tb.disabled=false; } };
     let cur = await pushState();
     render(cur);
@@ -20862,6 +20863,12 @@
   async function _acceptCall(){
     if(!_call || _call.state!=='ringing') return;
     _call.state='connecting'; _ringtone(false); clearTimeout(_call.timeout); _callUI();   // sync guard: a 2nd Accept tap now fails the state check
+    // Tell my OTHER devices to stop ringing. Every device signed in as me received the invite (it is
+    // p-tagged to my key) and each rings on its own 60s timer; the answer goes to the CALLER, so the
+    // others never learn the call was picked up and keep ringing at an empty room — and now that a
+    // closed phone gets a push too, that is a lock-screen notification for a call already in progress.
+    // Addressed to MYSELF so only my devices see it, and marked `sig` so it never pushes.
+    try{ _callSend(ME.pubkey, {v:1, callId:_call.id, t:'handled'}); }catch(_){}
     const invite = _call.invite;
     let local;
     try{ local = await _getMedia(_call.video); }catch(_){ toast('microphone/camera permission needed'); _declineCall(); return; }
@@ -20879,7 +20886,34 @@
       await _callSend(_call.peer, {v:1, callId:_call.id, t:'answer', sdp: pc.localDescription.sdp}); }
     catch(_){ _hangup(false); }
   }
-  function _declineCall(){ if(_call){ _callSend(_call.peer, {v:1, callId:_call.id, t:'bye'}); _callTeardown(); } }
+  /* Missed calls, recorded locally.
+   *
+   * kind-25050 is EPHEMERAL — the relay fans it out and stores nothing — so a call you were offline
+   * for leaves no trace anywhere: no event to sync, no row, nothing to open the app and find. You
+   * simply never learn it happened. (A push may have buzzed a locked phone, but a dismissed
+   * notification is gone for good.)
+   *
+   * Local storage rather than an event: this is a per-DEVICE fact ("this device did not take that
+   * call"), it must work with no network, and publishing it would leak who calls you to the relay.
+   * Capped hard — a log nobody prunes is a log that eventually breaks the page it lives on. */
+  const MISSED_MAX = 30;
+  function _missedList(){ try{ return JSON.parse(localStorage.getItem('pc_missed_calls')||'[]'); }catch(_){ return []; } }
+  function _missedAdd(pk){
+    if(!pk) return;
+    try{
+      const l=_missedList();
+      l.unshift({pk, at: Math.floor(Date.now()/1000)});
+      localStorage.setItem('pc_missed_calls', JSON.stringify(l.slice(0, MISSED_MAX)));
+      if(VIEW==='calls') renderCalls();
+    }catch(_){}
+  }
+  function _missedClear(){ try{ localStorage.removeItem('pc_missed_calls'); if(VIEW==='calls') renderCalls(); }catch(_){} }
+  function _declineCall(){ if(_call){
+    _callSend(_call.peer, {v:1, callId:_call.id, t:'bye'});
+    // Same reason as accepting: declining on one device must silence the others, or the phone in your
+    // pocket keeps ringing for a call you already turned down at the desk.
+    try{ if(_call.state==='ringing') _callSend(ME.pubkey, {v:1, callId:_call.id, t:'handled'}); }catch(_){}
+    _callTeardown(); } }
   function _hangup(silent){ if(_call){ if(!silent) _callSend(_call.peer, {v:1, callId:_call.id, t:'bye'}); _callTeardown(); } }
   function _callTeardown(){
     if(!_call) return;
@@ -20895,6 +20929,14 @@
       let msg; try{ msg = JSON.parse(await signer.nip44dec(ev.pubkey, ev.content)); }catch(_){ return; }
       const from = ev.pubkey;
       if(msg && msg.room){ try{ _onRoomEvent(from, msg); }catch(_){} return; }   // group-call (mesh) signaling
+      // Another of MY devices answered (or declined) this call — stop ringing here. Only ever sent
+      // by me to me, so a stranger cannot silence someone else's phone with it.
+      if(msg.t==='handled'){
+        if(from===ME.pubkey && _call && _call.id===msg.callId && _call.state==='ringing'){
+          _ringtone(false); _callTeardown(); toast('answered on another device');
+        }
+        return;
+      }
       if(msg.t==='invite'){
         if(MUTED.has(from)) return;   // a muted/blocked pubkey can't ring you
         // Don't ring for an invite that is already over. The subscription's `since` cannot be relied on
@@ -20915,7 +20957,7 @@
         if(_call){ _callSend(from, {v:1, callId:msg.callId, t:'bye'}); return; }   // busy with someone else → auto-decline
         _call = { id:msg.callId, peer:from, pc:null, local:null, remote:null, video:!!msg.video, state:'ringing', caller:false, invite:msg, pendingIce:[] };
         // Stop ringing if the caller vanishes without a 'bye' (crash/offline) — ephemeral events can be lost.
-        _call.timeout = setTimeout(()=>{ if(_call && _call.state==='ringing'){ _ringtone(false); _callTeardown(); } }, 60000);
+        _call.timeout = setTimeout(()=>{ if(_call && _call.state==='ringing'){ _ringtone(false); _missedAdd(_call.peer); _callTeardown(); } }, 60000);
         try{ needProfile(from); }catch(_){}
         _ringtone(true); _callUI();
         try{ if('Notification' in window && Notification.permission==='granted'){ const p=profOf(from)||{}; new Notification('📞 '+(p.name||'Incoming call'), {body:'tap to answer', tag:'pc-call'}); } }catch(_){}
@@ -20942,7 +20984,8 @@
         }catch(_){}
       }
       else if(msg.t==='reanswer'){ if(_call.pc){ try{ await _call.pc.setRemoteDescription({type:'answer', sdp:msg.sdp}); _callUI(); }catch(_){} } }
-      else if(msg.t==='bye'){ if(_call.state!=='connected') toast('call ended'); _callTeardown(); }
+      else if(msg.t==='bye'){ if(_call.state==='ringing') _missedAdd(from);   // they gave up before we picked up
+        if(_call.state!=='connected') toast('call ended'); _callTeardown(); }
     })();
   }
   function startCallSignaling(){
@@ -21061,6 +21104,13 @@
         <div class="grp-list">${contacts.map(pk=>{ const p=profOf(pk)||{}; return `<label class="grp-contact"><input type="checkbox" class="grp-pick" value="${pk}"><img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span>${enc(p.name||p.display_name||'anon')}</span></label>`; }).join('')}</div>
         <button class="btn btn-neon full" id="grp-start" style="margin-top:8px"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Start group call</button>
       </div>
+      ${(()=>{ const m=_missedList(); if(!m.length) return '';
+        return `<div class="call-missed"><div class="search-section-title" style="display:flex;align-items:center;gap:8px">
+          <svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Missed
+          <button class="btn small" id="missed-clear" style="margin-left:auto">Clear</button></div>` +
+          m.map(x=>{ const p=profOf(x.pk)||{};
+            return `<button class="call-contact" data-pk="${x.pk}"><img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span>${enc(p.name||p.display_name||'anon')}</span><span class="muted small">${enc(timeAgo(x.at))}</span></button>`;
+          }).join('') + `</div>`; })()}
       <div class="call-contacts">${contacts.map(pk=>{ const p=profOf(pk)||{}; return `<button class="call-contact" data-pk="${pk}"><img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span>${enc(p.name||p.display_name||'anon')}</span></button>`; }).join('')}</div>
     </div>`;
     // Followers arrive lazily; when they do, redraw ONCE so the list settles on friends. Guarded on
