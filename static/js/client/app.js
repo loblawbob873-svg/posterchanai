@@ -17441,7 +17441,19 @@
     const reg=await navigator.serviceWorker.ready;
     let publicKey; try{ publicKey=(await fetch('/api/push/vapid').then(r=>r.json())).publicKey; }catch(_){}
     if(!publicKey){ toast('Push not configured on the server'); return; }
-    const sub=await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:_urlB64ToUint8(publicKey) });
+    // subscribe() is where iOS actually refuses, and it refuses by THROWING. Unhandled, that landed
+    // in the button's catch as "push change failed" — a message that names nothing, on the one step
+    // that fails most. Surface what the browser said; it is the difference between guessing and
+    // knowing. (Seen here: an installed PWA whose permission was granted in the Safari tab instead,
+    // which reads as AbortError with no further detail.)
+    let sub;
+    try{
+      sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:_urlB64ToUint8(publicKey) });
+    }catch(e){
+      const why = (e && (e.name || e.message)) ? `${e.name||''} ${e.message||''}`.trim() : 'unknown error';
+      toast('This device refused to subscribe: '+why);
+      return;
+    }
     return await _registerPushSub(sub.toJSON());
   }
   /* The packaged Android app takes a different road to the same place.
@@ -17531,7 +17543,8 @@
     if(tb) tb.onclick=async()=>{ tb.disabled=true; try{ await testPush(); } finally { tb.disabled=false; } };
     render(await pushState());
     btn.onclick=async()=>{ btn.disabled=true;
-      try{ if((await pushState())==='on') await disablePush(); else await enablePush(); }catch(e){ toast('push change failed'); }
+      try{ if((await pushState())==='on') await disablePush(); else await enablePush(); }
+      catch(e){ toast('push change failed: '+((e&&(e.name||e.message))||e)); }
       render(await pushState()); };
   }
 
