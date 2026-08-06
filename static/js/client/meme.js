@@ -1192,7 +1192,17 @@
   const _maskLocal = Object.create(null);
   function _maskAdopt(url, blob){
     if(!url || !blob) return;
+    // Immediate LOCAL copy so the just-painted erase shows on the very NEXT render, synchronously (the
+    // "no grace period" guarantee check_meme_mobile.py asserts). A blob: object URL is in-memory — it
+    // renders reliably and never flakes like the remote url() did (verified in Firefox: blob: paints, a
+    // remote url() at random does not). Then upgrade it to a data: URI in the background — the most robust
+    // form, and what any later re-render or a reload's _maskProbe would settle on anyway.
     try{ _maskLocal[url] = URL.createObjectURL(blob); _maskOk[url] = true; }catch(_){ }
+    try{
+      const rd = new FileReader();
+      rd.onload = () => { _maskLocal[url] = rd.result; try{ _paintMask(url); }catch(_){ } };
+      rd.readAsDataURL(blob);
+    }catch(_){ }
   }
   // The URL the PREVIEW should paint with — local copy when we have one, else the stored remote URL.
   const _maskSrc = url => _maskLocal[url] || url;
@@ -1224,32 +1234,41 @@
     });
   }
   const _maskTries = Object.create(null);
-  const _MASK_TRIES = 3;
+  const _MASK_TRIES = 4;
+  // FETCH the mask and inline it as a data: URI, rather than probing with an Image() and then letting the
+  // CSS point `mask-image` at the REMOTE url. That indirection was the "random empty box" bug: an external
+  // url() mask whose fetch fails OR merely loses a race HIDES the whole element (a failed mask does not
+  // degrade to "no mask" — the layer vanishes), and the CSS fetch is a SEPARATE request from the probe, so
+  // the probe could pass while the real mask-image request flaked — worst cross-origin and inside the
+  // Electron app:// build, where it hid a layer at random and a reload sometimes "fixed" it. Verified in
+  // Firefox: `url(remote)` → blank, `url(data:...)` → correct. So we fetch ONCE (CORS is open on our
+  // Blossom), turn the bytes into a data: URI held in _maskLocal, and every consumer paints from THAT —
+  // a local literal that cannot fail a fetch. Backed-off retries cover the not-yet-servable window; only
+  // after they're exhausted does it give up and show the layer un-erased (never a hole).
   function _maskProbe(url){
-    if(_maskLocal[url]) return true;          // painted here, in this tab — nothing to prove
+    if(_maskLocal[url]) return true;          // already inlined (this tab's paint, or a prior fetch)
     if(url in _maskOk) return _maskOk[url];
-    _maskOk[url] = undefined;                 // in flight — don't start a second load per re-render
-    const im = new Image();
-    im.onload  = () => { _maskOk[url] = true; try{ _paintMask(url); }catch(_){ } };
-    im.onerror = () => {
-      // Do NOT latch false on the first failure. Retrying per RENDER would be an unbounded request loop,
-      // which is what the old comment was guarding against — but never retrying is worse: a blob that is
-      // simply not readable back yet (the upload returns the url before the bytes are servable) fails
-      // once and the erase is then invisible for the rest of the session, on a project where it is
-      // already saved and already correct in the export. A few backed-off attempts cost nothing and
-      // cover the whole timing class; only after those does it give up and say so.
+    _maskOk[url] = undefined;                 // in flight — don't start a second fetch per re-render
+    const fail = () => {
       const n = (_maskTries[url] = (_maskTries[url] || 0) + 1);
       if(n < _MASK_TRIES){
-        // Stay marked in-flight (undefined) so a repaint cannot start a SECOND probe while this one is
-        // waiting — the timer owns the retry. Clearing the entry here instead would put the retry back
-        // on the render path, which is the unbounded request loop the gate exists to avoid.
-        setTimeout(() => { delete _maskOk[url]; _maskProbe(url); }, 800 * n);
+        // Stay marked in-flight (undefined) so a repaint can't start a SECOND fetch while this one waits —
+        // the timer owns the retry, keeping it off the render path (the unbounded-request loop to avoid).
+        setTimeout(() => { delete _maskOk[url]; _maskProbe(url); }, 700 * n);
         return;
       }
       _maskOk[url] = false;
       try{ toast('the erase on a layer could not be loaded — showing the layer un-erased'); }catch(_){ }
     };
-    im.src = url;
+    fetch(url, { cache: 'force-cache' })
+      .then(r => { if(!r.ok) throw new Error('http ' + r.status); return r.blob(); })
+      .then(b => new Promise((res, rej) => {
+        const rd = new FileReader();
+        rd.onload = () => res(rd.result); rd.onerror = () => rej(rd.error || new Error('read'));
+        rd.readAsDataURL(b);
+      }))
+      .then(dataUri => { _maskLocal[url] = dataUri; _maskOk[url] = true; try{ _paintMask(url); }catch(_){ } })
+      .catch(fail);
     return undefined;
   }
   function _maskCss(l, ofit){
