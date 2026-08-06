@@ -17499,7 +17499,13 @@
     }
     const r=await fetch('/api/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({ pubkey:ME.pubkey, subscription, auth:btoa(JSON.stringify(auth)) })}).then(r=>r.json()).catch(()=>null);
-    if(!(r&&r.ok)){ toast('Could not turn notifications on'+((r&&r.error)?': '+r.error:'')); return false; }
+    if(!(r&&r.ok)){
+      toast('Could not turn notifications on'+((r&&r.error)?': '+r.error:''));
+      // Undo the browser-side subscription. Left in place, pushState() reads 'on' from it while the
+      // server has no row to deliver to — a toggle that says yes and a phone that never buzzes.
+      try{ const reg=await navigator.serviceWorker.ready; const s2=await reg.pushManager.getSubscription(); if(s2) await s2.unsubscribe(); }catch(_){}
+      return false;
+    }
     toast('🔔 Push notifications on');
     return true;
   }
@@ -20819,6 +20825,10 @@
     if(!_call){ vs.getTracks().forEach(t=>t.stop()); return; }
     const vt=vs.getVideoTracks()[0]; if(!vt){ vs.getTracks().forEach(t=>t.stop()); return; }
     _call.local.addTrack(vt); _call.pc.addTrack(vt, _call.local); _call.camOff=false; _callUI();
+    // The video transceiver only exists NOW — every call from the Calls view starts audio-first, so
+    // this is the usual route to video in a 1:1 call and would otherwise be the one path with no
+    // codec preference at all. Must precede the renegotiation offer to reach the SDP.
+    _preferH264(_call.pc);
     await _renegotiate();
   }
   async function startCall(peerHex, opts){
@@ -20862,7 +20872,7 @@
     const pc = _newPc(ice.iceServers); _call.pc = pc;
     try{ await pc.setRemoteDescription({type:'offer', sdp:invite.sdp}); }catch(_){ _hangup(false); return; }
     local.getTracks().forEach(t=> pc.addTrack(t, local));
-    _preferH264(pc);   // hardware encode/decode on both ends — see _preferH264   // attach our media onto the offer's m-lines (setRemote first)
+    _preferH264(pc);   // hardware encode/decode on both ends — see _preferH264
     for(const c of (_call.pendingIce||[])){ try{ await pc.addIceCandidate(c); }catch(_){} }
     _call.pendingIce=[];
     try{ const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
@@ -20925,6 +20935,7 @@
         try{
           if(collision){ try{ await _call.pc.setLocalDescription({type:'rollback'}); }catch(_){} }
           await _call.pc.setRemoteDescription({type:'offer', sdp:msg.sdp});
+          _preferH264(_call.pc);   // their video arrived mid-call; answer with hardware codecs too
           const ans=await _call.pc.createAnswer(); await _call.pc.setLocalDescription(ans);
           await _callSend(_call.peer,{v:1,callId:_call.id,t:'reanswer',sdp:_call.pc.localDescription.sdp});
           _callUI();
@@ -21054,7 +21065,14 @@
     </div>`;
     // Followers arrive lazily; when they do, redraw ONCE so the list settles on friends. Guarded on
     // _narrowed and on still being here, so it cannot loop or stomp a view the user has moved on from.
-    if(!_narrowed) ensureMyFollowers().then(()=>{ if(VIEW==='calls' && [...FOLLOWS].some(pk=>FOLLOWERS.has(pk))) renderCalls(); }).catch(()=>{});
+    // …but never mid-interaction. ensureMyFollowers awaits a live socket and a 1000-event query, so it
+    // can land seconds later — straight into innerHTML, discarding a half-typed npub, the focus, and any
+    // ticked group-call boxes. Redraw only when the form is untouched.
+    if(!_narrowed) ensureMyFollowers().then(()=>{
+      const inp=$('#call-npub'), gp=$('#grp-panel');
+      const busy = (inp && (inp.value || document.activeElement===inp)) || (gp && gp.style.display!=='none');
+      if(VIEW==='calls' && !busy && [...FOLLOWS].some(pk=>FOLLOWERS.has(pk))) renderCalls();
+    }).catch(()=>{});
     const go=async(pk)=>{ if(pk) startCall(pk, {video:false}); };   // audio-first; add video mid-call with the in-call button
     // Autocomplete: as you type a name, suggest known profiles (like the DM composer); click one to call.
     { const inp=$('#call-npub',feed), ac=$('#call-ac',feed);
