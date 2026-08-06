@@ -114,18 +114,16 @@
                 android:resource="@xml/autofill_service" />
         </service>
     
-        <!-- Where a UnifiedPush distributor delivers. The two actions are the connector's contract;
-             without BOTH, registration appears to succeed and nothing is ever delivered. -->
-        <receiver
-            android:name="place.poster.app.push.UnifiedPushReceiver"
-            android:exported="true">
+        <!-- Where a UnifiedPush distributor delivers. In connector 3.x this is a SERVICE on the
+             PUSH_EVENT action, and it must NOT be exported — the distributor binds it by permission,
+             and exporting it would let any app on the phone feed us notifications. -->
+        <service
+            android:name="place.poster.app.push.PushEventService"
+            android:exported="false">
             <intent-filter>
-                <action android:name="org.unifiedpush.android.connector.MESSAGE" />
-                <action android:name="org.unifiedpush.android.connector.UNREGISTERED" />
-                <action android:name="org.unifiedpush.android.connector.NEW_ENDPOINT" />
-                <action android:name="org.unifiedpush.android.connector.REGISTRATION_FAILED" />
+                <action android:name="org.unifiedpush.android.connector.PUSH_EVENT" />
             </intent-filter>
-        </receiver>
+        </service>
 
     </application>
 

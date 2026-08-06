@@ -9,8 +9,6 @@ import android.os.Build;
 import android.os.PowerManager;
 import android.provider.Settings;
 
-import java.util.ArrayList;
-
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -34,7 +32,7 @@ import org.unifiedpush.android.connector.UnifiedPush;
  * ONE OS-level socket shared by every app on the phone, which is why this costs far less battery than
  * us keeping a relay connection alive in the background would.
  *
- * The endpoint arrives asynchronously, at the distributor's leisure — see UnifiedPushReceiver, which
+ * The endpoint arrives asynchronously, at the distributor's leisure — see PushEventService, which
  * is what actually hands it to the web layer to register with the server.
  *
  * The battery half is here for a reason that is not obvious: Samsung's "Deep sleeping apps" (and the
@@ -53,10 +51,8 @@ import org.unifiedpush.android.connector.UnifiedPush;
 public class PushPlugin extends Plugin {
 
     private static final String INSTANCE = "default";
-    private static final ArrayList<String> FEATURES = new ArrayList<>();
-    private static final String KEY_CHOSE = "distributor_chosen";
 
-    /** Ask the user's distributor for an endpoint. Result arrives via UnifiedPushReceiver. */
+    /** Ask the user's distributor for an endpoint. Result arrives via PushEventService. */
     @PluginMethod
     public void register(PluginCall call) {
         // Android 13+ DROPS every notification unless this was granted at runtime — declaring it in
@@ -81,9 +77,7 @@ public class PushPlugin extends Plugin {
         try {
             // No distributor installed = nothing can deliver to this phone. Say so plainly rather
             // than register into a void and look like a delivery failure later.
-            // 2.4.0's Kotlin defaults are NOT visible to Java (no @JvmOverloads), so every argument
-            // is spelled out. Getting this wrong is a compile error, not a warning.
-            java.util.List<String> dists = UnifiedPush.getDistributors(ctx, FEATURES);
+            java.util.List<String> dists = UnifiedPush.getDistributors(ctx);
             if (dists.isEmpty()) {
                 out.put("ok", false);
                 out.put("needsDistributor", true);
@@ -92,12 +86,12 @@ public class PushPlugin extends Plugin {
             }
             // getDistributor() returns the ACKed one, which stays empty until the first endpoint
             // arrives — so re-registering would otherwise overwrite the user's choice with dists[0].
-            if (UnifiedPush.getDistributor(ctx).isEmpty() && !hasSavedChoice(ctx)) {
+            String saved = UnifiedPush.getSavedDistributor(ctx);   // nullable in 3.x
+            if (saved == null || saved.isEmpty()) {
                 UnifiedPush.saveDistributor(ctx, dists.get(0));
-                ctx.getSharedPreferences(UnifiedPushReceiver.PREFS, Context.MODE_PRIVATE)
-                   .edit().putBoolean(KEY_CHOSE, true).apply();
             }
-            UnifiedPush.registerApp(ctx, INSTANCE, FEATURES, "");
+            // All four arguments spelled out: the Kotlin defaults are not guaranteed visible to Java.
+            UnifiedPush.register(ctx, INSTANCE, null, null);
             out.put("ok", true);
         } catch (Throwable t) {
             out.put("ok", false);
@@ -117,25 +111,22 @@ public class PushPlugin extends Plugin {
     public void getEndpoint(PluginCall call) {
         JSObject out = new JSObject();
         out.put("endpoint", getContext()
-                .getSharedPreferences(UnifiedPushReceiver.PREFS, Context.MODE_PRIVATE)
-                .getString(UnifiedPushReceiver.KEY_ENDPOINT, ""));
+                .getSharedPreferences(PushEventService.PREFS, Context.MODE_PRIVATE)
+                .getString(PushEventService.KEY_ENDPOINT, ""));
         call.resolve(out);
     }
 
     @PluginMethod
     public void unregister(PluginCall call) {
         try {
-            UnifiedPush.unregisterApp(getContext(), INSTANCE);
+            UnifiedPush.unregister(getContext(), INSTANCE);
         } catch (Throwable ignored) {
         }
-        getContext().getSharedPreferences(UnifiedPushReceiver.PREFS, Context.MODE_PRIVATE)
-                    .edit().remove(UnifiedPushReceiver.KEY_ENDPOINT).remove(KEY_CHOSE).apply();
+        // unregister() does not clear OUR copy of the endpoint, and pushState() reads that — without
+        // this, turning notifications off leaves the toggle reading "on".
+        getContext().getSharedPreferences(PushEventService.PREFS, Context.MODE_PRIVATE)
+                    .edit().remove(PushEventService.KEY_ENDPOINT).apply();
         call.resolve();
-    }
-
-    private static boolean hasSavedChoice(Context ctx) {
-        return ctx.getSharedPreferences(UnifiedPushReceiver.PREFS, Context.MODE_PRIVATE)
-                  .getBoolean(KEY_CHOSE, false);
     }
 
     /**

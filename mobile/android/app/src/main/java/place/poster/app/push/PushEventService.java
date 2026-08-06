@@ -10,12 +10,21 @@ import android.content.SharedPreferences;
 import android.os.Build;
 
 import org.json.JSONObject;
-import org.unifiedpush.android.connector.MessagingReceiver;
+import org.unifiedpush.android.connector.PushService;
+import org.unifiedpush.android.connector.data.PushEndpoint;
+import org.unifiedpush.android.connector.data.PushMessage;
+import org.unifiedpush.android.connector.FailedReason;
+
+import androidx.annotation.NonNull;
 
 import place.poster.app.MainActivity;
 
 /**
  * Where a push actually lands on the packaged app.
+ *
+ * A SERVICE, not a BroadcastReceiver: connector 3.x replaced MessagingReceiver with PushService, and
+ * only the 3.x line is published to Maven Central at these coordinates — 2.x resolves nowhere, which
+ * is what broke the first build.
  *
  * The server sends the SAME JSON payload it sends the service worker — {title, body, type} — so there
  * is one notification contract for every transport rather than a second one that can drift out of
@@ -25,7 +34,7 @@ import place.poster.app.MainActivity;
  * an incoming call rather than an email, everything else is an ordinary heads-up. Two channels, so the
  * user can silence chatter without silencing calls — Android only lets them do that per channel.
  */
-public class UnifiedPushReceiver extends MessagingReceiver {
+public class PushEventService extends PushService {
 
     public static final String PREFS = "pcai_push";
     public static final String KEY_ENDPOINT = "endpoint";
@@ -33,10 +42,11 @@ public class UnifiedPushReceiver extends MessagingReceiver {
     private static final String CH_MSGS = "pcai_messages";
 
     @Override
-    public void onMessage(Context ctx, byte[] message, String instance) {
+    public void onMessage(@NonNull PushMessage message, @NonNull String instance) {
+        Context ctx = this;
         String title = "PosterChan", body = "New activity", type = "";
         try {
-            JSONObject j = new JSONObject(new String(message, "UTF-8"));
+            JSONObject j = new JSONObject(new String(message.getContent(), "UTF-8"));
             title = j.optString("title", title);
             body = j.optString("body", body);
             type = j.optString("type", "");
@@ -88,19 +98,19 @@ public class UnifiedPushReceiver extends MessagingReceiver {
      * foreground, and the server call must be signed by the user's key, which lives in the web layer.
      */
     @Override
-    public void onNewEndpoint(Context ctx, String endpoint, String instance) {
-        SharedPreferences.Editor e = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit();
-        e.putString(KEY_ENDPOINT, endpoint);
+    public void onNewEndpoint(@NonNull PushEndpoint endpoint, @NonNull String instance) {
+        SharedPreferences.Editor e = getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit();
+        e.putString(KEY_ENDPOINT, endpoint.getUrl());
         e.apply();
     }
 
     @Override
-    public void onUnregistered(Context ctx, String instance) {
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_ENDPOINT).apply();
+    public void onUnregistered(@NonNull String instance) {
+        getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_ENDPOINT).apply();
     }
 
     @Override
-    public void onRegistrationFailed(Context ctx, String instance) {
+    public void onRegistrationFailed(@NonNull FailedReason reason, @NonNull String instance) {
         // Nothing to show: the user asked for notifications and will be told by the in-app check,
         // which can explain the fix. A toast from a background receiver cannot.
     }
