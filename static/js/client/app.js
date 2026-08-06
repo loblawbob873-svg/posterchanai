@@ -8637,6 +8637,7 @@
       renderView(true);
     }catch(e){ toast('failed: '+((e&&e.message)||e)); }
   }
+  let _noteCardErrs = 0;
   function noteCard(ev, prefix=''){
    try{
     const p = profOf(ev.pubkey); if(!NO_IMAGES) needProfile(ev.pubkey);   // data saver: observeProfiles fetches lazily as the card nears view
@@ -8685,7 +8686,13 @@
           <button class="act actm ${BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>
         </div>
       </div></article>`;
-   }catch(e){ return `<article class="note" data-id="${(ev&&ev.id)||''}" data-pk="${(ev&&ev.pubkey)||''}"><div class="body"><div class="txt muted small">⚠ couldn't render this post</div></div></article>`; }
+   }catch(e){
+     // One bad global (a missing NostrTools, a half-booted app) makes EVERY card take this branch, and a
+     // silent catch turns that into "all my posts say couldn't render" with an empty console — undebuggable
+     // from the outside. Log the first few, once per page, with the id so the failure can be reproduced.
+     if((_noteCardErrs=(_noteCardErrs||0)+1) <= 3) try{ console.error('[noteCard] render failed', (ev&&ev.id)||'?', e); }catch(_){}
+     return `<article class="note" data-id="${(ev&&ev.id)||''}" data-pk="${(ev&&ev.pubkey)||''}"><div class="body"><div class="txt muted small">⚠ couldn't render this post</div></div></article>`;
+   }
   }
   // A NIP-18 quote post carries both a `q` tag (rendered by quoteHtml) AND usually the same
   // nostr:nevent inline — strip the inline one so the quoted note doesn't embed twice.
