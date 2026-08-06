@@ -270,8 +270,13 @@ def test_relays_are_user_definable_with_a_working_default():
     bg = open(os.path.join(ROOT, "extension", "background.js"), encoding="utf-8").read()
     assert "const DEFAULT_RELAY = 'wss://relay.poster.place'" in bg, \
         "no default relay — a pairing code without one leaves the extension with nothing to talk to"
+    # Take the WHOLE function, not a fixed byte window. This read bg[i:i+500] and went red the day
+    # the comment inside relayUrls() grew past 500 characters — the code was correct, the test was
+    # measuring in the wrong unit. A window that a comment can invalidate tests formatting, not
+    # behaviour.
     i = bg.index("function relayUrls()")
-    body = bg[i:i + 500]
+    end = bg.index("\n}", i)
+    body = bg[i:end]
     assert "userRelays" in body and "DEFAULT_RELAY" in body, \
         "relayUrls must prefer the user's list and fall back to the default"
     assert "case 'relays-set'" in bg and "case 'relays-get'" in bg
