@@ -103,6 +103,30 @@ def send(subscription: dict, payload: dict) -> bool:
         return True
 
 
+def can_reach(endpoint: str) -> bool:
+    """Can THIS server resolve the push service at all?
+
+    Exists because of a real failure that looks nothing like its cause: an ad-blocking resolver on the
+    LAN (AdGuard, Pi-hole) answers fcm.googleapis.com with 0.0.0.0, so every Chrome and Android-Chrome
+    push silently fails to send while the phone, the browser and the subscription are all perfectly
+    fine. Without this the only symptom is "notifications don't work", pointing at the wrong machine.
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+    host = (urlparse(endpoint).hostname or "").lower()
+    if not host:
+        return False
+    try:
+        for info in socket.getaddrinfo(host, None):
+            ip = ipaddress.ip_address(info[4][0])
+            if ip.is_unspecified or ip.is_loopback:
+                return False        # sinkholed
+        return True
+    except Exception:
+        return False                # cannot resolve at all
+
+
 def _send_unifiedpush(endpoint: str, payload: dict) -> bool:
     """POST a notification to a UnifiedPush endpoint. Returns False only when the endpoint is
     permanently gone, so the caller prunes it.

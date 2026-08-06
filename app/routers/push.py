@@ -47,12 +47,20 @@ async def subscribe(request: Request, db: Session = Depends(get_db)):
     # VAPID keys to send, and requiring them is what would keep the packaged app silent.
     if not (pubkey and endpoint):
         return {"ok": False, "error": "missing pubkey/endpoint"}
-    # This is a URL the SERVER will POST to, so it goes through the same SSRF guard as user-supplied
-    # feed URLs. Without it, "register a subscription" is an arbitrary blind POST into the private
-    # network — http://192.168.x.y/admin/... — signed by nothing and reachable by any account.
-    from app.services.rss_service import is_safe_host
-    if not (endpoint.startswith(("http://", "https://")) and is_safe_host(endpoint)):
+    if not endpoint.startswith(("http://", "https://")):
         return {"ok": False, "error": "bad endpoint"}
+    # SSRF guard, but ONLY for UnifiedPush — the transport where the endpoint is an arbitrary URL this
+    # server POSTs to, i.e. the one that could be aimed at http://192.168.x.y/admin/...
+    #
+    # A Web Push endpoint is NOT ours to second-guess: the BROWSER chose it, it is always the vendor's
+    # own push service, and pywebpush is what talks to it. Running it through the same guard broke
+    # subscribing outright on this deployment, because the LAN DNS here answers fcm.googleapis.com with
+    # 0.0.0.0 — which the guard correctly reads as unroutable, and which is every Chrome and Android
+    # Chrome user. A protection that rejects the single most common push endpoint is a bug, not safety.
+    if not (p256dh and auth):
+        from app.services.rss_service import is_safe_host
+        if not is_safe_host(endpoint):
+            return {"ok": False, "error": "bad endpoint"}
     row = db.query(PushSubscription).filter(PushSubscription.endpoint == endpoint).first()
     if row:
         row.pubkey, row.p256dh, row.auth = pubkey, p256dh, auth   # device re-subscribed / rotated keys
@@ -98,8 +106,20 @@ async def test_push(request: Request, db: Session = Depends(get_db)):
         db.delete(r)
     if dead:
         db.commit()
+    # Distinguish "your device is gone" from "this SERVER cannot reach the push service" — they need
+    # completely different fixes and both otherwise read as "notifications are broken". The second is
+    # real and easy to miss: a node whose DNS sinkholes fcm.googleapis.com (ad-blocking resolvers do)
+    # can never deliver to Chrome or an Android Chrome PWA, no matter what the phone does.
+    reachable = push_service.can_reach(rows[0].endpoint) if rows else True
+    if delivered:
+        err = ""
+    elif not reachable:
+        err = ("This server cannot reach the push service for that device — check the node's DNS "
+               "and outbound network, not your phone.")
+    else:
+        err = "Every registered device rejected the push. Turn notifications off and on again."
     return {"ok": delivered > 0, "devices": len(rows), "delivered": delivered, "expired": len(dead),
-            "error": "" if delivered else "Every registered device rejected the push. Turn notifications off and on again."}
+            "reachable": reachable, "error": err}
 
 
 @router.post("/unsubscribe")
