@@ -56,7 +56,8 @@ cd posterchanai
 
 ## Step 3 — Write your `.env`
 
-Create a file called `.env` next to `docker-compose.yml`:
+`cp .env.example .env` and edit it, or paste this to generate one with a random database password
+already filled in:
 
 ```bash
 cat > .env <<EOF
