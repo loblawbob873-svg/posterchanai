@@ -12,11 +12,12 @@ Written as a plan, so each phase says what it changes and how you'd know it work
 | **Calls** (25050) | live relay subscription, `_call_sub_loop` | immediate |
 | Mentions, replies, reactions, zaps, NIP-22, NIP-28 chat | APScheduler poll, `_POLL_SECS = 20` | up to 20s |
 | Joined-channel chatter | poll, `_CHAN_POLL_SECS = 60` (+300s per-room cooldown) | up to 60s |
-| **DMs** | **none** | — |
+| **DMs** (1059 / 4) | live subscription, `_dm_sub_loop` | immediate |
 
-That last row is not an oversight in this document. `_KINDS = [1, 6, 7, 9735, 1111, 42]`
-(`nostr_push_service.py:25`) contains neither kind 4 nor kind 1059, so a gift-wrapped NIP-17 DM
-produces **no push by any path**. A closed phone is never told about a message. See Phase 5.
+DMs were the glaring hole until Phase 5: `_KINDS` covers mentions, reposts, reactions, zaps and
+channel chat but neither kind 4 nor kind 1059, so a gift-wrapped NIP-17 DM produced **no push by any
+path** and a closed phone was never told a message had arrived. They now ride their own live
+subscription, for the reason spelled out in Phase 5 — a poller cannot see them.
 
 Calls have to be a live subscription rather than a poll, because 25050 is **ephemeral** — the relay
 transmits it to current subscribers and never persists it (`nostr_relay/server.py:107`), so there is
@@ -177,7 +178,7 @@ If a foreground socket is ever added anyway:
 
 ---
 
-## Phase 5 — DMs push at all
+## Phase 5 — DMs push at all ✅ done
 
 Found while fact-checking this document, and arguably the biggest gap on the page: **a direct message
 never notifies a closed phone.** `_KINDS` covers mentions, reposts, reactions, zaps, NIP-22 comments
@@ -197,7 +198,7 @@ NIP-17 makes this harder than adding a number to a list, which is presumably why
 Minimum viable: push *"New message"* with no sender or content, let the client fill in detail once
 opened. Better than silence, and it leaks nothing.
 
-## Phase 6 — stop the phantom second ring on every missed call
+## Phase 6 — stop the phantom second ring on every missed call ✅ done
 
 Found in review. **Every unanswered call to a backgrounded phone rings twice**, and the second ring
 arrives 45 seconds after the caller already gave up.

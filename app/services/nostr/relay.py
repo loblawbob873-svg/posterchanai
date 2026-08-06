@@ -32,6 +32,9 @@ def _proxy_kw() -> dict:
 _CONNECT_TIMEOUT = 8
 _DEFAULT_QUERY_TIMEOUT = 12
 _PUBLISH_TIMEOUT = 10
+# subscribe(live_only=True): how long to wait for EOSE before handing events on regardless. A relay
+# that never EOSEs would otherwise gate us forever, and silence is the one failure nobody notices.
+_EOSE_FALLBACK = 15
 
 # Per-relay circuit breaker: after this many consecutive connect failures (Tor proxy AND direct both
 # failed), stop querying/publishing that relay for _RELAY_PAUSE_SEC so a dead/blocked upstream doesn't
@@ -331,12 +334,22 @@ async def await_one(relays, filters: list, timeout: float = 60.0, direct: bool =
 
 
 async def subscribe(relay: str, filters: list, handler, stop: asyncio.Event, direct: bool = False,
-                    since_now: bool = False) -> None:
+                    since_now: bool = False, live_only: bool = False) -> None:
     """Persistent subscription to ONE relay: REQ `filters`, await handler(ev) per live EVENT,
     auto-reconnecting (capped backoff) until `stop` is set. Used by the DVM worker loop.
 
     since_now: stamp each filter's `since` with the CURRENT time on every (re)connect, so a reconnect
-    after a drop does NOT replay old / already-handled events — only live ones from now forward."""
+    after a drop does NOT replay old / already-handled events — only live ones from now forward.
+
+    live_only: drop everything the relay sends BEFORE its EOSE, i.e. the stored backlog, and handle
+    only what arrives afterwards. Use this instead of since_now when the events carry timestamps you
+    cannot trust: a NIP-59 gift wrap is deliberately backdated by up to two days to defeat timing
+    analysis, so `since=now` silently discards real, newly-arrived messages, while no filter at all
+    replays the entire mailbox on every reconnect — as a notification per message.
+    ARRIVAL is the only honest signal there, and EOSE is where it changes.
+
+    If the relay never sends EOSE the gate opens anyway after _EOSE_FALLBACK seconds: degrading to
+    "handle the backlog too" is recoverable, and silence is not."""
     backoff = 1
     while not stop.is_set():
         sub_id = uuid.uuid4().hex[:16]
@@ -345,6 +358,10 @@ async def subscribe(relay: str, filters: list, handler, stop: asyncio.Event, dir
             async with _connect(relay, direct) as ws:
                 await ws.send(json.dumps(["REQ", sub_id] + req_filters))
                 backoff = 1
+                # Per-CONNECTION, not per-subscription: a reconnect re-REQs and the relay replays its
+                # backlog again, so the gate has to close again with it.
+                gated = live_only
+                opened_at = time.time()
                 while not stop.is_set():
                     try:
                         raw = await asyncio.wait_for(ws.recv(), timeout=30)
@@ -358,8 +375,18 @@ async def subscribe(relay: str, filters: list, handler, stop: asyncio.Event, dir
                         msg = json.loads(raw)
                     except json.JSONDecodeError:
                         continue
+                    if (isinstance(msg, list) and len(msg) >= 2 and msg[0] == "EOSE"
+                            and msg[1] == sub_id):
+                        gated = False       # backlog delivered; everything after this is live
+                        continue
                     if (isinstance(msg, list) and len(msg) >= 3 and msg[0] == "EVENT"
                             and msg[1] == sub_id and isinstance(msg[2], dict)):
+                        if gated:
+                            if time.time() - opened_at < _EOSE_FALLBACK:
+                                continue    # stored backlog — not news, don't hand it on
+                            gated = False   # no EOSE in time: open up rather than stay silent forever
+                            logger.warning("[nostr] %s sent no EOSE in %ss — ungating %s",
+                                           relay, _EOSE_FALLBACK, sub_id)
                         try:
                             await handler(msg[2])
                         except Exception as e:

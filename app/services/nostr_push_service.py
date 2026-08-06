@@ -380,6 +380,83 @@ async def _call_handler(ev: dict):
         logger.warning(f"[nostr-push] call handler error: {e}")
 
 
+# ---- Direct messages -----------------------------------------------------------------------------
+# A DM used to produce NO notification at all, by either mechanism: _KINDS below covers mentions,
+# reposts, reactions, zaps and channel chat, but neither kind 4 nor NIP-17's kind 1059. A closed phone
+# was simply never told someone had written to you.
+#
+# This is a live subscription rather than a row added to the poller, and that is forced by NIP-59: a
+# gift wrap's created_at is deliberately backdated by up to two days to defeat timing analysis. The
+# poller advances a cursor and asks for `since=cursor-5`, so a wrap arriving now bearing yesterday's
+# timestamp is filtered out and never seen — and widening the window to two days would re-scan two
+# days of mail every 20 seconds to find it. Arrival order is the only trustworthy signal, which is
+# exactly what a subscription gives (see relay.subscribe's live_only, which drops the backlog).
+_DM_KINDS = [1059, 4]
+_DM_COOLDOWN = 10.0        # per recipient; collapses a burst into one buzz without hiding conversation
+_dm_recent: dict = {}
+_dm_stop = None
+_dm_task = None
+
+
+async def _dm_handler(ev: dict):
+    kind = ev.get("kind")
+    author = ev.get("pubkey", "")
+    # The gift wrap is signed by a THROWAWAY key and p-tags the real recipient, so this filter is
+    # right for 1059 even though `author` is meaningless there. For kind 4 the author is the sender.
+    ptags = [t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "p"]
+    recips = [pk for pk in ptags if pk and pk != author]
+    if not recips:
+        return
+    now = time.monotonic()
+    if len(_dm_recent) > 2000:
+        for k in [k for k, v in _dm_recent.items() if now - v > 300]:
+            _dm_recent.pop(k, None)
+    fresh = [pk for pk in recips if now - _dm_recent.get(pk, 0.0) >= _DM_COOLDOWN]
+    if not fresh:
+        return
+    for pk in fresh:
+        _dm_recent[pk] = now
+
+    def _lookup_subs():
+        from app.database import SessionLocal
+        from app.models import PushSubscription
+        db = SessionLocal()
+        try:
+            out = {}
+            for pk in fresh:
+                rows = db.query(PushSubscription).filter(PushSubscription.pubkey == pk).all()
+                if rows:
+                    out[pk] = [{"endpoint": r.endpoint, "keys": {"p256dh": r.p256dh, "auth": r.auth}} for r in rows]
+            return out
+        finally:
+            db.close()
+
+    try:
+        targets = await asyncio.to_thread(_lookup_subs)
+        if not targets:
+            return
+        # NO content, and for 1059 no sender either — the server cannot decrypt, which is the point of
+        # the feature. Naming a kind-4 sender is safe (its author IS the sender) and worth doing; a
+        # gift wrap gets "Someone", and the client fills in the detail once it opens and decrypts.
+        who = await _name_for(author) if kind == 4 else ""
+        payload = {"title": "💬 New message",
+                   "body": f"{who} sent you a message" if who else "Someone sent you a message",
+                   "type": "dm"}
+        for subs in targets.values():
+            for sub in subs:
+                await asyncio.to_thread(push_service.send, sub, payload)
+    except Exception as e:
+        logger.warning(f"[nostr-push] dm handler error: {e}")
+
+
+async def _dm_sub_loop():
+    try:
+        await relay.subscribe(_local_relay()[0], [{"kinds": _DM_KINDS}], _dm_handler,
+                              _dm_stop, live_only=True)
+    except Exception as e:
+        logger.warning(f"[nostr-push] dm subscription ended: {e}")
+
+
 async def _flush_call_stats():
     try:
         from app.services import stats_service
@@ -397,7 +474,7 @@ async def _call_sub_loop():
 
 
 def start_nostr_push_scheduler():
-    global _sched, _call_stop, _call_task
+    global _sched, _call_stop, _call_task, _dm_stop, _dm_task
     if _sched:
         return
     _sched = AsyncIOScheduler()
@@ -410,14 +487,16 @@ def start_nostr_push_scheduler():
         if _local_relay():
             _call_stop = asyncio.Event()
             _call_task = asyncio.create_task(_call_sub_loop())
+            _dm_stop = asyncio.Event()
+            _dm_task = asyncio.create_task(_dm_sub_loop())
     except Exception as e:
-        logger.warning(f"[nostr-push] could not start call subscription: {e}")
-    logger.info("[nostr-push] scheduler started (mentions every %ss, joined channels every %ss) + call-invite push subscription",
-                _POLL_SECS, _CHAN_POLL_SECS)
+        logger.warning(f"[nostr-push] could not start push subscriptions: {e}")
+    logger.info("[nostr-push] scheduler started (mentions every %ss, joined channels every %ss) "
+                "+ live call-invite and DM push subscriptions", _POLL_SECS, _CHAN_POLL_SECS)
 
 
 def stop_nostr_push_scheduler():
-    global _sched, _call_stop, _call_task
+    global _sched, _call_stop, _call_task, _dm_stop, _dm_task
     if _call_stop:
         try:
             _call_stop.set()
@@ -429,6 +508,18 @@ def stop_nostr_push_scheduler():
         except Exception:
             pass
     _call_task = None
+    if _dm_stop:
+        try:
+            _dm_stop.set()
+        except Exception:
+            pass
+    if _dm_task:
+        try:
+            _dm_task.cancel()
+        except Exception:
+            pass
+    _dm_task = None
+    _call_stop = _dm_stop = None      # release the Events; start_* mints fresh ones
     if _sched:
         try:
             _sched.shutdown(wait=False)
