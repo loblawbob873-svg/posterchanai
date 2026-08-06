@@ -465,7 +465,10 @@
             <label for="nostr_relay_paid_retention_days">Paid tier — keep a subscriber's posts for (days)</label>
             <input type="number" id="nostr_relay_paid_retention_days" name="nostr_relay_paid_retention_days" placeholder="0">
             <small><code>0</code> = kept forever while subscribed. When a subscription lapses the free window applies again,
-            so a lapsed author's older posts go on the next auto-clean.</small>
+            so a lapsed author's older posts go on the next auto-clean. A subscriber is <strong>also exempt from the feed
+            auto-clean and the count cap above</strong> — otherwise a copy of their note that reached us over the firehose,
+            rather than being published here, would still be deleted at the feed retention window. Moderation
+            (blocked words/languages/pubkeys) is <em>not</em> exempt: paying doesn't buy immunity from the block purge.</small>
         </div>
         <div class="form-group">
             <label for="nostr_relay_paid_sats_per_month">Price (sats per month)</label>

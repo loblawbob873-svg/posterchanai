@@ -405,6 +405,14 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   not a purchase; (5) the splash-page QR encodes the `nostr:` PROFILE, never `lightning:` — a plain
   wallet payment carries no identity, so a payment QR would take sats and credit nobody. Both prune
   triggers (nightly + Admin "Run auto-clean now") and the dry-run preview refresh tiers + ledger first.
+  **The EXISTING auto-clean is untouched and disjoint** — every old rule carries `origin != 'direct'`,
+  both new ones `origin = 'direct'` — except that a subscriber is also exempt from the old age prune
+  and count cap (`_subscriber_exempt`), or "your posts stay" would silently exclude the copies that
+  arrived over the firehose. That exemption treats an unreadable ledger the OPPOSITE way to the tiered
+  rules, deliberately: a direct write can be the only copy (fail closed — skip the rule), while a
+  synced row is a mirror AND its rule is the relay's only bound on firehose growth (keep pruning, fall
+  back to the last successfully-read subscriber set; the master switch OFF drops that memory). The
+  block purge is NOT exempt — paying doesn't buy immunity from moderation.
   See `docs/PAY_TO_STAY.md`; `tests/test_paid_retention.py`.
 - **Live-stream bitrate clamp** (`stream_service._write_clamp_script` + the `stream_clamp_*` settings,
   Admin → Live → OBS Streaming): MediaMTX is a pure remux, so without this whatever OBS sends is what

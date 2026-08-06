@@ -505,3 +505,93 @@ def test_the_shipped_defaults_are_inert():
     assert f["nostr_relay_free_retention_days"].default == 0
     assert f["nostr_relay_paid_retention_days"].default == 0
     assert f["nostr_relay_paid_sats_per_month"].default == 0
+
+
+# ---- the exemption on ORDINARY auto-clean (synced content) -------------
+
+async def _seed_synced(store):
+    """The same corpus, but arrived over the firehose (origin='wot') — what the pre-existing age
+    prune and count cap actually operate on."""
+    evs = []
+    n = 0
+    for pk in (STRANGER, SUBSCRIBER, LOCAL):
+        for age in (90, 1):
+            for _ in range(30):
+                n += 1
+                evs.append(_ev(5000 + n, pubkey=pk, age_days=age))
+    await store.add_events_bulk(evs, origin="wot")
+
+
+def test_a_subscriber_is_spared_the_ordinary_age_prune(store_factory):
+    """A subscriber pays for their posts to stay on this relay. Which relay the copy we hold arrived
+    from is our implementation detail, not something they bought a different answer for."""
+    async def go(loop):
+        store = store_factory(loop, retention_days=30)
+        store.set_paid_tier_enabled(True)
+        store.set_subscribers([SUBSCRIBER], ledger_ok=True)
+        await _seed_synced(store)
+        preview = await store.prune_preview()
+        removed = await store.prune()
+        assert preview["aged"] == removed == 60, "the stranger's and the local user's 30 each"
+        left = {pk: len(await store.query([{"authors": [pk], "limit": 500}]))
+                for pk in (STRANGER, SUBSCRIBER, LOCAL)}
+        assert left == {STRANGER: 30, SUBSCRIBER: 60, LOCAL: 30}
+    _run(go)
+
+
+def test_with_the_feature_off_nobody_is_exempt(store_factory):
+    """The exemption must not be reachable on a node that never enabled pay-to-stay — including via
+    a subscriber set left in memory from before the switch was turned off."""
+    async def go(loop):
+        store = store_factory(loop, retention_days=30)
+        store.set_paid_tier_enabled(True)
+        store.set_subscribers([SUBSCRIBER], ledger_ok=True)
+        store.set_paid_tier_enabled(False)          # admin turns the whole feature off
+        await _seed_synced(store)
+        assert store._subscriber_exempt() == ""
+        assert await store.prune() == 90, "every author's old synced notes, subscriber included"
+    _run(go)
+
+
+def test_a_hiccup_reading_the_ledger_does_not_expose_a_subscriber(store_factory):
+    """Deliberately NOT the fail-closed behaviour the tiered rules use: this rule is the relay's only
+    bound on firehose growth, so it keeps running — but it falls back to the last set it read rather
+    than to 'nobody has paid'."""
+    async def go(loop):
+        store = store_factory(loop, retention_days=30)
+        store.set_paid_tier_enabled(True)
+        store.set_subscribers([SUBSCRIBER], ledger_ok=True)     # a good read
+        store.set_subscribers(set(), ledger_ok=False)           # …then the relay hiccups
+        await _seed_synced(store)
+        removed = await store.prune()
+        assert removed == 60, "the age prune still runs — but not over the subscriber"
+        assert len(await store.query([{"authors": [SUBSCRIBER], "limit": 500}])) == 60
+    _run(go)
+
+
+def test_a_real_read_showing_a_lapse_removes_the_exemption(store_factory):
+    """The last-known-good fallback must not ossify: a SUCCESSFUL read that no longer lists someone
+    is the subscription ending, and their synced notes age out like anyone else's."""
+    async def go(loop):
+        store = store_factory(loop, retention_days=30)
+        store.set_paid_tier_enabled(True)
+        store.set_subscribers([SUBSCRIBER], ledger_ok=True)
+        store.set_subscribers(set(), ledger_ok=True)            # subscription lapsed
+        await _seed_synced(store)
+        assert await store.prune() == 90
+    _run(go)
+
+
+def test_the_count_cap_spares_a_subscriber_too(store_factory):
+    """The cap already spares preserved authors and every direct write; a paying author is not the
+    one to treat more harshly than either."""
+    async def go(loop):
+        store = store_factory(loop, retention_days=0, max_events=10)
+        store.set_paid_tier_enabled(True)
+        store.set_subscribers([SUBSCRIBER], ledger_ok=True)
+        await _seed_synced(store)
+        preview = await store.prune_preview()
+        removed = await store.prune()
+        assert preview["capped"] == removed
+        assert len(await store.query([{"authors": [SUBSCRIBER], "limit": 500}])) == 60
+    _run(go)

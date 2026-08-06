@@ -23,6 +23,42 @@ Only high-volume **feed** kinds are ever aged out (notes, reposts, reactions, co
 articles, live events — `store._PRUNABLE_KINDS`). Profiles, contact lists, relay lists, DMs, git
 events and the app's own kind-30078 datastore are never touched, for anyone, at any age.
 
+## How it sits next to the auto-clean you already have
+
+The pre-existing rules are unchanged, and the two sets are **disjoint by origin**: every old rule
+carries `origin != 'direct'`, both new ones carry `origin = 'direct'`. Turning the feature off
+restores today's behaviour exactly, because there is no shared predicate to get wrong.
+
+| rule | what it deletes | window | new? |
+|---|---|---|---|
+| NIP-40 expiration sweep | anything with an `expiration` tag (except git + 30078) | author's own | no |
+| age prune | **synced** firehose feed content | `nostr_relay_retention_days` | no |
+| bridge DM TTL | puppet-addressed gift wraps | 4 days, fixed | no |
+| count cap | synced feed content | `nostr_relay_max_events` | no |
+| pay-to-stay free | direct writes, unsubscribed, no account here | `free_retention_days` | yes |
+| pay-to-stay paid | direct writes, subscribed | `paid_retention_days` | yes |
+
+The nightly job and the Admin **Run auto-clean now** button are one code path (`_prune_fresh`), which
+re-reads the tier windows and the subscriber ledger before pruning — as does the dry-run preview, so
+the counts on the button are the counts the real run uses.
+
+**A subscriber is also exempt from the two OLD rules** (`store._subscriber_exempt`), for the age
+prune and the count cap. Otherwise "your posts stay" would quietly mean "unless the copy we hold
+arrived over the firehose", which is our implementation detail, not something they bought a
+different answer for. The block purge (words/languages/pubkeys) is deliberately **not** exempt —
+that is moderation, and paying does not buy immunity from it.
+
+That exemption handles a failed ledger read **differently from the tiered rules, on purpose**:
+
+* a direct write can be the only copy in existence, so an unreadable ledger disables the tiered
+  rules entirely — the loss would be unrecoverable;
+* a synced row is a mirror of a note that still lives on the relays it came from, and the rule it
+  belongs to is the relay's only bound on firehose growth. Skipping it on a hiccup would trade a
+  recoverable loss for unbounded disk, so it keeps running and falls back to the last subscriber set
+  that was successfully read. Over-protecting a mirror is harmless, and the set still shrinks the
+  moment a real read shows a subscription lapsed. Turning the master switch off drops the remembered
+  set, so a stale copy can't go on exempting anyone.
+
 ## How someone pays
 
 They **zap the relay's profile** from a Nostr client. The zap receipt (kind 9735) is picked up by

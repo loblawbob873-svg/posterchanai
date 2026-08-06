@@ -604,6 +604,7 @@ def _apply_tier_config(store, cfg: dict) -> None:
     behaviour) whenever the feature is off, so the master switch alone is enough to disable it — the
     day counts can stay configured without doing anything."""
     on = bool(cfg.get("paid_retention_enabled"))
+    store.set_paid_tier_enabled(on)
     store.free_retention_days = max(0, cfg.get("free_retention_days", 0) or 0) if on else 0
     store.paid_retention_days = max(0, cfg.get("paid_retention_days", 0) or 0) if on else 0
 
@@ -616,8 +617,12 @@ async def _refresh_subscribers(store) -> None:
     has paid. FAIL-CLOSED: anything short of a successful read — feature off, relay busy, no ledger
     document, decrypt failure — leaves the tiered rules disabled for this pass rather than running
     them against an empty subscriber list, which is what deleting paying users' notes would look
-    like. Skipping a prune costs disk; the other way costs data."""
-    if not store.free_retention_days:
+    like. Skipping a prune costs disk; the other way costs data.
+
+    Driven by the master switch, NOT by `free_retention_days`: with the feature on and no free
+    window the tiered rules do nothing, but a subscriber is still exempt from the ORDINARY age
+    prune on synced content (store._subscriber_exempt), and that exemption needs a current set."""
+    if not store.paid_tier_enabled:
         store.set_subscribers((), ledger_ok=False)
         return
     try:

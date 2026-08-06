@@ -212,6 +212,8 @@ class RelayStore:
         self.paid_retention_days = 0
         self.subscriber_pubkeys: frozenset = frozenset()
         self.tiered_ok = False        # ledger READ succeeded → the tiered rules may run (fail-closed)
+        self.paid_tier_enabled = False        # the admin master switch, mirrored here
+        self._last_good_subscribers: frozenset = frozenset()   # see _subscriber_exempt
         self._tls = threading.local()
         self._write_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="relay-db-w")
         self._read_exec = ThreadPoolExecutor(max_workers=read_workers, thread_name_prefix="relay-db-r")
@@ -909,9 +911,41 @@ class RelayStore:
         leave it. That makes an unreadable ledger indistinguishable from "nobody subscribed", which
         would delete exactly the data people paid to keep, so the read result is passed in
         explicitly: `ledger_ok=False` (relay unreachable, no ledger document, decrypt failed) turns
-        the tiered rules OFF for the pass rather than running them against an empty set."""
+        the tiered rules OFF for the pass rather than running them against an empty set.
+
+        A successful read is also remembered (`_last_good_subscribers`) for the SYNCED-content
+        exemption below, which needs an answer even when this pass couldn't get a fresh one."""
         self.subscriber_pubkeys = frozenset(p for p in (pubkeys or []) if _is_hex64(p))
         self.tiered_ok = bool(ledger_ok)
+        if ledger_ok:
+            self._last_good_subscribers = self.subscriber_pubkeys
+
+    def set_paid_tier_enabled(self, on: bool) -> None:
+        """Master switch, mirrored onto the store. Turning it OFF drops the remembered subscriber set
+        too — otherwise a stale in-memory copy would go on exempting people from the ordinary age
+        prune on a relay whose operator has switched the whole feature off."""
+        self.paid_tier_enabled = bool(on)
+        if not self.paid_tier_enabled:
+            self._last_good_subscribers = frozenset()
+
+    def _subscriber_exempt(self) -> str:
+        """`AND pubkey NOT IN (…)` for the ORDINARY age prune — the one that deletes SYNCED feed
+        content — so a subscriber's notes aren't aged out from under them just because the copy we
+        hold arrived over the firehose instead of being published here. Empty string (no exemption)
+        when the feature is off or no subscriber set is known.
+
+        This treats a failed ledger read DIFFERENTLY from the tiered rules, on purpose. There, an
+        unreadable ledger disables the rule: a direct write can be the only copy in existence, and
+        deleting it is unrecoverable. Here the row is a MIRROR of a note that lives on the relays it
+        was synced from, and the rule it belongs to is the relay's only bound on firehose growth —
+        so skipping the prune outright on a hiccup would trade a recoverable loss for unbounded
+        disk. Instead it falls back to the last set successfully read: over-protecting a mirror is
+        harmless, and the set still shrinks the moment a real read shows a subscription lapsed."""
+        if not self.paid_tier_enabled:
+            return ""
+        subs = self.subscriber_pubkeys if self.tiered_ok else self._last_good_subscribers
+        vals = ",".join("'" + p + "'" for p in sorted(subs) if _is_hex64(p))
+        return f" AND pubkey NOT IN ({vals})" if vals else ""
 
     def _not_preserved(self) -> str:
         """SQL excluding local users' events (see preserve_pubkeys) from a DELETE. Pubkeys are our
@@ -982,12 +1016,14 @@ class RelayStore:
         aged = 0
         if self.retention_days:
             aged = _n(f"SELECT COUNT(*) AS c FROM events WHERE created_at < ? AND "
-                      f"kind IN ({prunable}) AND {preserve}", (now - self.retention_days * 86400,))
+                      f"kind IN ({prunable}) AND {preserve}{self._subscriber_exempt()}",
+                      (now - self.retention_days * 86400,))
         bridge_dm = _n("SELECT COUNT(*) AS c FROM events WHERE origin = 'bridge' AND "
                        "kind IN (13, 1059) AND created_at < ?", (now - _BRIDGE_DM_TTL_DAYS * 86400,))
         capped = 0
         if self.max_events:
-            capped = _n(f"SELECT COUNT(*) AS c FROM events WHERE kind IN ({prunable}) AND {preserve} "
+            capped = _n(f"SELECT COUNT(*) AS c FROM events WHERE kind IN ({prunable}) AND {preserve}"
+                        f"{self._subscriber_exempt()} "
                         "AND id IN (SELECT id FROM events ORDER BY created_at DESC LIMIT ALL OFFSET ?)",
                         (self.max_events,))
         # Pay-to-stay (usually absent — the feature is off by default).
@@ -1065,9 +1101,14 @@ class RelayStore:
         # _collect_preserve_pubkeys covers local users, this server's NIP-05 holders, and the puppets
         # of local users' linked fediverse accounts (a bridged user's posts are authored by their
         # PUPPET key, never their npub, which is why preserving the npub alone never protected them).
+        #
+        # `_subscriber_exempt()` is appended (empty string unless pay-to-stay is on): a paying
+        # author's notes are not aged out just because the copy we hold came over the firehose
+        # rather than being published here — "your posts stay" would be a lie otherwise.
         if self.retention_days:
             cutoff = int(time.time()) - self.retention_days * 86400
-            ids = _delete(f"created_at < ? AND kind IN ({prunable}) AND {preserve}", (cutoff,))
+            ids = _delete(f"created_at < ? AND kind IN ({prunable}) AND {preserve}"
+                          f"{self._subscriber_exempt()}", (cutoff,))
             gone += ids; removed += len(ids)
         # NOT retention, and deliberately not folded into the setting above: puppet-addressed DM
         # gift-wraps/seals (origin='bridge', kinds 13/1059) are undeliverable junk anyone can generate,
@@ -1083,10 +1124,12 @@ class RelayStore:
         for _label, _where, _params in self._tiered_rules(int(time.time())):
             ids = _delete(_where, _params)
             gone += ids; removed += len(ids)
-        # Hard count cap (memory bound): trim oldest prunable feed events beyond the limit.
+        # Hard count cap (memory bound): trim oldest prunable feed events beyond the limit. Exempts
+        # subscribers for the same reason the age rule does — the cap already spares preserved
+        # authors and every direct write, so a paying author is not the one to treat more harshly.
         if self.max_events:
             ids = _delete(
-                f"kind IN ({prunable}) AND {preserve} AND id IN "
+                f"kind IN ({prunable}) AND {preserve}{self._subscriber_exempt()} AND id IN "
                 "(SELECT id FROM events ORDER BY created_at DESC LIMIT ALL OFFSET ?)",
                 (self.max_events,))
             gone += ids; removed += len(ids)
