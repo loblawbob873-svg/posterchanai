@@ -201,6 +201,17 @@ class RelayStore:
         # Authors nothing auto-deletes: local users, this server's NIP-05 holders, and the puppets of
         # local users' linked fediverse accounts (see thread._collect_preserve_pubkeys).
         self.preserve_pubkeys: frozenset = frozenset()
+        # --- pay-to-stay (OPTIONAL, and OFF unless an admin turns it on) --------------------
+        # Everything a client published HERE (origin='direct') is data entrusted to this relay and
+        # the rules above never touch it, at any age. `free_retention_days` is the one exception,
+        # and it exists only when the admin enables the paid-retention feature: a direct write by an
+        # author who has NO account here (not in preserve_pubkeys) and NO paid subscription ages out
+        # after that window; a subscriber's keeps `paid_retention_days` (0 = forever). Both default
+        # to 0, so on every node that never turns this on the prune behaves exactly as it always did.
+        self.free_retention_days = 0
+        self.paid_retention_days = 0
+        self.subscriber_pubkeys: frozenset = frozenset()
+        self.tiered_ok = False        # ledger READ succeeded → the tiered rules may run (fail-closed)
         self._tls = threading.local()
         self._write_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="relay-db-w")
         self._read_exec = ThreadPoolExecutor(max_workers=read_workers, thread_name_prefix="relay-db-r")
@@ -891,16 +902,62 @@ class RelayStore:
         if add - self.preserve_pubkeys:
             self.preserve_pubkeys = self.preserve_pubkeys | add
 
-    def _preserve_clause(self) -> str:
-        """Extra SQL: exclude direct-write events (data entrusted to this relay) and local
-        users' events from a prune DELETE. Pubkeys are our own 64-hex config values (safe to
-        inline). `origin='direct'` = a client published here; `'wot'`/`'ancestor'` = synced feed."""
-        cond = "origin != 'direct'"
+    def set_subscribers(self, pubkeys, *, ledger_ok: bool) -> None:
+        """Install the pay-to-stay subscriber set (authors with a live paid subscription).
+
+        Unlike preserve, this set is REPLACED, not grown — a lapsed subscription has to be able to
+        leave it. That makes an unreadable ledger indistinguishable from "nobody subscribed", which
+        would delete exactly the data people paid to keep, so the read result is passed in
+        explicitly: `ledger_ok=False` (relay unreachable, no ledger document, decrypt failed) turns
+        the tiered rules OFF for the pass rather than running them against an empty set."""
+        self.subscriber_pubkeys = frozenset(p for p in (pubkeys or []) if _is_hex64(p))
+        self.tiered_ok = bool(ledger_ok)
+
+    def _not_preserved(self) -> str:
+        """SQL excluding local users' events (see preserve_pubkeys) from a DELETE. Pubkeys are our
+        own 64-hex config values, so they're safe to inline."""
         if self.preserve_pubkeys:
             vals = ",".join("'" + p + "'" for p in self.preserve_pubkeys if _is_hex64(p))
             if vals:
-                cond += f" AND pubkey NOT IN ({vals})"
+                return f"pubkey NOT IN ({vals})"
+        return "TRUE"
+
+    def _preserve_clause(self) -> str:
+        """Extra SQL: exclude direct-write events (data entrusted to this relay) and local
+        users' events from a prune DELETE. `origin='direct'` = a client published here;
+        `'wot'`/`'ancestor'` = synced feed."""
+        cond = "origin != 'direct'"
+        nots = self._not_preserved()
+        if nots != "TRUE":
+            cond += f" AND {nots}"
         return cond
+
+    def _subscriber_sql(self) -> str:
+        """The subscriber pubkey list as an SQL IN-list. Empty set → `''`, which no 64-hex pubkey can
+        equal: `NOT IN ('')` is then true for everyone (free tier) and `IN ('')` false for everyone
+        (the paid rule deletes nothing). An empty `IN ()` is a syntax error, so the sentinel matters."""
+        vals = ",".join("'" + p + "'" for p in sorted(self.subscriber_pubkeys) if _is_hex64(p))
+        return vals or "''"
+
+    def _tiered_rules(self, now: int) -> list:
+        """The pay-to-stay age rules as (label, where, params) — the ONLY rules that can delete a
+        direct-published event. Empty (feature off) unless the admin set a free window AND the
+        subscriber ledger was successfully read this pass. Shared by the prune and its preview so
+        the two can't drift apart (the preview is what an admin trusts before deleting)."""
+        if not self.free_retention_days or not self.tiered_ok:
+            return []
+        prunable = ",".join(str(k) for k in _PRUNABLE_KINDS)
+        subs = self._subscriber_sql()
+        # Same three qualifiers on both rules: only ever direct writes, only ever high-volume feed
+        # kinds, and never an author with an account here.
+        base = f"origin = 'direct' AND kind IN ({prunable}) AND {self._not_preserved()}"
+        out = [("aged_free", f"created_at < ? AND {base} AND pubkey NOT IN ({subs})",
+                (now - self.free_retention_days * 86400,))]
+        if self.paid_retention_days:
+            # 0 = a subscription buys "kept forever", so there is no second rule at all.
+            out.append(("aged_paid", f"created_at < ? AND {base} AND pubkey IN ({subs})",
+                        (now - self.paid_retention_days * 86400,)))
+        return out
 
     def _prune_preview_sync(self) -> dict:
         """DRY RUN: how many events _prune_sync would delete right now, broken down by rule. Same
@@ -933,9 +990,16 @@ class RelayStore:
             capped = _n(f"SELECT COUNT(*) AS c FROM events WHERE kind IN ({prunable}) AND {preserve} "
                         "AND id IN (SELECT id FROM events ORDER BY created_at DESC LIMIT ALL OFFSET ?)",
                         (self.max_events,))
+        # Pay-to-stay (usually absent — the feature is off by default).
+        tiered = {label: _n(f"SELECT COUNT(*) AS c FROM events WHERE {where}", params)
+                  for label, where, params in self._tiered_rules(now)}
         return {"expired": expired, "aged": aged, "bridge_dm": bridge_dm, "capped": capped,
-                "total": expired + aged + bridge_dm + capped,
-                "retention_days": self.retention_days, "max_events": self.max_events}
+                **tiered,
+                "total": expired + aged + bridge_dm + capped + sum(tiered.values()),
+                "retention_days": self.retention_days, "max_events": self.max_events,
+                "free_retention_days": self.free_retention_days,
+                "paid_retention_days": self.paid_retention_days,
+                "subscribers": len(self.subscriber_pubkeys), "tiered_ok": self.tiered_ok}
 
     async def prune_preview(self) -> dict:
         return await self._r(self._prune_preview_sync)
@@ -1013,6 +1077,12 @@ class RelayStore:
         dmcut = int(time.time()) - _BRIDGE_DM_TTL_DAYS * 86400
         ids = _delete("origin = 'bridge' AND kind IN (13, 1059) AND created_at < ?", (dmcut,))
         gone += ids; removed += len(ids)
+        # Pay-to-stay: the ONLY rules that ever delete a direct-published event, and they exist only
+        # when an admin turned the feature on, set a free window, AND the subscriber ledger was read
+        # this pass (_tiered_rules returns nothing otherwise, so every other node is unaffected).
+        for _label, _where, _params in self._tiered_rules(int(time.time())):
+            ids = _delete(_where, _params)
+            gone += ids; removed += len(ids)
         # Hard count cap (memory bound): trim oldest prunable feed events beyond the limit.
         if self.max_events:
             ids = _delete(

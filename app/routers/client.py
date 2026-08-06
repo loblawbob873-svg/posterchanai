@@ -2703,6 +2703,24 @@ async def nip05_proxy(domain: str, name: str = "_"):
     return JSONResponse(out)
 
 
+@router.get("/retention")
+async def client_retention(pubkey: str = ""):
+    """Pay-to-stay policy for this relay, and (with `?pubkey=`) that author's standing.
+
+    Public and unauthenticated: it answers "how long will this relay keep MY posts", which a visitor
+    has to be able to ask before deciding to publish here. Reports `enabled: false` — and nothing
+    else — on every node that hasn't turned the feature on, which is all of them by default.
+    `known: false` means the ledger couldn't be read; the caller must not render that as
+    "not subscribed".
+
+    Anyone may look up any pubkey, deliberately: a subscription is bought with a zap, and zap
+    receipts are public events, so who pays this relay is already derivable from the open network.
+    Gating this would hide nothing and would put the answer behind a login on the one screen a
+    visitor without an account here needs it."""
+    from app.services import paid_retention_service as prs
+    return JSONResponse(await prs.get_status(pubkey))
+
+
 @router.get("/lnurl")
 async def lnurl_proxy(url: str):
     """CORS fallback for NIP-57 zaps: fetch an LNURL-pay endpoint (the lnurlp well-known params or

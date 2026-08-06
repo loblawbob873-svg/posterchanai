@@ -555,6 +555,15 @@ class SettingsResponse(BaseModel):
     nostr_relay_private_relays: Optional[str] = None
     nostr_relay_retention_days: Optional[int] = None  # auto-clean feed notes older than N days (0=off)
     nostr_relay_max_events: Optional[int] = None      # hard count cap on feed events (0=unlimited)
+    # Pay-to-stay: an OPTIONAL paid retention tier for authors with no account here. All five are
+    # inert until `_enabled` is on AND `_free_retention_days` is a non-zero number — see
+    # app/services/paid_retention_service.py.
+    nostr_relay_paid_retention_enabled: Optional[bool] = False
+    nostr_relay_free_retention_days: Optional[int] = 0    # non-subscribers' own posts (0 = forever)
+    nostr_relay_paid_retention_days: Optional[int] = 0    # subscribers' own posts (0 = forever)
+    nostr_relay_paid_sats_per_month: Optional[int] = 0    # price; 0 = nothing can be bought
+    nostr_relay_paid_lud16: Optional[str] = None          # lightning address zaps must be paid to
+    nostr_relay_paid_pubkey: Optional[str] = None         # zap target npub (blank = relay/operator key)
     nostr_relay_wot_enabled: Optional[bool] = True
     nostr_relay_send_only: Optional[bool] = False
     nostr_relay_wot_refresh_sec: Optional[int] = None

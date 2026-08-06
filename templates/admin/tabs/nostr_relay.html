@@ -236,9 +236,11 @@
                                             if(p&&(p[stamp]||0)>baseTs){
                                                 if(dry){
                                                     var v=p.preview||{};
+                                                    var extra=(v.free_retention_days?
+                                                        ', pay-to-stay free '+(v.aged_free||0)+'/paid '+(v.aged_paid||0):'');
                                                     resolve('≈'+(v.total||0)+' note(s) would go — aged '+(v.aged||0)+
                                                             ', expired '+(v.expired||0)+', bridge DMs '+(v.bridge_dm||0)+
-                                                            ', over cap '+(v.capped||0));
+                                                            ', over cap '+(v.capped||0)+extra);
                                                 } else resolve('✓ removed '+(p.count==null?0:p.count)+' note(s)');
                                             }
                                             else if(tries>=450) resolve('⏳ still running — count lands in the relay log');
@@ -255,6 +257,45 @@
                 abtn.addEventListener('click', function(){
                     if(!confirm('Delete every feed note past the retention window above? Preview first if you have not. This cannot be undone.')) return;
                     runPrune(false);
+                });
+            }
+            // Pay-to-stay: read the subscriber ledger, and grant/revoke days by hand. "Unknown"
+            // (the ledger could not be read) is shown as such and never as "no subscribers" —
+            // that is the same distinction the prune relies on to not delete paid-for notes.
+            var sbtn=document.getElementById('relayPaidRefresh'), sstat=document.getElementById('relayPaidStatus'),
+                slist=document.getElementById('relayPaidList'), gbtn=document.getElementById('relayPaidGrantBtn');
+            if(sbtn){
+                var sf=(window.csrfFetch||fetch);
+                function loadSubs(){
+                    sbtn.disabled=true; sstat.textContent='loading…';
+                    return sf('/api/admin/nostr-relay/paid-retention').then(function(r){return r.json();})
+                    .then(function(j){
+                        if(!j.enabled){ sstat.textContent='pay-to-stay is off'; slist.innerHTML=''; return; }
+                        if(!j.known){ sstat.textContent='⚠ ledger unreadable ('+(j.error||'?')+') — the prune skips the paid tier until it can be read'; slist.innerHTML=''; return; }
+                        var live=(j.subs||[]).filter(function(s){return s.live;});
+                        sstat.textContent=live.length+' live subscription(s) of '+(j.subs||[]).length+' on record';
+                        slist.innerHTML=(j.subs||[]).map(function(s){
+                            return '<div style="font-family:monospace;font-size:.8rem;opacity:'+(s.live?'1':'.55')+'">'+
+                                   (s.live?'✅':'⌛')+' '+s.npub.slice(0,20)+'… — until '+
+                                   new Date(s.until*1000).toISOString().slice(0,10)+' ('+s.sats+' sats)</div>';
+                        }).join('')||'<div class="muted">nobody yet</div>';
+                    })
+                    .catch(function(e){ sstat.textContent='✗ '+((e&&e.message)||e); })
+                    .finally(function(){ sbtn.disabled=false; });
+                }
+                sbtn.addEventListener('click', loadSubs);
+                if(gbtn) gbtn.addEventListener('click', function(){
+                    var pk=(document.getElementById('relayPaidGrantPk').value||'').trim(),
+                        d=parseInt(document.getElementById('relayPaidGrantDays').value||'0',10);
+                    if(!pk||!d){ sstat.textContent='need a pubkey and a non-zero number of days'; return; }
+                    gbtn.disabled=true; sstat.textContent='granting…';
+                    sf('/api/admin/nostr-relay/paid-retention/grant',{method:'POST',
+                        headers:{'Content-Type':'application/json'},body:JSON.stringify({pubkey:pk,days:d})})
+                    .then(function(r){return r.json();}).then(function(j){
+                        if(!(j&&j.ok)) throw new Error((j&&j.error)||'failed');
+                        return loadSubs();
+                    }).catch(function(e){ sstat.textContent='✗ '+((e&&e.message)||e); })
+                    .finally(function(){ gbtn.disabled=false; });
                 });
             }
         }
@@ -398,6 +439,62 @@
             <small>Auto-clean runs on a schedule (shortly after each relay start, then daily). Use <strong>Preview</strong>
             to count what the settings above would delete — do that first, it can be hundreds of thousands of notes —
             then <strong>Run</strong> to apply it now. Save your changes before either; both read the <em>saved</em> settings.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Pay to stay (paid retention tier)</legend>
+        <p class="muted" style="margin:0 0 12px">Everything a visitor publishes <em>to this relay</em> is currently kept
+        <strong>forever</strong>. Turn this on to age out those posts after a free window, and let an author keep them
+        longer by <strong>zapping</strong> this relay's profile. <strong>Your own users are never affected</strong> —
+        accounts on this instance, NIP-05 holders, operators and bridged puppets are in the preserve set and no age rule
+        can touch them. Profiles, contacts, DMs and articles are never auto-deleted for anyone.</p>
+        <div class="form-group">
+            <label for="nostr_relay_paid_retention_enabled">
+                <input type="checkbox" id="nostr_relay_paid_retention_enabled" name="nostr_relay_paid_retention_enabled"> Enable pay-to-stay
+            </label>
+            <small>Master switch. Off = nothing below has any effect and the prune behaves exactly as it does today.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_free_retention_days">Free tier — keep visitors' posts for (days)</label>
+            <input type="number" id="nostr_relay_free_retention_days" name="nostr_relay_free_retention_days" placeholder="0">
+            <small><strong>This is the setting that deletes things.</strong> <code>0</code> = keep forever (the default, and what
+            happens today) — nothing is ever deleted until you put a number here. Preview the auto-clean above after changing it.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_paid_retention_days">Paid tier — keep a subscriber's posts for (days)</label>
+            <input type="number" id="nostr_relay_paid_retention_days" name="nostr_relay_paid_retention_days" placeholder="0">
+            <small><code>0</code> = kept forever while subscribed. When a subscription lapses the free window applies again,
+            so a lapsed author's older posts go on the next auto-clean.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_paid_sats_per_month">Price (sats per month)</label>
+            <input type="number" id="nostr_relay_paid_sats_per_month" name="nostr_relay_paid_sats_per_month" placeholder="0">
+            <small><code>0</code> = nothing can be bought (grant days by hand below). Part-payments carry over, so small zaps add up.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_paid_lud16">Lightning address zaps are paid to</label>
+            <input type="text" id="nostr_relay_paid_lud16" name="nostr_relay_paid_lud16" placeholder="you@getalby.com">
+            <small>Required for automatic crediting: its LNURL endpoint publishes the <code>nostrPubkey</code> whose signature
+            on a zap receipt <strong>is</strong> the proof an invoice was paid. A receipt signed by anyone else is ignored.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_paid_pubkey">Zap target (npub/hex)</label>
+            <input type="text" id="nostr_relay_paid_pubkey" name="nostr_relay_paid_pubkey" placeholder="blank = this relay's admin/operator key">
+            <small>The profile people zap. Blank uses the NIP-11 admin pubkey above, else this node's operator key.
+            Only a <strong>profile</strong> zap counts — a zap on a single post stays an ordinary tip.</small>
+        </div>
+        <div class="form-group">
+            <button type="button" id="relayPaidRefresh" class="btn-secondary">👛 Subscribers</button>
+            <span id="relayPaidStatus" style="margin-left:.5rem;"></span>
+            <div id="relayPaidList" style="margin-top:.6rem;"></div>
+            <small>Reads the ledger (one operator-signed relay document, <code>pcai:kv:paid_retention</code>). Grant days by hand
+            for a payment that arrived another way — negative days take them back.</small>
+            <div style="margin-top:.5rem;display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;">
+                <input type="text" id="relayPaidGrantPk" placeholder="npub1… / hex" style="flex:1 1 18rem;min-width:0;">
+                <input type="number" id="relayPaidGrantDays" placeholder="days" style="width:7rem;">
+                <button type="button" id="relayPaidGrantBtn" class="btn-secondary">Grant</button>
+            </div>
         </div>
     </fieldset>
 

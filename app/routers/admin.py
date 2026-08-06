@@ -449,6 +449,50 @@ def nostr_relay_prune(dry_run: bool = False, admin: User = Depends(get_admin_use
     return trigger_prune(dry_run=dry_run)
 
 
+@router.get("/nostr-relay/paid-retention")
+async def nostr_relay_paid_retention(admin: User = Depends(get_admin_user)):
+    """Pay-to-stay: the configured policy plus who currently has a paid subscription.
+
+    `known: false` means the ledger could not be READ (relay down, no ledger yet) — reported as
+    such rather than as an empty subscriber list, because the same distinction is what stops the
+    prune from deleting paying users' notes."""
+    from app.services import paid_retention_service as prs
+    out = prs.policy()
+    out["subs"] = []
+    try:
+        ledger = await prs.load_ledger()
+    except Exception as e:
+        out["known"], out["error"] = False, str(e)
+        return out
+    if ledger is None:
+        out["known"] = False
+        out["error"] = "no ledger document yet"
+        return out
+    import time
+    from app.services.nostr import nostr_service
+    now = int(time.time())
+    for pk, rec in sorted(ledger["subs"].items(), key=lambda kv: -kv[1]["until"]):
+        out["subs"].append({"pubkey": pk, "npub": nostr_service.npub_of(pk),
+                            "until": rec["until"], "live": rec["until"] > now,
+                            "sats": rec.get("msats", 0) // 1000})
+    out["known"] = True
+    return out
+
+
+@router.post("/nostr-relay/paid-retention/grant")
+async def nostr_relay_paid_grant(body: dict, admin: User = Depends(get_admin_user)):
+    """Add (or with negative days, take back) paid retention for one author. The ops surface for a
+    payment that arrived some other way, a comped account, or a credit that needs undoing."""
+    from app.services import paid_retention_service as prs
+    try:
+        rec = await prs.grant(str(body.get("pubkey") or ""), int(body.get("days") or 0))
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    logger.info("[Admin] pay-to-stay grant %s day(s) to %s by %s", body.get("days"),
+                str(body.get("pubkey"))[:16], getattr(admin, "username", "?"))
+    return {"ok": True, "until": rec["until"]}
+
+
 @router.get("/nostr-relay/status")
 def nostr_relay_status(admin: User = Depends(get_admin_user)):
     from app.services.nostr_relay.thread import relay_status
@@ -612,7 +656,12 @@ def update_settings(
         # startup, so editing them in the UI did nothing until a restart (symptom: "I set prune to 0
         # but old notes still get deleted"). Flush durably first (relay re-reads from Postgres), then
         # push the live update — same pattern as the upstream reload above, no restart.
-        _relay_store_keys = ("nostr_relay_retention_days", "nostr_relay_max_events")
+        # The pay-to-stay windows ride the same path — they are prune inputs like the two above, and
+        # a tier change an admin can't see take effect until a restart is a tier change they will
+        # assume is broken.
+        _relay_store_keys = ("nostr_relay_retention_days", "nostr_relay_max_events",
+                             "nostr_relay_paid_retention_enabled", "nostr_relay_free_retention_days",
+                             "nostr_relay_paid_retention_days")
         if not _relay_will_restart and any(k in changed_keys for k in _relay_store_keys):
             flushed = False
             try:

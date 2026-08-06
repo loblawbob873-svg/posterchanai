@@ -350,6 +350,13 @@ def _read_config() -> dict:
             # feed notes once over the limit). 0 = unlimited; the 30-day age retention is the only
             # feed cleanup, and registered users' + direct-published events are always preserved.
             "max_events": gi("nostr_relay_max_events", 0),
+            # Pay-to-stay (OPTIONAL, off by default). The only rules that can delete a
+            # DIRECT-published event, and only for authors with no account here and no live
+            # subscription — see app/services/paid_retention_service.py. Read here so the admin
+            # toggle reaches the prune the same way retention_days does.
+            "paid_retention_enabled": gb("nostr_relay_paid_retention_enabled", False),
+            "free_retention_days": gi("nostr_relay_free_retention_days", 0),
+            "paid_retention_days": gi("nostr_relay_paid_retention_days", 0),
             "sync_budget_sec": gi("nostr_relay_sync_budget_sec", 100), # per-tick sync work budget
             "wot_refresh_sec": gi("nostr_relay_wot_refresh_sec", 604800),  # weekly (was daily)
             "wot_refresh_hour": gi("nostr_relay_wot_refresh_hour", 4),    # UTC hour for the nightly full crawl
@@ -592,6 +599,40 @@ def _collect_preserve_pubkeys(db) -> list:
     return list(out)
 
 
+def _apply_tier_config(store, cfg: dict) -> None:
+    """Push the pay-to-stay windows onto the store. Both are forced to 0 (= keep forever, today's
+    behaviour) whenever the feature is off, so the master switch alone is enough to disable it — the
+    day counts can stay configured without doing anything."""
+    on = bool(cfg.get("paid_retention_enabled"))
+    store.free_retention_days = max(0, cfg.get("free_retention_days", 0) or 0) if on else 0
+    store.paid_retention_days = max(0, cfg.get("paid_retention_days", 0) or 0) if on else 0
+
+
+async def _refresh_subscribers(store) -> None:
+    """Install the current pay-to-stay subscriber set, right before a prune/preview.
+
+    Shares ONE definition of "subscribed" with the worker that writes the ledger and the endpoint
+    that reports it (paid_retention_service.live_subscribers), so the three can't disagree about who
+    has paid. FAIL-CLOSED: anything short of a successful read — feature off, relay busy, no ledger
+    document, decrypt failure — leaves the tiered rules disabled for this pass rather than running
+    them against an empty subscriber list, which is what deleting paying users' notes would look
+    like. Skipping a prune costs disk; the other way costs data."""
+    if not store.free_retention_days:
+        store.set_subscribers((), ledger_ok=False)
+        return
+    try:
+        from app.services.paid_retention_service import live_subscribers
+        pks, ok = await live_subscribers()
+    except Exception as e:
+        logger.warning("[nostr-relay] paid-retention ledger read failed (%s) — tiered prune skipped", e)
+        pks, ok = set(), False
+    store.set_subscribers(pks, ledger_ok=ok)
+    if ok:
+        logger.info("[nostr-relay] pay-to-stay: %d live subscription(s); free window %dd, "
+                    "paid window %s", len(pks), store.free_retention_days,
+                    f"{store.paid_retention_days}d" if store.paid_retention_days else "forever")
+
+
 async def _refresh_preserve(store) -> None:
     """UNION the current operators (registered users/bots/keys) + persisted PINNED authors (explicitly
     backfilled histories, in relay kv) into the store's preserve set, right before a prune/purge.
@@ -638,6 +679,7 @@ async def _main(cfg: dict) -> None:
     gate.set_operator(cfg["operator"])
     gate.set_blocked(cfg["blocked_pubkeys"])
     gate.set_bridge_secret(cfg.get("bridge_secret"))   # validate fediverse puppet events
+    _apply_tier_config(store, cfg)   # pay-to-stay windows (both 0 = off, the default everywhere)
     store.set_preserve_pubkeys(cfg.get("preserve") or cfg["operator"])   # never pruned: local users,
     # NIP-05 holders on this server, and bridged users' puppets (their fedi posts mirror under those)
     try:                                            # + persisted PINNED authors (backfilled histories)
@@ -925,6 +967,11 @@ async def _main(cfg: dict) -> None:
         # was backfilled since startup/reload is protected — otherwise the prune runs with a STALE
         # preserve set and deletes their synced notes (the recurring "synced notes disappear" bug).
         await _refresh_preserve(store)
+        # Pay-to-stay: re-read the tier windows AND the subscriber ledger every time. The windows
+        # can have been changed in Admin since the last pass, and a subscription that lapsed (or was
+        # just bought) must be reflected in THIS prune, not the next one.
+        _apply_tier_config(store, _read_config())
+        await _refresh_subscribers(store)
         removed = await store.prune()
         # ALWAYS log the count, even zero. This used to return silently into _periodic, so there was
         # no way to tell from the logs whether auto-clean had ever run — the answer to "I set a
@@ -1109,13 +1156,17 @@ async def _main(cfg: dict) -> None:
                         try:
                             if cmd.get("dry_run"):
                                 await _refresh_preserve(store)   # same preserve set the real run uses
+                                _apply_tier_config(store, _read_config())   # …and the same tiers
+                                await _refresh_subscribers(store)
                                 pv = await store.prune_preview()
                                 _prune_state["preview"] = pv
                                 _prune_state["preview_ts"] = int(time.time())
                                 _write_status()
                                 logger.info("[nostr-relay] auto-clean DRY RUN: would remove ~%d event(s) "
-                                            "(aged=%d expired=%d bridge-dm=%d count-cap=%d)", pv["total"],
-                                            pv["aged"], pv["expired"], pv["bridge_dm"], pv["capped"])
+                                            "(aged=%d expired=%d bridge-dm=%d count-cap=%d "
+                                            "pay-to-stay: free=%d paid=%d)", pv["total"],
+                                            pv["aged"], pv["expired"], pv["bridge_dm"], pv["capped"],
+                                            pv.get("aged_free", 0), pv.get("aged_paid", 0))
                             else:
                                 removed = await _prune_fresh()   # logs the count + writes status
                                 logger.info("[nostr-relay] control: auto-clean removed %d stored event(s)",
@@ -1178,9 +1229,15 @@ async def _main(cfg: dict) -> None:
                             store.max_events = fresh["max_events"]
                             cfg["retention_days"] = fresh["retention_days"]
                             cfg["max_events"] = fresh["max_events"]
+                            # Pay-to-stay windows travel the same path (Admin saved the Relay tab).
+                            _apply_tier_config(store, fresh)
+                            for _k in ("paid_retention_enabled", "free_retention_days",
+                                       "paid_retention_days"):
+                                cfg[_k] = fresh[_k]
                             logger.info("[nostr-relay] control: store config reloaded "
-                                        "(retention_days=%s, max_events=%s)",
-                                        store.retention_days, store.max_events)
+                                        "(retention_days=%s, max_events=%s, pay-to-stay free=%sd "
+                                        "paid=%sd)", store.retention_days, store.max_events,
+                                        store.free_retention_days, store.paid_retention_days)
                         except Exception as e:
                             logger.warning("[nostr-relay] reload-store-config failed: %s", e)
                     elif cmd.get("cmd") == "backfill" and cmd.get("pubkey"):

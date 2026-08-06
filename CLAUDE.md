@@ -384,6 +384,28 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   invent a budget it cannot read. They stay OUT of `COMMANDS` so `help` doesn't advertise them.
   Migration off the old SQLite DB is `scripts/export_budget_db.py` → paste into Budget → Import
   (it can't be a server script — only the browser holds the key).
+- **Pay to stay** (`app/services/paid_retention_service.py` + the `nostr_relay_paid_*`/`_free_retention_days`
+  settings, Admin → Nostr Relay): an OPTIONAL paid retention tier for the relay, **off on every node**
+  until an admin enables it AND types a free window. Everything a client publishes here
+  (`origin='direct'`) is kept forever today; the tier ages out a NON-subscriber's own feed posts after
+  `free_retention_days` and a subscriber's after `paid_retention_days` (0 = forever). Accounts here,
+  NIP-05 holders, operators and bridged puppets are in the preserve set and are never affected — only
+  WoT strangers are. `store._tiered_rules()` is the ONLY thing in the codebase that can delete a
+  direct-published event; it returns nothing (so nothing changes) unless the feature is on, a free
+  window is set, and the ledger was read this pass. Payment is a **zap of the relay's profile**;
+  `verify_receipt` trusts a kind-9735 only because it is signed by the `nostrPubkey` the configured
+  `paid_lud16`'s LNURL endpoint advertises — a receipt on our relay proves nothing, any WoT member can
+  publish one. Ledger = ONE operator-signed 30078 doc `pcai:kv:paid_retention` (worker writes, relay +
+  app read). **Gotchas, each a silent loss:** (1) an unreadable ledger and "nobody subscribed" must not
+  look the same — `set_subscribers(pks, ledger_ok=…)` carries it and the tier is skipped entirely when
+  False, *including* when the doc doesn't exist, because the alternative deletes what people paid for;
+  (2) reads are `strict=True` and a failed read is never written back (replaceable-doc wipe); (3) the
+  amount comes from the bolt11 invoice — an unreadable invoice is REFUSED, never replaced by the zap
+  request's `amount` tag, which the payer controls; (4) a zap with an `e` tag is a tip for that post,
+  not a purchase; (5) the splash-page QR encodes the `nostr:` PROFILE, never `lightning:` — a plain
+  wallet payment carries no identity, so a payment QR would take sats and credit nobody. Both prune
+  triggers (nightly + Admin "Run auto-clean now") and the dry-run preview refresh tiers + ledger first.
+  See `docs/PAY_TO_STAY.md`; `tests/test_paid_retention.py`.
 - **Live-stream bitrate clamp** (`stream_service._write_clamp_script` + the `stream_clamp_*` settings,
   Admin → Live → OBS Streaming): MediaMTX is a pure remux, so without this whatever OBS sends is what
   **every viewer downloads** — one 1080p60/6 Mbps streamer costs 6 Mbps of upload *per viewer*. The clamp

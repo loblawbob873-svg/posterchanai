@@ -373,6 +373,26 @@ class RelayServer:
             doc["pubkey"] = c["pubkey"]
         if c.get("contact"):
             doc["contact"] = c["contact"]
+        # Pay-to-stay, when an admin enabled it: NIP-11 has fields for exactly this, and a client
+        # that reads them can warn a user before their notes age out. Absent entirely otherwise —
+        # advertising `retention` on a relay that deletes nothing would be a lie in the other
+        # direction. `retention` describes what a VISITOR's own posts get (the free tier); the
+        # subscription that extends it is the `fees.subscription` entry.
+        try:
+            from app.services import paid_retention_service as prs
+            pol = prs.policy()
+        except Exception:
+            pol = {}
+        if pol.get("enabled") and pol.get("free_days"):
+            from .store import _PRUNABLE_KINDS
+            doc["retention"] = [
+                # Only high-volume feed content is ever aged out; everything else is kept.
+                {"kinds": list(_PRUNABLE_KINDS), "time": int(pol["free_days"]) * 86400},
+                {"time": None},
+            ]
+            if pol.get("sats_per_month"):
+                doc["fees"] = {"subscription": [{"amount": int(pol["sats_per_month"]) * 1000,
+                                                 "unit": "msats", "period": 2592000}]}
         return json.dumps(doc).encode("utf-8")
 
     def _register_bridge_nip05(self, ev: dict) -> None:
@@ -495,7 +515,7 @@ class RelayServer:
         name = _html.escape(self.cfg.get("name") or "PosterChanAI Relay")
         desc = _html.escape(self.cfg.get("description") or "Web-of-trust Nostr relay")
         return _WELCOME_HTML.replace("{{URL}}", url).replace("{{NAME}}", name).replace(
-            "{{DESC}}", desc).encode("utf-8")
+            "{{DESC}}", desc).replace("{{RETENTION}}", _retention_block()).encode("utf-8")
 
     # --- connection handling ------------------------------------------------
 
@@ -998,6 +1018,80 @@ class RelayServer:
             self._send(conn, ["NEG-ERR", sub_id, "error"])
 
 
+_retention_cache: dict = {"key": None, "html": "", "at": 0.0}
+
+
+def _retention_block() -> str:
+    """The pay-to-stay section of the landing page — EMPTY unless an admin enabled the feature, so a
+    relay that doesn't charge says nothing about charging.
+
+    The QR encodes the receiving profile as a `nostr:` URI, NOT the lightning address, and that is
+    the whole point: a subscription is bought with a ZAP, and only a Nostr client can make one (it
+    signs the kind-9734 request that carries the payer's identity). A plain wallet paying the same
+    lightning address sends real sats with nothing to attribute them to, so a payment QR here would
+    take people's money and credit nobody. The address is still printed as text, as the destination
+    to verify a zap against — never as something to scan and pay.
+
+    Rendered once and cached against the settings that produced it: this runs on the relay's event
+    loop for every hit on the landing page, and a QR encode per request is real work."""
+    try:
+        from app.services import paid_retention_service as prs
+        from app.services.nostr import nostr_service
+        pol = prs.policy()
+    except Exception:
+        return ""
+    if not pol.get("enabled") or not pol.get("free_days"):
+        # No free window = nothing is ever deleted = there is nothing to sell. Saying otherwise
+        # would be advertising a subscription that buys the visitor exactly what they already have.
+        return ""
+    key = json.dumps(pol, sort_keys=True)
+    if _retention_cache["key"] == key and (time.time() - _retention_cache["at"]) < 300:
+        return _retention_cache["html"]
+    import html as _html
+    npub = ""
+    try:
+        npub = nostr_service.npub_of(pol["pubkey"]) if pol.get("pubkey") else ""
+    except Exception:
+        npub = ""
+    kept = (f"kept for <b>{pol['paid_days']} days</b>" if pol.get("paid_days")
+            else "kept for <b>as long as this relay runs</b>")
+    price = pol.get("sats_per_month") or 0
+    qr = ""
+    if npub:
+        try:
+            import io
+            import segno
+            buf = io.BytesIO()
+            segno.make(f"nostr:{npub}", error="m").save(buf, kind="svg", scale=4, border=2,
+                                                        dark="#000", light="#fff")
+            svg = buf.getvalue().decode("utf-8")
+            svg = svg[svg.index("<svg"):]          # drop the XML prolog — this is inline HTML
+            qr = f'<div class="qr">{svg}</div>'
+        except Exception as e:                     # segno missing → the text below still works
+            logger.debug("[nostr-relay] retention QR render skipped: %s", e)
+    buy = ""
+    if price and npub:
+        buy = (f'<h2>Keep them longer</h2>'
+               f'<div class="pay">{qr}<div>'
+               f'<p><b>{price} sats / month.</b> Scan with a Nostr client and <b>zap this '
+               f'profile</b> &mdash; the zap is what identifies you, so the storage is credited to '
+               f'your key automatically. Renewing early adds to the time you already have.</p>'
+               f'<p class="mono">{_html.escape(npub)}</p>'
+               + (f'<p class="mono">zaps are paid to {_html.escape(pol["lud16"])}</p>'
+                  if pol.get("lud16") else "")
+               + '<p class="warn">Pay by <b>zapping the profile above from a Nostr client</b>. A '
+                 'plain wallet payment to that lightning address, or a zap on a single <i>post</i>, '
+                 'carries no identity for us to credit &mdash; it is treated as an ordinary tip.</p>'
+               '</div></div>')
+    _retention_cache.update(key=key, at=time.time(), html=(
+        f'<h2>How long your posts are kept</h2>'
+        f'<ul><li><b>Free:</b> notes you publish here are kept for <b>{pol["free_days"]} days</b>.</li>'
+        f'<li><b>Subscribed:</b> {kept}.</li></ul>'
+        f'<p class="fine">This applies only to visitors\' own posts. Accounts on this instance, and '
+        f'the profiles, contact lists and DMs of everyone, are never auto-deleted.</p>{buy}'))
+    return _retention_cache["html"]
+
+
 _WELCOME_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1025,6 +1119,13 @@ li b{color:#fff;}
 a{color:var(--accent);}
 .foot{margin-top:2rem;padding-top:1.2rem;border-top:1px solid var(--border);color:#778;font-size:.85rem;letter-spacing:1px;text-align:center;}
 .clients{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.4rem;}
+.pay{display:flex;flex-wrap:wrap;gap:1.2rem;align-items:flex-start;}
+.pay>div{flex:1 1 16rem;min-width:0;}
+.qr{background:#fff;padding:.5rem;border-radius:8px;line-height:0;flex:0 0 auto;}
+.qr svg{width:150px;height:150px;display:block;}
+.mono{font-family:'Fira Code',monospace;font-size:.78rem;color:var(--accent2);word-break:break-all;}
+.fine{font-size:.85rem;color:#889;}
+.warn{font-size:.85rem;color:#f0c0cc;border-left:3px solid var(--accent3);padding-left:.7rem;}
 </style></head>
 <body>
 <div class="bg-grid"></div>
@@ -1052,6 +1153,8 @@ a{color:var(--accent);}
     <li><b>Full threads:</b> missing parent notes are fetched automatically, so replies aren't orphaned.</li>
     <li><b>Profiles included:</b> names &amp; avatars for everyone in the feed are synced for you.</li>
   </ul>
+
+  {{RETENTION}}
 
   <div class="note"><b>Heads up:</b> reading is open to everyone. <b>Publishing</b> is restricted &mdash; only authors inside the web of trust are accepted, so your client can read here freely but should keep your usual relays for posting.</div>
 
