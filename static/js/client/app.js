@@ -2,6 +2,14 @@
  * built-in Blossom server. Crypto runs in the worker (local key) or the NIP-07 extension. */
 (function(){
   const NT = () => window.NostrTools;
+  /* Display-only npub. nostr-tools is a SEPARATE <script> (templates/client.html), so anything that
+   * stops it executing — a proxy that won't serve /static/vendor, a CDN that rewrites script tags,
+   * a wrong MIME under nosniff — leaves NT() undefined. Every card in the feed names its author, so
+   * a bare NT() call there turned one missing file into a whole timeline of "couldn't render this
+   * post" with no hint as to why. Falling back to raw hex keeps the feed READABLE and lets the
+   * boot check in client.html be the thing that reports the actual fault. Identity/signing paths
+   * deliberately keep calling NT() directly — those MUST fail loudly rather than half-work. */
+  const npubOf = pk => { try{ return NT().nip19.npubEncode(pk); }catch(_){ return String(pk||''); } };
   const $ = (s,r=document)=>r.querySelector(s);
   const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
   const enc = s => (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -4324,8 +4332,8 @@
   // button posts a NIP-22 reply THREADED under this comment, not a plain kind-1.
   function _acCard(c, depth){
     const p=profOf(c.pubkey); needProfile(c.pubkey);
-    const name=p.name||p.display_name||(NT().nip19.npubEncode(c.pubkey).slice(0,12)+'…');
-    const handle=niceNip05(p.nip05)||('@'+NT().nip19.npubEncode(c.pubkey).slice(4,12));
+    const name=p.name||p.display_name||(npubOf(c.pubkey).slice(0,12)+'…');
+    const handle=niceNip05(p.nip05)||('@'+npubOf(c.pubkey).slice(4,12));
     const mp=mediaParts(c.content, c);
     const kids=(c._kids||[]).map(k=>_acCard(k, depth+1)).join('');
     return `<div class="ac-item"${depth?` style="margin-left:${Math.min(depth,5)*14}px"`:''}>
@@ -8078,8 +8086,8 @@
   const _myPollVotes = {};   // pollId -> Set(optionId)
   function pollCard(ev){
     const p=profOf(ev.pubkey); needProfile(ev.pubkey);
-    const name=p.name||p.display_name||(NT().nip19.npubEncode(ev.pubkey).slice(0,12)+'…');
-    const handle=niceNip05(p.nip05)||('@'+NT().nip19.npubEncode(ev.pubkey).slice(4,12));
+    const name=p.name||p.display_name||(npubOf(ev.pubkey).slice(0,12)+'…');
+    const handle=niceNip05(p.nip05)||('@'+npubOf(ev.pubkey).slice(4,12));
     const opts=ev.tags.filter(t=>t[0]==='option'&&t[1]).map(t=>({id:t[1],label:t[2]||t[1]}));
     const multi=((ev.tags.find(t=>t[0]==='polltype')||[])[1]==='multiplechoice');
     const endsAt=parseInt((ev.tags.find(t=>t[0]==='endsAt')||[])[1]||'0',10);
@@ -8645,12 +8653,12 @@
     // Wall-of-text guard: clamp very long posts with a "Show more" toggle so the feed stays scannable.
     const bodyTxt = stripQuoteRef(mp.text, ev);
     const longTxt = !!bodyTxt && (bodyTxt.length > 480 || (bodyTxt.match(/\n/g)||[]).length > 10);
-    const name = p.name||p.display_name||(NT().nip19.npubEncode(ev.pubkey).slice(0,12)+'…');
+    const name = p.name||p.display_name||(npubOf(ev.pubkey).slice(0,12)+'…');
     // Data saver: avatars are the biggest remaining image cost in the feed (dozens per page). Point them
     // at the single, already-cached local LOGO so a feed page pulls ~no avatar bytes over a throttled
     // link. Content media is already tap-to-load; this closes the other half.
     const av = NO_IMAGES ? LOGO : (p.picture || LOGO);
-    const handle = niceNip05(p.nip05) || ('@'+NT().nip19.npubEncode(ev.pubkey).slice(4,12));
+    const handle = niceNip05(p.nip05) || ('@'+npubOf(ev.pubkey).slice(4,12));
     const counts = countsFor(ev.id);
     const liked = myReaction(ev.id);
     const mine = ev.pubkey===ME.pubkey;
@@ -8691,7 +8699,11 @@
      // silent catch turns that into "all my posts say couldn't render" with an empty console — undebuggable
      // from the outside. Log the first few, once per page, with the id so the failure can be reproduced.
      if((_noteCardErrs=(_noteCardErrs||0)+1) <= 3) try{ console.error('[noteCard] render failed', (ev&&ev.id)||'?', e); }catch(_){}
-     return `<article class="note" data-id="${(ev&&ev.id)||''}" data-pk="${(ev&&ev.pubkey)||''}"><div class="body"><div class="txt muted small">⚠ couldn't render this post</div></div></article>`;
+     // The message goes ON the card, not just in the console. Whoever sees this is usually not the
+     // person who can open devtools — a screenshot of "⚠ couldn't render this post" alone is
+     // unactionable, the same line with "NT is not defined" on it diagnoses itself.
+     const why = (e && (e.message || e.name)) ? String(e.message || e.name).slice(0,140) : '';
+     return `<article class="note" data-id="${(ev&&ev.id)||''}" data-pk="${(ev&&ev.pubkey)||''}"><div class="body"><div class="txt muted small">⚠ couldn't render this post${why?' — '+enc(why):''}</div></div></article>`;
    }
   }
   // A NIP-18 quote post carries both a `q` tag (rendered by quoteHtml) AND usually the same
@@ -8734,9 +8746,9 @@
     return quotedDiv(o);
   }
   function quotedDiv(o){ const p=profOf(o.pubkey); needProfile(o.pubkey);
-    const name = p.name||p.display_name||(NT().nip19.npubEncode(o.pubkey).slice(0,12)+'…');
+    const name = p.name||p.display_name||(npubOf(o.pubkey).slice(0,12)+'…');
     const av = NO_IMAGES ? LOGO : (p.picture || LOGO);   // data saver: hold quoted/reply-context avatars too
-    const handle = niceNip05(p.nip05) || ('@'+NT().nip19.npubEncode(o.pubkey).slice(4,12));
+    const handle = niceNip05(p.nip05) || ('@'+npubOf(o.pubkey).slice(4,12));
     const mp = mediaParts(o.content, o);
     return `<div class="quoted" data-open="${o.id}">
       <div class="hd"><img class="qav" src="${enc(av)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,name)}</span><span class="vchk" data-pk="${o.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
@@ -8767,7 +8779,7 @@
     const p=profOf(pk); needProfile(pk); const nm=p.name||p.display_name;
     // Parent name is a .name[data-prof] span: renders custom emoji now (emojiName) and gets filled/patched
     // by decorateProfiles once the author's kind-0 loads — so bridged :shortcode: usernames show as images.
-    const inner = nm ? emojiName(pk,nm) : (NT().nip19.npubEncode(pk).slice(0,12)+'…');
+    const inner = nm ? emojiName(pk,nm) : (npubOf(pk).slice(0,12)+'…');
     return `<div class="reply-ctx"><span class="reply-ctx-lbl">↩ replying to <span class="name" data-prof="${pk}">${inner}</span></span></div>`;
   }
   const _evQ=new Set(); let _evT=null;
@@ -8823,7 +8835,7 @@
     const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'(untitled)';
     const summary=(e.tags.find(t=>t[0]==='summary')||[])[1]||'';
     const img=(e.tags.find(t=>t[0]==='image')||[])[1]||'';
-    const name=p.name||p.display_name||(NT().nip19.npubEncode(e.pubkey).slice(0,12)+'…');
+    const name=p.name||p.display_name||(npubOf(e.pubkey).slice(0,12)+'…');
     return `<div class="quoted naddrlink" data-pk="${enc(e.pubkey)}" data-d="${enc(d)}" data-k="${enc(String(e.kind))}">
       ${img?_hold(`<img class="m" src="${enc(img)}" loading="lazy">`, img, 'image', 'm'):''}
       <div class="hd"><span class="name">📄 ${e.kind===30023?'Article':'Post'} · ${enc(name)}</span></div>
@@ -9884,7 +9896,7 @@
     if(!ev){ toast('post not loaded'); return; }
     const p=profOf(ev.pubkey);
     const name=p.name||p.display_name||'';
-    const handle=niceNip05(p.nip05)||('@'+NT().nip19.npubEncode(ev.pubkey).slice(4,12)+'…');
+    const handle=niceNip05(p.nip05)||('@'+npubOf(ev.pubkey).slice(4,12)+'…');
     const text=_cardText(ev);
     let timestamp=''; try{ timestamp=new Date(ev.created_at*1000).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}); }catch(_){}
     toast('📸 rendering…');
@@ -10046,7 +10058,7 @@
     modal('<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-article"></use></svg>Summary</h3><div id="sum-body" style="max-height:60vh;overflow:auto;line-height:1.55;white-space:pre-wrap;font-size:15px;overflow-wrap:anywhere"><div class="spinner"></div></div>'+
           '<div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px"><button class="btn btn-neon small" id="sum-post" disabled><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Post summary</button><button class="btn btn-ghost small" id="sum-close">Close</button></div>',
       root=>{ const c=root.querySelector('#sum-close'); if(c) c.onclick=closeModal; });
-    const named=e=>{ const p=profOf(e.pubkey); const nm=p.name||p.display_name||NT().nip19.npubEncode(e.pubkey).slice(0,12); return nm+': '+((mediaParts(e.content).text||e.content||'').trim()); };
+    const named=e=>{ const p=profOf(e.pubkey); const nm=p.name||p.display_name||npubOf(e.pubkey).slice(0,12); return nm+': '+((mediaParts(e.content).text||e.content||'').trim()); };
     try{
       const seen=new Set([ev.id]);
       // walk up the reply chain for context (capped), oldest first
@@ -11432,7 +11444,7 @@
     const uniq=[...new Set([...(ta.value||'').matchAll(/(?:nostr:)?((?:npub1|nprofile1)[0-9a-z]{20,})/gi)].map(m=>refToPk(m[1])).filter(Boolean))];
     if(!uniq.length){ hintEl.textContent=''; hintEl.classList.add('hidden'); return; }
     let missing=false;
-    const names=uniq.map(pk=>{ const p=Store.profile(pk); if(!p){ needProfile(pk); missing=true; return '@'+NT().nip19.npubEncode(pk).slice(0,12)+'…'; } return '@'+(p.name||p.display_name||'anon'); });
+    const names=uniq.map(pk=>{ const p=Store.profile(pk); if(!p){ needProfile(pk); missing=true; return '@'+npubOf(pk).slice(0,12)+'…'; } return '@'+(p.name||p.display_name||'anon'); });
     hintEl.textContent='↳ mentioning '+names.join(', '); hintEl.classList.remove('hidden');
     if(missing && !hintEl._t){ hintEl._t=setTimeout(()=>{ hintEl._t=null; updateMentionHint(ta,hintEl); }, 800); }
   }
