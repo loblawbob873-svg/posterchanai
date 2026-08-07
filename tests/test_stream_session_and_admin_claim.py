@@ -295,23 +295,140 @@ def test_a_stale_live_announcement_is_not_re_adopted_forever():
         anything, because OBS reconnects. A recent dead feed is still adopted and left to that path.
     """
     src = (ROOT / "static" / "js" / "client" / "app.js").read_text(encoding="utf-8")
-    i = src.index("async function _adoptOwnLive(")
-    body = src[i:i + 3200]
+    i = src.index("async function _retireIfOver(")
+    body = src[i:src.index("async function _sweepStaleOwnLive(")]
 
-    assert "/api/streams/ingest" in body, (
-        "the adopt path must confirm OUR OWN api is reachable before believing a dead HLS probe — "
+    assert "/api/streams/ingest" in src[src.index("async function _serverAnswers("):][:600], (
+        "the retire path must confirm OUR OWN api is reachable before believing a dead HLS probe — "
         "otherwise an offline device ends the user's live stream"
     )
-    assert "if(!apiUp) return;" in body, (
-        "an unreachable api must leave the announcement alone, not retire it"
+    assert "_serverAnswers(hls)" in body, (
+        "an unreachable api must leave the announcement alone, not retire it — and the probe takes the "
+        "stream's own hls url so it asks the server that actually hosts it"
     )
     assert "> 900" in body, (
         "only an announcement old enough that no OBS reconnect explains it may be retired on a single "
         "probe; a recent one belongs to the heartbeat's 3-strike path"
     )
+    assert body.count("_probeFeed(hls)") >= 2, (
+        "a dead feed must be CONFIRMED by a second probe before publishing `ended` — the startup sweep "
+        "runs unattended, so one CDN blip would otherwise end a genuinely live broadcast"
+    )
     assert "'status','ended'" in body.replace('"', "'"), (
         "a stream confirmed over has to be published as ended — not adopting it merely stops the "
         "republishing, it does not clear `live` for everyone already watching the address"
+    )
+
+
+def test_a_401_from_our_api_means_reachable_not_offline(tmp_path):
+    """THE BUG THAT MADE THE FIX ABOVE A NO-OP, and the reason this test executes the guard instead of
+    grepping for it.
+
+    The reachability guard was `apiUp = r.ok` against /api/streams/ingest — an endpoint behind
+    get_current_user. The Nostr client normally carries no app session (`_aiToken` is set only by
+    nostr-login, and the call sent no credentials), so the real answer is 401, `r.ok` is false, and the
+    guard concluded "my network is down" and returned. Every time. The retirement it protects could
+    never run once — a stream "fixed" one night was still ● LIVE on zap.stream the next morning, and
+    the previous version of this test passed throughout, because the string `if(!apiUp) return;` was
+    present and said nothing about what apiUp MEANT.
+
+    Reachability is not authorization: a 401 is our server answering. Only a fetch that never resolves
+    means we could not reach it. 5xx is deliberately excluded — a sick origin is exactly when the HLS
+    probe fails for reasons unrelated to the broadcast.
+    """
+    src = APP_JS.read_text(encoding="utf-8")
+    body = src[src.index("async function _serverAnswers("):]
+    body = body[:body.index("\n  // On (re)opening Streams")]
+
+    harness = tmp_path / "s.js"
+    harness.write_text(
+        "let _aiToken='';\nfunction _instanceBase(){ return 'https://poster.place'; }\n" + body + """
+const HLS='https://poster.place/api/streams/hls/0d1ddd1c187b1cda/index.m3u8';
+async function main(){
+  // A faithful Response stub: real fetch gives BOTH .ok and .status, and `ok` is exactly
+  // status<300. Stubbing only .status would let the old `return r.ok` yield undefined, which
+  // JSON.stringify silently drops — the test would fail on a missing key rather than on the
+  // wrong answer, and would not read as the bug it is guarding.
+  const res = s => ({ status:s, ok: s>=200 && s<300 });
+  const cases = {
+    'unauthenticated 401': res(401),
+    'forbidden 403':       res(403),
+    'ok 200':              res(200),
+    'not found 404':       res(404),
+    'origin sick 502':     res(502),
+    'offline (throws)':    'THROW',
+  };
+  const out={};
+  for(const [name, resp] of Object.entries(cases)){
+    globalThis.fetch = async () => { if(resp==='THROW') throw new TypeError('failed'); return resp; };
+    out[name] = await _serverAnswers(HLS);
+  }
+  // The BUNDLED app has no instance and no server to ask. It must refuse to retire anything rather
+  // than trust a probe answered by its own bundle while the device is offline.
+  globalThis.fetch = async () => res(200);
+  out['standalone, no instance'] = await (async () => {
+    const real = _instanceBase; _instanceBase = () => '';
+    try { return await _serverAnswers(''); } finally { _instanceBase = real; }
+  })();
+  console.log(JSON.stringify(out));
+}
+main();
+""", encoding="utf-8")
+    r = subprocess.run(["node", str(harness)], capture_output=True, text=True)
+    if r.returncode != 0 and "not found" in (r.stderr or ""):
+        pytest.skip("node not available")
+    assert r.returncode == 0, r.stderr
+    got = json.loads(r.stdout)
+
+    assert got["unauthenticated 401"] is True, (
+        "a 401 is our server ANSWERING — treating it as unreachable is what silently disabled the "
+        "whole stale-stream retirement"
+    )
+    assert got["forbidden 403"] is True and got["not found 404"] is True and got["ok 200"] is True, (
+        f"any HTTP answer proves the app is up: {got}"
+    )
+    assert got["origin sick 502"] is False, (
+        "a 5xx origin is ambiguous — the HLS probe fails then for reasons unrelated to the broadcast"
+    )
+    assert got["offline (throws)"] is False, (
+        "a fetch that never resolves is the one case that really means this device is offline"
+    )
+    assert got["standalone, no instance"] is False, (
+        "with no instance there is no server to ask — and in the BUNDLED app a relative /api/ path is "
+        "answered by the bundle itself, which would read as 'server up' on a device with no network"
+    )
+    assert "new URL(hls" in body, (
+        "the reachability probe must target the origin of the DEAD HLS URL — that is the server whose "
+        "playlist just failed, and it is not necessarily the instance this client is signed in to"
+    )
+
+
+def test_stale_own_live_is_swept_without_opening_the_streams_view(tmp_path):
+    """The retirement used to run ONLY inside renderStreams, filtering a generic
+    `{kinds:[30311], limit:80}` feed. Two ways that loses:
+
+      * a wrong ● LIVE claim lives on zap.stream and every other NIP-53 client, and its owner has no
+        reason to open OUR Streams tab — so it stood for days, twice.
+      * a day-old announcement of ours is not in the newest 80 events across relays carrying every
+        stream on the network. Measured against the real relays: nos.lol's window had already dropped
+        the stuck event while primal's still held it, so even opening the view was a coin flip.
+
+    So the sweep asks BY AUTHOR, and runs at startup.
+    """
+    src = APP_JS.read_text(encoding="utf-8")
+    body = src[src.index("async function _sweepStaleOwnLive("):]
+    body = body[:body.index("\n  // On (re)opening Streams")]
+
+    assert "authors:[ME.pubkey]" in body.replace(" ", ""), (
+        "the sweep must ask for OUR OWN events by author — a global limit-80 feed is not guaranteed to "
+        "still contain a day-old announcement"
+    )
+    assert "verifyEvent" in body, (
+        "these relays are untrusted: a forged `live` event in our name would otherwise make us publish "
+        "an `ended` for a broadcast that never existed"
+    )
+    assert "_sweepStaleOwnLive()" in src[src.index("function startApp("):], (
+        "the sweep has to run at startup, not only when Discover → Streams is opened"
     )
 
 

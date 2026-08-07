@@ -1787,6 +1787,11 @@
     // now loads on first open instead (slightly slower first paint; no PWA-wide damage).
     if(IS_ADMIN) setTimeout(()=>{ ensureAiSession().catch(()=>{}); }, 1500);
     else if(CFG.admin_unclaimed) setTimeout(maybeClaimAdmin, 1200);   // fresh install: offer first-run admin setup
+    // Clear any of OUR OWN stale ● LIVE announcements still standing on the public stream relays. Runs
+    // here rather than in the Streams view because that view is not where the damage shows: the wrong
+    // claim is on zap.stream and every other NIP-53 client, and its owner has no reason to open our
+    // Streams tab. Deferred so it never competes with the cold start, and never awaited.
+    if(!GUEST) setTimeout(()=>{ try{ const p=_sweepStaleOwnLive(); if(p&&p.catch) p.catch(()=>{}); }catch(_){} }, 4000);
     // Do NOT auto-request notification permission on login: in a PWA (Firefox especially) the permission
     // prompt pops the browser's chrome — the URL/shield/hamburger TOOLBAR — the instant you sign in, and
     // it can stay. Browsers also discourage auto-requests. In-app toasts work without it; OS
@@ -6280,6 +6285,132 @@
       if(miss>=3){ _stopLiveHb(); toast('stream stopped (OBS ended) — marking it ended'); _endLive(); }
     }, 45000);
   }
+  /* "Did OUR SERVER answer?" — REACHABILITY, which is not the same question as "was I allowed in".
+   *
+   * This is the guard that decides whether a dead HLS url means "the broadcast is over" or "this
+   * device is offline", and it was written as `apiUp = r.ok` against /api/streams/ingest — an
+   * endpoint behind get_current_user. It answers 401 to a client that isn't carrying an app session,
+   * which is the ordinary state of the Nostr client (`_aiToken` is only set by nostr-login, and the
+   * call didn't send credentials either). `r.ok` is false for 401, so the guard concluded "my network
+   * is the suspect" and returned — every time, on every open. The retirement it protects could
+   * therefore never run once, which is why a stream fixed last night was still ● LIVE this morning.
+   * A 401 is our server ANSWERING. Only a fetch that never resolves means we couldn't reach it.
+   *
+   * 5xx is the one status deliberately NOT trusted: the origin being sick is exactly when the HLS
+   * probe also fails for a reason that has nothing to do with the broadcast, so it reads as ambiguous
+   * and we leave the announcement alone. Anything else — 200, 401, 403, 404 — proves the app is up.
+   *
+   * It probes the ORIGIN OF THE DEAD HLS URL, not a relative path. Two reasons, and the first is a
+   * false positive that would end a live broadcast: in the BUNDLED desktop/native app the client is
+   * served from its own origin, so `/api/streams/ingest` resolves against the BUNDLE — it can answer
+   * (or 404) perfectly happily while the device has no network at all, which is precisely the state
+   * this guard exists to detect. The second is that a stream's `streaming` url names the instance that
+   * actually hosts it, which is not necessarily the one this client is signed in to. Asking the same
+   * server whose playlist just failed is the only probe that answers the real question. */
+  async function _serverAnswers(hls){
+    let origin='';
+    try{ origin=new URL(hls, _instanceBase()||undefined).origin; }
+    catch(_){ origin=_instanceBase(); }
+    if(!origin) return false;   // standalone, no instance: nothing to ask, so nothing may be retired
+    try{
+      const r=await fetch(origin+'/api/streams/ingest', { credentials:'include',
+                          headers:_aiToken?{'Authorization':'Bearer '+_aiToken}:{} });
+      return !(r.status>=500);
+    }catch(_){ return false; }
+  }
+  /* Retire one of OUR OWN 30311s that still says `live` but demonstrably isn't. Returns true when it
+   * published the `ended` event, false when the stream might still be running (or we can't tell).
+   *
+   * Split out of _adoptOwnLive because a stale LIVE announcement is a public claim on relays we don't
+   * control, and it was only ever re-examined when its owner happened to open Discover → Streams.
+   * That is the wrong trigger for a wrong statement the whole network can see. _sweepStaleOwnLive
+   * calls this at startup with events fetched by author, so it no longer depends on a view being
+   * opened or on a stale event surviving in a global limit-80 feed. */
+  async function _probeFeed(hls){
+    if(!hls) return false;
+    try{ const r=await fetch(hls,{cache:'no-store'}); return r.ok; }catch(_){ return false; }
+  }
+  async function _retireIfOver(mine){
+    const hls=(mine.tags.find(t=>t[0]==='streaming')||[])[1]||'';
+    let feedUp=await _probeFeed(hls);
+    // CONFIRM a miss before acting. This used to be one probe, which was defensible when the only
+    // caller was the Streams view a human had just opened; the startup sweep made it unattended and
+    // ran it against every stream announcement we own, so a single CDN blip on a genuinely live feed
+    // would publish `ended` mid-broadcast. That is the outcome this whole path calls far worse than
+    // leaving a stale announcement up, so it costs one fetch and three seconds to not do it.
+    if(!feedUp && hls){
+      await new Promise(r=>setTimeout(r, 3000));
+      feedUp=await _probeFeed(hls);
+    }
+    // AGE is the second guard, and it is what makes a single probe safe to act on. The heartbeat
+    // needs THREE misses over ~2 minutes before it ends a stream, because OBS reconnects and a CDN
+    // blips — one 404 is not proof a broadcast is over. So a recent announcement with a dead feed is
+    // still ADOPTED by the caller, exactly as before, and left to that 3-strike path. Only an
+    // announcement old enough that no reconnect explains it is retired outright.
+    const startedAt=parseInt((mine.tags.find(t=>t[0]==='starts')||[])[1]||mine.created_at,10)||0;
+    const stale=startedAt && (Date.now()/1000 - startedAt) > 900;   // 15 min
+    if(!(hls && !feedUp && stale)) return false;
+    if(!await _serverAnswers(hls)) return false;   // our own network is the suspect — leave it alone
+    // Really over. Retire it so it stops claiming to be live everywhere, carrying `starts` and the
+    // rest through _liveBase so the ended event keeps the broadcast's own identity.
+    const sid0=(mine.tags.find(t=>t[0]==='d')||[])[1]||'';
+    _endedStreams.add(sid0); _endedStreams.add(_tokenOfD(sid0));
+    try{
+      const s0={ token:_tokenOfD(sid0), d:sid0,
+                 title:(mine.tags.find(t=>t[0]==='title')||[])[1]||'Live stream', hls,
+                 starts:(mine.tags.find(t=>t[0]==='starts')||[])[1]||String(mine.created_at),
+                 image:(mine.tags.find(t=>t[0]==='image')||[])[1]||'' };
+      const r=await publish(30311, '', _liveBase(s0).concat(
+        [['status','ended'], ['ends', String(Math.floor(Date.now()/1000))]]));
+      // Mirror on a SIGNED EVENT, not on r.ok — deliberately not _mirrorStream here. The phantom being
+      // cleared is standing on the PUBLIC relays (the stuck one this was written for was on primal and
+      // not on ours at all), so making that cleanup conditional on our own relay accepting the ended
+      // event first would leave the wrong claim up for the entire network on a local hiccup. Awaited,
+      // because reaching those relays IS the job. `d` comes through _liveBase unchanged, so this
+      // REPLACES the live announcement at its own address rather than adding a second event.
+      if(r && r.ev){ try{ await Relay.publishTo(STREAM_RELAYS, r.ev); }catch(_){ } }
+    }catch(_){ }
+    return true;
+  }
+  /* Startup sweep: ask the PUBLIC stream relays for our own 30311s BY AUTHOR and retire any that are
+   * still claiming to be live.
+   *
+   * Two reasons this can't be left to the Streams view. (1) It only ran when that view was opened,
+   * so a broadcast could sit ● LIVE on zap.stream for days while its owner used the app normally —
+   * which is exactly how this was reported, twice. (2) The list it filtered came from a generic
+   * `{kinds:[30311], limit:80}` across relays that carry every stream on the network; a day-old
+   * announcement of ours is not in the newest 80 (measured: nos.lol's window had already dropped it
+   * while primal's had not), so even opening the view was not reliably enough. Asking by author is
+   * bounded, cheap and exact.
+   *
+   * Never awaited, never fatal, once per session. */
+  let _sweptStaleLive=false;
+  async function _sweepStaleOwnLive(){
+    if(_sweptStaleLive || GUEST || !ME || _liveStream) return;
+    _sweptStaleLive=true;
+    let evs=[];
+    try{ evs=await Relay.queryFrom(STREAM_RELAYS, [{ kinds:[30311], authors:[ME.pubkey] }]); }catch(_){ }
+    if(!evs || !evs.length) return;
+    // Newest per address only: a replaceable event's older copies are not what any client shows, and
+    // retiring against a superseded copy would publish an `ended` that is itself immediately stale.
+    const best=new Map();
+    evs.forEach(e=>{
+      // Signature-verify before acting: these relays are untrusted, and a forged `live` event in our
+      // name would otherwise make us publish an `ended` for a stream that never existed.
+      try{ if(!NT().verifyEvent(e)) return; }catch(_){ return; }
+      if(e.pubkey!==ME.pubkey) return;
+      const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
+      const prev=best.get(d);
+      if(!prev || e.created_at>prev.created_at) best.set(d, e);
+    });
+    for(const e of best.values()){
+      if(_liveStream) return;                        // went live for real while the sweep ran
+      if(streamStatus(e)!=='live') continue;
+      const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
+      if(_endedStreams.has(d) || _endedStreams.has(_tokenOfD(d))) continue;
+      try{ await _retireIfOver(e); }catch(_){ }
+    }
+  }
   // On (re)opening Streams, re-adopt our OWN still-live announcement so a reload doesn't strand it as
   // permanently LIVE (the End button reappears + the heartbeat resumes).
   async function _adoptOwnLive(streams){
@@ -6297,39 +6428,7 @@
     // The probe is only trusted when OUR OWN api answers: an unreachable HLS url means "the stream is
     // over" if the server is reachable, and "this device is offline" if it is not — and ending someone's
     // live broadcast because their wifi dropped is far worse than leaving a stale one up for longer.
-    {
-      const hls=(mine.tags.find(t=>t[0]==='streaming')||[])[1]||'';
-      let feedUp=false;
-      if(hls){ try{ const r=await fetch(hls,{cache:'no-store'}); feedUp=r.ok; }catch(_){ feedUp=false; } }
-      // AGE is the second guard, and it is what makes a single probe safe to act on. The heartbeat
-      // needs THREE misses over ~2 minutes before it ends a stream, because OBS reconnects and a CDN
-      // blips — one 404 is not proof a broadcast is over. So a recent announcement with a dead feed is
-      // still ADOPTED here, exactly as before, and left to that 3-strike path. Only an announcement old
-      // enough that no reconnect explains it is retired outright.
-      const startedAt=parseInt((mine.tags.find(t=>t[0]==='starts')||[])[1]||mine.created_at,10)||0;
-      const stale=startedAt && (Date.now()/1000 - startedAt) > 900;   // 15 min
-      if(hls && !feedUp && stale){
-        let apiUp=false;
-        try{ const r=await fetch('/api/streams/ingest',
-                                 {headers:_aiToken?{'Authorization':'Bearer '+_aiToken}:{}});
-             apiUp=r.ok; }catch(_){ apiUp=false; }
-        if(!apiUp) return;            // our own network is the suspect — leave the announcement alone
-        // Really over. Retire it so it stops claiming to be live everywhere, carrying `starts` and the
-        // rest through _liveBase so the ended event keeps the broadcast's own identity.
-        const sid0=(mine.tags.find(t=>t[0]==='d')||[])[1]||'';
-        _endedStreams.add(sid0); _endedStreams.add(_tokenOfD(sid0));
-        try{
-          const s0={ token:_tokenOfD(sid0), d:sid0,
-                     title:(mine.tags.find(t=>t[0]==='title')||[])[1]||'Live stream', hls,
-                     starts:(mine.tags.find(t=>t[0]==='starts')||[])[1]||String(mine.created_at),
-                     image:(mine.tags.find(t=>t[0]==='image')||[])[1]||'' };
-          const r=await publish(30311, '', _liveBase(s0).concat(
-            [['status','ended'], ['ends', String(Math.floor(Date.now()/1000))]]));
-          _mirrorStream(r);
-        }catch(_){ }
-        return;
-      }
-    }
+    if(await _retireIfOver(mine)) return;
     // `d` is the SESSION id now; the MediaMTX token (what the HLS url and the VOD lookup need) is the
     // part before the `-<starts>` suffix. _tokenOfD also passes through an old event whose d IS the token.
     const sid=(mine.tags.find(t=>t[0]==='d')||[])[1];
