@@ -728,11 +728,92 @@ def _write_config(cfg: dict) -> None:
     _STREAM_CFG.write_text("\n".join(lines) + "\n")
 
 
+"""A MediaMTX that outlives the app that started it is the worst kind of running.
+
+`_terminate` acts on `_proc`, an in-process handle, so it only ever fires on a CLEAN shutdown. A
+SIGKILL, a crash, an OOM — anything that stops the app without running its shutdown hook — leaves
+MediaMTX alive, and the next app process starts with `_proc = None` and no idea it is there.
+
+That is not a leak, it is a silent configuration freeze. The survivor keeps serving on the config it
+loaded at ITS start, so every later change to `mediamtx.gen.yml` deploys, verifies, and does
+nothing. Found in production: an instance from 13:28 survived several restarts, which is why
+`runOnReady` — the bitrate clamp — never applied, and viewers pulled the streamer's full source
+bitrate off a residential uplink and buffered. It was invisible because `logDestinations: [stdout]`
+was writing into the dead parent's pipe: MediaMTX's log existed and reached nobody.
+
+Two defences, because they cover different failures:
+  * PDEATHSIG — the kernel sends the child SIGTERM when THIS process dies, however it dies. This is
+    the one that actually prevents an orphan.
+  * a pidfile checked at spawn — for an orphan that already exists (one started before this fix, or
+    one whose PDEATHSIG did not apply). The cmdline is verified before signalling, because a pid is
+    reused and killing an unrelated process is worse than the bug.
+"""
+_PIDFILE = _STREAM_DIR / "mediamtx.pid"
+
+
+def _pdeathsig() -> None:      # pragma: no cover - runs between fork and exec
+    try:
+        import ctypes
+        import signal as _sig
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, _sig.SIGTERM)   # PR_SET_PDEATHSIG
+    except Exception:
+        pass
+
+
+def _kill_stale() -> None:
+    """Kill a MediaMTX left behind by a previous app process, before spawning ours."""
+    try:
+        pid = int(_PIDFILE.read_text().strip())
+    except Exception:
+        return
+    if pid <= 0:
+        return
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", "ignore")
+    except Exception:
+        _clear_pidfile()
+        return
+    # The pid must still BE mediamtx. Pids are reused, and killing whatever inherited this one is a
+    # far worse bug than the one being fixed.
+    if str(_STREAM_BIN) not in cmdline:
+        _clear_pidfile()
+        return
+    logger.warning("[stream] a mediamtx from a previous app process is still running (pid %s); "
+                   "stopping it — it would keep serving the config IT started with", pid)
+    import signal as _sig
+    try:
+        os.kill(pid, _sig.SIGTERM)
+        for _ in range(30):                     # up to 3s for a clean exit
+            time.sleep(0.1)
+            os.kill(pid, 0)                     # raises once it is gone
+        os.kill(pid, _sig.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    except Exception as e:
+        logger.warning("[stream] could not stop the stale mediamtx: %s", e)
+    _clear_pidfile()
+
+
+def _clear_pidfile() -> None:
+    try:
+        _PIDFILE.unlink()
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+
+
 def _spawn(cfg: dict) -> None:
     global _proc
     try:
         _write_config(cfg)
-        _proc = subprocess.Popen([str(_STREAM_BIN), str(_STREAM_CFG)], cwd=str(_STREAM_DIR))
+        _kill_stale()          # before binding: a survivor already holds :1935/:8888
+        _proc = subprocess.Popen([str(_STREAM_BIN), str(_STREAM_CFG)], cwd=str(_STREAM_DIR),
+                                 preexec_fn=_pdeathsig)
+        try:
+            _PIDFILE.write_text(str(_proc.pid))
+        except Exception as e:
+            logger.warning("[stream] could not write the mediamtx pidfile: %s", e)
         logger.info("[stream] started mediamtx (pid %s): rtmp :%s, hls :%s", _proc.pid,
                     cfg.get("stream_rtmp_port", "1935"), cfg.get("stream_hls_port", "8888"))
     except Exception as e:
@@ -754,6 +835,7 @@ def _terminate() -> None:
     except Exception:
         pass
     _proc = None
+    _clear_pidfile()
 
 
 def _reconcile() -> None:
