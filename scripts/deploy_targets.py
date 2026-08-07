@@ -110,7 +110,17 @@ _INERT_PREFIXES = ("static/", "docs/", "tests/", "scripts/", ".github/", "README
                    # both nodes, dropping every connected Nostr client. That is precisely the outage
                    # the role split removed, caused by the tooling that exists to prevent it.
                    "git_hooks/")
-_INERT_SUFFIXES = (".md",)
+_INERT_SUFFIXES = (".md",
+                   # Templates BY DEFINITION: *.example is a file you copy and edit, so nothing reads
+                   # the original at runtime — a service that loaded one would be loading a sample.
+                   ".example")
+# App-store listing metadata. zapstore.yaml is fetched from the REPO by the Zapstore relay (that is
+# how the app is tied to its npub) and read by the publish step in android.yml — never by a running
+# service. Unmapped it meant "could affect anything", so editing the store DESCRIPTION restarted all
+# seven units on both nodes: every connected Nostr client dropped and the relay bounced mid-stream.
+# The same mistake as desktop/, mobile/, extension/ and git_hooks/ above, one file at a time — which
+# is the argument for listing what IS runtime rather than chasing what is not, but that inverts a
+# deliberately fail-safe default and is not worth the risk of a silent under-restart.
 # DEPLOY TOOLING. These are read fresh by whoever runs them and are imported by no service, so a
 # change to one must restart NOTHING. They were unmapped, which means "could affect anything" and
 # therefore EVERY unit — so editing sync.sh itself restarted the relay and put every connected web
@@ -123,7 +133,18 @@ _INERT_FILES = ("sync.sh", "install.sh",
                 # these boxes loads them — so a compose/Dockerfile edit must restart NOTHING. Left
                 # unmapped they meant "everything", which is how fixing a Docker doc would have
                 # bounced the relay and every connected web client.
-                "docker-compose.yml", "Dockerfile", "Dockerfile.sandbox", ".dockerignore")
+                "docker-compose.yml", "Dockerfile", "Dockerfile.sandbox", ".dockerignore",
+                # App-store listing metadata. The Zapstore RELAY fetches this from the repo (that is
+                # how the app is tied to its npub) and android.yml reads it when publishing — no
+                # running service ever loads it. Unmapped it meant "could affect anything", so
+                # editing the store DESCRIPTION restarted all seven units on both nodes: every
+                # connected Nostr client dropped and the relay bounced. The same mistake as
+                # desktop/, mobile/, extension/ and git_hooks/ above, one file at a time.
+                # (nostr.json is deliberately NOT here: every reference to it in the tree is the URL
+                # /.well-known/nostr.json that the relay serves from its own settings, and "I could
+                # not find a reader" is not the same as "there is none". An over-restart costs 90
+                # seconds; an under-restart ships code that is running nowhere.)
+                "zapstore.yaml")
 
 
 def _inert(path: str) -> bool:

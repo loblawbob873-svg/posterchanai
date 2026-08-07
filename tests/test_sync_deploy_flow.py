@@ -226,3 +226,37 @@ class VerifiesTheDeployLanded(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_store_metadata_and_templates_restart_nothing():
+    """Editing an app-store DESCRIPTION restarted all seven units on both nodes.
+
+    zapstore.yaml is fetched from the repo by the Zapstore relay and read by the android.yml publish
+    step; no running service loads it. Unmapped, it fell through to the fail-safe "could affect
+    anything" branch — so a wording change to the store listing dropped every connected Nostr client
+    and bounced the relay mid-stream. The same shape as desktop/, mobile/, extension/ and git_hooks/
+    before it, which is why this now has a test rather than another comment.
+
+    `.example` files are templates by definition: a service reading one would be reading a sample.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "dt", os.path.join(REPO, "scripts", "deploy_targets.py"))
+    dt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(dt)
+
+    for f in ("zapstore.yaml", "posterchanai-cuda.service.example", "sync.sh", "docker-compose.yml"):
+        assert dt.units_for([f]) == [], f"{f} restarts services it cannot affect"
+
+    # The duplicate-definition trap: _INERT_FILES was declared twice while this was being fixed, and
+    # the second assignment silently discarded the first — so the new entry did nothing and, in the
+    # other order, would have un-marked sync.sh and the Docker files. One definition, all entries.
+    with open(os.path.join(REPO, "scripts", "deploy_targets.py"), encoding="utf-8") as fh:
+        src = fh.read()
+    assert src.count("\n_INERT_FILES = ") == 1, "_INERT_FILES is defined more than once"
+    for f in ("sync.sh", "install.sh", "docker-compose.yml", "zapstore.yaml"):
+        assert f in dt._INERT_FILES, f"{f} fell out of _INERT_FILES"
+
+    # And the fail-safe default must survive: anything that IS runtime still restarts.
+    assert dt.units_for(["app/services/nostr_relay/outbox.py"]) == ["posterchanai-relay.service"]
+    assert len(dt.units_for(["run-intel.sh"])) >= 5, "a launcher must still restart everything"
