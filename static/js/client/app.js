@@ -5838,6 +5838,20 @@
   async function renderStreams(){
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     let evs=[]; try{ evs=await Relay.query([{ kinds:[30311], limit:80 }]); }catch(_){}
+    /* MERGE IN WHAT WE ALREADY HOLD. Relay.query is network-only, so this list was whatever the
+     * relays answered in that instant — and the one event most certain to be missing from it is the
+     * one YOU published a second ago. _goLive publishes, requires the relay to have stored it, then
+     * switches straight here; the REQ that follows can still come back without it, and since this
+     * view has no live subscription, nothing ever re-queries. The stream sat invisible until a full
+     * browser reload, on the one screen whose entire job is to show that it is live.
+     *
+     * publish() already saved it locally, so the fix is to stop depending on the round-trip. A
+     * cached copy that is genuinely stale loses anyway: _dedupAddr keeps the NEWEST per address, so
+     * the relay's version wins whenever it has one. */
+    try{
+      const seen=new Set(evs.map(e=>e.id));
+      (Store.query([{ kinds:[30311], limit:80 }])||[]).forEach(e=>{ if(!seen.has(e.id)) evs.push(e); });
+    }catch(_){ }
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     if(VIEW!=='streams') return;
     const paint=()=>{

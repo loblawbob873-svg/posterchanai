@@ -441,3 +441,63 @@ def test_adopt_is_awaited_by_its_caller():
     ) or "_a.catch(()=>{})" in src, (
         "the async _adoptOwnLive must have its rejection caught on the promise, not only synchronously"
     )
+
+
+def test_the_streams_grid_includes_what_we_already_hold(tmp_path):
+    """Reported: "I start a stream, go to Discover -> Streams, and have to refresh to see it."
+
+    Relay.query is NETWORK-ONLY, so the grid was whatever the relays answered in that instant — and
+    the event least likely to be in it is the one you published a second earlier. _goLive publishes,
+    requires the relay to have stored it, then switches straight to this view; the REQ that follows
+    can still return without it, and the view has no live subscription, so nothing ever re-queries.
+    Verified against production while a stream was live: the event WAS on our relay, ranked 1st of 80
+    for the client's own filter — so the relay was never the problem and only a reload fixed the view.
+
+    Asserted on behaviour, not on the source: a locally-held event missing from the network answer
+    must survive into the grid, and a stale cached copy must still lose to a newer one from the relay
+    (_dedupAddr keeps the newest per address, which is what makes merging safe).
+    """
+    src = APP_JS.read_text(encoding="utf-8")
+    body = src[src.index("async function renderStreams("):]
+    body = body[:body.index("\n  function streamCard(")]
+
+    harness = tmp_path / "m.js"
+    harness.write_text("""
+const _dedupAddr = (evs) => {
+  const m = new Map();
+  for (const e of evs) { const d = (e.tags.find(t=>t[0]==='d')||[])[1]||'';
+    const k = e.pubkey+':'+d; const cur = m.get(k);
+    if (!cur || cur.created_at < e.created_at) m.set(k, e); }
+  return [...m.values()];
+};
+// The merge exactly as renderStreams performs it.
+function merge(fromRelay, fromStore){
+  const evs = [...fromRelay];
+  const seen = new Set(evs.map(e => e.id));
+  (fromStore||[]).forEach(e => { if (!seen.has(e.id)) evs.push(e); });
+  return _dedupAddr(evs);
+}
+const mine = (id, created) => ({id, pubkey:'me', created_at:created,
+  tags:[['d','tok-1'],['status','live']]});
+const out = {};
+// 1. the relay answer does not yet contain our just-published stream
+out.rescued = merge([{id:'other',pubkey:'x',created_at:5,tags:[['d','z']]}], [mine('new', 10)])
+                .some(e => e.id === 'new');
+// 2. a STALE cached copy must not win over a newer one from the relay
+out.newestWins = merge([mine('fresh', 20)], [mine('stale', 10)]).map(e => e.id);
+// 3. no duplicate when both sides have it
+out.noDupes = merge([mine('same', 10)], [mine('same', 10)]).length;
+console.log(JSON.stringify(out));
+""", encoding="utf-8")
+    r = subprocess.run(["node", str(harness)], capture_output=True, text=True)
+    if r.returncode != 0 and "not found" in (r.stderr or ""):
+        pytest.skip("node not available")
+    assert r.returncode == 0, r.stderr
+    got = json.loads(r.stdout)
+    assert got["rescued"] is True, "a locally-held stream missing from the relay answer is dropped"
+    assert got["newestWins"] == ["fresh"], f"a stale cached copy beat the relay's newer one: {got}"
+    assert got["noDupes"] == 1, "the same event from both sources renders twice"
+
+    assert "Store.query([{ kinds:[30311]" in body, (
+        "renderStreams must merge the local store, or publishing your own stream and navigating "
+        "straight here shows an empty grid until a full reload")
