@@ -1,29 +1,46 @@
-# PosterChan Passwords — install without an app store
+# PosterChan Passwords — installing it
 
 A browser add-on that turns **your own Nostr relay** into a password manager and a bookmark sync
 service. Every login and every bookmark is an AES-GCM-encrypted `kind-30078` event decrypted only on
 your device — the relay stores ciphertext and nothing else. It's also a **NIP-07 signer**, so you can
 log into Nostr sites without pasting your `nsec` into a page.
 
-This page is about **getting it installed from a file** — no Chrome Web Store, no addons.mozilla.org,
-no store account. For how the vault itself works (the key, unlocking, Bitwarden import, matching
-rules), see [docs/PASSWORDS.md](../docs/PASSWORDS.md).
+For how the vault itself works (the key, unlocking, Bitwarden import, matching rules), see
+[docs/PASSWORDS.md](../docs/PASSWORDS.md).
 
 **What you need first:** a PosterChan instance you're signed into. The add-on holds no account of its
 own — it is paired to a vault that already exists.
 
 ---
 
-## 1. Get the bundle
+## Firefox — install it from Mozilla
+
+**<https://addons.mozilla.org/firefox/addon/posterchan-passwords/>** — or `poster.place/extension`,
+which redirects there.
+
+That's the whole thing: one click, on **release Firefox and Firefox for Android**, and it
+**auto-updates** from then on. Everything below this section is for Chrome, or for running a build
+you made yourself; you don't need any of it to install the add-on.
+
+Firefox for Android in particular has **no other route** — it installs add-ons only from AMO or a
+custom collection, so the sideload options further down don't exist there at all.
+
+---
+
+## 1. Get the bundle (only if you're not using AMO)
 
 ### Download a build
 
-    https://poster.place/extension        unpacked .tar.gz  — Firefox
-    https://poster.place/extension/zip    packed .zip       — Firefox (signing / AMO)
+    https://poster.place/extension/unpacked   unpacked .tar.gz  — Firefox, about:debugging
+    https://poster.place/extension/zip        packed .zip       — what gets submitted to AMO
+    https://poster.place/extension/chrome     Chrome/Edge/Brave
 
-Both redirect to the rolling `extension-latest` GitHub Release, which also carries
-**`posterchan-passwords-chrome.zip`** (Chrome/Edge/Brave) and **`posterchan-passwords.xpi`**
-(permanent Firefox install, see below). Grab the one for your browser from that release page.
+All three redirect to the rolling `extension-latest` GitHub Release, which also carries
+**`posterchan-passwords.xpi`** (permanent Firefox install, see below). Grab the one for your browser
+from that release page.
+
+These builds are **unsigned** — they are the same sources AMO signs, not the signed article. Release
+Firefox will only load one temporarily.
 
 ### Or build it yourself
 
@@ -58,21 +75,25 @@ folder is the install.
 Needs **Chrome 111+**. Chrome may show a "disable developer mode extensions" bubble on startup;
 dismissing it is harmless and the add-on keeps working.
 
-### Firefox — pick your trade-off
+### Firefox — sideloading your own build
 
-Release Firefox refuses to permanently install an unsigned add-on, and nothing in this repo signs
-anything (that needs a Mozilla account and an AMO submission). So there are two honest options:
+**[AMO](https://addons.mozilla.org/firefox/addon/posterchan-passwords/) is the install.** This is for
+running a build you made yourself — a local change, or a version that isn't through review yet.
+Release Firefox refuses to *permanently* install an unsigned add-on, so there are two options:
 
 | | How | Survives restart? | Works on |
 |---|---|---|---|
 | **Temporary** | `about:debugging` → *This Firefox* → **Load Temporary Add-on** → pick `manifest.json` from the extracted `-unpacked.tar.gz` | ❌ unloads every restart | any Firefox, including release |
 | **Permanent, unsigned** | `about:config` → set `xpinstall.signatures.required` to **`false`**, then `about:addons` → ⚙ → **Install Add-on From File** → pick `posterchan-passwords.xpi` | ✅ | **Developer Edition / Nightly / ESR only** |
 
-Release Firefox **ignores** that pref — it is not a setting you can talk it into. If you want a
-permanent install on release Firefox, that is the one case where you need a signed build.
+Release Firefox **ignores** that pref — it is not a setting you can talk it into. A permanent install
+on release Firefox is the signed build from AMO, and that's why it's there.
 
-**Firefox for Android:** signing is not optional there either; it installs add-ons only from AMO or a
-custom collection. There's no sideload path.
+Your own build shares the add-on ID (`passwords@poster.place`) with the signed one, so installing it
+**replaces** the AMO copy in that profile rather than sitting beside it. Use a separate profile if
+you want to keep the signed one working while you test a build.
+
+**Firefox for Android:** AMO only — no sideload path at all.
 
 ---
 
@@ -108,15 +129,19 @@ every browser you've paired: adds, moves and deletes propagate (and deletions *s
 toolbar-vs-menu placement and folders are preserved, and duplicates are de-duped by URL. An idle
 browser keeps syncing on an alarm, so it doesn't have to be focused.
 
+**Not on Firefox for Android** — it has no bookmarks API at all, so the toggle says so rather than
+pretending. Passwords, one-time codes and the NIP-07 signer all work there; bookmark sync is the one
+thing that can't.
+
 ---
 
 ## 5. Updating
 
-Nothing auto-updates when you install from a file.
-
-- **Chrome:** download the new bundle, replace the folder's contents, then hit **Reload** (↻) on the
-  card at `chrome://extensions`.
-- **Firefox, permanent:** install the newer `.xpi` over the old one.
+- **Firefox, from AMO:** nothing to do. Firefox updates it in the background; **Check for Updates**
+  under ⚙ at `about:addons` forces it.
+- **Chrome:** nothing auto-updates from a file — download the new bundle, replace the folder's
+  contents, then hit **Reload** (↻) on the card at `chrome://extensions`.
+- **Firefox, permanent sideload:** install the newer `.xpi` over the old one.
 - **Firefox, temporary:** it's gone on restart anyway — load the new one.
 
 Your pairing and settings live in extension storage and survive an update. They don't survive a
@@ -128,7 +153,7 @@ Your pairing and settings live in extension storage and survive an update. They 
 
 | Symptom | Cause |
 |---|---|
-| Firefox: *"this add-on could not be installed because it appears to be corrupt"* | Release Firefox rejecting an unsigned `.xpi`. Use the temporary route, or a Nightly/Dev/ESR build with the pref set |
+| Firefox: *"this add-on could not be installed because it appears to be corrupt"* | Release Firefox rejecting an unsigned `.xpi` you built. Install the signed one from [AMO](https://addons.mozilla.org/firefox/addon/posterchan-passwords/), or use the temporary route / a Nightly/Dev/ESR build with the pref set |
 | Chrome: *"Manifest is not valid JSON"* or the folder won't load | You picked the packed `.zip`, or a folder one level off — pick the folder that has `manifest.json` directly inside it |
 | Loaded, but no autofill anywhere | Not paired yet — open the popup and paste a pairing code |
 | Paired, but nothing syncs | Unreachable relay. Set one explicitly under **Relays** in the popup |

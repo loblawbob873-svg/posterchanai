@@ -122,15 +122,20 @@ agreeing, or if a background script starts using something a worker does not hav
 
 ### Getting it
 
-> Installing it on your own machine, store-free? **[extension/README.md](../extension/README.md)** is
-> the step-by-step for that — Chrome/Edge/Brave and both Firefox routes, pairing, and turning on
-> bookmark sync. The rest of this section is why it's built the way it is.
+> Just installing it? **Firefox:
+> <https://addons.mozilla.org/firefox/addon/posterchan-passwords/>** (or `poster.place/extension`,
+> which redirects there). **[extension/README.md](../extension/README.md)** is the step-by-step for
+> Chrome/Edge/Brave and for sideloading your own build, plus pairing and turning on bookmark sync.
+> The rest of this section is why it's built the way it is.
 
-    https://poster.place/extension        the unpacked bundle (.tar.gz) — for about:debugging
-    https://poster.place/extension/zip    the packed .zip — for signing / AMO submission
+    https://poster.place/extension            the signed listing on addons.mozilla.org
+    https://poster.place/extension/unpacked   the unpacked bundle (.tar.gz) — for about:debugging
+    https://poster.place/extension/zip        the packed .zip — what gets submitted to AMO
+    https://poster.place/extension/chrome     the Chrome/Edge/Brave bundle
 
-Both redirect to the rolling `extension-latest` GitHub Release, built by
-`.github/workflows/extension.yml` on every change to `extension/` or to the shared core.
+The last three redirect to the rolling `extension-latest` GitHub Release, built by
+`.github/workflows/extension.yml` on every change to `extension/` or to the shared core. Those builds
+are **unsigned** — the same sources AMO signs, not the signed article.
 
 **The built artifact is not in the repo, and neither is `extension/vendor/`.** Both are assembled
 from files that already live here — `static/js/client/vaultcore.js` and the vendored nostr bundle —
@@ -146,18 +151,30 @@ For Chrome (and Edge/Brave): `chrome://extensions` → **Developer mode** → **
 add-on an unpacked extension stays loaded across restarts — no signing, no store account. The release
 also ships `posterchan-passwords-chrome.zip`, which is the same folder zipped for transport.
 
-### Installing it properly
+### Signed and listed on AMO
 
-A temporary add-on unloads when Firefox restarts, and release Firefox **and Firefox for Android**
-refuse a permanent install of an unsigned extension. That needs a Mozilla account and an AMO
-submission (or a self-distributed signed build, which AMO also issues). Until then:
+**<https://addons.mozilla.org/firefox/addon/posterchan-passwords/>** — approved, so a permanent
+install on **release Firefox and Firefox for Android** is one click, and it **auto-updates**.
 
-* **Desktop:** the temporary-add-on route above, or Developer Edition / Nightly with
-  `xpinstall.signatures.required=false`.
-* **Android:** signing is not optional — Firefox for Android installs add-ons from AMO or from a
-  custom collection, both of which require a signed build.
+Android is now a route real users take rather than a theoretical one, so two known behaviours there
+stop being footnotes: host permissions are **not granted at install** on Firefox MV3, so the in-page
+badge does nothing until they're allowed (see *Getting a code on Firefox for Android* below — the
+popup works regardless, which is why it searches the whole vault), and **bookmark sync cannot work**
+because Firefox for Android has no bookmarks API. Passwords, one-time codes and the NIP-07 signer all
+work.
 
-Nothing here signs anything: it needs credentials and an account decision.
+That closes the hole this section used to describe: a temporary add-on unloads on restart, release
+Firefox refuses a permanent unsigned install, and Android had no sideload path at all. The CI builds
+are still unsigned and still useful (running a local change, or a version that isn't through review
+yet) — see [extension/README.md](../extension/README.md).
+
+**Shipping a new version is a manual AMO upload, and it needs a version bump first.** Nothing in CI
+holds Mozilla credentials, so the release flow is: bump `version` in `extension/manifest.json`, push
+(CI rebuilds the rolling release), then upload `posterchan-passwords.zip` to AMO as a **new version
+of the existing add-on** — never "Submit a New Add-on", the ID `passwords@poster.place` already has a
+listing. **AMO refuses a version string it has already seen** (*"Version 1.1.1 already exists"*), and
+it refuses it *after* the upload rather than before, so the bump is the first step and not the last.
+Review is human and takes as long as it takes; the GitHub release is what users have in the meantime.
 
 **AMO requires a data-collection declaration.** Without
 `browser_specific_settings.gecko.data_collection_permissions` the submission is rejected with *"The

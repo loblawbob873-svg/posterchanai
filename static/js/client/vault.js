@@ -1330,8 +1330,11 @@
   function openPair(){
     const canFull = ME() && ME().mode === 'local';
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-link"></use></svg>Pair a device</h3>
-      <div class="muted small">For the PosterChan Firefox extension, or another browser. The code below
+      <div class="muted small">For the PosterChan browser add-on, or another browser. The code below
         contains the key that decrypts your passwords — treat it like the passwords themselves.</div>
+      <div class="muted small" style="margin-top:6px">Don’t have it yet?
+        <a href="https://addons.mozilla.org/firefox/addon/posterchan-passwords/" target="_blank" rel="noopener noreferrer">Get it for Firefox</a>
+        — Android too. Chrome/Edge/Brave load it unpacked; see the docs.</div>
       <div class="fld">Access
         <label class="nf-opt"><input type="radio" name="pv-mode" value="ro" checked>
           <b>Read-only</b><span class="muted small"> — fill, generate and show 2FA codes. New logins

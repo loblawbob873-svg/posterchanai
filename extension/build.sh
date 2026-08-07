@@ -125,7 +125,8 @@ echo "Load it in Chrome:       chrome://extensions -> Developer mode -> Load unp
 echo "                         (or drag dist/posterchan-passwords-chrome.zip onto that page)"
 echo "Load it in Firefox:      about:debugging -> This Firefox -> Load Temporary Add-on -> manifest.json"
 echo "Firefox for Android:     about:debugging on the desktop, with the phone connected over USB,"
-echo "                         or install a signed build from addons.mozilla.org."
+echo "                         or install the signed build (sideloading is not possible there):"
+echo "                         https://addons.mozilla.org/firefox/addon/posterchan-passwords/"
 echo
 # "Duplicate add-on ID" from AMO is not a problem with the build: it means Submit a New Add-on was
 # used for an ID that already has a listing. There is one listing per ID, forever, and every build

@@ -1,7 +1,8 @@
 name: Firefox extension
 
 # Builds the PosterChan Passwords add-on and publishes it to a rolling GitHub Release, so
-# poster.place/extension always has something to hand out.
+# poster.place/extension/unpacked and /chrome always have something to hand out. (Bare
+# poster.place/extension is the signed AMO listing, which this workflow does not produce.)
 #
 # It exists because the built artifact is NOT in the repo: extension/dist and extension/vendor are
 # generated (vendor/nostr.bundle.js is copied from the app's own vendored bundle, vaultcore.js from
@@ -10,9 +11,13 @@ name: Firefox extension
 # this. `about:debugging` still wants an unpacked directory, so both are published: the .zip for
 # signing/AMO, and the unpacked bundle as a tarball for a temporary install.
 #
-# NOT SIGNED here. Mozilla signing needs AMO credentials and an account decision that isn't CI's to
-# make; without it Firefox for Android and release Firefox will refuse a permanent install. See
-# docs/PASSWORDS.md for what that means in practice.
+# NOT SIGNED here, and that is now a smaller thing than it was: the add-on is listed on AMO
+# (https://addons.mozilla.org/firefox/addon/posterchan-passwords/), so the ordinary Firefox install is
+# one click from Mozilla and auto-updates. Signing still needs AMO credentials this workflow doesn't
+# hold, so a NEW VERSION reaches release Firefox only when someone uploads dist/posterchan-passwords.zip
+# to AMO by hand — after bumping manifest.json's `version`, which AMO rejects as a duplicate otherwise.
+# What's built here is what a developer sideloads, and what Chrome/Edge/Brave install unpacked.
+# See docs/PASSWORDS.md.
 
 on:
   push:
@@ -86,7 +91,12 @@ jobs:
           body: |
             Autofill, one-time codes and a password generator for your PosterChan vault.
 
-            **Desktop Firefox, right now:** download the `-unpacked.tar.gz`, extract it, then
+            **Firefox — just install it from Mozilla:**
+            https://addons.mozilla.org/firefox/addon/posterchan-passwords/ — signed, permanent on
+            release Firefox and Firefox for Android, and it auto-updates. The builds below are
+            unsigned; they're for Chrome, or for running a build before it's through AMO review.
+
+            **Desktop Firefox, unsigned:** download the `-unpacked.tar.gz`, extract it, then
             `about:debugging` → This Firefox → Load Temporary Add-on → pick `manifest.json`.
             (Temporary add-ons unload when Firefox restarts.)
 
@@ -100,9 +110,9 @@ jobs:
             Add-on From File** → pick `posterchan-passwords.xpi`. It survives restarts. (Release
             Firefox ignores that pref, so this path is Nightly/Dev/ESR only.)
 
-            **Release Firefox / Android:** install the Mozilla-signed build from addons.mozilla.org —
-            a build from here is unsigned, so release Firefox (desktop and Android) will only install
-            it temporarily. See docs/PASSWORDS.md.
+            **Release Firefox / Android:** use the AMO link at the top. A build from here is
+            unsigned, so release Firefox installs it temporarily at best, and Firefox for Android
+            not at all. See docs/PASSWORDS.md.
 
             **Nostr sign-in (NIP-07):** once paired with full access, this provides `window.nostr`,
             so a Nostr site can log you in with your key. Each site is asked for once, per event

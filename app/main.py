@@ -969,17 +969,33 @@ small{color:#5c5c73;font-size:12px;display:block;margin-top:18px}</style>
 <a href="/desktop/mac">🍎 &nbsp;macOS (Apple silicon)</a>
 <a class=s href="/desktop/mac-intel">macOS (Intel)</a>
 <a class=s href="/apk">📱 Android APK</a>
-<a class=s href="/extension">🔑 Firefox add-on (passwords)</a>
+<a class=s href="/extension">🔑 Firefox add-on (passwords) — on addons.mozilla.org</a>
 <small>Unsigned builds — Windows shows a SmartScreen prompt (More info → Run anyway);
 on macOS right-click the app → Open.</small></div>""")
 
 
 _EXT_DL = ("https://github.com/loblawbob873-svg/posterchanai/releases/download/extension-latest/")
+# The Mozilla-signed listing. Locale-neutral on purpose — AMO redirects to the visitor's own locale,
+# so hardcoding /en-US/ would hand a German user an English page for no reason.
+_EXT_AMO = "https://addons.mozilla.org/firefox/addon/posterchan-passwords/"
 
 
 @app.get("/extension")
 async def firefox_extension():
-    """The Firefox add-on (autofill + one-time codes for the password vault).
+    """The Firefox add-on (autofill + one-time codes for the password vault) — the SIGNED listing.
+
+    This used to hand out the unpacked tarball, because there was no signed build and a temporary
+    add-on was the only thing release Firefox would accept. It's on AMO now, so the ordinary answer
+    to "I want this add-on" is one click that also auto-updates and works on Firefox for Android —
+    neither of which a sideload gives you. The raw artifacts are still one path segment away for
+    anyone who wants to install what they built rather than what Mozilla signed.
+    """
+    return RedirectResponse(url=_EXT_AMO, status_code=302)
+
+
+@app.get("/extension/unpacked")
+async def firefox_extension_unpacked():
+    """The unpacked bundle, for `about:debugging` → Load Temporary Add-on (it wants a directory).
 
     A redirect rather than a local mirror, unlike /apk: an add-on is a one-off desktop download over
     a connection that is by definition working, not a 60 MB APK pulled onto a throttled phone, so the
@@ -993,7 +1009,7 @@ async def firefox_extension():
 
 @app.get("/extension/zip")
 async def firefox_extension_zip():
-    """The packed .zip — what you submit to addons.mozilla.org for signing. The unpacked tarball
+    """The packed .zip — what gets submitted to addons.mozilla.org for signing. The unpacked tarball
     above is the one to grab for `about:debugging`, which wants a directory."""
     return RedirectResponse(url=_EXT_DL + "posterchan-passwords.zip", status_code=302)
 
