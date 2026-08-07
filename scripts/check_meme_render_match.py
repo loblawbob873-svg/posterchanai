@@ -2,6 +2,13 @@
 """Does the Meme Builder's stage show what the RENDERER will produce?
 
     venv-unified/bin/python scripts/check_meme_render_match.py
+    venv-unified/bin/python scripts/check_meme_render_match.py --project saved.json [--at 2.5]
+
+The second form runs a REAL project (the JSON in localStorage under `pc_meme_project`) instead of
+the built-in probes, which is how a report of "my render doesn't match my preview" stops being a
+description and becomes pixel numbers. It has no colour probes to key on, so it reports the diff
+image instead: where the two disagree, and by how much. Layer media is fetched from wherever the
+project points, so it needs network for a project built against a live instance.
 
 Every other check in this repo audits ONE side. check_meme_mobile.py audits the builder's controls;
 tests/test_meme_builder.py audits the filtergraph. Nothing compares them, and "preview and render are
@@ -147,7 +154,30 @@ EDIT_MOTION = {
     ],
 }
 
-SCENARIOS = [("static", EDIT, 0.0), ("motion", EDIT_MOTION, MOTION_AT)]
+# An ODD canvas, which is what "⇲ Canvas to this photo" produces from an ordinary photo — and a path
+# nothing tested. ffmpeg forces even output dimensions (h264 requires them), so a 474x265 project
+# renders 474x264 while the stage lays every layer out in a 265-tall space. Both the canvas AND each
+# layer box are rounded down independently, so this checks that the drift stays sub-pixel rather than
+# accumulating into a visible offset. Width is odd too (475), to catch the same on the other axis.
+EDIT_ODD = {
+    "w": 475, "h": 265, "fps": 12, "bg": "#000000", "duration": 4,
+    "fmt": "png", "still": 0,
+    "layers": [
+        {"id": "RED", "type": "image", "src": "SRC:RED", "name": "full-canvas",
+         "start": 0, "dur": 4, "trim": 0, "x": 0, "y": 0, "w": 475, "h": 265,
+         "fit": "contain", "opacity": 1, "effect": "none", "flipH": False, "flipV": False,
+         "rotate": 0, "align": ""},
+        {"id": "BLUE", "type": "image", "src": "SRC:BLUE", "name": "odd-box",
+         "start": 0, "dur": 4, "trim": 0, "x": 157, "y": 57, "w": 221, "h": 125,
+         "fit": "cover", "opacity": 1, "effect": "none", "flipH": False, "flipV": False,
+         "rotate": 0, "align": ""},
+        {"id": "YELLOW", "type": "text", "src": "", "name": "cap",
+         "start": 0, "dur": 4, "x": 31, "y": 25, "text": "ODD", "size": 41,
+         "color": "#ffff00", "stroke": "#000000", "align": "", "effect": "none"},
+    ],
+}
+
+SCENARIOS = [("static", EDIT, 0.0), ("motion", EDIT_MOTION, MOTION_AT), ("odd-canvas", EDIT_ODD, 0.0)]
 
 
 def _page(src_base, edit, at, mask_url):
@@ -372,7 +402,49 @@ async def drive(url, shots, payload):
             proc.kill()
 
 
+def _load_project(path, at):
+    """A saved project -> the (edit, at) pair the harness drives. The project IS the edit list
+    (render() builds its payload straight off it), so the only thing to force is the export format:
+    a still is what can be compared against a screenshot."""
+    with open(path, encoding="utf-8") as fh:
+        P = json.load(fh)
+    if not isinstance(P, dict) or not P.get("layers"):
+        raise SystemExit(f"{path} is not a Meme Builder project (no `layers`)")
+    P = dict(P, fmt="png", still=at)
+    return P, at
+
+
+def _diff_report(exp, got, label):
+    """No colour probes in a real project, so report WHERE the two images disagree. A per-row/column
+    profile of the differing pixels localises it to a layer far better than one number: a caption
+    that is 40px low shows as a tight band, a layer that is scaled shows as two bands at its edges."""
+    from PIL import ImageChops
+    d = ImageChops.difference(exp.convert("RGB"), got.convert("RGB")).convert("L")
+    px = d.load()
+    w, h = d.size
+    rows, cols, n = [0] * h, [0] * w, 0
+    for y in range(h):
+        for x in range(w):
+            if px[x, y] > 40:            # well above JPEG-ish noise and anti-aliasing
+                rows[y] += 1
+                cols[x] += 1
+                n += 1
+    pct = 100.0 * n / (w * h)
+    print(f"{label}: {n} differing pixels ({pct:.2f}% of the frame)")
+    if not n:
+        return 0.0, d
+    bands = [(i, c) for i, c in enumerate(rows) if c]
+    colb = [(i, c) for i, c in enumerate(cols) if c]
+    print(f"    rows {bands[0][0]}..{bands[-1][0]}   cols {colb[0][0]}..{colb[-1][0]}")
+    worst = sorted(bands, key=lambda t: -t[1])[:5]
+    print("    heaviest rows: " + ", ".join(f"y={i} ({c}px)" for i, c in worst))
+    return pct, d
+
+
 def main():
+    if "--project" in sys.argv:
+        return _run_project(sys.argv[sys.argv.index("--project") + 1],
+                            float(sys.argv[sys.argv.index("--at") + 1]) if "--at" in sys.argv else 0.0)
     try:
         import websockets  # noqa: F401
     except ImportError:
@@ -481,8 +553,12 @@ def main():
                 img = img.crop((int(round(box["x"] * dsf)), int(round(box["y"] * dsf)),
                                 int(round((box["x"] + box["w"]) * dsf)),
                                 int(round((box["y"] + box["h"]) * dsf))))
-                if img.size != (PROJ_W, PROJ_H):
-                    img = img.resize((PROJ_W, PROJ_H), Image.LANCZOS)
+                # The EXPORT's size, not the project's: ffmpeg forces even dimensions (h264 requires
+                # them), so a 474x265 project renders 474x264. Resizing the stage to the project size
+                # instead would introduce a one-pixel scale error of the harness's own making and then
+                # report it as a finding.
+                if img.size != exp.size:
+                    img = img.resize(exp.size, Image.LANCZOS)
                 if os.environ.get("PC_MEME_DUMP"):
                     img.save(os.path.join(os.environ["PC_MEME_DUMP"], f"{sname}-stage-{label}.png"))
                 got = _boxes(img)
@@ -508,6 +584,117 @@ def main():
         return 1
     print("\nOK — the stage matches the export in every scenario, at every width")
     return 0
+
+
+def _run_project(path, at):
+    """Drive a REAL saved project: screenshot its stage, render the payload its own Render button
+    builds, and diff the two."""
+    try:
+        import websockets  # noqa: F401
+    except ImportError:
+        print("SKIP  websockets not installed")
+        return 2
+    try:
+        from PIL import Image
+    except ImportError:
+        print("SKIP  Pillow not installed")
+        return 2
+    from app.services import meme_builder_service, media_service
+    if not media_service.resolve_ffmpeg():
+        print("SKIP  no ffmpeg on this node")
+        return 2
+
+    import http.server
+    import threading
+    import urllib.parse
+    proj, at = _load_project(path, at)
+    W, H = int(proj.get("w") or 720), int(proj.get("h") or 1280)
+    print(f"project: canvas {W}x{H}, {len(proj['layers'])} layers, still at {at}s")
+
+    tmp = tempfile.mkdtemp(prefix="memeproj-")
+
+    class H_(http.server.SimpleHTTPRequestHandler):
+        def translate_path(self, p2):
+            p2 = p2.split("?")[0].split("#")[0]
+            if p2.startswith("/static/"):
+                return os.path.join(ROOT, p2.lstrip("/"))
+            if p2 == "/client/meme-font.ttf":
+                from app.services.effects_service._common import _meme_font_path
+                return _meme_font_path() or os.path.join(tmp, "missing.ttf")
+            return os.path.join(tmp, p2.lstrip("/") or "index.html")
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H_)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_port}"
+    page = (_page(base + "/src/", proj, at, "")
+            .replace("__PROJECT__", json.dumps(proj)))
+    # _page rewrites src/mask for the synthetic probes; a real project's URLs are already absolute
+    # and must be left exactly as they are, so the project is re-injected verbatim over the top.
+    with open(os.path.join(tmp, "index.html"), "w") as fh:
+        fh.write(page)
+
+    shots, payload = {}, {}
+    try:
+        rc = asyncio.run(drive(f"{base}/index.html", shots, payload))
+    finally:
+        srv.shutdown()
+    if rc:
+        return rc
+    edit = payload.get("edit")
+    if not edit:
+        print("SKIP  the Render button produced no payload")
+        return 2
+
+    # Fetch every layer source the way the SERVER would (the client already has them; the renderer
+    # takes local paths). Anything unreachable is reported rather than silently rendered as a gap.
+    import urllib.request as _u
+    sources, failed = {}, []
+    for l in edit.get("layers") or []:
+        for key in ("src", "mask"):
+            u = l.get(key) or ""
+            if not u or u in sources:
+                continue
+            try:
+                with _u.urlopen(u, timeout=30) as r:
+                    data = r.read()
+                ext = os.path.splitext(urllib.parse.urlparse(u).path)[1][:6] or ".bin"
+                fp = os.path.join(tmp, f"s{len(sources)}{ext}")
+                open(fp, "wb").write(data)
+                sources[u] = fp
+            except Exception as e:
+                failed.append(f"{key}={u} ({e})")
+    if failed:
+        print("COULD NOT FETCH (these layers will be missing from the export, not from the stage):")
+        for f in failed:
+            print("   " + f)
+
+    png, ctype = meme_builder_service.render(dict(edit, fmt="png", still=at), sources)
+    if ctype != "image/png":
+        print(f"SKIP  the renderer returned {ctype}")
+        return 2
+    exp = Image.open(io.BytesIO(png)).convert("RGB")
+    out = os.environ.get("PC_MEME_DUMP") or tmp
+    exp.save(os.path.join(out, "project-export.png"))
+
+    worst = 0.0
+    for label, (data, box, dsf) in sorted(shots.items()):
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+        img = img.crop((int(round(box["x"] * dsf)), int(round(box["y"] * dsf)),
+                        int(round((box["x"] + box["w"]) * dsf)),
+                        int(round((box["y"] + box["h"]) * dsf))))
+        if img.size != exp.size:
+            img = img.resize(exp.size, Image.LANCZOS)
+        img.save(os.path.join(out, f"project-stage-{label}.png"))
+        pct, d = _diff_report(exp, img, f"[{label}]")
+        d.save(os.path.join(out, f"project-diff-{label}.png"))
+        worst = max(worst, pct)
+    print(f"\nimages written to {out}")
+    # A real project has anti-aliasing, video frame timing and font hinting between the two sides, so
+    # a few percent is normal. A misplaced LAYER is tens of percent and lands in a band.
+    return 1 if worst > 8.0 else 0
 
 
 if __name__ == "__main__":
