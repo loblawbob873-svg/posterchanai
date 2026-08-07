@@ -14557,7 +14557,16 @@
         $$('[data-pk]',ac).forEach(el=> el.onmousedown=ev=>{ ev.preventDefault(); toPk=el.dataset.pk; to.value='@'+((Store.profile(toPk)||{}).name||NT().nip19.npubEncode(toPk).slice(0,12)); ac.classList.add('hidden'); });
       });
       $('#dm-attach',root).onclick=()=>$('#dm-file',root).click();
-      $('#dm-file',root).onchange=async e=>{ const files=[...e.target.files]; for(let i=0;i<files.length;i++){ $('#dm-status',root).textContent=`uploading ${i+1}/${files.length}…`; try{ const url=await uploadBlob(files[i]); body.value+=(body.value?'\n':'')+url; }catch(err){ $('#dm-status',root).textContent='upload failed: '+err.message; return; } } $('#dm-status',root).textContent=''; _newSync(); };
+      // Honours the same 🔒 preference as an open thread's composer — it is a per-DEVICE choice, and
+      // a first message to someone is no less private than the tenth. (Its own toggle would be a
+      // second switch for one setting; the thread topbar owns it.)
+      $('#dm-file',root).onchange=async e=>{ const files=[...e.target.files]; const encOn=!!ClientSettings.get('dmEncryptAtts');
+        for(let i=0;i<files.length;i++){ const st=$('#dm-status',root);
+          st.textContent=`${encOn?'encrypting':'uploading'} ${i+1}/${files.length}…`;
+          try{ const url=encOn ? await uploadSharedEnc(files[i], st) : await uploadBlob(files[i]);
+            body.value+=(body.value?'\n':'')+url; }
+          catch(err){ st.textContent='upload failed: '+err.message; return; } }
+        $('#dm-status',root).textContent=''; _newSync(); };
       $('#dm-files',root).onclick=()=>blossomPicker(body);
       { const g=$('#dm-gif',root); if(g) g.onclick=()=>gifPicker(body); }
       $('#dm-go',root).onclick=async()=>{
