@@ -501,3 +501,29 @@ console.log(JSON.stringify(out));
     assert "Store.query([{ kinds:[30311]" in body, (
         "renderStreams must merge the local store, or publishing your own stream and navigating "
         "straight here shows an empty grid until a full reload")
+
+
+def test_replays_are_stamped_on_startup_not_only_when_streams_is_opened():
+    """A replay nobody else can see is the same as no replay.
+
+    The `recording` tag is the only cross-client way to say "the replay is here", and it can only be
+    SIGNED in the browser — so the trigger decides whether it ever gets published. _sweepUnstampedReplays
+    has always documented itself as running "on startup", but it was called from exactly one place:
+    renderStreams. End a stream, close the tab, and come back to the timeline like anyone would, and
+    the tag was never published — the VOD sat finished on the server while zap.stream, shosho and
+    Amethyst had nothing marking the stream replayable.
+
+    Measured on a real broadcast: the VOD existed 141 seconds after the end, and the ended 30311 still
+    carried no `recording` tag minutes later. The matcher was never the problem — that VOD's start was
+    26s after the announce, well inside the ±120s skew — it simply never ran.
+    """
+    src = APP_JS.read_text(encoding="utf-8")
+    boot = src[src.index("function startApp("):]
+    boot = boot[:boot.index("\n  function ")]
+    assert "_sweepUnstampedReplays()" in boot, (
+        "the replay sweep runs only when Discover → Streams is opened, so ending a stream and not "
+        "visiting that view leaves the replay invisible to every other client")
+
+    # Once per session, wherever it is reached from first — the view still calls it, and a second run
+    # would re-query and re-publish for no reason.
+    assert boot.count("_sweptReplays") >= 2, "the startup sweep must honour the once-per-session guard"

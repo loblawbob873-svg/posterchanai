@@ -1792,6 +1792,23 @@
     // claim is on zap.stream and every other NIP-53 client, and its owner has no reason to open our
     // Streams tab. Deferred so it never competes with the cold start, and never awaited.
     if(!GUEST) setTimeout(()=>{ try{ const p=_sweepStaleOwnLive(); if(p&&p.catch) p.catch(()=>{}); }catch(_){} }, 4000);
+    /* Stamp any replay whose recording finished while this client was closed.
+     *
+     * _sweepUnstampedReplays' own comment has always said "on startup" — it was only ever called from
+     * renderStreams, so it ran when you opened Discover → Streams and at no other time. End a stream,
+     * close the tab, and come back to the timeline like anyone would, and the `recording` tag was
+     * never published: the VOD sat finished on the server while every other client (zap.stream,
+     * shosho, Amethyst) had nothing marking the stream replayable. Measured on a real broadcast — the
+     * VOD existed 141s after the end and the 30311 still carried no `recording` tag minutes later.
+     *
+     * The tag can only be signed HERE, so "whenever the owner opens the app" is as good as it gets;
+     * the point is that it no longer requires opening one particular VIEW. _sweptReplays keeps it to
+     * once per session, so this simply gets there first. */
+    if(!GUEST) setTimeout(()=>{
+      if(_sweptReplays) return;
+      _sweptReplays = true;
+      try{ const p=_sweepUnstampedReplays(); if(p&&p.catch) p.catch(()=>{}); }catch(_){}
+    }, 6000);
     // Do NOT auto-request notification permission on login: in a PWA (Firefox especially) the permission
     // prompt pops the browser's chrome — the URL/shield/hamburger TOOLBAR — the instant you sign in, and
     // it can stay. Browsers also discourage auto-requests. In-app toasts work without it; OS
