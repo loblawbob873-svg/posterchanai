@@ -453,8 +453,20 @@ MASK_PROBE = r"""(async () => {
             w: Math.round(el.getBoundingClientRect().width)};
   };
   const good = await setMask('/static/icon-192.png');     // a real, served PNG
+  // RE-RENDER with the mask already decoded. This is the path stageEl takes from then on: the mask
+  // goes into an HTML style="..." attribute instead of arriving later through _paintMask's DOM-API
+  // assignment. A `url("` in that attribute terminates it, the declaration is truncated to a mask of
+  // url(""), and an unusable mask does not degrade — the element is not drawn. That is the
+  // layers-vanish-when-I-add-a-layer bug, and every check missed it because they all waited for
+  // _paintMask and never looked at a SECOND render.
+  window.PCMeme.render();
+  await wait(400);
+  const el2 = document.querySelector('.mb-item[data-id="L1"] .mb-mk');
+  const cs2 = el2 ? getComputedStyle(el2) : null;
+  const mi2 = cs2 ? (cs2.webkitMaskImage || cs2.maskImage || 'none') : 'none';
+  const inline = {hasMask: mi2 !== 'none' && mi2 !== '', len: mi2.length};
   const bad  = await setMask('/static/no-such-mask-404.png');
-  return {good, bad};
+  return {good, bad, inline};
 })()"""
 
 AUDIT = r"""(() => {
@@ -693,6 +705,15 @@ async def drive(url):
                                      "element vanish rather than degrade"))
                 # THE rule this all turns on: whatever else happens, the mask must never be on the
                 # media element. That is the replaced-element case both engines drop the layer for.
+                # The INLINE path: a re-render with the mask already decoded must still produce a
+                # usable mask. `url("")` is 7 characters and is what a quote-terminated style
+                # attribute leaves behind, so a real one is orders of magnitude longer.
+                inl = mk.get("inline") or {}
+                if not inl.get("hasMask") or inl.get("len", 0) < 32:
+                    problems.append(("mask", "erase-hides-layer",
+                                     f"a re-render produced an unusable mask (len={inl.get('len')}) — "
+                                     f"the value is being truncated on its way into the style "
+                                     f"attribute, and an unusable mask removes the layer"))
                 if mk["good"]["onMedia"] or mk["bad"]["onMedia"]:
                     problems.append(("mask", "erase-hides-layer",
                                      "the mask was applied to the <img>/<video> itself — it belongs on "
@@ -707,7 +728,8 @@ async def drive(url):
                                      f"({mk['good']['w']}px -> {mk['bad']['w']}px)"))
                 print(f"mask: loads->applied={mk['good']['hasMask']} "
                       f"404->applied={mk['bad']['hasMask']} (must be True/False) "
-                      f"onMedia={mk['good']['onMedia']}/{mk['bad']['onMedia']} (must be False/False)")
+                      f"onMedia={mk['good']['onMedia']}/{mk['bad']['onMedia']} (must be False/False) "
+                      f"inline-len={(mk.get('inline') or {}).get('len')} (7 == url(\"\") == broken)")
 
             # ✂ CUT. Arithmetic, so it is checked against exact numbers rather than "it changed".
             await call("Page.navigate", {"url": url})

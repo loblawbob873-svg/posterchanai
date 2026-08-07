@@ -1236,6 +1236,9 @@
       const el = document.querySelector(`.mb-item[data-id="${l.id}"] .mb-mk`);
       if(!el) return;
       const ofit = (l.fit === 'cover') ? 'cover' : 'contain';   // mirrors object-fit; see _maskCss
+      // Quoted is fine HERE and only here: this is assigned through the DOM style API, which parses
+      // CSS directly. _maskCss builds the same value for an HTML attribute and must NOT quote it —
+      // see the note there.
       const u = `url("${_maskSrc(l.mask)}")`;
       el.style.webkitMaskImage = u;  el.style.maskImage = u;
       el.style.webkitMaskSize = ofit; el.style.maskSize = ofit;
@@ -1378,7 +1381,19 @@
     // line with `src === l.mask` means the probe said yes without leaving a local copy, which is a
     // contradiction; draw the layer un-erased rather than gamble the layer on it.
     if(src === l.mask) return '';
-    const u = `url("${src}")`;
+    // UNQUOTED url(). This string is interpolated into an HTML style="..." attribute by stageEl, and
+    // `url("` carries a double quote that TERMINATES that attribute — the parser keeps
+    // `mask-image:url(` and discards the rest, leaving a mask of `url("")`. An empty mask is not
+    // ignored: it is unusable, so the element is not drawn at all. That is the layers-disappear bug,
+    // and it only ever showed on a RE-render: the first render has no decoded mask yet, so the mask
+    // arrives later through _paintMask, which sets it via the DOM API where quoting is not parsed.
+    // Every check waited for that path and so never exercised this one.
+    //
+    // Unquoted is safe for all three sources this can be: a data: URI (base64, no delimiters), a
+    // blob: URL, and the stored remote url — which the regex above has already restricted to no
+    // whitespace, quotes, parens or angle brackets, i.e. exactly the characters that could break out
+    // of an unquoted url().
+    const u = `url(${src})`;
     return `;-webkit-mask-image:${u};mask-image:${u}`
          + `;-webkit-mask-size:${ofit};mask-size:${ofit}`
          + `;-webkit-mask-position:center;mask-position:center`
