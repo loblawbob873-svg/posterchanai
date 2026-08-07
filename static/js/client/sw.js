@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v844';
+const CACHE = 'pc-nostr-v845';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -463,18 +463,28 @@ self.addEventListener('fetch', e => {
   // Encrypted-drive blobs (fetch(), so destination ''), BEFORE the destination rules below: a public
   // <img> pointing at the same path is ordinary media and keeps going to MEDIA_CACHE.
   else if (isDriveBlob(url, e.request)) e.respondWith(cacheFirstBlob(e.request));
-  // CROSS-ORIGIN VIDEO: leave it to the browser, exactly as the APK branch above does.
+  // CROSS-ORIGIN VIDEO **AND AUDIO**: leave it to the browser, exactly as the APK branch above does.
   //
-  // A <video> with no crossorigin attribute fetches no-cors, so fetch() hands back an OPAQUE response
-  // (status 0). cacheFirstMedia can never store one — its guard requires status 200 — so intercepting
-  // these bought NOTHING, and cost a failure mode: an opaque body cannot satisfy the Range requests a
-  // media element makes. Chromium tolerates that; FIREFOX fails the load outright with
+  // A <video>/<audio> with no crossorigin attribute fetches no-cors, so fetch() hands back an OPAQUE
+  // response (status 0). cacheFirstMedia can never store one — its guard requires status 200 — so
+  // intercepting these bought NOTHING, and cost a failure mode: an opaque body cannot satisfy the Range
+  // requests a media element makes. Chromium tolerates that; FIREFOX fails the load outright with
   // MEDIA_ERR_SRC_NOT_SUPPORTED, surfaced as "No video with supported format and MIME type found".
   //
   // That is why a twimg clip played in the desktop app but not in Firefox: the app's SW is root-scoped
   // (IS_APP) and already skips video, while the web SW proxied it. Same-origin video still goes through
   // the cache below — it comes back transparent, so it is both cacheable and range-able.
-  else if (e.request.destination === 'video' && url.origin !== self.location.origin) return;
+  //
+  // AUDIO was left out of that fix and hit the catch-all `fetch(e.request)` at the bottom, which is the
+  // same proxy with the same opaque result. The symptom is the same failure wearing different words:
+  // Firefox reports NS_ERROR_DOM_MEDIA_DECODE_ERR / "FFmpeg audio error" and the track is silent. It
+  // showed up on the Meme Builder's voice-over layers — a talk clip's speech is an <audio> on
+  // media.poster.place, i.e. cross-origin — where the export had sound and the preview did not. The
+  // file was never the problem: those .wav are canonical PCM (verified byte by byte — RIFF/WAVE, fmt 16,
+  // format 1, mono 24kHz/16-bit, data chunk exactly matching the file length) and ffmpeg decodes them
+  // clean. Nothing about audio makes it a better candidate for proxying than video.
+  else if ((e.request.destination === 'video' || e.request.destination === 'audio')
+           && url.origin !== self.location.origin) return;
   // Avatars + images always; videos only get stored if played + small (see cacheFirstMedia).
   else if (e.request.destination === 'image' || e.request.destination === 'video') e.respondWith(cacheFirstMedia(e.request));
   else e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));  // everything else

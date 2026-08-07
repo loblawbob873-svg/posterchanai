@@ -141,6 +141,10 @@ OWN_VIDEO = "https://poster.place/blossom/abc123.mp4"
 OWN_IMAGE = "https://poster.place/blossom/photo.jpg"          # same-origin media (cacheFirstMedia)
 OWN_ICON = "https://poster.place/static/icon-192.png"        # same-origin icon (its own cacheFirst branch)
 FEDI_AVATAR = "https://detroitriotcity.com/media/avatar.png"
+# The Meme Builder's voice-over layers: a talk clip's speech, served from the media host, which is a
+# DIFFERENT ORIGIN from the page even on our own deployment.
+XORIGIN_AUDIO = "https://media.poster.place/b7bee9fd9452f45fe6e60e7c0e0685954a9aff81e63.wav"
+OWN_AUDIO = "https://poster.place/blossom/voice.wav"
 
 
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
@@ -154,6 +158,26 @@ class WebServiceWorker(unittest.TestCase):
         """Our own uploads come back transparent -- cacheable AND range-able -- and offline replay of
         a small played clip is the feature this cache exists for. Don't throw it away with the fix."""
         self.assertTrue(_route(WEB_SW, OWN_VIDEO, "video"))
+
+    def test_a_cross_origin_audio_is_not_intercepted(self):
+        """The same bug as video, in the branch that was missed.
+
+        <audio> without a crossorigin attribute fetches no-cors too, so proxying it hands back an
+        OPAQUE body that cannot satisfy a Range request. Audio had no rule of its own, so it fell to
+        the catch-all `fetch(e.request)` at the bottom — the same proxy, the same opaque result.
+        Firefox reports it as NS_ERROR_DOM_MEDIA_DECODE_ERR / "FFmpeg audio error" rather than as an
+        unsupported format, which is why it read as a broken FILE rather than as this.
+
+        Found on the Meme Builder's voice-over layers: the export had sound and the preview did not.
+        The .wav were canonical PCM (RIFF/WAVE, fmt 16, format 1, mono 24kHz/16-bit, data chunk exactly
+        matching the file length) and ffmpeg decoded them clean — nothing was wrong with the bytes."""
+        self.assertFalse(_route(WEB_SW, XORIGIN_AUDIO, "audio"))
+
+    def test_a_same_origin_audio_is_left_to_the_catch_all(self):
+        """Same-origin audio comes back transparent, so it is range-able and the catch-all's proxy is
+        harmless. Pinned so 'fixing' audio does not accidentally send our own files to the network
+        without the offline fallback the catch-all provides."""
+        self.assertTrue(_route(WEB_SW, OWN_AUDIO, "audio"))
 
     def test_images_are_unaffected(self):
         """Avatars and post images are the main users of the media cache; a cross-origin image gets a
@@ -171,6 +195,13 @@ class BundledAppServiceWorker(unittest.TestCase):
     def test_video_is_never_intercepted_in_the_app(self):
         self.assertFalse(_route(APP_SW, TWIMG, "video"))
         self.assertFalse(_route(APP_SW, OWN_VIDEO, "video"))
+
+    def test_audio_is_never_intercepted_in_the_app(self):
+        """The app branch returns early for everything but cross-origin images, so audio was already
+        safe there — which is why the voice played in the desktop app and not in Firefox, the same
+        split as the video bug."""
+        self.assertFalse(_route(APP_SW, XORIGIN_AUDIO, "audio"))
+        self.assertFalse(_route(APP_SW, OWN_AUDIO, "audio"))
 
     def test_the_app_still_caches_cross_origin_images(self):
         self.assertTrue(_route(APP_SW, FEDI_AVATAR, "image"))
