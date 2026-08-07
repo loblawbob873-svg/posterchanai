@@ -425,6 +425,30 @@
   // clips have to be on screen at the same time for there to be anything to blend. `xin`/`xout` are the
   // ramps, stamped here (and cleared when the crossfade is off) so the render never has to guess which
   // joins are transitions.
+  // Do the clips already FORM a back-to-back sequence? Only then may adding one re-time the others.
+  //
+  // resequence() lays EVERY visual layer end to end from t=0, which is right for the case it was written
+  // for — drop three clips, they play in order — and destructive for any project where layers are meant
+  // to be on screen TOGETHER. A build with a background and two cut-outs over it is exactly that: the
+  // overlays share the background's timestamp deliberately. Adding one image from Blossom re-timed all
+  // of them into a queue and the arrangement was gone ("adding an image fucks up the entire timeline,
+  // all the layers changed"). The layers were not corrupted, they were sorted.
+  //
+  // So look at what is already there. Contiguous (each clip starting where the previous one ends, minus
+  // the crossfade) means a sequence, and joining the new clip to it is what the user expects. Anything
+  // overlapping is an arrangement somebody made on purpose, and the new layer is appended at the end
+  // (addLayer already gives it start = projEnd()) without touching a single existing start.
+  //
+  // The tolerance is loose because starts are stored to 2dp and trimming leaves ragged ends; it only has
+  // to tell "these were laid out by resequence" from "these overlap by seconds".
+  function _isBackToBack(list){
+    const xf = _xfade();
+    for(let i = 1; i < list.length; i++){
+      const prevEnd = (+list[i-1].start||0) + (+list[i-1].dur||0) - xf;
+      if(Math.abs((+list[i].start||0) - prevEnd) > 0.26) return false;
+    }
+    return true;
+  }
   function resequence(seq){
     const xf = _xfade();
     const list = seq || mediaSeq();
@@ -624,7 +648,12 @@
       if(firstText < 0) P.layers.push(l); else P.layers.splice(firstText, 0, l);
     }
     sel = l.id;
-    if(_isVisual(l)) resequence();   // join the master timeline exactly back-to-back (no drift from `tail`)
+    // Join the master timeline back-to-back (no drift from `tail`) — but ONLY if there IS one. See
+    // _isBackToBack: re-timing a deliberate overlay arrangement is not tidying, it is deleting it.
+    if(_isVisual(l)){
+      const seq = mediaSeq();
+      if(_isBackToBack(seq.filter(x => x !== l))) resequence(seq);
+    }
     // Adding a clip makes the meme longer, and a soundtrack that was covering the whole thing would
     // otherwise stop early — reported as "the music cuts out". save() re-spans it (see _syncMusicBeds),
     // along with every other way the length changes; this used to be a copy of that rule living here,
@@ -1927,7 +1956,17 @@
     // mid-playback would fight the user. Land just INSIDE the clip so it's visible, not on its exact edge.
     if(!_playT){
       const l = P.layers.find(x=>x.id===id);
-      if(l){
+      // ...but ONLY when the layer is not already on screen. The playhead is something the user SETS —
+      // park it on the frame you are matching, then select a layer and drag it to line up — and moving
+      // it out from under them makes that impossible: the reference frame is gone the instant you touch
+      // the thing you were positioning. Reported as "nothing should move the red line but me".
+      //
+      // The original reason still stands where it applies: selecting a clip whose slot is elsewhere on
+      // the timeline left the preview showing a DIFFERENT clip, so you were trimming something you could
+      // not see. That is only true when the playhead is OUTSIDE the layer's window, which is exactly the
+      // condition now. Inside it, the layer is already visible and there is nothing to fix.
+      const inView = l && _curT >= (+l.start||0) && _curT <= (+l.start||0) + (+l.dur||0);
+      if(l && !inView){
         const t = Math.min((+l.start||0) + Math.min(0.05, (+l.dur||0)/2), Math.max(0, projEnd()));
         const s = document.getElementById('mb-scrub');
         if(s) s.value = t.toFixed(2);

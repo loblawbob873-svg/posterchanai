@@ -175,3 +175,58 @@ class TestStagePreviewSurvivesAStaleStylesheet(unittest.TestCase):
         js = self._js()
         self.assertIn('class="mb-fx', js)
         self.assertIn("_rotCss(l)", js)
+
+
+class TestAddingAClipDoesNotRearrangeTheBuild(unittest.TestCase):
+    """Adding a layer must not re-time the layers already there — unless they ARE a plain sequence.
+
+    resequence() lays every visual layer end to end from t=0. That is right for the case it was written
+    for (drop three clips, they play in order) and destructive for any build where layers are meant to
+    be on screen together: a background with cut-outs over it shares its timestamps deliberately.
+    addLayer called it unconditionally, so adding one image from Blossom sorted the whole arrangement
+    into a queue — reported as "adding an image fucks up the entire timeline, all the layers changed".
+
+    The layers were never corrupted, which is why this reads as a data-loss bug and is not one.
+    """
+
+    def _js(self):
+        import os
+        return open(os.path.join(os.path.dirname(__file__), "..", "static", "js",
+                                 "client", "meme.js"), encoding="utf-8").read()
+
+    def test_resequence_is_gated_on_the_existing_layout(self):
+        js = self._js()
+        self.assertIn("function _isBackToBack(", js,
+                      "the gate that tells a sequence from a deliberate overlay arrangement is gone")
+        i = js.index("sel = l.id;")
+        self.assertIn("_isBackToBack(seq.filter(x => x !== l))", js[i:i + 700],
+                      "addLayer must only resequence when the OTHER layers already form a sequence; "
+                      "the new layer is excluded from that test because it was just appended past them")
+
+    def test_the_overlay_helper_still_exists(self):
+        """addOverlay is the deliberate path for a layer that spans the build rather than queueing
+        after it — the distinction this gate restores at the addLayer end."""
+        self.assertIn("function addOverlay(", self._js())
+
+
+class TestThePlayheadBelongsToTheUser(unittest.TestCase):
+    """Selecting a layer must not move the playhead that is already showing that layer.
+
+    The playhead is a REFERENCE the user sets — park it on the frame you are matching, then select a
+    layer and drag it into place. Seeking on every selection removed the reference at the exact moment
+    it was needed, so lining a layer up against a chosen frame was impossible.
+
+    The original behaviour is kept where it earns its place: a layer whose slot is elsewhere on the
+    timeline is genuinely invisible, and trimming something you cannot see is worse.
+    """
+
+    def test_selection_only_seeks_when_the_layer_is_off_screen(self):
+        import os
+        js = open(os.path.join(os.path.dirname(__file__), "..", "static", "js",
+                               "client", "meme.js"), encoding="utf-8").read()
+        i = js.index("function selectLayer(")
+        body = js[i:i + 2000]
+        self.assertIn("inView", body,
+                      "selectLayer must check whether the layer is already at the playhead")
+        self.assertIn("if(l && !inView){", body,
+                      "the seek must be conditional on the layer being OUT of view, not unconditional")
