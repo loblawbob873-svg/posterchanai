@@ -43,13 +43,17 @@ class Outbox:
         self._retry_gate = asyncio.Lock()
         self._dropped = 0
         # Lifetime counters for the public Server Stats relay panel (and the admin view). Plain ints
-        # bumped on the drain path — no timers, no history, so reading them is a dict build. `_sent`
-        # counts events DRAINED, `_full` the ones every target accepted on the first pass, and
-        # `_gave_up` the ones still missing after the last retry — that last one is the only number
-        # here that means "this did not get out", which is why it's reported separately from drops
-        # (a drop never left the queue; a give-up left it and was refused).
+        # bumped on the drain path — no timers, no history, so reading them is a dict build.
+        #
+        # `_acks`/`_targets` are a RATE, and they are the honest way to ask "are our broadcasts
+        # landing". The obvious alternative — count the events every target accepted — is worthless
+        # on a real fanout: with 26 upstream relays it takes ONE of them being briefly unreachable
+        # for the answer to be zero, so it reads as total failure while delivery is in fact fine.
+        # `_gave_up` is the one number here that means something went undelivered, and even then only
+        # to SOME relays; it is separate from `_dropped`, which never left the queue at all.
         self._sent = 0
-        self._full = 0
+        self._acks = 0
+        self._targets = 0
         self._failed = 0
         self._gave_up = 0
         self._last_at = 0.0
@@ -90,9 +94,9 @@ class Outbox:
                             ev.get("id", "")[:12], len(accepted), len(targets), self._q.qsize())
                 misses = set(targets) - accepted
                 self._sent += 1
+                self._acks += len(accepted)
+                self._targets += len(targets)
                 self._last_at = time.time()
-                if not misses:
-                    self._full += 1
                 if misses and self.retries > 0 and len(self._retry_tasks) < self._max_inflight_retries:
                     t = asyncio.create_task(self._retry_misses(ev, misses))
                     self._retry_tasks.add(t)
@@ -138,7 +142,8 @@ class Outbox:
             "max": self._q.maxsize,
             "relays": len(_relay.normalize_relays(self.upstream)),
             "sent": self._sent,
-            "full": self._full,          # accepted by EVERY target on the first pass
+            "acks": self._acks,          # (relay, event) pairs accepted on the first attempt…
+            "targets": self._targets,    # …out of this many attempted — a rate, not all-or-nothing
             "dropped": self._dropped,    # never left the queue (overflow)
             "failed": self._failed,      # the publish call itself raised
             "gave_up": self._gave_up,    # left the queue, still unaccepted after the last retry

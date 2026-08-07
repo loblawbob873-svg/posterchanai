@@ -256,6 +256,10 @@
       const fill = Math.min(100, Math.round((used/max)*100));
       const bad = (q.dropped|0) > 0 || (q.gave_up|0) > 0;
       const state = used === 0 ? ['idle','ok'] : (fill >= 80 ? [nf(used)+' queued','down'] : [nf(used)+' queued','warn']);
+      // A DELIVERY RATE, not "did every relay take it". On a 26-relay fan-out one unreachable relay
+      // makes an all-or-nothing measure read zero, which looks like total failure while delivery is
+      // in fact fine — the first version of this card said "every relay took 0" on a healthy node.
+      const rate = (q.targets|0) ? Math.min(100, Math.round(((q.acks|0)/q.targets)*100)) : null;
       return `<div class="st-qcard${bad?' bad':''}">
         <div class="st-qhd"><span class="st-qname">${enc(title)}</span>
           <span class="st-qpill ${state[1]}">${enc(state[0])}</span></div>
@@ -264,10 +268,14 @@
         <div class="st-qmeta muted small">
           <span>queue <b>${nf(used)}</b> / ${nf(max)}</span>
           <span>sent <b>${nf(q.sent)}</b></span>
-          <span>every relay took <b>${nf(q.full)}</b></span>
+          <span title="Relays that accepted on the FIRST attempt, out of every (relay, event) pair tried. Retries that later succeed are not counted here — see 'retrying'.">delivered
+            <b>${rate==null?'—':rate+'%'}</b> of ${nf(q.targets)}</span>
           <span>retrying <b>${nf(q.retrying)}</b></span>
-          <span class="${(q.dropped|0)?'st-bad':''}">dropped <b>${nf(q.dropped)}</b></span>
-          <span class="${(q.gave_up|0)?'st-bad':''}">gave up <b>${nf(q.gave_up)}</b></span>
+          <span class="${(q.dropped|0)?'st-bad':''}"
+            title="Queue was full — these never left this server">dropped <b>${nf(q.dropped)}</b></span>
+          <span class="${(q.gave_up|0)?'st-bad':''}"
+            title="Sent, but some relays still had not accepted after the last retry">unaccepted
+            somewhere <b>${nf(q.gave_up)}</b></span>
           <span>${nf(q.relays)} target relay${(q.relays|0)===1?'':'s'}</span>
           <span>last send ${enc(ago(q.last_at))}</span>
         </div>
@@ -289,6 +297,21 @@
       // build simply omits these keys, and a confident zero there reads as "nothing is happening".
       const num = v => has(v) ? nf(v) : '—';
       const fh = R.firehose || [], up = R.firehose_up|0;
+      // The payload is one row per SUBSCRIPTION — 26 upstream relays × the feed / DM-inbox / cluster
+      // streams is 78 rows, which is a scroll, not a status. Collapse to one row per RELAY, which is
+      // the unit an operator actually acts on, and keep a partial as its own amber state so a single
+      // dead subscription can't hide inside a relay that is otherwise fine. Broken first, then busiest.
+      const byRelay = {};
+      fh.forEach(f=>{
+        if(!f.relay) return;            // a row with no URL can only render as the word "null"
+        const r = byRelay[f.relay] || (byRelay[f.relay] = {relay: f.relay, n: 0, up: 0, events: 0, subs: []});
+        r.n++; r.events += f.events|0;
+        if(f.connected) r.up++;
+        if(f.label) r.subs.push(f.label);
+      });
+      const rel = Object.values(byRelay).sort((a,b)=>
+        (a.up===a.n) - (b.up===b.n) || (b.events - a.events) || String(a.relay).localeCompare(b.relay));
+      const relUp = rel.filter(r=>r.up === r.n).length;
       const org = R.origins || {};
       const oKeys = Object.keys(org).sort((a,b)=> (org[b].total|0) - (org[a].total|0));
       const omax = Math.max(1, ...oKeys.map(k=>org[k].total|0));
@@ -323,18 +346,23 @@
               'Encrypted personal libraries (notes, vault, budget, files index) copied to the operator’s own relays.')}
         </div>
 
-        <h3 class="st-sec">📡 Upstream streams</h3>
-        ${fh.length ? `<div class="up-banner ${up === fh.length ? 'ok' : (up ? '' : 'down')}">${
-            up === fh.length ? `🟢 All ${plural(fh.length,'stream')} connected`
-                             : `${up ? '🟡' : '🔴'} ${nf(up)} of ${plural(fh.length,'stream')} connected`}</div>
-          <div class="st-fh">${fh.map(f=>`
-            <div class="st-fhrow${f.connected?'':' off'}">
+        <h3 class="st-sec">📡 Upstream relays</h3>
+        ${rel.length ? `<div class="up-banner ${relUp === rel.length ? 'ok' : (relUp ? 'warn' : 'down')}">${
+            relUp === rel.length ? `🟢 All ${plural(rel.length,'upstream relay')} connected`
+                                 : `${relUp ? '🟡' : '🔴'} ${nf(relUp)} of ${plural(rel.length,'upstream relay')}
+                                    fully connected · ${nf(up)} of ${nf(fh.length)} subscriptions live`}</div>
+          <div class="st-fh">${rel.map(r=>`
+            <div class="st-fhrow ${r.up === r.n ? '' : (r.up ? 'part' : 'off')}">
               <span class="up-dot"></span>
-              <span class="st-fhurl">${enc(f.relay||'')}${f.label?` <span class="muted small">${enc(f.label)}</span>`:''}</span>
-              <span class="st-fhnum">${nf(f.events)}</span>
+              <span class="st-fhurl">${enc(r.relay)}
+                <span class="muted small">${r.up === r.n ? enc(r.subs.join(' ')) : `${nf(r.up)}/${nf(r.n)} · ${enc(r.subs.join(' '))}`}</span></span>
+              <span class="st-fhnum">${nf(r.events)}</span>
             </div>`).join('')}</div>
-          <div class="muted small st-hint">Events received on each live subscription since the relay
-            started — before the web-of-trust filter, so this is what arrives, not what is kept.</div>`
+          <div class="muted small st-hint">Events received on each relay's live subscriptions since
+            this relay started — before the web-of-trust filter, so this is what arrives, not what is
+            kept. A relay is amber when it holds some but not all of its subscriptions (the feed, the
+            DM inbox and, if enabled, the compute cluster), since one of those failing on its own is
+            invisible in a total.</div>`
           : `<p class="muted">No upstream streams — this server isn't syncing from other relays.</p>`}
 
         <h3 class="st-sec">📥 Writes since the relay started</h3>

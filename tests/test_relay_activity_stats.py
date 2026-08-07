@@ -46,10 +46,12 @@ def test_overflow_counts_as_dropped_not_as_sent():
     assert st["sent"] == 0
 
 
-def test_a_drain_counts_sent_and_full_acceptance_separately(monkeypatch):
-    """`sent` is what left the queue; `full` is what EVERY target accepted first time. A relay that
-    is quietly refusing half the fleet has a healthy `sent` and a sinking `full` — which is the
-    signal, so the two must not be one counter."""
+def test_a_drain_reports_delivery_as_a_rate_not_all_or_nothing(monkeypatch):
+    """`sent` is what left the queue; acks/targets is how much of the fan-out actually took it.
+
+    It has to be a RATE. The first version of this counted events that EVERY target accepted, and on
+    the real 26-relay fan-out that is ~always zero — one briefly unreachable relay makes a healthy
+    node report total failure, which is worse than reporting nothing."""
     accepted = {"set": {"wss://a.example"}}
 
     async def fake_publish_to(upstream, ev, direct=False):
@@ -70,12 +72,12 @@ def test_a_drain_counts_sent_and_full_acceptance_separately(monkeypatch):
 
     st = asyncio.run(go())
     assert st["sent"] == 1
-    assert st["full"] == 0             # b.example missed it
+    assert (st["acks"], st["targets"]) == (1, 2)    # half the fan-out took it — a rate, not a 0
     assert st["last_at"] > 0
 
     accepted["set"] = {"wss://a.example", "wss://b.example"}
     st2 = asyncio.run(go())
-    assert (st2["sent"], st2["full"]) == (1, 1)
+    assert (st2["sent"], st2["acks"], st2["targets"]) == (1, 2, 2)
 
 
 def test_stats_never_names_a_relay():

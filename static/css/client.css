@@ -3908,6 +3908,9 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .st-fhrow .up-dot{background:#34d399;box-shadow:0 0 8px rgba(52,211,153,.8)}
 .st-fhrow.off{opacity:.6}
 .st-fhrow.off .up-dot{background:#ef4444;box-shadow:none}
+/* some of this relay's subscriptions are live and some are not — its own state, because a single
+   dead subscription is invisible in a relay that is otherwise up */
+.st-fhrow.part .up-dot{background:#fbbf24;box-shadow:0 0 8px rgba(251,191,36,.7)}
 .st-fhurl{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .st-fhnum{flex:0 0 auto;font-weight:700;color:var(--cyan)}
 .st-gday{flex:0 0 auto;min-width:72px;text-align:right}
