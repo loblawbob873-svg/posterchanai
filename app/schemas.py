@@ -584,6 +584,13 @@ class SettingsResponse(BaseModel):
     nostr_relay_request_pace_sec: Optional[float] = None
     nostr_relay_outbox_min_interval_sec: Optional[float] = None
     nostr_relay_outbox_max_queue: Optional[int] = None
+    # Both are READ at runtime (nostr_relay/thread.py builds the Outbox from them) and were never
+    # declared here — so GET dropped them from the typed response and a PUT could not set them, which
+    # made the two knobs that decide how long a refusing relay is chased unreachable from Admin. They
+    # matter: 2 retries x 15s against a relay that answers `pow:`/`blocked:` is pure waste, and it is
+    # what pinned the retry pool at its cap. Declared, not yet given inputs — see docs/RELAY.md.
+    nostr_relay_outbox_retries: Optional[int] = None
+    nostr_relay_outbox_retry_delay_sec: Optional[float] = None
     nostr_relay_name: Optional[str] = None
     nostr_relay_description: Optional[str] = None
     nostr_relay_pubkey: Optional[str] = None

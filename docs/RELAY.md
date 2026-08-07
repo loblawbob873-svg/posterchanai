@@ -110,6 +110,72 @@ profile fetch), and the **outbox is a bounded paced queue** (a minimum interval 
 broadcasts; drops on overflow) — so a big sync or a post-blasting bot won't trip relay rate
 limits.
 
+### When an upstream relay refuses your events
+
+A relay can accept the TCP connection, accept the websocket, take the event — and then answer
+`OK false <reason>`, storing nothing. It looks perfectly healthy to anything that only watches
+connects, which is why this went unnoticed: **measured on a live node, 8 of its 24 upstream relays
+refused everything**, and the outbox spent a publish plus two 15-second retries on each of them for
+every event, forever.
+
+NIP-01 gives the reason a machine-readable prefix. What matters is whether sending the same event
+again could ever work:
+
+| Reason | Example seen in the wild | What the outbox does |
+|---|---|---|
+| `pow:` | `pow: 28 bits needed. (12)` | **pause 6h** — we don't mine (see below) |
+| `blocked:` | `blocked: Country US not allowed` · `pubkey is not allowed to publish` | **pause 6h** |
+| `restricted:` | `restricted: Pay on https://nostr.land for access.` | **pause 6h** |
+| `auth-required:` | `auth-required: we need auth` | **authenticate** (NIP-42) and re-send |
+| `rate-limited:` | | nothing here — the HTTP 429 path already paces |
+| `invalid:` / `error:` | `invalid: bad signature` | **nothing** — see below |
+| `duplicate:` | `duplicate: have this event` | success (the relay already has it) |
+
+`invalid:` and `error:` deliberately do **not** pause. They describe *the event*, not the relay's
+policy, so pausing on them would let one malformed event of ours blacklist a good relay for six
+hours — a worse failure than the one being fixed. The permanent set is a short explicit allowlist,
+never "any `OK false`". The **local** relay is never paused either, at all: a node that stopped
+publishing to its own relay would stop storing its own users' writes.
+
+Six hours, rather than the connect breaker's 10-minute ramp, because these are policy decisions and
+not outages — re-probing every 10 minutes learns nothing and costs a connect and a publish each time.
+
+#### NIP-42 AUTH
+Relays that challenge for authentication are answered with a **kind-22242 signed by this node's
+operator key**. That authenticates the *connection*, not the author — which is what makes it usable
+for an outbox that relays **other people's** signed events, and both relays tested this way
+(`auth.nostr1.com`, `relay.froth.zone`) accept events authored by a different pubkey once the socket
+is authenticated. A relay that keeps refusing after AUTH is simply a paid one, and the breaker above
+handles it.
+
+#### Proof-of-work: not done, and not doable here
+Relays demanding NIP-13 PoW (`nos.lol` and `nostr.mom` both want 28 bits) are paused as publish
+targets and kept as **read** sources, which still works.
+
+This is not a to-do. **The outbox structurally cannot add PoW**: mining means adding a `nonce` tag
+and hashing until the event **id** has N leading zero bits, and the id covers the tags — so changing
+the nonce invalidates the signature. The outbox re-broadcasts events signed with users' client-side
+keys, which the relay process does not have and cannot re-sign with. PoW would have to happen in the
+client before signing, and at 28 bits that is **~7 minutes of pegged CPU per note** (measured: 616k
+sha256/sec on one native core; 2²⁸ hashes on average). 20 bits would be 1.7s; nobody asking for 28
+is reachable.
+
+#### Reading the queue
+**Server Stats → Outbound queue** shows depth, lifetime `sent`, a first-attempt delivery *rate*, and
+`gave up`. A queue depth that climbs steadily means the drain is slower than the inbound write rate.
+Two known contributors, in order of size:
+
+1. **One slow relay sets the pace for all of them.** Each event is published to every upstream
+   concurrently, but the drain waits for the *last* answer before starting the next event, so a relay
+   that accepts the socket and never sends an `OK` costs the full publish timeout (10s) on every
+   event — the difference between ~5 events/minute and ~30.
+2. **`retrying` pinned at its cap** (50 in-flight) means the drain stops spawning retries entirely,
+   so misses go unretried and *uncounted* — `gave up` only counts retries that actually ran, and is
+   therefore a floor on what went undelivered, never the whole figure.
+
+Pausing the relays that refuse everything removes most of the retry pressure behind (2). Neither is
+a data-loss path: `dropped` (queue overflow) is the only counter that means an event never left.
+
 ### Tor proxy (proxy-first, direct fallback)
 By default the relay routes its upstream connections through the app's built-in Tor proxy (like
 the bots) and **falls back to a direct connection if the proxy connect fails** — so a flaky/down
@@ -278,6 +344,7 @@ Edits in the admin UI apply immediately (no restart).
 | Backfill ancestors / max | on / 20 | Complete reply threads |
 | Delay between sync queries | 1.0 s | Pace upstream requests |
 | Outbox min interval / queue | 1.0 s / 500 | Throttle + bound broadcasts |
+| Outbox retries / retry delay | 2 / 15.0 s | Per-event re-send to relays that didn't accept. **No Admin input yet** — set `nostr_relay_outbox_retries` / `nostr_relay_outbox_retry_delay_sec` via the settings API |
 | Max connections | 5000 | Concurrent client cap |
 | Enforce Web of Trust | on | Off = open publishing + no WoT/firehose/sync/NIP-05 work (processing node) |
 | Send-only | off | Broadcast to upstream but don't pull/store their events |

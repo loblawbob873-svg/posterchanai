@@ -47,6 +47,27 @@ _RELAY_PAUSE_MAX = 14400   # cap the escalating pause at 4h — a persistently d
 _RELAY_429_PAUSE_SEC = 900   # a 429 is an EXPLICIT rate-limit — pause 15m immediately (no ramp-up)
 _FAIL_DEBOUNCE = 30      # count at most ONE failure per relay per this many seconds (ignore bursts:
                          # a backfill pages many queries, so a brief blip shouldn't pause a relay)
+
+# A relay can ACCEPT the connection, take the event, and answer `OK false <reason>` — healthy by every
+# connect-level measure while never storing a single thing we send. The breaker above never saw those,
+# so each such relay cost a full publish + two 15s retries on EVERY event, forever. Measured on this
+# node's own 24 upstreams: 8 of them refuse everything, and the outbox's retry pool sat pinned at its
+# 50-task cap because of it — which silently meant most events got no retry at all.
+#
+# NIP-01 gives these reasons a machine-readable prefix, and the split that matters is whether a RETRY
+# could ever succeed:
+#   pow:        we do not mine (28 bits ≈ 7 minutes of CPU per note) — never
+#   blocked:    geo-block / pubkey not allowed to publish here — never, not by retrying
+#   restricted: paid or whitelist-only relay — never, not by retrying
+# Deliberately NOT here:
+#   auth-required: we answer it now (NIP-42) — pausing would give up on a relay that works
+#   rate-limited:  temporary by definition; the 429 path already handles the transport-level case
+#   invalid:/error: EVENT-specific, not relay-specific. One malformed event of ours would otherwise
+#                   blacklist a perfectly good relay for hours — the worst trade in this file.
+_PERMANENT_REFUSALS = ("pow:", "blocked:", "restricted:")
+_REFUSAL_PAUSE_SEC = 21600   # 6h. These are policy decisions, not outages: re-probing every 10 minutes
+                             # learns nothing and costs a connect + publish each time. Long enough to
+                             # stop the bleeding, short enough that a policy change is picked up daily.
 _relay_fail: dict = {}            # relay -> failure count (spaced >= _FAIL_DEBOUNCE apart)
 _relay_paused_until: dict = {}    # relay -> unix ts; skip the relay until then
 _relay_last_fail: dict = {}       # relay -> unix ts of the last counted failure (debounce)
@@ -109,6 +130,78 @@ def _note_relay_fail(relay: str) -> None:
         _relay_fail.pop(relay, None)
         logger.warning("[nostr] pausing sync with %s for %dm — %d failures (Tor+direct), streak %d",
                        relay, pause // 60, n, streak)
+
+
+def _refusal_is_permanent(reason: str) -> bool:
+    """Whether an `OK false <reason>` can ever be fixed by sending the same event again."""
+    r = (reason or "").strip().lower()
+    return r.startswith(_PERMANENT_REFUSALS)
+
+
+# A refusal is a WRITE policy, so it gets its own clock rather than reusing _relay_paused_until.
+# Two reasons, both of which made the first version of this useless or wrong:
+#   * _connect() calls _note_relay_ok() on every successful connect, which POPS _relay_paused_until.
+#     The firehose reads from these same upstreams continuously, so a publish ban stored there would
+#     be wiped by the next read — minutes after being set, forever.
+#   * _relay_paused() also short-circuits _sync(). Storing it there would stop us READING from a
+#     relay that merely won't accept our writes, which is the opposite of what we want: nos.lol
+#     refuses our events and is still one of the better read sources on the network.
+# Nothing clears this but time. A relay's answer to "may I publish here" is not evidence about
+# connectivity, and a successful socket is not evidence the policy changed.
+_relay_refuse_until: dict = {}
+
+
+def _relay_refuses(relay: str) -> bool:
+    """True while a relay is known to refuse our WRITES (reads are unaffected)."""
+    return time.time() < _relay_refuse_until.get(relay, 0)
+
+
+def _note_relay_refusal(relay: str, reason: str) -> None:
+    """A relay took the event and refused it for a reason retrying cannot change. Stop publishing.
+
+    Separate from _note_relay_fail's ramp on purpose: that one debounces and needs three strikes,
+    because a connect failure is usually a blip. This is not a blip — the relay told us its policy in
+    words. One answer is all the evidence there is going to be, so act on the first one."""
+    if not _relay_refuses(relay):
+        logger.warning("[nostr] %s refuses our events (%s) — no publishes for %dh (reads continue)",
+                       relay, (reason or "").strip()[:80], _REFUSAL_PAUSE_SEC // 3600)
+    _relay_refuse_until[relay] = time.time() + _REFUSAL_PAUSE_SEC
+
+
+# NIP-42: signed with the OPERATOR key, which is this node's own identity and the one key the relay
+# process actually holds. It authenticates the CONNECTION, not the author — measured against the real
+# relays, auth.nostr1.com and relay.froth.zone both accept events authored by OTHER pubkeys once the
+# socket is authenticated, which is exactly what an outbox relaying its users' events needs.
+# (eden.nostr.land does not: it answers `restricted: Pay …` authenticated or not, so the breaker above
+# is what handles that one.)
+_AUTH_SK = None   # None = not looked up yet; b"" = looked up and unavailable (don't retry the import)
+
+
+def _auth_seckey():
+    global _AUTH_SK
+    if _AUTH_SK is None:
+        try:
+            from app.services import keystore
+            from app.services.nostr import nostr_service
+            nsec = keystore.get_operator_nsec()
+            _AUTH_SK = nostr_service.decode_seckey(nsec) if nsec else b""
+        except Exception as e:
+            logger.warning("[nostr] no operator key for NIP-42 AUTH: %s", e)
+            _AUTH_SK = b""
+    return _AUTH_SK or None
+
+
+def _auth_event(relay: str, challenge: str):
+    """Build the kind-22242 response to a relay's AUTH challenge. None if we have no key to sign it."""
+    sk = _auth_seckey()
+    if not sk:
+        return None
+    try:
+        from app.services.nostr.event import build_event
+        return build_event(sk, 22242, "", [["relay", relay], ["challenge", challenge]])
+    except Exception as e:
+        logger.warning("[nostr] could not build the AUTH event for %s: %s", relay, e)
+        return None
 
 
 def normalize_relays(relays) -> list[str]:
@@ -187,18 +280,60 @@ async def _connect(relay: str, direct: bool, **kw):
 
 
 async def _publish_one(relay: str, event: dict, direct: bool = False) -> bool:
-    if not _is_local(relay) and _relay_paused(relay):
-        return False   # circuit breaker: relay paused after repeated connect failures
+    if not _is_local(relay) and (_relay_paused(relay) or _relay_refuses(relay)):
+        return False   # paused after repeated connect failures, or known to refuse our writes
+    eid = event.get("id") or ""
     try:
         async with _connect(relay, direct) as ws:
             await ws.send(json.dumps(["EVENT", event]))
-            try:
-                raw = await asyncio.wait_for(ws.recv(), timeout=5)
-                msg = json.loads(raw)
-                if isinstance(msg, list) and msg and msg[0] == "OK":
-                    return bool(msg[2]) if len(msg) > 2 else True
-            except (asyncio.TimeoutError, json.JSONDecodeError):
-                return True  # event was sent; some relays don't send OK promptly
+            authed = False
+            # How many EVENT frames we have sent whose verdict we have not taken yet. It matters
+            # because BOTH copies (before and after authenticating) carry the SAME event id, so their
+            # OKs are indistinguishable — the pre-auth `auth-required` refusal usually arrives after
+            # we have already authenticated and re-sent. Counting is the only way to know that an
+            # `auth-required` is answering the copy we already gave up on rather than the new one.
+            pending = 1
+            # READ UNTIL WE SEE THE OK FOR *THIS* EVENT, rather than returning on the first message.
+            # A relay interleaves NOTICEs, an AUTH challenge, and the OK for our own AUTH event — and
+            # that last one is the trap: it is a well-formed `OK true` for a DIFFERENT event id, so
+            # taking the first OK would report "accepted" for an event the relay may have refused.
+            # Bounded by _PUBLISH_TIMEOUT at the caller and by this message budget, so a chatty or
+            # broken relay cannot hold the drain open.
+            for _ in range(12):
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=5)
+                    msg = json.loads(raw)
+                except (asyncio.TimeoutError, json.JSONDecodeError):
+                    return True  # event was sent; some relays don't send OK promptly
+                if not isinstance(msg, list) or not msg:
+                    continue
+                if msg[0] == "AUTH" and not authed and len(msg) > 1:
+                    # NIP-42 challenge. Sign it, then RE-SEND the event: a relay that challenged us
+                    # has already refused (or ignored) the first copy.
+                    ev = _auth_event(relay, str(msg[1]))
+                    if not ev:
+                        continue   # no operator key — nothing to answer with; wait for its OK/timeout
+                    authed = True
+                    await ws.send(json.dumps(["AUTH", ev]))
+                    await ws.send(json.dumps(["EVENT", event]))
+                    pending += 1
+                    continue
+                if msg[0] == "OK":
+                    if len(msg) > 1 and eid and msg[1] != eid:
+                        continue   # the OK for our AUTH event, not for this one
+                    ok = bool(msg[2]) if len(msg) > 2 else True
+                    reason = str(msg[3]) if len(msg) > 3 else ""
+                    pending -= 1
+                    if ok:
+                        return True
+                    # `auth-required` is the relay ASKING, not refusing — some send it instead of an
+                    # AUTH frame, and the copy it refers to is usually the one we sent before we
+                    # could answer. Only the verdict on the LAST copy we sent is final.
+                    if reason.strip().lower().startswith("auth-required") and pending > 0:
+                        continue
+                    if not _is_local(relay) and _refusal_is_permanent(reason):
+                        _note_relay_refusal(relay, reason)
+                    return False
             return True
     except Exception as e:
         logger.warning(f"[nostr] publish to {relay} failed: {e}")
