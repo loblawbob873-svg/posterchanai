@@ -1225,6 +1225,7 @@
   // in-progress drag — the reason so many edits here deliberately repaint in place. A mask arriving is
   // exactly that kind of edit: one CSS property on one element.
   function _paintMask(url){
+    if(!_MASK_IN_PREVIEW) return;   // see _maskCss — the preview never masks, so nothing to patch in
     P.layers.forEach(l => {
       if(l.mask !== url || l.type === 'text' || l.type === 'audio') return;
       // Descendant, not `>`: the media sits inside the .mb-fx wrapper now (see stageEl). A direct-child
@@ -1287,7 +1288,30 @@
       .catch(fail);
     return undefined;
   }
+  // THE PREVIEW DOES NOT PAINT THE ERASE. Deliberate, and it stays that way until there is a way to
+  // show it that cannot make a layer vanish.
+  //
+  // A CSS mask does not degrade. When it resolves to anything the compositor will not use — a fetch
+  // that lost a race, a data: URI that arrived late, a mask whose fitted rect does not cover the box —
+  // the element is not drawn UN-erased, it is not drawn AT ALL. So the failure mode of this feature is
+  // "my layer disappeared", on the stage and on the timeline tile at once, and it is intermittent
+  // because it depends on whether the mask happened to be cached: a fresh load draws the layer (no
+  // mask yet), and the next repaint — adding a caption, deleting one, undo, pressing space — draws
+  // nothing. Hours of a build cycle went into chasing that as a geometry bug.
+  //
+  // The RENDER was correct throughout, and none of the render path is touched by this: the mask still
+  // travels in the payload, the server still fetches it, and alphaextract still applies it. What is
+  // given up is only that the stage shows the layer whole while the export shows it cut out — a
+  // preview that is honest about one thing and quiet about another, rather than one that erases the
+  // layer from the editor. Visible-but-un-erased beats invisible.
+  //
+  // To bring it back: bake the mask into the pixels instead of asking the compositor for it
+  // (_bakeErase already does exactly that for the talk picker, and cannot fail closed). That works
+  // directly for image layers; a video layer needs a per-frame canvas, which is why it was not done
+  // this way first.
+  const _MASK_IN_PREVIEW = false;
   function _maskCss(l, ofit){
+    if(!_MASK_IN_PREVIEW) return '';
     if(!l || !l.mask) return '';
     if(_maskProbe(l.mask) !== true) return '';   // unknown or failed → draw the layer, not a hole
     // This lands in a CSS url() inside a style attribute, which enc() alone does NOT make safe: it

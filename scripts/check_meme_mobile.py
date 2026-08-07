@@ -427,7 +427,8 @@ ERASE_PROBE = r"""(async () => {
 #
 # Both directions are asserted, because "never mask" would also pass a one-sided test:
 #   a mask that LOADS   must actually be applied (the erase still shows on the stage)
-#   a mask that 404s    must leave the layer drawn and un-erased (never a hole)
+#   NEITHER a loading nor a 404 mask may reach the compositor — the preview does not paint the
+#   erase at all, because a CSS mask that cannot be used hides the element instead of degrading
 MASK_PROBE = r"""(async () => {
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const setMask = async (url) => {
@@ -636,14 +637,21 @@ async def drive(url):
                     problems.append((lbl, "erase-broken", "Apply did not put a mask on the layer"))
                 if er["stillOpen"]:
                     problems.append((lbl, "erase-broken", "Apply left the dialog open"))
-                if er["mask"] and not er["stageMasked"]:
-                    problems.append((lbl, "erase-invisible",
-                                     "Apply saved the mask but the stage is not showing it — the erase "
-                                     "is invisible in the preview and only appears in the export"))
-                if er["mask"] and er["tileFound"] and not er["tileMasked"]:
-                    problems.append((lbl, "erase-invisible-thumb",
-                                     "Apply saved the mask but the LAYER-ROW THUMBNAIL is not showing it "
-                                     "— the list preview stays un-erased"))
+                # The PREVIEW DELIBERATELY DOES NOT PAINT THE ERASE (see _MASK_IN_PREVIEW in meme.js).
+                # This used to assert the opposite. A CSS mask does not degrade — when it resolves to
+                # anything the compositor will not use, the element is not drawn at all — so the
+                # feature's failure mode was "my layer disappeared", on the stage and the timeline tile
+                # at once, intermittently, depending on whether the mask happened to be cached. What is
+                # pinned now is the property that actually protects the user: a mask on a layer must
+                # never stop that layer being drawn.
+                if er["mask"] and er["stageMasked"]:
+                    problems.append((lbl, "erase-hides-layer",
+                                     "the stage applied a CSS mask to the layer — that is the code path "
+                                     "that makes layers vanish; the erase is shown by the RENDER only"))
+                if er["mask"] and er["tileFound"] and er["tileMasked"]:
+                    problems.append((lbl, "erase-hides-layer",
+                                     "the layer-row thumbnail applied a CSS mask — same path, same "
+                                     "vanishing tile"))
                 print(f"{lbl}: mask={er['maskW']}x{er['maskH']} painted={er['painted']} "
                       f"corner={er['corner']} saved={'yes' if er['mask'] else 'NO'} "
                       f"onStage={'yes' if er['stageMasked'] else 'NO'} "
@@ -664,13 +672,15 @@ async def drive(url):
                 problems.append(("mask", "erase-broken",
                                  (mk.get("good") or {}).get("err") or (mk.get("bad") or {}).get("err")))
             else:
-                if not mk["good"]["hasMask"]:
-                    problems.append(("mask", "erase-broken",
-                                     "a mask that LOADS was not applied — the erase would never show"))
-                if mk["bad"]["hasMask"]:
-                    problems.append(("mask", "erase-broken",
-                                     "a mask that 404s was still applied — the layer renders as a hole "
-                                     "(this is the black-screen bug)"))
+                # NEITHER a mask that loads nor one that 404s may reach the compositor now: the
+                # preview does not paint the erase at all. The 404 half was always the dangerous one
+                # (an unusable mask hides the element outright); the loading half turned out to be
+                # equally dangerous in practice, because "usable" is decided per repaint and a mask
+                # that was fine a moment ago can lose the race on the next one.
+                if mk["good"]["hasMask"] or mk["bad"]["hasMask"]:
+                    problems.append(("mask", "erase-hides-layer",
+                                     f"a CSS mask reached the layer (loads={mk['good']['hasMask']}, "
+                                     f"404={mk['bad']['hasMask']}) — that is the vanishing-layer path"))
                 # Compared against the GOOD case, not against zero: at phone width the builder is
                 # tabbed and boot opens the Layer tab, so the stage is off-screen and both widths are
                 # legitimately 0. "Same as a working mask" is the property that actually matters —
@@ -680,7 +690,7 @@ async def drive(url):
                                      f"an unreachable mask changed the layer's box "
                                      f"({mk['good']['w']}px -> {mk['bad']['w']}px)"))
                 print(f"mask: loads->applied={mk['good']['hasMask']} "
-                      f"404->applied={mk['bad']['hasMask']} (must be True/False)")
+                      f"404->applied={mk['bad']['hasMask']} (both must be False)")
 
             # ✂ CUT. Arithmetic, so it is checked against exact numbers rather than "it changed".
             await call("Page.navigate", {"url": url})
