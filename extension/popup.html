@@ -19,11 +19,15 @@
      about to create the account you will then pair with. -->
 <nav id="nav" class="nav">
   <button class="tab" id="tab-pair" data-pane="pane-pair" data-unpaired>Pair</button>
-  <button class="tab" id="tab-list" data-pane="pane-list" data-vault>Logins</button>
-  <button class="tab" id="tab-post" data-pane="pane-post" data-vault
+  <!-- The vault tabs START hidden and boot() reveals them. They used to start visible and be hidden
+       once boot() resolved, and boot() awaits two async round-trips — so an unpaired install showed
+       Logins/Post/Bookmarks for that whole window and they were clickable, landing on panes with no
+       vault behind them. The safe state is the default state. -->
+  <button class="tab hidden" id="tab-list" data-pane="pane-list" data-vault>Logins</button>
+  <button class="tab hidden" id="tab-post" data-pane="pane-post" data-vault
           title="Post this page to Nostr">Post</button>
   <button class="tab" id="tab-gen" data-pane="pane-gen" title="Password generator">Generate</button>
-  <button class="tab" id="bm-tab" data-pane="pane-bm" data-vault>Bookmarks</button>
+  <button class="tab hidden" id="bm-tab" data-pane="pane-bm" data-vault>Bookmarks</button>
 </nav>
 
 <!-- Not paired -->
@@ -50,10 +54,11 @@
 <section id="pane-post" class="pane hidden">
   <textarea id="post-text" rows="7" placeholder="Say something about this page…"></textarea>
   <div id="post-note" class="muted small"></div>
-  <button id="post-go" class="primary">Post to Nostr</button>
-  <div class="row hidden" id="post-after">
-    <button id="post-copy">Copy link to it</button>
-  </div>
+  <!-- Two destinations for one draft, and the labels carry the difference because it is the only
+       thing that matters here: one is permanent and public, the other is encrypted to you. The
+       first line becomes the note's title. -->
+  <button id="post-go" class="primary">Post to Nostr — public</button>
+  <button id="note-go">Save to Notes — private</button>
 </section>
 
 <!-- Generator -->

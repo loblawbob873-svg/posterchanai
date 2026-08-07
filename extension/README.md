@@ -165,10 +165,28 @@ only thing it sends that you typed rather than saved. Nothing goes out until you
   you get the relay's own words back (`blocked: not in the web of trust`, `rate-limited`).
 - `#hashtags` you type become real `t` tags, so the note turns up in hashtag feeds; the page address
   becomes an `r` tag, so clients can show a preview.
-- **Copy link to it** puts a `nostr:nevent1…` URI on your clipboard — it opens in whatever client you
-  already use, and asks nothing of any third-party web viewer.
-- A draft survives the popup closing (a browser-action popup is destroyed the moment it loses focus),
-  and the button will not fire twice on the same text — a note cannot be recalled.
+- Posting the **same text twice is refused** for a day — a note cannot be recalled. Edit it to post
+  again. That guard lives in the extension's background page, not the popup, because the popup is
+  destroyed on focus loss (including mid-publish), so a popup-side guard is no guard at all.
+- **Your draft is not saved.** A browser-action popup is destroyed the moment it loses focus, so if
+  you click into the page mid-sentence the box starts fresh. A draft store was tried and removed: it
+  produced more ways to lose text than it saved (on upgrade, and on installs with no host
+  permission). Write it, send it.
+
+## Save it to Notes instead
+
+The same screen, the other button: **Save to Notes — private**. It writes one encrypted note into
+your PosterChan **Notes** library — the page title (first line of the draft) becomes the note's
+title, the rest becomes the body — and it opens in **PosterChan → Notes** like any note you wrote
+there.
+
+It is the app's own format: one `kind-30078` event, `d = pcai:note:<id>`, **NIP-44 encrypted to your
+own key**. Nobody else can read it — not the relay, not any PosterChan server, not the AI. That is
+the opposite of the Post button beside it, which is why the two say *public* and *private* on their
+faces.
+
+Needs a full pairing, same as posting. Unlike a post, saving twice is not refused — a note is yours
+to edit and delete, so a duplicate costs one delete rather than being permanent.
 
 ---
 

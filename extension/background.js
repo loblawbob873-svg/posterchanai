@@ -501,17 +501,30 @@ function _publishTo(url, ev, ms){
   });
 }
 
-async function broadcast(ev){
-  const urls = postRelayUrls();
+async function broadcast(ev, only){
+  // `only` = an explicit relay set. A PRIVATE note takes this; postRelayUrls' widening is reasoning
+  // about public reach and does not transfer (see saveNote).
+  const urls = (only && only.length) ? only : postRelayUrls();
   const res = await Promise.all(urls.map(u => _publishTo(u, ev)));
   const okd = res.filter(r => r.ok);
   /* A RELAY'S OWN REFUSAL OUTRANKS A DEAD SOCKET, whatever order the relays are in. Taking the first
    * failure meant one unreachable relay at the top of the list reported "could not connect" while the
    * other two were saying "blocked: not in the web of trust" — so the user retries a network problem
    * they do not have and never learns the actual reason. */
-  const bad = res.find(r => !r.ok && r.said && r.why) || res.find(r => !r.ok && r.why);
+  /* `why` belongs to a relay that ACTUALLY REFUSED, or it is not reported at all. The fallback to any
+   * failure's message meant a refusal with an empty reason string let a different relay's "timed out"
+   * be printed as "1 refused it: timed out" — a transport message attributed to the relay that
+   * refused, which is the thing splitting the counts was supposed to end. */
+  const refusals = res.filter(r => !r.ok && r.said);
+  const bad = refusals.find(r => r.why) || (refusals.length ? null : res.find(r => !r.ok && r.why));
+  /* REFUSED and UNREACHABLE are counted apart, because they are different facts and the UI was
+   * asserting one relay's reason about both: "2 refused it: blocked: not in the web of trust" when
+   * one relay said that and the other simply never answered. A relay that did not reply did not give
+   * a reason, and saying it did is inventing evidence. */
   return { accepted: okd.length, tried: urls.length, why: bad ? bad.why : '',
            failed: res.length - okd.length,
+           refused: res.filter(r => !r.ok && r.said).length,
+           unreachable: res.filter(r => !r.ok && !r.said).length,
            // The relays that TOOK it, for the nevent — pointing a reader at one that refused it is
            // pointing them at nothing.
            urls: (okd.length ? okd : res).map(r => r.url) };
@@ -524,12 +537,36 @@ function _pageUrl(u){
   catch(_){ return ''; }
 }
 
-// Every web address IN the note, normalised, in order. Trailing punctuation is stripped because a
-// sentence ending "…see https://example.com/x." would otherwise tag the full stop as part of the URL.
+/* Where a URL ends in a sentence.
+ *
+ * A full stop after a link is punctuation; a BRACKET may not be. Stripping `)` unconditionally
+ * turned https://en.wikipedia.org/wiki/Mercury_(planet) into `…Mercury_(planet` and tagged THAT —
+ * a permanent public note whose `r` tag 404s, which is worse than the leak the tag rule was added to
+ * fix. So a closing bracket only comes off when the URL does not open it. */
+function _trimUrl(u){
+  const PAIR = { ')': '(', ']': '[', '}': '{' };
+  for(;;){
+    const last = u.slice(-1);
+    if('.,;:!?'.indexOf(last) >= 0 && last){ u = u.slice(0, -1); continue; }
+    const open = PAIR[last];
+    if(open){
+      const opens = u.split(open).length - 1, closes = u.split(last).length - 1;
+      if(closes > opens){ u = u.slice(0, -1); continue; }     // unbalanced: it closed the sentence
+    }
+    return u;
+  }
+}
+
+/* Every web address IN the note, normalised, in order.
+ *
+ * The excluded characters include the TYPOGRAPHIC quotes, not just the straight ones: draftFor wraps
+ * a quoted selection in “…”, so a selection ending in a link produced a tag for
+ * `https://…/track%E2%80%9D`, which resolves to nothing. The character the code itself inserts is the
+ * one most likely to be there. */
 function _urlsIn(text){
   const out = [];
-  for(const m of String(text || '').match(/https?:\/\/[^\s<>"'`]+/gi) || []){
-    const u = _pageUrl(m.replace(/[.,;:!?)\]}>]+$/, ''));
+  for(const m of String(text || '').match(/https?:\/\/[^\s<>"'`“”‘’]+/gi) || []){
+    const u = _pageUrl(_trimUrl(m));
     if(u && !out.includes(u)) out.push(u);
   }
   return out.slice(0, 5);
@@ -565,6 +602,39 @@ function _shareTags(content, url){
   return tags;
 }
 
+/* WHAT HAS ALREADY BEEN PUBLISHED, remembered HERE.
+ *
+ * The popup cannot hold this. It is destroyed the instant it loses focus — which is a thing that
+ * routinely happens during the up-to-8s publish itself — so a record written popup-side after the
+ * await is a record that never gets written for exactly the publish most likely to be repeated. Nor
+ * can the popup compare against a REBUILT draft: clear the selection, or edit before posting (which
+ * is the normal case), and the rebuild differs from what went out and the guard silently misses.
+ *
+ * So the guard is a content hash, checked in the one place that sees every publish. The popup is free
+ * to be wrong about its own state; it cannot cause a duplicate. Editing the text posts again, which is
+ * the escape hatch, and 24 hours is long enough to cover "did that go through?" without turning a
+ * genuine repost next week into a mystery refusal. */
+const POSTED_KEY = 'sharePosted';
+const POSTED_KEEP = 50;                 // newest-last; slice(-50) IS the recency eviction
+const POSTED_WINDOW = 24 * 3600;
+
+async function _postedLog(){
+  const got = await B.storage.local.get(POSTED_KEY);
+  return Array.isArray(got[POSTED_KEY]) ? got[POSTED_KEY] : [];
+}
+
+async function _rememberPost(rec){
+  const log = (await _postedLog()).filter(r => r && r.h !== rec.h);
+  log.push(rec);
+  await B.storage.local.set({ [POSTED_KEY]: log.slice(-POSTED_KEEP) });
+}
+
+async function _contentHash(s){
+  const bytes = new TextEncoder().encode(String(s || ''));
+  const d = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(d)).map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
 async function sharePost(msg){
   if(!cfg || !key) return { ok:false, error:'PosterChan Passwords is not paired' };
   if(!(cfg.mode === 'full' && cfg.sk))
@@ -572,6 +642,12 @@ async function sharePost(msg){
                             'post. Re-pair with full access from PosterChan → Passwords → Pair a device.' };
   const content = String((msg && msg.text) || '').replace(/\s+$/, '').slice(0, 8000);
   if(!content.trim()) return { ok:false, error:'there is nothing to post' };
+  const now = Math.floor(Date.now()/1000);
+  const h = await _contentHash(content);
+  const dup = (await _postedLog()).find(r => r && r.h === h && (now - (r.at || 0)) < POSTED_WINDOW);
+  if(dup)
+    return { ok:false, duplicate:true, nevent: dup.nevent || '', at: dup.at || 0,
+             error:'you have already posted this exact text — edit it to post it again' };
   let ev;
   try{ ev = finalize({ kind: 1, created_at: Math.floor(Date.now()/1000), content,
                        tags: _shareTags(content, msg && msg.url) }); }
@@ -585,7 +661,93 @@ async function sharePost(msg){
   let nevent = '';
   try{ nevent = NT().nip19.neventEncode({ id: ev.id, author: cfg.pubkey, relays: r.urls.slice(0, 3) }); }
   catch(_){ }
-  return { ok:true, accepted: r.accepted, tried: r.tried, id: ev.id, nevent, why: r.why };
+  /* Recorded HERE, after the publish that actually happened, so the popup dying mid-send cannot lose
+   * it. Awaited so the next press cannot race a half-written record — but NEVER allowed to throw: a
+   * storage failure (quota, a private-window profile) would otherwise propagate out of a successful
+   * publish and be reported as "Not posted", on a note that IS posted, with the guard unarmed. The
+   * user then presses again and gets the permanent duplicate this whole mechanism exists to prevent.
+   * A lost record costs at most one un-guarded repeat; a thrown one guarantees it. */
+  let remembered = true;
+  try{ await _rememberPost({ h, url: _pageUrl(msg && msg.url), id: ev.id, nevent, at: now }); }
+  catch(_){ remembered = false; }
+  return { ok:true, accepted: r.accepted, tried: r.tried, id: ev.id, nevent, remembered,
+           why: r.why, refused: r.refused, unreachable: r.unreachable };
+}
+
+/* ================================================================ save to Notes
+ *
+ * The private counterpart of a share: the same page, the same selection, kept instead of published.
+ *
+ * IT IS THE APP'S OWN NOTE FORMAT, not a new one — one kind-30078 event per note, `d =
+ * pcai:note:<id>`, tagged `l=pcai-notes` so the library is one indexed subscription, with the JSON
+ * body NIP-44 encrypted to the user's OWN key. That last part is the whole point and the reason this
+ * cannot reuse the vault's AES key: a note is readable by its author and by nobody else — not this
+ * server, not any server, not the AI. A note saved here opens in PosterChan → Notes, and one written
+ * there is not something this extension could read either.
+ *
+ * THE FIRST LINE IS THE TITLE. Notes have a title field and a browser popup should not grow a second
+ * text box to fill it; the draft already starts with the page title on its own line.
+ *
+ * No duplicate guard, unlike a post, and deliberately: a note is editable and deletable by the person
+ * who wrote it, so saving twice costs a delete. A kind-1 cannot be recalled at all, which is why that
+ * path is guarded and this one is not.
+ */
+const NOTE_KIND = 30078;
+const D_NOTE = 'pcai:note:';
+const L_NOTE = 'pcai-notes';
+
+async function saveNote(msg){
+  if(!cfg || !key) return { ok:false, error:'PosterChan Passwords is not paired' };
+  if(!(cfg.mode === 'full' && cfg.sk))
+    return { ok:false, error:'this browser is paired READ-ONLY, so it holds no key to encrypt a note ' +
+                            'with. Re-pair with full access from PosterChan → Passwords → Pair a device.' };
+  /* Capped by what NIP-44 WILL ACTUALLY ENCRYPT, measured, not guessed.
+   *
+   * `nip44.v2.encrypt` throws above 65535 BYTES of plaintext — checked against the bundle that ships
+   * here, not inferred from the relay's message limit. A 100000-CHARACTER cap therefore bounded
+   * nothing: a long article selection sailed past it and died at encrypt time with "invalid plaintext
+   * size", a crypto internal shown to somebody who just wanted to keep a page. The app's answer to a
+   * big note is to spill the body to an encrypted Blossom blob, which this extension does not do, so
+   * the honest thing is to trim before signing. UTF-8 bytes, because the limit is bytes and a cap
+   * counted in characters is 3x wrong on non-Latin text. */
+  const NOTE_MAX_BYTES = 60000;          // 65535 minus room for the JSON envelope around the body
+  let text = String((msg && msg.text) || '').replace(/\s+$/, '');
+  while(new TextEncoder().encode(text).length > NOTE_MAX_BYTES) text = text.slice(0, -1024);
+  if(!text.trim()) return { ok:false, error:'there is nothing to save' };
+
+  const lines = text.split('\n');
+  const first = (lines[0] || '').trim();
+  const title = first.slice(0, 200);
+  /* A long opening line is TRUNCATED for the title and kept in full in the body. Slicing it into the
+   * title and starting the body at line 2 silently dropped everything past 200 characters — text the
+   * user watched go into the box, in neither field of the saved note. */
+  let rest = lines.slice(1).join('\n').replace(/^\s+/, '');
+  if(first.length > 200) rest = rest ? first + '\n\n' + rest : first;
+  const at = Math.floor(Date.now()/1000);
+  const note = { v:1, id: randomId(), title, body: rest || text.trim(), folder:'',
+                 tags:[], created: at, updated: at, res:[] };
+  let ev;
+  try{
+    const T = NT();
+    const ck = T.nip44.v2.utils.getConversationKey(_skBytes(), cfg.pubkey);
+    ev = finalize({ kind: NOTE_KIND, created_at: at, content: T.nip44.v2.encrypt(JSON.stringify(note), ck),
+                    tags: [['d', D_NOTE + note.id], ['l', L_NOTE]] });
+  }catch(e){ return { ok:false, error:'could not encrypt it: ' + ((e && e.message) || 'bad key') }; }
+  /* THE SAME RELAYS A POST GOES TO, which includes the ones the PAIRING carries.
+   *
+   * Narrowing this to relayUrls() looked like the privacy-preserving choice and was a data-loss bug:
+   * with no user-set relay list that function returns the single hardcoded DEFAULT_RELAY, not
+   * anything derived from the pairing — so a note saved from a browser paired to a self-hosted node
+   * went to a relay that node never reads, reported "saved", and could not be found in Notes
+   * afterwards. Reaching the instance the user actually reads from is the requirement; the note is
+   * ciphertext only its author can open, so the extra copies cost privacy nothing. */
+  const r = await broadcast(ev);
+  // Same rule as a post: "saved" has to mean a relay said so. A note that reached nowhere is a note
+  // that will not be in Notes when they go looking for it.
+  if(!r.accepted)
+    return { ok:false, tried: r.tried, error: (r.why || 'no relay accepted it') + ` (tried ${r.tried})` };
+  return { ok:true, accepted: r.accepted, tried: r.tried, id: note.id, title: note.title,
+           why: r.why, refused: r.refused, unreachable: r.unreachable };
 }
 
 /* ================================================================ NIP-07 signing
@@ -976,6 +1138,12 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
         case 'share-post': {
           if(!_fromPopup(sender)) return reply({ ok:false, error:'not available to a page' });
           return reply(await sharePost(msg));
+        }
+        /* Save the page to Notes. THE POPUP ONLY, same as posting: this writes to the user's relay
+         * with the user's key, so a page that could reach it could fill their notebook. */
+        case 'note-save': {
+          if(!_fromPopup(sender)) return reply({ ok:false, error:'not available to a page' });
+          return reply(await saveNote(msg));
         }
         case 'approve-answer':
           return reply(await _answerApproval(msg, sender));

@@ -21,7 +21,12 @@ In the browser's extension storage:
 - the **vault key** you supplied when you paired the device, and — only if you chose a "full
   access" pairing — a Nostr signing key;
 - the list of relays to talk to;
-- a queue of entries saved while offline, until they can be published.
+- a queue of entries saved while offline, until they can be published;
+- if you use **Post**: a record of your **most recent 50 posts** — the page address, the time, and a
+  fingerprint of the text — kept in plain text so the extension can refuse to publish the same note
+  twice. It is a list of pages you posted about, which is browsing-history-shaped, so: it is capped
+  at 50, it never leaves your device, and **Unpair** or removing the add-on deletes it along with
+  everything else. Drafts are **not** stored at all.
 
 ## What leaves your device, and where it goes
 
@@ -31,6 +36,11 @@ travels only to the Nostr relay(s) you configured.
 
 The relay stores ciphertext. It cannot read your entries, and neither can the developer, who
 operates no server in this path — the relay is one you name. Nobody but you holds the key.
+
+**Saving to Notes stays private.** The popup's **Save to Notes** button writes the same draft into
+your PosterChan Notes library as an event encrypted to **your own key**, so the relay stores
+ciphertext and nobody else — including the developer and any PosterChan server — can read it. It is
+the private alternative to the public button beside it.
 
 **One thing is deliberately not encrypted: a note you choose to post.** The popup's **Post** screen
 publishes an ordinary public Nostr note containing exactly the text shown in the box before you press

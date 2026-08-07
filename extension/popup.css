@@ -163,6 +163,9 @@ textarea.input{
 }
 #post-after{ margin-top:8px; }
 #post-after button{ flex:1 1 auto; }
+/* The private destination, under the public one: full width so the two read as a pair of choices
+   rather than a button and an afterthought, and quiet so the public one stays the default. */
+#note-go{ width:100%; margin-top:8px; min-height:40px; }
 
 /* A hint inside a field label is prose, not a label: "ONE-TIME CODE SECRET — OTPAUTH:// OR THE RAW
    SECRET" is unreadable, and the whole point of the hint is to be read. */

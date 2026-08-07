@@ -19,6 +19,7 @@ and loses the guard still fails.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 
@@ -53,6 +54,14 @@ def _fn(src, name):
     return src[i:src.index("\n}", i) + 2]
 
 
+def _consts(src, *names):
+    """The real `const NAME = …` lines, for the same reason the functions are lifted rather than
+    reimplemented: a dedup window or a cap redefined in the test is a value the extension does not
+    have."""
+    return "\n".join(src[src.index("const %s = " % n):src.index("\n", src.index("const %s = " % n))]
+                     for n in names)
+
+
 def _node(script):
     r = subprocess.run(["node", "-e", script], capture_output=True, text=True, cwd=EXT, timeout=60)
     assert r.returncode == 0, r.stderr or r.stdout
@@ -69,8 +78,17 @@ def test_tags_make_it_a_share_and_not_a_wall_of_text():
     become one: the note then appears in a feed nobody meant it for.
     """
     src = _src("background.js")
-    got = _node(_fn(src, "_shareTags") + _fn(src, "_pageUrl") + _fn(src, "_urlsIn") + """
+    got = _node(_fn(src, "_shareTags") + _fn(src, "_pageUrl") + _fn(src, "_urlsIn")
+                + _fn(src, "_trimUrl") + """
       const out = {};
+      // A bracket can be part of a URL; a full stop cannot. Stripping `)` unconditionally tagged
+      // `…/Mercury_(planet` — a permanent public note whose link 404s.
+      const WIKI = 'https://en.wikipedia.org/wiki/Mercury_(planet)';
+      out.paren     = _shareTags('look at ' + WIKI, WIKI);
+      out.parenStop = _shareTags('see ' + WIKI + '.', '');
+      out.sentence  = _shareTags('(see https://example.com/x)', '');
+      // draftFor wraps a selection in “ ”, so those are the quotes most likely to touch a URL.
+      out.curly = _shareTags('he said “read https://example.com/a”', '');
       out.page  = _shareTags('look at this https://example.com/a?b=1', 'https://example.com/a?b=1');
       // The address deleted from the draft, and one the user typed instead.
       out.cut   = _shareTags('just a comment, no link', 'https://intranet.example/doc?token=SECRET');
@@ -97,6 +115,18 @@ def test_tags_make_it_a_share_and_not_a_wall_of_text():
         f"the tag follows the tab instead of the text the user wrote: {got['other']}"
     assert got["stop"] == [["r", "https://example.com/x"]], \
         f"a sentence's full stop was swallowed into the tagged URL: {got['stop']}"
+    # A closing bracket the URL itself opened is PART of the URL. Cutting it publishes a permanent
+    # note whose `r` tag 404s — worse than the leak the content-derived tag rule was added to fix.
+    wiki = "https://en.wikipedia.org/wiki/Mercury_(planet)"
+    assert got["paren"] == [["r", wiki]], f"a URL ending in ')' was truncated: {got['paren']}"
+    assert got["parenStop"] == [["r", wiki]], \
+        f"a full stop after a bracketed URL broke it: {got['parenStop']}"
+    # …and one it did NOT open still closes the sentence, not the link.
+    assert got["sentence"] == [["r", "https://example.com/x"]], \
+        f"an unmatched ')' was kept in the URL: {got['sentence']}"
+    assert got["curly"] == [["r", "https://example.com/a"]], (
+        "the typographic quote draftFor itself wraps selections in was captured into the URL "
+        f"(%E2%80%9D): {got['curly']}")
     assert got["tags"] == [["t", "nostr"], ["t", "bitcoin"]], \
         f"hashtags are not lowercased+deduped into t tags: {got['tags']}"
     # `C#` and a URL fragment are not hashtags. (The URL in that text IS legitimately `r`-tagged now
@@ -131,18 +161,21 @@ _RELAY_HARNESS = """
   }
   const cfg = { relay: 'wss://paired.example', relays: ['wss://paired.example/', 'wss://second.example'] };
   let userRelays = %(user)s;
-  const relayUrls = () => userRelays.length ? userRelays : ['wss://vault.example'];
-  const _uniqRelays = (list) => {
-    const out = [];
-    for(const u of list){ const n = String(u || '').replace(/\\/$/, ''); if(n && !out.includes(n)) out.push(n); }
-    return out.slice(0, 6);
-  };
+  const relayUrls = () => userRelays.length ? _uniqRelays(userRelays) : ['wss://vault.example'];
 """
 
 
 def _relay_node(body, plan, user_relays=()):
+    """The REAL _uniqRelays and normRelay, not a stand-in.
+
+    The harness used to define its own `_uniqRelays` that just stripped a trailing slash, while the
+    shipped one runs every URL through `normRelay` — scheme coercion, host validation, dropping
+    unusable entries. So postRelayUrls was exercised against dedup behaviour the extension does not
+    have, and a divergence between the two — the exact bug this is here to catch — could not fail it.
+    """
     src = _src("background.js")
-    code = "\n".join(_fn(src, n) for n in ("_publishTo", "broadcast", "postRelayUrls"))
+    code = "\n".join(_fn(src, n) for n in
+                     ("_publishTo", "broadcast", "postRelayUrls", "_uniqRelays", "normRelay"))
     return _node((_RELAY_HARNESS % {"code": code, "plan": json.dumps(plan),
                                     "user": json.dumps(list(user_relays))}) + """
       global.WebSocket = FakeWS;
@@ -227,6 +260,166 @@ def test_a_rejection_is_reported_and_not_swallowed():
     assert got["why"] == "rate-limited: slow down"
 
 
+# --------------------------------------------------------------- save to Notes
+
+def test_a_saved_note_is_the_apps_own_note_format():
+    """A note the app cannot see is a note that was thrown away.
+
+    The extension writes into a library the app owns, so every part of the envelope has to match what
+    `static/js/client/notes.js` reads: kind 30078, `d = pcai:note:<id>`, the `l=pcai-notes` label the
+    whole library is subscribed by, and a JSON body encrypted to the user's OWN key. Nothing about a
+    wrong d-tag or a missing label fails loudly — the note is published, accepted by the relay, and
+    simply never appears.
+    """
+    src = _src("background.js")
+    code = (_consts(src, "NOTE_KIND", "D_NOTE", "L_NOTE") + "\n" +
+            "\n".join(_fn(src, n) for n in
+                      ("_publishTo", "broadcast", "postRelayUrls", "_uniqRelays", "normRelay",
+                       "randomId", "saveNote")))
+    got = _node((_RELAY_HARNESS % {"code": code,
+                                   "plan": json.dumps({"wss://vault.example": {"ok": True}}),
+                                   "user": json.dumps(["wss://vault.example"])}) + """
+      global.WebSocket = FakeWS;
+      global.crypto = require('crypto').webcrypto;
+      Object.assign(cfg, { mode:'full', sk:'11'.repeat(32), pubkey:'22'.repeat(32) });
+      const key = new Uint8Array(32);
+      const sent = [];
+      const _skBytes = () => new Uint8Array(32).fill(1);
+      // Records WHO the note was encrypted to — the invariant that makes it private.
+      const seen = { plain: [] };
+      const NT = () => ({ nip44: { v2: {
+        utils: { getConversationKey: (sk, pub) => { seen.to = pub; return 'ck'; } },
+        encrypt: (plain, ck) => { seen.plain.push(plain); return 'CIPHERTEXT(' + ck + ')'; } } } });
+      const finalize = (t) => { const ev = Object.assign({}, t, { id:'ev1', pubkey: cfg.pubkey });
+                                sent.push(ev); return ev; };
+      (async () => {
+        const many = await saveNote({ text: 'Page Title\\n\\n“a quote”\\n\\nhttps://example.com/' });
+        const one  = await saveNote({ text: 'just one line' });
+        console.log(JSON.stringify({ many, one, ev: sent[0], ev2: sent[1], seen,
+                                     note: JSON.parse(seen.plain[0]),
+                                     note2: JSON.parse(seen.plain[1]) }));
+      })();
+    """)
+
+    ev = got["ev"]
+    assert ev["kind"] == 30078, f"a note must be kind 30078, got {ev['kind']}"
+    tags = {t[0]: t[1] for t in ev["tags"]}
+    assert tags["d"].startswith("pcai:note:"), f"wrong d-tag prefix: {tags['d']}"
+    assert re.fullmatch(r"[0-9a-f]{32}", tags["d"].split(":")[-1]), \
+        f"the note id is not a 16-byte hex id like the app's: {tags['d']}"
+    assert tags["l"] == "pcai-notes", (
+        "without the l=pcai-notes label the note is outside the one subscription the library reads, "
+        "so it is published and invisible")
+    # Encrypted to the user's OWN key: that is what makes it unreadable by this server or any other.
+    assert got["seen"]["to"] == "22" * 32, \
+        f"the note was encrypted to somebody else's key: {got['seen']['to']}"
+    assert ev["content"].startswith("CIPHERTEXT("), "the note body was published in the clear"
+
+    note = got["note"]
+    for f in ("v", "id", "title", "body", "folder", "tags", "created", "updated", "res"):
+        assert f in note, f"the note object is missing `{f}`, which the app's reader expects"
+    assert note["title"] == "Page Title", f"the first line is not the title: {note['title']!r}"
+    assert "a quote" in note["body"] and "Page Title" not in note["body"], \
+        f"the body did not get the rest of the draft: {note['body']!r}"
+    assert note["folder"] == "", "a note must land Unfiled, not in a folder id that does not exist"
+    # A one-line note whose body is empty opens in Notes as a title with nothing under it, which
+    # reads as "the thing I saved was thrown away".
+    assert got["one"]["ok"] is True
+    assert got["note2"]["title"] == "just one line" and got["note2"]["body"] == "just one line", \
+        f"a one-line note lost its body: {got['note2']}"
+    assert got["ev2"]["tags"][0][1] != got["ev"]["tags"][0][1], \
+        "two notes were saved under the same id — the second replaces the first"
+
+
+def test_the_note_envelope_matches_the_apps_reader():
+    """The two files have to agree, and only one of them is in this repo's test suite by default.
+
+    If the app renames its d-tag prefix or its label, the extension keeps writing the old shape and
+    every note saved from the browser silently stops appearing.
+    """
+    bg = _src("background.js")
+    with open(os.path.join(ROOT, "static", "js", "client", "notes.js"), encoding="utf-8") as fh:
+        app = fh.read()
+    for want in ("const D_NOTE = 'pcai:note:';", "const KIND = 30078;"):
+        assert want in app, f"notes.js changed shape ({want!r} is gone) — re-check the extension"
+    assert "const L_TAG = 'pcai-notes';" in app
+    assert "const D_NOTE = 'pcai:note:';" in bg, "the extension's note d-tag drifted from the app's"
+    assert "const L_NOTE = 'pcai-notes';" in bg, "the extension's note label drifted from the app's"
+    assert "const NOTE_KIND = 30078;" in bg
+
+
+def test_a_long_first_line_is_not_thrown_away():
+    """Truncating it into the title and starting the body at line 2 silently dropped the rest."""
+    src = _src("background.js")
+    code = (_consts(src, "NOTE_KIND", "D_NOTE", "L_NOTE") + "\n" +
+            "\n".join(_fn(src, n) for n in
+                      ("_publishTo", "broadcast", "postRelayUrls", "_uniqRelays", "normRelay",
+                       "randomId", "saveNote")))
+    got = _node((_RELAY_HARNESS % {"code": code,
+                                   "plan": json.dumps({"wss://vault.example": {"ok": True}}),
+                                   "user": json.dumps(["wss://vault.example"])}) + """
+      global.WebSocket = FakeWS;
+      global.crypto = require('crypto').webcrypto;
+      Object.assign(cfg, { mode:'full', sk:'11'.repeat(32), pubkey:'22'.repeat(32) });
+      const key = new Uint8Array(32);
+      const _skBytes = () => new Uint8Array(32).fill(1);
+      const plain = [];
+      const NT = () => ({ nip44: { v2: {
+        utils: { getConversationKey: () => 'ck' },
+        encrypt: (p) => { plain.push(p); return 'CT'; } } } });
+      const finalize = (t) => Object.assign({}, t, { id:'ev1', pubkey: cfg.pubkey });
+      (async () => {
+        const long = 'L'.repeat(400);
+        await saveNote({ text: long + '\\n\\nhttps://example.com/' });
+        await saveNote({ text: 'x'.repeat(200000) });
+        console.log(JSON.stringify({ note: JSON.parse(plain[0]), big: JSON.parse(plain[1]) }));
+      })();
+    """)
+    note = got["note"]
+    assert len(note["title"]) == 200, f"the title is not capped: {len(note['title'])}"
+    assert note["body"].count("L") == 400, \
+        "the 200 characters past the title cap exist in neither the title nor the body"
+    assert "https://example.com/" in note["body"], "the rest of the draft was dropped"
+    # And an enormous note is trimmed up front rather than signed, sent and refused by the relay.
+    assert len(got["big"]["body"]) <= 100000, \
+        f"no length cap: a note too big to be one event is published anyway ({len(got['big']['body'])})"
+
+
+def test_read_only_cannot_save_a_note_either():
+    """No signing key means no note — and it must say so, not fail at the button."""
+    fn = _fn(_src("background.js"), "saveNote")
+    assert "cfg.mode === 'full' && cfg.sk" in fn, "a read-only pairing can write notes"
+    assert "READ-ONLY" in fn, "a read-only pairing fails with no explanation"
+    assert "if(!r.accepted)" in fn, \
+        "saveNote reports success without a relay accepting it — the note will not be there later"
+
+
+def test_read_only_disables_both_destinations():
+    """Disabling only the public button left "Save to Notes" live, and its handler returns silently on
+    a read-only pairing — a button that does nothing at all, with no message."""
+    js = _src("popup.js")
+    i = js.index("if(_mode === 'ro')")
+    block = js[i:i + 700]
+    assert "nb.disabled = true" in block, \
+        "the Notes button stays enabled on a read-only pairing over a handler that returns silently"
+    assert "postWas" in js, \
+        "saving a note re-arms the Post button unconditionally, undoing the post-publish lock"
+    # And BOTH move together during a publish: an idle-looking button whose handler no-ops is the
+    # same dead control one step later.
+    assert "function _postBusy(" in js and "for(const b of [go, nb])" in js, \
+        "the publish lock does not cover both destinations"
+
+
+def test_only_the_popup_can_save_a_note():
+    bg = _src("background.js")
+    i = bg.index("case 'note-save'")
+    block = bg[i:i + 300]
+    assert "_fromPopup(sender)" in block, \
+        "any web page can write notes into the user's notebook with the user's key"
+    assert block.index("_fromPopup(sender)") < block.index("saveNote("), \
+        "the guard runs after the write"
+
+
 # --------------------------------------------------------------- the guards
 
 def test_only_the_popup_can_post():
@@ -261,7 +454,7 @@ def test_read_only_cannot_post_and_says_so():
 def test_the_popup_has_a_post_screen_that_is_wired():
     html = _src("popup.html")
     js = _src("popup.js")
-    for el in ("pane-post", "post-text", "post-go", "post-note", "post-after", "post-copy"):
+    for el in ("pane-post", "post-text", "post-go", "post-note", "note-go"):
         assert f'id="{el}"' in html, f"the post screen is missing #{el}"
     assert "type:'share-post'" in js, "the Post button does not message the background"
     # The nav is the only thing that reveals a pane; a tab without data-pane is a dead button.
@@ -269,35 +462,75 @@ def test_the_popup_has_a_post_screen_that_is_wired():
 
 
 def test_a_note_cannot_be_published_twice():
-    """Two independent ways to press Post twice, and a note cannot be recalled.
+    """RUN the guard, do not grep for it.
 
-    (1) The publish takes up to 8s per relay, and every other path here re-enables the button —
-    typing, or leaving the pane and coming back — so with nothing on screen saying a publish was
-    already running, pressing again was the obvious thing to do. `_posting` locks the pane.
-    (2) A browser-action popup is DESTROYED on focus loss, so an in-memory "already posted" flag is
-    no guard at all: reopen it, the identical draft is rebuilt from the same page, and the button is
-    armed again. The record of what went out has to outlive the popup.
+    This test used to assert that the strings `_posting` and `POST_SENT` appeared somewhere in
+    popup.js. Deleting the guard from any one call site left those strings elsewhere in the file, so
+    it stayed green while the defect came back — it documented the fix instead of testing it. Worse,
+    it was asserting the popup-side guard, which could not work at all: the popup is destroyed on
+    focus loss, which routinely happens DURING the up-to-8s publish, so the record was never written
+    for the publish most likely to be repeated.
+
+    The guard is now a content hash in the background, which sees every publish whether the window
+    survived it or not. So: publish, then publish the same text again, and require a refusal.
     """
-    js = _src("popup.js")
-    assert "_posting" in js, "nothing stops a second press while the first publish is in flight"
-    assert "box.disabled = true" in js, "the textarea stays live during a publish, which re-arms the button"
-    assert "POST_SENT" in js, "what was already published is not remembered past the popup closing"
-    assert "if(_posting) return" in js, "a guard exists but the input/prepare paths do not honour it"
+    src = _src("background.js")
+    code = (_consts(src, "POSTED_KEY", "POSTED_KEEP", "POSTED_WINDOW") + "\n" +
+            "\n".join(_fn(src, n) for n in
+                      ("_publishTo", "broadcast", "postRelayUrls", "_uniqRelays", "normRelay",
+                       "_pageUrl", "_urlsIn", "_trimUrl", "_shareTags", "_postedLog",
+                       "_rememberPost", "_contentHash", "sharePost")))
+    got = _node((_RELAY_HARNESS % {"code": code,
+                                   "plan": json.dumps({"wss://vault.example": {"ok": True}}),
+                                   "user": json.dumps(["wss://vault.example"])}) + """
+      global.WebSocket = FakeWS;
+      // Just enough extension around sharePost: a full pairing, a signer, and a storage area.
+      const store = {};
+      const B = { storage: { local: {
+        get: async (k) => (k in store ? { [k]: store[k] } : {}),
+        set: async (o) => Object.assign(store, o) } } };
+      Object.assign(cfg, { mode:'full', sk:'11'.repeat(32), pubkey:'22'.repeat(32) });
+      const key = new Uint8Array(32);
+      let n = 0;
+      const finalize = (t) => Object.assign({}, t, { id: 'ev' + (++n), pubkey: cfg.pubkey });
+      const NT = () => ({ nip19: { neventEncode: () => 'nevent1fake' } });
+      (async () => {
+        const first  = await sharePost({ text: 'the same words', url: 'https://example.com/' });
+        const second = await sharePost({ text: 'the same words', url: 'https://example.com/' });
+        const edited = await sharePost({ text: 'the same words, edited', url: 'https://example.com/' });
+        console.log(JSON.stringify({ first, second, edited, published: n }));
+      })();
+    """)
+
+    assert got["first"]["ok"] is True, f"the first post did not go out: {got['first']}"
+    assert got["second"]["ok"] is False and got["second"].get("duplicate") is True, (
+        "posting the identical text twice published a second permanent, unrecallable note: "
+        f"{got['second']}")
+    assert got["second"].get("nevent"), "the refusal does not point at the note it already published"
+    assert got["edited"]["ok"] is True, "editing the text could not post a new note — the guard is a trap"
+    assert got["published"] == 2, \
+        f"the duplicate was signed and broadcast before being refused ({got['published']} events)"
 
 
-def test_the_plaintext_drafts_are_page_keyed_and_cleared_on_unpair():
-    """The one thing here the user TYPED, next to the address of the page it is about.
+def test_the_publish_lock_and_the_record_survive_the_popup():
+    """The two halves the behaviour test above cannot reach from node.
 
-    It lives in the popup document's localStorage, which is a different store from the
-    `B.storage.local` that unpair() wipes — so "Unpair removes everything from this device" was false
-    for exactly the plaintext item, and the next person to open the popup on that page saw it. A
-    single shared slot was also a data-loss bug: the first keystroke on any other tab destroyed a
-    long note half-written somewhere else.
+    `_posting` is the in-flight lock in the popup document, and the record has to be written by the
+    BACKGROUND — if it ever moves back into popup.js, the popup being destroyed mid-publish loses it
+    again. Checked structurally because there is no DOM here, but checked at the level that would
+    actually regress: which FILE owns the record.
     """
-    js = _src("popup.js")
-    assert "clearPostLocal()" in js and "await send({ type:'unpair' })" in js, \
-        "Unpair does not clear the post drafts it left in localStorage"
-    assert "drafts[tabUrl]" in js, "drafts share one slot, so another page's note overwrites them"
+    js, bg = _src("popup.js"), _src("background.js")
+    assert "if(_posting) return" in js, "the in-flight lock is not honoured by the input/prepare paths"
+    assert "if(box) box.disabled = on" in js, \
+        "the textarea stays live during a publish, which re-arms the buttons"
+    assert "POSTED_KEY" in bg and "_rememberPost" in bg, \
+        "the record of what was published is not in the background"
+    # (`pcpwGen` is the generator's own preference and predates all of this.)
+    for gone in ("POST_SENT", "POST_DRAFT", "pcpwPostDraft', JSON"):
+        assert gone not in js, (
+            f"`{gone}` is back in the popup: the draft/published state it used to keep here is what "
+            "four review rounds of defects were about, and the popup is destroyed on focus loss")
 
 
 def test_the_generator_is_reachable_before_pairing():

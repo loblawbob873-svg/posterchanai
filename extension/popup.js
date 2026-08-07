@@ -329,10 +329,11 @@ $('#unpair').onclick = async () => {
     return;
   }
   await send({ type:'unpair' });
-  /* unpair() clears `B.storage.local`, which is NOT this page's localStorage — so the post drafts
-   * and the record of what was already published survived it, leaving the address of the page you
-   * were on and whatever you wrote about it for the next person to open this popup. */
-  clearPostLocal();
+  /* The post/notes record lives in `B.storage.local`, which unpair() clears. Nothing about posting is
+   * kept in THIS page's localStorage any more — the draft store that used to be there survived
+   * unpair (a different store) and is gone entirely, which is the simplest way to keep that promise.
+   * The stale key from earlier builds is removed so an upgraded install does not carry it forever. */
+  try{ localStorage.removeItem('pcpwPostDraft'); localStorage.removeItem('pcpwPosted'); }catch(_){ }
   location.reload();
 };
 
@@ -425,88 +426,67 @@ function paintBm(){
   }; }
 
 
-/* ---- post this page to Nostr -----------------------------------------------------------------
- * A full pairing already holds the signing key, so the browser can post the page you are on without
- * a website, an app, or copy-pasting a URL into a client. The draft is the page's title, whatever you
- * had selected, and its address — all of it editable, because a share nobody can edit before it goes
- * out is a share people stop using.
+/* ---- post this page, or save it to Notes -----------------------------------------------------
+ * A full pairing already holds the signing key, so the browser can publish the page you are on as a
+ * public note, or keep it as an encrypted one in your PosterChan Notes. The draft is the page's
+ * title, whatever you had selected, and its address; the destination is the button you press.
  *
- * The two things that go wrong with a compose box in a browser-action popup, both handled here:
- * a popup is DESTROYED the instant it loses focus (so a half-written note is saved and restored), and
- * a note cannot be recalled (so the button will not fire twice on the same text).
+ * DELIBERATELY SMALL. This pane previously also persisted drafts across the popup closing and kept a
+ * "copy link to it" button, and four review rounds found ten defects each — nearly all of them
+ * INTERACTIONS between those extras and the publish path, not bugs inside any one of them: a draft
+ * store that lost text on upgrade, that lost it again when there was no host permission, and a link
+ * button that pointed at the wrong note in three different ways. So they are gone rather than fixed.
+ * What is left is a box and two buttons.
+ *
+ * The one thing a compose box in a browser-action popup MUST get right is that a note cannot be
+ * recalled, and that guard is a content hash in the BACKGROUND — the popup is destroyed on focus
+ * loss, so it cannot be trusted to remember anything at all.
  */
-let _lastNevent = '';
-let _posting = false;                   // a publish is in flight; nothing may re-arm the button
-const POST_DRAFT = 'pcpwPostDraft';     // { "<url>": "<text>" } — one slot per page, not one slot
-const POST_SENT = 'pcpwPosted';         // { "<url>": { text, nevent } } — what has already gone out
+let _posting = false;                   // a publish is in flight; both buttons are locked
+const POST_LABEL = 'Post to Nostr — public';
+const NOTE_LABEL = 'Save to Notes — private';
 
-/* Both stores are PLAINTEXT and page-keyed, so they are capped and they are cleared on Unpair.
- *
- * They hold the one thing in this extension the user typed rather than saved, next to the address of
- * the page they typed it about. Unpair's promise is that nothing of yours is left on a shared
- * machine, and a draft sitting in the popup's localStorage — a different store from the one unpair()
- * wipes — quietly broke that. */
-function _readMap(key){
-  try{ const m = JSON.parse(localStorage.getItem(key) || 'null'); return (m && typeof m === 'object') ? m : {}; }
-  catch(_){ return {}; }
-}
-function _writeMap(key, map){
-  // Newest few pages only. A per-URL map that grows forever is a log of everywhere you have posted.
-  const keys = Object.keys(map);
-  for(const k of keys.slice(0, Math.max(0, keys.length - 8))) delete map[k];
-  try{ localStorage.setItem(key, JSON.stringify(map)); }catch(_){ }
-}
-function clearPostLocal(){
-  try{ localStorage.removeItem(POST_DRAFT); localStorage.removeItem(POST_SENT); }catch(_){ }
+// Both buttons and the box move together: whichever one is running, the other is not a thing to
+// press. Leaving the idle button enabled made it a dead control that silently did nothing.
+function _postBusy(on, pressed, label){
+  _posting = on;
+  const go = $('#post-go'), nb = $('#note-go'), box = $('#post-text');
+  if(box) box.disabled = on;
+  for(const b of [go, nb]) if(b) b.disabled = on;
+  if(on && pressed) pressed.textContent = label;
 }
 
 async function preparePost(){
-  const box = $('#post-text'), go = $('#post-go'), note = $('#post-note'), after = $('#post-after');
+  const box = $('#post-text'), go = $('#post-go'), note = $('#post-note'), nb = $('#note-go');
   if(!box || !go) return;
-  if(_posting) return;                          // mid-publish: the button's state is not ours to touch
+  if(_posting) return;                          // mid-publish: the buttons are not ours to touch
   if(_mode === 'ro'){
-    go.disabled = true;
-    after.classList.add('hidden');
-    note.innerHTML = '<b>This pairing is read-only,</b> so it holds no signing key and cannot post. ' +
-      'Pair again with full access from PosterChan → Passwords → Pair a device.';
+    // BOTH destinations, with one reason. Disabling only the public one left Save to Notes looking
+    // live over a handler that returns silently — a button that does nothing, with no message.
+    go.disabled = true; if(nb) nb.disabled = true;
+    note.innerHTML = '<b>This pairing is read-only,</b> so it holds no key to sign a post or encrypt ' +
+      'a note. Pair again with full access from PosterChan → Passwords → Pair a device.';
     return;
   }
-  after.classList.add('hidden');
-  go.disabled = false; go.textContent = 'Post to Nostr'; note.textContent = '';
+  go.disabled = false; go.textContent = POST_LABEL;
+  if(nb){ nb.disabled = false; nb.textContent = NOTE_LABEL; }
+  note.textContent = '';
 
   if(!box.value.trim()){
-    const drafts = _readMap(POST_DRAFT);
-    if(drafts[tabUrl]){
-      box.value = drafts[tabUrl];
-    }else{
-      /* Re-checked AFTER the await. draftFor() goes into the page for the selection, and the pane is
-       * interactive the whole time — the guard above ran before that round-trip and cannot see
-       * anything typed during it, so an unconditional assign here erased what the user was writing. */
-      const built = await draftFor(tabUrl);
-      if(!box.value.trim()) box.value = built;
-    }
-  }
-
-  /* ALREADY PUBLISHED, and remembered across the popup being destroyed — which happens on every
-   * focus loss, so an in-memory flag was no guard at all: reopen the popup, get the identical draft
-   * rebuilt from the same page, press Post, and there are two permanent copies of the same note. */
-  const sent = _readMap(POST_SENT)[tabUrl];
-  if(sent && sent.text === box.value){
-    _lastNevent = sent.nevent || '';
-    go.disabled = true; go.textContent = 'Posted';
-    note.innerHTML = 'Already posted from this page. Edit the text to post again.';
-    after.classList.toggle('hidden', !_lastNevent);
-    return;
+    /* Re-checked AFTER the await. draftFor() goes into the page for the selection and the pane is
+     * interactive the whole time, so the guard above cannot see anything typed during that
+     * round-trip; assigning unconditionally erased what the user was writing. */
+    const built = await draftFor(tabUrl);
+    if(!box.value.trim() && !_posting) box.value = built;
   }
 
   // Firefox MV3 grants no host permission at install, so there is no tab URL, no title and no content
-  // script to ask for the selection: the box comes out EMPTY and the only feedback was "Nothing to
-  // post yet", which describes the symptom and hides the cause. The Logins pane already offers the
-  // grant; this is the same offer on the same terms.
-  if(!tabUrl){
+  // script to ask for the selection: the box comes out EMPTY and "Nothing to post yet" describes the
+  // symptom while hiding the cause. The Logins pane already offers the grant; same offer, same terms.
+  if(!tabUrl && !_posting){
     note.innerHTML = 'This add-on can’t see which page you’re on, so it couldn’t fill anything in. ' +
       'Firefox doesn’t grant that at install.<br><button id="post-grant" class="primary">Allow on all ' +
-      'sites</button><br>You can still write a note by hand and post it.';
+      'sites</button><br>You can still write a note by hand and post or save it.';
     const g = $('#post-grant');
     if(g) g.onclick = async () => {
       try{ await B.permissions.request({ origins:['<all_urls>'] }); }catch(_){ }
@@ -538,70 +518,78 @@ async function draftFor(url){
   return [title, quote, link].filter(Boolean).join('\n\n');
 }
 
+// Where the note landed, in the relay's terms. REFUSED and UNREACHABLE stay apart: a relay that never
+// answered gave no reason, and printing one relay's words against it invents evidence.
+function _relayLine(r){
+  const bits = [];
+  if(r.refused) bits.push(`${r.refused} refused it` + (r.why ? ': ' + esc(r.why) : ''));
+  if(r.unreachable) bits.push(`${r.unreachable} didn’t answer`);
+  return `<b>${r.accepted} of ${r.tried}</b> relay${r.tried === 1 ? '' : 's'}` +
+         (bits.length ? '. ' + bits.join('; ') : '');
+}
+
 { const box = $('#post-text');
   if(box) box.oninput = () => {
-    const go = $('#post-go');
-    if(_posting) return;                    // a publish is in flight; typing must not re-arm the button
-    if(go && _mode !== 'ro'){ go.disabled = false; go.textContent = 'Post to Nostr'; }
-    $('#post-after').classList.add('hidden');
-    const drafts = _readMap(POST_DRAFT);
-    // Keyed by PAGE. One shared slot meant the first keystroke on any other tab overwrote — and
-    // permanently lost — a long note half-written somewhere else.
-    if(box.value.trim()) drafts[tabUrl] = box.value; else delete drafts[tabUrl];
-    _writeMap(POST_DRAFT, drafts);
+    if(_posting) return;                    // a publish is in flight; typing must not re-arm anything
+    const go = $('#post-go'), nb = $('#note-go');
+    if(_mode === 'ro') return;
+    if(go){ go.disabled = false; go.textContent = POST_LABEL; }
+    if(nb){ nb.disabled = false; nb.textContent = NOTE_LABEL; }
   }; }
 
 { const b = $('#post-go');
   if(b) b.onclick = async () => {
     const note = $('#post-note'), box = $('#post-text');
     const text = (box.value || '').trim();
-    if(_posting) return;
+    if(_posting || _mode === 'ro') return;
     if(!text){ note.textContent = 'Nothing to post yet.'; return; }
-    /* THE WHOLE PANE LOCKS WHILE IT IS IN FLIGHT. broadcast waits up to 8s per relay, and everything
-     * else here re-enables the button — typing in the box, or leaving the tab and coming back. With
-     * nothing on screen saying a publish was already running, the second press was the obvious thing
-     * to do, and it published a second permanent copy. */
-    _posting = true;
-    b.disabled = true; b.textContent = 'posting…'; box.disabled = true;
+    _postBusy(true, b, 'posting…');
     note.textContent = 'Sending to your relays…';
     const r = await send({ type:'share-post', text, url: tabUrl });
-    _posting = false;
-    box.disabled = false;
+    _postBusy(false);
     if(!r || !r.ok){
-      b.disabled = false; b.textContent = 'Post to Nostr';
-      // Which relay refused it and why, in the relay's own words — and that the text is still here,
-      // because the first thing anybody does after a failed post is check whether they lost it.
+      b.textContent = POST_LABEL;
+      // A DUPLICATE is the guard working, not an error to diagnose.
+      if(r && r.duplicate){
+        note.innerHTML = 'You already posted this exact text, and a note cannot be recalled. ' +
+                         'Edit it to post a new one.';
+        return;
+      }
       note.innerHTML = '<b>Not posted:</b> ' + esc((r && r.error) || 'no answer from the extension') +
                        '<br>Nothing was published, and your text is still here.';
       return;
     }
-    _lastNevent = r.nevent || '';
-    // Remembered per page, so reopening the popup shows "Posted" instead of a rebuilt draft and an
-    // armed button. Written BEFORE the draft is dropped: if the write fails, the draft is what stops
-    // the text being lost.
-    const sent = _readMap(POST_SENT);
-    sent[tabUrl] = { text: box.value, nevent: _lastNevent };
-    _writeMap(POST_SENT, sent);
-    const drafts = _readMap(POST_DRAFT);
-    delete drafts[tabUrl];
-    _writeMap(POST_DRAFT, drafts);
-    b.textContent = 'Posted';                    // stays disabled until the text changes
-    const failed = r.tried - r.accepted;
-    note.innerHTML = `Posted to <b>${r.accepted} of ${r.tried}</b> relay${r.tried === 1 ? '' : 's'}.` +
-      (failed > 0 && r.why ? ` ${failed} refused it: ` + esc(r.why) : '');
-    $('#post-after').classList.toggle('hidden', !_lastNevent);
+    // Left disabled reading "Posted" until the text changes — the background refuses a repeat anyway,
+    // but the button should not invite the press.
+    b.disabled = true; b.textContent = 'Posted';
+    note.innerHTML = 'Posted to ' + _relayLine(r) + '.';
   }; }
 
-{ const b = $('#post-copy');
+{ const b = $('#note-go');
   if(b) b.onclick = async () => {
-    if(!_lastNevent) return;
-    // A `nostr:` URI, not a link to somebody's web viewer: it opens in whatever client the user
-    // already uses, and it asks nothing of a third party that the rest of this extension refuses to.
-    try{
-      await navigator.clipboard.writeText('nostr:' + _lastNevent);
-      b.textContent = 'copied';
-      setTimeout(() => { b.textContent = 'Copy link to it'; }, 1500);
-    }catch(_){ $('#post-note').textContent = 'could not copy'; }
+    const note = $('#post-note'), box = $('#post-text');
+    const text = (box.value || '').trim();
+    if(_posting || _mode === 'ro') return;
+    if(!text){ note.textContent = 'Nothing to save yet.'; return; }
+    /* The Post button's state is RESTORED, not enabled: after a successful post it is deliberately
+     * left disabled on unchanged text, and re-arming it here would re-open the path that lock
+     * exists to close — on a press that has nothing to do with posting. */
+    const post = $('#post-go');
+    const postWas = post ? post.disabled : false;
+    const postLabel = post ? post.textContent : POST_LABEL;
+    _postBusy(true, b, 'saving…');
+    note.textContent = 'Encrypting and saving…';
+    const r = await send({ type:'note-save', text, url: tabUrl });
+    _postBusy(false);
+    b.textContent = NOTE_LABEL;
+    if(post){ post.disabled = postWas; post.textContent = postLabel; }
+    if(!r || !r.ok){
+      note.innerHTML = '<b>Not saved:</b> ' + esc((r && r.error) || 'no answer from the extension') +
+                       '<br>Nothing was written, and your text is still here.';
+      return;
+    }
+    note.innerHTML = `Saved to <b>Notes</b> as “${esc(r.title || 'Untitled')}” — encrypted to you, on ` +
+                     _relayLine(r) + '. Open it in PosterChan → Notes.';
   }; }
 
 
