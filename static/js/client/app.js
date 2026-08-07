@@ -8198,7 +8198,20 @@
         // so playback needs no cookie from the browser — same as any third-party CDN. Sending credentials
         // would be FATAL: CORS forbids `Access-Control-Allow-Origin: *` on a credentialed request (exactly
         // what our proxy and zap.stream's CloudFront both return), which is what used to black out viewers.
-        const h=new window.Hls({ maxBufferLength:30 }); _streamHls=h;
+        /* THE BUFFER TARGET MUST FIT IN THE PLAYLIST, or the player spends its life reaching for media
+         * that does not exist. MediaMTX publishes a ROLLING window — `hlsSegmentCount: 7` — so the whole
+         * playlist is 7 × segment-duration. Asking for 30s of buffer from a 14s window means the target
+         * is never reached, playback settles further back to chase it, and the moment it drifts past the
+         * oldest segment there is nothing to fetch: stall, then a jump forward to whatever still exists.
+         * That is a black screen followed by a skip.
+         *
+         * It hid for a long time because the streamer's keyframe interval was ~4.17s (x264's default
+         * 250-frame GOP at 60fps), which made the window 29s — near enough to 30 that it never bit.
+         * Fixing the keyframe interval to 2s halved the window to 14s and exposed it.
+         *
+         * Derived, not picked: stay comfortably inside the smallest window the server can produce
+         * (7 × 2s), and let hls.js sit near the live edge as it does by default. */
+        const h=new window.Hls({ maxBufferLength:10, maxMaxBufferLength:20 }); _streamHls=h;
         h.loadSource(url); h.attachMedia(v);
         h.on(window.Hls.Events.ERROR,(_e,d)=>{ if(d&&d.fatal) _streamNote('Could not play this stream here — try the \u201cOpen stream URL\u201d link below.'); });
         return;
