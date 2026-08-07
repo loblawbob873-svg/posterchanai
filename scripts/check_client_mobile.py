@@ -125,6 +125,17 @@ AUDIT = r"""(() => {
       if (document.documentElement.scrollWidth > window.innerWidth + 1)
         out.searchClipped.push('title + search row pushes the page sideways');
       h.textContent = txt; if (wasHidden) h.classList.add('hidden');
+
+      // ...and the topbar search must STAND DOWN for a view that renders its own (Messages, Notes,
+      // Passwords, Git). Two identical pills on one phone screen is what shipped. The guest lands on a
+      // timeline view that has no in-view search, so plant one and check the rule fires.
+      const probe = document.createElement('input');
+      probe.type = 'search'; probe.style.cssText = 'position:absolute;left:-9999px';
+      document.getElementById('feed').appendChild(probe);
+      void document.body.offsetHeight;
+      if (getComputedStyle(sb).display !== 'none')
+        out.searchClipped.push('a view with its own search still shows the topbar search too (two search boxes)');
+      probe.remove();
     }
   }
 

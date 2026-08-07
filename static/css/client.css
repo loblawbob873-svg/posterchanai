@@ -2199,6 +2199,13 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
      someone's phone eats, putting the clipping straight back on exactly the surface this fixed. The
      title has min-width:0, so it absorbs the extra by truncating; the row still cannot overflow. */
   .searchbox{margin:0 4px;min-width:140px}
+  /* A view that ships its OWN search does not also get the topbar's. Measured: Messages, Notes,
+     Passwords and Git each render one inside #feed, so on a phone those screens showed TWO identical
+     pills — reported the moment the topbar one became legible enough to notice. Driven off the
+     rendered DOM rather than a list of view names, so a view that grows (or loses) a search needs no
+     second edit here, and the paths that bypass switchView (thread, profile, hashtag) can't leave a
+     stale flag behind. The title takes the freed width. */
+  .main:has(#feed input[type="search"]) .searchbox{display:none}
   .note,.tl-cmp{padding:14px 14px;gap:10px}
   .reply-ctx{padding:12px 14px 0}   /* align reply context with the note body on mobile */
   .note .av,.tl-cmp-av{width:40px;height:40px}
