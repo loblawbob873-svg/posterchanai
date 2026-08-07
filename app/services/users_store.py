@@ -241,9 +241,83 @@ async def hydrate_user_kv(db) -> int:
 # forget), a periodic sweep mirrors EVERY npub account's authority record + non-exempt kv to the
 # relay — so a setting changed via any path lands in Nostr within one interval. Change-detected by a
 # content hash so an unchanged account isn't rewritten (no replaceable-event churn).
+#
+# That cache is IN MEMORY, so a restart empties it and the first sweep considered every account
+# changed — on this deployment, 176 accounts x (record + kv) = ~352 replaceable docs rewritten with
+# byte-identical content on every single deploy. Each one is then re-broadcast to every upstream
+# relay (nostr_relay_backup_datastore, on by default), and the outbox is paced at ~1 event / 3s, so
+# a deploy buried the outbound queue for ~20 minutes and drowned out every real post in it. It was
+# invisible until Server Stats grew a queue-depth reading. _seed_hashes fixes it by asking the relay
+# what it ALREADY holds, in two queries, before the first sweep runs.
 _last_synced_hash: dict = {}
 _reconcile_task = None
 _RECONCILE_INTERVAL = 600   # seconds (10 min)
+
+
+def _hash(record: dict, kv: dict) -> str:
+    """The change-detection hash. ONE definition, used both to decide whether to write and to seed
+    from what is already stored — if the two ever computed it differently, seeding would silently
+    stop matching and every restart would resume rewriting everything."""
+    import hashlib
+    import json as _json
+    return hashlib.sha256(
+        _json.dumps([record, kv], sort_keys=True, default=str).encode()).hexdigest()
+
+
+async def _seed_hashes(db) -> int:
+    """Prime the cache from the relay's CURRENT docs, so a restart doesn't rewrite unchanged accounts.
+
+    A bulk read of exactly the docs we care about, not two reads per user — and `get_docs`, not
+    `list_docs`: the latter pulls every doc this key owns under a 5000 cap and filters client-side,
+    which on the operator key (4028 docs, 2972 of them bookmarks and still growing) would one day
+    start returning a partial answer with no signal, and the accounts it quietly omitted would go
+    back to being rewritten on every restart.
+
+    For each account we compare the stored pair against the local pair and, only when they are
+    identical, record the hash the sweep would compute — so an account whose doc is missing, stale or
+    unreadable is left unseeded and gets rewritten exactly as it does today. The comparison
+    round-trips the local side through JSON first: a value that isn't JSON-native (no column in
+    _SYNCED is one today, but it is a hand-edited list) is not equal to the string it was stored as,
+    and comparing them directly would make every account look changed and seed nothing.
+
+    Failure is a no-op, deliberately. If the relay can't be read we seed nothing and the sweep runs
+    as it always has — this only ever REMOVES redundant writes, it can never skip a needed one.
+    """
+    op_sk = _ss._operator_seckey(db)
+    if not op_sk:
+        return 0
+    import json as _json
+    from app.models import UserSetting
+    users = db.query(User).filter(User.nostr_npub.isnot(None)).all()
+    if not users:
+        return 0
+    try:
+        port = _ss._port(db)
+        stored_rec = await store.get_docs(
+            port, [store.NS_USER + u.nostr_npub for u in users], seckey=op_sk, strict=True)
+        stored_kv = await store.get_docs(
+            port, [store.NS_USERCFG + u.nostr_npub for u in users], seckey=op_sk, strict=True)
+    except Exception as e:
+        logger.warning("[users-store] could not read stored docs to seed change-detection (%s) — "
+                       "this pass will re-sync every account", e)
+        return 0
+    seeded = 0
+    for user in users:
+        npub = user.nostr_npub
+        rec = stored_rec.get(store.NS_USER + npub)
+        kvd = stored_kv.get(store.NS_USERCFG + npub)
+        if not isinstance(rec, dict) or not isinstance(kvd, dict):
+            continue                       # never stored, or unreadable → let the sweep write it
+        kv = {r.key: r.value
+              for r in db.query(UserSetting).filter(UserSetting.user_id == user.id).all()
+              if not _kv_exempt(r.key)}
+        local = _json.loads(_json.dumps([_record(user), kv], sort_keys=True, default=str))
+        if local == [rec, kvd]:
+            _last_synced_hash[npub] = _hash(_record(user), kv)
+            seeded += 1
+    if seeded:
+        logger.info("[users-store] %d account(s) already match the relay — not re-syncing them", seeded)
+    return seeded
 
 
 async def reconcile_all(db, *, force: bool = False) -> int:
@@ -251,16 +325,17 @@ async def reconcile_all(db, *, force: bool = False) -> int:
     the last pass (or all when `force`). Returns the number (re)synced."""
     if not _ss._operator_seckey(db):
         return 0
-    import hashlib
-    import json as _json
     from app.models import UserSetting
+    # First sweep after a restart: ask the relay what it already has, so identical content isn't
+    # rewritten (and re-broadcast to every upstream relay) just because this process is new.
+    if not force and not _last_synced_hash:
+        await _seed_hashes(db)
     synced = 0
     for user in db.query(User).filter(User.nostr_npub.isnot(None)).all():
         kv = {r.key: r.value
               for r in db.query(UserSetting).filter(UserSetting.user_id == user.id).all()
               if not _kv_exempt(r.key)}
-        h = hashlib.sha256(
-            _json.dumps([_record(user), kv], sort_keys=True, default=str).encode()).hexdigest()
+        h = _hash(_record(user), kv)
         if not force and _last_synced_hash.get(user.nostr_npub) == h:
             continue
         ok_rec = await sync_user(db, user, force=True)

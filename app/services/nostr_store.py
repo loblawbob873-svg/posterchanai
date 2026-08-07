@@ -211,6 +211,38 @@ async def list_docs(port: int, prefix: str, *, seckey: bytes | None = None, pubk
     return {d: _decode(ev.get("content", ""), seckey, encrypt) for d, ev in best.items()}
 
 
+async def get_docs(port: int, d_tags, *, seckey: bytes | None = None, pubkey: str | None = None,
+                   encrypt: bool = True, kind: int = APP_KIND, chunk: int = 200,
+                   strict: bool = False) -> dict:
+    """Return {d_tag: data} for the NAMED docs — a bulk read by exact `d` tag.
+
+    Prefer this over `list_docs` whenever the caller knows which documents it wants. `list_docs`
+    fetches every doc this author has (capped at 5000) and filters client-side, so on a busy operator
+    key it silently stops returning the ones asked for once the total crosses that cap: this key is
+    already at 4028, of which 2972 are bookmarks, a set that only grows. The failure would be a quiet
+    partial answer, which is the worst shape for a caller deciding what to write.
+
+    Chunked because a single REQ filter carrying thousands of tag values is a large frame for no
+    benefit. A missing d_tag is simply absent from the result, exactly as with get_doc.
+    """
+    pk = pubkey or (bip340.pubkey_from_seckey(seckey).hex() if seckey else None)
+    if not pk:
+        raise ValueError("get_docs needs seckey or pubkey")
+    tags = [d for d in dict.fromkeys(d_tags or []) if d]
+    best: dict = {}
+    for i in range(0, len(tags), max(1, chunk)):
+        part = tags[i:i + max(1, chunk)]
+        evs = await _ws_query(port, [{"authors": [pk], "kinds": [kind], "#d": part,
+                                      "limit": len(part) * 2}], strict=strict)
+        for ev in evs:
+            d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), None)
+            if not d:
+                continue
+            if d not in best or ev.get("created_at", 0) > best[d].get("created_at", 0):
+                best[d] = ev
+    return {d: _decode(ev.get("content", ""), seckey, encrypt) for d, ev in best.items()}
+
+
 async def delete_doc(port: int, seckey: bytes, d_tag: str, *, kind: int = APP_KIND) -> bool:
     """Delete document `d_tag` (NIP-09 kind-5 referencing the current event + its addressable coord)."""
     pk = bip340.pubkey_from_seckey(seckey).hex()
