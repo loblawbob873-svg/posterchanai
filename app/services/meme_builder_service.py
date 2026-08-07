@@ -177,6 +177,10 @@ def _drawtext(layer: dict, w: int, h: int) -> str:
     # ONE drawtext PER LINE (see the caller): this build of ffmpeg honours a newline in the textfile
     # as a break AND draws a notdef box for the LF itself — "line one[]" — so the control character
     # must never reach drawtext at all. `_line_dy` shifts each line down by a line height.
+    # 1.18 is ALSO written into `.mb-text{line-height}` in client.css — the stage has to step its lines
+    # by the same pitch or a wrapped caption sits progressively higher on the stage than in the export
+    # (it did: 0.18em per line, cumulative, so only multi-line captions showed it). Change one and you
+    # must change the other; scripts/check_meme_render_match.py is what catches it if you don't.
     y_off = int(_num(layer.get("_line_dy"), 0, 200, 0)) * int(round(size * 1.18))
     y_expr = f"{y + y_off}"
     # Optional background box — the "caption bar" look (black text on a solid strip) that a plain outlined

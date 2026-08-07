@@ -1488,7 +1488,10 @@
       }
     }catch(_){ }
     const size = +l.size||64, lines = wrapText(l).split('\n').length;
-    return { w: Math.min(P.w, size * 0.55 * (l.text||'').length), h: size * lines };
+    // Lines are stepped by 1.18 x size in BOTH the renderer (_line_dy) and the stage (.mb-text's
+    // line-height), so the fallback has to use the same pitch or "align to the bottom" puts a
+    // multi-line caption somewhere the export does not.
+    return { w: Math.min(P.w, size * 0.55 * (l.text||'').length), h: size * (1 + 1.18 * (lines - 1)) };
   }
   function alignLayer(l, hx, vy){
     if(!l || l.type==='audio') return;

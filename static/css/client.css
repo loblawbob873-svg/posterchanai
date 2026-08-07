@@ -4392,7 +4392,16 @@ svg.mb-e{margin-right:0}
    or (w-text_w)/2 when the ⇔ Centre flag is on), so a caption with more than one line exports with its
    lines centred on each other. Left-aligning them here made the preview disagree with the export for any
    multi-line caption — which is now every caption long enough to wrap. */
-.mb-text{font-weight:700;line-height:1;white-space:pre;width:max-content;max-width:none;text-align:center;
+/* line-height 1.18, NOT 1: the renderer draws one drawtext PER LINE and steps each one down by
+   `round(size * 1.18)` (see _line_dy in meme_builder_service.py), so a preview at 1.0 packs the lines
+   0.18em tighter than the export at every line after the first. That is cumulative and invisible on
+   the single-line caption everything was checked against — at size 64 the fourth line of a wrapped
+   caption came out 36px lower in the MP4 than on the stage, and captions WRAP automatically now, so
+   this hit any caption long enough to need two lines. The number is the renderer's; the export is
+   what people have already made, so the preview is the side that moves.
+   Cross-check: scripts/check_meme_render_match.py screenshots the stage and renders the same payload
+   through ffmpeg, and fails on exactly this. */
+.mb-text{font-weight:700;line-height:1.18;white-space:pre;width:max-content;max-width:none;text-align:center;
   padding:0;margin:0;
   /* Match the font ffmpeg draws with (Liberation Sans Bold, via _meme_font_path). The preview used to
      inherit the THEME font — cyberpunk's stylised glyphs meant the caption you saw was not the caption
@@ -4405,8 +4414,11 @@ svg.mb-e{margin-right:0}
   /* ffmpeg's drawtext places the INK (cap) top exactly at the layer's y — measured, +0px at every size.
      CSS instead places the ASCENT top there, and the ink sits ~0.19em lower (ascender .905 - capHeight
      .716 for Arial/Liberation). So the export always came out ~0.19 x font-size HIGHER than the preview
-     showed — 36px on a 189px caption. Lift the preview by the same amount so ink lines up with ink. */
-  transform:translateY(-0.19em)}
+     showed — 36px on a 189px caption. Lift the preview by the same amount so ink lines up with ink.
+     -0.28em, not -0.19em: line-height 1.18 (above) also puts half its extra leading ABOVE the first
+     line — (1.18 - 1)/2 = 0.09em — which would push the WHOLE caption down by that much. The two
+     corrections are independent and both are needed; 0.19 + 0.09 is the total. */
+  transform:translateY(-0.28em)}
 /* ONE span per wrapped line. Each is its own inline-block so the optional background box hugs that line's
    own ink — which is what drawtext's box=1 draws. The box itself is a box-SHADOW spread, never padding:
    padding would move the glyphs, and drawtext's boxborderw does not. */
@@ -4819,7 +4831,7 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
    whole canvas and parked the resize dot at the far right. Hug the text and shift it by half its own
    width instead — same visual centre, but the box (and its handle) stay on the words. */
 .mb-text.centred{width:max-content;max-width:none;text-align:center;
-  transform:translate(-50%,-0.19em)}
+  transform:translate(-50%,-0.28em)}   /* the -0.28em is the same pair of corrections — see .mb-text */
 
 /* ===== 🧾 Raw event viewer (post ☰ → Raw event) =========================================
    A label/value grid of the decoded header, then the pretty-printed event. The <pre> WRAPS
