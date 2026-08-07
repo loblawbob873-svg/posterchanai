@@ -138,3 +138,40 @@ class TestPoseAliases(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertNotIn(mb.canonical_alpha_effect(name), poses)
                 self.assertFalse(_pose_art_path(name))
+
+
+class TestStagePreviewSurvivesAStaleStylesheet(unittest.TestCase):
+    """The stage's .mb-fx wrapper must carry its own layout INLINE.
+
+    It is a positioned box whose child media is sized `width:100%;height:100%`. If the JS that emits
+    it can arrive without the CSS that lays it out — a service worker holding one file and not the
+    other, or a desktop/APK bundle whose copy of client.css is a build behind — then `<i>` is an
+    ordinary inline box with no size and EVERY image and clip on the stage collapses to nothing. The
+    build looks empty, with no error in the console, and the only cure the user can find is a hard
+    refresh. That happened in Firefox the first time this shipped.
+
+    So this is not style policing: it pins the one property that makes the element independent of a
+    second file landing at the same moment.
+    """
+
+    def _js(self):
+        import os
+        return open(os.path.join(os.path.dirname(__file__), "..", "static", "js",
+                                 "client", "meme.js"), encoding="utf-8").read()
+
+    def test_the_wrapper_styles_itself(self):
+        import re
+        js = self._js()
+        m = re.search(r"function _rotCss\(l\)\{(.+?)\n  \}", js, re.S)
+        self.assertIsNotNone(m, "_rotCss (the .mb-fx wrapper's style) went away")
+        body = m.group(1)
+        for prop in ("position:absolute", "inset:0", "display:block"):
+            self.assertIn(prop, body,
+                          f"the .mb-fx wrapper must set {prop} inline — a class alone is a promise "
+                          f"that meme.js and client.css shipped together, which caches do not keep")
+
+    def test_the_wrapper_is_actually_used(self):
+        """…and that the stage still emits it, so the test above cannot pass on dead code."""
+        js = self._js()
+        self.assertIn('class="mb-fx', js)
+        self.assertIn("_rotCss(l)", js)

@@ -1355,10 +1355,20 @@
     if(l.flipV) p.push('scaleY(-1)');
     return p.join(' ');
   }
-  // Just the free rotate — the wrapper's job. Kept separate from _xform for the reason above.
+  // The whole style for the .mb-fx wrapper, INLINE — its layout is never left to the stylesheet.
+  //
+  // This element is new, and the media inside it is sized `width:100%;height:100%`. If the JS that
+  // emits it arrives without the CSS that lays it out — a service worker holding one file and not the
+  // other, a desktop/APK bundle whose copy of client.css is a build behind — then `<i>` is an ordinary
+  // INLINE box with no size, and every image and clip on the stage collapses to nothing. The whole
+  // build looks empty, with no error. A class alone is a promise that two files shipped together;
+  // inline styles are a promise this element keeps by itself. The .mb-fx rules in client.css are kept
+  // as documentation and for the .crop case to stay greppable, but nothing depends on them.
   function _rotCss(l){
     const r=+l.rotate||0;
-    return r ? `transform:rotate(${r}deg);transform-origin:center` : '';
+    return 'position:absolute;inset:0;display:block;pointer-events:none;'
+         + (_fxCrops(l) ? 'overflow:hidden;' : '')
+         + (r ? `transform:rotate(${r}deg);transform-origin:center;` : '');
   }
 
   // ---------- the per-layer EFFECT, previewed ----------

@@ -51,7 +51,9 @@ TOL_TEXT = 16
 # threshold instead of by shape. They are chosen to cover the ways the two sides can disagree:
 #
 #   RED    a plain `cover` layer            — the baseline: if this is out, everything is
-#   GREEN  a `contain` layer in a box of a different shape — letterbox geometry
+#   GREEN  a `contain` layer in a box of a different shape, WITH AN ERASE MASK on it — letterbox
+#          geometry, and the mask seated by that same geometry (the stage does it with mask-size,
+#          the renderer with a second _fit_chain + alphaextract: two implementations, one contract)
 #   BLUE   a rotated layer                  — rotw()/roth() growth vs the CSS transform
 #   ORANGE a layer with an EFFECT on it     — the per-layer FX dropdown
 #   YELLOW a one-line caption               — font, size and the ink-vs-ascent lift
@@ -94,10 +96,10 @@ EDIT = {
          "start": 0, "dur": 4, "trim": 0, "x": 120, "y": 300, "w": 360, "h": 300,
          "fit": "cover", "opacity": 1, "effect": "none", "flipH": False, "flipV": False,
          "rotate": 0, "align": ""},
-        {"id": "GREEN", "type": "image", "src": "SRC:GREEN", "name": "contain",
+        {"id": "GREEN", "type": "image", "src": "SRC:GREEN", "name": "contain+erased",
          "start": 0, "dur": 4, "trim": 0, "x": 420, "y": 40, "w": 260, "h": 200,
          "fit": "contain", "opacity": 1, "effect": "none", "flipH": False, "flipV": False,
-         "rotate": 0, "align": ""},
+         "rotate": 0, "align": "", "mask": "MASK"},
         {"id": "ORANGE", "type": "image", "src": "SRC:ORANGE", "name": "fx-mirror",
          "start": 0, "dur": 4, "trim": 0, "x": 430, "y": 300, "w": 250, "h": 190,
          "fit": "cover", "opacity": 1, "effect": "flip", "flipH": False, "flipV": False,
@@ -148,7 +150,7 @@ EDIT_MOTION = {
 SCENARIOS = [("static", EDIT, 0.0), ("motion", EDIT_MOTION, MOTION_AT)]
 
 
-def _page(src_base, edit, at):
+def _page(src_base, edit, at, mask_url):
     return """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="/static/css/client.css">
@@ -224,6 +226,7 @@ window.__ready = false;
 </script>
 </body></html>""".replace("__AT__", json.dumps(at)).replace("__PROJECT__", json.dumps(dict(edit, name="match", layers=[
         dict(l, src=(src_base + l["id"] + ".png" if l.get("src") else ""),
+             mask=(mask_url if l.get("mask") else ""),
              # The editor's own defaults for the fields the render payload does not carry.
              trim=l.get("trim", 0), opacity=l.get("opacity", 1), volume=1, mute=False,
              sound="", soundVolume=1, speed=1)
@@ -400,6 +403,14 @@ def main():
         im.paste(Image.new("RGB", (200, 300), rgb), (0, 0))   # left half only — see PROBES
         im.save(p)
         src_paths[name] = p
+    # The erase mask: opaque = KEEP, transparent = erased. Painted in the SOURCE's space (400x300),
+    # erasing its bottom third — a horizontal cut, so a mask seated with the wrong aspect handling
+    # shows up as the cut landing at the wrong height rather than as a subtle edge.
+    mk = Image.new("RGBA", (400, 300), (255, 255, 255, 255))
+    mk.paste(Image.new("RGBA", (400, 100), (0, 0, 0, 0)), (0, 200))
+    mask_path = os.path.join(tmp, "mask.png")
+    mk.save(mask_path)
+    src_paths["mask"] = mask_path
 
     class H(http.server.SimpleHTTPRequestHandler):
         def translate_path(self, path):
@@ -413,6 +424,8 @@ def main():
                 return _meme_font_path() or os.path.join(tmp, "missing.ttf")
             if path.startswith("/src/"):
                 return os.path.join(tmp, os.path.basename(path))
+            if path == "/mask.png":
+                return mask_path
             return os.path.join(tmp, path.lstrip("/") or "index.html")
 
         def log_message(self, *a):
@@ -426,7 +439,7 @@ def main():
     try:
         for sname, sedit, at in SCENARIOS:
             with open(os.path.join(tmp, "index.html"), "w") as fh:
-                fh.write(_page(f"{base}/src/", sedit, at))
+                fh.write(_page(f"{base}/src/", sedit, at, f"{base}/mask.png"))
             shots, payload = {}, {}
             rc = asyncio.run(drive(f"{base}/index.html", shots, payload))
             if rc:
@@ -442,6 +455,9 @@ def main():
                 u = l.get("src") or ""
                 if u:
                     sources[u] = src_paths[os.path.basename(u).rsplit(".", 1)[0]]
+                mu = l.get("mask") or ""
+                if mu:
+                    sources[mu] = src_paths["mask"]
             png, ctype = meme_builder_service.render(edit, sources)
             if ctype != "image/png":
                 print(f"SKIP  [{sname}] the renderer returned {ctype}")
