@@ -824,6 +824,17 @@
                button beats a pictogram nobody has to guess at. -->
           <button class="btn btn-neon small" id="mb-add-media" title="A photo, a clip, music, a sticker, an effect or a ready-made layout"><svg class="ic b-ic mb-e" aria-hidden="true"><use href="#i-image"></use></svg>Media</button>
           <button class="btn btn-cyan small" id="mb-add-text"><svg class="ic b-ic mb-e" aria-hidden="true"><use href="#i-text"></use></svg>Text</button>
+          <!-- Save / open / rename / start new. It lived under ⚙︎ Canvas, below the export format —
+               a pane you open to CONFIGURE the canvas, not where anyone looks for "open my other
+               meme", which is a thing you do BEFORE anything else. Same sheet, one entry point: the
+               duplicate under Canvas is gone rather than left to drift, and the project's name is
+               the button's title.
+               Its icon deliberately does NOT carry .mb-e (hidden below 480px). Media and Text drop
+               their icon and keep their word; this one does the opposite, because a folder glyph
+               needs no reading and a fourth WORD is exactly what pushed this bar onto a second row
+               at 360px — the wall the one-row bar exists to prevent (caught by check_meme_mobile,
+               which now measures the row count). aria-label carries the name where the word is gone. -->
+          <button class="btn btn-cyan small" id="mb-project" aria-label="Project" title="${enc(P.name || 'Untitled')} — save, open, rename, start new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg><span class="mb-lbl">Project</span></button>
           <button class="btn btn-cyan small mb-icon" id="mb-undo" title="Undo (Ctrl+Z)" aria-label="Undo" ${_hist.length?'':'disabled'}><svg class="ic x-ic" aria-hidden="true"><use href="#i-undo"></use></svg></button>
           <button class="btn btn-cyan small mb-icon" id="mb-redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" ${_future.length?'':'disabled'}><svg class="ic x-ic" aria-hidden="true"><use href="#i-redo"></use></svg></button>
         </div>
@@ -932,8 +943,7 @@
           <option value="png" ${_fmt()==='png'?'selected':''}>Still image (frame at the playhead)</option>
         </select></label>
       <div class="mb-secttl">This project</div>
-      <div class="muted small mb-dbg">${enc(P.name || 'Untitled')} · ${P.layers.length} layer${P.layers.length===1?'':'s'} · ${P.w}×${P.h} · ${projEnd().toFixed(1)}s</div>
-      <button class="btn btn-cyan small full" id="mb-proj"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Save, open, rename, start new…</button>`;
+      <div class="muted small mb-dbg">${enc(P.name || 'Untitled')} · ${P.layers.length} layer${P.layers.length===1?'':'s'} · ${P.w}×${P.h} · ${projEnd().toFixed(1)}s</div>`;
   }
 
 
@@ -3905,7 +3915,7 @@
     }));
     on('mb-undo','click',undo);
     on('mb-redo','click',redo);
-    on('mb-proj','click',projectMenu);
+    on('mb-project','click',projectMenu);
     on('mb-cutall','click',cutAll);
     // Explicit "snap everything back-to-back", in the clips' current time order. This used to happen
     // automatically on every drop, which made adjusting one clip rewrite the whole timeline.

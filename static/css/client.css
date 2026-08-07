@@ -4877,6 +4877,11 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
    pictogram, and hiding the label instead would leave "🅣" and "➕" to be guessed at. */
 @media(max-width:480px){
   .mb-e{display:none}
+  /* Project is the fourth labelled button on that row and the one that can afford to lose its word:
+     Media and Text are the two things you came here to do, and a folder is legible without reading.
+     Dropping the WORD here rather than the icon is the opposite of the rule above, on purpose. */
+  #mb-project .mb-lbl{display:none}
+  #mb-project svg.ic{margin-right:0}
 }
 /* (The Meme Builder's Blossom grid used to live here. It now opens the shared blossomPicker — folders
    and all — so .mb-picker/.mb-pick are gone rather than left as a second, folderless look.) */

@@ -481,6 +481,22 @@ AUDIT = r"""(() => {
   // two elements share an id and only the first is ever wired up.
   out.dupes = ids.filter(id => document.querySelectorAll('#' + id).length > 1);
 
+  // THE TOP BAR IS ONE ROW, on every width, and that is a promise the file makes in its own comment:
+  // the two wrapped rows it replaced cost ~6 rows of a phone screen before you saw any of the meme.
+  // Nothing enforced it, so the next button added to that bar is free to quietly reintroduce the
+  // wall — which is exactly what adding #mb-project could have done. Measured as distinct row tops
+  // among the bar's own buttons, because a wrap is invisible to the overflow check (it makes the
+  // page TALLER, never wider).
+  const bar = document.querySelector('.mb-bar');
+  if (bar) {
+    // Inlined rather than using `vis` below: that is a `const` declared later in this scope, so
+    // reading it here is a temporal-dead-zone throw, which the harness would report as a blank audit.
+    const bb = [...bar.querySelectorAll('button')].filter(el => !el.checkVisibility || el.checkVisibility());
+    out.barRows = new Set(bb.map(b => Math.round(b.getBoundingClientRect().top / 4))).size;
+    out.barButtons = bb.length;
+    out.projectBtn = !!bar.querySelector('#mb-project');
+  }
+
   const vis = el => !el.checkVisibility || el.checkVisibility();
   const boxes = [];
   document.querySelectorAll('#feed button, #feed .btn').forEach(b => {
@@ -571,6 +587,15 @@ async def drive(url):
                         problems.append((label, "missing-control", f"#{cid} is not in the DOM"))
                 if res["overflow"]:
                     problems.append((label, "horizontal-overflow", "the page scrolls sideways"))
+                if not res.get("projectBtn"):
+                    problems.append((label, "missing-control",
+                                     "#mb-project is not on the top bar — save/open/rename/start-new "
+                                     "is unreachable without opening the Canvas settings pane"))
+                if (res.get("barRows") or 1) > 1:
+                    problems.append((label, "toolbar-wrapped",
+                                     f"the top bar wrapped onto {res['barRows']} rows "
+                                     f"({res.get('barButtons')} buttons) — it is one row by design, and a "
+                                     f"wrap costs rows of a phone screen before any of the meme is visible"))
                 for o in res["offscreen"]:
                     problems.append((label, "offscreen-control",
                                      f"{o['tag']} spans {o['left']}..{o['right']} in {o['vw']}px"))
@@ -582,7 +607,8 @@ async def drive(url):
                 print(f"{label}: panel={res['panel']} overflow={res['overflow']} "
                       f"offscreen={len(res['offscreen'])} tiny={len(res['tiny'])} "
                       f"overlap={len(res['overlap'])} "
-                      f"controls={sum(1 for v in res['present'].values() if v)}/{len(EXPECTED)}")
+                      f"controls={sum(1 for v in res['present'].values() if v)}/{len(EXPECTED)} "
+                      f"barRows={res.get('barRows')} project={res.get('projectBtn')}")
 
             # Behaviour, once — it is width-independent, and it needs the page in its initial state.
             await call("Page.navigate", {"url": url})
