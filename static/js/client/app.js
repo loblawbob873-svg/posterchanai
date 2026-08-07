@@ -11030,6 +11030,11 @@
           <label class="muted small" style="margin-left:auto"><input type="checkbox" id="cmp-poll-multi"> Allow multiple</label></div>
       </div>
       <div class="muted small" id="cmp-status"></div>`, root=>{
+      // The composer is the one modal whose contents can outgrow the viewport (a quote/reply card on
+      // top of a 220px textarea and two button rows), so it lays out as a flex COLUMN instead of a
+      // single scroll box — otherwise the overflow comes off the bottom, i.e. off Post. See the
+      // `.modal.cmp-modal` block in client.css; modal() has no class hook, so it goes on here.
+      root.classList.add('cmp-modal');
       const ta=$('#cmp',root); attachMentionAutocomplete(ta); if(text) ta.value=text;
       // Files shared IN from another app (OS share sheet → _consumeSharedFiles): upload each to Blossom
       // and append its URL, exactly like paste/attach. Runs async so the composer paints immediately.

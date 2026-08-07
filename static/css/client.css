@@ -1696,6 +1696,49 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .cmp-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:var(--sp-2);margin-top:var(--sp-3)}
 .cmp-tools .btn,.cmp-actions .btn{flex:0 0 auto;margin:0;white-space:nowrap;vertical-align:middle}
 #cmp-send{min-width:120px;justify-content:center}   /* the primary stays the widest control in its row */
+
+/* ---- The compose sheet is a COLUMN, not one long scroll box ----------------------------------
+   `.modal{overflow:auto}` means a composer taller than the viewport loses its BOTTOM — and the
+   bottom is Post. A QUOTE POST is the case that breaks it: it stacks a preview of the quoted note
+   on top of a composer that already wants 220px of textarea plus two button rows, so on a laptop
+   (and on any phone, portrait or landscape) you had to scroll a dialog to reach the button that
+   submits it. Nothing about a dialog says "scroll me", so it read as broken.
+   Two things were wrong and both are fixed here:
+     - the quoted card was sized by `.modal .quoted{max-height:46vh}` (further up this file), which
+       beats `.cmp-ctx .quoted{max-height:230px}` on SOURCE ORDER at equal specificity — so the
+       documented 230px cap, and the ≤820px 190px one, had never applied inside the composer at
+       all. 46vh of a 900px screen is a 414px reference card sitting above an empty text box.
+     - the sheet was one scroll box, so any overflow came off the end you need.
+   The sheet is now a flex column in which only the two REFERENCE panes give up space: the quoted
+   card shrinks first and hardest (it is something you look at, not type in) and scrolls inside its
+   own border; the textarea shrinks next, to a floor that is still writable. Title, tabs, tools and
+   actions are flex:none and therefore always on screen. Measured by scripts/check_quote_modal.py —
+   which fails on the pre-fix stylesheet at every phone size and in a short desktop window. */
+.modal.cmp-modal{display:flex;flex-direction:column}
+.cmp-modal > *{flex:0 0 auto}
+/* min-height:0 is what lets a flex item go below its content height at all; without it the column
+   is exactly as tall as its contents and nothing above it shrinks. */
+.cmp-modal .cmp-ctx{display:flex;flex-direction:column;flex:0 3 auto;min-height:0}
+/* The floor is deliberately at the natural height of a ONE-LINE quote: a min-height binds in
+   ordinary layout too, not only under shrink, so a taller one would pad every short quote out with
+   dead space — the same complaint from the other direction (check_quote_modal.py asserts it). */
+.cmp-modal .cmp-ctx .quoted{flex:0 1 auto;min-height:72px;max-height:230px}
+/* `height`, not a flex-basis LENGTH: same 220px preferred size, but the resize grip still works —
+   a basis length wins over the inline height a drag writes, and silently freezes it. */
+.modal.cmp-modal #cmp{flex:1 1 auto;height:220px;min-height:96px}
+.modal.cmp-modal #cmp-preview{flex:1 1 auto;min-height:96px;overflow:auto}
+/* A phone in LANDSCAPE, or a short desktop window, has less height than those floors add up to.
+   Tighten the fixed chrome rather than let the sheet start scrolling off the bottom again. */
+@media (max-height:600px){
+  .cmp-modal h3{font-size:17px;margin-bottom:6px}
+  .cmp-modal .cmp-ctx{margin-bottom:6px}
+  .cmp-modal .cmp-ctx .quoted{min-height:44px;padding:6px 10px}
+  .modal.cmp-modal #cmp{height:120px;min-height:64px}
+  .modal.cmp-modal #cmp-preview{min-height:64px}
+  .cmp-modal .cmp-tools{margin-bottom:4px}
+  .cmp-modal .cmp-tools .cmp-ico{width:38px;height:38px;font-size:19px}
+  .cmp-modal .cmp-actions{margin-top:6px}
+}
 /* YouTube inline embed (click the thumbnail facade to load the player) */
 .yt-embed{position:relative;display:block;max-width:480px;width:100%;margin-top:8px;cursor:pointer;border-radius:12px;overflow:hidden;border:1px solid var(--line)}
 .yt-thumb{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}
