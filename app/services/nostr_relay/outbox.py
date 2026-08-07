@@ -54,6 +54,7 @@ class Outbox:
         self._sent = 0
         self._acks = 0
         self._targets = 0
+        self._no_targets = 0   # events dequeued while EVERY upstream was paused (nothing sent)
         self._failed = 0
         self._gave_up = 0
         self._last_at = 0.0
@@ -87,20 +88,38 @@ class Outbox:
             # Re-read self.upstream each event so a live upstream change (reload-upstream retargets
             # outbox.upstream in place) takes effect without restarting the worker — otherwise the
             # miss-set / retry path would keep hitting the OLD relay set.
-            targets = _relay.normalize_relays(self.upstream)
+            # SENDABLE targets, not every configured relay. A relay the breaker has paused (dead, or
+            # refusing our writes with pow:/blocked:/restricted:) can never ack, so counting it here
+            # made it a permanent miss: retried twice per event forever — which is what pinned
+            # `retrying` at its 50-task cap, and the drain only spawns a retry while UNDER that cap,
+            # so REAL misses silently stopped being retried at all. It also dragged the delivery rate
+            # down to a figure describing our own circuit breaker rather than the network.
+            targets = _relay.publishable(self.upstream)
             try:
-                accepted = await _relay.publish_to(self.upstream, ev, direct=self.direct)
-                logger.info("[nostr-relay] outbox: %s → %d/%d relays (queue=%d)",
-                            ev.get("id", "")[:12], len(accepted), len(targets), self._q.qsize())
-                misses = set(targets) - accepted
-                self._sent += 1
-                self._acks += len(accepted)
-                self._targets += len(targets)
-                self._last_at = time.time()
-                if misses and self.retries > 0 and len(self._retry_tasks) < self._max_inflight_retries:
-                    t = asyncio.create_task(self._retry_misses(ev, misses))
-                    self._retry_tasks.add(t)
-                    t.add_done_callback(self._retry_tasks.discard)
+                if not targets:
+                    # Every upstream is paused. Deliberately NOT `continue`: the pacing sleep is at
+                    # the bottom of this loop, so skipping it would spin the drain through the whole
+                    # queue at full speed, burning every event with nothing sent and nothing said
+                    # per event. Count it, say it occasionally, and keep the same cadence.
+                    self._no_targets += 1
+                    if self._no_targets % 50 == 1:
+                        logger.warning("[nostr-relay] %s: every upstream relay is paused — %d event(s) "
+                                       "not sent", self.label, self._no_targets)
+                else:
+                    accepted = await _relay.publish_to(targets, ev, direct=self.direct)
+                    skipped = len(_relay.normalize_relays(self.upstream)) - len(targets)
+                    logger.info("[nostr-relay] outbox: %s → %d/%d relays%s (queue=%d)",
+                                ev.get("id", "")[:12], len(accepted), len(targets),
+                                f" ({skipped} paused)" if skipped else "", self._q.qsize())
+                    misses = set(targets) - accepted
+                    self._sent += 1
+                    self._acks += len(accepted)
+                    self._targets += len(targets)
+                    self._last_at = time.time()
+                    if misses and self.retries > 0 and len(self._retry_tasks) < self._max_inflight_retries:
+                        t = asyncio.create_task(self._retry_misses(ev, misses))
+                        self._retry_tasks.add(t)
+                        t.add_done_callback(self._retry_tasks.discard)
             except Exception as e:
                 self._failed += 1
                 logger.warning("[nostr-relay] outbox publish failed: %s", e)
@@ -117,6 +136,13 @@ class Outbox:
         eid = ev.get("id", "")[:12]
         for attempt in range(1, self.retries + 1):
             await asyncio.sleep(self.retry_delay)
+            # Re-filter every attempt. A relay can start refusing BETWEEN the first publish and a
+            # retry — a `pow:`/`blocked:` answer to some other event is what usually trips it — and
+            # a miss set frozen at send time would keep dialling it for the full retry schedule,
+            # which is the waste the breaker exists to stop.
+            remaining = set(_relay.publishable(list(remaining)))
+            if not remaining:
+                return
             # Paced behind the gate so concurrent retry tasks don't blast a recovering relay.
             async with self._retry_gate:
                 ok = await _relay.publish_to(list(remaining), ev, direct=self.direct)
@@ -141,6 +167,13 @@ class Outbox:
             "queued": self._q.qsize(),
             "max": self._q.maxsize,
             "relays": len(_relay.normalize_relays(self.upstream)),
+            # How many of those we are NOT currently sending to (dead, or refusing our writes).
+            # Without this the delivery rate is unreadable: "60%" means something very different
+            # when a third of the list is a relay that has told us in words it will never take our
+            # events. It is a LIVE depth like `queued`, not a lifetime counter.
+            "paused": max(0, len(_relay.normalize_relays(self.upstream))
+                          - len(_relay.publishable(self.upstream))),
+            "not_sent": self._no_targets,   # dequeued with every upstream paused
             "sent": self._sent,
             "acks": self._acks,          # (relay, event) pairs accepted on the first attempt…
             "targets": self._targets,    # …out of this many attempted — a rate, not all-or-nothing

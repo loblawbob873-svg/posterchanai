@@ -276,7 +276,13 @@
           <span class="${(q.gave_up|0)?'st-bad':''}"
             title="Sent, but some relays still had not accepted after the last retry">unaccepted
             somewhere <b>${nf(q.gave_up)}</b></span>
-          <span>${nf(q.relays)} target relay${(q.relays|0)===1?'':'s'}</span>
+          <!-- "24 target relays" alone made the delivery figure unreadable: it means one thing when
+               every relay can accept and quite another when several have told us in words that they
+               never will (proof-of-work we don't do, a country block, a paid tier). Those are not
+               sent to at all, so they are named here rather than silently dragging the rate down. -->
+          <span title="Relays currently skipped: unreachable, or refusing our events (proof-of-work, blocked or paid-only). They are not sent to, so they do not count against the delivery rate.">
+            ${nf((q.relays|0)-(q.paused|0))} target relay${((q.relays|0)-(q.paused|0))===1?'':'s'}${(q.paused|0)?` · <b>${nf(q.paused)}</b> paused`:''}</span>
+          ${(q.not_sent|0)?`<span class="st-bad" title="Dequeued while EVERY upstream relay was paused — nothing was sent for these">not sent <b>${nf(q.not_sent)}</b></span>`:''}
           <span>last send ${enc(ago(q.last_at))}</span>
         </div>
       </div>`;

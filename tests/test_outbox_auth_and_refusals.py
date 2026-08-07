@@ -311,3 +311,90 @@ def test_the_classifier_is_case_and_whitespace_tolerant():
     assert not R._refusal_is_permanent("error: could not connect to the database")
     assert not R._refusal_is_permanent("")
     assert not R._refusal_is_permanent("duplicate: have this event")
+
+
+def test_publishable_drops_relays_that_will_never_take_our_events(monkeypatch):
+    """The incomplete half of the first fix, and the one the production numbers exposed.
+
+    Pausing a relay stopped the network cost and nothing else: it stayed in the outbox's TARGET
+    list, so it could never ack, so it read as a MISS on every event — retried twice each time,
+    which pinned the retry pool at its 50-task cap. The drain only spawns a retry while UNDER that
+    cap, so genuine misses silently stopped being retried at all, and the delivery rate became a
+    description of our own circuit breaker (60%) rather than of the network.
+
+    Measured on the live node before this: 5 paused relays appeared in 243 of 243 give-ups.
+    """
+    monkeypatch.setattr(R, "_is_local", lambda url: False)
+    good, dead, refusing = "wss://a.example/", "wss://b.example/", "wss://c.example/"
+    R._relay_paused_until[dead] = __import__("time").time() + 600
+    R._relay_refuse_until[refusing] = __import__("time").time() + 600
+    try:
+        out = R.publishable([good, dead, refusing])
+        assert out == [good], f"paused/refusing relays are still targets: {out}"
+    finally:
+        R._relay_paused_until.pop(dead, None)
+        R._relay_refuse_until.pop(refusing, None)
+
+
+def test_publishable_never_drops_the_local_relay(monkeypatch):
+    """Our own relay is exempt from the breaker everywhere else; the target filter must agree, or a
+    single local hiccup would stop this node publishing its own users' writes to itself."""
+    monkeypatch.setattr(R, "_is_local", lambda url: url.startswith("ws://127."))
+    local = "ws://127.0.0.1:3052"
+    R._relay_paused_until[local] = __import__("time").time() + 600
+    try:
+        assert R.publishable([local]) == [local]
+    finally:
+        R._relay_paused_until.pop(local, None)
+
+
+def test_a_relay_that_never_answers_costs_the_bounded_wait_not_the_whole_budget():
+    """relay.wellorder.net: accepts the socket, takes the event, and never sends an OK — ever.
+
+    The drain waits for the LAST relay before starting the next event, so this one set the pace for
+    all 24 at the full publish timeout, and under that pressure the outer timeout began firing on
+    relays that WOULD have answered (nos.lol's `pow:` verdict never arrived, so the breaker could
+    not learn it; auth.nostr1.com's NIP-42 round trip was cut off 163 times out of 243).
+
+    Every real relay measured answered within 1.9s, so the silence is bounded at _OK_WAIT and the
+    event is treated as sent — the same optimistic outcome as before, reached sooner.
+    """
+    import time as _t
+
+    class Silent(Relay):
+        async def _handle(self, ws):
+            async for _ in ws:
+                pass   # takes the event, says nothing — forever
+
+    async def go():
+        async with Silent("silent") as srv:
+            _clear(srv.url)
+            try:
+                t0 = _t.monotonic()
+                ok = await R._publish_one(srv.url, _ev(), direct=True)
+                return ok, _t.monotonic() - t0
+            finally:
+                _clear(srv.url)
+
+    ok, secs = _run(go())
+    assert ok is True, "a relay that never answers is still assumed to have taken the event"
+    assert secs < R._PUBLISH_TIMEOUT, (
+        f"took {secs:.1f}s — the whole publish budget, which is what let one silent relay pace all 24")
+    assert secs < R._OK_WAIT + 2, f"took {secs:.1f}s, expected ~{R._OK_WAIT}s"
+
+
+def test_the_auth_round_trip_fits_inside_the_publish_budget():
+    """The invariant that actually explains the production failure, rather than a tuning opinion.
+
+    A NIP-42 publish is two round trips inside ONE _PUBLISH_TIMEOUT: connect, wait for the
+    challenge, sign, re-send the event, wait for the verdict. That is 2 x _OK_WAIT plus connect. If
+    it does not fit, the outer wait_for cuts the handshake off mid-flight — and because that
+    wait_for lives outside _publish_one, it is swallowed by gather(return_exceptions=True) and
+    logged nowhere. Which is exactly what happened: auth.nostr1.com missed 163 of 243 events with
+    ZERO errors in the journal, so a working handshake looked like a broken one.
+
+    Connect measured at up to 3.3s through the proxy on this node, hence the 4s of headroom.
+    """
+    assert 2 * R._OK_WAIT + 4 <= R._PUBLISH_TIMEOUT, (
+        f"_OK_WAIT={R._OK_WAIT}s x2 + connect does not fit in _PUBLISH_TIMEOUT={R._PUBLISH_TIMEOUT}s "
+        "— the NIP-42 round trip will be cut off, silently")

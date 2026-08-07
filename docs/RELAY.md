@@ -160,21 +160,44 @@ client before signing, and at 28 bits that is **~7 minutes of pegged CPU per not
 sha256/sec on one native core; 2²⁸ hashes on average). 20 bits would be 1.7s; nobody asking for 28
 is reachable.
 
+#### A paused relay is not a target
+A relay the breaker has paused is **excluded from the target set** (`relay.publishable()`), not
+merely skipped when dialled. That distinction cost all three of the outbox's numbers at once when it
+was missing: a paused relay left in the list is counted as a target, can never ack, and so reads as a
+**miss** on every event — retried twice each time, which pinned `retrying` at its 50-task cap. The
+drain only spawns a retry while *under* that cap, so genuine misses silently stopped being retried at
+all, and the delivery rate fell to a number describing our own circuit breaker rather than the
+network. Measured before the fix: 5 paused relays appeared in 243 of 243 give-ups.
+
+Stats therefore report `paused` alongside `relays` — a delivery rate means something different when
+a third of the list has told us in words that it will never accept our events.
+
+#### Timeouts, and the failure that logged nothing
+Two budgets, and the relationship between them is load-bearing:
+
+- **`_OK_WAIT` (3s)** — how long one relay gets to answer with `OK`. Measured, not chosen: replaying
+  a real event to all 24 upstreams, everything that was ever going to answer did so within **1.9s**,
+  accept/duplicate/reject alike. The one relay that took 7.7s then said nothing at all, ever.
+- **`_PUBLISH_TIMEOUT` (10s)** — the whole publish to one relay, including connect (up to 3.3s
+  through the proxy here).
+
+A NIP-42 publish is **two** round trips inside that one budget — connect, wait for the challenge,
+sign, re-send, wait for the verdict — so `2 × _OK_WAIT + connect` must fit inside `_PUBLISH_TIMEOUT`.
+When it did not, the outer `wait_for` cut the handshake off mid-flight, and because that wait lives
+*outside* `_publish_one`, `gather(return_exceptions=True)` swallowed it and nothing was logged:
+`auth.nostr1.com` missed **163 of 243** events with **zero** errors in the journal, so a working
+handshake looked like a broken one, and `nos.lol`'s `pow:` verdict never arrived either — which is
+why the breaker could not learn it. Those timeouts are logged now, and
+`tests/test_outbox_auth_and_refusals.py` asserts the two budgets still fit.
+
 #### Reading the queue
-**Server Stats → Outbound queue** shows depth, lifetime `sent`, a first-attempt delivery *rate*, and
-`gave up`. A queue depth that climbs steadily means the drain is slower than the inbound write rate.
-Two known contributors, in order of size:
+**Server Stats → Outbound queue** shows depth, lifetime `sent`, a first-attempt delivery *rate*,
+`paused`, and `gave up`. A depth that climbs steadily means the drain is slower than the inbound
+write rate; the drain waits for the *last* relay before starting the next event, so the slowest
+answering relay sets the pace for all of them.
 
-1. **One slow relay sets the pace for all of them.** Each event is published to every upstream
-   concurrently, but the drain waits for the *last* answer before starting the next event, so a relay
-   that accepts the socket and never sends an `OK` costs the full publish timeout (10s) on every
-   event — the difference between ~5 events/minute and ~30.
-2. **`retrying` pinned at its cap** (50 in-flight) means the drain stops spawning retries entirely,
-   so misses go unretried and *uncounted* — `gave up` only counts retries that actually ran, and is
-   therefore a floor on what went undelivered, never the whole figure.
-
-Pausing the relays that refuse everything removes most of the retry pressure behind (2). Neither is
-a data-loss path: `dropped` (queue overflow) is the only counter that means an event never left.
+None of it is a data-loss path: `dropped` (queue overflow) is the only counter that means an event
+never left, and `not_sent` counts events dequeued while *every* upstream was paused.
 
 ### Tor proxy (proxy-first, direct fallback)
 By default the relay routes its upstream connections through the app's built-in Tor proxy (like

@@ -64,6 +64,19 @@ _FAIL_DEBOUNCE = 30      # count at most ONE failure per relay per this many sec
 #   rate-limited:  temporary by definition; the 429 path already handles the transport-level case
 #   invalid:/error: EVENT-specific, not relay-specific. One malformed event of ours would otherwise
 #                   blacklist a perfectly good relay for hours — the worst trade in this file.
+# How long to wait for ONE relay's `OK` before giving up on hearing a verdict and assuming the event
+# landed. MEASURED, not picked: replaying a real event to this node's 24 upstreams, every relay that
+# was ever going to answer did so within 1.9s — accept, duplicate and reject alike. The only one that
+# took longer took 7.7s and then said nothing at all, ever.
+#
+# It was 5s, and the cost was not the 5s. The whole publish is wrapped in _PUBLISH_TIMEOUT by
+# publish_to, and the drain waits for the LAST relay before starting the next event — so one relay
+# that never answers set the pace for all 24, and under that pressure the outer timeout began firing
+# on relays that WOULD have answered: nos.lol's `pow:` verdict never arrived, so the breaker could
+# not learn it, and auth.nostr1.com's NIP-42 round trip (challenge → sign → re-send → OK) was cut
+# off 163 times out of 243. Bounding the silence is what gives the round trip room inside the same
+# 10s budget.
+_OK_WAIT = 3
 _PERMANENT_REFUSALS = ("pow:", "blocked:", "restricted:")
 _REFUSAL_PAUSE_SEC = 21600   # 6h. These are policy decisions, not outages: re-probing every 10 minutes
                              # learns nothing and costs a connect + publish each time. Long enough to
@@ -301,7 +314,7 @@ async def _publish_one(relay: str, event: dict, direct: bool = False) -> bool:
             # broken relay cannot hold the drain open.
             for _ in range(12):
                 try:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=5)
+                    raw = await asyncio.wait_for(ws.recv(), timeout=_OK_WAIT)
                     msg = json.loads(raw)
                 except (asyncio.TimeoutError, json.JSONDecodeError):
                     return True  # event was sent; some relays don't send OK promptly
@@ -340,10 +353,24 @@ async def _publish_one(relay: str, event: dict, direct: bool = False) -> bool:
         return False
 
 
+def publishable(relays) -> list[str]:
+    """The relays a publish should actually be SENT to: the configured set minus the ones this
+    process already knows will not take it (paused after connect failures, or refusing our writes).
+
+    Exists because "we didn't send it" and "we sent it and it was refused" are different facts, and
+    conflating them cost all three of the outbox's numbers at once. A paused relay left in the target
+    list is counted as a target, never acks, and so reads as a MISS — which meant it was retried
+    twice per event forever (pinning the retry pool at its cap, so genuine misses got no retry at
+    all) and dragged the delivery rate down to a number that described our own circuit breaker rather
+    than the network. Measured on this node: 5 paused relays appearing in 243 of 243 give-ups."""
+    return [r for r in normalize_relays(relays) if _is_local(r) or not (_relay_paused(r) or _relay_refuses(r))]
+
+
 async def publish_to(relays, event: dict, direct: bool = False) -> set:
     """Publish an event to all relays; return the SET of relay URLs that accepted/received it.
 
-    Lets callers (e.g. the relay outbox) compute the misses and retry just those."""
+    Lets callers (e.g. the relay outbox) compute the misses and retry just those. Callers that
+    compute misses should take their target list from `publishable()`, not from the raw config."""
     relays = normalize_relays(relays)
     if not relays:
         return set()
@@ -351,6 +378,15 @@ async def publish_to(relays, event: dict, direct: bool = False) -> set:
         *[asyncio.wait_for(_publish_one(r, event, direct), timeout=_PUBLISH_TIMEOUT) for r in relays],
         return_exceptions=True,
     )
+    # A TIMEOUT HERE IS NOT SILENT ANY MORE. This wait_for is OUTSIDE _publish_one, so its
+    # TimeoutError is swallowed by return_exceptions and never reached the log inside — and that is
+    # how the biggest failure on this node stayed invisible: relay.wellorder.net missed 243 of 243
+    # events while logging only 64 errors, and auth.nostr1.com missed 163 while logging NONE, so the
+    # NIP-42 handshake looked broken when it was simply being cut off mid-round-trip.
+    for r, res in zip(relays, results):
+        if isinstance(res, asyncio.TimeoutError):
+            logger.warning("[nostr] publish to %s timed out after %ss (no verdict — counted as a miss)",
+                           r, _PUBLISH_TIMEOUT)
     return {r for r, ok in zip(relays, results) if ok is True}
 
 
