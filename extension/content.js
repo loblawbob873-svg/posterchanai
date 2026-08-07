@@ -344,9 +344,19 @@
 
   /* The popup drives the page through here: it has the tab, this has the fields. Both entry points
    * are the result of a click the user just made in the popup — nothing fills on its own. */
-  B.runtime.onMessage.addListener((msg) => {
+  B.runtime.onMessage.addListener((msg, sender, reply) => {
     if(!msg) return;
     if(msg.type === 'pcpw-fill'){ fill(msg.id); return; }
+    /* What is selected on the page, so "Post" in the popup can quote it. Read ONLY when the popup
+     * asks, and nothing is kept: the string goes straight back as the reply and this script holds no
+     * copy. The popup asks the TOP frame only, so a third-party iframe is never the source of what
+     * the user is about to publish under their own name. */
+    if(msg.type === 'pcpw-selection'){
+      let t = '';
+      try{ t = String(window.getSelection() || ''); }catch(_){ }
+      reply({ text: t.slice(0, 2000), title: document.title || '' });
+      return true;
+    }
     if(msg.type === 'pcpw-set-password'){
       const pw = (activeField && activeField.type === 'password') ? activeField : document.querySelector(PW_SEL);
       if(pw && msg.value){

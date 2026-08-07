@@ -31,6 +31,16 @@ body{
   flex:none; padding:6px 10px; border-radius:8px; border:1px solid rgba(140,200,255,.3);
   background:rgba(140,200,255,.1); color:inherit; font:inherit; cursor:pointer; min-height:32px;
 }
+/* The screen switcher. One row, wrapping, every button the same shape — the alternative was one tab
+   marooned in the header and three more fighting Sync and Unpair for space in the footer, which is
+   how you end up with five boxed buttons on a 380px popup and no idea which one is "where I am". */
+.nav{ display:flex; gap:6px; padding:9px 12px 0; }
+.nav .tab{ flex:1 1 auto; font-size:12.5px; padding:6px 4px; text-align:center; }
+.nav .tab.on{
+  background:rgba(140,200,255,.26); border-color:rgba(140,200,255,.55); font-weight:600;
+}
+.nav .tab:hover{ background:rgba(140,200,255,.2); }
+
 .pane{ padding:10px 12px; }
 
 input[type="search"], textarea{
@@ -141,8 +151,18 @@ textarea.input{
 
 /* The note under a control carries the reason something did or did not happen — it wraps, it is not
    a fixed height, and it must not be so dim that nobody reads the one line that explains the state. */
-#bm-note, #relay-note, #ed-note{ margin:8px 0 10px; line-height:1.45; opacity:.75; }
-#bm-note b, #relay-note b, #ed-note b{ opacity:1; }
+#bm-note, #relay-note, #ed-note, #post-note{ margin:8px 0 10px; line-height:1.45; opacity:.75; }
+#bm-note b, #relay-note b, #ed-note b, #post-note b{ opacity:1; }
+
+/* The share draft is PROSE, not a relay list. The generic textarea rule is monospace 11px with
+   `word-break:break-all` — right for a wss:// address, and unreadable for a sentence, which it
+   hyphenates mid-word. This is the one thing in the popup somebody actually writes in. */
+#post-text{
+  font:13.5px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  word-break:normal; overflow-wrap:anywhere; resize:vertical; min-height:120px;
+}
+#post-after{ margin-top:8px; }
+#post-after button{ flex:1 1 auto; }
 
 /* A hint inside a field label is prose, not a label: "ONE-TIME CODE SECRET — OTPAUTH:// OR THE RAW
    SECRET" is unreadable, and the whole point of the hint is to be read. */
@@ -153,9 +173,14 @@ textarea.input{
    content 380px inside a ~365px window, which is a horizontal scrollbar on every long panel. */
 body{ overflow-x:hidden; }
 
-/* FIVE buttons now, in a row laid out for three. `flex:1 1 0` divided 380px between them and the
-   labels stopped fitting — "Bookmarks" and "Relays" were clipped mid-word. Let the row wrap, let a
-   button be its own width, and put the version on its own line so it stops competing for space. */
+/* The footer is the OCCASIONAL half — relays, approved sites, unpair — now that the screens you
+   switch between live in the nav at the top. It was five boxed buttons in a row laid out for three,
+   wrapping onto two lines with "Bookmarks" clipped mid-word. Four quiet ones fit on one line, and
+   they read as secondary because that is what they are. */
 .bot{ flex-wrap:wrap; align-items:center; }
-.bot button{ flex:0 1 auto; padding:7px 11px; font-size:12.5px; }
+.bot button{
+  flex:1 1 auto; padding:7px 6px; font-size:12.5px; border-color:transparent;
+  background:rgba(255,255,255,.04);
+}
+.bot button:hover{ background:rgba(255,255,255,.1); border-color:rgba(140,200,255,.22); }
 .bot #ver{ flex:1 0 100%; margin-bottom:2px; }

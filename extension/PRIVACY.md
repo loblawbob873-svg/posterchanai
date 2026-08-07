@@ -25,12 +25,19 @@ In the browser's extension storage:
 
 ## What leaves your device, and where it goes
 
-Only your vault: password entries (site, username, password, TOTP secret, notes) and, if you
-switch bookmark sync on, your bookmarks. Each is **encrypted on your device before it is sent**
-and travels only to the Nostr relay(s) you configured.
+Your vault: password entries (site, username, password, TOTP secret, notes) and, if you switch
+bookmark sync on, your bookmarks. Each is **encrypted on your device before it is sent** and
+travels only to the Nostr relay(s) you configured.
 
 The relay stores ciphertext. It cannot read your entries, and neither can the developer, who
 operates no server in this path — the relay is one you name. Nobody but you holds the key.
+
+**One thing is deliberately not encrypted: a note you choose to post.** The popup's **Post** screen
+publishes an ordinary public Nostr note containing exactly the text shown in the box before you press
+the button — by default the current page's title, its address, and anything you had selected on it,
+all editable first. It is public by design: that is what posting means. Nothing is sent until you
+press **Post to Nostr**, nothing is drafted unless you open that screen, and no page you merely visit
+is ever posted or recorded.
 
 ## What the extension never does
 
@@ -38,7 +45,9 @@ operates no server in this path — the relay is one you name. Nobody but you ho
 - It makes **no** third-party requests of any kind — no analytics, no fonts, no favicon lookups,
   no crash reporting.
 - It does **not** transmit the content of pages you visit. The content script reads form fields on
-  your device in order to fill them, and that data stays there.
+  your device in order to fill them, and that data stays there. The one exception is what you put in
+  a note yourself and publish with the **Post** button, described above — the current page's title,
+  address and your own selection, shown to you and editable before it is sent.
 - It does **not** read your clipboard. It only writes to it, when you ask it to copy a password.
 - It does **not** execute remote code. Everything it runs ships inside the package.
 - It does **not** sell or transfer your data, use it for anything unrelated to being a password

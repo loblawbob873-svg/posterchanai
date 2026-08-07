@@ -9,8 +9,18 @@
 <header class="top">
   <b>PosterChan</b>
   <span id="status" class="muted"></span>
-  <button id="tab-gen" class="tab" title="Password generator">Generate</button>
 </header>
+
+<!-- The screens you switch between, on one row, instead of one tab in the header and the rest
+     competing with Sync and Unpair in the footer. The footer keeps what you press once in a while
+     (relays, approved sites, unpair); this keeps what you came here to do. Hidden until paired —
+     there is nothing to switch to before that. -->
+<nav id="nav" class="nav hidden">
+  <button class="tab" id="tab-list" data-pane="pane-list">Logins</button>
+  <button class="tab" id="tab-post" data-pane="pane-post" title="Post this page to Nostr">Post</button>
+  <button class="tab" id="tab-gen" data-pane="pane-gen" title="Password generator">Generate</button>
+  <button class="tab" id="bm-tab" data-pane="pane-bm">Bookmarks</button>
+</nav>
 
 <!-- Not paired -->
 <section id="pane-pair" class="pane hidden">
@@ -27,6 +37,19 @@
 <section id="pane-list" class="pane hidden">
   <input id="q" type="search" placeholder="Search…" autocomplete="off">
   <div id="list"></div>
+</section>
+
+<!-- Post this page to Nostr. The same signing key the NIP-07 signer lends to websites, used by the
+     extension itself: the draft is the page's title, whatever you had selected, and its address, all
+     editable before anything is published. A read-only pairing has no signing key, so the pane says
+     that instead of failing at the button. -->
+<section id="pane-post" class="pane hidden">
+  <textarea id="post-text" rows="7" placeholder="Say something about this page…"></textarea>
+  <div id="post-note" class="muted small"></div>
+  <button id="post-go" class="primary">Post to Nostr</button>
+  <div class="row hidden" id="post-after">
+    <button id="post-copy">Copy link to it</button>
+  </div>
 </section>
 
 <!-- Generator -->
@@ -98,10 +121,9 @@
 
 <footer class="bot">
   <span id="ver" class="muted small"></span>
-  <button id="sites-tab">Sites</button>
-  <button id="bm-tab">Bookmarks</button>
-  <button id="relay-tab">Relays</button>
   <button id="sync">Sync</button>
+  <button id="relay-tab">Relays</button>
+  <button id="sites-tab">Sites</button>
   <button id="unpair" class="danger">Unpair</button>
 </footer>
 

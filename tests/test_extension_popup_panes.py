@@ -38,6 +38,9 @@ except ImportError:
 
 # tab button id -> the pane it must reveal
 TABS = {
+    "tab-list": "pane-list",
+    "tab-post": "pane-post",
+    "tab-gen": "pane-gen",
     "sites-tab": "pane-sites",
     "bm-tab": "pane-bm",
     "relay-tab": "pane-relays",
@@ -147,6 +150,9 @@ def test_every_tab_reveals_its_pane():
                   document.getElementById('relay-tab').click();
                   document.getElementById('relay-list').value = 'wss://relay.poster.place';
                   document.getElementById('relay-save').click();
+                  document.getElementById('tab-post').click();
+                  await new Promise(r => setTimeout(r, 300));
+                  document.getElementById('post-go').click();
                   await new Promise(r => setTimeout(r, 400));
                   return window.__sent;
                 })()''', "returnByValue": True, "awaitPromise": True})
@@ -168,6 +174,11 @@ def test_every_tab_reveals_its_pane():
             f"does nothing (messages seen: {sent})")
         assert "relays-set" in sent, (
             f"saving relays did not message the background (messages seen: {sent})")
+        # The share pane has to compose a draft on its own — an empty box refuses to post, so a Post
+        # button that sends nothing means the draft never got built from the tab.
+        assert "share-post" in sent, (
+            "pressing Post sent nothing to the background: either the button is unwired or the draft "
+            f"came out empty (messages seen: {sent})")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

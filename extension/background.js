@@ -425,6 +425,135 @@ async function flushOutbox(){
   if(left.length !== outbox.length) await B.storage.local.set({ outbox: left });
 }
 
+/* ================================================================ share this page
+ *
+ * A full pairing already holds the signing key — the same key the NIP-07 signer lends to websites —
+ * so the browser can post the page you are looking at as an ordinary kind-1 note, with no site, no
+ * app and no copy-pasting a URL into a client.
+ *
+ * THE APPROVAL IS THE BUTTON. Everything in the signer section asks per origin and per kind, because
+ * there a WEBSITE is asking. Here the request comes from the extension's own popup, which a page
+ * cannot open and cannot message — so the guard that matters is `_fromPopup` on the message, not a
+ * prompt. Without it any page could post as the user, silently, which is strictly worse than
+ * anything the signer can do.
+ *
+ * READ-ONLY PAIRING CANNOT POST, and says so. It holds no signing key at all; queuing the note in the
+ * vault's outbox would be wrong for the same reason a bookmark is not queued there — that queue is
+ * drained by the app publishing VAULT items, and it has never heard of a note.
+ */
+
+/* Where a note goes, which is NOT where the vault syncs.
+ *
+ * relayUrls() deliberately narrows to ONE relay by default: the vault is a private document, the
+ * pairing code routinely carries several URLs for the same server, and syncing a replaceable document
+ * to two of them made a delete reappear. A public note is the opposite case in every respect — it is
+ * append-only, it cannot be resurrected, and a note that reached one relay reached nobody but its
+ * author. So a post goes to every relay the pairing knows about as well, deduped, capped, and the
+ * count is reported honestly rather than assumed.
+ */
+function postRelayUrls(){
+  const out = relayUrls().slice();
+  for(const u of _uniqRelays([...((cfg && cfg.relays) || []), (cfg && cfg.relay) || '']))
+    if(!out.includes(u)) out.push(u);
+  return out.slice(0, 8);
+}
+
+/* One socket per relay, opened for this post and closed after it.
+ *
+ * The vault's publishAndWait resolves on the FIRST OK from any relay, which is right for "is my
+ * password stored" and useless here: "posted" and "posted to one of five relays, four of which
+ * refused you" are different facts, and only a per-relay accounting can tell them apart. A private
+ * socket also cannot disturb the vault's subscription — an OK for this event will not be swallowed by
+ * okWaiters, and a relay that closes on us takes nothing else down with it. A share is one click, not
+ * a loop, so the cost of the extra sockets is paid once and knowingly. */
+function _publishTo(url, ev, ms){
+  return new Promise((resolve) => {
+    let sock = null, done = false, timer = null;
+    const finish = (ok, why) => {
+      if(done) return;
+      done = true;
+      clearTimeout(timer);
+      try{ if(sock){ sock.onopen = sock.onmessage = sock.onerror = sock.onclose = null; sock.close(); } }catch(_){ }
+      resolve({ url, ok: !!ok, why: why || '' });
+    };
+    timer = setTimeout(() => finish(false, 'timed out'), ms || 8000);
+    try{ sock = new WebSocket(url); }catch(_){ return finish(false, 'could not connect'); }
+    sock.onopen = () => { try{ sock.send(JSON.stringify(['EVENT', ev])); }
+                          catch(_){ finish(false, 'could not send'); } };
+    sock.onmessage = (e) => {
+      let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
+      /* The relay's OWN words on a refusal. "blocked: not in the web of trust" or "rate-limited" is
+       * the entire answer to "why did nothing happen", and replacing it with a generic message throws
+       * away the one thing the user could act on. */
+      if(m[0] === 'OK' && m[1] === ev.id) finish(m[2] === true, String(m[3] || ''));
+    };
+    sock.onerror = () => finish(false, 'could not connect');
+    sock.onclose = () => finish(false, 'the relay closed the connection');
+  });
+}
+
+async function broadcast(ev){
+  const urls = postRelayUrls();
+  const res = await Promise.all(urls.map(u => _publishTo(u, ev)));
+  const okd = res.filter(r => r.ok);
+  const bad = res.find(r => !r.ok && r.why);
+  return { accepted: okd.length, tried: urls.length, why: bad ? bad.why : '',
+           // The relays that TOOK it, for the nevent — pointing a reader at one that refused it is
+           // pointing them at nothing.
+           urls: (okd.length ? okd : res).map(r => r.url) };
+}
+
+// A page address, or nothing. `about:`, `file:` and `moz-extension:` are not things to tag a public
+// note with — the first two say nothing to anyone else and the third leaks the per-install UUID.
+function _pageUrl(u){
+  try{ const x = new URL(String(u || '')); return /^https?:$/.test(x.protocol) ? x.href : ''; }
+  catch(_){ return ''; }
+}
+
+/* What makes it a SHARE rather than a wall of text.
+ *
+ * `r` is the page itself, which is how a client knows to show a preview and how the note is findable
+ * by URL at all. `t` is one per hashtag actually typed — a hashtag that exists only inside the content
+ * is invisible to every hashtag feed there is, which reads as "my post didn't show up". */
+function _shareTags(content, url){
+  const tags = [];
+  const u = _pageUrl(url);
+  if(u) tags.push(['r', u]);
+  const seen = new Set();
+  const re = /(?:^|\s)#([\p{L}\p{N}_-]{1,64})/gu;
+  let m;
+  while((m = re.exec(String(content || '')))){
+    const t = m[1].toLowerCase();
+    if(seen.has(t) || seen.size >= 20) continue;
+    seen.add(t);
+    tags.push(['t', t]);
+  }
+  return tags;
+}
+
+async function sharePost(msg){
+  if(!cfg || !key) return { ok:false, error:'PosterChan Passwords is not paired' };
+  if(!(cfg.mode === 'full' && cfg.sk))
+    return { ok:false, error:'this browser is paired READ-ONLY, so it has no signing key and cannot ' +
+                            'post. Re-pair with full access from PosterChan → Passwords → Pair a device.' };
+  const content = String((msg && msg.text) || '').replace(/\s+$/, '').slice(0, 8000);
+  if(!content.trim()) return { ok:false, error:'there is nothing to post' };
+  let ev;
+  try{ ev = finalize({ kind: 1, created_at: Math.floor(Date.now()/1000), content,
+                       tags: _shareTags(content, msg && msg.url) }); }
+  catch(e){ return { ok:false, error:'could not sign it: ' + ((e && e.message) || 'bad key') }; }
+  const r = await broadcast(ev);
+  // Nothing stored anywhere is a FAILURE, said in the relay's words. Reporting "posted" here is how a
+  // note that exists nowhere gets mistaken for one that does.
+  if(!r.accepted)
+    return { ok:false, tried: r.tried,
+             error: (r.why || 'no relay accepted it') + ` (tried ${r.tried})` };
+  let nevent = '';
+  try{ nevent = NT().nip19.neventEncode({ id: ev.id, author: cfg.pubkey, relays: r.urls.slice(0, 3) }); }
+  catch(_){ }
+  return { ok:true, accepted: r.accepted, tried: r.tried, id: ev.id, nevent, why: r.why };
+}
+
 /* ================================================================ NIP-07 signing
  *
  * The extension already holds the signing key in FULL pairing mode, so it can be the signer a Nostr
@@ -805,6 +934,15 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
         }
         case 'nostr':
           return reply(await handleNostr(msg, sender));
+        /* Post the current page. THE POPUP ONLY — this signs and publishes with no per-site approval
+         * at all: the approval is the user pressing the button inside the extension's own popup.
+         * A page that could reach it would be able to post as the user silently, with none of the
+         * per-origin, per-kind consent the NIP-07 path insists on. A content script always has
+         * `sender.tab`. */
+        case 'share-post': {
+          if(!_fromPopup(sender)) return reply({ ok:false, error:'not available to a page' });
+          return reply(await sharePost(msg));
+        }
         case 'approve-answer':
           return reply(await _answerApproval(msg, sender));
         case 'nostr-perms':

@@ -25,6 +25,9 @@ const send = (msg) => B.runtime.sendMessage(msg).catch(() => null);
  * a panel that shows nothing, and nothing in the console. */
 function show(pane){
   for(const p of document.querySelectorAll('.pane')) p.classList.toggle('hidden', p.id !== pane);
+  // …and which tab you are on. A switcher that never marks the current screen is a switcher you
+  // press twice to find out where you were.
+  for(const b of document.querySelectorAll('.nav .tab')) b.classList.toggle('on', b.dataset.pane === pane);
 }
 
 /* The build, in the footer.
@@ -52,7 +55,12 @@ async function boot(){
     tabUrl = (tabs && tabs[0] && tabs[0].url) || '';
   }catch(_){ }
   const st = await send({ type:'state' });
-  if(!st || !st.paired){ show('pane-pair'); $('#status').textContent = ''; return; }
+  const nav = $('#nav');
+  if(!st || !st.paired){
+    if(nav) nav.classList.add('hidden');        // nothing to switch to before there is a vault
+    show('pane-pair'); $('#status').textContent = ''; return;
+  }
+  if(nav) nav.classList.remove('hidden');
   vaultCount = st.count || 0;
   $('#status').textContent = `${st.count} · ${st.status}${st.mode === 'ro' ? ' · read-only' : ''}`;
   _mode = st.mode; _bmOn = !!st.bmOn; _bmCount = st.bmCount || 0; _bmPending = st.bmPending || 0;
@@ -224,10 +232,28 @@ function bindGen(){
 // ---------------------------------------------------------------- wiring
 
 $('#q').oninput = render;
-$('#tab-gen').onclick = () => {
-  const on = !$('#pane-gen').classList.contains('hidden');
-  if(on){ boot(); } else { show('pane-gen'); drawGen(); }
+
+/* ONE handler for the whole switcher, driven by `data-pane` in the HTML.
+ *
+ * Every tab used to be its own listener, and the one in the header TOGGLED — pressing Generate a
+ * second time went back to the list — so "which screen am I on" had two different answers depending
+ * on which button you pressed. Adding a tab meant remembering to add a listener as well, and the
+ * failure when you forgot was a button that visibly does nothing. A tab is now a line of HTML; the
+ * only thing a pane may add is a hook to run when it opens. */
+const PANE_OPEN = {
+  'pane-list': () => paint(),
+  'pane-gen': () => drawGen(),
+  'pane-bm': () => paintBm(),
+  'pane-post': () => preparePost(),
 };
+for(const b of document.querySelectorAll('.nav .tab')){
+  b.onclick = () => {
+    const pane = b.dataset.pane;
+    show(pane);
+    const open = PANE_OPEN[pane];
+    if(open) open();
+  };
+}
 $('#pair-go').onclick = async () => {
   const r = await send({ type:'pair', code: $('#pair-code').value });
   if(r && r.ok){ $('#pair-err').textContent = ''; boot(); }
@@ -327,7 +353,8 @@ function paintBm(){
        sides and deletes nothing.${ro ? ' This pairing is read-only, so it can receive but not send.' : ''}`;
 }
 
-{ const t = $('#bm-tab'); if(t) t.onclick = () => { show('pane-bm'); paintBm(); }; }
+/* (No listener for #bm-tab here — it is a `data-pane` button in the nav like every other screen, and
+ * a second onclick assigned down here would silently replace the one the switcher wired.) */
 { const b = $('#bm-on');
   if(b) b.onchange = async () => {
     b.disabled = true;
@@ -375,6 +402,115 @@ function paintBm(){
     // the single authority on that label — it shows "Merge now", or re-arms "Delete N everywhere" if a
     // bulk delete is still pending — so the button is never left stuck and the confirm is never lost.
     setTimeout(() => { b.disabled = false; paintBm(); }, 2500);
+  }; }
+
+
+/* ---- post this page to Nostr -----------------------------------------------------------------
+ * A full pairing already holds the signing key, so the browser can post the page you are on without
+ * a website, an app, or copy-pasting a URL into a client. The draft is the page's title, whatever you
+ * had selected, and its address — all of it editable, because a share nobody can edit before it goes
+ * out is a share people stop using.
+ *
+ * The two things that go wrong with a compose box in a browser-action popup, both handled here:
+ * a popup is DESTROYED the instant it loses focus (so a half-written note is saved and restored), and
+ * a note cannot be recalled (so the button will not fire twice on the same text).
+ */
+let _lastNevent = '';
+let _postedText = null;                 // the exact text last published, or null
+const POST_DRAFT = 'pcpwPostDraft';
+
+async function preparePost(){
+  const box = $('#post-text'), go = $('#post-go'), note = $('#post-note'), after = $('#post-after');
+  if(!box || !go) return;
+  if(_mode === 'ro'){
+    go.disabled = true;
+    after.classList.add('hidden');
+    note.innerHTML = '<b>This pairing is read-only,</b> so it holds no signing key and cannot post. ' +
+      'Pair again with full access from PosterChan → Passwords → Pair a device.';
+    return;
+  }
+  /* Posted, and not edited since. Switching to another tab in the popup and back is not an
+   * instruction to post again — re-arming the button here publishes the same note twice, and there
+   * is no taking one back. */
+  if(_postedText !== null && box.value === _postedText){
+    go.disabled = true; go.textContent = 'Posted';
+    after.classList.toggle('hidden', !_lastNevent);
+    return;
+  }
+  after.classList.add('hidden');
+  go.disabled = false; go.textContent = 'Post to Nostr'; note.textContent = '';
+  if(box.value.trim()) return;                 // never overwrite what is already being written
+  try{
+    const d = JSON.parse(localStorage.getItem(POST_DRAFT) || 'null');
+    if(d && d.url === tabUrl && d.text){ box.value = d.text; return; }
+  }catch(_){ }
+  box.value = await draftFor(tabUrl);
+}
+
+async function draftFor(url){
+  let title = '', sel = '';
+  try{
+    const tabs = await B.tabs.query({ active:true, currentWindow:true });
+    const tab = (tabs && tabs[0]) || {};
+    title = (tab.title || '').trim();
+    // The TOP frame only, like every other message this popup sends into a page: what a third-party
+    // ad or widget iframe has selected is not what the user is about to publish under their own name.
+    if(tab.id != null){
+      const r = await B.tabs.sendMessage(tab.id, { type:'pcpw-selection' }, { frameId: 0 });
+      sel = ((r && r.text) || '').trim().replace(/\s+/g, ' ');
+      if(!title) title = ((r && r.title) || '').trim();
+    }
+  }catch(_){ }     // no content script here (a store page, a PDF viewer) — compose it by hand
+  const quote = sel ? '“' + (sel.length > 400 ? sel.slice(0, 400) + '…' : sel) + '”' : '';
+  // Only a real web address goes in. `about:`, `file:` and the extension's own pages say nothing to
+  // anybody else; the background drops them from the `r` tag for the same reason.
+  const link = /^https?:\/\//i.test(url) ? url : '';
+  return [title, quote, link].filter(Boolean).join('\n\n');
+}
+
+{ const box = $('#post-text');
+  if(box) box.oninput = () => {
+    const go = $('#post-go');
+    _postedText = null;
+    if(go && _mode !== 'ro'){ go.disabled = false; go.textContent = 'Post to Nostr'; }
+    $('#post-after').classList.add('hidden');
+    try{ localStorage.setItem(POST_DRAFT, JSON.stringify({ url: tabUrl, text: box.value })); }catch(_){ }
+  }; }
+
+{ const b = $('#post-go');
+  if(b) b.onclick = async () => {
+    const note = $('#post-note');
+    const text = ($('#post-text').value || '').trim();
+    if(!text){ note.textContent = 'Nothing to post yet.'; return; }
+    b.disabled = true; b.textContent = 'posting…';
+    const r = await send({ type:'share-post', text, url: tabUrl });
+    if(!r || !r.ok){
+      b.disabled = false; b.textContent = 'Post to Nostr';
+      // Which relay refused it and why, in the relay's own words — and that the text is still here,
+      // because the first thing anybody does after a failed post is check whether they lost it.
+      note.innerHTML = '<b>Not posted:</b> ' + esc((r && r.error) || 'no answer from the extension') +
+                       '<br>Nothing was published, and your text is still here.';
+      return;
+    }
+    _lastNevent = r.nevent || '';
+    _postedText = $('#post-text').value;
+    try{ localStorage.removeItem(POST_DRAFT); }catch(_){ }
+    b.textContent = 'Posted';                    // stays disabled until the text changes
+    note.innerHTML = `Posted to <b>${r.accepted} of ${r.tried}</b> relay${r.tried === 1 ? '' : 's'}.` +
+      (r.accepted < r.tried && r.why ? ' One refused it: ' + esc(r.why) : '');
+    $('#post-after').classList.toggle('hidden', !_lastNevent);
+  }; }
+
+{ const b = $('#post-copy');
+  if(b) b.onclick = async () => {
+    if(!_lastNevent) return;
+    // A `nostr:` URI, not a link to somebody's web viewer: it opens in whatever client the user
+    // already uses, and it asks nothing of a third party that the rest of this extension refuses to.
+    try{
+      await navigator.clipboard.writeText('nostr:' + _lastNevent);
+      b.textContent = 'copied';
+      setTimeout(() => { b.textContent = 'Copy link to it'; }, 1500);
+    }catch(_){ $('#post-note').textContent = 'could not copy'; }
   }; }
 
 

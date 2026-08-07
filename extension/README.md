@@ -135,6 +135,29 @@ thing that can't.
 
 ---
 
+## 5. Post the page you're on
+
+Open the popup → **Post**. The draft is the page's title, anything you had **selected** on it, and its
+address — all editable before it goes anywhere. Press **Post to Nostr** and it is published as an
+ordinary note (kind 1), signed with the key this browser already holds.
+
+It is a **public, unencrypted** note — the one thing this add-on sends that isn't ciphertext, and the
+only thing it sends that you typed rather than saved. Nothing goes out until you press the button.
+
+- **Needs a full pairing.** Read-only holds no signing key, so the pane says so instead of failing at
+  the button.
+- **Goes to every relay the pairing knows**, not just the one the vault syncs on — a note that reached
+  one relay reached nobody but you. It reports *"posted to 2 of 3 relays"*, and if a relay refuses it
+  you get the relay's own words back (`blocked: not in the web of trust`, `rate-limited`).
+- `#hashtags` you type become real `t` tags, so the note turns up in hashtag feeds; the page address
+  becomes an `r` tag, so clients can show a preview.
+- **Copy link to it** puts a `nostr:nevent1…` URI on your clipboard — it opens in whatever client you
+  already use, and asks nothing of any third-party web viewer.
+- A draft survives the popup closing (a browser-action popup is destroyed the moment it loses focus),
+  and the button will not fire twice on the same text — a note cannot be recalled.
+
+---
+
 ## Releasing (maintainers)
 
 **Bump `version` in `extension/manifest.json` and push.** That is the whole release: CI builds, then
@@ -164,7 +187,7 @@ version, an expired token and a refused publish are all covered without touching
 
 ---
 
-## 5. Updating
+## 6. Updating
 
 - **Firefox, from AMO:** nothing to do. Firefox updates it in the background; **Check for Updates**
   under ⚙ at `about:addons` forces it.
