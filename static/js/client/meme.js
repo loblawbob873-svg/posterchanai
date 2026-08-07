@@ -3484,14 +3484,22 @@
             // A CHARACTER POSE animates its OWN artwork (a different-shaped clip than this layer's src),
             // so a mask painted on the old clip would no longer line up — clear it, the way effects do.
             // A pose can carry a mask: eraseParts runs on video layers too, and a pose is one.
-            if(pose){
+            // …and a TRANSPARENT result (j.alpha) has the cut-out baked into the clip's OWN alpha, so
+            // keeping the layer mask applies the erase a SECOND time. Those two are not the same shape
+            // — the clip's alpha is the erase composited with whatever transparency the picture already
+            // had, the mask is only the erase — so the second pass eats parts of the subject that the
+            // first one kept. Measured on a real project: clip alpha 59.6% transparent, mask 29.3%,
+            // agreeing on 27% of pixels, which reads as a talking layer that is chewed away at the
+            // edges and drifts as you resize it.
+            if(pose || j.alpha){
               cur.mask = '';
             }
-            // For a plain ERASED image, KEEP the mask (unlike applyMemeEffect, which resamples to a new
-            // shape): add_talk renders each frame at the source's own size (base.copy(), aspect
-            // preserved), so the still's mask still lines up under the same object-fit. Keeping it is what
-            // makes the erase SHOW — the layer becomes an ordinary masked video, previewed by a CSS mask
-            // and exported by the renderer's alphaextract, exactly like erasing a video directly.
+            // For a plain ERASED image that came back OPAQUE, KEEP the mask (unlike applyMemeEffect,
+            // which resamples to a new shape): add_talk renders each frame at the source's own size
+            // (base.copy(), aspect preserved), so the still's mask still lines up under the same
+            // object-fit. Keeping it is what makes the erase SHOW — the layer becomes an ordinary
+            // masked video, previewed by a CSS mask and exported by the renderer's alphaextract,
+            // exactly like erasing a video directly.
             if(+j.dur > 0) cur.dur = +j.dur;
             cur.name = name;
             sel = cur.id;

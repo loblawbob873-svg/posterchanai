@@ -424,3 +424,41 @@ class TestWiring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestATransparentTalkResultDropsTheLayerMask(unittest.TestCase):
+    """A talk result that came back TRANSPARENT already carries the erase in its own alpha.
+
+    add_talk keeps the source's transparency when the picture uses it, so the returned clip's alpha IS
+    the cut-out. Leaving the layer's erase mask on top of that applies it a second time — and the two
+    are not the same shape (the clip's alpha is the erase composited with whatever transparency the
+    picture already had; the mask is only the erase). Measured on a real project: clip alpha 59.6%
+    transparent, mask 29.3%, agreeing on 27% of pixels. The visible result is a talking layer chewed
+    away at the edges, which reads as "it isn't aligned" rather than as a masking bug.
+
+    A source-level assertion because this lives in a browser handler with no seam to call.
+    """
+
+    def _js(self):
+        import os
+        return open(os.path.join(os.path.dirname(__file__), "..", "static", "js",
+                                 "client", "meme.js"), encoding="utf-8").read()
+
+    def test_alpha_clears_the_mask(self):
+        import re
+        js = self._js()
+        # the branch that decides whether the talked layer keeps its erase
+        m = re.search(r"if\s*\(\s*pose\s*(\|\|[^)]*)?\)\s*\{\s*\n\s*cur\.mask\s*=\s*'';", js)
+        self.assertIsNotNone(m, "the talk handler no longer decides what to do with cur.mask")
+        cond = m.group(0)
+        self.assertIn("j.alpha", cond,
+                      "a TRANSPARENT talk result must clear cur.mask — its alpha already IS the erase, "
+                      "so keeping the mask applies the cut-out twice with two different shapes")
+
+    def test_the_voice_still_becomes_its_own_layer_for_an_alpha_clip(self):
+        """Clearing the mask must not cost the voice its layer: an alpha clip is silent by necessity
+        (audio inside a VP9-alpha WebM corrupts the alpha), so `j.alpha` has to keep driving that on
+        its own rather than through `cur.mask`, which is now empty by the time it is read."""
+        js = self._js()
+        self.assertIn("const _voiceLayer = j.alpha ||", js,
+                      "the voice-layer decision must still lead with j.alpha")
