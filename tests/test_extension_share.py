@@ -46,16 +46,11 @@ def _fn(src, name):
     # awaits, which node refuses to parse at all.
     if src[max(0, i - 6):i] == "async ":
         i -= 6
-    depth, k = 0, src.index("{", i)
-    while True:
-        if src[k] == "{":
-            depth += 1
-        elif src[k] == "}":
-            depth -= 1
-            if depth == 0:
-                break
-        k += 1
-    return src[i:k + 1]
+    # These are all TOP-LEVEL functions, so the end is the first `}` in column 0. Counting braces
+    # instead looked more general and was wrong: a `}` inside a regex character class
+    # (`[.,;:!?)\]}>]`) closed the function early and the extract went to node unbalanced, failing
+    # with a syntax error about the TEST's variables rather than anything real.
+    return src[i:src.index("\n}", i) + 2]
 
 
 def _node(script):
@@ -74,9 +69,14 @@ def test_tags_make_it_a_share_and_not_a_wall_of_text():
     become one: the note then appears in a feed nobody meant it for.
     """
     src = _src("background.js")
-    got = _node(_fn(src, "_shareTags") + _fn(src, "_pageUrl") + """
+    got = _node(_fn(src, "_shareTags") + _fn(src, "_pageUrl") + _fn(src, "_urlsIn") + """
       const out = {};
-      out.page  = _shareTags('look at this', 'https://example.com/a?b=1');
+      out.page  = _shareTags('look at this https://example.com/a?b=1', 'https://example.com/a?b=1');
+      // The address deleted from the draft, and one the user typed instead.
+      out.cut   = _shareTags('just a comment, no link', 'https://intranet.example/doc?token=SECRET');
+      out.other = _shareTags('read https://other.example/x instead',
+                             'https://intranet.example/doc?token=SECRET');
+      out.stop  = _shareTags('see https://example.com/x.', 'https://example.com/x');
       out.tags  = _shareTags('#Nostr and #nostr and #bitcoin', '');
       out.notag = _shareTags('the key of C# and https://x.example/#top', '');
       out.about = _shareTags('hi', 'about:debugging');
@@ -89,9 +89,20 @@ def test_tags_make_it_a_share_and_not_a_wall_of_text():
 
     assert got["page"] == [["r", "https://example.com/a?b=1"]], \
         "the page address is not tagged, so no client can preview it and it is unfindable by URL"
+    # The note is the whole of what the user agreed to publish. A tag naming a URL they deleted from
+    # the draft publishes it anyway — clients render `r` as a link, so an intranet address or a URL
+    # carrying a one-time token goes out on a permanent public note the user thought they had cleaned.
+    assert got["cut"] == [], f"a URL deleted from the draft was still tagged: {got['cut']}"
+    assert got["other"] == [["r", "https://other.example/x"]], \
+        f"the tag follows the tab instead of the text the user wrote: {got['other']}"
+    assert got["stop"] == [["r", "https://example.com/x"]], \
+        f"a sentence's full stop was swallowed into the tagged URL: {got['stop']}"
     assert got["tags"] == [["t", "nostr"], ["t", "bitcoin"]], \
         f"hashtags are not lowercased+deduped into t tags: {got['tags']}"
-    assert got["notag"] == [], f"a non-hashtag '#' became a tag: {got['notag']}"
+    # `C#` and a URL fragment are not hashtags. (The URL in that text IS legitimately `r`-tagged now
+    # — it is in the note — so only the `t` tags are the question here.)
+    assert [t for t in got["notag"] if t[0] == "t"] == [], \
+        f"a non-hashtag '#' became a tag: {got['notag']}"
     for scheme in ("about", "file", "ext", "js"):
         assert got[scheme] == [], (
             f"a {scheme}: address was tagged on a PUBLIC note — it says nothing to anyone else, and "
@@ -119,7 +130,8 @@ _RELAY_HARNESS = """
     close(){ }
   }
   const cfg = { relay: 'wss://paired.example', relays: ['wss://paired.example/', 'wss://second.example'] };
-  const relayUrls = () => ['wss://vault.example'];
+  let userRelays = %(user)s;
+  const relayUrls = () => userRelays.length ? userRelays : ['wss://vault.example'];
   const _uniqRelays = (list) => {
     const out = [];
     for(const u of list){ const n = String(u || '').replace(/\\/$/, ''); if(n && !out.includes(n)) out.push(n); }
@@ -128,10 +140,11 @@ _RELAY_HARNESS = """
 """
 
 
-def _relay_node(body, plan):
+def _relay_node(body, plan, user_relays=()):
     src = _src("background.js")
     code = "\n".join(_fn(src, n) for n in ("_publishTo", "broadcast", "postRelayUrls"))
-    return _node((_RELAY_HARNESS % {"code": code, "plan": json.dumps(plan)}) + """
+    return _node((_RELAY_HARNESS % {"code": code, "plan": json.dumps(plan),
+                                    "user": json.dumps(list(user_relays))}) + """
       global.WebSocket = FakeWS;
       (async () => { console.log(JSON.stringify(await (async () => { %s })())); })();
     """ % body)
@@ -151,6 +164,19 @@ def test_a_post_goes_wider_than_the_vault_syncs():
     assert len(got) == len(set(got)), f"the same relay is counted twice: {got}"
 
 
+def test_a_relay_list_the_user_typed_is_not_widened():
+    """Widening is for the DEFAULT, never for an explicit choice.
+
+    relayUrls() promises "the user's explicit choice wins", and somebody who narrows the list in the
+    Relays pane is usually removing a relay they do not want carrying their public identity. Posting
+    to it anyway is a privacy defect, not a nicety — and the Relays pane went on reporting the narrow
+    set as "in use" while the wide one was being published to.
+    """
+    got = _relay_node("return postRelayUrls();", {}, user_relays=["wss://mine.example"])
+    assert got == ["wss://mine.example"], \
+        f"a post went to relays the user deliberately removed: {got}"
+
+
 def test_the_count_is_what_relays_actually_accepted():
     got = _relay_node("return await broadcast({ id: 'abc' });", {
         "wss://vault.example": {"ok": True},
@@ -163,6 +189,24 @@ def test_the_count_is_what_relays_actually_accepted():
         "the relay's own reason for refusing was replaced with something invented"
     assert sorted(got["urls"]) == ["wss://second.example", "wss://vault.example"], (
         "the nevent points at a relay that REFUSED the note — which is pointing a reader at nothing")
+
+
+def test_a_relays_own_refusal_outranks_a_dead_socket():
+    """The first relay in the list is not the most informative one.
+
+    `res.find(r => !r.ok && r.why)` returned whichever failed FIRST in URL order, so one unreachable
+    relay at the top reported "could not connect" while the others were saying "blocked: not in the
+    web of trust" — sending the user to debug a network problem they do not have, and losing the one
+    sentence they could act on.
+    """
+    got = _relay_node("return await broadcast({ id: 'abc' });", {
+        # vault.example is not in the plan at all: its socket opens and nothing ever answers.
+        "wss://paired.example": {"ok": False, "why": "blocked: not in the web of trust"},
+        "wss://second.example": {"ok": False, "why": "blocked: not in the web of trust"},
+    })
+    assert got["accepted"] == 0 and got["failed"] == 3
+    assert got["why"] == "blocked: not in the web of trust", \
+        f"a transport error masked the relay's actual reason: {got['why']!r}"
 
 
 def test_a_relay_that_says_nothing_is_not_a_success():
@@ -220,10 +264,59 @@ def test_the_popup_has_a_post_screen_that_is_wired():
     for el in ("pane-post", "post-text", "post-go", "post-note", "post-after", "post-copy"):
         assert f'id="{el}"' in html, f"the post screen is missing #{el}"
     assert "type:'share-post'" in js, "the Post button does not message the background"
-    # A note cannot be recalled, and a browser-action popup is a live window you can click twice.
-    assert "_postedText" in js, "nothing stops the same note being published twice"
     # The nav is the only thing that reveals a pane; a tab without data-pane is a dead button.
     assert 'data-pane="pane-post"' in html, "the Post tab is not wired to its pane"
+
+
+def test_a_note_cannot_be_published_twice():
+    """Two independent ways to press Post twice, and a note cannot be recalled.
+
+    (1) The publish takes up to 8s per relay, and every other path here re-enables the button —
+    typing, or leaving the pane and coming back — so with nothing on screen saying a publish was
+    already running, pressing again was the obvious thing to do. `_posting` locks the pane.
+    (2) A browser-action popup is DESTROYED on focus loss, so an in-memory "already posted" flag is
+    no guard at all: reopen it, the identical draft is rebuilt from the same page, and the button is
+    armed again. The record of what went out has to outlive the popup.
+    """
+    js = _src("popup.js")
+    assert "_posting" in js, "nothing stops a second press while the first publish is in flight"
+    assert "box.disabled = true" in js, "the textarea stays live during a publish, which re-arms the button"
+    assert "POST_SENT" in js, "what was already published is not remembered past the popup closing"
+    assert "if(_posting) return" in js, "a guard exists but the input/prepare paths do not honour it"
+
+
+def test_the_plaintext_drafts_are_page_keyed_and_cleared_on_unpair():
+    """The one thing here the user TYPED, next to the address of the page it is about.
+
+    It lives in the popup document's localStorage, which is a different store from the
+    `B.storage.local` that unpair() wipes — so "Unpair removes everything from this device" was false
+    for exactly the plaintext item, and the next person to open the popup on that page saw it. A
+    single shared slot was also a data-loss bug: the first keystroke on any other tab destroyed a
+    long note half-written somewhere else.
+    """
+    js = _src("popup.js")
+    assert "clearPostLocal()" in js and "await send({ type:'unpair' })" in js, \
+        "Unpair does not clear the post drafts it left in localStorage"
+    assert "drafts[tabUrl]" in js, "drafts share one slot, so another page's note overwrites them"
+
+
+def test_the_generator_is_reachable_before_pairing():
+    """It always was, from the header, and moving it into a pair-gated row deleted it silently.
+
+    Generating a password for the account you are about to create is the most ordinary thing to do
+    before you have paired anything — and the Pair tab has to be there too, or opening the generator
+    on a fresh install is a one-way trip away from the box you paste the code into.
+    """
+    html = _src("popup.html")
+    nav = html[html.index('<nav'):html.index('</nav>')]
+    gen = nav[nav.index('id="tab-gen"'):]
+    gen = gen[:gen.index('>')]
+    assert "data-vault" not in gen, \
+        "the generator tab is pair-gated — a fresh install cannot reach the password generator"
+    assert 'id="tab-pair"' in nav, "there is no way back to the pairing screen from the generator"
+    for tab in ('id="tab-list"', 'id="tab-post"', 'id="bm-tab"'):
+        seg = nav[nav.index(tab):]
+        assert "data-vault" in seg[:seg.index('>')], f"{tab} is offered before there is a vault"
 
 
 def test_the_switcher_has_one_owner():

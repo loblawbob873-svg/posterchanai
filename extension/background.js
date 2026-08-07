@@ -452,6 +452,13 @@ async function flushOutbox(){
  * count is reported honestly rather than assumed.
  */
 function postRelayUrls(){
+  /* AN EXPLICIT LIST IS EXPLICIT FOR POSTING TOO. relayUrls() promises "the user's choice wins", and
+   * widening past it was a privacy bug, not a nicety: somebody who narrows to one relay in the Relays
+   * pane is usually removing a relay they do NOT want carrying their public identity, and this fanned
+   * every note out to it anyway — while that same pane went on reporting the narrow set as "in use".
+   * Widening is only for the DEFAULT, where the single relay was chosen for the vault's sake. */
+  const mine = _uniqRelays(userRelays);
+  if(mine.length) return mine;
   const out = relayUrls().slice();
   for(const u of _uniqRelays([...((cfg && cfg.relays) || []), (cfg && cfg.relay) || '']))
     if(!out.includes(u)) out.push(u);
@@ -469,12 +476,14 @@ function postRelayUrls(){
 function _publishTo(url, ev, ms){
   return new Promise((resolve) => {
     let sock = null, done = false, timer = null;
-    const finish = (ok, why) => {
+    // `said` = this came from an OK frame, i.e. the RELAY's verdict, as opposed to a socket that
+    // never got that far. broadcast() needs to tell those apart to report the useful one.
+    const finish = (ok, why, said) => {
       if(done) return;
       done = true;
       clearTimeout(timer);
       try{ if(sock){ sock.onopen = sock.onmessage = sock.onerror = sock.onclose = null; sock.close(); } }catch(_){ }
-      resolve({ url, ok: !!ok, why: why || '' });
+      resolve({ url, ok: !!ok, why: why || '', said: !!said });
     };
     timer = setTimeout(() => finish(false, 'timed out'), ms || 8000);
     try{ sock = new WebSocket(url); }catch(_){ return finish(false, 'could not connect'); }
@@ -485,7 +494,7 @@ function _publishTo(url, ev, ms){
       /* The relay's OWN words on a refusal. "blocked: not in the web of trust" or "rate-limited" is
        * the entire answer to "why did nothing happen", and replacing it with a generic message throws
        * away the one thing the user could act on. */
-      if(m[0] === 'OK' && m[1] === ev.id) finish(m[2] === true, String(m[3] || ''));
+      if(m[0] === 'OK' && m[1] === ev.id) finish(m[2] === true, String(m[3] || ''), true);
     };
     sock.onerror = () => finish(false, 'could not connect');
     sock.onclose = () => finish(false, 'the relay closed the connection');
@@ -496,8 +505,13 @@ async function broadcast(ev){
   const urls = postRelayUrls();
   const res = await Promise.all(urls.map(u => _publishTo(u, ev)));
   const okd = res.filter(r => r.ok);
-  const bad = res.find(r => !r.ok && r.why);
+  /* A RELAY'S OWN REFUSAL OUTRANKS A DEAD SOCKET, whatever order the relays are in. Taking the first
+   * failure meant one unreachable relay at the top of the list reported "could not connect" while the
+   * other two were saying "blocked: not in the web of trust" — so the user retries a network problem
+   * they do not have and never learns the actual reason. */
+  const bad = res.find(r => !r.ok && r.said && r.why) || res.find(r => !r.ok && r.why);
   return { accepted: okd.length, tried: urls.length, why: bad ? bad.why : '',
+           failed: res.length - okd.length,
            // The relays that TOOK it, for the nevent — pointing a reader at one that refused it is
            // pointing them at nothing.
            urls: (okd.length ? okd : res).map(r => r.url) };
@@ -510,14 +524,34 @@ function _pageUrl(u){
   catch(_){ return ''; }
 }
 
+// Every web address IN the note, normalised, in order. Trailing punctuation is stripped because a
+// sentence ending "…see https://example.com/x." would otherwise tag the full stop as part of the URL.
+function _urlsIn(text){
+  const out = [];
+  for(const m of String(text || '').match(/https?:\/\/[^\s<>"'`]+/gi) || []){
+    const u = _pageUrl(m.replace(/[.,;:!?)\]}>]+$/, ''));
+    if(u && !out.includes(u)) out.push(u);
+  }
+  return out.slice(0, 5);
+}
+
 /* What makes it a SHARE rather than a wall of text.
  *
  * `r` is the page itself, which is how a client knows to show a preview and how the note is findable
  * by URL at all. `t` is one per hashtag actually typed — a hashtag that exists only inside the content
- * is invisible to every hashtag feed there is, which reads as "my post didn't show up". */
+ * is invisible to every hashtag feed there is, which reads as "my post didn't show up".
+ *
+ * THE `r` TAG COMES OUT OF THE NOTE, NOT OFF THE TAB. It used to be the popup's live tab URL, which
+ * is not what the user approved: delete the address from the draft — because it is an internal wiki,
+ * or because it carries a one-time login token — and the published event still carried it in a tag,
+ * which clients render as a link. The note is the whole of what the user agreed to publish, so the
+ * tag can only name a URL the note itself contains. `url` is a HINT for which one is the subject when
+ * there are several; if it isn't in the text, it isn't in the tags. */
 function _shareTags(content, url){
   const tags = [];
-  const u = _pageUrl(url);
+  const inText = _urlsIn(content);
+  const hint = _pageUrl(url);
+  const u = (hint && inText.includes(hint)) ? hint : (inText[0] || '');
   if(u) tags.push(['r', u]);
   const seen = new Set();
   const re = /(?:^|\s)#([\p{L}\p{N}_-]{1,64})/gu;

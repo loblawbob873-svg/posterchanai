@@ -56,11 +56,27 @@ async function boot(){
   }catch(_){ }
   const st = await send({ type:'state' });
   const nav = $('#nav');
-  if(!st || !st.paired){
-    if(nav) nav.classList.add('hidden');        // nothing to switch to before there is a vault
-    show('pane-pair'); $('#status').textContent = ''; return;
+  const paired = !!(st && st.paired);
+  /* The nav stays UP when unpaired, minus the tabs that need a vault.
+   *
+   * Hiding the whole thing took the password GENERATOR down with it — it had always been reachable
+   * on the pairing screen, from the header, and generating a password for the account you are about
+   * to create is the most ordinary thing to do before you have paired anything. Moving that button
+   * into a pair-gated row deleted the feature for every fresh install, silently. */
+  if(nav){
+    nav.classList.remove('hidden');
+    // Unpaired: Pair and Generate. Paired: everything except Pair. The Pair tab is what makes the
+    // generator safe to reach before pairing — without it, opening the generator on a fresh install
+    // was a one-way trip with no way back to the box you paste the code into.
+    for(const b of nav.querySelectorAll('.tab'))
+      b.classList.toggle('hidden', paired ? b.hasAttribute('data-unpaired') : b.hasAttribute('data-vault'));
   }
-  if(nav) nav.classList.remove('hidden');
+  if(!paired){
+    // Don't yank the generator out from under someone — boot() also runs after a failed pair attempt.
+    if($('#pane-gen').classList.contains('hidden')) show('pane-pair');
+    $('#status').textContent = '';
+    return;
+  }
   vaultCount = st.count || 0;
   $('#status').textContent = `${st.count} · ${st.status}${st.mode === 'ro' ? ' · read-only' : ''}`;
   _mode = st.mode; _bmOn = !!st.bmOn; _bmCount = st.bmCount || 0; _bmPending = st.bmPending || 0;
@@ -313,6 +329,10 @@ $('#unpair').onclick = async () => {
     return;
   }
   await send({ type:'unpair' });
+  /* unpair() clears `B.storage.local`, which is NOT this page's localStorage — so the post drafts
+   * and the record of what was already published survived it, leaving the address of the page you
+   * were on and whatever you wrote about it for the next person to open this popup. */
+  clearPostLocal();
   location.reload();
 };
 
@@ -416,12 +436,34 @@ function paintBm(){
  * a note cannot be recalled (so the button will not fire twice on the same text).
  */
 let _lastNevent = '';
-let _postedText = null;                 // the exact text last published, or null
-const POST_DRAFT = 'pcpwPostDraft';
+let _posting = false;                   // a publish is in flight; nothing may re-arm the button
+const POST_DRAFT = 'pcpwPostDraft';     // { "<url>": "<text>" } — one slot per page, not one slot
+const POST_SENT = 'pcpwPosted';         // { "<url>": { text, nevent } } — what has already gone out
+
+/* Both stores are PLAINTEXT and page-keyed, so they are capped and they are cleared on Unpair.
+ *
+ * They hold the one thing in this extension the user typed rather than saved, next to the address of
+ * the page they typed it about. Unpair's promise is that nothing of yours is left on a shared
+ * machine, and a draft sitting in the popup's localStorage — a different store from the one unpair()
+ * wipes — quietly broke that. */
+function _readMap(key){
+  try{ const m = JSON.parse(localStorage.getItem(key) || 'null'); return (m && typeof m === 'object') ? m : {}; }
+  catch(_){ return {}; }
+}
+function _writeMap(key, map){
+  // Newest few pages only. A per-URL map that grows forever is a log of everywhere you have posted.
+  const keys = Object.keys(map);
+  for(const k of keys.slice(0, Math.max(0, keys.length - 8))) delete map[k];
+  try{ localStorage.setItem(key, JSON.stringify(map)); }catch(_){ }
+}
+function clearPostLocal(){
+  try{ localStorage.removeItem(POST_DRAFT); localStorage.removeItem(POST_SENT); }catch(_){ }
+}
 
 async function preparePost(){
   const box = $('#post-text'), go = $('#post-go'), note = $('#post-note'), after = $('#post-after');
   if(!box || !go) return;
+  if(_posting) return;                          // mid-publish: the button's state is not ours to touch
   if(_mode === 'ro'){
     go.disabled = true;
     after.classList.add('hidden');
@@ -429,22 +471,50 @@ async function preparePost(){
       'Pair again with full access from PosterChan → Passwords → Pair a device.';
     return;
   }
-  /* Posted, and not edited since. Switching to another tab in the popup and back is not an
-   * instruction to post again — re-arming the button here publishes the same note twice, and there
-   * is no taking one back. */
-  if(_postedText !== null && box.value === _postedText){
+  after.classList.add('hidden');
+  go.disabled = false; go.textContent = 'Post to Nostr'; note.textContent = '';
+
+  if(!box.value.trim()){
+    const drafts = _readMap(POST_DRAFT);
+    if(drafts[tabUrl]){
+      box.value = drafts[tabUrl];
+    }else{
+      /* Re-checked AFTER the await. draftFor() goes into the page for the selection, and the pane is
+       * interactive the whole time — the guard above ran before that round-trip and cannot see
+       * anything typed during it, so an unconditional assign here erased what the user was writing. */
+      const built = await draftFor(tabUrl);
+      if(!box.value.trim()) box.value = built;
+    }
+  }
+
+  /* ALREADY PUBLISHED, and remembered across the popup being destroyed — which happens on every
+   * focus loss, so an in-memory flag was no guard at all: reopen the popup, get the identical draft
+   * rebuilt from the same page, press Post, and there are two permanent copies of the same note. */
+  const sent = _readMap(POST_SENT)[tabUrl];
+  if(sent && sent.text === box.value){
+    _lastNevent = sent.nevent || '';
     go.disabled = true; go.textContent = 'Posted';
+    note.innerHTML = 'Already posted from this page. Edit the text to post again.';
     after.classList.toggle('hidden', !_lastNevent);
     return;
   }
-  after.classList.add('hidden');
-  go.disabled = false; go.textContent = 'Post to Nostr'; note.textContent = '';
-  if(box.value.trim()) return;                 // never overwrite what is already being written
-  try{
-    const d = JSON.parse(localStorage.getItem(POST_DRAFT) || 'null');
-    if(d && d.url === tabUrl && d.text){ box.value = d.text; return; }
-  }catch(_){ }
-  box.value = await draftFor(tabUrl);
+
+  // Firefox MV3 grants no host permission at install, so there is no tab URL, no title and no content
+  // script to ask for the selection: the box comes out EMPTY and the only feedback was "Nothing to
+  // post yet", which describes the symptom and hides the cause. The Logins pane already offers the
+  // grant; this is the same offer on the same terms.
+  if(!tabUrl){
+    note.innerHTML = 'This add-on can’t see which page you’re on, so it couldn’t fill anything in. ' +
+      'Firefox doesn’t grant that at install.<br><button id="post-grant" class="primary">Allow on all ' +
+      'sites</button><br>You can still write a note by hand and post it.';
+    const g = $('#post-grant');
+    if(g) g.onclick = async () => {
+      try{ await B.permissions.request({ origins:['<all_urls>'] }); }catch(_){ }
+      await boot();
+      show('pane-post');
+      preparePost();
+    };
+  }
 }
 
 async function draftFor(url){
@@ -471,19 +541,32 @@ async function draftFor(url){
 { const box = $('#post-text');
   if(box) box.oninput = () => {
     const go = $('#post-go');
-    _postedText = null;
+    if(_posting) return;                    // a publish is in flight; typing must not re-arm the button
     if(go && _mode !== 'ro'){ go.disabled = false; go.textContent = 'Post to Nostr'; }
     $('#post-after').classList.add('hidden');
-    try{ localStorage.setItem(POST_DRAFT, JSON.stringify({ url: tabUrl, text: box.value })); }catch(_){ }
+    const drafts = _readMap(POST_DRAFT);
+    // Keyed by PAGE. One shared slot meant the first keystroke on any other tab overwrote — and
+    // permanently lost — a long note half-written somewhere else.
+    if(box.value.trim()) drafts[tabUrl] = box.value; else delete drafts[tabUrl];
+    _writeMap(POST_DRAFT, drafts);
   }; }
 
 { const b = $('#post-go');
   if(b) b.onclick = async () => {
-    const note = $('#post-note');
-    const text = ($('#post-text').value || '').trim();
+    const note = $('#post-note'), box = $('#post-text');
+    const text = (box.value || '').trim();
+    if(_posting) return;
     if(!text){ note.textContent = 'Nothing to post yet.'; return; }
-    b.disabled = true; b.textContent = 'posting…';
+    /* THE WHOLE PANE LOCKS WHILE IT IS IN FLIGHT. broadcast waits up to 8s per relay, and everything
+     * else here re-enables the button — typing in the box, or leaving the tab and coming back. With
+     * nothing on screen saying a publish was already running, the second press was the obvious thing
+     * to do, and it published a second permanent copy. */
+    _posting = true;
+    b.disabled = true; b.textContent = 'posting…'; box.disabled = true;
+    note.textContent = 'Sending to your relays…';
     const r = await send({ type:'share-post', text, url: tabUrl });
+    _posting = false;
+    box.disabled = false;
     if(!r || !r.ok){
       b.disabled = false; b.textContent = 'Post to Nostr';
       // Which relay refused it and why, in the relay's own words — and that the text is still here,
@@ -493,11 +576,19 @@ async function draftFor(url){
       return;
     }
     _lastNevent = r.nevent || '';
-    _postedText = $('#post-text').value;
-    try{ localStorage.removeItem(POST_DRAFT); }catch(_){ }
+    // Remembered per page, so reopening the popup shows "Posted" instead of a rebuilt draft and an
+    // armed button. Written BEFORE the draft is dropped: if the write fails, the draft is what stops
+    // the text being lost.
+    const sent = _readMap(POST_SENT);
+    sent[tabUrl] = { text: box.value, nevent: _lastNevent };
+    _writeMap(POST_SENT, sent);
+    const drafts = _readMap(POST_DRAFT);
+    delete drafts[tabUrl];
+    _writeMap(POST_DRAFT, drafts);
     b.textContent = 'Posted';                    // stays disabled until the text changes
+    const failed = r.tried - r.accepted;
     note.innerHTML = `Posted to <b>${r.accepted} of ${r.tried}</b> relay${r.tried === 1 ? '' : 's'}.` +
-      (r.accepted < r.tried && r.why ? ' One refused it: ' + esc(r.why) : '');
+      (failed > 0 && r.why ? ` ${failed} refused it: ` + esc(r.why) : '');
     $('#post-after').classList.toggle('hidden', !_lastNevent);
   }; }
 

@@ -13,13 +13,17 @@
 
 <!-- The screens you switch between, on one row, instead of one tab in the header and the rest
      competing with Sync and Unpair in the footer. The footer keeps what you press once in a while
-     (relays, approved sites, unpair); this keeps what you came here to do. Hidden until paired —
-     there is nothing to switch to before that. -->
-<nav id="nav" class="nav hidden">
-  <button class="tab" id="tab-list" data-pane="pane-list">Logins</button>
-  <button class="tab" id="tab-post" data-pane="pane-post" title="Post this page to Nostr">Post</button>
+     (relays, approved sites, unpair); this keeps what you came here to do.
+     `data-vault` = needs a paired vault, and is the ONLY thing hidden before pairing. Generate is
+     not marked, because a password generator is exactly what you want on the screen where you are
+     about to create the account you will then pair with. -->
+<nav id="nav" class="nav">
+  <button class="tab" id="tab-pair" data-pane="pane-pair" data-unpaired>Pair</button>
+  <button class="tab" id="tab-list" data-pane="pane-list" data-vault>Logins</button>
+  <button class="tab" id="tab-post" data-pane="pane-post" data-vault
+          title="Post this page to Nostr">Post</button>
   <button class="tab" id="tab-gen" data-pane="pane-gen" title="Password generator">Generate</button>
-  <button class="tab" id="bm-tab" data-pane="pane-bm">Bookmarks</button>
+  <button class="tab" id="bm-tab" data-pane="pane-bm" data-vault>Bookmarks</button>
 </nav>
 
 <!-- Not paired -->
