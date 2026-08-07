@@ -1091,9 +1091,12 @@
     // you scrub/play (the "I have to render to see the effect" bug). preload=auto so the frame loads eagerly.
     const mk = _maskCss(l, ofit);
     const lt = _curT - l.start;
-    const inner = l.type==='video'
-      ? `<video src="${enc(l.src)}#t=0.1" muted playsinline preload="auto" style="object-fit:${ofit}${mk}${_xformCss(l, lt)}"></video>`
-      : `<img src="${enc(l.src)}" alt="" style="object-fit:${ofit}${mk}${_xformCss(l, lt)}">`;
+    const media = l.type==='video'
+      ? `<video src="${enc(l.src)}#t=0.1" muted playsinline preload="auto" style="object-fit:${ofit}"></video>`
+      : `<img src="${enc(l.src)}" alt="" style="object-fit:${ofit}">`;
+    // .mb-mk styles itself inline for the same reason .mb-fx does — see _rotCss.
+    const inner = `<i class="mb-mk" style="position:absolute;inset:0;display:block;pointer-events:none`
+                + `${mk}${_xformCss(l, lt)}">${media}</i>`;
     const fxw = `<i class="mb-fx${_fxCrops(l)?' crop':''}" style="${_rotCss(l)}">${inner}</i>`;
     return `<div class="mb-item mb-media${s}" data-id="${l.id}" style="${pos}${size}opacity:${_opacityOf(l, lt)}">${fxw}<i class="mb-h"></i></div>`;
   }
@@ -1133,14 +1136,14 @@
     // is `cover` (see .mb-tile img in client.css), NOT the layer's own fit. `_maskCss` returns '' until
     // the mask is proven loadable, so it never turns a tile into a blank hole.
     const tmk = (l.type==='image' || l.type==='video') ? _maskCss(l, 'cover') : '';
-    const tsty = tmk ? ` style="${tmk.replace(/^;/, '')}"` : '';
+    const tsty = tmk ? ` style="${tmk.replace(/^;/, '')}"` : '';   // goes on the TILE, never on its media
     const tile = l.type==='text'
       ? `<span class="mb-tile mb-tile-gl" aria-hidden="true">${ic('text')}</span>`
       : (l.type==='audio'
         ? `<span class="mb-tile mb-tile-gl mb-tile-aud" aria-hidden="true">${ic('music')}</span>`
         : l.type==='video'
-          ? `<span class="mb-tile"><video src="${enc(l.src)}#t=0.1" muted playsinline preload="metadata"${tsty}></video><i class="mb-tvid">${ic('play')}</i></span>`
-          : `<span class="mb-tile"><img src="${enc(l.src)}" alt="" loading="lazy"${tsty}></span>`);
+          ? `<span class="mb-tile"${tsty}><video src="${enc(l.src)}#t=0.1" muted playsinline preload="metadata"></video><i class="mb-tvid">${ic('play')}</i></span>`
+          : `<span class="mb-tile"${tsty}><img src="${enc(l.src)}" alt="" loading="lazy"></span>`);
     return `<div class="mb-track${l.id===sel?' sel':''}${l.type==='audio'?' mb-track-aud':''}" data-id="${l.id}">
       <div class="mb-trackname" title="${enc(name)}">
         ${/* Its OWN handle, not the whole row: the drag surface needs touch-action:none to be a drag at all
@@ -1225,12 +1228,12 @@
   // in-progress drag — the reason so many edits here deliberately repaint in place. A mask arriving is
   // exactly that kind of edit: one CSS property on one element.
   function _paintMask(url){
-    if(!_MASK_IN_PREVIEW) return;   // see _maskCss — the preview never masks, so nothing to patch in
+    if(!_MASK_IN_PREVIEW) return;   // kill-switch — see _maskCss
     P.layers.forEach(l => {
       if(l.mask !== url || l.type === 'text' || l.type === 'audio') return;
       // Descendant, not `>`: the media sits inside the .mb-fx wrapper now (see stageEl). A direct-child
       // selector silently matched nothing, which would have shown every erased layer un-erased.
-      const el = document.querySelector(`.mb-item[data-id="${l.id}"] img, .mb-item[data-id="${l.id}"] video`);
+      const el = document.querySelector(`.mb-item[data-id="${l.id}"] .mb-mk`);
       if(!el) return;
       const ofit = (l.fit === 'cover') ? 'cover' : 'contain';   // mirrors object-fit; see _maskCss
       const u = `url("${_maskSrc(l.mask)}")`;
@@ -1241,7 +1244,7 @@
       // Patch the ROW THUMBNAIL too, so a mask that arrives via the async probe (a reload, no local
       // blob yet) shows in the list without waiting for a full re-render. The tile is object-fit:cover
       // regardless of the layer's own fit, so its mask-size is always cover (see the tile in trackEl).
-      const tel = document.querySelector(`.mb-track[data-id="${l.id}"] .mb-tile > img, .mb-track[data-id="${l.id}"] .mb-tile > video`);
+      const tel = document.querySelector(`.mb-track[data-id="${l.id}"] .mb-tile`);
       if(tel){
         tel.style.webkitMaskImage = u;  tel.style.maskImage = u;
         tel.style.webkitMaskSize = 'cover'; tel.style.maskSize = 'cover';
@@ -1288,28 +1291,27 @@
       .catch(fail);
     return undefined;
   }
-  // THE PREVIEW DOES NOT PAINT THE ERASE. Deliberate, and it stays that way until there is a way to
-  // show it that cannot make a layer vanish.
+  // THE ERASE IS PREVIEWED, BUT NEVER BY MASKING THE MEDIA ELEMENT ITSELF.
   //
-  // A CSS mask does not degrade. When it resolves to anything the compositor will not use — a fetch
-  // that lost a race, a data: URI that arrived late, a mask whose fitted rect does not cover the box —
-  // the element is not drawn UN-erased, it is not drawn AT ALL. So the failure mode of this feature is
-  // "my layer disappeared", on the stage and on the timeline tile at once, and it is intermittent
-  // because it depends on whether the mask happened to be cached: a fresh load draws the layer (no
-  // mask yet), and the next repaint — adding a caption, deleting one, undo, pressing space — draws
-  // nothing. Hours of a build cycle went into chasing that as a geometry bug.
+  // `mask-image` on a <video> (or an <img>) is a mask on a REPLACED element, and that is the fragile
+  // case in both engines: when the mask resolves to anything the compositor will not use, the element
+  // is not drawn un-erased, it is not drawn AT ALL — and "usable" is re-decided on every repaint, so a
+  // mask that was fine a moment ago can lose the race on the next one. Reported as layers and their
+  // timeline thumbnails vanishing at random in Firefox AND the Electron app, cured by a hard refresh
+  // and back the moment anything re-rendered (add a caption, delete one, undo, press space).
   //
-  // The RENDER was correct throughout, and none of the render path is touched by this: the mask still
-  // travels in the payload, the server still fetches it, and alphaextract still applies it. What is
-  // given up is only that the stage shows the layer whole while the export shows it cut out — a
-  // preview that is honest about one thing and quiet about another, rather than one that erases the
-  // layer from the editor. Visible-but-un-erased beats invisible.
+  // So the mask goes on an ordinary <i> WRAPPING the media (.mb-mk on the stage, .mb-tile in the
+  // list), which is a plain box the compositor masks the same way it masks any div. The wrapper is the
+  // media's own size, so mask-size/mask-position resolve to exactly the geometry they did before.
   //
-  // To bring it back: bake the mask into the pixels instead of asking the compositor for it
-  // (_bakeErase already does exactly that for the talk picker, and cannot fail closed). That works
-  // directly for image layers; a video layer needs a per-frame canvas, which is why it was not done
-  // this way first.
-  const _MASK_IN_PREVIEW = false;
+  // It sits INSIDE .mb-fx and carries the flip + effect with it, because the renderer masks BEFORE
+  // hflip/vflip and the effect: CSS paints an element (mask included) and THEN transforms it, so mask
+  // and flip on one element is mask-then-flip, which is the renderer's order. The free rotate stays
+  // outside on .mb-fx, which is what may grow past the layer box.
+  //
+  // The kill-switch stays, one edit away, because this failure mode cost a whole evening once.
+  //
+  const _MASK_IN_PREVIEW = true;
   function _maskCss(l, ofit){
     if(!_MASK_IN_PREVIEW) return '';
     if(!l || !l.mask) return '';
@@ -2111,7 +2113,7 @@
       // place rather than via render(), like every other per-frame update here — a rebuild would
       // restart the <video>s and drop an in-progress drag.
       if(on && l.type!=='text'){
-        const m=el.querySelector('img,video');
+        const m=el.querySelector('.mb-mk');
         if(m){ const x=_xform(l, t - l.start);
           if(m.style.transform!==x){ m.style.transform=x; m.style.transformOrigin=_fxOrigin(l); } }
       }
@@ -3631,7 +3633,7 @@
     // rather than by re-rendering the board: a full re-render on every slider step would rebuild the
     // <video> elements and restart them from frame 0.
     const _paintX=()=>{ const it=root.querySelector('.mb-item[data-id="'+l.id+'"]');
-      const m=it && it.querySelector('img,video'); if(!m) return;
+      const m=it && it.querySelector('.mb-mk'); if(!m) return;
       m.style.transform=_xform(l, _curT-l.start); m.style.transformOrigin=_fxOrigin(l);
       const fw=it.querySelector('.mb-fx');
       if(fw){ fw.style.transform=(+l.rotate||0)?`rotate(${+l.rotate||0}deg)`:''; fw.style.transformOrigin='center'; } };

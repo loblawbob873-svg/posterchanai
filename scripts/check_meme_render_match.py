@@ -58,13 +58,10 @@ TOL_TEXT = 16
 # threshold instead of by shape. They are chosen to cover the ways the two sides can disagree:
 #
 #   RED    a plain `cover` layer            — the baseline: if this is out, everything is
-#   GREEN  a `contain` layer in a box of a different shape — letterbox geometry
-#
-# NO ERASE-MASK PROBE. The preview deliberately does not paint the erase (see _MASK_IN_PREVIEW in
-# meme.js): a CSS mask does not degrade, it makes the element vanish, so the stage shows a masked
-# layer WHOLE while the export shows it cut out. That is a known, chosen difference, and a probe for
-# it would fail every run — which is how a check stops being read. When the erase is previewed by
-# baking it into the pixels instead, put the probe back.
+#   GREEN  a `contain` layer in a box of a different shape, WITH AN ERASE MASK — letterbox geometry,
+#          and the mask seated by that same geometry. Two implementations of one contract: mask-size
+#          on the .mb-mk wrapper here, a second _fit_chain + alphaextract there. The mask must land in
+#          the same place on both sides AND must not be on the media element (see check_meme_mobile).
 #   BLUE   a rotated layer                  — rotw()/roth() growth vs the CSS transform
 #   ORANGE a layer with an EFFECT on it     — the per-layer FX dropdown
 #   YELLOW a one-line caption               — font, size and the ink-vs-ascent lift
@@ -110,7 +107,7 @@ EDIT = {
         {"id": "GREEN", "type": "image", "src": "SRC:GREEN", "name": "contain+erased",
          "start": 0, "dur": 4, "trim": 0, "x": 420, "y": 40, "w": 260, "h": 200,
          "fit": "contain", "opacity": 1, "effect": "none", "flipH": False, "flipV": False,
-         "rotate": 0, "align": ""},
+         "rotate": 0, "align": "", "mask": "MASK"},
         {"id": "ORANGE", "type": "image", "src": "SRC:ORANGE", "name": "fx-mirror",
          "start": 0, "dur": 4, "trim": 0, "x": 430, "y": 300, "w": 250, "h": 190,
          "fit": "cover", "opacity": 1, "effect": "flip", "flipH": False, "flipV": False,

@@ -390,15 +390,17 @@ ERASE_PROBE = r"""(async () => {
   // yet, a cross-origin block, an offline moment — showed the layer un-erased while the export was
   // perfect, and one failure latched for the whole session. Read it immediately, with no grace period:
   // waiting here would hide exactly the regression this asserts.
-  // Descendant, not `>`: the media sits inside the .mb-fx effect wrapper (see stageEl in meme.js).
-  const stageEl = document.querySelector(`.mb-item[data-id="${layer().id}"] img`);
+  // The .mb-mk WRAPPER, not the <img>: the mask is deliberately never on the media element (masking a
+  // replaced element is what made layers vanish at random on repaint). See stageEl in meme.js.
+  const stageEl = document.querySelector(`.mb-item[data-id="${layer().id}"] .mb-mk`);
   const stageMask = stageEl ? (getComputedStyle(stageEl).webkitMaskImage
                                || getComputedStyle(stageEl).maskImage || 'none') : 'none';
 
   // The LAYER-ROW THUMBNAIL must reflect the erase too — reported as "the layer preview image never
   // gets updated on erase". It is a separate render path (trackEl's .mb-tile) from the stage, so a mask
   // on the stage says nothing about the tile. Same immediacy requirement: no fetch, no grace period.
-  const tileEl = document.querySelector(`.mb-track[data-id="${layer().id}"] .mb-tile > img`);
+  // Likewise the TILE itself carries the mask, not the media inside it.
+  const tileEl = document.querySelector(`.mb-track[data-id="${layer().id}"] .mb-tile`);
   const tileMask = tileEl ? (getComputedStyle(tileEl).webkitMaskImage
                              || getComputedStyle(tileEl).maskImage || 'none') : 'none';
 
@@ -427,8 +429,8 @@ ERASE_PROBE = r"""(async () => {
 #
 # Both directions are asserted, because "never mask" would also pass a one-sided test:
 #   a mask that LOADS   must actually be applied (the erase still shows on the stage)
-#   NEITHER a loading nor a 404 mask may reach the compositor — the preview does not paint the
-#   erase at all, because a CSS mask that cannot be used hides the element instead of degrading
+#   a mask that 404s    must leave the layer drawn and un-erased (never a hole), and NO mask may ever
+#                       land on the <img>/<video> itself — see the .mb-mk wrapper
 MASK_PROBE = r"""(async () => {
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const setMask = async (url) => {
@@ -437,12 +439,17 @@ MASK_PROBE = r"""(async () => {
     localStorage.setItem('pc_meme_project', JSON.stringify(p));
     window.PCMeme.render();
     await wait(1200);                       // the probe Image() has to resolve
-    // Descendant, not `>` — the .mb-fx effect wrapper sits between them now.
-    const el = document.querySelector('.mb-item[data-id="L1"] img');
+    // The mask belongs to the .mb-mk WRAPPER, never to the media element inside it — masking a
+    // replaced element is what made layers vanish. Both are read so the test can tell them apart.
+    const el = document.querySelector('.mb-item[data-id="L1"] .mb-mk');
+    const md = document.querySelector('.mb-item[data-id="L1"] img, .mb-item[data-id="L1"] video');
     if (!el) return {err: 'the layer element is not on the stage'};
     const cs = getComputedStyle(el);
     const mi = cs.webkitMaskImage || cs.maskImage || 'none';
+    const mdcs = md ? getComputedStyle(md) : null;
+    const mdmi = mdcs ? (mdcs.webkitMaskImage || mdcs.maskImage || 'none') : 'none';
     return {maskImage: mi, hasMask: mi !== 'none' && mi !== '', display: cs.display,
+            onMedia: mdmi !== 'none' && mdmi !== '',
             w: Math.round(el.getBoundingClientRect().width)};
   };
   const good = await setMask('/static/icon-192.png');     // a real, served PNG
@@ -644,14 +651,14 @@ async def drive(url):
                 # at once, intermittently, depending on whether the mask happened to be cached. What is
                 # pinned now is the property that actually protects the user: a mask on a layer must
                 # never stop that layer being drawn.
-                if er["mask"] and er["stageMasked"]:
-                    problems.append((lbl, "erase-hides-layer",
-                                     "the stage applied a CSS mask to the layer — that is the code path "
-                                     "that makes layers vanish; the erase is shown by the RENDER only"))
-                if er["mask"] and er["tileFound"] and er["tileMasked"]:
-                    problems.append((lbl, "erase-hides-layer",
-                                     "the layer-row thumbnail applied a CSS mask — same path, same "
-                                     "vanishing tile"))
+                if er["mask"] and not er["stageMasked"]:
+                    problems.append((lbl, "erase-invisible",
+                                     "Apply saved the mask but the stage is not showing it — the erase "
+                                     "is invisible in the preview and only appears in the export"))
+                if er["mask"] and er["tileFound"] and not er["tileMasked"]:
+                    problems.append((lbl, "erase-invisible-thumb",
+                                     "Apply saved the mask but the LAYER-ROW THUMBNAIL is not showing it "
+                                     "— the list preview stays un-erased"))
                 print(f"{lbl}: mask={er['maskW']}x{er['maskH']} painted={er['painted']} "
                       f"corner={er['corner']} saved={'yes' if er['mask'] else 'NO'} "
                       f"onStage={'yes' if er['stageMasked'] else 'NO'} "
@@ -677,10 +684,19 @@ async def drive(url):
                 # (an unusable mask hides the element outright); the loading half turned out to be
                 # equally dangerous in practice, because "usable" is decided per repaint and a mask
                 # that was fine a moment ago can lose the race on the next one.
-                if mk["good"]["hasMask"] or mk["bad"]["hasMask"]:
+                if not mk["good"]["hasMask"]:
+                    problems.append(("mask", "erase-broken",
+                                     "a mask that LOADS was not applied — the erase would never show"))
+                if mk["bad"]["hasMask"]:
+                    problems.append(("mask", "erase-broken",
+                                     "a mask that 404s was still applied — an unusable mask makes the "
+                                     "element vanish rather than degrade"))
+                # THE rule this all turns on: whatever else happens, the mask must never be on the
+                # media element. That is the replaced-element case both engines drop the layer for.
+                if mk["good"]["onMedia"] or mk["bad"]["onMedia"]:
                     problems.append(("mask", "erase-hides-layer",
-                                     f"a CSS mask reached the layer (loads={mk['good']['hasMask']}, "
-                                     f"404={mk['bad']['hasMask']}) — that is the vanishing-layer path"))
+                                     "the mask was applied to the <img>/<video> itself — it belongs on "
+                                     "the .mb-mk wrapper, or layers vanish at random on repaint"))
                 # Compared against the GOOD case, not against zero: at phone width the builder is
                 # tabbed and boot opens the Layer tab, so the stage is off-screen and both widths are
                 # legitimately 0. "Same as a working mask" is the property that actually matters —
@@ -690,7 +706,8 @@ async def drive(url):
                                      f"an unreachable mask changed the layer's box "
                                      f"({mk['good']['w']}px -> {mk['bad']['w']}px)"))
                 print(f"mask: loads->applied={mk['good']['hasMask']} "
-                      f"404->applied={mk['bad']['hasMask']} (both must be False)")
+                      f"404->applied={mk['bad']['hasMask']} (must be True/False) "
+                      f"onMedia={mk['good']['onMedia']}/{mk['bad']['onMedia']} (must be False/False)")
 
             # ✂ CUT. Arithmetic, so it is checked against exact numbers rather than "it changed".
             await call("Page.navigate", {"url": url})
