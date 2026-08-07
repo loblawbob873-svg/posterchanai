@@ -1280,13 +1280,47 @@
       _maskOk[url] = false;
       try{ toast('the erase on a layer could not be loaded — showing the layer un-erased'); }catch(_){ }
     };
-    fetch(url, { cache: 'force-cache' })
-      .then(r => { if(!r.ok) throw new Error('http ' + r.status); return r.blob(); })
-      .then(b => new Promise((res, rej) => {
-        const rd = new FileReader();
-        rd.onload = () => res(rd.result); rd.onerror = () => rej(rd.error || new Error('read'));
-        rd.readAsDataURL(b);
-      }))
+    // DECODE IT, don't just transport it. This used to fetch() the bytes and hand them straight to
+    // FileReader, which produces a data: URI for whatever came back — including a response with an
+    // empty or unusable body. A mask like that does not degrade: an unusable mask-image makes the
+    // element vanish, so the layer and its timeline tile disappeared, on every repaint after the first,
+    // in both engines, and a hard refresh "fixed" it. There was nothing in the pipeline that checked
+    // the bytes were a picture.
+    //
+    // An Image() + canvas round-trip settles it. The browser's own image decoder either produces
+    // pixels or fires onerror, and re-encoding from the canvas means what lands in _maskLocal is PNG
+    // bytes this tab just wrote — it cannot be a truncated body, an error page, or an opaque response.
+    // crossOrigin so the canvas stays exportable (our Blossom sends Access-Control-Allow-Origin:*);
+    // without it toDataURL throws on a tainted canvas, which is caught below and treated as a failure,
+    // i.e. the layer draws un-erased rather than vanishing.
+    //
+    // Same technique as _bakeErase, which has never had this problem.
+    new Promise((res, rej) => {
+      const im = new Image();
+      im.crossOrigin = 'anonymous';
+      im.onload = () => {
+        if(!im.naturalWidth || !im.naturalHeight) return rej(new Error('decoded to nothing'));
+        try{
+          // DOWNSCALE for the preview copy. A mask is painted at up to MASK_EDGE (1024) and stored as
+          // a tightly-packed PNG — but canvas re-encodes LOSSLESS RGBA, so a 1024x768 mask comes back
+          // as hundreds of KB against the ~17KB it was on disk, and this string is written into a style
+          // attribute twice per layer (stage + tile) on every render. The stage is a few hundred pixels
+          // wide; 512 on the long edge is well past what it can show. Geometry is untouched — the mask
+          // keeps its aspect exactly, so mask-size contain/cover resolves to the same rectangle.
+          const k = Math.min(1, 512 / Math.max(im.naturalWidth, im.naturalHeight));
+          const c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(im.naturalWidth * k));
+          c.height = Math.max(1, Math.round(im.naturalHeight * k));
+          c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+          const d = c.toDataURL('image/png');
+          // A canvas that produced no real payload is a failure, not a mask.
+          if(!d || d.length < 64) return rej(new Error('empty re-encode'));
+          res(d);
+        }catch(e){ rej(e); }
+      };
+      im.onerror = () => rej(new Error('decode failed'));
+      im.src = url;
+    })
       .then(dataUri => { _maskLocal[url] = dataUri; _maskOk[url] = true; try{ _paintMask(url); }catch(_){ } })
       .catch(fail);
     return undefined;
@@ -1326,7 +1360,14 @@
     // be rejected by a rule written for untrusted input.
     if(!/^(https?:\/\/|\/)[^\s"'()\\<>]+$/i.test(String(l.mask))) return '';
     const src = _maskSrc(l.mask);
-    const u = `url("${src === l.mask ? enc(l.mask) : src}")`;
+    // NEVER point mask-image at the REMOTE url. Only a local copy this tab decoded itself (a data:
+    // URI re-encoded through a canvas, or a blob: from the erase that was just painted) is allowed,
+    // because a remote mask is a second network fetch the compositor makes on its own — one this code
+    // never sees fail, and a mask that fails does not degrade, it removes the element. Reaching this
+    // line with `src === l.mask` means the probe said yes without leaving a local copy, which is a
+    // contradiction; draw the layer un-erased rather than gamble the layer on it.
+    if(src === l.mask) return '';
+    const u = `url("${src}")`;
     return `;-webkit-mask-image:${u};mask-image:${u}`
          + `;-webkit-mask-size:${ofit};mask-size:${ofit}`
          + `;-webkit-mask-position:center;mask-position:center`

@@ -228,3 +228,52 @@ class EraseMask(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestThePreviewNeverTrustsAnUndecodedMask(unittest.TestCase):
+    """A CSS mask that cannot be used REMOVES the element — it does not degrade to "un-erased".
+
+    That is the whole hazard of previewing an erase, and it is why the mask the compositor is given
+    must be bytes this tab has already decoded, never a URL the compositor will go and fetch on its
+    own. A remote mask fails somewhere this code cannot observe, and the layer (and its timeline tile)
+    silently disappear on the next repaint — reported as layers vanishing whenever anything was added
+    or deleted, in Firefox and in the Electron app alike, "fixed" by a hard refresh.
+
+    Source assertions: this is browser plumbing with no seam to call.
+    """
+
+    def _js(self):
+        import os
+        return open(os.path.join(os.path.dirname(__file__), "..", "static", "js",
+                                 "client", "meme.js"), encoding="utf-8").read()
+
+    def test_the_mask_is_decoded_before_it_is_used(self):
+        js = self._js()
+        i = js.index("function _maskProbe(")
+        body = js[i:i + 4200]
+        self.assertIn("new Image()", body,
+                      "the mask must be put through the browser's image DECODER before it is trusted")
+        self.assertIn("naturalWidth", body,
+                      "a decode that produced no pixels has to count as a failure")
+        self.assertIn("toDataURL", body,
+                      "the copy handed to the compositor must be bytes this tab re-encoded, so it "
+                      "cannot be a truncated body, an error page or an opaque response")
+        self.assertNotIn("readAsDataURL", body,
+                         "FileReader transports whatever came back WITHOUT checking it is a picture — "
+                         "that is the bug: an empty body became a data: URI and the layer vanished")
+
+    def test_a_remote_url_is_never_handed_to_mask_image(self):
+        js = self._js()
+        i = js.index("function _maskCss(")
+        body = js[i:i + 2400]
+        self.assertIn("if(src === l.mask) return '';", body,
+                      "mask-image must never point at the stored REMOTE url — only at a local copy "
+                      "this tab decoded, or a failed fetch takes the layer with it")
+
+    def test_the_preview_copy_is_bounded(self):
+        """canvas re-encodes lossless RGBA, so a 1024px mask would balloon from ~17KB to hundreds of
+        KB — and it is written into a style attribute twice per layer on every render."""
+        js = self._js()
+        i = js.index("function _maskProbe(")
+        self.assertIn("512 / Math.max", js[i:i + 4200],
+                      "the re-encoded preview mask must be capped, not stored at full resolution")
