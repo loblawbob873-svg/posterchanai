@@ -21,11 +21,18 @@ license: GPL-3.0-or-later
 # The APK the workflow just built and signed (the job copies it here before publishing).
 release_source: ./posterchan.apk
 
-summary: Nostr client with AI chat, image/music/video generation and live streaming
+summary: Nostr client with a password manager, AI chat, media generation and live streaming
 description: |
   PosterChan is the Android client for a self-hosted PosterChanAI instance — a Nostr social client with a
-  built-in AI assistant.
+  built-in AI assistant and an end-to-end encrypted password manager.
 
+  - **Password manager**: logins, one-time codes (TOTP) and a password generator, with **Android autofill**
+    offering them in your other apps and browsers. Every entry is encrypted on your device — the relay
+    stores ciphertext and nothing else, so no server can read your passwords.
+  - **Password sync**: your vault follows you across devices through your own relay, with no account and no
+    third-party service in the middle.
+  - **Browser bookmark sync**: the companion browser add-on (Firefox, Chrome, Edge, Brave) keeps your
+    bookmarks in sync across browsers, sealed with the same vault key, and fills these logins into web pages.
   - **Nostr social**: feeds, threads, profiles, DMs, communities and a web-of-trust relay.
   - **AI chat**: streaming LLM chat, with image, music and video generation.
   - **Live streaming**: go live from your camera or share your screen (NIP-53), and watch other people's streams.
@@ -35,6 +42,8 @@ description: |
 tags:
   - nostr
   - social
+  - passwords
+  - bookmarks
   - ai
   - chat
   - streaming
