@@ -19,12 +19,19 @@ logger = logging.getLogger(__name__)
 # Default upstream relays for fresh installs (the set this deployment syncs with). Used as the
 # fallback whenever a relay list is blank — the built-in relay's upstream sync AND the bots'
 # fetch/post. Existing installs keep whatever they've saved in nostr_relay_upstream_relays.
+#
+# REMOVED as dead, 2026-08-06: relay.snort.social and nostr.oxtr.dev. Both time out during the
+# opening WS handshake (measured: 12s, every attempt, from a direct connection) — so each one costs
+# a connect timeout on every firehose reconnect and every outbox publish, and contributes nothing.
+# They were visible as 0-of-3 subscriptions with 0 events received in Server Stats → Relay, which is
+# what a dead upstream looks like there. Re-add only after probing; a relay that merely refuses our
+# WRITES (most of them reject an unknown pubkey's app docs) is still a useful READ source and should
+# stay. Same for auth.nostr1.com, which is alive but NIP-42 auth-gated: it CLOSEs an unauthenticated
+# REQ, which is a configuration fact, not an outage.
 DEFAULT_RELAYS = [
-    "wss://relay.snort.social/",
     "wss://nos.lol/",
     "wss://relay.primal.net/",
     "wss://nostr.mom/",
-    "wss://nostr.oxtr.dev/",
     "wss://offchain.pub/",
     "wss://relay.ditto.pub/",
     "wss://relay.froth.zone/",

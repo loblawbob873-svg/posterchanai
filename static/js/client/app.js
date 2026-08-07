@@ -2212,8 +2212,8 @@
    * with (`nostr_service.DEFAULT_RELAYS`) — so someone who switches off this instance keeps reading
    * the same firehose they were reading a moment ago instead of landing somewhere unfamiliar. Keep
    * the two lists in step when that one changes. */
-  const FALLBACK_RELAYS = ['wss://relay.poster.place/', 'wss://relay.snort.social/', 'wss://nos.lol/',
-                           'wss://relay.primal.net/', 'wss://nostr.mom/', 'wss://offchain.pub/'];
+  const FALLBACK_RELAYS = ['wss://relay.poster.place/', 'wss://nos.lol/', 'wss://relay.primal.net/',
+                           'wss://nostr.mom/', 'wss://offchain.pub/', 'wss://relay.ditto.pub/'];
   function defaultRelays(){
     const fromCfg = (CFG && Array.isArray(CFG.default_relays) ? CFG.default_relays : [])
       .map(u=>String(u||'').trim()).filter(Boolean);
