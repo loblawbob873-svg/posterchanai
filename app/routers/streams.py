@@ -192,6 +192,25 @@ _CLAMP_TTL = 5.0
 _clamp_ready: dict[str, tuple[bool, float]] = {}
 
 
+async def _hls_gone_or_502(name: str) -> Response:
+    """A stream that ENDED is 404, not 502.
+
+    MediaMTX only generates HLS while a publisher is connected, so the overwhelmingly common
+    reason a session cannot be primed is that the stream is over — which is not a server fault
+    and is not something retrying can fix. `502` tells a player the gateway is broken and to try
+    again, so every viewer who leaves a tab open retries forever: measured here at ~200 failed
+    manifest fetches per five minutes, for hours, against a token nobody was publishing. That is
+    load on the same box that has to encode the NEXT stream.
+
+    A genuinely unreachable MediaMTX keeps its 502, because that one IS worth retrying.
+    """
+    try:
+        live = bool(await stream_end_service.is_publishing(name))
+    except Exception:
+        live = False                      # can't ask → treat as gone; a retry loop is the worse failure
+    return Response(status_code=502 if live else 404)
+
+
 async def _upstream_path(token: str) -> str:
     """The MediaMTX path to proxy for `token` — `<token>_clamped` while the clamp is publishing it.
 
@@ -604,6 +623,7 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
               else "application/octet-stream")
         return Response(status_code=200, media_type=ct)
     hls_port = (settings_store.get("stream_hls_port", "8888") or "8888").strip()
+
     # Viewers always address the PUBLIC token (it's what rides the kind-30311); the clamped transcode is an
     # internal path they never see, so the swap happens here. Segment URLs inside a MediaMTX playlist are
     # relative, so the follow-up segment requests come back to this same route and resolve identically.
@@ -620,7 +640,7 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
 
     cookie = await _hls_session_cookie(hls_port, src)
     if cookie is None:
-        return Response(status_code=502)
+        return await _hls_gone_or_502(src)
     client = None
     resp = None
     try:
@@ -631,7 +651,7 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
             await resp.aclose(); await client.aclose(); client = resp = None
             cookie = await _hls_session_cookie(hls_port, src, force=True)
             if cookie is None:
-                return Response(status_code=502)
+                return await _hls_gone_or_502(src)
             client, resp = await _open(cookie)
     except Exception:
         if client is not None:
@@ -639,7 +659,7 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
                 await client.aclose()
             except Exception:
                 pass
-        return Response(status_code=502)
+        return await _hls_gone_or_502(src)
     if resp.status_code != 200:
         code = resp.status_code
         await resp.aclose(); await client.aclose()
