@@ -35,8 +35,21 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # AT JOB LEVEL, deliberately. The AMO step needs to SKIP (not fail) when the credentials are
+    # absent — forks and PR runs cannot see them — and a step's `if:` has no access to the `secrets`
+    # context at all, nor reliably to env defined on that same step. Job-level env is the documented
+    # way to make a secret's presence testable in a condition.
+    env:
+      AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+      AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
     steps:
+      # Full history: the AMO step decides whether to submit by comparing this commit's manifest
+      # version with the one BEFORE the push. The default shallow clone (depth 1) has no such commit,
+      # so the comparison would silently read "changed" on every push and submit every time — which
+      # AMO answers with "Version N already exists", after the upload, on every ordinary commit.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Pillow (the icons are generated, not committed)
         run: python3 -m pip install --quiet pillow
@@ -77,6 +90,64 @@ jobs:
       - name: Read the version the manifest actually declares
         id: ver
         run: echo "v=$(python3 -c "import json;print(json.load(open('extension/manifest.json'))['version'])")" >> "$GITHUB_OUTPUT"
+
+      # ---- AMO submission -------------------------------------------------------------------------
+      # Only when the VERSION CHANGED in this push. AMO refuses a version string it has already seen
+      # ("Version 1.1.1 already exists") and refuses it AFTER the upload completes, so a workflow that
+      # submitted on every push to extension/ would fail on every commit that isn't a release. The
+      # bump IS the release trigger.
+      - name: Did the manifest version change?
+        id: bump
+        run: |
+          cur='${{ steps.ver.outputs.v }}'
+          # The commit the push STARTED from, not HEAD~1: a push can carry several commits, and if
+          # the bump was the first of them HEAD~1 already shows the new version — reading "unchanged"
+          # and silently skipping the release. Falls back to HEAD~1 for workflow_dispatch, where
+          # there is no `before`.
+          base='${{ github.event.before }}'
+          case "$base" in ''|0000000*) base='HEAD~1';; esac
+          prev=$(git show "$base:extension/manifest.json" 2>/dev/null \
+                 | python3 -c "import json,sys;print(json.load(sys.stdin)['version'])" 2>/dev/null || echo '')
+          echo "previous=$prev current=$cur"
+          if [ -n "$prev" ] && [ "$prev" = "$cur" ]; then
+            echo "changed=no" >> "$GITHUB_OUTPUT"
+            echo "::notice title=AMO::version unchanged ($cur) — not submitting"
+          else
+            echo "changed=yes" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Signs and submits the LISTED add-on. A listed version still goes through Mozilla's review;
+      # this only automates the upload, which is the part that was manual and error-prone.
+      #
+      # It signs the SAME BYTES that ship: the zip built above is unpacked and handed to web-ext,
+      # rather than pointing web-ext at extension/ — that directory also contains dist/ and any
+      # untracked local edits, and "what was signed" must equal "what was tested".
+      #
+      # Skipped, not failed, when the secrets are absent: forks and PR runs have no access to them,
+      # and a red build there would say "broken" when it means "not configured".
+      - name: Submit to addons.mozilla.org
+        if: steps.bump.outputs.changed == 'yes' && env.AMO_JWT_ISSUER != ''
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/ffsrc && mkdir -p /tmp/ffsrc
+          unzip -q extension/dist/posterchan-passwords.zip -d /tmp/ffsrc
+          test -f /tmp/ffsrc/manifest.json   # the zip is flat; a nested dir would sign an empty add-on
+          npx --yes web-ext@8 sign \
+            --source-dir /tmp/ffsrc \
+            --channel listed \
+            --api-key "$AMO_JWT_ISSUER" \
+            --api-secret "$AMO_JWT_SECRET" \
+            --artifacts-dir /tmp/ffout \
+            2>&1 | tee /tmp/amo.log || true
+          # A LISTED submission does not come back with a signed file — it goes to human review — so
+          # web-ext's exit code is not the signal. "Version already exists" and an auth failure are,
+          # and both must be loud rather than a green tick on a submission that never happened.
+          if grep -qiE 'already exists|JWT|401|Unauthorized|not authenticated' /tmp/amo.log; then
+            echo "::error title=AMO submission rejected::see the log above"; exit 1
+          fi
+          grep -qiE 'submitted|uploaded|Your add-on' /tmp/amo.log \
+            && echo "::notice title=AMO::version ${{ steps.ver.outputs.v }} submitted for review" \
+            || { echo "::error title=AMO::no confirmation in web-ext output"; exit 1; }
 
       - name: Retire the previous rolling release
         env:
