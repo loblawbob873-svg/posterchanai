@@ -134,6 +134,11 @@ const attachEmojiAutocomplete = () => {};
 const blossomPicker = () => {};
 const gifPicker = () => {};
 const uploadBlob = () => Promise.resolve('https://example.invalid/x.png');
+// Encrypted attachments: the composer's 🔒 reads its state from here, and every rebuild of the
+// bubbles asks decorateEncAtts to fill in the placeholders. Neither has anything to do with the
+// draft, but renderDmThread calls both, so the harness has to answer them.
+const uploadSharedEnc = () => Promise.resolve('https://example.invalid/y.enc#pcenc1=AA');
+const decorateEncAtts = () => {};
 const openMenuPopover = () => {};
 const renderProfileView = () => {};
 const toggleMute = () => Promise.resolve();

@@ -4139,6 +4139,20 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .dm-sendbtn.on{background:linear-gradient(135deg,var(--neon),var(--neon2));color:#04121a;
   border-color:transparent;box-shadow:var(--glow-cy)}
 .dm-row .mini{flex:0 0 auto;width:40px;height:40px}
+/* 🔒 attachment encryption, off by default — it has to read as OFF at a glance, because the whole
+   point is that the user chose it for this file. Dimmed when off, lit amber when on. */
+.dm-lock{opacity:.5;filter:grayscale(1);transition:.15s;line-height:1}
+.dm-lock.on{opacity:1;filter:none;border-color:rgba(251,191,36,.6);background:rgba(251,191,36,.12)}
+@media (max-width:820px){
+  /* A .mini is a 22px text pill — fine for a label, too small for a toggle you press with a thumb.
+     Scoped to the DM thread's own topbar so it lifts the lock AND the mute beside it without
+     resizing every other topbar in the app. */
+  .dm-thread .topbar .mini{min-height:38px;padding-left:12px;padding-right:12px}
+}
+
+/* an encrypted attachment before (and if) it decrypts */
+.encatt{display:inline-block;max-width:100%}
+.encatt.done{display:block}
 
 @media (max-width:820px){
   .dm-peer{padding:10px 12px;gap:12px}
@@ -5398,3 +5412,8 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
      zoomed back. check_vault_mobile.py caught it; the eye would not have. */
   .pv-ed-body .input,.pv-ed-body textarea,.pv-title,.pv-search{font-size:16px}
 }
+
+/* data saver: an encrypted attachment is offered, not fetched — decrypting it is the tap */
+.encatt-ds{display:inline-block;cursor:pointer;border:1px dashed var(--line);border-radius:10px;
+  padding:8px 12px;min-height:38px;line-height:22px;color:var(--muted)}
+.encatt-ds:hover{border-color:var(--cyan);color:var(--text)}

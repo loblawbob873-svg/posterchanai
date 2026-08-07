@@ -13184,6 +13184,158 @@
   // SCALABLE encryption (Phase 2.5): ONE master key (wrapped once) + the IV prepended to the blob. For
   // tracks the IV is DERIVED from the content (sha256(plain)[:12]) → identical input → identical
   // ciphertext/hash → Blossom DEDUP + resumable import. For the index a random IV is used (it changes).
+  /* ---- Shareable encrypted attachments -------------------------------------------------------
+   *
+   * Blossom stores bytes and serves them back by sha256. It never looks inside them, and it has no
+   * read authorization at all — `GET /<sha>` and `GET /list/<pubkey>` both answer anyone, so a file
+   * attached to a DM was world-readable AND enumerable by the sender's npub. The message was
+   * encrypted; the picture in it was not.
+   *
+   * The drive already encrypts before upload, but under the user's MASTER key — which is exactly
+   * what makes it unshareable, since nobody else can derive it. So this uses a fresh random AES-GCM
+   * key per file and hands that key to the recipient out of band: in the URL FRAGMENT, inside the
+   * NIP-44-encrypted DM. A fragment is never transmitted to a server, so even pasting the link into
+   * a browser cannot leak the key to the host — and the host is storing ciphertext regardless.
+   *
+   * Deliberately OPT-IN. A client that doesn't understand the marker (Damus, Amethyst) shows a link
+   * to bytes it can't render, so encrypting silently would break conversations with people not on
+   * this software; the composer's 🔒 makes it a per-file choice.
+   *
+   * Same on-the-wire layout as the drive (iv ‖ ciphertext, AES-GCM) so _masterEncrypt/_masterDecrypt
+   * are reused as-is. The IV is random here, NOT content-derived: dedup is meaningless with a
+   * per-file key, and a fresh key with a fresh IV is the conservative pairing.
+   */
+  const _ENC_MARK = '#pcenc1=';
+  const _b64u = b => btoa(String.fromCharCode(...b)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  function _b64uDec(s){
+    s = String(s||'').replace(/-/g,'+').replace(/_/g,'/');
+    while(s.length % 4) s += '=';
+    const raw = atob(s); const out = new Uint8Array(raw.length);
+    for(let i=0;i<raw.length;i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+
+  /* Encrypt → upload → return a self-contained reference. `keep` because this blob is the only copy
+     the recipient will ever have (the age sweep must not delete it out from under them), `noMirror`
+     because a DR mirror would hand our ciphertext to a third-party server for no benefit. */
+  async function uploadSharedEnc(file, statEl){
+    const setS = t => { if(statEl) statEl.textContent = t; };
+    const key = crypto.getRandomValues(new Uint8Array(32));
+    const buf = new Uint8Array(await file.arrayBuffer());
+    setS('encrypting…');
+    const blob = await _masterEncrypt(key, buf);
+    setS('uploading…');
+    const url = await uploadBlob(new File([blob], (file.name||'file')+'.enc',
+                                          {type:'application/octet-stream'}), {noMirror:true, keep:true});
+    const meta = { k:_b64u(key), m:file.type||'application/octet-stream', n:file.name||'' };
+    setS('');
+    // Strip any fragment uploadBlob may have produced before appending ours, and base64url the whole
+    // descriptor as ONE token: no separator can then collide with linkify's trailing-punctuation trim.
+    return url.split('#')[0] + _ENC_MARK + _b64u(new TextEncoder().encode(JSON.stringify(meta)));
+  }
+
+  /* {url, key, mime, name} for a reference, or null if this isn't one / is malformed. */
+  function encAttParse(ref){
+    const s = String(ref||''); const i = s.indexOf(_ENC_MARK);
+    if(i < 0) return null;
+    try{
+      const m = JSON.parse(new TextDecoder().decode(_b64uDec(s.slice(i + _ENC_MARK.length))));
+      if(!m || !m.k) return null;
+      const key = _b64uDec(m.k);
+      if(key.length !== 32) return null;
+      return { url:s.slice(0,i), key, mime:String(m.m||'application/octet-stream'), name:String(m.n||'') };
+    }catch(_){ return null; }
+  }
+
+  /* Fetch the ciphertext, decrypt in the page, hand back an object URL. Cached per reference: a
+     thread re-renders on every arriving message and re-downloading each attachment every time would
+     be both slow and pointless. Bounded so a long conversation can't pin every attachment it ever
+     showed in memory — object URLs hold their blob until revoked. */
+  const _encAttUrls = new Map();
+  const _ENC_ATT_MAX = 24;
+  async function encAttObjectUrl(ref){
+    const ck = ref.url + '|' + _b64u(ref.key);
+    if(_encAttUrls.has(ck)) return _encAttUrls.get(ck);
+    const r = await fetch(ref.url);
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const plain = await _masterDecrypt(ref.key, new Uint8Array(await r.arrayBuffer()));
+    const obj = URL.createObjectURL(new Blob([plain], { type: ref.mime }));
+    _encAttUrls.set(ck, obj);
+    // Evict oldest-first, but NEVER an object URL something on the page is still pointing at:
+    // revoking one breaks that <img>/<video> permanently, and a media-heavy thread can easily hold
+    // more than the cap on screen at once. Skipping those bounds the cache by what is actually
+    // visible instead of by a number that has nothing to do with the conversation.
+    if(_encAttUrls.size > _ENC_ATT_MAX){
+      const inUse = u => { try{ return !!document.querySelector(`[src="${u}"],[href="${u}"]`); }catch(_){ return true; } };
+      for(const k of [..._encAttUrls.keys()]){
+        if(_encAttUrls.size <= _ENC_ATT_MAX) break;
+        if(k === ck || inUse(_encAttUrls.get(k))) continue;
+        try{ URL.revokeObjectURL(_encAttUrls.get(k)); }catch(_){}
+        _encAttUrls.delete(k);
+      }
+    }
+    return obj;
+  }
+
+  /* Swap every 🔒 placeholder linkify left behind for the real media. A separate pass because a
+     bubble body is built as a STRING and rendered once — the same reason mentions need
+     decorateProfiles — and because decrypting is async while rendering is not. */
+  async function decorateEncAtts(root){
+    const nodes = [...((root||document).querySelectorAll('.encatt[data-encatt]'))];
+    // Concurrently: each attachment is an independent fetch+decrypt, and doing them in sequence made
+    // one slow blob hold up every later one in the thread. The claim below happens synchronously in
+    // every callback before the first await, so the map can't double-start any of them.
+    await Promise.all(nodes.map(async n => {
+      const ref = encAttParse(n.dataset.encatt);
+      // Claim it before awaiting: a re-render during the fetch would otherwise start a second
+      // decrypt of the same blob for the same node.
+      n.removeAttribute('data-encatt');
+      if(!ref){ n.innerHTML = '🔒 <span class="muted small">encrypted attachment (unreadable link)</span>'; return; }
+      const label = ref.name || 'encrypted file';
+      // Data saver means DON'T SPEND THE BYTES. Deciding after the fetch would have downloaded and
+      // decrypted the whole thing first and only then declined to show it — the one thing the mode
+      // exists to prevent. Offer it instead, and decrypt on the tap.
+      if(NO_IMAGES && /^(image|video)\//.test(ref.mime)){
+        n.innerHTML = `<span class="encatt-ds" role="button" tabindex="0">🔒 ${enc(label)} — tap to decrypt</span>`;
+        const go = async () => {
+          n.textContent = '🔒 decrypting…';
+          try{
+            const obj = await encAttObjectUrl(ref);
+            n.innerHTML = /^video\//.test(ref.mime)
+              ? `<video class="m" src="${enc(obj)}" controls preload="metadata" playsinline></video>`
+              : `<img class="m" src="${enc(obj)}" alt="${enc(label)}">`;
+            n.classList.add('done');
+          }catch(e){ n.innerHTML = `🔒 <span class="muted small">${enc(label)} — ${enc((e&&e.message)||'failed')}</span>`; }
+        };
+        const el = n.firstElementChild;
+        el.onclick = go;
+        el.onkeydown = ev => { if(ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); go(); } };
+        return;
+      }
+      try{
+        const obj = await encAttObjectUrl(ref);
+        const t = ref.mime;
+        if(/^image\//.test(t)){
+          n.innerHTML = `<img class="m" src="${enc(obj)}" alt="${enc(label)}" loading="lazy">`;
+        } else if(/^video\//.test(t)){
+          n.innerHTML = `<video class="m" src="${enc(obj)}" controls preload="metadata" playsinline></video>`;
+        } else if(/^audio\//.test(t)){
+          n.innerHTML = `<audio src="${enc(obj)}" controls preload="none"></audio>`;
+        } else {
+          n.innerHTML = `<a href="${enc(obj)}" download="${enc(label)}">🔒 ${enc(label)}</a>`;
+        }
+        n.classList.add('done');
+      }catch(e){
+        // Say WHICH failure it was. "Couldn't open" over a blob that was swept, a link that lost its
+        // fragment on the way through another client, and a genuine network error are three different
+        // problems and only one of them is worth retrying.
+        const why = /decrypt|operation/i.test((e&&e.message)||'') ? 'wrong key or damaged file'
+                  : ((e&&e.message)||'download failed');
+        n.innerHTML = `🔒 <span class="muted small">${enc(label)} — ${enc(why)}</span>`;
+      }
+    }));
+  }
+
   async function _contentIV(plain){ return new Uint8Array(await crypto.subtle.digest('SHA-256', plain)).slice(0,12); }
   async function _masterEncrypt(mk, plain, iv){ iv = iv || crypto.getRandomValues(new Uint8Array(12));
     const ck=await crypto.subtle.importKey('raw',mk,'AES-GCM',false,['encrypt']);
@@ -14592,10 +14744,11 @@
       // double-firing. The topbar can still go stale (a mute toggled, a profile that just loaded), so
       // repaint those two in place.
       _prev.innerHTML = _msgsHtml;
+      decorateEncAtts(_prev);   // bubbles are rebuilt here, so their 🔒 placeholders are new ones
       { const mb=$('#dm-mute'); if(mb) mb.textContent=_muteLabel; }
       { const nm=wrap.querySelector('.dm-peer-name'); if(nm) nm.innerHTML=_peerName; }
     } else {
-    wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back" aria-label="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button> <b class="dm-peer-name name" data-prof="${pk}" style="cursor:pointer">${_peerName}</b><span class="spacer"></span><button class="mini" id="dm-mute" title="Mute this sender">${_muteLabel}</button></div>
+    wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back" aria-label="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button> <b class="dm-peer-name name" data-prof="${pk}" style="cursor:pointer">${_peerName}</b><span class="spacer"></span><button class="mini dm-lock" id="dm-lock" aria-label="Encrypt attachments">🔒</button><button class="mini" id="dm-mute" title="Mute this sender">${_muteLabel}</button></div>
       <div class="dm-msgs" id="dm-msgs">${_msgsHtml}</div>
       <div class="dm-compose">
         <div class="dm-replybar" id="dm-replybar" hidden></div>
@@ -14628,8 +14781,30 @@
     const inp=$('#dm-in');
     // Paste-to-attach + removable preview strip (📎 Attach / 🌸 Files / 🎬 GIF also feed it via 'input').
     const _syncAtts = wireImgAttach(inp, $('#dm-atts'));
+    decorateEncAtts($('#dm-msgs'));   // first paint of this thread
     $('#dm-attach').onclick=()=>$('#dm-file').click();
-    $('#dm-file').onchange=async e=>{ const files=[...e.target.files]; for(let i=0;i<files.length;i++){ try{ const url=await uploadBlob(files[i]); inp.value+=(inp.value&&!/\s$/.test(inp.value)?' ':'')+url; }catch(err){ toast('upload failed: '+((err&&err.message)||err)); } } e.target.value=''; _syncAtts(); inp.focus(); };
+    // 🔒 is opt-in and OFF by default: an encrypted file is unreadable to anyone not running this
+    // client, so it can't be the silent default for a conversation with a Damus user. Remembered per
+    // device (not per thread) — someone who encrypts once usually means it.
+    //
+    // It lives in the THREAD TOPBAR, not in the composer row. Measured at 360px with the GIF button
+    // present, a fifth control in that row cut the message box from 150px to 104px — about six
+    // visible characters. The topbar carries a name and one button at every width, and a sticky
+    // preference belongs there rather than beside the per-message actions anyway.
+    { const lk=$('#dm-lock');
+      const paint=()=>{ if(!lk) return; const on=ClientSettings.get('dmEncryptAtts');
+        lk.classList.toggle('on', !!on);
+        lk.title = on ? 'Attachments are encrypted — only this conversation can open them (other Nostr clients cannot)'
+                      : 'Attachments upload readable by anyone with the link. Click to encrypt them.'; };
+      if(lk) lk.onclick=()=>{ ClientSettings.set('dmEncryptAtts', !ClientSettings.get('dmEncryptAtts')); paint();
+        toast(ClientSettings.get('dmEncryptAtts') ? '🔒 Attachments will be encrypted' : '🔓 Attachments upload readable'); };
+      paint(); }
+    $('#dm-file').onchange=async e=>{ const files=[...e.target.files]; const encOn=!!ClientSettings.get('dmEncryptAtts');
+      for(let i=0;i<files.length;i++){ try{
+        if(encOn) toast('encrypting '+(i+1)+'/'+files.length+'…');
+        const url=encOn ? await uploadSharedEnc(files[i]) : await uploadBlob(files[i]);
+        inp.value+=(inp.value&&!/\s$/.test(inp.value)?' ':'')+url; }catch(err){ toast('upload failed: '+((err&&err.message)||err)); } }
+      e.target.value=''; _syncAtts(); inp.focus(); };
     $('#dm-files').onclick=()=>blossomPicker(inp);
     { const g=$('#dm-gif'); if(g) g.onclick=()=>gifPicker(inp); }
     let _dmSending=false;
@@ -19054,6 +19229,20 @@
       const u=url.replace(/[)\].,!?]+$/,'');          // don't swallow trailing punctuation
       const tail=url.slice(u.length);
       let tag;
+      // Encrypted attachment — MUST be tested before the extension branches below: the reference
+      // keeps the blob's own extension, so `…/<sha>.jpg#pcenc1=…` matches the image rule (which ends
+      // `(\?|#|$)`) and would render an <img> pointed at ciphertext. Emits a placeholder that
+      // decorateEncAtts fills in once the bytes are fetched and decrypted.
+      // The marker ALONE decides this, not whether the descriptor parses. A reference mangled in
+      // transit still points at ciphertext, and falling through would hand it to the image rule:
+      // an <img> that downloads the encrypted bytes and draws a broken picture. decorateEncAtts
+      // says "unreadable link" instead, having fetched nothing.
+      if(u.indexOf(_ENC_MARK) > 0){
+        const _ref = encAttParse(u);
+        return `<span class="encatt" data-encatt="${enc(u)}">🔒 <span class="muted small">${
+          _ref ? enc(_ref.name || 'encrypted attachment') + ' — decrypting…'
+               : 'encrypted attachment'}</span></span>` + tail;
+      }
       const yid=ytId(u);
       if(yid) tag = NO_IMAGES
         ? `<span class="yt-embed yt-ds" data-yt="${yid}" title="play">▶ YouTube — tap to load</span>`   // data saver: no external thumbnail fetch
