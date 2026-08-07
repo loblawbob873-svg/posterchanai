@@ -70,6 +70,14 @@ if missing:
 for f in ('approve.html', 'approve.js'):
     if f not in shipped:
         sys.exit(f + ' is missing from the bundle; the approval prompt cannot open')
+# The CHROME WEB STORE caps `description` at 132 characters and rejects the UPLOAD, not the review —
+# "There was a problem uploading your file", after the whole bundle has gone up. AMO has no such cap,
+# so a description that sailed through Firefox review (this one shipped at 150) fails Chrome at the
+# last step. Caught here, where the artifact is made, rather than in a store's web form.
+_desc = m.get('description', '')
+if len(_desc) > 132:
+    sys.exit('description is %d chars; the Chrome Web Store rejects anything over 132:\n  %s'
+             % (len(_desc), _desc))
 EOF
 
 rm -rf dist/posterchan-passwords.zip dist/posterchan-passwords.xpi \

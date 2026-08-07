@@ -48,6 +48,21 @@ class ExtensionCore(unittest.TestCase):
         with open(os.path.join(REPO, "extension", "popup.html"), encoding="utf-8") as fh:
             self.assertIn("vaultcore.js", fh.read())
 
+    def test_the_description_fits_the_chrome_web_store(self):
+        """132 characters, and the Chrome Web Store rejects the UPLOAD rather than the review.
+
+        The failure is "There was a problem uploading your file", surfaced only after the whole
+        bundle has been transferred, with the real reason on a second line. AMO has no equivalent
+        cap — this description shipped through a full Firefox review at 150 characters — so nothing
+        in the Firefox path can catch it, and the same manifest is the source for both bundles.
+        """
+        with open(MANIFEST, encoding="utf-8") as fh:
+            desc = json.load(fh)["description"]
+        self.assertLessEqual(
+            len(desc), 132,
+            f"description is {len(desc)} chars; the Chrome Web Store refuses the upload over 132")
+        self.assertTrue(desc.strip(), "a store listing with no description")
+
     def test_it_is_a_firefox_extension(self):
         """browser_specific_settings is what makes it installable on Firefox at all, and the
         gecko_android block is what makes it installable on the phone — which is half the ask."""

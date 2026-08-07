@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "PosterChan Passwords",
   "version": "1.2.0",
-  "description": "Autofill, one-time codes and a password generator for your PosterChan vault. Your passwords are decrypted on this device and never sent to any server.",
+  "description": "Autofill, one-time codes and a password generator for your PosterChan vault. Decrypted on your device, never sent to any server.",
   "browser_specific_settings": {
     "gecko": {
       "id": "passwords@poster.place",
