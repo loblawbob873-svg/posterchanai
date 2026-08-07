@@ -8211,7 +8211,18 @@
          *
          * Derived, not picked: stay comfortably inside the smallest window the server can produce
          * (7 × 2s), and let hls.js sit near the live edge as it does by default. */
-        const h=new window.Hls({ maxBufferLength:10, maxMaxBufferLength:20 }); _streamHls=h;
+        /* AND SIT BACK FROM THE LIVE EDGE. Measured on a real stream: the player was running with
+         * 0.3s of media ahead of the playhead and a gap already in its buffer, while dropping zero
+         * frames — decode was perfectly healthy, there was simply nothing in hand. Any jitter at all
+         * empties a third of a second, and playback stops until the next segment lands.
+         *
+         * hls.js defaults to ~3 segments behind live, which was 12.5s of margin at the 4.17s segments
+         * this stream used to produce and only 6s once the keyframe interval was corrected to 2s. So
+         * shortening the segments — right for join latency — quietly halved the safety margin.
+         *
+         * Nobody watching a broadcast notices ten seconds of latency; everybody notices stuttering. */
+        const h=new window.Hls({ maxBufferLength:10, maxMaxBufferLength:20,
+                                 liveSyncDurationCount:5, liveMaxLatencyDurationCount:12 }); _streamHls=h;
         h.loadSource(url); h.attachMedia(v);
         h.on(window.Hls.Events.ERROR,(_e,d)=>{ if(d&&d.fatal) _streamNote('Could not play this stream here — try the \u201cOpen stream URL\u201d link below.'); });
         return;
