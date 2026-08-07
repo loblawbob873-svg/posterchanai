@@ -180,7 +180,7 @@ EDIT_ODD = {
 SCENARIOS = [("static", EDIT, 0.0), ("motion", EDIT_MOTION, MOTION_AT), ("odd-canvas", EDIT_ODD, 0.0)]
 
 
-def _page(src_base, edit, at, mask_url):
+def _page(src_base, edit, at, mask_url, rewrite=True):
     return """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="/static/css/client.css">
@@ -254,7 +254,7 @@ window.__ready = false;
   ]).then(() => setTimeout(done, 500));
 })();
 </script>
-</body></html>""".replace("__AT__", json.dumps(at)).replace("__PROJECT__", json.dumps(dict(edit, name="match", layers=[
+</body></html>""".replace("__AT__", json.dumps(at)).replace("__PROJECT__", json.dumps(edit if not rewrite else dict(edit, name="match", layers=[
         dict(l, src=(src_base + l["id"] + ".png" if l.get("src") else ""),
              mask=(mask_url if l.get("mask") else ""),
              # The editor's own defaults for the fields the render payload does not carry.
@@ -629,10 +629,9 @@ def _run_project(path, at):
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H_)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{srv.server_port}"
-    page = (_page(base + "/src/", proj, at, "")
-            .replace("__PROJECT__", json.dumps(proj)))
-    # _page rewrites src/mask for the synthetic probes; a real project's URLs are already absolute
-    # and must be left exactly as they are, so the project is re-injected verbatim over the top.
+    # rewrite=False: _page remaps src/mask onto the harness's own files for the synthetic probes, and
+    # a real project's URLs are already absolute and must reach the browser untouched.
+    page = _page("", proj, at, "", rewrite=False)
     with open(os.path.join(tmp, "index.html"), "w") as fh:
         fh.write(page)
 
