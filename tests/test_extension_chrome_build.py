@@ -91,6 +91,28 @@ def test_nip07_goes_into_the_page_world_directly_on_chrome():
         "the MAIN world nothing else will call it")
 
 
+def test_the_build_needs_nothing_but_bash_and_python():
+    """`zip` is not a thing a Windows box has.
+
+    Git for Windows ships no `zip` at all, and `build.sh` is `set -e`, so shelling out to it killed
+    the build at the first archive line — after the source copies but BEFORE `dist/chrome/` was
+    staged, leaving no loadable folder either. The error named a missing tool and not what to do
+    about it, and the whole failure exists on a platform CI never runs on, so nothing here would ever
+    catch it. Python's zipfile/tarfile ship with python3, which this script already required.
+
+    Checked by ABSENCE, deliberately: the tempting fix is a fallback chain (zip, else bsdtar, else
+    PowerShell) whose branches are untestable from Linux and therefore wrong the first time anyone
+    needs one. There is one archiver.
+    """
+    build = _read("build.sh")
+    code = re.sub(r"(?m)^\s*#.*$", "", build)                 # comments may discuss zip freely
+    for tool in ("zip", "tar"):
+        assert not re.search(r"(?m)^\s*(\(\s*cd[^&]*&&\s*)?%s\s+-" % tool, code), (
+            f"build.sh shells out to `{tool}` again — that build cannot run on Windows, and the way "
+            "it fails leaves no dist/chrome/ to load either")
+    assert "zipfile" in build and "tarfile" in build, "the python packer is gone"
+
+
 def test_bookmark_sync_ships_in_both_bundles():
     """A background file listed for one browser and not the other is the drift the test above exists
     for; this is the same check from the other end, for the file most recently added."""

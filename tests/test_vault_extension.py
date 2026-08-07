@@ -127,10 +127,18 @@ class BundleCompleteness(unittest.TestCase):
     """
 
     def test_build_sh_has_one_file_list(self):
+        """Every artifact is packed from `$FILES`, whatever the packer happens to be.
+
+        The point is the single list, not the tool: `zip`/`tar` were replaced with a python packer so
+        the build runs on a box with no `zip` (Windows), and asserting the old command strings would
+        have failed for a change that kept the property this test exists to protect.
+        """
         with open(os.path.join(REPO, "extension", "build.sh"), encoding="utf-8") as f:
             s = f.read()
-        self.assertIn('zip -qr dist/posterchan-passwords.zip $FILES', s)
-        self.assertIn('tar czf dist/posterchan-passwords-unpacked.tar.gz $FILES', s)
+        self.assertIn('pack dist/posterchan-passwords.zip $FILES', s)
+        self.assertIn('pack dist/posterchan-passwords-unpacked.tar.gz $FILES', s)
+        # The Chrome bundle is the third artifact off the same list, and the one nobody re-checks.
+        self.assertIn('pack ../posterchan-passwords-chrome.zip $FILES', s)
 
     def test_ci_does_not_keep_its_own_list(self):
         wf = os.path.join(REPO, ".github", "workflows", "extension.yml")

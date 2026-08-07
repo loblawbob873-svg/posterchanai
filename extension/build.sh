@@ -9,8 +9,51 @@
 # arrangement exists to prevent: a generator that quietly omits a character class, or a matcher that
 # offers a credential on a domain the app would refuse. tests/test_vault_extension.py fails if the
 # checked-in copy stops matching the source.
+#
+# NEEDS BASH AND PYTHON3, AND NOTHING ELSE. It used to shell out to `zip` and `tar`, which is fine on
+# a Linux CI box and is the reason this could not be built on Windows at all: Git for Windows ships
+# no `zip`, and `set -e` meant the script died at the first archive line — AFTER the copies but
+# BEFORE staging dist/chrome, so you were left with no loadable folder either and an error that named
+# a missing tool rather than what to do about it. Python's zipfile/tarfile are in the standard
+# library, behave identically on Linux, macOS, WSL and Git Bash, and python3 was already required
+# here for the manifest checks below. One implementation, not a fallback chain nobody can test.
 set -eu
 cd "$(dirname "$0")"
+
+command -v python3 >/dev/null 2>&1 || { echo "build.sh needs python3 on PATH"; exit 1; }
+
+# pack <archive> <member>… — .zip or .tar.gz, decided by the name. Members may be files or
+# directories; directories are walked in sorted order so two builds of the same tree agree.
+pack () {
+  out=$1; shift
+  python3 - "$out" "$@" <<'EOF'
+import os, sys, tarfile, zipfile
+
+out, members = sys.argv[1], sys.argv[2:]
+
+def files(path):
+    if os.path.isfile(path):
+        yield path
+        return
+    for root, dirs, names in os.walk(path):
+        dirs.sort()
+        for n in sorted(names):
+            if n == '.DS_Store':
+                continue
+            yield os.path.join(root, n)
+
+if out.endswith('.zip'):
+    with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
+        for m in members:
+            for f in files(m):
+                z.write(f, f)
+else:
+    with tarfile.open(out, 'w:gz') as t:
+        for m in members:
+            for f in files(m):
+                t.add(f, f)
+EOF
+}
 
 SRC=../static/js/client/vaultcore.js
 VENDOR=../static/vendor/nostr/nostr.bundle.js
@@ -83,13 +126,13 @@ EOF
 rm -rf dist/posterchan-passwords.zip dist/posterchan-passwords.xpi \
        dist/posterchan-passwords-unpacked.tar.gz \
        dist/posterchan-passwords-chrome.zip dist/chrome
-zip -qr dist/posterchan-passwords.zip $FILES -x '*.DS_Store'
+pack dist/posterchan-passwords.zip $FILES
 # An .xpi IS the .zip under a name Firefox will "Install Add-on From File". Ship it so Firefox
 # Nightly / Developer Edition / ESR (with xpinstall.signatures.required=false) can install this
 # PERMANENTLY — not just as a temporary add-on that unloads on restart. The AMO-upload artifact is
 # the same bytes, kept as .zip.
 cp dist/posterchan-passwords.zip dist/posterchan-passwords.xpi
-tar czf dist/posterchan-passwords-unpacked.tar.gz $FILES
+pack dist/posterchan-passwords-unpacked.tar.gz $FILES
 
 # ---- Chrome ------------------------------------------------------------------------------------
 # The SAME sources with a GENERATED manifest, never a second checked-in one: two manifests drift, and
@@ -124,7 +167,9 @@ with open('dist/chrome/manifest.json', 'w') as fh:
     json.dump(m, fh, indent=2)
     fh.write('\n')
 EOF
-( cd dist/chrome && zip -qr ../posterchan-passwords-chrome.zip . -x '*.DS_Store' )
+# Named members, not `.` — an archiver that stores `./manifest.json` gives a store an extension whose
+# manifest is not at the root, which is refused at upload with no useful message.
+( cd dist/chrome && pack ../posterchan-passwords-chrome.zip $FILES background-chrome.js )
 
 echo "built dist/posterchan-passwords.zip, dist/posterchan-passwords-unpacked.tar.gz"
 echo "  and dist/posterchan-passwords-chrome.zip (+ dist/chrome/ to load unpacked)"

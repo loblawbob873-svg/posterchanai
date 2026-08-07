@@ -48,8 +48,22 @@ Firefox will only load one temporarily.
 extension/build.sh
 ```
 
-Needs `python3` and `zip`; Pillow is optional (it generates the icons — without it the committed ones
-are used). It writes everything into `extension/dist/`.
+Needs **`bash` and `python3`, and nothing else** — the archives are built with Python's own
+`zipfile`/`tarfile`, so the same command works on Linux, macOS, WSL and **Git Bash on Windows**.
+Pillow is optional (it generates the icons — without it the committed ones are used). It writes
+everything into `extension/dist/`.
+
+**On Windows**, run it from **Git Bash** (bundled with Git for Windows) or WSL:
+
+```bash
+cd /c/path/to/posterchanai
+extension/build.sh
+```
+
+If `python3` isn't found there, the python.org installer names it `python` — either add a
+`python3` alias or use the Microsoft Store build, which provides `python3`. The build used to shell
+out to `zip`, which Git for Windows does not ship at all; it died at the first archive line and left
+no `dist/chrome/` to load either, so that is gone.
 
 **A fresh checkout cannot be loaded as-is** — you have to run this first. `vaultcore.js` and
 `vendor/nostr.bundle.js` are *copied from the app's own tree* at build time rather than committed,
