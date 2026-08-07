@@ -2188,8 +2188,13 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   /* Clear the notch / status bar (safe-area inset) so the sticky topbar isn't cut off; opaque bg
      fills the notch strip and keeps content from showing through on scroll. */
   .topbar{padding:calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 10px calc(14px + env(safe-area-inset-left));gap:8px;background:var(--bg)}
-  .topbar h2{font-size:17px;flex-shrink:0}
-  .searchbox{margin:0 4px}
+  /* Title and search share ONE row here, and the title used to be flex-shrink:0 — so every pixel the
+     title wanted came out of the search box. On a 390px phone that left the search 161px on Alerts /
+     186px on Messages against the 257px its placeholder needs, i.e. the search was visibly cut off on
+     every view that HAS a title (the three timeline views hide theirs, which is why only those looked
+     right). The title truncates now and the search keeps a floor, so neither can squeeze the other out. */
+  .topbar h2{font-size:17px;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .searchbox{margin:0 4px;min-width:120px}
   .note,.tl-cmp{padding:14px 14px;gap:10px}
   .reply-ctx{padding:12px 14px 0}   /* align reply context with the note body on mobile */
   .note .av,.tl-cmp-av{width:40px;height:40px}

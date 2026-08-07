@@ -18,6 +18,12 @@ Every assertion here corresponds to a bug that reached a user rather than a revi
   trapped-hscroll      A horizontally scrollable strip inside the feed whose drag the swipe-to-navigate
                        handler steals, so it cannot be slid on a phone. Shipped as "can't slide to see
                        all the background choices".
+  search-clipped       The topbar search box squeezed below the width its own placeholder needs. It shares
+                       one row with the view title, and the title used to refuse to shrink — so on every
+                       view that HAS a title (i.e. everything except the three timeline views, which hide
+                       theirs) the search read as cut off. Shipped as "search is cut off" on Alerts and
+                       Messages. Checked against the LONGEST title in the view map, since the guest the
+                       audit runs as lands on a timeline view where the title is hidden.
   offline-bar          The persistent offline banner overlapping the mobile nav, running off the side, or
                        pushing the page sideways. It is fixed and bottom-anchored precisely so that showing
                        it reflows nothing; the check forces it visible, since the audit itself runs online.
@@ -41,7 +47,7 @@ PORT = 9471
 PROFILE = "/tmp/pc-mobile-check"
 
 AUDIT = r"""(() => {
-  const out = {overflow:false, zero:[], offCentre:[], stretched:[], hscroll:[], offlineBar:[]};
+  const out = {overflow:false, zero:[], offCentre:[], stretched:[], hscroll:[], offlineBar:[], searchClipped:[]};
   out.overflow = document.documentElement.scrollWidth > window.innerWidth + 1;
 
   const vis = el => !el.checkVisibility || el.checkVisibility();
@@ -95,6 +101,33 @@ AUDIT = r"""(() => {
                         scroll: n.scrollWidth + '>' + n.clientWidth});
     });
   }
+  // Topbar search vs the view title — they share ONE row at phone width. The audit runs as a guest, which
+  // lands on a timeline view where the title is hidden, so force the worst case: un-hide it and give it
+  // the longest title in the view map. The search must still fit the placeholder it is asking people to
+  // read. Measuring the placeholder (canvas) rather than scrollWidth: an <input> reports scrollWidth from
+  // its VALUE, which is empty here, so a clipped placeholder is invisible to the usual overflow test.
+  {
+    const h = document.getElementById('view-title'), inp = document.getElementById('search-input');
+    const sb = document.querySelector('.searchbox');
+    if (h && inp && sb && getComputedStyle(sb).display !== 'none') {
+      const wasHidden = h.classList.contains('hidden'), txt = h.textContent;
+      h.classList.remove('hidden'); h.textContent = 'Live Translate \u{1F310}';
+      void h.offsetHeight;
+      const cs = getComputedStyle(inp);
+      const c = document.createElement('canvas').getContext('2d');
+      c.font = cs.fontStyle + ' ' + cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily;
+      const need = Math.ceil(c.measureText(inp.placeholder).width)
+                 + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+      const got = inp.getBoundingClientRect().width;
+      if (need > got + 1)
+        out.searchClipped.push('placeholder "' + inp.placeholder + '" needs ' + Math.round(need)
+                               + 'px, the box is ' + Math.round(got) + 'px');
+      if (document.documentElement.scrollWidth > window.innerWidth + 1)
+        out.searchClipped.push('title + search row pushes the page sideways');
+      h.textContent = txt; if (wasHidden) h.classList.add('hidden');
+    }
+  }
+
   // Offline banner. It is hidden in every check above (the audit runs online), so force it visible and
   // measure, then put the page back. Bottom-anchored and fixed SPECIFICALLY so that showing it moves no
   // layout — if it overlaps .mobilenav, runs off the side, or pushes the page sideways, the reason it was
@@ -211,9 +244,11 @@ async def drive():
                                  f"{s['cls'] or '<img>'} {s['box']} ratio {s['got']} vs {s['want']}"))
             for b in res["offlineBar"]:
                 problems.append((label, "offline-bar", b))
+            for s in res.get("searchClipped", []):
+                problems.append((label, "search-clipped", s))
             print(f"{label}: overflow={res['overflow']} zero={len(res['zero'])} "
                   f"offCentre={len(res['offCentre'])} stretched={len(res['stretched'])} "
-                  f"hscrollers={len(res['hscroll'])}")
+                  f"hscrollers={len(res['hscroll'])} searchClipped={len(res.get('searchClipped', []))}")
 
     if not problems:
         print("OK  mobile checks passed")

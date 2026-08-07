@@ -274,8 +274,12 @@
             <h2 id="view-title">Nostrverse</h2>
             <!-- The ▦ media-grid toggle moved into the timeline's own tab row (it only ever applied to
                  Home/Nostrverse), which lets the whole topbar hide on those views — see body.tl-view. -->
-            <!-- Mobile-only search: the desktop one lives under the sidebar logo (#nav-search-input) -->
-            <div class="searchbox"><input id="search-input" class="input" type="search" placeholder="🔍 search posts &amp; profiles…"></div>
+            <!-- Mobile-only search: the desktop one lives under the sidebar logo (#nav-search-input).
+                 Placeholder is SHORT ("🔍 Search", same as the sidebar's) because this input only ever
+                 renders on a phone, where it shares one row with the view title — "search posts &
+                 profiles…" needs 257px and the row leaves it 161px on Alerts at 390px, so the
+                 placeholder was cut off mid-word on every view that has a title. -->
+            <div class="searchbox"><input id="search-input" class="input" type="search" placeholder="🔍 Search"></div>
             <!-- Calls, Drafts and New post all moved to the sidebar; on Home/Nostrverse the topbar itself
                  is hidden (body.tl-view), since the tabs name the timeline and the composer is inline. -->
         </header>
