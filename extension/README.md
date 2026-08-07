@@ -135,6 +135,35 @@ thing that can't.
 
 ---
 
+## Releasing (maintainers)
+
+**Bump `version` in `extension/manifest.json` and push.** That is the whole release: CI builds, then
+submits to **both** stores — but only when the version differs from the commit before the push.
+
+The gate is the point. Both stores reject a version they have already seen, and both do it *after*
+the upload completes, so an ungated workflow would attempt a release on every commit and fail on
+every one. A bump releases to both; an ordinary commit releases to neither.
+
+| | Secrets | Set up with |
+|---|---|---|
+| **Firefox (AMO)** | `AMO_JWT_ISSUER`, `AMO_JWT_SECRET` | [AMO API keys](https://addons.mozilla.org/en-US/developers/addon/api/key/) |
+| **Chrome Web Store** | `CWS_CLIENT_ID`, `CWS_CLIENT_SECRET`, `CWS_REFRESH_TOKEN`, `CWS_ITEM_ID` | `python3 scripts/cws_refresh_token.py` |
+
+A step whose secrets are absent is **skipped, not failed** — forks and PRs cannot see them.
+
+Both stores still put a submission through **human review**; this automates the upload, which was the
+manual and error-prone part. The first upload to each store must be done by hand: AMO needs the
+listing to exist, and the Web Store's **item ID** does not exist until it does.
+
+**The one trap that bites later, not now:** while the Google OAuth consent screen is in *Testing*,
+Google expires the refresh token after **7 days** — so Chrome publishing starts failing about a week
+after it is set up, for a reason that is nowhere in this repo. Set the consent screen to *In
+production* (no verification review is needed for a client only you use).
+`tests/test_extension_store_workflows.py` runs both steps with a stubbed `curl`, so a duplicate
+version, an expired token and a refused publish are all covered without touching the real APIs.
+
+---
+
 ## 5. Updating
 
 - **Firefox, from AMO:** nothing to do. Firefox updates it in the background; **Check for Updates**

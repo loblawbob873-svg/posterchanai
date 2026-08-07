@@ -42,6 +42,10 @@ jobs:
     env:
       AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
       AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+      CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+      CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+      CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+      CWS_ITEM_ID: ${{ secrets.CWS_ITEM_ID }}
     steps:
       # Full history: the AMO step decides whether to submit by comparing this commit's manifest
       # version with the one BEFORE the push. The default shallow clone (depth 1) has no such commit,
@@ -148,6 +152,61 @@ jobs:
           grep -qiE 'submitted|uploaded|Your add-on' /tmp/amo.log \
             && echo "::notice title=AMO::version ${{ steps.ver.outputs.v }} submitted for review" \
             || { echo "::error title=AMO::no confirmation in web-ext output"; exit 1; }
+
+      # ---- Chrome Web Store ------------------------------------------------------------------------
+      # Three plain HTTPS calls, deliberately not a third-party action: refresh-token → access token,
+      # upload the zip, publish. Gated on the SAME version bump as AMO, because the Web Store rejects
+      # a re-upload of an existing version exactly like Mozilla does — so one bump releases to both
+      # stores, and an ordinary commit releases to neither.
+      #
+      # Set up with scripts/cws_refresh_token.py (one-off, needs a human to click Allow).
+      - name: Publish to the Chrome Web Store
+        if: steps.bump.outputs.changed == 'yes' && env.CWS_CLIENT_ID != ''
+        run: |
+          set -euo pipefail
+          tok=$(curl -fsS -X POST https://oauth2.googleapis.com/token \
+                  -d client_id="$CWS_CLIENT_ID" \
+                  -d client_secret="$CWS_CLIENT_SECRET" \
+                  -d refresh_token="$CWS_REFRESH_TOKEN" \
+                  -d grant_type=refresh_token \
+                | python3 -c "import json,sys;print(json.load(sys.stdin).get('access_token',''))")
+          if [ -z "$tok" ]; then
+            # The overwhelmingly likely cause, and it is not in this workflow: Google expires refresh
+            # tokens after 7 days while the OAuth consent screen is in "Testing".
+            echo "::error title=Chrome Web Store::could not exchange the refresh token — if this "\
+                 "worked before and stopped, set the OAuth consent screen to 'In production'"; exit 1
+          fi
+
+          up=$(curl -fsS -X PUT \
+                 -H "Authorization: Bearer $tok" -H "x-goog-api-version: 2" \
+                 -T extension/dist/posterchan-passwords-chrome.zip \
+                 "https://www.googleapis.com/upload/chromewebstore/v1.1/items/$CWS_ITEM_ID")
+          echo "upload: $up"
+          python3 - "$up" <<'PY'
+          import json, sys
+          r = json.loads(sys.argv[1] or '{}')
+          if r.get('uploadState') not in ('SUCCESS', 'IN_PROGRESS'):
+              # itemError carries the real reason — a duplicate version, a manifest the store
+              # refuses, a description over 132 chars. Surface it instead of a bare state string.
+              for e in (r.get('itemError') or []):
+                  print(f"::error title=Chrome Web Store upload::{e.get('error_detail')}")
+              raise SystemExit(f"upload failed: {r.get('uploadState')}")
+          PY
+
+          pub=$(curl -fsS -X POST \
+                  -H "Authorization: Bearer $tok" -H "x-goog-api-version: 2" -H "Content-Length: 0" \
+                  "https://www.googleapis.com/chromewebstore/v1.1/items/$CWS_ITEM_ID/publish")
+          echo "publish: $pub"
+          python3 - "$pub" <<'PY'
+          import json, sys
+          r = json.loads(sys.argv[1] or '{}')
+          st = r.get('status') or []
+          # OK and ITEM_PENDING_REVIEW are both successes: the Web Store reviews before it goes live,
+          # so "pending review" is the expected outcome, not a failure to publish.
+          if not any(s in ('OK', 'ITEM_PENDING_REVIEW') for s in st):
+              raise SystemExit(f"publish failed: {st} {r.get('statusDetail')}")
+          print(f"::notice title=Chrome Web Store::submitted ({', '.join(st)})")
+          PY
 
       - name: Retire the previous rolling release
         env:
