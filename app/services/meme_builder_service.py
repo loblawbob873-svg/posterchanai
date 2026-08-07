@@ -73,7 +73,12 @@ def _fx_chain(effect: str, w: int, h: int, dur: float, fps: int) -> str:
         return (f"scale={w*2}:{h*2},zoompan=z='1.03+0.03*sin(on/{fps}*6)':"
                 f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}:fps={fps},setsar=1")
     if e == "spin":
-        return f"rotate='0.6*t':c=none:ow={w}:oh={h}"
+        # c=black@0, NOT c=none. `none` does not mean "transparent" — it means "print no background at
+        # all", so the corners the rotated frame does not cover keep whatever was already in the output
+        # buffer. On a spin that is the previous frame's pixels smeared into all four corners: measured
+        # against the same project, the export had green in corners the preview (correctly) left empty,
+        # by up to 77px. Naming a fully-transparent colour paints them, which is what was always meant.
+        return f"rotate='0.6*t':c=black@0:ow={w}:oh={h}"
     if e == "grayscale":
         return "hue=s=0"
     if e == "sepia":
@@ -828,7 +833,11 @@ def render(edit: dict, sources: dict) -> tuple:
                 rad = math.radians(rot)
                 c, sn = abs(math.cos(rad)), abs(math.sin(rad))
                 ow, oh = lw * c + lh * sn, lw * sn + lh * c        # same as rotw()/roth()
-                chain.append(f"rotate={rad:.6f}:ow=rotw({rad:.6f}):oh=roth({rad:.6f}):fillcolor=none")
+                # fillcolor=black@0, not `none` — see the spin effect in _fx_chain for what `none`
+                # actually does. The grown ow/oh happen to give this a fresh buffer most of the time,
+                # which is why it has not misbehaved here, but "most of the time" is not a guarantee
+                # and the two rotates may as well state the same, defined thing.
+                chain.append(f"rotate={rad:.6f}:ow=rotw({rad:.6f}):oh=roth({rad:.6f}):fillcolor=black@0")
                 ox = lx - int(round((ow - lw) / 2))
                 oy = ly - int(round((oh - lh) / 2))
             if opacity < 1.0:

@@ -384,8 +384,18 @@ class TestWiring(unittest.TestCase):
         m = re.search(r"\{ pubkey: ME\.pubkey, auth, audio, character: pose[^}]*\}", js)
         self.assertIsNotNone(m, "the pose talk request went away")
         self.assertIn("mouth", m.group(0))
-        # …and the picker is not skipped for it
-        self.assertIn("pickMouth(l.src, pose)", js)
+        # …and the picker is not skipped for it, and it is shown the POSE'S OWN artwork.
+        #
+        # Matched on the pose branch of the argument rather than on the whole call. This asserted the
+        # literal `pickMouth(l.src, pose)` and went red the moment an ERASED image layer started
+        # handing the picker a baked cut-out (`pose ? l.src : (bakedUrl || l.src)`) — a behaviour
+        # change the assertion had no opinion about, reported as if the picker had been skipped. What
+        # actually matters is unchanged: a pose still opens the picker, still on `l.src`.
+        m2 = re.search(r"pickMouth\(\s*(.+?),\s*pose\s*\)", js)
+        self.assertIsNotNone(m2, "a pose no longer opens the mouth picker")
+        arg = m2.group(1)
+        self.assertTrue(arg == "l.src" or "pose ? l.src" in arg,
+                        f"the pose branch must show the pose's own artwork, got: {arg}")
 
     def test_it_is_not_an_effect(self):
         """Effects read their argument as motion MODIFIERS, so `talk hello there` in an effect set

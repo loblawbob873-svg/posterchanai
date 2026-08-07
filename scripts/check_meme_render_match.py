@@ -53,12 +53,18 @@ TOL_TEXT = 16
 #   RED    a plain `cover` layer            — the baseline: if this is out, everything is
 #   GREEN  a `contain` layer in a box of a different shape — letterbox geometry
 #   BLUE   a rotated layer                  — rotw()/roth() growth vs the CSS transform
+#   ORANGE a layer with an EFFECT on it     — the per-layer FX dropdown
 #   YELLOW a one-line caption               — font, size and the ink-vs-ascent lift
 #   CYAN   a caption long enough to WRAP    — per-line spacing, which the two sides state separately
 #   PINK   a centred caption                — (w-text_w)/2 vs the CSS centring
 #
 # Captions are stroked in the BACKGROUND colour so the outline (which the two sides draw at
 # different widths, and on different sides of the glyph edge) cannot move the measured ink box.
+#
+# Layer sources are HALF colour, half black — deliberately asymmetric. A flat rectangle is identical
+# to its own mirror image, so with a symmetric source a layer that the export mirrors (or flips, or
+# pans) and the stage does not measures the SAME box on both sides and the check passes on a picture
+# that is visibly wrong.
 # Fully-saturated primaries and secondaries, matched within TOL_COLOUR. Anti-aliasing blends a
 # probe towards the BLACK background, and every such blend keeps the probe's zero channels at zero
 # while dropping its full channels — so it can never wander into another probe's neighbourhood. A
@@ -68,11 +74,17 @@ PROBES = {
     "RED":    ((255, 0, 0),     "layer"),
     "GREEN":  ((0, 255, 0),     "layer"),
     "BLUE":   ((0, 0, 255),     "layer"),
+    "ORANGE": ((255, 128, 0),   "layer"),
     "YELLOW": ((255, 255, 0),   "text"),
     "CYAN":   ((0, 255, 255),   "text"),
     "PINK":   ((255, 0, 255),   "text"),
 }
 TOL_COLOUR = 46
+
+# The playhead the MOTION scenario is sampled at. Deliberately not 0: zoom/spin/pulse/shake are all
+# identity (or near it) on frame 0, so a check that only ever looked at t=0 would pass on a preview
+# that never moves at all — which is precisely the bug the effect preview was written to fix.
+MOTION_AT = 2.0
 
 EDIT = {
     "w": PROJ_W, "h": PROJ_H, "fps": 12, "bg": "#000000", "duration": 4,
@@ -85,6 +97,10 @@ EDIT = {
         {"id": "GREEN", "type": "image", "src": "SRC:GREEN", "name": "contain",
          "start": 0, "dur": 4, "trim": 0, "x": 420, "y": 40, "w": 260, "h": 200,
          "fit": "contain", "opacity": 1, "effect": "none", "flipH": False, "flipV": False,
+         "rotate": 0, "align": ""},
+        {"id": "ORANGE", "type": "image", "src": "SRC:ORANGE", "name": "fx-mirror",
+         "start": 0, "dur": 4, "trim": 0, "x": 430, "y": 300, "w": 250, "h": 190,
+         "fit": "cover", "opacity": 1, "effect": "flip", "flipH": False, "flipV": False,
          "rotate": 0, "align": ""},
         {"id": "BLUE", "type": "image", "src": "SRC:BLUE", "name": "rot",
          "start": 0, "dur": 4, "trim": 0, "x": 60, "y": 1020, "w": 240, "h": 180,
@@ -103,8 +119,36 @@ EDIT = {
     ],
 }
 
+# Every effect whose geometry MOVES with time, one per probe, each in its own corner so a bug that
+# drags a layer sideways cannot hide inside a neighbour's box. `spin` and `zoom` are also the two the
+# renderer crops back to the layer box, so these double as the check that the preview clips.
+EDIT_MOTION = {
+    "w": PROJ_W, "h": PROJ_H, "fps": 12, "bg": "#000000", "duration": 6,
+    "fmt": "png", "still": MOTION_AT,
+    "layers": [
+        {"id": "RED", "type": "image", "src": "SRC:RED", "name": "fx-zoom",
+         "start": 0, "dur": 6, "trim": 0, "x": 40, "y": 60, "w": 300, "h": 240,
+         "fit": "cover", "opacity": 1, "effect": "zoom", "flipH": False, "flipV": False,
+         "rotate": 0, "align": ""},
+        {"id": "GREEN", "type": "image", "src": "SRC:GREEN", "name": "fx-spin",
+         "start": 0, "dur": 6, "trim": 0, "x": 390, "y": 60, "w": 290, "h": 240,
+         "fit": "cover", "opacity": 1, "effect": "spin", "flipH": False, "flipV": False,
+         "rotate": 0, "align": ""},
+        {"id": "BLUE", "type": "image", "src": "SRC:BLUE", "name": "fx-pulse",
+         "start": 0, "dur": 6, "trim": 0, "x": 40, "y": 420, "w": 300, "h": 240,
+         "fit": "cover", "opacity": 1, "effect": "pulse", "flipH": False, "flipV": False,
+         "rotate": 0, "align": ""},
+        {"id": "ORANGE", "type": "image", "src": "SRC:ORANGE", "name": "fx-shake",
+         "start": 0, "dur": 6, "trim": 0, "x": 390, "y": 420, "w": 290, "h": 240,
+         "fit": "cover", "opacity": 1, "effect": "shake", "flipH": False, "flipV": False,
+         "rotate": 0, "align": ""},
+    ],
+}
 
-def _page(src_base, edit):
+SCENARIOS = [("static", EDIT, 0.0), ("motion", EDIT_MOTION, MOTION_AT)]
+
+
+def _page(src_base, edit, at):
     return """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="/static/css/client.css">
@@ -162,7 +206,14 @@ window.__ready = false;
   // Wait for the layer's own picture AND the caption's webfont: a screenshot taken before either has
   // landed compares an empty stage (or a fallback face) against a finished export, which reads as a
   // huge misalignment and is really a race in the harness.
-  const done = () => { window.__ready = true; };
+  const done = () => {
+    // Park the playhead where the export will be sampled. Through the real scrub input, so this goes
+    // down the same seek() path a user's drag does — and the Render button reads its value for
+    // `still`, so BOTH sides end up at the same instant without the harness stating it twice.
+    const sc = document.getElementById('mb-scrub');
+    if (sc) { sc.value = String(__AT__); sc.dispatchEvent(new Event('input', {bubbles: true})); }
+    setTimeout(() => { window.__ready = true; }, 300);
+  };
   const imgs = [...document.querySelectorAll('.mb-stage img')];
   Promise.all([
     document.fonts ? document.fonts.ready : Promise.resolve(),
@@ -171,7 +222,7 @@ window.__ready = false;
   ]).then(() => setTimeout(done, 500));
 })();
 </script>
-</body></html>""".replace("__PROJECT__", json.dumps(dict(edit, name="match", layers=[
+</body></html>""".replace("__AT__", json.dumps(at)).replace("__PROJECT__", json.dumps(dict(edit, name="match", layers=[
         dict(l, src=(src_base + l["id"] + ".png" if l.get("src") else ""),
              # The editor's own defaults for the fields the render payload does not carry.
              trim=l.get("trim", 0), opacity=l.get("opacity", 1), volume=1, mute=False,
@@ -345,7 +396,9 @@ def main():
         if kind != "layer":
             continue
         p = os.path.join(tmp, f"{name}.png")
-        Image.new("RGB", (400, 300), rgb).save(p)
+        im = Image.new("RGB", (400, 300), (0, 0, 0))
+        im.paste(Image.new("RGB", (200, 300), rgb), (0, 0))   # left half only — see PROBES
+        im.save(p)
         src_paths[name] = p
 
     class H(http.server.SimpleHTTPRequestHandler):
@@ -368,68 +421,76 @@ def main():
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{srv.server_port}"
-    with open(os.path.join(tmp, "index.html"), "w") as fh:
-        fh.write(_page(f"{base}/src/", EDIT))
 
-    shots, payload = {}, {}
+    problems, rc = [], 0
     try:
-        rc = asyncio.run(drive(f"{base}/index.html", shots, payload))
+        for sname, sedit, at in SCENARIOS:
+            with open(os.path.join(tmp, "index.html"), "w") as fh:
+                fh.write(_page(f"{base}/src/", sedit, at))
+            shots, payload = {}, {}
+            rc = asyncio.run(drive(f"{base}/index.html", shots, payload))
+            if rc:
+                return rc
+            edit = payload.get("edit")
+            if not edit or not edit.get("layers"):
+                print(f"SKIP  [{sname}] the Render button produced no payload")
+                return 2
+
+            # The EXPORT, from the real filtergraph, driven by the payload the client just built.
+            sources = {}
+            for l in edit["layers"]:
+                u = l.get("src") or ""
+                if u:
+                    sources[u] = src_paths[os.path.basename(u).rsplit(".", 1)[0]]
+            png, ctype = meme_builder_service.render(edit, sources)
+            if ctype != "image/png":
+                print(f"SKIP  [{sname}] the renderer returned {ctype}")
+                return 2
+            exp = Image.open(io.BytesIO(png)).convert("RGB")
+            # PC_MEME_DUMP=<dir> writes both sides out. A bounding box says THAT two shapes differ;
+            # when they differ in area rather than position, only the pictures say why.
+            if os.environ.get("PC_MEME_DUMP"):
+                exp.save(os.path.join(os.environ["PC_MEME_DUMP"], f"{sname}-export.png"))
+            want = _boxes(exp)
+            live = {l["id"] for l in sedit["layers"]}
+            missing = [k for k, v in want.items() if not v and k in live]
+            if missing:
+                print(f"SKIP  [{sname}] the export is missing probes: {', '.join(missing)}")
+                return 2
+            keys = [k for k in PROBES if k in live]
+            print(f"[{sname} @{at}s] export    " + "  ".join(f"{k}={want[k]}" for k in keys))
+
+            for label, (data, box, dsf) in sorted(shots.items()):
+                img = Image.open(io.BytesIO(data)).convert("RGB")
+                img = img.crop((int(round(box["x"] * dsf)), int(round(box["y"] * dsf)),
+                                int(round((box["x"] + box["w"]) * dsf)),
+                                int(round((box["y"] + box["h"]) * dsf))))
+                if img.size != (PROJ_W, PROJ_H):
+                    img = img.resize((PROJ_W, PROJ_H), Image.LANCZOS)
+                if os.environ.get("PC_MEME_DUMP"):
+                    img.save(os.path.join(os.environ["PC_MEME_DUMP"], f"{sname}-stage-{label}.png"))
+                got = _boxes(img)
+                print(f"[{sname} @{at}s] {label:<9} " + "  ".join(f"{k}={got[k]}" for k in keys))
+                for k in keys:
+                    tol = TOL_BOX if PROBES[k][1] == "layer" else TOL_TEXT
+                    g, wn = got[k], want[k]
+                    if not g:
+                        problems.append((sname, label, k, "the stage does not show it at all"))
+                        continue
+                    d = [a - b for a, b in zip(g, wn)]
+                    if max(abs(v) for v in d) > tol:
+                        problems.append((sname, label, k,
+                                         f"stage {g} vs export {wn} — left/top/right/bottom out by "
+                                         f"{d[0]:+d}/{d[1]:+d}/{d[2]:+d}/{d[3]:+d} canvas px"))
     finally:
         srv.shutdown()
-    if rc:
-        return rc
-    edit = payload.get("edit")
-    if not edit or not edit.get("layers"):
-        print("SKIP  the Render button produced no payload")
-        return 2
-
-    # The EXPORT, from the real filtergraph, driven by the payload the client just built. Sources are
-    # keyed by the same urls the page used, so both sides are looking at the same bytes.
-    sources = {}
-    for l in edit["layers"]:
-        u = l.get("src") or ""
-        if u:
-            sources[u] = src_paths[os.path.basename(u).rsplit(".", 1)[0]]
-    png, ctype = meme_builder_service.render(edit, sources)
-    if ctype != "image/png":
-        print(f"SKIP  the renderer returned {ctype}")
-        return 2
-    exp = Image.open(io.BytesIO(png)).convert("RGB")
-    want = _boxes(exp)
-    missing = [k for k, v in want.items() if not v]
-    if missing:
-        print(f"SKIP  the export is missing probes: {', '.join(missing)}")
-        return 2
-    print("export    " + "  ".join(f"{k}={want[k]}" for k in PROBES))
-
-    problems = []
-    for label, (data, box, dsf) in sorted(shots.items()):
-        img = Image.open(io.BytesIO(data)).convert("RGB")
-        img = img.crop((int(round(box["x"] * dsf)), int(round(box["y"] * dsf)),
-                        int(round((box["x"] + box["w"]) * dsf)),
-                        int(round((box["y"] + box["h"]) * dsf))))
-        if img.size != (PROJ_W, PROJ_H):
-            img = img.resize((PROJ_W, PROJ_H), Image.LANCZOS)
-        got = _boxes(img)
-        print(f"{label:<9} " + "  ".join(f"{k}={got[k]}" for k in PROBES))
-        for k, (_rgb, kind) in PROBES.items():
-            tol = TOL_BOX if kind == "layer" else TOL_TEXT
-            g, wn = got[k], want[k]
-            if not g:
-                problems.append((label, k, "the stage does not show it at all"))
-                continue
-            d = [a - b for a, b in zip(g, wn)]
-            if max(abs(v) for v in d) > tol:
-                problems.append((label, k,
-                                 f"stage {g} vs export {wn} — left/top/right/bottom out by "
-                                 f"{d[0]:+d}/{d[1]:+d}/{d[2]:+d}/{d[3]:+d} canvas px"))
 
     if problems:
         print("\nPREVIEW DISAGREES WITH THE EXPORT:")
-        for label, k, msg in problems:
-            print(f"  [{label}] {k} ({PROBES[k][1]}): {msg}")
+        for sname, label, k, msg in problems:
+            print(f"  [{sname}/{label}] {k} ({PROBES[k][1]}): {msg}")
         return 1
-    print("\nOK — the stage matches the export at every width")
+    print("\nOK — the stage matches the export in every scenario, at every width")
     return 0
 
 

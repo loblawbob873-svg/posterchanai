@@ -390,7 +390,8 @@ ERASE_PROBE = r"""(async () => {
   // yet, a cross-origin block, an offline moment — showed the layer un-erased while the export was
   // perfect, and one failure latched for the whole session. Read it immediately, with no grace period:
   // waiting here would hide exactly the regression this asserts.
-  const stageEl = document.querySelector(`.mb-item[data-id="${layer().id}"] > img`);
+  // Descendant, not `>`: the media sits inside the .mb-fx effect wrapper (see stageEl in meme.js).
+  const stageEl = document.querySelector(`.mb-item[data-id="${layer().id}"] img`);
   const stageMask = stageEl ? (getComputedStyle(stageEl).webkitMaskImage
                                || getComputedStyle(stageEl).maskImage || 'none') : 'none';
 
@@ -435,7 +436,8 @@ MASK_PROBE = r"""(async () => {
     localStorage.setItem('pc_meme_project', JSON.stringify(p));
     window.PCMeme.render();
     await wait(1200);                       // the probe Image() has to resolve
-    const el = document.querySelector('.mb-item[data-id="L1"] > img');
+    // Descendant, not `>` — the .mb-fx effect wrapper sits between them now.
+    const el = document.querySelector('.mb-item[data-id="L1"] img');
     if (!el) return {err: 'the layer element is not on the stage'};
     const cs = getComputedStyle(el);
     const mi = cs.webkitMaskImage || cs.maskImage || 'none';

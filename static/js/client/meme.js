@@ -170,6 +170,11 @@
     _fitRO.disconnect();                 // render() replaces the element every time
     _fitRO.observe(host);
   }
+  // The playhead, in project seconds. stageEl is declarative and synchronous, so a time-varying
+  // effect needs the CURRENT time at build time too — not just on the next seek() tick, or every
+  // repaint (selecting a layer, editing a field) would flash the layer back to its frame-0
+  // geometry until the clock next ran. seek() is the only writer.
+  let _curT = 0;
   const nid = () => 'L' + (++_uid) + Math.random().toString(36).slice(2, 6);
 
   function blank(){
@@ -1064,24 +1069,33 @@
       const cpos = _alignOf(l)==='center' ? `left:50%;top:${(l.y/P.h*100).toFixed(3)}%;` : pos;   // .centred shifts back by half its width
       // Drop shadow, matching the renderer's shadowx/shadowy (size/18, black at 65%).
       const sh = l.shadow ? `text-shadow:${(Math.max(2,l.size/18)/P.w*100).toFixed(3)}cqw ${(Math.max(2,l.size/18)/P.w*100).toFixed(3)}cqw 0 rgba(0,0,0,.65);` : '';
-      return `<div class="mb-item mb-text${_alignOf(l)==='center'?' centred':''}${s}" data-id="${l.id}" style="${cpos}font-size:${(l.size/P.w*100).toFixed(3)}cqw;color:${enc(l.color)};-webkit-text-stroke:.03em ${enc(l.stroke)};${sh}opacity:${l.opacity}">${_textInnerHTML(l)}<i class="mb-h"></i></div>`;
+      // A caption's EFFECT: the colour ones only. The renderer draws a caption onto its own
+      // CANVAS-SIZED transparent stream and applies the effect to that whole frame, so spin/zoom/
+      // shake/pulse on a caption turn the entire canvas about ITS centre, not the caption's — which
+      // this small, caption-hugging box cannot express. `fade` is folded into the opacity below, and
+      // the colour filters shift no geometry, so those are exact. See _fxFilter.
+      const tf = _fxFilter(l);
+      return `<div class="mb-item mb-text${_alignOf(l)==='center'?' centred':''}${s}" data-id="${l.id}" style="${cpos}font-size:${(l.size/P.w*100).toFixed(3)}cqw;color:${enc(l.color)};-webkit-text-stroke:.03em ${enc(l.stroke)};${sh}${tf?`filter:${tf};`:''}opacity:${_opacityOf(l, _curT-l.start)}">${_textInnerHTML(l)}<i class="mb-h"></i></div>`;
     }
     const size = `width:${(l.w/P.w*100).toFixed(3)}%;height:${(l.h/P.h*100).toFixed(3)}%;`;
-    // Mirror the renderer's mirror+rotate. Order matters and CSS applies transforms RIGHT to LEFT, so
-    // `rotate(...) scaleX(-1) scaleY(-1)` runs flip-then-rotate — the same order as the ffmpeg chain
-    // (hflip/vflip, then rotate). Put it on the IMG, not on .mb-item, so the layer's box and its resize
-    // handle stay axis-aligned and still grab where you expect. .mb-item has no overflow:hidden, so the
-    // corners spill out exactly as the renderer's rotw()/roth() growth allows.
+    // Mirror the renderer's mirror -> effect -> rotate, split across TWO elements because those steps
+    // clip differently: the effect ends at a fixed WxH (ffmpeg's ow/oh, zoompan's s=) so it has to be
+    // cropped to the layer box, while the free rotate GROWS the frame (rotw()/roth()) and must spill.
+    // So .mb-fx carries the rotate and, when the effect crops, the overflow:hidden; the media itself
+    // carries flip + the effect. .mb-item still has no overflow:hidden, so the rotated corners spill
+    // exactly as the renderer allows, and the layer's box and resize handle stay axis-aligned.
     // object-fit must mirror the renderer: 'cover' fills the box and crops, 'contain' letterboxes.
     const ofit = (l.fit==='cover') ? 'cover' : 'contain';
     // `#t=0.1` (a media fragment) makes the browser seek to 0.1s and DISPLAY that frame as a poster the
     // moment the layer mounts — otherwise `preload` alone decodes nothing and the clip shows blank until
     // you scrub/play (the "I have to render to see the effect" bug). preload=auto so the frame loads eagerly.
     const mk = _maskCss(l, ofit);
+    const lt = _curT - l.start;
     const inner = l.type==='video'
-      ? `<video src="${enc(l.src)}#t=0.1" muted playsinline preload="auto" style="object-fit:${ofit}${mk}${_xformCss(l)}"></video>`
-      : `<img src="${enc(l.src)}" alt="" style="object-fit:${ofit}${mk}${_xformCss(l)}">`;
-    return `<div class="mb-item mb-media${s}" data-id="${l.id}" style="${pos}${size}opacity:${l.opacity}">${inner}<i class="mb-h"></i></div>`;
+      ? `<video src="${enc(l.src)}#t=0.1" muted playsinline preload="auto" style="object-fit:${ofit}${mk}${_xformCss(l, lt)}"></video>`
+      : `<img src="${enc(l.src)}" alt="" style="object-fit:${ofit}${mk}${_xformCss(l, lt)}">`;
+    const fxw = `<i class="mb-fx${_fxCrops(l)?' crop':''}" style="${_rotCss(l)}">${inner}</i>`;
+    return `<div class="mb-item mb-media${s}" data-id="${l.id}" style="${pos}${size}opacity:${_opacityOf(l, lt)}">${fxw}<i class="mb-h"></i></div>`;
   }
 
   function trackEl(l){
@@ -1213,7 +1227,9 @@
   function _paintMask(url){
     P.layers.forEach(l => {
       if(l.mask !== url || l.type === 'text' || l.type === 'audio') return;
-      const el = document.querySelector(`.mb-item[data-id="${l.id}"] > img, .mb-item[data-id="${l.id}"] > video`);
+      // Descendant, not `>`: the media sits inside the .mb-fx wrapper now (see stageEl). A direct-child
+      // selector silently matched nothing, which would have shown every erased layer un-erased.
+      const el = document.querySelector(`.mb-item[data-id="${l.id}"] img, .mb-item[data-id="${l.id}"] video`);
       if(!el) return;
       const ofit = (l.fit === 'cover') ? 'cover' : 'contain';   // mirrors object-fit; see _maskCss
       const u = `url("${_maskSrc(l.mask)}")`;
@@ -1317,16 +1333,109 @@
       return new Promise(res => c.toBlob(b => res(b || null), 'image/png'));
     })).catch(() => null);
   }
-  // CSS equivalent of the renderer's flip+rotate for this layer ('' when it is untouched).
-  function _xformCss(l){
-    const t=_xform(l); return t ? `;transform:${t};transform-origin:center` : '';
+  // CSS equivalent of the renderer's flip + EFFECT for this layer ('' when it is untouched).
+  //
+  // The free ROTATE is deliberately NOT here — it goes on the .mb-fx wrapper, because the renderer's
+  // order is fit -> mask -> hflip/vflip -> effect -> rotate, and an effect like spin/zoom/shake is
+  // cropped back to the layer box (ffmpeg's ow=w:oh=h, or zoompan's s=WxH) while the free rotate GROWS
+  // the frame. One element cannot both clip its content and spill outside its parent, so the two live
+  // on two elements in that order. See stageEl.
+  function _xformCss(l, lt){
+    const t=_xform(l, lt), f=_fxFilter(l);
+    return (t ? `;transform:${t};transform-origin:${_fxOrigin(l)}` : '') + (f ? `;filter:${f}` : '');
   }
-  function _xform(l){
-    const p=[]; const r=+l.rotate||0;
-    if(r) p.push(`rotate(${r}deg)`);
+  function _xform(l, lt){
+    const p=[];
+    // EFFECT FIRST in the list, flip second. A CSS transform list applies RIGHT TO LEFT — the
+    // rightmost runs first — and the renderer's order is hflip/vflip THEN the effect. So the effect
+    // has to be the leftmost entry to run last. Written the other way round it silently mirrors a
+    // spin the wrong way for any layer that is both flipped and effected.
+    const fx=_fxXform(l, lt); if(fx) p.push(fx);
     if(l.flipH) p.push('scaleX(-1)');
     if(l.flipV) p.push('scaleY(-1)');
     return p.join(' ');
+  }
+  // Just the free rotate — the wrapper's job. Kept separate from _xform for the reason above.
+  function _rotCss(l){
+    const r=+l.rotate||0;
+    return r ? `transform:rotate(${r}deg);transform-origin:center` : '';
+  }
+
+  // ---------- the per-layer EFFECT, previewed ----------
+  // The stage used to draw every layer with NO effect applied at all, so all twelve entries in the FX
+  // dropdown previewed identically to "None" while five of them MOVE the picture in the export. Picking
+  // "Mirror" put the layer 126 canvas px from where the stage showed it (measured by
+  // scripts/check_meme_render_match.py) and nothing on screen said so until the render came back.
+  //
+  // Every case below mirrors _fx_chain in meme_builder_service.py filter for filter. Where ffmpeg's
+  // geometry is time-varying the local time `lt` (seconds INTO the layer's slot, which is the clock
+  // ffmpeg's own `t` runs on after setpts) drives it, and seek() re-applies it per tick.
+  //
+  // EFFECTS THAT CROP: zoom/shake/pulse/spin all end at a fixed WxH in ffmpeg, so their preview has to
+  // be clipped to the layer box or a zoomed layer would visibly overflow onto its neighbours. That is
+  // what _fxCrops drives (the .crop class on the wrapper).
+  const _fxCrops = (l) => ['zoom','shake','pulse','spin'].indexOf(_fxOf(l)) >= 0;
+  const _fxOf = (l) => String((l && l.effect) || 'none').trim().toLowerCase();
+  // zoom pans from the TOP-LEFT, because ffmpeg's zoompan is given no x/y and defaults to 0,0. That is
+  // the renderer's behaviour, so it is the preview's too — a preview that centred it would be a second,
+  // prettier lie.
+  function _fxOrigin(l){ return _fxOf(l)==='zoom' ? '0 0' : 'center'; }
+  function _fxXform(l, lt){
+    const e=_fxOf(l), t=Math.max(0, +lt||0), fps=+P.fps||30;
+    if(e==='flip') return 'scaleX(-1)';                       // ffmpeg: hflip
+    if(e==='spin') return `rotate(${(0.6*t*180/Math.PI).toFixed(3)}deg)`;   // ffmpeg: rotate='0.6*t' (radians)
+    if(e==='pulse'){                                          // ffmpeg: z='1.03+0.03*sin(on/fps*6)', centred
+      const z=1.03+0.03*Math.sin(Math.round(t*fps)/fps*6);
+      return `scale(${z.toFixed(4)})`;
+    }
+    if(e==='zoom'){                                           // ffmpeg: z='min(zoom+0.0015,1.35)', per FRAME
+      const z=Math.min(1+0.0015*Math.round(t*fps), 1.35);
+      return `scale(${z.toFixed(4)})`;
+    }
+    if(e==='shake'){
+      // ffmpeg crops a (w-8)x(h-8) window at (4+3sin(22t), 4+3cos(18t)) and scales it back to WxH.
+      // Same thing: translate the window's origin to 0,0 then scale up by w/(w-8).
+      const w=Math.max(2,+l.w||0), h=Math.max(2,+l.h||0);
+      const cw=Math.max(2,w-8), ch=Math.max(2,h-8);
+      const ox=4+3*Math.sin(t*22), oy=4+3*Math.cos(t*18);
+      return `scale(${(w/cw).toFixed(4)},${(h/ch).toFixed(4)}) `
+           + `translate(${(-ox/w*100).toFixed(3)}%,${(-oy/h*100).toFixed(3)}%)`;
+    }
+    return '';
+  }
+  function _fxFilter(l){
+    const e=_fxOf(l);
+    if(e==='grayscale') return 'grayscale(1)';                // ffmpeg: hue=s=0
+    if(e==='invert') return 'invert(1)';                      // ffmpeg: negate
+    // CSS sepia(1) IS the matrix _fx_chain hands colorchannelmixer (.393/.769/.189 …) — same numbers,
+    // so this one is exact rather than a lookalike.
+    if(e==='sepia') return 'sepia(1)';
+    // gblur's sigma is in the layer stream's own pixels, i.e. canvas pixels, and CSS blur()'s length IS
+    // a standard deviation — so the only conversion needed is canvas px -> a unit that tracks the stage.
+    if(e==='blur') return `blur(${(12/(+P.w||720)*100).toFixed(3)}cqw)`;
+    // APPROXIMATE, and the only one that is: glow is a blurred bright copy screen-blended back over the
+    // original, which CSS has no filter for. It shifts no geometry, so the alignment contract still
+    // holds — this just gets the look close instead of leaving it looking like "None".
+    if(e==='glow') return 'brightness(1.10) saturate(1.12) contrast(1.03)';
+    return '';
+  }
+  // A layer's on-screen alpha: its own opacity, times the crossfade ramp, times the `fade` effect's
+  // ramp — the same three the renderer multiplies. ONE function because the three callers (stageEl,
+  // seek, the opacity slider) drifted the moment there was more than one factor: `l.opacity` unset
+  // means 1, and spelling that `+l.opacity||0` instead of `l.opacity==null?1:` renders the layer
+  // INVISIBLE rather than opaque.
+  function _opacityOf(l, lt){
+    return (l.opacity==null?1:+l.opacity) * _rampAt(l, lt) * _fxAlpha(l, lt);
+  }
+  // The `fade` EFFECT is an alpha ramp over the layer's own window, exactly like a crossfade — so it is
+  // folded into the same opacity product rather than into the transform (see _rampAt / seek).
+  function _fxAlpha(l, lt){
+    if(_fxOf(l)!=='fade') return 1;
+    const dur=+l.dur||0, t=Math.max(0,+lt||0);
+    const f=Math.min(0.5, Math.max(0.15, dur/6));
+    if(t<f) return Math.max(0, t/f);
+    if(t>dur-f) return Math.min(1, Math.max(0, (dur-t)/f));
+    return 1;
   }
 
   function inspector(){
@@ -1952,6 +2061,7 @@
 
   // Preview scrubbing: show only the layers alive at time t, and seek videos to their own local time.
   function seek(t){
+    _curT = t;
     P.layers.forEach(l=>{
       const el=document.querySelector('.mb-item[data-id="'+l.id+'"]'); if(!el) return;
       const on = t>=l.start && t<=l.start+l.dur;
@@ -1959,7 +2069,18 @@
       // CROSSFADE in the preview. The renderer blends with alpha ramps on each clip's own stream; without
       // the same ramp here, an overlapping pair previews as the top clip simply covering the one beneath
       // (a hard cut) and the dissolve only appears in the export.
-      if(on) el.style.opacity = (l.opacity==null?1:+l.opacity) * _rampAt(l, t - l.start);
+      // The `fade` EFFECT is a second, independent ramp in the renderer (a clip can dissolve AND fade),
+      // so the two multiply here exactly as their two alpha filters do there.
+      if(on) el.style.opacity = _opacityOf(l, t - l.start);
+      // A TIME-VARYING effect (zoom's push-in, spin, pulse, shake) has to be re-applied on every tick,
+      // or the stage shows frame 0's geometry for the whole clip while the export moves. Repainted in
+      // place rather than via render(), like every other per-frame update here — a rebuild would
+      // restart the <video>s and drop an in-progress drag.
+      if(on && l.type!=='text'){
+        const m=el.querySelector('img,video');
+        if(m){ const x=_xform(l, t - l.start);
+          if(m.style.transform!==x){ m.style.transform=x; m.style.transformOrigin=_fxOrigin(l); } }
+      }
       const v=el.querySelector('video');
       if(v){
         const playing = !!_playT;
@@ -3257,7 +3378,10 @@
     on('mb-f-boxcolor','input',(e)=>{ snapBurst('boxcolor:'+l.id); l.boxColor=e.target.value; save(); _paintText(); });
     on('mb-f-boxalpha','input',(e)=>{ snapBurst('boxalpha:'+l.id); l.boxAlpha=clamp(e.target.value,0.1,1); save(); _paintText(); });
     on('mb-f-shadow','change',(e)=>{ snap(); l.shadow=!!e.target.checked; save(); render(); });
-    on('mb-f-fx','change',(e)=>{ snap(); l.effect=e.target.value; save(); });
+    // render(), not an in-place paint: the effect decides whether the wrapper CROPS, and that is a
+    // class on an element rather than a style on one. Without this the dropdown changed the export and
+    // left the stage showing the old effect — the exact gap this whole preview closes.
+    on('mb-f-fx','change',(e)=>{ snap(); l.effect=e.target.value; save(); render(); });
     // Put the layer's ORIGINAL picture back. applyMemeEffect replaces the source in place, which used to be
     // a one-way door: the wrong pick out of a hundred-name list cost you the layer (Ctrl+Z covers it too now,
     // but not once you have made other edits on top).
@@ -3456,12 +3580,19 @@
       const sl=root.querySelector('#mb-f-speed'); if(sl) sl.value=_speedOf(l);
     }));
     on('mb-f-op','input',(e)=>{ snapBurst('op:'+l.id); l.opacity=clamp(e.target.value,0.05,1); save();
-      const it=root.querySelector('.mb-item[data-id="'+l.id+'"]'); if(it) it.style.opacity=l.opacity; });
-    // Flip/rotate repaint the layer's transform IN PLACE rather than re-rendering the board: a full
-    // re-render on every slider step would rebuild the <video> elements and restart them from frame 0.
+      // Through _opacityOf, not the raw value: a layer that is mid-crossfade or mid-`fade` would
+      // otherwise jump to full alpha for as long as the slider is held and snap back on the next tick.
+      const it=root.querySelector('.mb-item[data-id="'+l.id+'"]');
+      if(it) it.style.opacity=_opacityOf(l, _curT-l.start); });
+    // Flip and rotate land on DIFFERENT elements — the effect sits between them in the renderer's
+    // order, so the free rotate is on the .mb-fx wrapper and the flip on the media. Painted IN PLACE
+    // rather than by re-rendering the board: a full re-render on every slider step would rebuild the
+    // <video> elements and restart them from frame 0.
     const _paintX=()=>{ const it=root.querySelector('.mb-item[data-id="'+l.id+'"]');
       const m=it && it.querySelector('img,video'); if(!m) return;
-      m.style.transform=_xform(l); m.style.transformOrigin='center'; };
+      m.style.transform=_xform(l, _curT-l.start); m.style.transformOrigin=_fxOrigin(l);
+      const fw=it.querySelector('.mb-fx');
+      if(fw){ fw.style.transform=(+l.rotate||0)?`rotate(${+l.rotate||0}deg)`:''; fw.style.transformOrigin='center'; } };
     on('mb-fliph','click',(e)=>{ snap(); l.flipH=!l.flipH; save(); e.currentTarget.classList.toggle('on',!!l.flipH); _paintX(); });
     on('mb-flipv','click',(e)=>{ snap(); l.flipV=!l.flipV; save(); e.currentTarget.classList.toggle('on',!!l.flipV); _paintX(); });
     on('mb-f-rot','input',(e)=>{ snapBurst('rot:'+l.id); l.rotate=clamp(e.target.value,-180,180); save();

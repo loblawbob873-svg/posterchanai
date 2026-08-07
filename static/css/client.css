@@ -4380,6 +4380,12 @@ svg.mb-e{margin-right:0}
 .mb-item.mb-text.sel{outline:none}
 .mb-item.mb-text.sel .mb-h{display:block}
 .mb-item img,.mb-item video{width:100%;height:100%;object-fit:contain;display:block;pointer-events:none}
+/* The layer's EFFECT box, between .mb-item and the media — see stageEl. It carries the free rotate,
+   and .crop carries the clip for the effects ffmpeg constrains to a fixed WxH (zoom/shake/pulse/spin).
+   The two cannot be one element: the effect must be clipped to the layer box while the rotate must
+   spill outside it. Not display:contents either — that box is what does the clipping. */
+.mb-fx{position:absolute;inset:0;display:block;pointer-events:none}
+.mb-fx.crop{overflow:hidden}
 /* width:max-content — the box HUGS the text. It used to be a full 92%-wide box with the text centred
    inside it, so the preview showed the caption centred while ffmpeg's drawtext anchors the text's LEFT
    EDGE at the same x — the caption you placed centre-bottom rendered hard against the left edge. Hugging
