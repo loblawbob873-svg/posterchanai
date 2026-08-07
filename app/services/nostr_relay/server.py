@@ -168,6 +168,10 @@ class SubscriptionManager:
     def count(self, conn) -> int:
         return len(self._subs.get(conn, {}))
 
+    def total(self) -> int:
+        """Open subscriptions across every connection — the fan-out cost per stored event."""
+        return sum(len(s) for s in self._subs.values())
+
     def fanout(self, ev: dict, send) -> None:
         """Enqueue `ev` to every matching open subscription via `send(conn, obj)` (a
         non-blocking, drop-on-slow enqueue) — so one slow client can't stall the firehose."""
@@ -275,6 +279,14 @@ class _OutQ:
 
 
 class RelayServer:
+    # Write-path tallies since this process started, for the Server Stats relay panel. Counted in
+    # _send, which is the single funnel every accept/reject OK frame goes through — a per-branch
+    # counter in _on_event's ~20 rejection paths would drift the first time one was added. Declared
+    # on the CLASS so `+=` works on an instance built without __init__ (the queue tests do that);
+    # the first bump shadows it with a per-instance int, so two relays can't share a tally.
+    _accepted = 0
+    _rejected = 0
+
     def __init__(self, store, gate, config: dict, outbox_cb=None, private_cb=None):
         self.store = store
         self.gate = gate                 # .is_member(pubkey) -> bool
@@ -297,6 +309,13 @@ class RelayServer:
         """Enqueue a message to a client WITHOUT blocking — a slow consumer must never stall the
         firehose/fanout or other clients. On a full queue an EVENT is dropped (re-pullable) and a
         control frame evicts the oldest event instead; see _OutQ for why that distinction matters."""
+        if obj and obj[0] == "OK" and len(obj) >= 3:
+            # Counted before the queue lookup on purpose: the verdict is a fact about the write, not
+            # about whether this particular socket was still around to be told.
+            if obj[2]:
+                self._accepted += 1
+            else:
+                self._rejected += 1
         q = self._outq.get(conn)
         if q is None:
             return

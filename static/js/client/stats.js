@@ -1,9 +1,10 @@
-/* #stats — public Server Stats + Uptime. Anyone (including a logged-out guest) can read them.
+/* #stats — public Server Stats, Relay activity + Uptime. Anyone (including a logged-out guest) can
+ * read them.
  *
- * Two tabs, two cached endpoints: /client/server-stats (activity, recomputed at most once a minute
- * server-side) and /client/uptime (endpoint monitors, whose checks run in the background worker —
- * this page only reads the state the worker publishes). Opening either costs the server a dictionary
- * lookup, not a query.
+ * Three tabs, two cached endpoints: /client/server-stats (activity AND the relay panel, recomputed
+ * at most once a minute server-side) and /client/uptime (endpoint monitors, whose checks run in the
+ * background worker — this page only reads the state the worker publishes). Opening any of them
+ * costs the server a dictionary lookup, not a query.
  *
  * Rendering is deliberately dumb: every chart is a static SVG string built once per refresh — no
  * canvas, no animation loop, no requestAnimationFrame, no charting library. The only motion is a
@@ -18,7 +19,7 @@
     const inView = () => window.__PC.VIEW === 'stats';
 
     const RANGES = [['minute','60 min'],['hour','24 hours'],['day','30 days']];
-    const TABS = [['stats','📊 Activity'],['uptime','📡 Uptime']];
+    const TABS = [['stats','📊 Activity'],['relay','🛰️ Relay'],['uptime','📡 Uptime']];
     let _range = 'hour', _data = null, _timer = null, _busy = false;
     let _tab = 'stats', _up = null, _upBusy = false;
 
@@ -232,6 +233,138 @@
           computed in ${enc(String(_data.ms||0))}ms · shared by every viewer</div>`;
     }
 
+    // ---- Relay tab ----------------------------------------------------------------------------
+    // What the relay PROCESS is doing right now — the outbound queues, the upstream streams it is
+    // reading, and what it has accepted or turned away — as opposed to the Activity tab, which is
+    // about what has been published through it. Same payload, same 60s snapshot: opening this tab
+    // costs no extra server work.
+
+    const ORIGIN_LBL = {
+      direct:   ['📮 Posted here',        'Published straight to this relay by its own clients'],
+      wot:      ['🌐 Synced from the network', 'Pulled in from upstream relays for the web of trust'],
+      ancestor: ['🧵 Thread ancestors',   'Parent notes fetched so replies are not orphaned'],
+      bridge:   ['🔗 Fediverse mirror',   'Posts mirrored from the fediverse under puppet keys'],
+    };
+
+    /* One outbound queue (the upstream broadcaster, and the private mirror when configured).
+       The pressure line is the point of the card: `queued` is the only number that can tell you the
+       relay is falling behind RIGHT NOW, and `dropped`/`gave up` are the two different ways an event
+       can fail to leave — one never got into the queue, the other left it and was refused. */
+    function queueCard(q, title, note){
+      if(!q) return '';
+      const max = Math.max(1, q.max|0), used = q.queued|0;
+      const fill = Math.min(100, Math.round((used/max)*100));
+      const bad = (q.dropped|0) > 0 || (q.gave_up|0) > 0;
+      const state = used === 0 ? ['idle','ok'] : (fill >= 80 ? [nf(used)+' queued','down'] : [nf(used)+' queued','warn']);
+      return `<div class="st-qcard${bad?' bad':''}">
+        <div class="st-qhd"><span class="st-qname">${enc(title)}</span>
+          <span class="st-qpill ${state[1]}">${enc(state[0])}</span></div>
+        <div class="muted small">${enc(note)}</div>
+        <div class="st-qbar" title="${enc(nf(used)+' of '+nf(max)+' slots used')}"><i style="width:${fill}%"></i></div>
+        <div class="st-qmeta muted small">
+          <span>queue <b>${nf(used)}</b> / ${nf(max)}</span>
+          <span>sent <b>${nf(q.sent)}</b></span>
+          <span>every relay took <b>${nf(q.full)}</b></span>
+          <span>retrying <b>${nf(q.retrying)}</b></span>
+          <span class="${(q.dropped|0)?'st-bad':''}">dropped <b>${nf(q.dropped)}</b></span>
+          <span class="${(q.gave_up|0)?'st-bad':''}">gave up <b>${nf(q.gave_up)}</b></span>
+          <span>${nf(q.relays)} target relay${(q.relays|0)===1?'':'s'}</span>
+          <span>last send ${enc(ago(q.last_at))}</span>
+        </div>
+      </div>`;
+    }
+
+    function relayBody(){
+      if(!_data) return `<div class="spinner"></div>`;
+      const R = _data.relay;
+      if(!R){
+        return `<p class="muted">This server isn't reporting relay activity yet — it may need a
+          restart to pick it up.</p>`;
+      }
+      if(!R.running){
+        return `<div class="up-banner down">🔴 The relay is not running on this server.</div>`;
+      }
+      const has = v => (v !== null && v !== undefined);
+      // "not reported" is deliberately NOT rendered as 0: a relay subprocess still running an older
+      // build simply omits these keys, and a confident zero there reads as "nothing is happening".
+      const num = v => has(v) ? nf(v) : '—';
+      const fh = R.firehose || [], up = R.firehose_up|0;
+      const org = R.origins || {};
+      const oKeys = Object.keys(org).sort((a,b)=> (org[b].total|0) - (org[a].total|0));
+      const omax = Math.max(1, ...oKeys.map(k=>org[k].total|0));
+      const P = R.prune || null, B = R.block_purge || null;
+      const upFor = R.uptime ? span(R.uptime) : null;
+
+      // The relay writes its status file every 15s and is reported as running on a live pid, so a
+      // relay that is up but has stopped writing shows FROZEN numbers under a green banner — the
+      // false-green this codebase keeps meeting. Say how old the reading is the moment it stops
+      // being a current one.
+      const frozen = has(R.stale) && R.stale > 90;
+
+      return `
+        <div class="up-banner ${frozen?'warn':'ok'}">${frozen
+          ? `🟡 Relay running, but it last reported <b>${enc(span(R.stale))}</b> ago — the figures
+             below are that old.`
+          : `🟢 Relay running${upFor?` · up for <b>${enc(upFor)}</b>`:''}`}</div>
+
+        <div class="st-tiles">
+          ${tile('people connected', nf(R.online), 'Distinct client IPs with a websocket open right now')}
+          ${tile('open sockets', nf(R.conns), 'Raw connection count — one person can hold several (tabs, PWA, signer)')}
+          ${tile('open subscriptions', num(R.subs), 'REQ filters the relay is matching every stored event against')}
+          ${tile('web of trust', nf(R.members), 'Pubkeys allowed to publish here and whose posts are synced in')}
+        </div>
+
+        <h3 class="st-sec">📤 Outbound queue</h3>
+        <div class="st-qlist">
+          ${R.outbox ? queueCard(R.outbox, 'Upstream broadcast',
+              'Events published here, re-broadcast to the public relays — paced so we are not rate-limited.')
+            : `<p class="muted">Not reported by this server.</p>`}
+          ${queueCard(R.private_outbox, 'Private mirror',
+              'Encrypted personal libraries (notes, vault, budget, files index) copied to the operator’s own relays.')}
+        </div>
+
+        <h3 class="st-sec">📡 Upstream streams</h3>
+        ${fh.length ? `<div class="up-banner ${up === fh.length ? 'ok' : (up ? '' : 'down')}">${
+            up === fh.length ? `🟢 All ${plural(fh.length,'stream')} connected`
+                             : `${up ? '🟡' : '🔴'} ${nf(up)} of ${plural(fh.length,'stream')} connected`}</div>
+          <div class="st-fh">${fh.map(f=>`
+            <div class="st-fhrow${f.connected?'':' off'}">
+              <span class="up-dot"></span>
+              <span class="st-fhurl">${enc(f.relay||'')}${f.label?` <span class="muted small">${enc(f.label)}</span>`:''}</span>
+              <span class="st-fhnum">${nf(f.events)}</span>
+            </div>`).join('')}</div>
+          <div class="muted small st-hint">Events received on each live subscription since the relay
+            started — before the web-of-trust filter, so this is what arrives, not what is kept.</div>`
+          : `<p class="muted">No upstream streams — this server isn't syncing from other relays.</p>`}
+
+        <h3 class="st-sec">📥 Writes since the relay started</h3>
+        <div class="st-tiles">
+          ${tile('accepted', num(R.accepted), 'Events written by connected clients that the relay stored')}
+          ${tile('turned away', num(R.rejected), 'Rejected: not in the web of trust, blocked, or invalid')}
+        </div>
+
+        <h3 class="st-sec">💾 Stored events by origin</h3>
+        ${oKeys.length ? `<div class="st-games">${oKeys.map(k=>{
+            const [lbl, hint] = ORIGIN_LBL[k] || ['📦 '+k, ''];
+            return `<div class="st-grow" title="${enc(hint)}">
+              <span class="st-glbl">${enc(lbl)}</span>
+              <span class="st-gbar"><i style="width:${Math.round(((org[k].total|0)/omax)*100)}%"></i></span>
+              <span class="st-gnum">${nf(org[k].total)}</span>
+              <span class="st-gday muted small">+${nf(org[k].day)}/24h</span></div>`;
+          }).join('')}</div>` : `<p class="muted">No stored events yet.</p>`}
+
+        <h3 class="st-sec">🧹 Housekeeping</h3>
+        <div class="st-tiles">
+          ${tile('last auto-clean', P && P.ts ? nf(P.count) + ' removed' : 'not yet',
+                 P && P.ts ? 'Ran ' + ago(P.ts) : 'The age/retention prune has not run since this relay started')}
+          ${tile('last block purge', B && B.ts ? nf(B.count) + ' removed' : 'not yet',
+                 B && B.ts ? 'Ran ' + ago(B.ts) : 'No blocklist purge since this relay started')}
+        </div>
+
+        <div class="st-foot muted small">Snapshot taken ${enc(ago(_data.now))} · refreshes every
+          ${enc(String(_data.ttl||60))}s · shared by every viewer</div>`;
+    }
+
     // ---- Uptime tab ---------------------------------------------------------------------------
     // The server does the arithmetic (uptime %, averages) so this stays a renderer, same as above.
 
@@ -243,13 +376,17 @@
       if(s < 86400) return Math.floor(s/3600) + 'h ago';
       return Math.floor(s/86400) + 'd ago';
     };
-    const dur = ts => {
-      if(!ts) return '—';
-      const s = Math.max(0, Math.floor(Date.now()/1000) - ts);
+    /* A LENGTH of time, already in seconds — kept separate from `dur` because the relay reports its
+       uptime as a duration, not as a start timestamp, and turning one into the other through the
+       viewer's clock would let a phone with a skewed clock report a negative age. */
+    const span = s => {
+      if(s == null) return '—';
+      s = Math.max(0, Math.floor(s));
       if(s < 3600) return Math.floor(s/60) + 'm';
       if(s < 86400) return Math.floor(s/3600) + 'h';
       return Math.floor(s/86400) + 'd';
     };
+    const dur = ts => (ts ? span(Math.floor(Date.now()/1000) - ts) : '—');
     const pct = v => (v==null ? '—' : (Number(v).toFixed(Number(v) >= 99.95 ? 0 : 2) + '%'));
     const plural = (n, w) => nf(n) + ' ' + w + (n === 1 ? '' : 's');
 
@@ -324,6 +461,8 @@
       const feed = $('#feed'); if(!feed) return;
       const sub = _tab === 'uptime'
         ? 'Endpoints this server watches. Public, no account needed.'
+        : _tab === 'relay'
+        ? 'What this server’s Nostr relay is doing right now — queues, streams and storage. Public, no account needed.'
         : 'Activity published to <b>this server</b> — not the wider Nostr network it syncs. Public, no account needed.';
       feed.innerHTML = `<div class="st-wrap">
         <div class="st-head">
@@ -332,7 +471,8 @@
         </div>
         <div class="st-tabs">${TABS.map(([k,l])=>
           `<button class="st-tab${_tab===k?' on':''}" data-tab="${k}">${enc(l)}</button>`).join('')}</div>
-        <div class="st-body">${_tab === 'uptime' ? uptimeBody() : activityBody()}</div>
+        <div class="st-body">${_tab === 'uptime' ? uptimeBody()
+                              : _tab === 'relay' ? relayBody() : activityBody()}</div>
       </div>`;
 
       feed.querySelectorAll('.st-range').forEach(b=> b.onclick = ()=>{ _range = b.dataset.range; render(); });
@@ -345,8 +485,9 @@
       });
     }
 
-    /* One loader for both tabs — it only ever fetches the endpoint the OPEN tab needs, so sitting on
-       Activity costs nothing on the uptime side and vice versa. */
+    /* One loader for every tab — it only ever fetches the endpoint the OPEN tab needs, so sitting on
+       Activity costs nothing on the uptime side and vice versa. Activity and Relay share the one
+       server-stats snapshot, so switching between those two fetches nothing new. */
     async function load(){
       if(_tab === 'uptime'){
         if(_upBusy) return; _upBusy = true;

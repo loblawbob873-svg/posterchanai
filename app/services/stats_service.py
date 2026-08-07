@@ -9,6 +9,11 @@ the federated network the relay syncs. ~96% of `events` is synced content (origi
 or our fedi mirror ('bridge'); counting all of it read as "misleading" since the page frames itself
 as "what this node is doing".
 
+The `relay` block (see _relay) is the one exception, and deliberately so: it answers "what is the
+relay PROCESS doing" — outbound queue depth, which upstream streams are live, what it accepted or
+turned away — rather than "what has been published". None of it is a query: the relay runs in its
+own process and publishes those numbers to a status file every 15s, so this is a file read.
+
 Cost discipline (the whole reason this module exists rather than inline queries in the router):
 
 * Every window is bounded by an INTEGER epoch computed in Python. Writing
@@ -223,7 +228,70 @@ def _games(db):
     return {"by_game": out, "total": total}
 
 
-def _totals(db, now: int):
+def _origins(db, now: int) -> dict:
+    """{origin: {"total": n, "day": n}} in ONE grouped pass over `events`.
+
+    `origin` has no index, so any question about it is a sequential scan — which is exactly why this
+    is one query answering every such question instead of one per number. It also feeds `events` /
+    `events_24h` in _totals (origin='direct'), replacing two more scans of the same table.
+    """
+    from sqlalchemy import text
+    out = {}
+    try:
+        rows = db.execute(text("""
+            SELECT origin, count(*), count(*) FILTER (WHERE created_at >= :s)
+              FROM events GROUP BY 1
+        """), {"s": now - 86400}).fetchall()
+        for origin, total, day in rows:
+            out[str(origin or "?")] = {"total": int(total or 0), "day": int(day or 0)}
+    except Exception as e:
+        logger.debug("[stats] origin breakdown unavailable: %s", e)
+    return out
+
+
+def _relay(now: int, origins: dict) -> dict:
+    """The relay's own activity: what it is doing right now, not what has been posted through it.
+
+    Everything except the store breakdown comes from the relay subprocess's status FILE (it runs in
+    its own process — see nostr_relay/thread.py), so this is a file read, not a query. A relay that
+    is down, or one still running an older build, simply reports fewer keys; the page renders what
+    it is given rather than filling the gaps with zeros, because "0 queued" and "not reported" are
+    different facts and only one of them is reassuring.
+    """
+    st = {}
+    try:
+        from app.services.nostr_relay.thread import relay_status
+        st = relay_status() or {}
+    except Exception as e:
+        logger.debug("[stats] relay status unavailable: %s", e)
+    fh = st.get("firehose") or []
+    started = int(st.get("started") or 0)
+    out = {
+        "running": bool(st.get("running")),
+        "members": int(st.get("members", 0) or 0),      # web-of-trust size
+        "conns": int(st.get("conns", 0) or 0),          # raw sockets
+        "online": int(st.get("online", 0) or 0),        # deduped by IP = people
+        "subs": st.get("subs"),                         # open REQ subscriptions (None = not reported)
+        "accepted": st.get("accepted"),
+        "rejected": st.get("rejected"),
+        "uptime": (int(now - started) if started else None),
+        "outbox": st.get("outbox"),
+        "private_outbox": st.get("private_outbox"),
+        # One row per live upstream stream. URLs are the public relays this node syncs from (already
+        # advertised in its NIP-65/NIP-11 posture), never the private mirror's targets.
+        "firehose": [{"relay": r.get("relay"), "label": r.get("label"), "connected": bool(r.get("connected")),
+                      "events": int(r.get("events", 0) or 0), "since": int(r.get("since", 0) or 0)}
+                     for r in fh if isinstance(r, dict)],
+        "firehose_up": sum(1 for r in fh if isinstance(r, dict) and r.get("connected")),
+        "origins": origins,
+        "prune": st.get("prune") or None,
+        "block_purge": st.get("block_purge") or None,
+        "stale": (int(now - int(st.get("ts") or 0)) if st.get("ts") else None),
+    }
+    return out
+
+
+def _totals(db, now: int, origins: dict):
     from sqlalchemy import text
     def scalar(sql, params=None, default=0):
         try:
@@ -241,9 +309,12 @@ def _totals(db, now: int):
                     {"s": now - 86400})
     # Network-section counts are scoped to origin='direct' (see _LOCAL): posted HERE, not synced from
     # the federated network. `db_bytes` stays the full on-disk footprint (honest storage figure).
+    # Both come from the single grouped scan in _origins (origin='direct' IS _LOCAL) rather than
+    # from two more sequential scans of the same table for the same two numbers.
+    _direct = origins.get("direct") or {}
     return {
-        "events":        scalar("SELECT count(*) FROM events WHERE " + _LOCAL),
-        "events_24h":    scalar("SELECT count(*) FROM events WHERE created_at >= :s AND " + _LOCAL, {"s": now - 86400}),
+        "events":        int(_direct.get("total", 0)),
+        "events_24h":    int(_direct.get("day", 0)),
         "notes":         scalar("SELECT count(*) FROM events WHERE kind=1 AND " + _LOCAL),
         "streams":       scalar("SELECT count(*) FROM events WHERE kind=30311 AND " + _LOCAL),
         "pubkeys_24h":   scalar("SELECT count(DISTINCT pubkey) FROM events WHERE created_at >= :s AND " + _LOCAL, {"s": now - 86400}),
@@ -329,11 +400,13 @@ def _compute() -> dict:
     try:
         now = int(time.time())
         t0 = time.monotonic()
+        origins = _origins(db, now)
         data = {
             "now": now,
             "windows": _series(db, now),
             "games": _games(db),
-            "totals": _totals(db, now),
+            "totals": _totals(db, now, origins),
+            "relay": _relay(now, origins),
             "counters": _counter_series(now),
             "chat": _chat_series(db, now),
             "ttl": int(_TTL),

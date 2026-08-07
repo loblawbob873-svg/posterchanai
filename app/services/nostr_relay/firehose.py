@@ -29,6 +29,35 @@ logger = logging.getLogger(__name__)
 # reload passes a shorter span (see thread._spawn_firehose) since only a reconnect, not a full boot.
 _STAGGER_SPAN = 6.0
 
+# Live per-stream state for the status file → Server Stats' relay panel: {(url, label): {...}}.
+# Bumped on the receive path (one dict lookup + an int), so it costs nothing per event. It is
+# process-local and rebuilt from scratch on every (re)spawn, which is why `_prune_status` runs at
+# the top of run_firehose: after an upstream change the removed relays' entries would otherwise sit
+# there forever reading "disconnected" and make the panel report streams that no longer exist.
+_STATUS: dict = {}
+
+
+def _mark(url: str, label: str, connected: bool = None, event: bool = False) -> None:
+    st = _STATUS.setdefault((url, label), {"connected": False, "events": 0, "since": 0, "last": 0})
+    if connected is not None and connected != st["connected"]:
+        st["connected"] = connected
+        st["since"] = int(time.time()) if connected else 0
+    if event:
+        st["events"] += 1
+        st["last"] = int(time.time())
+
+
+def _prune_status(label: str, relays: list) -> None:
+    keep = set(relays)
+    for key in [k for k in _STATUS if k[1] == label and k[0] not in keep]:
+        _STATUS.pop(key, None)
+
+
+def firehose_status() -> list:
+    """One row per open stream, newest counts. Sorted so the panel's order is stable between polls."""
+    return [{"relay": url, "label": (label or "").strip(), **st}
+            for (url, label), st in sorted(_STATUS.items())]
+
 
 async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, direct: bool,
                    extra: dict = None, start_delay: float = 0.0, label: str = "") -> None:
@@ -56,6 +85,7 @@ async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, d
                     flt.update(extra)
                 await ws.send(json.dumps(["REQ", sub, flt]))
                 logger.info("[nostr-relay] firehose connected: %s%s", relay_url, label)
+                _mark(relay_url, label, connected=True)
                 backoff = 2
                 while not stop.is_set():
                     try:
@@ -72,12 +102,18 @@ async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, d
                         continue
                     if (isinstance(msg, list) and len(msg) >= 3
                             and msg[0] == "EVENT" and msg[1] == sub):
+                        _mark(relay_url, label, event=True)
                         try:
                             await on_event(msg[2])
                         except Exception as e:
                             logger.debug("[nostr-relay] firehose on_event error: %s", e)
         except Exception as e:
             logger.debug("[nostr-relay] firehose %s dropped: %s", relay_url, e)
+        finally:
+            # Whatever ended the stream — a drop, a cancel on reload, or shutdown — it is no longer
+            # connected. Marking here rather than only in the except branch is what stops a cancelled
+            # task from leaving a permanently "connected" row behind after an upstream change.
+            _mark(relay_url, label, connected=False)
         if stop.is_set():
             break
         # Jittered backoff: a network/proxy blip drops every upstream at once, and without jitter
@@ -105,6 +141,7 @@ async def run_firehose(upstream, kinds: list, on_event, stop: asyncio.Event, dir
     deduped, so the extra cost is just parsing each stream. Lower max_relays to trade
     completeness for idle CPU if a node is constrained."""
     relays = list(upstream)[:max_relays] if max_relays and max_relays > 0 else list(upstream)
+    _prune_status(label, relays)   # drop rows for relays this group no longer streams from
     # Stagger each upstream's first connect so the initial `since`-window replays don't all land at
     # once — keeps the event loop responsive to local /client handshakes during (re)start instead of
     # CPU-pegged on backfill. Spread the fleet over `stagger_span` seconds total.

@@ -1051,6 +1051,35 @@ async def _main(cfg: dict) -> None:
     _paths = _relay_paths(_relay_db_path())
     os.makedirs(_paths["control"], exist_ok=True)
 
+    _started = int(time.time())
+
+    def _activity() -> dict:
+        """The relay-activity block of the status file: outbound queues, live firehose streams and
+        the write-path tallies. Every piece is wrapped, because this feeds the STATUS FILE — a
+        status file that fails to write is a relay the admin UI reports as DOWN, so a new counter
+        must never be able to take the whole document with it."""
+        out = {}
+        try:
+            out["outbox"] = outbox.stats()
+        except Exception:
+            out["outbox"] = None
+        try:
+            out["private_outbox"] = private.stats() if private else None
+        except Exception:
+            out["private_outbox"] = None
+        try:
+            from .firehose import firehose_status
+            out["firehose"] = firehose_status()
+        except Exception:
+            out["firehose"] = []
+        try:
+            out["subs"] = int(server.subs.total())
+            out["accepted"] = int(getattr(server, "_accepted", 0) or 0)
+            out["rejected"] = int(getattr(server, "_rejected", 0) or 0)
+        except Exception:
+            pass
+        return out
+
     def _write_status():
         try:
             tmp = _paths["status"] + ".tmp"
@@ -1068,8 +1097,10 @@ async def _main(cfg: dict) -> None:
                            "online": online,                                  # deduped by client IP = people now
                            "calls": calls,                                    # people in a call right now (kind-25050)
                            "pid": os.getpid(), "ts": int(time.time()),
+                           "started": _started,
                            "block_purge": dict(_purge_state),
-                           "prune": dict(_prune_state)}, f)
+                           "prune": dict(_prune_state),
+                           **_activity()}, f)
             os.replace(tmp, _paths["status"])
         except Exception:
             pass
@@ -1606,6 +1637,10 @@ def relay_status() -> dict:
     calls = 0
     block_purge = None
     prune = None
+    # Relay-activity block (outbound queues / firehose / write tallies), written by _activity(). All
+    # optional: an older relay subprocess that hasn't restarted into this code yet simply has none of
+    # these keys, and every reader must render that as "not reported", never as zero.
+    extra = {}
     try:
         with open(_relay_paths(_relay_db_path())["status"]) as f:
             st = json.load(f)
@@ -1615,12 +1650,14 @@ def relay_status() -> dict:
         calls = int(st.get("calls", 0))         # people in a call right now
         block_purge = st.get("block_purge")
         prune = st.get("prune")
+        extra = {k: st[k] for k in ("outbox", "private_outbox", "firehose", "subs",
+                                    "accepted", "rejected", "started", "ts") if k in st}
         if not alive:
             alive = (time.time() - st.get("ts", 0)) < 90 and _pid_alive(st.get("pid"))
     except Exception:
         pass
     return {"running": bool(alive), "members": members, "conns": conns, "online": online,
-            "calls": calls, "block_purge": block_purge, "prune": prune}
+            "calls": calls, "block_purge": block_purge, "prune": prune, **extra}
 
 
 def _drop_control(cmd: dict) -> dict:

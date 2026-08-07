@@ -10,6 +10,7 @@ growing unbounded under a burst.
 
 import asyncio
 import logging
+import time
 
 from app.services.nostr import relay as _relay
 
@@ -41,6 +42,17 @@ class Outbox:
         # is meant to prevent.
         self._retry_gate = asyncio.Lock()
         self._dropped = 0
+        # Lifetime counters for the public Server Stats relay panel (and the admin view). Plain ints
+        # bumped on the drain path — no timers, no history, so reading them is a dict build. `_sent`
+        # counts events DRAINED, `_full` the ones every target accepted on the first pass, and
+        # `_gave_up` the ones still missing after the last retry — that last one is the only number
+        # here that means "this did not get out", which is why it's reported separately from drops
+        # (a drop never left the queue; a give-up left it and was refused).
+        self._sent = 0
+        self._full = 0
+        self._failed = 0
+        self._gave_up = 0
+        self._last_at = 0.0
 
     def start(self) -> None:
         if self._task is None:
@@ -77,11 +89,16 @@ class Outbox:
                 logger.info("[nostr-relay] outbox: %s → %d/%d relays (queue=%d)",
                             ev.get("id", "")[:12], len(accepted), len(targets), self._q.qsize())
                 misses = set(targets) - accepted
+                self._sent += 1
+                self._last_at = time.time()
+                if not misses:
+                    self._full += 1
                 if misses and self.retries > 0 and len(self._retry_tasks) < self._max_inflight_retries:
                     t = asyncio.create_task(self._retry_misses(ev, misses))
                     self._retry_tasks.add(t)
                     t.add_done_callback(self._retry_tasks.discard)
             except Exception as e:
+                self._failed += 1
                 logger.warning("[nostr-relay] outbox publish failed: %s", e)
             # Pace: don't blast the public relays back-to-back.
             if self.min_interval > 0:
@@ -107,5 +124,24 @@ class Outbox:
                             attempt, self.retries, eid, len(ok))
             if not remaining:
                 return
+        self._gave_up += 1
         logger.warning("[nostr-relay] outbox: %s gave up on %d relay(s) after %d retries: %s",
                        eid, len(remaining), self.retries, ", ".join(sorted(remaining)))
+
+    def stats(self) -> dict:
+        """A snapshot for the status file → Server Stats. Counts only; no event ids, no relay URLs
+        (the private mirror's targets are the operator's own machines and this feeds a PUBLIC page).
+        `queued`/`retrying` are live depths, everything else is since the relay process started."""
+        return {
+            "label": self.label,
+            "queued": self._q.qsize(),
+            "max": self._q.maxsize,
+            "relays": len(_relay.normalize_relays(self.upstream)),
+            "sent": self._sent,
+            "full": self._full,          # accepted by EVERY target on the first pass
+            "dropped": self._dropped,    # never left the queue (overflow)
+            "failed": self._failed,      # the publish call itself raised
+            "gave_up": self._gave_up,    # left the queue, still unaccepted after the last retry
+            "retrying": len(self._retry_tasks),
+            "last_at": int(self._last_at),
+        }
