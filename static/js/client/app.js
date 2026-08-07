@@ -6098,12 +6098,41 @@
    * so picking [0] attributes the latest recording to whichever old stream you happened to open. Match
    * on the session's start time — the same key stream_vod_service uses for its one-VOD-per-session
    * uniqueness index — and only fall back to newest when the event carries no `starts`. */
+  /* ONE request per token, not one per event.
+   *
+   * The publish token is stable for life, so a streamer with a dozen past broadcasts has a dozen
+   * kind-30311 events that all resolve to the SAME /vods/by-token list — and the replay sweep asks
+   * per event. Measured in the server log: twelve identical requests for one token inside a single
+   * second, answered identically twelve times. Nothing failed, so nothing said anything.
+   *
+   * Cached briefly, with concurrent callers sharing the in-flight promise, so a sweep costs one
+   * round-trip per token however many broadcasts it covers. The window is deliberately SHORTER than
+   * _stampReplayWhenReady's first retry (15s): that loop is waiting for a recording to appear, and a
+   * cache that outlived its poll would just make it wait longer. A failed fetch is not cached at all
+   * — "the request didn't work" must not be remembered as "there are no recordings". */
+  const _VOD_TTL = 10000;
+  const _vodLists = new Map();        // token -> { at, p }
+
+  function _vodList(token){
+    const now = Date.now();
+    const hit = _vodLists.get(token);
+    if(hit && (now - hit.at) < _VOD_TTL) return hit.p;
+    const p = (async () => {
+      const r = await _streamFetch('/api/streams/vods/by-token/' + encodeURIComponent(token));
+      if(!(r && r.ok)){ _vodLists.delete(token); return null; }   // null = ask again, not "none exist"
+      try{ return ((await r.json()) || {}).vods || []; }
+      catch(_){ _vodLists.delete(token); return null; }
+    })();
+    _vodLists.set(token, { at: now, p });
+    if(_vodLists.size > 64)
+      for(const k of [..._vodLists.keys()].slice(0, 32)) _vodLists.delete(k);
+    return p;
+  }
+
   async function _vodUrlFor(token, starts){
     if(!token) return '';
-    const r = await _streamFetch('/api/streams/vods/by-token/' + encodeURIComponent(token));
-    if(!(r && r.ok)) return '';
-    const vods = ((await r.json()) || {}).vods || [];
-    if(!vods.length) return '';
+    const vods = await _vodList(token);
+    if(!vods || !vods.length) return '';
     const s = parseInt(starts, 10);
     if(!s) return vods[0].url || '';
     /* A RECORDING CANNOT START BEFORE THE BROADCAST WAS ANNOUNCED, and "no recording yet" must return
