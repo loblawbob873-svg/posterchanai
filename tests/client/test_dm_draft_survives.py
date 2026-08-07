@@ -47,7 +47,7 @@ pytestmark = pytest.mark.skipif(CHROME is None, reason="chrome not installed")
 
 # Extracted verbatim: the pane renderer plus every helper it calls that is part of what broke.
 WANT = [
-    "function wireImgAttach(inp, strip){",
+    "function wireImgAttach(inp, strip, opts){",
     "function _dmClock(ts){",
     "function _dmDayLabel(ts){",
     "function _dmHidden(){",
@@ -138,6 +138,9 @@ const uploadBlob = () => Promise.resolve('https://example.invalid/x.png');
 // bubbles asks decorateEncAtts to fill in the placeholders. Neither has anything to do with the
 // draft, but renderDmThread calls both, so the harness has to answer them.
 const uploadSharedEnc = () => Promise.resolve('https://example.invalid/y.enc#pcenc1=AA');
+const dmEncOn = () => !!ClientSettings.get('dmEncryptAtts');
+const dmPickMedia = () => () => {};
+const dmPickGif = () => () => {};
 const decorateEncAtts = () => {};
 const openMenuPopover = () => {};
 const renderProfileView = () => {};

@@ -13234,6 +13234,71 @@
     return url.split('#')[0] + _ENC_MARK + _b64u(new TextEncoder().encode(JSON.stringify(meta)));
   }
 
+  /* Pick from the drive / GIF search INTO a DM, honouring 🔒.
+   *
+   * The drive picker inserts a URL to a file that is already on Blossom in the clear, so with the
+   * lock lit it used to put a world-readable link straight into an "encrypted" conversation — which
+   * is exactly how a plaintext PNG uploaded eleven hours earlier ended up rendering fine on a client
+   * that cannot decrypt anything. Re-uploading it encrypted keeps the LINK private; it cannot
+   * un-publish the copy already on the drive, and pretending otherwise would be the worse failure,
+   * so the toast says so.
+   *
+   * A GIF is somebody else's URL on somebody else's server. There is nothing to encrypt and no
+   * honest way to make one private, so the lock says plainly that this one isn't. */
+  function dmPickMedia(inp){
+    return () => blossomPicker(inp, async ({url, type, ext}) => {
+      // Dispatch 'input' exactly as the picker's own insert path does. Calling the attachment-strip
+      // sync directly instead looks equivalent and isn't: the composer hangs its textarea autogrow,
+      // its DRAFT SAVE and the Send button's enabled state off that same event, so a file picked
+      // this way left the send button dim and the draft unsaved.
+      const add = u => { inp.value += (inp.value && !/\s$/.test(inp.value) ? ' ' : '') + u;
+                         inp.dispatchEvent(new Event('input', {bubbles:true})); };
+      const _need = ext && !/\.[a-z0-9]{1,8}$/i.test(String(url).split('?')[0]);
+      const plain = url + (_need ? ('.' + ext) : '');
+      if(!dmEncOn()){ add(plain); return toast('attached'); }
+      // Already-encrypted drive content (octet-stream) must not be wrapped a second time: the
+      // recipient would peel off one layer and be left holding master-key ciphertext.
+      if(/octet-stream/i.test(type || '')){
+        toast('That file is already encrypted to you — sent as a link only you can open.');
+        return add(plain);
+      }
+      toast('encrypting…');
+      try{
+        add(await encryptExistingUrl(url, type));
+        toast('🔒 Sent encrypted. The original copy stays on your drive and is still public there.');
+      }catch(err){
+        toast("Couldn't encrypt that file: " + ((err && err.message) || err));
+      }
+    });
+  }
+
+  function dmPickGif(inp){
+    return () => {
+      if(dmEncOn()) toast('GIFs are links to another server — this one is not encrypted.');
+      gifPicker(inp);
+    };
+  }
+
+  /* Is 🔒 on for DM attachments? One reader, because the lock has to mean the same thing to every
+     path that can put media in a message — the 📎 picker, a pasted image, the 🌸 drive picker and
+     the 🎬 GIF search. It originally only governed 📎, so the drive picker happily inserted a
+     world-readable link while the lock was lit. */
+  const dmEncOn = () => !!ClientSettings.get('dmEncryptAtts');
+
+  /* Re-upload an EXISTING blob as an encrypted one. Used by the drive picker: those files are
+     already sitting in the clear, so this stops the DM from carrying a public link — it does NOT
+     un-publish the original, and the caller says so out loud rather than implying otherwise. */
+  async function encryptExistingUrl(url, mime){
+    const r = await fetch(url);
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const b = await r.blob();
+    const raw = url.split('?')[0].split('/').pop() || 'file';
+    // decodeURIComponent throws on a stray '%' — a filename is not guaranteed to be well-formed
+    // percent-encoding, and throwing here would take the whole picker down over a cosmetic label.
+    let name; try{ name = decodeURIComponent(raw); }catch(_){ name = raw; }
+    return await uploadSharedEnc(new File([b], name, { type: mime || b.type || 'application/octet-stream' }));
+  }
+
   /* {url, key, mime, name} for a reference, or null if this isn't one / is malformed. */
   function encAttParse(ref){
     const s = String(ref||''); const i = s.indexOf(_ENC_MARK);
@@ -14427,8 +14492,12 @@
   function isImageUrl(u){ return /\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u); }
   // Wire a compose <textarea> for image PASTE-to-attach + a live, removable thumbnail strip. Shared by
   // both DM entry points. Returns sync() to call after programmatic value changes (e.g. send clears the box).
-  function wireImgAttach(inp, strip){
+  /* `opts.enc` marks a composer whose attachments obey the DM 🔒 (the two DM boxes). It is a flag
+     rather than a global check because this same helper backs composers where encrypting would be
+     wrong — a public post encrypted to nobody is just a broken image. */
+  function wireImgAttach(inp, strip, opts){
     if(!inp) return ()=>{};
+    const encHere = () => !!(opts && opts.enc) && dmEncOn();
     // Remove the URL only where it stands as a WHOLE token (+ its leading space), so it can't clobber a
     // longer URL it's a prefix of (e.g. x.png vs x.png?thumb=1) and doesn't collapse unrelated whitespace.
     const removeOne=u=>{ const esc=u.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
@@ -14444,8 +14513,8 @@
     inp.addEventListener('paste', async e=>{
       const files=[...(e.clipboardData&&e.clipboardData.items||[])].filter(it=>it.kind==='file').map(it=>it.getAsFile()).filter(Boolean);
       if(!files.length) return; e.preventDefault();
-      for(const f of files){ toast('uploading pasted image…');
-        try{ const url=await uploadBlob(f); inp.value+=(inp.value&&!/\s$/.test(inp.value)?' ':'')+url; }
+      for(const f of files){ const _e=encHere(); toast(_e?'encrypting pasted image…':'uploading pasted image…');
+        try{ const url=_e ? await uploadSharedEnc(f) : await uploadBlob(f); inp.value+=(inp.value&&!/\s$/.test(inp.value)?' ':'')+url; }
         catch(err){ if(typeof _blossomDenied==='function'&&_blossomDenied(err)){ requestBlossomAccess(); toast('🔒 No upload access — requested it from the admin.'); } else toast('upload failed: '+((err&&err.message)||err)); } }
       sync(); inp.focus();
     });
@@ -14547,7 +14616,7 @@
       <div class="row cmp-tools"><button class="btn btn-ghost small" id="dm-attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Attach</button><button class="btn btn-ghost small" id="dm-files"><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg>Files</button>${CFG.gif_enabled?`<button class="btn btn-ghost small" id="dm-gif"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>GIF</button>`:''}<input type="file" id="dm-file" multiple hidden><span class="spacer"></span><button class="btn btn-neon" id="dm-go">Send ▶</button></div>
       <div class="muted small" id="dm-status"></div>`, root=>{
       let toPk=null; const to=$('#dm-to',root), ac=$('#dm-ac',root), body=$('#dm-body',root);
-      const _newSync=wireImgAttach(body, $('#dm-atts-new',root));   // paste-to-attach + preview strip here too
+      const _newSync=wireImgAttach(body, $('#dm-atts-new',root), {enc:true});   // paste-to-attach + preview strip here too
       to.addEventListener('input', ()=>{ const v=to.value.trim(); toPk=null;
         const pk=safePk(v); if(pk){ toPk=pk; ac.classList.add('hidden'); return; }
         const q=v.replace(/^@/,'').toLowerCase(); if(q.length<2){ ac.classList.add('hidden'); return; }
@@ -14560,15 +14629,15 @@
       // Honours the same 🔒 preference as an open thread's composer — it is a per-DEVICE choice, and
       // a first message to someone is no less private than the tenth. (Its own toggle would be a
       // second switch for one setting; the thread topbar owns it.)
-      $('#dm-file',root).onchange=async e=>{ const files=[...e.target.files]; const encOn=!!ClientSettings.get('dmEncryptAtts');
+      $('#dm-file',root).onchange=async e=>{ const files=[...e.target.files]; const encOn=dmEncOn();
         for(let i=0;i<files.length;i++){ const st=$('#dm-status',root);
           st.textContent=`${encOn?'encrypting':'uploading'} ${i+1}/${files.length}…`;
           try{ const url=encOn ? await uploadSharedEnc(files[i], st) : await uploadBlob(files[i]);
             body.value+=(body.value?'\n':'')+url; }
           catch(err){ st.textContent='upload failed: '+err.message; return; } }
         $('#dm-status',root).textContent=''; _newSync(); };
-      $('#dm-files',root).onclick=()=>blossomPicker(body);
-      { const g=$('#dm-gif',root); if(g) g.onclick=()=>gifPicker(body); }
+      $('#dm-files',root).onclick=dmPickMedia(body);
+      { const g=$('#dm-gif',root); if(g) g.onclick=dmPickGif(body); }
       $('#dm-go',root).onclick=async()=>{
         let pk=toPk||safePk(to.value.trim().replace(/^@/,''));
         const v=to.value.trim();
@@ -14789,7 +14858,7 @@
         if(!wasMuted && MUTED.has(pk)){ dmActive=null; const dl=$('#dm-list'); if(dl) dl.classList.remove('has-active'); } }; }
     const inp=$('#dm-in');
     // Paste-to-attach + removable preview strip (📎 Attach / 🌸 Files / 🎬 GIF also feed it via 'input').
-    const _syncAtts = wireImgAttach(inp, $('#dm-atts'));
+    const _syncAtts = wireImgAttach(inp, $('#dm-atts'), {enc:true});
     decorateEncAtts($('#dm-msgs'));   // first paint of this thread
     $('#dm-attach').onclick=()=>$('#dm-file').click();
     // 🔒 is opt-in and OFF by default: an encrypted file is unreadable to anyone not running this
@@ -14801,21 +14870,21 @@
     // visible characters. The topbar carries a name and one button at every width, and a sticky
     // preference belongs there rather than beside the per-message actions anyway.
     { const lk=$('#dm-lock');
-      const paint=()=>{ if(!lk) return; const on=ClientSettings.get('dmEncryptAtts');
+      const paint=()=>{ if(!lk) return; const on=dmEncOn();
         lk.classList.toggle('on', !!on);
         lk.title = on ? 'Attachments are encrypted — only this conversation can open them (other Nostr clients cannot)'
                       : 'Attachments upload readable by anyone with the link. Click to encrypt them.'; };
-      if(lk) lk.onclick=()=>{ ClientSettings.set('dmEncryptAtts', !ClientSettings.get('dmEncryptAtts')); paint();
-        toast(ClientSettings.get('dmEncryptAtts') ? '🔒 Attachments will be encrypted' : '🔓 Attachments upload readable'); };
+      if(lk) lk.onclick=()=>{ ClientSettings.set('dmEncryptAtts', !dmEncOn()); paint();
+        toast(dmEncOn() ? '🔒 Attachments will be encrypted' : '🔓 Attachments upload readable'); };
       paint(); }
-    $('#dm-file').onchange=async e=>{ const files=[...e.target.files]; const encOn=!!ClientSettings.get('dmEncryptAtts');
+    $('#dm-file').onchange=async e=>{ const files=[...e.target.files]; const encOn=dmEncOn();
       for(let i=0;i<files.length;i++){ try{
         if(encOn) toast('encrypting '+(i+1)+'/'+files.length+'…');
         const url=encOn ? await uploadSharedEnc(files[i]) : await uploadBlob(files[i]);
         inp.value+=(inp.value&&!/\s$/.test(inp.value)?' ':'')+url; }catch(err){ toast('upload failed: '+((err&&err.message)||err)); } }
       e.target.value=''; _syncAtts(); inp.focus(); };
-    $('#dm-files').onclick=()=>blossomPicker(inp);
-    { const g=$('#dm-gif'); if(g) g.onclick=()=>gifPicker(inp); }
+    $('#dm-files').onclick=dmPickMedia(inp);
+    { const g=$('#dm-gif'); if(g) g.onclick=dmPickGif(inp); }
     let _dmSending=false;
     const send=async()=>{ if(_dmSending) return; const t=inp.value.trim(); if(!t)return; _dmSending=true;   // guard: a 2nd Enter before the send resolves must not send twice
       // A reply goes out as a quote block the receiving client already renders, followed by a blank
