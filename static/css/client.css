@@ -5176,6 +5176,22 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
 .nt-link svg.ic,.pv-link svg.ic{width:14px;height:14px;flex:none;color:var(--neon)}
 .nt-link:hover,.pv-link:hover{border-color:var(--neon);background:rgba(var(--accent-rgb),.16);color:var(--neon)}
 .nt-pending,.pv-pending{color:var(--amber);font-size:11px}
+/* The one pointer to the browser add-on inside Passwords. It lives in the SCROLLING list, not in
+   .pv-list-head — that header is position:sticky, so a strip there is charged to every visit and to
+   every phone viewport forever. Here it scrolls away on its own, and the ✕ retires it for good.
+   `flex-wrap` plus a min-width on the text is what keeps it from becoming a three-line block at
+   360px: the pitch takes the first row and the two controls sit together on the second. */
+.pv-exttip{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  margin:10px 14px 2px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;
+  background:rgba(var(--accent-rgb),.07);font-size:12.5px;color:var(--fg)}
+.pv-exttip svg.ic{width:15px;height:15px;flex:none;color:var(--neon)}
+.pv-exttip-t{flex:1 1 190px;min-width:0;line-height:1.4}
+.pv-exttip-get{flex:none;padding:4px 11px;border:1px solid var(--neon);border-radius:999px;
+  color:var(--neon);text-decoration:none;font-size:12px;white-space:nowrap}
+.pv-exttip-get:hover{background:rgba(var(--accent-rgb),.18)}
+.pv-exttip-x{flex:none;width:24px;height:24px;line-height:1;border:0;border-radius:6px;cursor:pointer;
+  background:transparent;color:var(--muted);font-size:13px}
+.pv-exttip-x:hover{background:rgba(var(--accent-rgb),.14);color:var(--fg)}
 /* Destructive, and on its OWN row: three across a 190px column truncates every label, which is the
    mistake this sidebar already made once. Muted until hover — it sits one tap from buttons people
    press routinely, so it must not invite the reach. */

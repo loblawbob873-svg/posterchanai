@@ -38,6 +38,28 @@
   'use strict';
 
   const KIND = 30078;
+  /* The add-on's signed listing. Passwords is the one screen where knowing this exists actually
+   * changes what the product does for you — a vault you have to copy out of by hand is a different
+   * (worse) thing from one that fills the page. But it is a POINTER, not a campaign: it sits in the
+   * scrolling list rather than the sticky header (which would cost every visit a strip of the
+   * viewport, worst on a phone), and once dismissed it never returns. `Pair a device` carries the
+   * same link permanently, so dismissing loses nothing. */
+  const EXT_AMO = 'https://addons.mozilla.org/firefox/addon/posterchan-passwords/';
+  // Chrome/Edge/Brave install it UNPACKED — there is no Web Store listing yet — so sending a
+  // Chromium user to AMO is sending them to a page that cannot install anything for them. The
+  // install guide is the honest destination until a Web Store listing exists; swap this for it then.
+  const EXT_CHROME = 'https://github.com/loblawbob873-svg/posterchanai/blob/main/extension/README.md';
+  function _extUrl(){
+    try{ return /firefox|fxios/i.test(navigator.userAgent || '') ? EXT_AMO : EXT_CHROME; }
+    catch(_){ return EXT_AMO; }
+  }
+  const EXT_TIP_KEY = 'pvExtTipDismissed';
+  function _showExtTip(){
+    try{ return !window.ClientSettings.get(EXT_TIP_KEY, false); }catch(_){ return false; }
+  }
+  function _dismissExtTip(){
+    try{ window.ClientSettings.set(EXT_TIP_KEY, true); }catch(_){ }
+  }
   const D_ITEM   = 'pcai:pw:';
   const D_FOLDER = 'pcai:pwfolder:';
   const D_KEY    = 'pcai:pwkey';
@@ -737,6 +759,12 @@
             <input class="input pv-search" type="search" placeholder="Search passwords…" value="${enc(_filter.q)}" autocomplete="off">
           </div>
         </div>
+        ${_showExtTip() ? `<div class="pv-exttip">
+          <svg class="ic" aria-hidden="true"><use href="#i-link"></use></svg>
+          <span class="pv-exttip-t">Fill these logins straight into websites — there's a browser add-on.</span>
+          <a class="pv-exttip-get" href="${_extUrl()}" target="_blank" rel="noopener noreferrer">Get it</a>
+          <button class="pv-exttip-x" title="Don't show this again" aria-label="Dismiss">✕</button>
+        </div>` : ''}
         ${items.length ? items.map(i=>`
           <button class="pv-item${_sel===i.id?' active':''}" data-id="${enc(i.id)}">
             <span class="pv-fav">${_favicon(i)}</span>
@@ -758,6 +786,10 @@
     $('.pv-pair', feed).onclick = openPair;
     $('.pv-device', feed).onclick = openDevice;
     $('.pv-health', feed).onclick = openHealth;
+    // Guarded: the tip is absent once dismissed, and an unguarded null here would throw mid-wiring
+    // and take every binding BELOW it down with it — search, folders, tags and the item clicks.
+    { const x = $('.pv-exttip-x', feed);
+      if(x) x.onclick = () => { _dismissExtTip(); _paint(); }; }
     const s = $('.pv-search', feed);
     let t=null;
     s.oninput = () => { clearTimeout(t); t=setTimeout(()=>{ _filter.q = s.value; _repaintKeepFocus(); }, 160); };
