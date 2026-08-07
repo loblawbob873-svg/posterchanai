@@ -3285,7 +3285,13 @@
   // old pixel box on a differently-shaped canvas — captions land off-frame and photos stop covering
   // what they covered — which reads as "changing the size wrecked my build".
   function _resizeCanvas(w, h){
-    w = Math.max(16, Math.round(w)/2*2|0) || P.w; h = Math.max(16, Math.round(h)/2*2|0) || P.h;
+    // EVEN dimensions. `Math.round(w)/2*2|0` was a no-op: / and * bind left-to-right, so it divided by
+    // two and multiplied straight back, leaving an ordinary rounded number. "Canvas to this photo" on a
+    // 474x265 photo therefore produced a 474x265 PROJECT, and h264 needs even dims — so the renderer
+    // floored it to 474x264 while the stage kept laying every layer out in a 265-tall space. One pixel,
+    // but it is a pixel of permanent disagreement built into the project rather than into a layer.
+    const even = v => Math.max(16, (Math.round(v) / 2 | 0) * 2);
+    w = even(w) || P.w; h = even(h) || P.h;
     if(w === P.w && h === P.h) return;
     snap();      // reshaping rewrites every layer's geometry — the one edit you most want to take back
     const rx = w/P.w, ry = h/P.h;
@@ -3314,7 +3320,17 @@
     _resizeCanvas(iw*r, ih*r);
     l.x = 0; l.y = 0; l.w = P.w; l.h = P.h; l.fit = 'contain';
     sel = l.id; save(); render();
-    toast('canvas matched — whole photo, no bars');
+    // SAY WHAT THE EXPORT WILL BE. The canvas IS the render size, so matching it to a small photo
+    // quietly sets the whole meme's resolution — a 474x265 photo makes a 474x264 video, which looks
+    // fine on the stage (it is scaled up to fill the panel) and arrives as a postage stamp. Reported
+    // as "the rendered version is super tiny and nothing like the preview": the preview was not wrong,
+    // it was just displayed three times larger than the file. Deliberately NOT auto-upscaled — that
+    // would hand back a soft, interpolated meme without asking. Name the number and point at the fix.
+    const small = Math.max(P.w, P.h) < 640;
+    toast(small
+      ? `canvas matched — ${P.w}x${P.h}. That is the size your meme will EXPORT at, which is small for `
+        + `posting; pick a preset under ⚙︎ Canvas for a bigger render.`
+      : `canvas matched — whole photo, no bars (${P.w}x${P.h})`);
   }
 
   // The finished meme (or the error that stopped it) lands in its own pane, and the tab strip grows a

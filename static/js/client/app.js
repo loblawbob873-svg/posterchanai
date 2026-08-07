@@ -5839,7 +5839,9 @@
       if(VIEW!=='streams') return;
       const rank=e=>({live:0,planned:1,ended:2}[streamStatus(e)] ?? 3);
       const streams=_dedupAddr(evs.filter(e=>!_isDeletedStream(e))).sort((a,b)=> rank(a)-rank(b) || b.created_at-a.created_at);
-      try{ _adoptOwnLive(streams); }catch(_){}   // never let self-adopt break the list render
+      // async now (it probes the feed before adopting), so the rejection has to be caught on the
+      // PROMISE as well as synchronously — a bare call would surface as an unhandled rejection.
+      try{ const _a=_adoptOwnLive(streams); if(_a&&_a.catch) _a.catch(()=>{}); }catch(_){}
       // Catch up any of YOUR ended streams whose recording finished while this tab was closed, so the
       // replay becomes visible to other clients. Once per view open, never awaited, never fatal.
       if(!_sweptReplays){ _sweptReplays = true; try{ _sweepUnstampedReplays(); }catch(_){} }
@@ -6280,11 +6282,54 @@
   }
   // On (re)opening Streams, re-adopt our OWN still-live announcement so a reload doesn't strand it as
   // permanently LIVE (the End button reappears + the heartbeat resumes).
-  function _adoptOwnLive(streams){
+  async function _adoptOwnLive(streams){
     if(_liveStream || GUEST || !ME) return;
     const mine=(streams||[]).find(e=>e.pubkey===ME.pubkey && streamStatus(e)==='live'
                                      && !_endedStreams.has((e.tags.find(t=>t[0]==='d')||[])[1]));
     if(!mine) return;
+    // ADOPT ONLY A STREAM THAT IS ACTUALLY STILL RUNNING. This used to adopt any 30311 of ours whose
+    // status says `live`, which makes a stream that never got its `ended` event IMMORTAL: opening
+    // Streams re-adopts it, the heartbeat republishes it, and the event's created_at marches forward
+    // while its `starts` stays days in the past. Measured on a real account — a broadcast from two days
+    // earlier was still being restamped ● LIVE on zap.stream every time the owner opened the app, which
+    // is exactly "wtf, I am not streaming this anymore".
+    //
+    // The probe is only trusted when OUR OWN api answers: an unreachable HLS url means "the stream is
+    // over" if the server is reachable, and "this device is offline" if it is not — and ending someone's
+    // live broadcast because their wifi dropped is far worse than leaving a stale one up for longer.
+    {
+      const hls=(mine.tags.find(t=>t[0]==='streaming')||[])[1]||'';
+      let feedUp=false;
+      if(hls){ try{ const r=await fetch(hls,{cache:'no-store'}); feedUp=r.ok; }catch(_){ feedUp=false; } }
+      // AGE is the second guard, and it is what makes a single probe safe to act on. The heartbeat
+      // needs THREE misses over ~2 minutes before it ends a stream, because OBS reconnects and a CDN
+      // blips — one 404 is not proof a broadcast is over. So a recent announcement with a dead feed is
+      // still ADOPTED here, exactly as before, and left to that 3-strike path. Only an announcement old
+      // enough that no reconnect explains it is retired outright.
+      const startedAt=parseInt((mine.tags.find(t=>t[0]==='starts')||[])[1]||mine.created_at,10)||0;
+      const stale=startedAt && (Date.now()/1000 - startedAt) > 900;   // 15 min
+      if(hls && !feedUp && stale){
+        let apiUp=false;
+        try{ const r=await fetch('/api/streams/ingest',
+                                 {headers:_aiToken?{'Authorization':'Bearer '+_aiToken}:{}});
+             apiUp=r.ok; }catch(_){ apiUp=false; }
+        if(!apiUp) return;            // our own network is the suspect — leave the announcement alone
+        // Really over. Retire it so it stops claiming to be live everywhere, carrying `starts` and the
+        // rest through _liveBase so the ended event keeps the broadcast's own identity.
+        const sid0=(mine.tags.find(t=>t[0]==='d')||[])[1]||'';
+        _endedStreams.add(sid0); _endedStreams.add(_tokenOfD(sid0));
+        try{
+          const s0={ token:_tokenOfD(sid0), d:sid0,
+                     title:(mine.tags.find(t=>t[0]==='title')||[])[1]||'Live stream', hls,
+                     starts:(mine.tags.find(t=>t[0]==='starts')||[])[1]||String(mine.created_at),
+                     image:(mine.tags.find(t=>t[0]==='image')||[])[1]||'' };
+          const r=await publish(30311, '', _liveBase(s0).concat(
+            [['status','ended'], ['ends', String(Math.floor(Date.now()/1000))]]));
+          _mirrorStream(r);
+        }catch(_){ }
+        return;
+      }
+    }
     // `d` is the SESSION id now; the MediaMTX token (what the HLS url and the VOD lookup need) is the
     // part before the `-<starts>` suffix. _tokenOfD also passes through an old event whose d IS the token.
     const sid=(mine.tags.find(t=>t[0]==='d')||[])[1];

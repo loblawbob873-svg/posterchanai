@@ -277,3 +277,50 @@ def test_a_stream_that_just_ended_does_not_claim_it_has_no_recording():
     assert "_fresh" in branch and "15 * 60" in branch, "no recent-vs-really-absent distinction"
     assert "Saving your recording" in branch
     assert "setTimeout" in branch, "a stream still saving must re-check, not need a manual reload"
+
+
+def test_a_stale_live_announcement_is_not_re_adopted_forever():
+    """A 30311 of ours that says `live` but has no feed must be RETIRED, not adopted again.
+
+    _adoptOwnLive exists so a reload mid-broadcast does not strand a stream as permanently LIVE. But it
+    adopted any own event whose status said `live`, which makes a stream that never received its
+    `ended` event immortal: opening Streams re-adopts it, the heartbeat republishes it, and created_at
+    marches forward while `starts` stays days behind. Observed on a real account — a two-day-old
+    broadcast was being restamped LIVE on zap.stream every time the owner opened the app.
+
+    Two guards make acting on the probe safe, and both must stay:
+      * the api must answer  — a dead HLS means "over" only if the server is reachable; otherwise this
+        device is simply offline, and ending a live broadcast over that is far worse than a stale one.
+      * the announcement must be OLD — the heartbeat needs three misses over ~2 minutes before it ends
+        anything, because OBS reconnects. A recent dead feed is still adopted and left to that path.
+    """
+    src = (ROOT / "static" / "js" / "client" / "app.js").read_text(encoding="utf-8")
+    i = src.index("async function _adoptOwnLive(")
+    body = src[i:i + 3200]
+
+    assert "/api/streams/ingest" in body, (
+        "the adopt path must confirm OUR OWN api is reachable before believing a dead HLS probe — "
+        "otherwise an offline device ends the user's live stream"
+    )
+    assert "if(!apiUp) return;" in body, (
+        "an unreachable api must leave the announcement alone, not retire it"
+    )
+    assert "> 900" in body, (
+        "only an announcement old enough that no OBS reconnect explains it may be retired on a single "
+        "probe; a recent one belongs to the heartbeat's 3-strike path"
+    )
+    assert "'status','ended'" in body.replace('"', "'"), (
+        "a stream confirmed over has to be published as ended — not adopting it merely stops the "
+        "republishing, it does not clear `live` for everyone already watching the address"
+    )
+
+
+def test_adopt_is_awaited_by_its_caller():
+    """It probes the network now, so it returns a promise — a bare call would surface a rejection as an
+    unhandled promise rejection, which in this client is a console error nobody reads."""
+    src = (ROOT / "static" / "js" / "client" / "app.js").read_text(encoding="utf-8")
+    assert "_a=_adoptOwnLive(streams); if(_a&&_a.catch) _a.catch(()=>{})" in src.replace(" ", "").replace(
+        "const_a", "_a"
+    ) or "_a.catch(()=>{})" in src, (
+        "the async _adoptOwnLive must have its rejection caught on the promise, not only synchronously"
+    )
