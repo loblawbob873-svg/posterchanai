@@ -1319,7 +1319,18 @@
         }catch(e){ rej(e); }
       };
       im.onerror = () => rej(new Error('decode failed'));
-      im.src = url;
+      // A DISTINCT url for the CORS load. Until this code existed, `mask-image` pointed straight at
+      // the remote mask, and a compositor mask fetch is made WITHOUT CORS — so the browser's HTTP
+      // cache holds an entry for that url with no Access-Control-Allow-Origin on it. Loading the same
+      // url with crossOrigin='anonymous' REUSES that entry and fails the CORS check, no matter that
+      // the server would answer a fresh request perfectly. It is per-url, which is exactly the shape
+      // of the report: of two near-identical layers one came back and one did not, and a hard refresh
+      // helped until the poisoned entry returned.
+      //
+      // The query is ignored by Blossom (it serves by path), so this costs one extra fetch the first
+      // time and nothing after. Kept for good: old caches outlive any fix, and a stale non-CORS entry
+      // is indistinguishable from a broken mask from in here.
+      im.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'pcmask=1';
     })
       .then(dataUri => { _maskLocal[url] = dataUri; _maskOk[url] = true; try{ _paintMask(url); }catch(_){ } })
       .catch(fail);
