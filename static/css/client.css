@@ -2194,7 +2194,11 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
      every view that HAS a title (the three timeline views hide theirs, which is why only those looked
      right). The title truncates now and the search keeps a floor, so neither can squeeze the other out. */
   .topbar h2{font-size:17px;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .searchbox{margin:0 4px;min-width:120px}
+  /* 140px, not 120: the floor only binds on a long USER-SUPPLIED title (a chat room name, a long
+     hashtag), and "🔍 Search" measures 115px in Inter — a 5px margin that a wider fallback font on
+     someone's phone eats, putting the clipping straight back on exactly the surface this fixed. The
+     title has min-width:0, so it absorbs the extra by truncating; the row still cannot overflow. */
+  .searchbox{margin:0 4px;min-width:140px}
   .note,.tl-cmp{padding:14px 14px;gap:10px}
   .reply-ctx{padding:12px 14px 0}   /* align reply context with the note body on mobile */
   .note .av,.tl-cmp-av{width:40px;height:40px}
