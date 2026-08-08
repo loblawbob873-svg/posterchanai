@@ -79,7 +79,12 @@ window.__PC = {
   switchView: v => {
     window.__view = v; window.__rendered.push(v);
     const f = document.getElementById('feed');
-    if (f) f.innerHTML = '<div class="stub-view" data-v="' + v + '">' + v + ' rendered</div>';
+    if (f) {
+      f.innerHTML = '<div class="stub-view" data-v="' + v + '">' + v + ' rendered'
+                  + '<button class="stub-btn">Do the thing</button></div>';
+      const b = f.querySelector('.stub-btn');
+      if (b) b.onclick = () => { window.__clicked = (window.__clicked || 0) + 1; };
+    }
   },
 };
 window.ClientSettings = { _v:{}, get(k,d){ return k in this._v ? this._v[k] : d; }, set(k,v){ this._v[k]=v; } };
@@ -92,6 +97,8 @@ DRIVE = r"""(async () => {
   const out = {};
   const sleep = ms => new Promise(r=>setTimeout(r,ms));
   const feeds = () => document.querySelectorAll('#feed').length;
+  const feedIn = sel => { const f = document.getElementById('feed');
+                          return !!(f && f.closest(sel)); };
 
   out.classicFeedText = (document.getElementById('feed')||{}).textContent;
   PCOS.enter(); await sleep(150);
@@ -125,7 +132,10 @@ DRIVE = r"""(async () => {
   out.tasks     = document.querySelectorAll('.os-task').length;
   out.feedCount = feeds();
   const focused = document.querySelector('.osw.focused .osw-body');
-  out.feedOnFocused = !!(focused && focused.id === 'feed');
+  // The real element must LIVE in the focused window — moving it is what carries the delegated
+  // click/scroll/touch listeners the whole client depends on.
+  out.feedOnFocused = !!(focused && document.getElementById('feed')
+                         && document.getElementById('feed').parentElement === focused);
   out.renderedLast  = window.__rendered[window.__rendered.length-1];
 
   // Focusing the other window must move the id AND re-render that feature there.
@@ -133,9 +143,26 @@ DRIVE = r"""(async () => {
   other.querySelector('.osw-bar').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
   await sleep(200);
   const f2 = document.querySelector('.osw.focused .osw-body');
-  out.feedMoved = !!(f2 && f2.id === 'feed' && f2 !== focused);
+  out.feedMoved = !!(f2 && f2 !== focused && document.getElementById('feed')
+                     && document.getElementById('feed').parentElement === f2);
   out.feedCount2 = feeds();
   out.renderedAfterFocus = window.__rendered[window.__rendered.length-1];
+
+  // A button a feature rendered INSIDE a window must actually fire. This is the whole point of the
+  // shell: if clicks do not reach the feature, the desktop is a picture of the app.
+  window.__clicked = 0;
+  const fw = document.querySelector('.osw.focused');
+  const sb = fw && fw.querySelector('.stub-btn');
+  out.hasBtn = !!sb;
+  if (sb) { sb.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true})); sb.click(); }
+  await sleep(120);
+  out.clicked = window.__clicked;
+  // …and in a window that is NOT focused: the click should focus it and still work.
+  const uw = [...document.querySelectorAll('.osw')].find(w => !w.classList.contains('focused'));
+  const ub = uw && uw.querySelector('.stub-btn');
+  if (ub) { ub.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true})); await sleep(120); ub.click(); }
+  await sleep(120);
+  out.clickedUnfocused = window.__clicked;
 
   // Window controls.
   const w = document.querySelector('.osw.focused');
@@ -157,8 +184,7 @@ DRIVE = r"""(async () => {
 
   PCOS.exit(); await sleep(150);
   out.exited = !PCOS.isOn() && !document.querySelector('#os-root');
-  out.feedReturned = (document.getElementById('feed')||{}).closest ?
-    !!document.getElementById('feed').closest('.main') : false;
+  out.feedReturned = feedIn('.main');
   out.feedCountAfterExit = feeds();
   return out;
 })()"""
@@ -293,6 +319,10 @@ async def drive(url):
                     print(f"SKIP  {label}: the desktop script did not evaluate")
                     return 2
 
+                if not r.get("hasBtn") or not r.get("clicked"):
+                    problems.append((label, "clicks-dead",
+                                     "a button a feature rendered inside a window did not fire — "
+                                     f"hasBtn={r.get('hasBtn')} clicked={r.get('clicked')}"))
                 if not r.get("hasNew") or not r.get("composed"):
                     problems.append((label, "cannot-post",
                                      "there is no working New post button on the taskbar — the "

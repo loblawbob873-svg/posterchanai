@@ -36,7 +36,8 @@
   let root = null, bar = null, desk = null;
   let wins = [];                   // [{id, view, title, el, body, min, max, rect}]
   let seq = 0, zTop = 10, on = false, startOpen = false;
-  let realFeed = null;             // the client's own #feed, parked while the desktop owns the id
+  let realFeed = null;             // the client's own #feed element — MOVED into the focused window
+  let realHome = null;             // …and where it belongs when the desktop closes
 
   const PC = () => window.__PC || {};
   const $ = (s, r) => (r || document).querySelector(s);
@@ -79,23 +80,42 @@
     ? `<svg class="ic" aria-hidden="true"><use href="${enc(href)}"></use></svg>`
     : '<svg class="ic" aria-hidden="true"><use href="#i-app"></use></svg>';
 
-  // ---- the #feed handoff ---------------------------------------------------------------------
+  // ---- the feed handoff -----------------------------------------------------------------------
 
-  /* Give `id="feed"` to this window's body and to nothing else, then let the app render into it.
+  /* MOVE THE ELEMENT, not the id.
    *
-   * Duplicate ids are invalid and `querySelector` would answer with whichever came first in the
-   * document, so exactly one element may hold it at a time — that single rule is what keeps every
-   * untouched feature pointing at the right window. */
+   * The first version of this gave each window its own body and handed `id="feed"` to whichever was
+   * focused, so `$('#feed')` resolved there. That is only half of it: this client also binds
+   * DELEGATED listeners once, at boot, to the feed ELEMENT — a click handler (app.js), the
+   * infinite-scroll handler, the pull-to-refresh touch handlers. Those stay on the node they were
+   * attached to. Renaming ids left every feature rendering into a window whose clicks nothing was
+   * listening for, which is exactly "none of the app buttons work".
+   *
+   * So the real feed element is RELOCATED into the focused window. appendChild preserves listeners,
+   * so every delegated handler comes with it and each feature behaves exactly as it does in the
+   * classic client. Only one window can hold it — which was always true, since only one feature is
+   * live at a time — so the window losing it keeps a static snapshot of what it was showing, and
+   * refocusing moves the real element back and re-renders.
+   */
+  function snapshot(w){
+    if(!w || !realFeed || realFeed.parentElement !== w.body) return;
+    const slot = w.slot;
+    if(slot) slot.innerHTML = realFeed.innerHTML;   // a picture of it, for the unfocused window
+  }
+
   function claimFeed(w){
-    const cur = document.getElementById('feed');
-    if(cur && cur !== w.body) cur.removeAttribute('id');
-    if(w.body.id !== 'feed') w.body.id = 'feed';
+    if(!realFeed || realFeed.parentElement === w.body) return;
+    const holder = wins.find(x => realFeed.parentElement === x.body);
+    if(holder) snapshot(holder);
+    w.body.appendChild(realFeed);
+    if(w.slot) w.slot.innerHTML = '';               // the live element replaces the snapshot
   }
 
   function releaseFeed(){
-    const cur = document.getElementById('feed');
-    if(cur && cur !== realFeed) cur.removeAttribute('id');
-    if(realFeed && realFeed.id !== 'feed') realFeed.id = 'feed';
+    if(!realFeed || !realHome) return;
+    const holder = wins.find(x => realFeed.parentElement === x.body);
+    if(holder) snapshot(holder);
+    realHome.appendChild(realFeed);
   }
 
   // ---- windows -------------------------------------------------------------------------------
@@ -147,11 +167,11 @@
            <button class="osw-b osw-x" data-w="close" title="Close" aria-label="Close">✕</button>
          </span>
        </div>
-       <div class="osw-body feed"></div>
+       <div class="osw-body"><div class="osw-slot"></div></div>
        <span class="osw-grip" aria-hidden="true"></span>`;
     desk.appendChild(el);
     const w = { id: ++seq, view, title: label, icon, el, body: $('.osw-body', el),
-                min: false, max: false, rect: r };
+                slot: $('.osw-slot', el), min: false, max: false, rect: r };
     wins.push(w);
 
     $('.osw-bar', el).addEventListener('pointerdown', e => {
@@ -181,7 +201,7 @@
     wins.splice(i, 1);
     // If this window held the id, hand it back BEFORE removing the element, or `$('#feed')` briefly
     // resolves to nothing and whatever renders next paints into a detached node.
-    if(w.body.id === 'feed') releaseFeed();
+    if(realFeed && realFeed.parentElement === w.body) releaseFeed();
     w.el.remove();
     const next = wins.filter(x => !x.min).pop();
     if(next) focusWin(next); else drawBar();
@@ -190,7 +210,7 @@
   function minimise(w){
     w.min = true;
     w.el.classList.add('minimised');
-    if(w.body.id === 'feed') releaseFeed();
+    if(realFeed && realFeed.parentElement === w.body) releaseFeed();
     const next = wins.filter(x => !x.min).pop();
     if(next) focusWin(next); else drawBar();
   }
@@ -341,6 +361,7 @@
     }
     on = true;
     realFeed = document.getElementById('feed');
+    realHome = realFeed ? realFeed.parentElement : null;
     root = document.createElement('div');
     root.id = 'os-root';
     root.className = 'os-root';

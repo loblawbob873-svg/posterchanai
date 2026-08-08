@@ -6052,8 +6052,13 @@ body.os-on #os-root{pointer-events:auto}
 .osw-x:hover{background:#e81123;color:#fff}
 /* The window body IS the feature's container: while focused it carries id="feed", so it must scroll
    and size exactly like the real one. */
-.osw-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:8px 10px 14px;
-  background:var(--bg);scrollbar-width:thin}
+/* The window body HOLDS the real feed element while focused (moved, not copied — see os.js), so it
+   is a plain flex container; the feed brings its own scrolling. The slot beside it shows a snapshot
+   of what this window was displaying while another one has the live element. */
+.osw-body{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+.osw-body > #feed{flex:1;min-height:0}
+.osw-slot{flex:1;min-height:0;overflow:auto;padding:8px 10px 14px;opacity:.72}
+.osw-slot:empty{display:none}
 .osw-grip{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;
   touch-action:none;background:linear-gradient(135deg,transparent 50%,var(--line) 50%)}
 
