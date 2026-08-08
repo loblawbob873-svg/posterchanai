@@ -1147,6 +1147,10 @@
         : (await fetch('/client/config').then(r=>r.json()).catch(()=>null)) || _cfgCached() || {};
     _cfgCache(CFG);
     applyInstanceGating();
+    // The logo becomes the way into PosterChan OS. Wired after gating, so the desktop's app list —
+    // which it reads from the sidebar — reflects what this deployment actually shows.
+    try{ _wireOsLogo(); }catch(_){}
+    try{ window.PCOS && window.PCOS.restore(); }catch(_){}   // remembered per device
     // Custom branding (Admin → Site): override the logo used as the avatar fallback + brand
     // marks, and point the favicon/splash at it. Blank → keep the built-in PosterChan logo.
     if (CFG.logo_url){
@@ -3042,6 +3046,22 @@
   // the app entirely, which is what history.back() would do on a single-entry history.
   let _navPushed=0;
   function _clearNav(){ $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); _syncRightbar(); }
+  /* The instance logo opens PosterChan OS — a windowed desktop over this same client.
+   *
+   * A plain <img> is not a control, so it gets a button's affordances: a role, a tab stop, a title
+   * and Enter/Space. Desktop only; os.js itself refuses below 1024px and says why. */
+  function _wireOsLogo(){
+    const logo = $('.brand-logo');
+    if(!logo || logo.dataset.osWired) return;
+    logo.dataset.osWired = '1';
+    logo.setAttribute('role', 'button');
+    logo.setAttribute('tabindex', '0');
+    logo.setAttribute('title', 'PosterChan OS — open the desktop');
+    const go = () => { try{ window.PCOS && window.PCOS.toggle(); }catch(err){ toast('could not open the desktop'); } };
+    logo.onclick = go;
+    logo.onkeydown = (e) => { if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); go(); } };
+  }
+
   function switchView(v){
     _onLandingView = false;   // an explicit navigation — a late pref restore must not move them now
     if(window.PC_NOSTR_ONLY && (v==='ai' || v==='markets')) v='home';   // AI-backed views disabled in Nostr-only deployments

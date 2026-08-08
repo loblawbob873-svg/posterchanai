@@ -5999,3 +5999,120 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
 .encatt-ds{display:inline-block;cursor:pointer;border:1px dashed var(--line);border-radius:10px;
   padding:8px 12px;min-height:38px;line-height:22px;color:var(--muted)}
 .encatt-ds:hover{border-color:var(--cyan);color:var(--text)}
+
+/* ===== PosterChan OS — the windowed desktop (see static/js/client/os.js) =====================
+   Dark, Win11-shaped: a taskbar with a centred start button, rounded windows with a title bar, and
+   desktop icons for everything on the left navbar. Built from the theme's own tokens rather than
+   hardcoded greys, so it follows whichever of the seven themes is active instead of being a second
+   look bolted on. Desktop only — os.js refuses below 1024px. */
+body.os-on .app{filter:none}
+body.os-on > .app{pointer-events:none}          /* the classic UI is still there, just not clickable */
+body.os-on #os-root{pointer-events:auto}
+.os-root{position:fixed;inset:0;z-index:300;display:flex;flex-direction:column;
+  background:radial-gradient(1200px 800px at 20% 0%, rgba(var(--accent-rgb),.16), transparent 60%),
+             linear-gradient(160deg, var(--bg), var(--bg2, var(--bg)));}
+.os-desk{position:relative;flex:1;min-height:0;overflow:hidden}
+
+/* Desktop icons — a column grid down the left, like a desktop. */
+.os-icons{position:absolute;inset:14px auto 14px 14px;display:grid;grid-auto-flow:column;
+  grid-template-rows:repeat(auto-fill,88px);gap:6px;align-content:start}
+.os-icon{width:92px;height:88px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:6px;background:transparent;border:1px solid transparent;border-radius:10px;color:var(--text);
+  cursor:pointer;padding:6px 4px}
+.os-icon:hover,.os-icon:focus-visible{background:rgba(255,255,255,.09);border-color:var(--line)}
+.os-icon .ic{width:30px;height:30px;color:var(--neon)}
+.os-icon span{font-size:11.5px;line-height:1.15;text-align:center;max-width:86px;
+  overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+
+/* Windows */
+.osw{position:absolute;display:flex;flex-direction:column;min-width:420px;min-height:260px;
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;
+  box-shadow:0 18px 50px rgba(0,0,0,.55)}
+.osw.focused{border-color:color-mix(in srgb, var(--neon) 55%, var(--line));
+  box-shadow:0 22px 64px rgba(0,0,0,.62)}
+.osw.minimised{display:none}
+/* touch-action:none is what makes dragging work with a FINGER. Pointer events fire on touch either
+   way, but without this the browser claims the gesture as a scroll and the window never moves —
+   which is the whole feature on an Android tablet. Same for the resize grip. */
+.osw-bar{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:0 4px 0 10px;height:34px;
+  background:var(--panel2);border-bottom:1px solid var(--line);cursor:grab;user-select:none;
+  touch-action:none}
+.osw-bar:active{cursor:grabbing}
+.osw-ico .ic{width:15px;height:15px;color:var(--neon);display:block}
+.osw-title{flex:1 1 auto;min-width:0;font-size:12.5px;font-weight:600;color:var(--text);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.osw-btns{flex:0 0 auto;display:flex}
+.osw-b{width:38px;height:34px;border:0;background:transparent;color:var(--muted);cursor:pointer;
+  font-size:13px;line-height:1}
+.osw-b:hover{background:rgba(255,255,255,.10);color:var(--text)}
+.osw-x:hover{background:#e81123;color:#fff}
+/* The window body IS the feature's container: while focused it carries id="feed", so it must scroll
+   and size exactly like the real one. */
+.osw-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:8px 10px 14px;
+  background:var(--bg);scrollbar-width:thin}
+.osw-grip{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;
+  touch-action:none;background:linear-gradient(135deg,transparent 50%,var(--line) 50%)}
+
+/* Taskbar */
+/* Centred start + tasks, tray pinned right — the Win11 arrangement. The tray is absolutely placed
+   so the centred group is centred on the SCREEN, not on the space the tray leaves over. */
+.os-bar{position:relative;flex:0 0 48px;display:flex;align-items:center;justify-content:center;gap:8px;padding:0 10px;
+  background:color-mix(in srgb, var(--panel2) 88%, transparent);
+  border-top:1px solid var(--line);backdrop-filter:blur(10px)}
+.os-start{flex:0 0 auto;width:38px;height:38px;border-radius:9px;border:1px solid transparent;
+  background:transparent;cursor:pointer;display:grid;place-items:center;padding:0}
+.os-start img{width:24px;height:24px;border-radius:5px;display:block}
+.os-start:hover,.os-start.on{background:rgba(255,255,255,.12);border-color:var(--line)}
+.os-tasks{flex:0 1 auto;min-width:0;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
+.os-tasks::-webkit-scrollbar{display:none}
+.os-task{flex:0 0 auto;max-width:190px;display:flex;align-items:center;gap:7px;height:38px;
+  padding:0 11px;border-radius:9px;border:1px solid transparent;background:rgba(255,255,255,.05);
+  color:var(--text);cursor:pointer;font-size:12.5px}
+.os-task:hover{background:rgba(255,255,255,.11)}
+.os-task.on{background:color-mix(in srgb, var(--neon) 18%, transparent);
+  border-color:color-mix(in srgb, var(--neon) 45%, var(--line))}
+.os-task .ic{width:15px;height:15px;color:var(--neon);flex:0 0 auto}
+.os-task span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.os-tray{position:absolute;right:10px;top:0;height:100%;display:flex;align-items:center;gap:10px}
+.os-exit{height:34px;padding:0 12px;border-radius:9px;border:1px solid var(--line);
+  background:transparent;color:var(--muted);cursor:pointer;font-size:12px}
+.os-exit:hover{color:var(--text);border-color:var(--neon)}
+.os-clock{display:flex;flex-direction:column;align-items:flex-end;line-height:1.15;font-size:11.5px;
+  color:var(--muted)}
+.os-clock b{font-size:13px;color:var(--text);font-weight:600}
+
+/* Start menu */
+.os-startmenu{position:absolute;left:50%;transform:translateX(-50%);bottom:56px;width:min(520px,70vw);max-height:60vh;
+  display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:14px;
+  background:var(--panel);border:1px solid var(--line);box-shadow:0 20px 60px rgba(0,0,0,.6);z-index:320}
+.os-search{font-size:14px}
+.os-applist{flex:1;min-height:0;overflow-y:auto;display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px}
+.os-app{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:9px;border:0;
+  background:transparent;color:var(--text);cursor:pointer;text-align:left;font-size:13px;min-height:40px}
+.os-app:hover{background:rgba(255,255,255,.09)}
+.os-app .ic{width:17px;height:17px;color:var(--neon);flex:0 0 auto}
+.os-app span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* The logo is the way in, so it has to look like a control rather than decoration. */
+.brand-logo{cursor:pointer;transition:transform .15s, filter .15s}
+.brand-logo:hover{transform:scale(1.06);filter:drop-shadow(0 0 8px rgba(var(--accent-rgb),.55))}
+
+/* TOUCH (Android tablets, the Windows app on a 2-in-1). A 34px title-bar button is a mouse target,
+   not a thumb one, and a 16px corner grip is unhittable with a finger.
+   EVERY SIZE HERE IS DIVIDED BY --zf, and that is the point: a tablet at 1280px gets the desktop
+   scaling tier (body{zoom:.67}), so a plain 44px button PAINTS at 29px — measured — and is no
+   longer a thumb target at all. Dividing by the zoom factor makes these real, on-screen pixels. */
+@media (pointer:coarse){
+  .osw-bar{height:calc(44px / var(--zf, 1))}
+  .osw-b{width:calc(46px / var(--zf, 1));height:calc(44px / var(--zf, 1));
+         font-size:calc(15px / var(--zf, 1))}
+  .osw-grip{width:calc(30px / var(--zf, 1));height:calc(30px / var(--zf, 1))}
+  .os-icon{width:calc(104px / var(--zf, 1));height:calc(100px / var(--zf, 1))}
+  .os-icon .ic{width:calc(34px / var(--zf, 1));height:calc(34px / var(--zf, 1))}
+  .os-icon span{font-size:calc(11.5px / var(--zf, 1))}
+  .os-task{height:calc(42px / var(--zf, 1));padding:0 calc(13px / var(--zf, 1))}
+  .os-start{width:calc(42px / var(--zf, 1));height:calc(42px / var(--zf, 1))}
+  .os-app{min-height:calc(46px / var(--zf, 1))}
+  .os-exit{height:calc(40px / var(--zf, 1))}
+}
