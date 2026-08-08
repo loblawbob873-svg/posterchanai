@@ -310,6 +310,102 @@ class RedirectSsrfTests(unittest.TestCase):
         self.assertIn("redirect", out["error"])
 
 
+class PageRenderTests(unittest.TestCase):
+    """The page view: someone else's markup, served from OUR origin so it can be framed at all.
+
+    Which means the sanitiser is load-bearing — anything that executes would be executing on
+    poster.place — and so is the part that makes the page still LOOK like itself, because a stripped
+    page that renders naked is the thing this endpoint exists to replace.
+    """
+    HTML = """<!doctype html><html><head>
+      <link rel="stylesheet" href="/style.css">
+      <script src="/app.js"></script>
+      <base href="https://evil.example/">
+    </head><body onload="steal()">
+      <img src="/logo.png" data-src="/real.png" srcset="/a.png 1x, /b.png 2x">
+      <a href="/page2">next</a>
+      <a href="javascript:alert(1)">bad</a>
+      <a href="mailto:x@y.z">mail</a>
+      <form action="/post"><input name="q"><button>go</button></form>
+      <iframe src="https://tracker.example/"></iframe>
+      <p onclick="alert(1)">text</p>
+    </body></html>"""
+
+    def setUp(self):
+        self.out = W._render_page(self.HTML, "https://site.example/dir/page")
+
+    def test_nothing_executes(self):
+        low = self.out.lower()
+        for dead in ("<script", "<iframe", "<form", "onload=", "onclick=", "javascript:"):
+            self.assertNotIn(dead, low, f"{dead} survived the sanitiser")
+
+    def test_the_page_still_looks_like_itself(self):
+        """Stylesheets and images are kept and absolutised — resolved against /api/websearch/page they
+        would 404 and the 'real page' would render as unstyled text."""
+        self.assertIn('href="https://site.example/style.css"', self.out)
+        self.assertIn("https://site.example/real.png", self.out)     # data-src promoted (no JS to do it)
+        self.assertIn("https://site.example/a.png 1x", self.out)     # srcset absolutised
+        self.assertIn('<base href="https://site.example/dir/page"', self.out)
+
+    def test_the_pages_own_base_is_replaced_not_kept(self):
+        """A <base> the page brought with it would point every relative URL wherever it says."""
+        self.assertNotIn("evil.example", self.out)
+
+    def test_links_stay_in_the_app(self):
+        self.assertIn("/api/websearch/page?url=https%3A%2F%2Fsite.example%2Fpage2", self.out)
+        self.assertNotIn("mailto:", self.out)     # not ours to open from a frame
+
+    def test_the_csp_allows_the_base_it_injects(self):
+        """`base-uri 'none'` would make the browser ignore our own <base>, so every relative URL would
+        resolve against the proxy endpoint — the page renders naked and nothing says why."""
+        self.assertNotIn("base-uri", W._PAGE_CSP)
+        self.assertIn("default-src 'none'", W._PAGE_CSP)     # …and still no scripts, ever
+        self.assertNotIn("script-src", W._PAGE_CSP)
+
+    def test_a_blocked_url_is_a_readable_page_not_a_stack_trace(self):
+        svc = mock.Mock()
+        async def _blocked(url, max_bytes=0):
+            return {"url": url, "html": "", "content_type": "", "error": "URL blocked: Private IP not allowed"}
+        svc.fetch_url_raw = _blocked
+        with mock.patch.object(W, "get_search_service", return_value=svc):
+            resp = run(W.render_page(url="http://10.0.0.1/", db=None, current_user=_User()))
+        body = resp.body.decode()
+        self.assertIn("can't be shown here", body)
+        self.assertIn("Open the original", body)
+        self.assertIn("default-src 'none'", resp.headers["content-security-policy"])
+
+
+class KeyboardWiringTests(unittest.TestCase):
+    """Web Search joins app.js's EXISTING card-cursor system rather than growing a second one.
+
+    Source-level on purpose: the keys live in app.js and the buttons in websearch.js, so a rename on
+    either side breaks them silently — the key simply does nothing, which nobody notices until they
+    try it. (The same shape as tests/test_effect_command_coverage.py.)
+    """
+    import pathlib as _pl
+    ROOT = _pl.Path(__file__).resolve().parents[1]
+
+    def setUp(self):
+        self.app_js = (self.ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+        self.ws_js = (self.ROOT / "static/js/client/websearch.js").read_text(encoding="utf-8")
+
+    def test_results_are_rows_the_cursor_can_reach(self):
+        self.assertIn("'#feed .ws-card'", self.app_js,
+                      "without this, j/k/Enter skip straight past every search result")
+
+    def test_every_card_key_presses_a_button_that_exists(self):
+        import re
+        m = re.search(r"\['\.ws-card', \{([^}]*)\}\]", self.app_js)
+        self.assertIsNotNone(m, "no .ws-card entry in _CARD_KEYS — S/N/U do nothing on a result")
+        for key, sel in re.findall(r"(\w+):'\.([\w-]+)'", m.group(1)):
+            self.assertIn(f'ws-{sel.split("ws-")[-1]}', self.ws_js,
+                          f"key '{key}' presses .{sel}, which websearch.js does not render")
+
+    def test_escape_closes_the_open_page(self):
+        self.assertIn("Escape", self.ws_js)
+        self.assertIn("closeReader", self.ws_js)
+
+
 class _StubService:
     """Stands in for the inference service. Records what the model was shown."""
     def __init__(self, reply="A summary [1]."):

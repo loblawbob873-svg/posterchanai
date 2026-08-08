@@ -133,6 +133,11 @@
       S.q = (q != null ? q : (el ? el.value : S.q)) || '';
       if(el && q != null) el.value = S.q;
       if(!S.q.trim()){ toast('type something to search'); return; }
+      // Hand the keyboard BACK. Every key handler in the app bails out while focus is in an <input>
+      // (rightly — you are typing), so leaving the caret in the search box after a search means j/k,
+      // Enter and the card letters all type into it instead of walking the results. It also drops the
+      // on-screen keyboard on a phone, which was covering the first two results.
+      try{ if(el) el.blur(); }catch(_){}
       S.reader = null;
       runSearch(false);
     }
@@ -204,10 +209,18 @@
     }
 
     // ---- the reader --------------------------------------------------------------------------
-    async function openReader(r){
+    // Opening a result shows the PAGE. The extracted text is fetched only if the reader is actually
+    // switched to Reader (or Summarize asks for it) — in page mode that request buys nothing, and it
+    // is a second full fetch of the same URL through this node.
+    function openReader(r){
       S.scroll = scrollTop();                              // remember where the results were
-      S.reader = { url:r.url, title:r.title, content:'', error:'', loading:true, scroll:0 };
+      S.reader = { url:r.url, title:r.title, mode:'page', content:'', error:'', loading:false, scroll:0 };
       paint();
+    }
+    async function loadText(){
+      const r = S.reader;
+      if(!r || r.content || r.loading) return;
+      r.loading = true; paint();
       try{
         const out = await api('/api/websearch/read?url=' + encodeURIComponent(r.url));
         if(!S.reader || S.reader.url !== r.url) return;     // they backed out / opened another
@@ -218,6 +231,13 @@
       }finally{
         if(S.reader && S.reader.url === r.url){ S.reader.loading = false; paint(); }
       }
+    }
+    function toggleMode(){
+      const r = S.reader; if(!r) return;
+      r.mode = (r.mode === 'text') ? 'page' : 'text';
+      r.scroll = 0;                       // the two modes are different documents; don't cross the offsets
+      paint();
+      if(r.mode === 'text') loadText();
     }
     function closeReader(){
       if(!S.reader) return false;
@@ -243,6 +263,23 @@
         requestAnimationFrame(()=>{ try{ if(px) s.scrollTop = px; }catch(_){} _painting = false; });
       });
     }
+    /* Escape closes the open page, exactly as the Android back button does.
+     *
+     * The card cursor (j/k, S/N/U, Enter) is app.js's — `.ws-card` is registered in its row list and
+     * its per-card key table, so these results behave like every other card list rather than growing
+     * a second keyboard model. What app.js has no way to know about is the reader, which is a
+     * sub-screen inside the view: without this, Esc on an open page does nothing and the only way
+     * back is the mouse.
+     */
+    document.addEventListener('keydown', e => {
+      if(e.key !== 'Escape' || !inView() || !S.reader) return;
+      if(e.defaultPrevented) return;                       // something above already claimed it
+      if(document.body.classList.contains('modal-open')) return;
+      const t = e.target;
+      if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ''))) return;
+      e.preventDefault();
+      closeReader();
+    });
     // Remember where you are, live — the results' offset and the reader's own are kept separately,
     // so opening an article and coming back returns to the result you opened it from.
     (function watchScroll(){
@@ -276,13 +313,15 @@
     function resultCard(r, i){
       const url = safeUrl(r.url);
       const thumb = safeUrl(r.thumbnail);
+      // No "Read here" button: the title — and the card — already open the page, and a fourth action
+      // per result wrapped onto a second row on a phone, which is most of what made a page of results
+      // read as a wall of buttons.
       const acts = `<div class="ws-acts">
-          <button class="btn btn-ghost small ws-open" data-i="${i}">📖 Read here</button>
           <button class="btn btn-ghost small ws-share" data-i="${i}">↗ Share</button>
           <button class="btn btn-ghost small ws-note" data-i="${i}">📓 Notes</button>
           ${aiOff() ? '' : `<button class="btn btn-ghost small ws-sum" data-i="${i}">✨ Summarize</button>`}
         </div>`;
-      return `<article class="ws-card" data-i="${i}">
+      return `<article class="ws-card" data-i="${i}" data-id="${enc(url)}">
         ${thumb ? `<img class="ws-thumb" src="${enc(thumb)}" alt="" loading="lazy" onerror="this.remove()">` : ''}
         <div class="ws-body">
           <div class="ws-src">${enc(host(url) || r.engine || '')}${r.published ? ' · ' + enc(String(r.published).slice(0,10)) : ''}</div>
@@ -383,25 +422,52 @@
       return `${answers}<div id="ws-ov-slot">${overviewCard()}</div>${list}${sugg}${more}`;
     }
 
+    /* The opened result.
+     *
+     * TWO modes, and PAGE is the default: clicking a search result should give you the page, laid
+     * out the way its author laid it out. The extracted-text mode is still there behind "Reader",
+     * because it is the better answer for a wall of ads around four paragraphs — but it is not what
+     * "open this result" means, and a screen full of stripped paragraphs reads as broken.
+     *
+     * The page is framed from OUR origin (/api/websearch/page) rather than pointed straight at the
+     * site, because most sites refuse to be framed at all (X-Frame-Options / frame-ancestors). The
+     * endpoint strips everything that executes and serves a no-script CSP, so the frame lays itself
+     * out and does nothing else.
+     */
+    function pageUrl(u){
+      let s = '/api/websearch/page?url=' + encodeURIComponent(u);
+      // An <iframe src> cannot carry an Authorization header, and on the APK the WebView origin is
+      // not the API host, so the cookie is not there either. get_current_user accepts ?token=.
+      try{ const t = PC.aiToken && PC.aiToken(); if(t) s += '&token=' + encodeURIComponent(t); }catch(_){}
+      return s;
+    }
     function readerView(){
       const r = S.reader;
       const url = safeUrl(r.url);
-      const body = r.loading ? '<div class="spinner"></div>'
-        : r.error ? `<div class="ws-err">${enc(r.error)} — the page is still there, open it in a tab.</div>`
-        : r.content.split(/\n+/).filter(l=>l.trim()).map(l=>`<p>${enc(l)}</p>`).join('');
-      return `<div class="ws-reader">
+      const isPage = r.mode !== 'text';
+      const body = isPage
+        ? `<iframe class="ws-frame" id="ws-frame" src="${enc(pageUrl(r.url))}"
+                   sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+                   referrerpolicy="no-referrer" title="${enc(r.title || host(url))}"></iframe>`
+        : (r.loading ? '<div class="spinner"></div>'
+           : r.error ? `<div class="ws-err">${enc(r.error)} — the page is still there, open it in a tab.</div>`
+           : `<div class="ws-rtext">${r.content.split(/\n+/).filter(l=>l.trim()).map(l=>`<p>${enc(l)}</p>`).join('')}</div>`);
+      return `<div class="ws-reader${isPage ? ' ws-reader-page' : ''}">
         <div class="ws-rbar">
           <button class="btn btn-ghost small ws-back" id="ws-back">← Results</button>
-          <a class="btn btn-ghost small" href="${enc(url||'#')}" target="_blank" rel="noopener noreferrer">↗ Open original</a>
+          <div class="ws-rsrc" title="${enc(url)}">${enc(host(url))}</div>
+          <div class="ws-rbar-acts">
+            <button class="btn btn-ghost small" id="ws-mode">${isPage ? '📄 Reader' : '🖼 Page'}</button>
+            <a class="btn btn-ghost small" href="${enc(url||'#')}" target="_blank" rel="noopener noreferrer">↗ Open</a>
+          </div>
         </div>
-        <h2 class="ws-rtitle">${enc(r.title || host(url))}</h2>
-        <div class="ws-rsrc">${enc(host(url))}</div>
+        ${isPage ? '' : `<h2 class="ws-rtitle">${enc(r.title || host(url))}</h2>`}
         <div class="ws-acts ws-racts">
           <button class="btn btn-ghost small" id="ws-r-share">↗ Share</button>
-          <button class="btn btn-ghost small" id="ws-r-note">📓 Save to Notes</button>
+          <button class="btn btn-ghost small" id="ws-r-note">📓 Notes</button>
           ${aiOff() ? '' : `<button class="btn btn-ghost small" id="ws-r-sum">✨ Summarize</button>`}
         </div>
-        <div class="ws-rtext">${body}</div>
+        ${body}
       </div>`;
     }
 
@@ -440,7 +506,12 @@
         if(e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
         e.preventDefault(); const r = at(a.dataset.i); if(r) openReader(r);
       });
-      $$('.ws-open', root).forEach(b => b.onclick = ()=>{ const r = at(b.dataset.i); if(r) openReader(r); });
+      // The whole card opens the result — the actions stop the click themselves, and the title is a
+      // real link so ctrl/⌘/middle-click still gets a tab.
+      $$('.ws-card', root).forEach(card => card.onclick = (e)=>{
+        if(e.target.closest('a, button')) return;
+        const r = at(card.dataset.i); if(r) openReader(r);
+      });
       $$('.ws-share', root).forEach(b => b.onclick = ()=>{ const r = at(b.dataset.i);
         if(r) compose({ text: (r.title||'') + '\n\n' + r.url }); });
       $$('.ws-note', root).forEach(b => b.onclick = ()=>{ const r = at(b.dataset.i); if(!r) return;
@@ -455,13 +526,17 @@
     function wireReader(root){
       const r = S.reader;
       const back = $('#ws-back', root); if(back) back.onclick = closeReader;
+      const md = $('#ws-mode', root); if(md) md.onclick = toggleMode;
       const sh = $('#ws-r-share', root);
       if(sh) sh.onclick = ()=> compose({ text: (r.title||'') + '\n\n' + r.url });
       const nt = $('#ws-r-note', root);
-      if(nt) nt.onclick = ()=> saveNote(nt, { title: r.title || host(r.url), tags:['web-search'],
-        // The page's TEXT goes in, not a link to it — that is the difference between a saved article
-        // and a bookmark that 404s next year.
-        body: (r.content ? r.content.slice(0, 40000) + '\n\n' : '') + r.url });
+      // Saving from PAGE mode still saves the page's TEXT, not a bookmark — that is the difference
+      // between a saved article and a link that 404s next year — so fetch it if it isn't here yet.
+      if(nt) nt.onclick = async ()=>{
+        if(!r.content && !r.error) await loadText();
+        saveNote(nt, { title: r.title || host(r.url), tags:['web-search'],
+                       body: ((S.reader && S.reader.content) ? S.reader.content.slice(0, 40000) + '\n\n' : '') + r.url });
+      };
       const sm = $('#ws-r-sum', root);
       if(sm) sm.onclick = ()=> summarize(r.url, r.title, sm);
     }

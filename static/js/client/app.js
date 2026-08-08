@@ -1101,6 +1101,20 @@
     if(sp.has('shared')){ try{ history.replaceState({},'','/client'); }catch(_){} }
     if(![...sp.keys()].filter(k=>k!=='shared').length) return false;
     const view = sp.get('view'), wantCompose = sp.has('compose');
+    /* `poster.place/search?q=…` — this node as the browser's search engine (see /opensearch.xml).
+     * Handled BEFORE the share-target branch, because a search from the URL bar arrives as a plain
+     * ?q= and the composer path would otherwise never see it. Only on /search, so a ?q on any other
+     * screen keeps whatever meaning that screen gives it. */
+    if(location.pathname === '/search'){
+      const q = (sp.get('q') || '').trim();
+      try{ history.replaceState({}, '', '/search'); }catch(_){}
+      switchView('websearch');
+      if(q){
+        const go = () => { if(window.PCWebSearch) window.PCWebSearch.search(q); else setTimeout(go, 60); };
+        go();
+      }
+      return true;
+    }
     const shared = ['title','text','url'].map(k=>(sp.get(k)||'').trim()).filter(Boolean);
     const _clean = ()=>{ try{ const base=(location.pathname==='/client'||location.pathname.startsWith('/client/'))?'/client':'/'; history.replaceState({},'',base); }catch(_){} };
     // Share target / compose shortcut → open the composer pre-filled (de-duped: a shared URL is
@@ -19937,6 +19951,8 @@
       +sec('On a selected file', [['O','Open'],['C','Copy the URL'],['M','Move to a folder'],['D','Delete'],
                                   ['Enter','Open'],['↓ Load more','Is a row too — Enter keeps paging']])
       +sec('On a selected news item', [['S','Share (also Markets)'],['U','Summarize'],['Enter','Open the article']])
+      +sec('On a selected web-search result', [['S','Share'],['N','Save to Notes'],['U','Summarize'],
+                                              ['Enter','Open the page'],['Esc','Back to results']])
       +sec('Viewing an image', [['C','Copy'],['S','Save'],['B','Save to Blossom'],['← / →','Previous / next'],
                                 ['Esc','Close']])
       +sec('Games', [['A – Z','Guess a letter (Hangman)'],['1 – 9','Play that square / drop that column'],
@@ -20049,6 +20065,7 @@
     // up here without a second place to remember.
     '#feed .draft-card[data-draft], #feed .draft-art[data-id]',   // Drafts (post + article)
     '#feed .news-card',                  // News (its own keys — see _CARD_KEYS)
+    '#feed .ws-card',                    // Web Search results (its own keys — see _CARD_KEYS)
     // Files (a GRID — see _rowStride). "↓ Load more" is a row too: it sits at the END of the same grid,
     // and without it the cursor stopped dead on the last tile — Tab could not save you either, because
     // while a row is selected Tab is scoped to THAT row's own controls.
@@ -20543,6 +20560,9 @@
   const _CARD_KEYS = [
     ['.file-card', { o:'a', c:'.copy', m:'.movebtn', d:'.del' }],
     ['.news-card', { s:'.news-post', u:'.news-sum' }],
+    // Web Search. S and U are News' letters for the same two actions; N is Save to Notes (the
+    // card has no other n-word control, and it is the action this screen is FOR).
+    ['.ws-card', { s:'.ws-share', u:'.ws-sum', n:'.ws-note' }],
     ['.mkts-card', { s:'.mkts-post' }],
     // Budget. `p` is the one you press all day (pay / un-pay), so it gets the letter even though the
     // GLOBAL p is "New post" — global shortcuts are Alt+p, so there is no collision. querySelector
@@ -22028,6 +22048,9 @@
     // endpoints like /api/news/summarize called from sub-modules (news.js).
     authFetch: (url, opts={}) => fetch(url, { credentials:'include', ...opts, headers:{ ...(opts.headers||{}), ...(_aiToken?{'Authorization':'Bearer '+_aiToken}:{}) } }),
     ensureAiSession,   // populate the bearer token (needed for authed endpoints on the APK) before authFetch
+    // The bearer token itself, for the ONE case a header cannot be attached: an <iframe src> (Web
+    // Search's page view). get_current_user accepts it as ?token=. Everything else must use authFetch.
+    aiToken: () => _aiToken || '',
     // NIP-44 decrypt with the current signer (any login type) — games use it to read their own
     // encrypted hole cards from a public game-state doc.
     nip44dec: (peer, ct) => (signer && signer.nip44dec) ? signer.nip44dec(peer, ct) : Promise.reject(new Error('no nip44')),

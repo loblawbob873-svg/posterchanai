@@ -326,9 +326,12 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   a front end to this node's SearXNG, plus Save to Notes / Share / summarize a link / an **AI overview**
   of the results with numbered citations. The whole search lives in MODULE state, not the DOM —
   `#feed` is shared by every view and app.js blanks it on entry, so leaving and returning repaints
-  query/filters/results/overview/scroll with no refetch. A result opens in an in-app READER with
-  `← Results` (a browser tab is a one-way door in a PWA/APK); `PCWebSearch.readerOpen()` lets the
-  Android back button close it before leaving the view.
+  query/filters/results/overview/scroll with no refetch. A result opens IN the app as the PAGE ITSELF — an iframe of
+  `/api/websearch/page`, which re-serves the fetched HTML from our origin (most sites refuse to be
+  framed) with every script/handler/form stripped and a no-`script-src` CSP, CSS+images kept and
+  absolutised; **Reader** toggles to extracted text, `← Results` returns to the exact offset, and
+  `PCWebSearch.readerOpen()` lets the Android back button close it before leaving the view. `/search?q=`
+  + `/opensearch.xml` make the node addable as the browser's own search engine.
   **Where a node searches is now ONE resolution order** (`search_service.resolve_searxng_url`), shared
   by the AI's web-search tool, the news digests, the bots (`bot_manager_service` injects the resolved
   `SEARXNG_URL`) and this screen: the **"Web search enabled"** switch → Admin → Tools → the SearXNG

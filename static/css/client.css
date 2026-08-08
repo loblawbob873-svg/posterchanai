@@ -1286,15 +1286,21 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
    from an arbitrary site, which is the classic source of a phone-width horizontal scrollbar, so
    overflow-wrap is on every long-string element and the filter chips wrap onto a second row instead
    of becoming a strip that hides half its options off-screen. */
-.ws-wrap{max-width:none;margin:0 auto;padding:6px 6px 40px}
-.ws-bar{position:sticky;top:0;z-index:5;background:var(--bg);padding:6px 0 10px;margin:0 0 6px}
+.ws-wrap{max-width:none;margin:0 auto;padding:0 6px 40px}
+/* top:-8px + the matching top padding swallow .feed's own 8px padding strip. With top:0 a sliver of
+   the scrolling RESULTS stayed visible ABOVE the search bar as you scrolled — the same bug .tl-tabs,
+   .notif-tabs and #news-head each had. --canvas (not --panel) because it is opaque in every theme,
+   and mobile drops backdrop-filter, so a frosted bar would degrade to see-through exactly here. */
+.ws-bar{position:sticky;top:-8px;z-index:5;background:var(--canvas);background-attachment:fixed;
+  padding:14px 0 10px;margin:0 0 6px;box-shadow:var(--sticky-sh)}
 .ws-form{display:flex;align-items:center;gap:8px;position:relative}
 .ws-ic{position:absolute;left:12px;width:18px;height:18px;color:var(--muted);pointer-events:none}
 /* 16px minimum: anything smaller and iOS Safari zooms the page on focus and never zooms back. */
 .ws-input{flex:1 1 auto;min-width:0;font-size:16px;padding:12px 12px 12px 38px;border-radius:999px}
 .ws-go{flex:0 0 auto;padding:10px 16px;min-height:40px}
 .ws-filters{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
-.ws-chips{display:flex;gap:6px;flex-wrap:wrap;min-width:0;flex:1 1 auto}
+.ws-chips{display:contents}   /* the chips wrap in the SAME flow as the time filter, so the filter
+                                    row is two tight lines on a phone instead of three */
 .ws-chip{background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:999px;
   padding:7px 14px;font-size:14px;cursor:pointer;white-space:nowrap;transition:.15s;min-height:34px}
 .ws-chip:hover{color:var(--text)}
@@ -1306,7 +1312,7 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .ws-answer{border:1px solid var(--line);border-left:3px solid var(--neon);border-radius:10px;background:var(--panel);
   padding:12px 14px;margin:0 0 10px;font-size:15px;line-height:1.5;color:var(--text);overflow-wrap:anywhere}
 .ws-card{display:flex;gap:12px;padding:12px;border:1px solid var(--line);border-radius:12px;margin:0 0 10px;
-  background:var(--panel);transition:border-color .15s}
+  background:var(--panel);transition:border-color .15s;cursor:pointer}
 .ws-card:hover{border-color:var(--neon)}
 .ws-thumb{width:112px;height:78px;object-fit:cover;border-radius:8px;flex:0 0 auto;background:var(--panel2)}
 .ws-body{min-width:0;flex:1 1 auto}
@@ -1341,9 +1347,20 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .ws-srchost{color:var(--muted);font-size:12px;margin-left:6px}
 /* reader */
 .ws-reader{max-width:760px;margin:0 auto}
-.ws-rbar{position:sticky;top:0;z-index:5;display:flex;gap:8px;justify-content:space-between;align-items:center;
-  background:var(--bg);padding:8px 0}
+/* Page mode is the whole width and the whole height: it is showing a web page, not an article. */
+.ws-reader-page{max-width:none;display:flex;flex-direction:column;min-height:0}
+.ws-rbar{position:sticky;top:-8px;z-index:5;display:flex;gap:8px;justify-content:space-between;align-items:center;
+  background:var(--canvas);background-attachment:fixed;padding:14px 0 8px;box-shadow:var(--sticky-sh)}
+.ws-rbar .ws-rsrc{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}
+.ws-rbar-acts{flex:0 0 auto;display:flex;gap:6px}
 .ws-back{min-height:36px}
+/* The framed page. 100% of a fixed height rather than flex:1, because #feed is the scroller: the
+   frame has to be a definite size or it collapses to 150px (the iframe default) and the page inside
+   it scrolls in a letterbox. dvh, never vh — vh on a phone is the address-bar-expanded height, so the
+   bottom of the page would sit permanently under the browser chrome. The subtractions are the bar +
+   the action row; on mobile also the fixed .mobilenav and the safe area. */
+.ws-frame{width:100%;height:calc(100dvh - 190px);min-height:340px;border:1px solid var(--line);
+  border-radius:12px;background:#fff;display:block}
 .ws-rtitle{font-size:22px;line-height:1.3;margin:6px 0 2px;color:var(--text);overflow-wrap:anywhere}
 .ws-rsrc{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
 .ws-racts{margin:10px 0 6px}
@@ -1358,7 +1375,14 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
   .ws-rtitle{font-size:19px}
   .ws-grid{grid-template-columns:repeat(auto-fill,minmax(46%,1fr))}
   /* Every action is a thumb target on a phone, and there are four of them per card. */
-  .ws-acts .btn{min-height:36px}
+  .ws-acts .btn{min-height:36px;font-size:13px;padding:7px 11px}
+  .ws-chip{font-size:13px;padding:6px 12px;min-height:32px}
+  .ws-time{font-size:16px;padding:5px 8px;min-height:32px}   /* 16px: iOS zooms anything smaller */
+  .ws-bar{padding-top:10px}
+  .ws-snip{-webkit-line-clamp:2}
+  /* …and the framed page has to clear the fixed bottom nav (62px) plus the safe area, or its last
+     inch is under the nav and un-scrollable-to. */
+  .ws-frame{height:calc(100dvh - 250px - env(safe-area-inset-bottom));min-height:300px}
 }
 @media(max-width:480px){
   .ws-card{flex-direction:column}
@@ -5072,6 +5096,9 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
 .stream-card.sel,.article-card.sel,.mkt-card.sel,.community-card.sel,.channel-card.sel,.fc-card.sel,.pic-card.sel{
   outline:2px solid var(--neon);outline-offset:2px}
 .news-card.sel{outline:2px solid var(--neon);outline-offset:2px}
+/* Web Search results. Without this the cursor IS on the card and nothing shows it, which is
+   indistinguishable from the keys not working at all. */
+.ws-card.sel{outline:2px solid var(--neon);outline-offset:2px}
 .file-card.sel{outline:2px solid var(--neon);outline-offset:2px}
 
 /* Vim cursor in the side columns. They are dense lists, so a left rule reads better than a full ring. */

@@ -689,6 +689,60 @@ class SearchService:
         return {"url": url, "title": title, "content": "",
                 "error": "no transcript/captions available for this video"}
 
+    async def fetch_url_raw(self, url: str, max_bytes: int = 3_000_000) -> dict:
+        """The page's OWN html, unextracted — for rendering it rather than summarizing it.
+
+        Separate from `fetch_url_content` on purpose: that one returns text for a model to read, and
+        every AI path in the app depends on its shape. This one is the input to the Web Search
+        reader's page view, so it keeps the markup (and reports the URL it ENDED on, which is what
+        relative links have to resolve against).
+
+        Same SSRF guard, re-checked on every redirect hop — a search result is a URL this node did not
+        choose, and rendering it is not a reason to trust it any further than summarizing it.
+        Returns {url, html, content_type, error}; `error` is set instead of raising.
+        """
+        ok, why = is_safe_url(url)
+        if not ok:
+            return {"url": url, "html": "", "content_type": "", "error": f"URL blocked: {why}"}
+
+        headers = {
+            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                           "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
+                current, hops = url, 0
+                while True:
+                    r = await client.get(current, headers=headers)
+                    if r.status_code not in (301, 302, 303, 307, 308):
+                        break
+                    loc = r.headers.get("location")
+                    if not loc:
+                        break
+                    hops += 1
+                    if hops > 5:
+                        return {"url": current, "html": "", "content_type": "", "error": "too many redirects"}
+                    current = str(httpx.URL(current).join(loc))
+                    ok, why = is_safe_url(current)
+                    if not ok:
+                        logger.warning("SSRF blocked (redirect): %s -> %s - %s", url, current, why)
+                        return {"url": url, "html": "", "content_type": "", "error": f"URL blocked: {why}"}
+                ctype = (r.headers.get("content-type") or "").lower()
+                if "html" not in ctype:
+                    # A PDF or an image is not something to re-serve through here; the client offers
+                    # the original link for those.
+                    return {"url": current, "html": "", "content_type": ctype,
+                            "error": f"not a web page ({ctype.split(';')[0] or 'unknown type'})"}
+                body = r.content[:max_bytes]
+                enc = r.encoding or "utf-8"
+                return {"url": current, "html": body.decode(enc, errors="replace"),
+                        "content_type": ctype, "error": None}
+        except Exception as e:
+            logger.info("page fetch failed for %s: %s", url, e)
+            return {"url": url, "html": "", "content_type": "", "error": str(e)[:200]}
+
     async def fetch_url_content(self, url: str, max_length: int = 15000) -> Optional[dict]:
         """Fetch and extract text content from a URL"""
         # YouTube *videos* need the transcript, not the watch-page HTML (which is contentless and

@@ -25,8 +25,11 @@ Assertions, each a way THIS screen breaks:
                         lose the query, the results, or where you were in them. #feed is shared by
                         every view and app.js blanks it on entry, so a screen that keeps its results
                         in the DOM has already lost them.
-  reader-dead-end       Opening a result must show the article WITH a way back to the results — a
-                        phone has no second pane and no browser chrome to fall back on.
+  reader-dead-end       Opening a result must show the PAGE (an iframe of it, which is what "open
+                        this result" means) with a way back to the results — a phone has no second
+                        pane and no browser chrome to fall back on. The text-only Reader mode must
+                        still be one tap away, and the frame must be a definite size: an <iframe>
+                        with no height collapses to 150px and the page scrolls in a letterbox.
   reader-scroll-lost    …and coming back must land where the results were, not at the top of a list
                         you had already worked through.
   missing-control       The search box, the filters, or a result's actions did not render at all.
@@ -190,19 +193,39 @@ LEAVE_AND_RETURN = r"""(async () => {
            refetched: window.__searches > before };
 })()"""
 
+# The card itself opens the result now — there is no separate "Read here" button to click.
 OPEN_READER = r"""(async () => {
   const feed = document.getElementById('feed');
   feed.scrollTop = 350;
   await new Promise(r=>setTimeout(r,150));
-  const b = document.querySelector('.ws-card .ws-open');
-  if (!b) return {error:'no read control on a result'};
-  b.click();
-  for (let i=0;i<60 && !document.querySelector('.ws-rtext p'); i++) await new Promise(r=>setTimeout(r,50));
+  const card = document.querySelector('.ws-card');
+  if (!card) return {error:'no result card to open'};
+  card.click();
+  for (let i=0;i<60 && !document.querySelector('.ws-frame'); i++) await new Promise(r=>setTimeout(r,50));
+  await new Promise(r=>setTimeout(r,250));
+  const fr = document.querySelector('.ws-frame');
+  const nav = document.querySelector('.mobilenav');
+  const vis = el => el && (!el.checkVisibility || el.checkVisibility());
   return { reader: !!document.querySelector('.ws-reader'),
            back: !!document.querySelector('#ws-back'),
-           paras: document.querySelectorAll('.ws-rtext p').length,
+           frame: !!fr,
+           frameH: fr ? Math.round(fr.getBoundingClientRect().height) : 0,
+           frameBottom: fr ? Math.round(fr.getBoundingClientRect().bottom) : 0,
+           navTop: (nav && vis(nav)) ? Math.round(nav.getBoundingClientRect().top) : window.innerHeight,
+           mode: !!document.querySelector('#ws-mode'),
            original: !!document.querySelector('.ws-rbar a[target="_blank"]'),
            readerOpen: !!(window.PCWebSearch.readerOpen && window.PCWebSearch.readerOpen()) };
+})()"""
+
+# …and the text mode has to still be reachable, since a page the frame renders badly is exactly when
+# you want it.
+TOGGLE_READER = r"""(async () => {
+  const b = document.querySelector('#ws-mode');
+  if (!b) return {error:'no Page/Reader toggle'};
+  b.click();
+  for (let i=0;i<60 && !document.querySelector('.ws-rtext p'); i++) await new Promise(r=>setTimeout(r,50));
+  return { paras: document.querySelectorAll('.ws-rtext p').length,
+           frame: !!document.querySelector('.ws-frame') };
 })()"""
 
 BACK_TO_RESULTS = r"""(async () => {
@@ -363,8 +386,25 @@ async def drive(url):
                 if not rd or rd.get("error"):
                     problems.append((label, "reader-dead-end", f"could not open a result ({(rd or {}).get('error')})"))
                 else:
-                    if not rd["reader"] or not rd["paras"]:
-                        problems.append((label, "reader-dead-end", "the reader opened with no article text"))
+                    if not rd["reader"] or not rd["frame"]:
+                        problems.append((label, "reader-dead-end", "opening a result showed no page"))
+                    if rd["frame"] and rd["frameH"] < 200:
+                        problems.append((label, "reader-dead-end",
+                                         f"the page frame is only {rd['frameH']}px tall — an <iframe> with no "
+                                         "height collapses to 150px and the page scrolls in a letterbox"))
+                    if phone and rd["frame"] and rd["frameBottom"] > rd["navTop"] + 1:
+                        problems.append((label, "results-under-nav",
+                                         f"the page frame's bottom ({rd['frameBottom']}px) is under the "
+                                         f"nav ({rd['navTop']}px)"))
+                    if not rd["mode"]:
+                        problems.append((label, "reader-dead-end", "no Page/Reader toggle"))
+                    else:
+                        tg = await js(TOGGLE_READER, awaited=True)
+                        if not tg or tg.get("error") or not tg.get("paras"):
+                            problems.append((label, "reader-dead-end",
+                                             f"Reader mode showed no text ({(tg or {}).get('error')})"))
+                        await js("document.querySelector('#ws-mode').click()")
+                        await asyncio.sleep(0.4)
                     if not rd["back"]:
                         problems.append((label, "reader-dead-end", "the reader has no way back to the results"))
                     if not rd["original"]:
@@ -424,11 +464,21 @@ def main():
     with open(os.path.join(tmp, "index.html"), "w") as fh:
         fh.write(PAGE)
 
+    # The page view is an <iframe src="/api/websearch/page?url=…">, which is a real navigation and
+    # never touches the stubbed window.fetch — so this server has to answer it or the frame is blank
+    # and "did the page render" cannot be asked at all.
+    with open(os.path.join(tmp, "page.html"), "w") as fh:
+        fh.write("<!doctype html><meta charset=utf-8><title>Framed</title>"
+                 "<body style='font:16px/1.5 system-ui;margin:0;padding:16px'>"
+                 "<h1>The actual page</h1>" + "<p>Body text.</p>" * 40)
+
     class H(http.server.SimpleHTTPRequestHandler):
         def translate_path(self, path):
             path = path.split("?")[0].split("#")[0]
             if path.startswith("/static/"):
                 return os.path.join(ROOT, path.lstrip("/"))
+            if path.startswith("/api/websearch/page"):
+                return os.path.join(tmp, "page.html")
             return os.path.join(tmp, path.lstrip("/") or "index.html")
 
         def log_message(self, *a):

@@ -1112,6 +1112,39 @@ async def service_worker():
     )
 
 
+@app.get("/search", response_class=HTMLResponse)
+async def browser_search(request: Request, q: str = ""):
+    """`https://poster.place/search?q=…` — this node as a browser search engine.
+
+    Serves the client itself rather than redirecting to /client?…: a redirect costs a round trip on
+    every search from the URL bar, and the client already reads `view`/`q` off the address bar on
+    boot. Paired with /opensearch.xml, which is what lets a browser OFFER to add this as a search
+    engine instead of the user typing the %s template in by hand.
+    """
+    from app.routers.client import client_app
+    return await client_app(request)
+
+
+@app.get("/opensearch.xml")
+async def opensearch_descriptor(request: Request):
+    """OpenSearch descriptor, linked from the client shell. Chrome/Firefox pick it up on first visit
+    and then `poster.place` (or a keyword) in the URL bar searches through this node."""
+    base = str(request.base_url).rstrip("/")
+    # A public-facing node is behind a reverse proxy; base_url already reflects the forwarded host.
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+  <ShortName>PosterChan</ShortName>
+  <Description>Search the web with PosterChan</Description>
+  <InputEncoding>UTF-8</InputEncoding>
+  <Image width="16" height="16" type="image/png">{base}/static/favicon.png</Image>
+  <Url type="text/html" method="get" template="{base}/search?q={{searchTerms}}"/>
+  <moz:SearchForm xmlns:moz="http://www.mozilla.org/2006/browser/search/">{base}/search</moz:SearchForm>
+</OpenSearchDescription>
+"""
+    return Response(content=xml, media_type="application/opensearchdescription+xml",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
 @app.get("/manifest.json")
 async def manifest():
     """Serve manifest from root for PWA"""

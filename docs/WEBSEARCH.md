@@ -18,11 +18,27 @@ live in module state, not in the DOM — `#feed` is one element every view share
 on entry, so anything left in the page is gone the moment you glance at Messages. Leaving and coming
 back repaints all of it with no refetch.
 
-**Results open IN the app.** Clicking a title opens the reader (extracted text) with `← Results`,
-which returns to the exact offset you left. A browser tab is a one-way door on a phone — in the
-PWA/APK, coming back is often a cold restart, i.e. the results are gone. The original is always one
-tap away, since the reader cannot parse every page. Ctrl/⌘/middle-click still opens a real tab.
-The Android back button closes the reader before it leaves the view (`PCWebSearch.readerOpen()`).
+**Results open IN the app — as the PAGE.** Clicking a result (anywhere on the card) frames the real
+page, laid out the way its author laid it out, with `← Results` returning to the exact offset you
+left. **Reader** toggles to extracted text for a page that is mostly ads. A browser tab is a one-way
+door on a phone — in the PWA/APK coming back is often a cold restart, i.e. the results are gone —
+but **Open** is always in the bar, and ctrl/⌘/middle-click on the title still gets a real tab. The
+Android back button closes the reader before it leaves the view (`PCWebSearch.readerOpen()`).
+
+The page is framed from `/api/websearch/page` on **our own** origin, not pointed at the site: most
+sites refuse to be framed at all (`X-Frame-Options` / `frame-ancestors`). That endpoint strips
+everything that executes — scripts, inline handlers, `javascript:` urls, forms, nested frames — and
+serves a CSP with no `script-src` at all, so the frame lays itself out and does nothing else. CSS,
+images and fonts are kept and absolutised, which is the difference between "the page" and a naked
+wall of text; they load from the site itself, so this is **not** an anonymising proxy and does not
+pretend to be. Links inside are rewritten back through the endpoint, so following one stays in the
+app.
+
+## As your browser's search engine
+
+`https://<node>/search?q=%s` opens the client straight into Web Search with that query, and
+`/opensearch.xml` (linked from the client shell) is what makes a browser OFFER to add it — so
+Chrome/Firefox can search this node from the URL bar instead of Google.
 
 ## Where a node searches
 

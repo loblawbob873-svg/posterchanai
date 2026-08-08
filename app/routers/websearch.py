@@ -24,7 +24,7 @@ import asyncio
 import logging
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -136,6 +136,143 @@ async def read_page(
                 "content": "", "error": out["error"]}
     return {"url": out.get("url", url), "title": out.get("title") or url,
             "content": out.get("content") or "", "error": None}
+
+
+_PAGE_CSP = (
+    # No scripts AT ALL (default-src 'none' and no script-src), which is what makes serving someone
+    # else's markup from our origin safe enough to do. Pictures, stylesheets, fonts and media still
+    # load — that is the whole point of showing the page instead of a wall of extracted text — and
+    # they load from the site itself, so this is not an anonymising proxy and does not pretend to be.
+    "default-src 'none'; "
+    "img-src * data: blob:; style-src * 'unsafe-inline'; font-src * data:; media-src *; "
+    "form-action 'none'; frame-ancestors 'self'"
+    # NO `base-uri 'none'` — the ONE <base> in this document is the one we inject (every other is
+    # stripped), and with the directive on, the browser ignores it and every relative URL on the page
+    # resolves against /api/websearch/page instead of the site. Stylesheets and images 404 and the
+    # "real page" renders as unstyled text, which is the thing this endpoint exists to avoid.
+)
+# Elements that either execute, phone home invisibly, or would frame something else inside the frame.
+_PAGE_STRIP = ("script", "noscript", "iframe", "frame", "frameset", "object", "embed", "applet",
+               "form", "input", "button", "select", "textarea", "template")
+
+
+def _render_page(html: str, final_url: str) -> str:
+    """Someone else's page, made safe to show inside ours.
+
+    Not a "reader mode" — the CSS, the images and the layout are the page's own, because that is what
+    "open the result" means. What is removed is everything that runs or submits: scripts, event
+    handlers, `javascript:` urls, forms and nested frames. Links are rewritten back through this
+    endpoint so following one stays in the app (and cannot escape the frame), with the original
+    always one tap away in the bar above.
+    """
+    from bs4 import BeautifulSoup
+    from urllib.parse import urljoin, quote
+
+    soup = BeautifulSoup(html, "lxml")
+    for tag in soup(list(_PAGE_STRIP)):
+        tag.decompose()
+
+    # `<base>` first: everything below resolves against the URL we ENDED on, not the one asked for.
+    for old in soup.find_all("base"):
+        old.decompose()
+    head = soup.head or soup.new_tag("head")
+    if not soup.head:
+        (soup.html or soup).insert(0, head)
+    base = soup.new_tag("base", href=final_url)
+    base["target"] = "_self"
+    head.insert(0, base)
+
+    for el in soup.find_all(True):
+        # Inline handlers survive a script strip, and they are scripts.
+        for attr in [a for a in el.attrs if a.lower().startswith("on")]:
+            del el[attr]
+        for attr in ("href", "src", "action", "poster", "srcset", "data-src"):
+            v = el.get(attr)
+            if isinstance(v, str) and v.strip().lower().startswith(("javascript:", "vbscript:", "data:text/html")):
+                del el[attr]
+        # Lazy-loaded images: the real URL sits in data-src and the src is a placeholder, so without
+        # this half a page renders blank inside the frame (the loader that would swap them is gone).
+        if el.name == "img":
+            real = el.get("data-src") or el.get("data-lazy-src") or el.get("data-original")
+            if real and not (el.get("src") or "").startswith("http"):
+                el["src"] = real
+            el["loading"] = "lazy"
+            el["referrerpolicy"] = "no-referrer"
+        # ABSOLUTISE, rather than trusting the injected <base> alone. The base handles what this
+        # misses (CSS `url()`, anything exotic), but a stylesheet or image that silently resolves
+        # against /api/websearch/page renders the page naked, and that is the exact failure this
+        # endpoint exists to avoid — so the common attributes are pinned here.
+        for attr in ("src", "poster"):
+            v = el.get(attr)
+            if isinstance(v, str) and v and not v.startswith(("http://", "https://", "data:", "blob:", "#")):
+                el[attr] = urljoin(final_url, v)
+        if el.name == "link" and isinstance(el.get("href"), str):
+            h = el["href"]
+            if h and not h.startswith(("http://", "https://", "data:", "#")):
+                el["href"] = urljoin(final_url, h)
+        srcset = el.get("srcset")
+        if isinstance(srcset, str) and srcset:
+            parts = []
+            for cand in srcset.split(","):
+                bits = cand.strip().split(None, 1)
+                if not bits:
+                    continue
+                u = bits[0]
+                if not u.startswith(("http://", "https://", "data:")):
+                    u = urljoin(final_url, u)
+                parts.append(" ".join([u] + bits[1:]))
+            el["srcset"] = ", ".join(parts)
+
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if href.startswith("#") or not href:
+            continue
+        absolute = urljoin(final_url, href)
+        if absolute.lower().startswith(("http://", "https://")):
+            a["href"] = "/api/websearch/page?url=" + quote(absolute, safe="")
+            a["target"] = "_self"
+        else:
+            del a["href"]      # mailto:, tel:, anything else — not ours to open from a frame
+
+    return str(soup)
+
+
+@router.get("/page")
+async def render_page(
+    url: str = Query(..., max_length=2000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """The result's ACTUAL page, rendered in the app.
+
+    `/read` gives the text, which is the right answer for summarizing and for a page the layout of
+    which is noise. This is the other half: the page as it looks, in an iframe, with a Back that
+    returns to the results — the thing a browser tab does, without the browser tab (which on a phone
+    is a one-way door, and in the PWA/APK often a cold restart that loses the results).
+
+    Served from our own origin because most sites refuse to be framed (X-Frame-Options /
+    frame-ancestors); that is the only reason this proxies rather than pointing an iframe at the site.
+    The response carries a no-script CSP and the markup is stripped of anything that executes, so what
+    comes back can lay itself out and nothing more.
+    """
+    out = await get_search_service(db).fetch_url_raw(url.strip())
+    if out.get("error"):
+        safe = (out["error"] or "")[:300]
+        body = (f"<!doctype html><meta charset=utf-8><style>body{{font:16px/1.6 system-ui;padding:24px;"
+                f"color:#ddd;background:#111}}a{{color:#3ce8ff}}</style>"
+                f"<p>This page can't be shown here: {safe}</p>"
+                f"<p><a href=\"{url}\" target=\"_blank\" rel=\"noopener noreferrer\">Open the original</a></p>")
+        return Response(content=body, media_type="text/html; charset=utf-8",
+                        headers={"Content-Security-Policy": _PAGE_CSP, "X-Content-Type-Options": "nosniff",
+                                 "Referrer-Policy": "no-referrer", "Cache-Control": "private, max-age=60"})
+    try:
+        html = _render_page(out["html"], out["url"])
+    except Exception as e:
+        logger.warning("page render failed for %s: %s", url, e)
+        raise HTTPException(status_code=502, detail="Could not render that page.")
+    return Response(content=html, media_type="text/html; charset=utf-8",
+                    headers={"Content-Security-Policy": _PAGE_CSP, "X-Content-Type-Options": "nosniff",
+                             "Referrer-Policy": "no-referrer", "Cache-Control": "private, max-age=60"})
 
 
 class SummarizeReq(BaseModel):

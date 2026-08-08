@@ -28,6 +28,9 @@
     <meta name="referrer" content="no-referrer">
     <title>PosterChan · Nostr</title>
     <link rel="manifest" href="/client/manifest.json">
+    <!-- Lets a browser OFFER this node as a search engine (poster.place/search?q=…) instead of the
+         user pasting the %s template in by hand. Served by /opensearch.xml. -->
+    <link rel="search" type="application/opensearchdescription+xml" title="PosterChan" href="/opensearch.xml">
     <link rel="icon" type="image/png" href="/static/posterchan-relay.png">
     <link rel="shortcut icon" href="/static/favicon.png">
     <link rel="apple-touch-icon" href="/static/icon-192.png">
