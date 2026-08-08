@@ -252,6 +252,16 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: true,
+      /* A LIVE STREAM CANNOT BE THROTTLED. Chromium's default is to throttle timers and rendering
+       * whenever the window is not in the foreground, which is right for a document and wrong for a
+       * broadcast: put a game in front of this window and the player stops being serviced, falls
+       * behind the live edge, and then has to catch up when you come back — seen as a black frame on
+       * switching and stuttering while it is behind.
+       *
+       * Reported as "windows app stuttery, firefox smooth and perfect" — same machine, same stream,
+       * same moment, and the same client code once the app was rebuilt. Firefox does not throttle a
+       * visible-but-unfocused window the way Chromium does, which is the whole of the difference. */
+      backgroundThrottling: false,
       preload: path.join(__dirname, 'preload.js'),
     },
   });

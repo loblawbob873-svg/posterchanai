@@ -337,3 +337,23 @@ def test_countries_are_offered_with_any_available(tmp_path):
     assert d["n"] >= 20, f"too few exit countries offered: {d['n']}"
     assert len(d["first"]) == 2 and len(d["first"][0]) == 2, d
     assert d["avail"] is True, "the bundled binary was not found — tor.available() gates the whole panel"
+
+
+def test_the_window_does_not_throttle_a_live_stream():
+    """Chromium throttles timers and rendering in a non-foreground window; a broadcast cannot take it.
+
+    Put a game in front of the app and the player stops being serviced, falls behind the live edge,
+    then catches up when you return — a black frame on switching, and stuttering while it is behind.
+    Reported as "windows app stuttery, firefox smooth and perfect": same machine, same stream, same
+    moment, same client code. Firefox does not throttle a visible-but-unfocused window the way
+    Chromium does, and that was the whole of the difference.
+
+    The default is ON, so this has to be set explicitly — which means it can be silently lost by any
+    edit to webPreferences.
+    """
+    src = open(os.path.join(ROOT, "desktop", "main.js"), encoding="utf-8").read()
+    i = src.index("webPreferences: {")
+    block = src[i:src.index("preload:", i)]      # the whole webPreferences literal
+    assert "backgroundThrottling: false" in block, (
+        "the main window throttles when it loses focus — a live stream falls behind the moment "
+        "anything covers it")
