@@ -15932,6 +15932,21 @@
     const ab=feed.querySelector('.prof .about'); if(ab) ab.innerHTML=linkify(p.about||'');
   }
   async function renderProfileView(pk){
+    // PosterChan OS: a profile opens in its OWN window, for the same reason a post does — opening
+    // one from the timeline used to REPLACE the timeline, and with the sidebar hidden there was
+    // then no way back to it. _routing is the back/forward button; see openThread.
+    if(window.PCOS && PCOS.isOn() && pk && !renderProfileView._osIn){
+      if(_routing){
+        try{ PCOS.focusDoc && PCOS.focusDoc('prof:' + pk); }catch(_){}
+      }else{
+        renderProfileView._osIn = 1;
+        try{
+          const mine = !!(window.ME && ME.pubkey === pk);
+          if(PCOS.openDoc('prof:' + pk, mine ? 'My profile' : 'Profile', 'i-user',
+                          () => renderProfileView(pk))) return;
+        }finally{ renderProfileView._osIn = 0; }
+      }
+    }
     cleanupInlineStream();   // e.g. tapping the host's name from a stream
     _hidePill();
     try{ _navUrl('/'+NT().nip19.npubEncode(pk)); }catch(_){}   // shareable URL: poster.place/<npub>
@@ -19862,9 +19877,17 @@
     // The window's render callback re-enters here with the guard set, so the navigation and the
     // thread render below happen exactly once — inside the new window, which now holds the feed.
     if(window.PCOS && PCOS.isOn() && !openThread._osIn){
-      openThread._osIn = 1;
-      try{ if(PCOS.openDoc('post:'+id, 'Post', 'i-note', ()=>openThread(id, hints))) return; }
-      finally{ openThread._osIn = 0; }
+      // _routing means the BACK/FORWARD button, or the initial URL — a history entry, not somebody
+      // asking for another frame. Spawning a window there opened a second copy of whichever post
+      // the popped URL happened to name. Route into the window already showing it if there is one,
+      // otherwise just repaint where we are.
+      if(_routing){
+        try{ PCOS.focusDoc && PCOS.focusDoc('post:' + id); }catch(_){}
+      }else{
+        openThread._osIn = 1;
+        try{ if(PCOS.openDoc('post:'+id, 'Post', 'i-note', ()=>openThread(id, hints))) return; }
+        finally{ openThread._osIn = 0; }
+      }
     }
     try{ _navUrl('/'+NT().nip19.neventEncode(hints.length?{ id, relays:hints }:{ id })); }catch(_){ try{ _navUrl('/'+NT().nip19.noteEncode(id)); }catch(__){} }
     renderThread(id, hints);
@@ -22784,6 +22807,14 @@
     carryPrivateToRelays,
     $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast,
     ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
+    runSearch,                                                // → the desktop's taskbar search box
+    // The desktop hides the sidebar, and #me-card was the only way to reach your own profile.
+    openProfile: (pk) => renderProfileView(pk || (window.ME && ME.pubkey)),
+    // The community counters the sidebar shows under ONLINE. The desktop hides the sidebar, so it
+    // reads them from here rather than polling /client/stats a second time — that endpoint counts
+    // the caller as a viewer, and a second caller with its own id would inflate "online now".
+    communityStats: () => ({ users: Number(CFG.users) || 0, online: _lastOnline, relay: _lastRelay,
+                             streams: _lastStreams, calls: _lastCalls }),
     // fetch that carries auth on BOTH web (session cookie) and the APK (bearer token) — for authed server
     // endpoints like /api/news/summarize called from sub-modules (news.js).
     authFetch: (url, opts={}) => fetch(url, { credentials:'include', ...opts, headers:{ ...(opts.headers||{}), ...(_aiToken?{'Authorization':'Bearer '+_aiToken}:{}) } }),

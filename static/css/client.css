@@ -6144,6 +6144,34 @@ body.os-on #os-root{pointer-events:auto}
 .os-lay-bl i{left:3px;bottom:3px;width:14px;height:10px}
 .os-lay-br i{right:3px;bottom:3px;width:14px;height:10px}
 
+/* Taskbar search — Win11 puts one next to Start. This one searches Nostr (the start menu already
+   filters apps), so it is deliberately wide enough to type a name or an npub into. */
+.os-qbox{display:flex;align-items:center;gap:7px;height:34px;padding:0 12px;border-radius:17px;
+  background:var(--panel2);border:1px solid var(--line);min-width:150px;max-width:290px;flex:0 1 260px}
+.os-qbox .ic{width:15px;height:15px;color:var(--muted);flex:0 0 auto}
+.os-qin{flex:1;min-width:0;background:none;border:0;outline:none;color:var(--text);font-size:13px;
+  font-family:inherit}
+.os-qin::placeholder{color:var(--muted)}
+.os-qbox:focus-within{border-color:var(--neon);box-shadow:0 0 0 2px rgba(var(--accent-rgb),.16)}
+/* AFTER the base rule, or same-specificity cascade means these never apply. On a narrow desktop the
+   task buttons matter more than the search box, so it shrinks and then goes. */
+@media (max-width:1200px){ .os-qbox{flex:0 1 170px;min-width:120px} }
+@media (max-width:1080px){ .os-qbox{display:none} }
+
+/* The community counters, moved into the start menu because the desktop hides the sidebar. */
+.os-me{width:32px;height:32px;border-radius:50%;overflow:hidden;padding:0;flex:0 0 auto;
+  border:1px solid var(--line);background:var(--panel2);cursor:pointer;display:flex;
+  align-items:center;justify-content:center}
+.os-me:hover{border-color:var(--neon)}
+.os-me img{width:100%;height:100%;object-fit:cover;display:block}
+.os-me .ic{width:17px;height:17px;color:var(--muted)}
+
+.os-stats{display:flex;flex-wrap:wrap;gap:6px 14px;padding:11px 4px 2px;margin-top:9px;
+  border-top:1px solid var(--line)}
+.os-stat{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)}
+.os-stat .ic{width:14px;height:14px}
+.os-stat b{color:var(--text);font-weight:600}
+
 body.os-on .modal-bg{z-index:340}
 body.os-on .offline-bar{z-index:330}
 body.os-on #music-player.mp,body.os-on #music-player.mp-mini{z-index:332}

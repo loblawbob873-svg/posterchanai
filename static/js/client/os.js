@@ -218,6 +218,15 @@
     return openApp(view, label, icon, render);
   }
 
+  // Focus the window already showing a document, without creating one. Back/forward must never
+  // conjure a window: the history entry is a URL, not a user asking for a new frame.
+  function focusDoc(key){
+    const w = wins.find(x => x.view === 'doc:' + key);
+    if(!w) return false;
+    focusWin(w, false);            // claim the feed; the caller is about to paint into it
+    return true;
+  }
+
   function closeWin(w){
     const i = wins.indexOf(w);
     if(i < 0) return;
@@ -476,6 +485,18 @@
     });
   }
 
+  // Your own account, in the tray. The classic UI reaches your profile through #me-card in the
+  // sidebar, which the desktop hides — so without this there is no way to open your own profile at
+  // all. The picture is read from that card rather than re-fetched, so it can never disagree with it.
+  function meAvatar(){
+    if(!(window.ME && ME.pubkey)) return '';
+    let src = '';
+    try{ const img = document.querySelector('#me-card img'); if(img) src = img.getAttribute('src') || ''; }catch(_){}
+    const inner = src ? `<img src="${enc(src)}" alt="">`
+                      : '<svg class="ic" aria-hidden="true"><use href="#i-user"></use></svg>';
+    return `<button class="os-me" id="os-me" title="My profile" aria-label="My profile">${inner}</button>`;
+  }
+
   function drawBar(){
     if(!bar) return;
     const t = new Date();
@@ -486,11 +507,16 @@
          <img src="${enc(brandLogo())}" alt="Start"></button>
        <button class="os-new" id="os-new" title="New post">
          <svg class="ic" aria-hidden="true"><use href="#i-plus"></use></svg><span>Post</span></button>
+       <div class="os-qbox">
+         <svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg>
+         <input id="os-q-bar" class="os-qin" type="search" autocomplete="off"
+                placeholder="Search Nostr" aria-label="Search Nostr"></div>
        <div class="os-tasks">${wins.map(w =>
          `<button class="os-task${w.el.classList.contains('focused') && !w.min ? ' on' : ''}"
                   data-id="${w.id}" title="${enc(w.title)}">
             ${iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')}</div>
        <div class="os-tray">
+         ${meAvatar()}
          <button class="os-exit" id="os-exit" title="Leave the desktop">⤢ Classic</button>
          <div class="os-clock"><b>${enc(clock)}</b><span>${enc(date)}</span></div>
        </div>`;
@@ -502,6 +528,21 @@
     { const nb = $('#os-new', bar);
       if(nb) nb.onclick = () => { try{ PC().compose && PC().compose(); }
                                   catch(err){ PC().toast && PC().toast('could not open the composer'); } }; }
+    /* The taskbar box searches NOSTR, not the app list — the start menu already filters apps, and a
+     * second app filter next to it would be the least useful thing that box could do. Results land
+     * in their own window, so searching does not throw away whatever the focused app was showing. */
+    { const qb = $('#os-q-bar', bar);
+      if(qb) qb.addEventListener('keydown', (e) => {
+        if(e.key !== 'Enter') return;
+        const q = qb.value.trim();
+        if(!q) return;
+        const run = () => { try{ PC().runSearch && PC().runSearch(q); }
+                            catch(err){ PC().toast && PC().toast('search is unavailable here'); } };
+        openDoc('search', 'Search', 'i-search', run);
+      }); }
+    { const mb = $('#os-me', bar);
+      if(mb) mb.onclick = () => { try{ PC().openProfile && PC().openProfile(); }
+                                  catch(err){ PC().toast && PC().toast('could not open your profile'); } }; }
     $('#os-exit', bar).onclick = () => exit();
     $$('.os-task', bar).forEach(b => b.onclick = () => {
       const w = wins.find(x => String(x.id) === b.dataset.id);
@@ -521,7 +562,8 @@
     menu.className = 'os-startmenu';
     menu.innerHTML =
       `<input class="input os-search" id="os-q" placeholder="Search apps" autocomplete="off">
-       <div class="os-applist" id="os-applist"></div>`;
+       <div class="os-applist" id="os-applist"></div>
+       <div class="os-stats" id="os-stats"></div>`;
     root.appendChild(menu);
     const paint = (q) => {
       const list = apps().filter(a => !q || a.label.toLowerCase().includes(q.toLowerCase()));
@@ -532,6 +574,19 @@
       $$('.os-app', menu).forEach(b => b.onclick = () => { toggleStart(false); openApp(b.dataset.view); });
     };
     paint('');
+    // The community counters live in the sidebar, which the desktop hides — so the start menu is
+    // where they go. Read from the client's own cache (PC.communityStats): /client/stats counts the
+    // caller as a viewer, and polling it again from here would inflate "online now" by one.
+    try{
+      const st = (PC().communityStats && PC().communityStats()) || {};
+      const row = (icon, n, label) => (n > 0 || label === 'WoT')
+        ? `<span class="os-stat" title="${enc(label)}">${iconSvg(icon)}<b>${enc(String(n || 0))}</b>
+             <i>${enc(label)}</i></span>` : '';
+      $('#os-stats', menu).innerHTML =
+        row('i-wot', st.users, 'WoT') + row('i-livedot', st.online, 'online') +
+        row('i-relay-dot', st.relay, 'on relay') + row('i-stream', st.streams, 'live') +
+        row('i-call', st.calls, 'in call');
+    }catch(_){ /* no instance (standalone build) → no community counters, which is correct */ }
     const q = $('#os-q', menu);
     q.oninput = () => paint(q.value.trim());
     q.onkeydown = (e) => {
@@ -657,6 +712,6 @@
     else snapTo(w, k === 'Left' ? 'left' : 'right');
   });
 
-  window.PCOS = { enter, exit, toggle, restore, isOn: () => on, openDoc, snapTo,
+  window.PCOS = { enter, exit, toggle, restore, isOn: () => on, openDoc, focusDoc, snapTo,
                   windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min })) };
 })();
