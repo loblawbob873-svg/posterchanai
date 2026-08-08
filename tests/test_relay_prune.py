@@ -476,3 +476,50 @@ def test_deleting_a_private_document_is_not_broadcast():
     # …while an ordinary deletion still federates, or retracting a post would stop working.
     assert _broadcastable({"kind": 5, "tags": [["e", "y" * 64]]})
     assert _broadcastable({"kind": 5, "tags": [["a", f"30023:{pk}:my-article"]]})
+
+
+def test_a_prefix_tag_filter_reads_one_namespace_not_the_whole_key(store_factory):
+    """`#d~` — a LOCAL filter extension, and the app's datastore depends on it.
+
+    A `d` tag is a path (`pcai:mail:<account>:<folder>:<uid>`) but NIP-01 can only match a tag
+    exactly, so reading one folder meant asking for every kind-30078 document the author owns and
+    filtering client-side. Measured on a live node: opening a mail folder moved 5000 events and
+    91.9 MB across the socket to display 35 messages — and hit the limit, so it silently truncated
+    too. One user clicking Email could saturate the relay.
+    """
+    async def go(loop):
+        store = store_factory(loop)
+        pk = "e" * 64
+
+        def doc(i, d):
+            e = _ev(i, kind=30078, pubkey=pk)
+            e["tags"] = [["d", d]]
+            return e
+
+        await store.add_events_bulk(
+            [doc(i, f"pcai:mail:me@example.com:INBOX:{i}") for i in range(1, 6)]
+            + [doc(100 + i, f"pcai:mail:me@example.com:Trash:{i}") for i in range(1, 21)]
+            + [doc(200 + i, f"pcai:cal:main:uid-{i}") for i in range(1, 11)], origin="direct")
+
+        inbox = await store.query([{"authors": [pk], "kinds": [30078],
+                                    "#d~": ["pcai:mail:me@example.com:INBOX:"], "limit": 500}])
+        assert len(inbox) == 5, f"the prefix filter returned {len(inbox)} instead of the 5 in INBOX"
+
+        mail = await store.query([{"authors": [pk], "kinds": [30078],
+                                   "#d~": ["pcai:mail:"], "limit": 500}])
+        assert len(mail) == 25, "a shorter prefix must match everything under it"
+
+        # A `%` or `_` in the prefix is a LITERAL. Unescaped they are LIKE wildcards, and one
+        # document's name could then read another's.
+        await store.add_events_bulk([doc(900, "pcai:kv:a%b"), doc(901, "pcai:kv:axxb")],
+                                    origin="direct")
+        got = await store.query([{"authors": [pk], "kinds": [30078],
+                                  "#d~": ["pcai:kv:a%b"], "limit": 50}])
+        assert len(got) == 1, "`%` in a prefix must not act as a wildcard"
+
+        # …and the ordinary exact filter still behaves.
+        one = await store.query([{"authors": [pk], "kinds": [30078],
+                                  "#d": ["pcai:cal:main:uid-3"], "limit": 50}])
+        assert len(one) == 1
+
+    _run(go)

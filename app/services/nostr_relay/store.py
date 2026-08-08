@@ -727,6 +727,32 @@ class RelayStore:
                 f"({','.join('?' * len(vals))}))")
             params.append(key[1])
             params += [str(v) for v in vals]
+        # PREFIX tag filter — a LOCAL extension, not NIP-01, and the app's datastore depends on it.
+        #
+        # A `d` tag is a path (`pcai:mail:<account>:<folder>:<uid>`), but a Nostr filter can only
+        # match a tag EXACTLY. So reading one folder meant asking for every kind-30078 document the
+        # author owns and filtering in Python: measured on this node, opening a mail folder pulled
+        # 5000 events and 91.9 MB across the socket to display 35 messages, in 2.6 seconds — and hit
+        # the limit, so it was silently truncating as well. That is the read-side twin of the
+        # quadratic write path, and it is why one user could saturate the relay by clicking Email.
+        #
+        # `{"#d~": ["pcai:mail:me@example.com:INBOX:"]}` matches by prefix instead, straight down
+        # idx_event_tags_tv. Only this app's own store sends it; a stranger's client never will, and
+        # a relay that does not understand it simply returns nothing rather than the wrong thing.
+        for key, vals in flt.items():
+            if not (isinstance(key, str) and len(key) == 3 and key.startswith("#")
+                    and key.endswith("~") and vals):
+                continue
+            ors, tag = [], key[1]
+            for v in vals:
+                # LIKE, with the caller's text escaped: a `%` or `_` inside a d-tag must be a
+                # literal, not a wildcard, or one document's name could read another's.
+                esc = str(v).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                ors.append("(t2.tag=? AND t2.value LIKE ? ESCAPE '\\')")
+                params.append(tag)
+                params.append(esc + "%")
+            where.append("EXISTS (SELECT 1 FROM event_tags t2 WHERE t2.event_id = e.id AND ("
+                         + " OR ".join(ors) + "))")
         # NIP-40: never serve an event past its expiration, even before the periodic purge
         # (see _prune_sync) has reclaimed it. Applied to every read (query/count/negentropy).
         where.append("(e.expiration IS NULL OR e.expiration > ?)")

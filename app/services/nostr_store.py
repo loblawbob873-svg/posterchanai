@@ -259,7 +259,14 @@ async def list_docs(port: int, prefix: str, *, seckey: bytes | None = None, pubk
     pk = pubkey or (bip340.pubkey_from_seckey(seckey).hex() if seckey else None)
     if not pk:
         raise ValueError("list_docs needs seckey or pubkey")
-    evs = await _ws_query(port, [{"authors": [pk], "kinds": [kind], "limit": limit}], strict=strict)
+    # `#d~` is this relay's PREFIX tag filter, so the socket carries the documents asked for instead
+    # of everything the author owns. Measured before it existed: opening one mail folder moved 5000
+    # events and 91.9 MB to display 35 messages — and hit `limit`, so it truncated too. `limit` is
+    # still sent as the backstop it always was.
+    flt = {"authors": [pk], "kinds": [kind], "limit": limit}
+    if prefix:
+        flt["#d~"] = [prefix]
+    evs = await _ws_query(port, [flt], strict=strict)
     best: dict = {}
     for ev in evs:
         d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), None)
@@ -289,7 +296,10 @@ async def list_dtags(port: int, prefix: str, *, seckey: bytes | None = None,
     pk = pubkey or (bip340.pubkey_from_seckey(seckey).hex() if seckey else None)
     if not pk:
         raise ValueError("list_dtags needs seckey or pubkey")
-    evs = await _ws_query(port, [{"authors": [pk], "kinds": [kind], "limit": limit}])
+    flt = {"authors": [pk], "kinds": [kind], "limit": limit}
+    if prefix:
+        flt["#d~"] = [prefix]      # see list_docs: ask for the namespace, not the whole key
+    evs = await _ws_query(port, [flt])
     out = set()
     for ev in evs:
         d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), None)
