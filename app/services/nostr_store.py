@@ -223,6 +223,34 @@ async def list_docs(port: int, prefix: str, *, seckey: bytes | None = None, pubk
     return {d: _decode(ev.get("content", ""), seckey, encrypt) for d, ev in best.items()}
 
 
+async def list_dtags(port: int, prefix: str, *, seckey: bytes | None = None,
+                     pubkey: str | None = None, kind: int = APP_KIND,
+                     limit: int = 5000) -> set:
+    """Just the d-tags under `prefix` — NO content decryption.
+
+    For existence/UID checks where the key is encoded in the d-tag itself (mailbox dedup), so a sync
+    pass doesn't NIP-44-decrypt the whole folder to find out what it already has. Doing that pegged
+    the event loop on every pass.
+
+    `limit` IS THE DEDUP'S CORRECTNESS, not a performance knob, and the caller must size it. A `d`
+    prefix is not something a Nostr filter can match, so this pulls the author's documents of that
+    kind and filters here — and the keyspace is SHARED (chat messages, calendars, contacts and mail
+    all live in kind 30078 under one key). Truncate the window and the set comes back INCOMPLETE,
+    which a dedup reads as "I have never seen this message": the sync re-downloads and re-writes the
+    whole mailbox, which is precisely the write-storm that took this feature down once already.
+    """
+    pk = pubkey or (bip340.pubkey_from_seckey(seckey).hex() if seckey else None)
+    if not pk:
+        raise ValueError("list_dtags needs seckey or pubkey")
+    evs = await _ws_query(port, [{"authors": [pk], "kinds": [kind], "limit": limit}])
+    out = set()
+    for ev in evs:
+        d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), None)
+        if d and d.startswith(prefix):
+            out.add(d)
+    return out
+
+
 async def get_docs(port: int, d_tags, *, seckey: bytes | None = None, pubkey: str | None = None,
                    encrypt: bool = True, kind: int = APP_KIND, chunk: int = 200,
                    strict: bool = False) -> dict:

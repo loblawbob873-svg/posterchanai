@@ -12,7 +12,10 @@ from urllib.parse import unquote
 from app.database import get_db
 from app.auth import get_current_user
 from app.models import User
-from app.services.mail_service import get_attachment, get_user_mail_accounts, sanitize_filename
+from app.services.mail_service import (get_attachment, get_user_mail_accounts, sanitize_filename,
+                                       send_email, reply_to_message, forward_message,
+                                       archive_message, delete_message, move_message,
+                                       list_special_folders as _list_special_folders)
 from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base
 
 logger = logging.getLogger(__name__)
@@ -172,3 +175,411 @@ async def serve_saved_attachment(
             "Content-Disposition": f'{disposition}; filename="{safe_filename}"'
         }
     )
+
+
+# ============================================================================
+# Nostr-mailbox GUI API (Discover → Email). The mailbox lives as encrypted
+# kind-30078 events (mail_store); IMAP/SMTP run server-side (mail_service);
+# attachments are AES-GCM-encrypted in Blossom (mail_sync). All endpoints are
+# per-user (JWT from the Nostr login). See docs in mail_store/mail_sync.
+# ============================================================================
+import base64
+import asyncio as _asyncio
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from app.services import mail_store, mail_sync, nostr_store
+from app.services.nostr import nostr_service as _ns
+
+
+def _seckey(db, user):
+    return nostr_store.user_storage_seckey(db, user)
+
+
+def _resolve_account(db, user, hint: str):
+    """Match an account: EXACT email first (so 'a@x' can't resolve to 'aa@x'), then substring, then
+    the first account when hint is blank."""
+    accts = get_user_mail_accounts(user.id, db)
+    if not hint:
+        return accts[0] if accts else None
+    hl = hint.lower()
+    for a in accts:
+        if a.email.lower() == hl:
+            return a
+    for a in accts:
+        if hl in a.email.lower():
+            return a
+    return None
+
+
+def _summary(m: dict) -> dict:
+    """List-view projection — no bodies (those load on open), with an unread + attachment flag."""
+    return {
+        "uid": m.get("uid"), "account": m.get("account"), "folder": m.get("folder"),
+        "from": m.get("from"), "from_email": m.get("from_email"), "to": m.get("to"),
+        "subject": m.get("subject"), "date": m.get("date"), "ts": m.get("ts", 0),
+        "read": bool((m.get("flags") or {}).get("read")),
+        "attachments": len(m.get("attachments") or []),
+        "preview": (m.get("preview") or m.get("body_text") or "")[:140],
+    }
+
+
+@router.get("/accounts")
+async def mail_accounts(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return {"accounts": [{"email": a.email} for a in get_user_mail_accounts(current_user.id, db)]}
+
+
+@router.post("/sync")
+async def mail_do_sync(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Login-triggered + manual refresh: IMAP → encrypted mailbox. Returns new-message counts."""
+    try:
+        res = await mail_sync.sync_all(db, current_user)
+        return {"ok": True, "new": res}
+    except Exception as e:
+        logger.warning("[mail] sync failed for %s: %s", current_user.id, e)
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@router.get("/messages")
+async def mail_messages(account: str = "", folder: str = "INBOX",
+                        db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    sk = _seckey(db, current_user)
+    if account == "__all":   # unified view: this logical folder across EVERY account (real folder
+        # names differ per account, so match the logical tag — or the local 'Drafts' folder).
+        msgs = [m for m in await mail_store.list_messages(sk, None, None)
+                if m.get("logical") == folder or m.get("folder") == folder]
+        return {"messages": [_summary(m) for m in msgs], "account": "__all"}
+    acc = _resolve_account(db, current_user, account)
+    if not acc:
+        return {"messages": [], "account": None}
+    msgs = await mail_store.list_messages(sk, acc.email, folder)
+    return {"messages": [_summary(m) for m in msgs], "account": acc.email}
+
+
+@router.get("/message")
+async def mail_message(account: str, uid: str, folder: str = "INBOX",
+                       db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    acc = _resolve_account(db, current_user, account)
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    sk = _seckey(db, current_user)
+    msg = await mail_store.get_message(sk, acc.email, folder, uid)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg.get("body_ref"):     # large body was offloaded to an encrypted Blossom blob — rehydrate it
+        body = await mail_sync.load_body(db, msg["body_ref"])
+        if body:
+            msg["body_text"] = body.get("body_text", "")
+            msg["body_html"] = body.get("body_html", "")
+    if msg.get("is_draft"):     # draft attachments offloaded to Blossom → rehydrate to b64 for the composer
+        for a in (msg.get("attachments") or []):
+            if a.get("sha256") and not a.get("b64"):
+                data, _ = await mail_sync.load_attachment(db, a)
+                if data is not None:
+                    a["b64"] = base64.b64encode(data).decode()
+    if not (msg.get("flags") or {}).get("read"):     # opening marks it read
+        await mail_store.set_flags(sk, acc.email, folder, uid, read=True)
+        msg.setdefault("flags", {})["read"] = True
+    return {"message": msg}
+
+
+@router.get("/search")
+async def mail_search(q: str, account: str = "", folder: str = "",
+                      db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    sk = _seckey(db, current_user)
+    if account == "__all":
+        msgs = await mail_store.list_messages(sk, None, None)
+    else:
+        acc = _resolve_account(db, current_user, account)
+        msgs = await mail_store.list_messages(sk, acc.email if acc else None, folder or None)
+    return {"messages": [_summary(m) for m in mail_store.search(msgs, q)]}
+
+
+@router.post("/mark-read")
+async def mail_mark_read(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    d = await request.json()
+    acc = _resolve_account(db, current_user, d.get("account", ""))
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    ok = await mail_store.set_flags(_seckey(db, current_user), acc.email, d.get("folder", "INBOX"),
+                                    d.get("uid"), read=bool(d.get("read", True)))
+    return {"ok": ok}
+
+
+@router.post("/delete")
+async def mail_delete(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    d = await request.json()
+    acc = _resolve_account(db, current_user, d.get("account", ""))
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    folder, uid = d.get("folder", "INBOX"), d.get("uid")
+    if folder != "Drafts":   # Drafts are local-only (never on IMAP) — skip the round-trip
+        moved = False
+        try:   # prefer MOVE to Trash (recoverable) over a permanent expunge
+            meta = await _asyncio.to_thread(_list_special_folders, current_user.id, db, acc.email)
+            trash = meta.get("trash")
+            if trash and trash != folder:
+                moved = await _asyncio.to_thread(move_message, current_user.id, db, acc.email, uid, folder, trash)
+        except Exception as e:
+            logger.debug("[mail] trash move failed (%s): %s", uid, e)
+        if not moved:   # no Trash folder / already in Trash → fall back to expunge
+            try:
+                await _asyncio.to_thread(delete_message, current_user.id, db, acc.email, uid, folder)
+            except Exception as e:
+                logger.debug("[mail] IMAP delete failed (%s): %s", uid, e)
+    await mail_store.delete_message(_seckey(db, current_user), acc.email, folder, uid)
+    return {"ok": True}
+
+
+@router.post("/archive")
+async def mail_archive(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    d = await request.json()
+    acc = _resolve_account(db, current_user, d.get("account", ""))
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    folder, uid = d.get("folder", "INBOX"), d.get("uid")
+    try:
+        await _asyncio.to_thread(archive_message, current_user.id, db, acc.email, uid, folder)
+    except Exception as e:
+        logger.debug("[mail] IMAP archive failed (%s): %s", uid, e)
+    await mail_store.delete_message(_seckey(db, current_user), acc.email, folder, uid)
+    return {"ok": True}
+
+
+def _decode_attachments(items) -> list:
+    """Compose attachments arrive as [{name,type,b64}] → (filename, bytes, content_type) for SMTP."""
+    out = []
+    for a in (items or []):
+        try:
+            out.append((a.get("name") or "attachment",
+                        base64.b64decode(a.get("b64") or ""),
+                        a.get("type") or "application/octet-stream"))
+        except Exception:
+            pass
+    return out
+
+
+@router.post("/send")
+async def mail_send(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    d = await request.json()
+    acc = _resolve_account(db, current_user, d.get("account", ""))
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if not (d.get("to") or "").strip():
+        return JSONResponse({"ok": False, "error": "Recipient required"}, status_code=400)
+    ok = await _asyncio.to_thread(
+        send_email, acc, d.get("to", ""), d.get("subject", ""), d.get("body", ""),
+        d.get("html_body"), _decode_attachments(d.get("attachments")), None,
+        d.get("cc", ""), d.get("bcc", ""))
+    return {"ok": bool(ok)}
+
+
+@router.post("/reply")
+async def mail_reply(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    d = await request.json()
+    acc = _resolve_account(db, current_user, d.get("account", ""))
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    ok = await _asyncio.to_thread(
+        reply_to_message, current_user.id, db, acc.email, d.get("uid"), d.get("body", ""),
+        bool(d.get("reply_all")), _decode_attachments(d.get("attachments")), d.get("folder", "INBOX"))
+    return {"ok": bool(ok)}
+
+
+@router.post("/forward")
+async def mail_forward(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    d = await request.json()
+    acc = _resolve_account(db, current_user, d.get("account", ""))
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if not (d.get("to") or "").strip():
+        return JSONResponse({"ok": False, "error": "Recipient required"}, status_code=400)
+    ok = await _asyncio.to_thread(
+        forward_message, current_user.id, db, acc.email, d.get("uid"), d.get("to", ""),
+        d.get("body", ""), _decode_attachments(d.get("attachments")), d.get("folder", "INBOX"))
+    return {"ok": bool(ok)}
+
+
+@router.get("/dl/{account_hint}/{folder}/{uid}/{idx}")
+async def mail_download(account_hint: str, folder: str, uid: str, idx: int,
+                        db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Download a received attachment: fetch the ciphertext from Blossom and decrypt it (the message
+    doc holds the per-file key+iv). Inline for viewable types, attachment otherwise."""
+    acc = _resolve_account(db, current_user, account_hint)
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    msg = await mail_store.get_message(_seckey(db, current_user), acc.email, folder, uid)
+    atts = (msg or {}).get("attachments") or []
+    if idx < 0 or idx >= len(atts):
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    ref = atts[idx]
+    data, mime = await mail_sync.load_attachment(db, ref)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Attachment unavailable")
+    name = sanitize_filename(ref.get("name") or "attachment")
+    disp = "inline" if any(t in mime for t in ("image/", "application/pdf", "text/")) else "attachment"
+    return Response(content=data, media_type=mime,
+                    headers={"Content-Disposition": f'{disp}; filename="{name}"'})
+
+
+@router.post("/draft")
+async def mail_save_draft(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Save a compose draft as an encrypted Nostr doc in the virtual 'Drafts' folder. Overwrites the
+    same uid when re-saving; the GUI lists/opens it like any folder, and a successful send deletes it."""
+    import time
+    d = await request.json()
+    acc = _resolve_account(db, current_user, d.get("account", ""))
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    dr = d.get("draft") or {}
+    uid = str(dr.get("uid") or f"draft-{int(time.time() * 1000)}")
+    body = dr.get("body", "")
+    doc = {
+        "uid": uid, "is_draft": True, "from": acc.email,
+        "to": dr.get("to", ""), "cc": dr.get("cc", ""),
+        "subject": dr.get("subject", "") or "(no subject)",
+        "body_text": body, "preview": (body or "")[:200],
+        "attachments": dr.get("attachments") or [],
+        "mode": dr.get("mode"), "reply_uid": dr.get("reply_uid"), "reply_folder": dr.get("reply_folder"),
+        "flags": {"read": True}, "ts": int(time.time()),
+    }
+    sk = _seckey(db, current_user)
+    doc = await mail_sync.offload_body(db, _ns.derive_pubkey(sk), doc)   # large draft body → encrypted blob
+    ok = await mail_store.store_message(sk, acc.email, "Drafts", doc)
+    return {"ok": bool(ok), "uid": uid}
+
+
+@router.get("/folders")
+async def mail_folders(account: str = "", db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Account's REAL folders with friendly labels + special-use mapping (so 'Sent' points at the
+    server's actual sent mailbox, e.g. INBOX.Sent / [Gmail]/Sent Mail). Returns ordered names + a
+    {name: label} map. 'Drafts' is the local compose-drafts folder, pinned separately."""
+    acc = _resolve_account(db, current_user, account)
+    if not acc:
+        return {"folders": ["INBOX", "Drafts"], "labels": {"INBOX": "📥 Inbox", "Drafts": "📝 Drafts"}}
+    try:
+        meta = await _asyncio.to_thread(_list_special_folders, current_user.id, db, acc.email)
+    except Exception as e:
+        logger.debug("[mail] list_special_folders failed: %s", e)
+        meta = {"all": ["INBOX"]}
+    allf = meta.get("all") or ["INBOX"]
+    sent, trash, junk, archive = meta.get("sent"), meta.get("trash"), meta.get("junk"), meta.get("archive")
+    inbox = next((f for f in allf if f.upper() == "INBOX"), "INBOX")
+
+    def label(n):
+        if n == sent: return "📤 Sent"
+        if n == trash: return "🗑 Trash"
+        if n == junk: return "⚠️ Spam"
+        if n == archive: return "🗄 Archive"
+        if n.upper() == "INBOX": return "📥 Inbox"
+        return "📁 " + (n.replace("INBOX.", "").replace("[Gmail]/", "").split("/")[-1] or n)
+
+    order = [inbox]
+    if sent and sent != inbox:
+        order.append(sent)
+    order.append("Drafts")   # local compose-drafts (virtual)
+    for f in allf:
+        if f not in order and f != inbox:
+            order.append(f)
+    labels = {"Drafts": "📝 Drafts"}
+    for f in order:
+        if f != "Drafts":
+            labels[f] = label(f)
+    return {"folders": order, "labels": labels, "sent": sent}
+
+
+@router.post("/sync-folder")
+async def mail_sync_folder(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Pull one folder on demand (the default sync only does INBOX/Sent)."""
+    d = await request.json()
+    acc = _resolve_account(db, current_user, d.get("account", ""))
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    try:
+        n = await mail_sync.sync_one(db, current_user, acc.email, d.get("folder", "INBOX"))
+        return {"ok": True, "new": n}
+    except Exception as e:
+        logger.warning("[mail] sync-folder failed: %s", e)
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+import re as _re
+
+
+def _normsubj(s: str) -> str:
+    return _re.sub(r'^\s*(re|fwd|fw)\s*:\s*', '', (s or '').strip(), flags=_re.I).strip().lower()
+
+
+def _idset(m: dict) -> set:
+    s = set()
+    for k in ("message_id", "in_reply_to"):
+        v = (m.get(k) or "").strip()
+        if v:
+            s.add(v)
+    for r in (m.get("references") or "").split():
+        r = r.strip()
+        if r:
+            s.add(r)
+    return s
+
+
+def _build_thread(seed: dict, allmsgs: list) -> list:
+    """Group a conversation: close the Message-ID/References/In-Reply-To reference graph, with a
+    normalized-subject fallback when there are no usable headers. Cross-folder. Oldest→newest."""
+    related = _idset(seed)
+    members = {seed.get("message_id") or f"uid:{seed.get('folder')}:{seed.get('uid')}": seed}
+    while True:
+        added = False
+        for m in allmsgs:
+            key = m.get("message_id") or f"uid:{m.get('folder')}:{m.get('uid')}"
+            if key in members:
+                continue
+            if _idset(m) & related:
+                members[key] = m
+                related |= _idset(m)
+                added = True
+        if not added:
+            break
+    msgs = list(members.values())
+    if len(msgs) <= 1:                                  # no header links → fall back to subject
+        ns = _normsubj(seed.get("subject", ""))
+        if ns:
+            by = {}
+            for m in allmsgs:
+                if _normsubj(m.get("subject", "")) == ns:
+                    by[(m.get("folder"), m.get("uid"))] = m
+            by[(seed.get("folder"), seed.get("uid"))] = seed
+            msgs = list(by.values())
+    msgs.sort(key=lambda m: m.get("ts", 0))
+    return msgs
+
+
+@router.get("/thread")
+async def mail_thread(account: str, uid: str, folder: str = "INBOX",
+                      db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """The whole conversation for a message (across folders), bodies rehydrated."""
+    sk = _seckey(db, current_user)
+    acc = None
+    if account == "__all":
+        seed = next((m for m in await mail_store.list_messages(sk, None, None)
+                     if str(m.get("uid")) == str(uid) and m.get("folder") == folder), None)
+    else:
+        acc = _resolve_account(db, current_user, account)
+        if not acc:
+            raise HTTPException(status_code=404, detail="Account not found")
+        seed = await mail_store.get_message(sk, acc.email, folder, uid)
+    if not seed:
+        raise HTTPException(status_code=404, detail="Message not found")
+    # Only scan/decrypt the whole mailbox when this message is actually part of a thread (has reply
+    # headers). Most messages are singletons — return just the seed and skip the expensive load.
+    if not (seed.get("in_reply_to") or (seed.get("references") or "").strip()):
+        thread = [seed]
+    else:
+        allm = await mail_store.list_messages(sk, acc.email if acc else None, None)
+        thread = _build_thread(seed, allm)
+    for m in thread:                                    # rehydrate offloaded bodies (bounded by thread size)
+        if m.get("body_ref"):
+            body = await mail_sync.load_body(db, m["body_ref"])
+            if body:
+                m["body_text"] = body.get("body_text", "")
+                m["body_html"] = body.get("body_html", "")
+    return {"messages": thread}

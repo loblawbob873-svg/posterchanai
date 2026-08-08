@@ -484,7 +484,7 @@ def fetch_messages(
         return messages
 
     try:
-        imap.select(folder)
+        imap.select('"' + folder + '"')
 
         # Search criteria - use UID SEARCH to get actual UIDs
         if unread_only:
@@ -717,7 +717,7 @@ def search_messages(user_id: int, db: Session, account_email: str, query: str, l
 
                 for folder in folders:
                     try:
-                        status, _ = imap.select(folder, readonly=True)
+                        status, _ = imap.select('"' + folder + '"', readonly=True)
                         if status != "OK":
                             logger.debug(f"Could not select folder: {folder}")
                             continue
@@ -834,7 +834,7 @@ def get_message_by_id(
                 # Try specified/INBOX first
                 for check_folder in folders_to_check:
                     try:
-                        status, _ = imap.select(check_folder, readonly=True)
+                        status, _ = imap.select('"' + check_folder + '"', readonly=True)
                         if status == "OK":
                             # Use UID FETCH
                             status, msg_data = imap.uid("fetch", uid, "(RFC822)")
@@ -863,7 +863,7 @@ def get_message_by_id(
                                     if folder_name == "INBOX" or folder_name.lower() in ("[gmail]", "[google mail]"):
                                         continue
 
-                                    status, _ = imap.select(folder_name, readonly=True)
+                                    status, _ = imap.select('"' + folder_name + '"', readonly=True)
                                     if status == "OK":
                                         status, msg_data = imap.uid("fetch", uid, "(RFC822)")
                                         if status == "OK" and msg_data and msg_data[0]:
@@ -906,7 +906,7 @@ def delete_message(user_id: int, db: Session, account_email: str, uid: str, fold
 
                 # Wrap select with timeout
                 def select_folder():
-                    return imap.select(folder)
+                    return imap.select('"' + folder + '"')
                 
                 result = run_with_timeout(select_folder, timeout=MAIL_OPERATION_TIMEOUT)
                 if not result or result[0] != "OK":
@@ -1029,7 +1029,7 @@ def archive_message(user_id: int, db: Session, account_email: str, uid: str, fol
                 return False
 
             try:
-                status, _ = imap.select(folder)
+                status, _ = imap.select('"' + folder + '"')
                 if status != "OK":
                     logger.error(f"Failed to select folder {folder}")
                     return False
@@ -1316,7 +1316,7 @@ def send_email(
                 for folder in sent_folders:
                     try:
                         # Try to select the folder to verify it exists
-                        status, _ = imap.select(folder)
+                        status, _ = imap.select('"' + folder + '"')
                         if status == "OK":
                             # Append message with \Seen flag
                             import time
@@ -1605,3 +1605,168 @@ def format_message_detail(msg: EmailMessage, folder: str = "INBOX") -> str:
     lines.append(f"[+ Calendar](cmd:{extract_event_cmd}) | [+ Bill](cmd:{extract_bill_cmd})")
 
     return "\n".join(lines)
+
+
+# ---- incremental sync + special-use folder discovery (for the Nostr-mailbox Email client) --------
+
+def _account_by_email(user_id: int, db: Session, account_email: str):
+    for a in get_user_mail_accounts(user_id, db):
+        if a.email == account_email:
+            return a
+    return None
+
+
+def list_special_folders(user_id: int, db: Session, account_email: str) -> dict:
+    """Resolve an account's real folders + special-use mailboxes (RFC 6154 \\Sent etc., with name
+    heuristics as a fallback). Returns {'all':[names], 'sent':name|None, 'drafts':.., 'trash':..,
+    'junk':.., 'archive':..} — so the GUI maps 'Sent' to the server's ACTUAL sent folder."""
+    out = {"all": [], "sent": None, "drafts": None, "trash": None, "junk": None, "archive": None}
+    acc = _account_by_email(user_id, db, account_email)
+    if not acc:
+        return out
+    imap = connect_imap(acc)
+    if not imap:
+        return out
+    try:
+        res = run_with_timeout(lambda: imap.list(), timeout=6)
+        if not res or res[0] != "OK":
+            return out
+        for line in (res[1] or []):
+            try:
+                dec = line.decode() if isinstance(line, bytes) else line
+            except Exception:
+                continue
+            fm = re.search(r'^\(([^)]*)\)', dec)
+            flags = (fm.group(1).lower() if fm else "")
+            nm = re.search(r'"([^"]+)"\s*$|(\S+)\s*$', dec)
+            name = ((nm.group(1) or nm.group(2)) if nm else None)
+            if not name or name.lower() in ("[gmail]", "[google mail]"):
+                continue
+            out["all"].append(name)
+            for su, key in (("\\sent", "sent"), ("\\drafts", "drafts"), ("\\trash", "trash"),
+                            ("\\junk", "junk"), ("\\archive", "archive")):
+                if su in flags and not out[key]:
+                    out[key] = name
+
+        def _heur(*subs):
+            for n in out["all"]:
+                base = n.lower().replace("[gmail]/", "").split("/")[-1].split(".")[-1]
+                if any(s in base for s in subs):
+                    return n
+            return None
+        out["sent"] = out["sent"] or _heur("sent")
+        out["drafts"] = out["drafts"] or _heur("draft")
+        out["trash"] = out["trash"] or _heur("trash", "deleted")
+        out["junk"] = out["junk"] or _heur("junk", "spam")
+        out["archive"] = out["archive"] or _heur("archive", "all mail")
+        out["all"] = sorted(set(out["all"]))
+        return out
+    except Exception as e:
+        logger.warning(f"list_special_folders failed for {account_email}: {e}")
+        return out
+    finally:
+        try:
+            imap.logout()
+        except Exception:
+            pass
+
+
+def list_uids(account: MailAccount, folder: str = "INBOX") -> List[str]:
+    """Cheap UID SEARCH ALL → every UID in a folder (oldest→newest). Used to diff against what's
+    already mirrored so we FETCH only genuinely-new messages (efficient full sync)."""
+    imap = connect_imap(account)
+    if not imap:
+        return []
+    try:
+        sel = run_with_timeout(lambda: imap.select(f'"{folder}"', readonly=True), timeout=6)
+        if not sel or sel[0] != "OK":
+            return []
+        res = run_with_timeout(lambda: imap.uid("SEARCH", None, "ALL"), timeout=10)
+        if not res or res[0] != "OK" or not res[1] or not res[1][0]:
+            return []
+        return [u.decode() if isinstance(u, bytes) else u for u in res[1][0].split()]
+    except Exception as e:
+        logger.warning(f"list_uids {account.email}/{folder} failed: {e}")
+        return []
+    finally:
+        try:
+            imap.logout()
+        except Exception:
+            pass
+
+
+def fetch_by_uids(account: MailAccount, folder: str, uids: List[str]) -> List[EmailMessage]:
+    """FETCH specific UIDs (in batches) and parse them — pairs with list_uids for incremental sync."""
+    if not uids:
+        return []
+    imap = connect_imap(account)
+    if not imap:
+        return []
+    out: List[EmailMessage] = []
+    try:
+        sel = run_with_timeout(lambda: imap.select(f'"{folder}"', readonly=True), timeout=6)
+        if not sel or sel[0] != "OK":
+            return []
+        CHUNK = 40
+        for i in range(0, len(uids), CHUNK):
+            uidset = ",".join(uids[i:i + CHUNK])
+            try:
+                res = run_with_timeout(lambda: imap.uid("FETCH", uidset, "(FLAGS RFC822)"), timeout=45)
+            except Exception as e:
+                logger.debug(f"fetch_by_uids batch failed: {e}")
+                continue
+            if not res or res[0] != "OK" or not res[1]:
+                continue
+            for part in res[1]:
+                if not isinstance(part, tuple) or len(part) < 2 or not part[1]:
+                    continue
+                head = part[0].decode(errors="ignore") if isinstance(part[0], bytes) else str(part[0])
+                um = re.search(r"UID (\d+)", head)
+                _fm = re.search(r"FLAGS \(([^)]*)\)", head)   # real read/unread (parse_email otherwise defaults read=True)
+                uid = um.group(1) if um else None
+                if not uid:
+                    continue
+                msg = parse_email(part[1], uid, account.email)
+                if msg:
+                    msg.is_read = bool(_fm and "\\Seen" in _fm.group(1))
+                    out.append(msg)
+        return out
+    except Exception as e:
+        logger.warning(f"fetch_by_uids {account.email}/{folder} failed: {e}")
+        return []
+    finally:
+        try:
+            imap.logout()
+        except Exception:
+            pass
+
+
+def move_message(user_id: int, db: Session, account_email: str, uid: str, src_folder: str, dest_folder: str) -> bool:
+    """Move a message src→dest (COPY + \\Deleted + EXPUNGE on the source). Used to send a 'deleted'
+    message to Trash instead of expunging it permanently. Returns False if it can't (caller falls back)."""
+    if not dest_folder or dest_folder == src_folder:
+        return False
+    acc = _account_by_email(user_id, db, account_email)
+    if not acc:
+        return False
+    imap = connect_imap(acc)
+    if not imap:
+        return False
+    try:
+        sel = run_with_timeout(lambda: imap.select('"' + src_folder + '"'), timeout=6)
+        if not sel or sel[0] != "OK":
+            return False
+        r = run_with_timeout(lambda: imap.uid("COPY", uid, '"' + dest_folder + '"'), timeout=10)
+        if not r or r[0] != "OK":
+            return False
+        run_with_timeout(lambda: imap.uid("STORE", uid, "+FLAGS", r"(\Deleted)"), timeout=8)
+        run_with_timeout(lambda: imap.expunge(), timeout=10)
+        return True
+    except Exception as e:
+        logger.warning(f"move_message {account_email} {src_folder}->{dest_folder} failed: {e}")
+        return False
+    finally:
+        try:
+            imap.logout()
+        except Exception:
+            pass

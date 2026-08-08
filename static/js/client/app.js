@@ -1915,6 +1915,7 @@
         .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
       watchNotifications(); watchDeletions(); startCallSignaling(); loadPubChats();
       setTimeout(()=>ensureDMs(), 3000);   // subscribe to INCOMING DMs (read). Our kind-10050 DM-inbox list
+      setTimeout(()=>{ try{ Mail.loginSync(); }catch(_){} }, 4500);   // fetch mail on login (background)
       // is published lazily on first DM use (renderMessages / send), NOT here — see ensureDmInboxList.
     };
     Relay.onReady = ()=>{
@@ -3051,6 +3052,7 @@
     // thread). The profile "message @user" action sets dmActive THEN calls switchView (from a non-messages
     // view), so this guard won't wipe it. Without it, fix for the mobile thread-overlay would auto-open.
     if(VIEW==='messages' && v!=='messages') dmActive=null;
+    if(v==='messages' && VIEW!=='messages') _msgTab='dm';   // clicking Messages defaults to DMs (not the last-used Email tab)
     // A keyboard selection belongs to the feed we are leaving; and if the cursor was parked in the nav
     // rail, opening a view is exactly the moment to hand it back to the content.
     try{ _selectNote(null); _vimPane='feed'; }catch(_){ }
@@ -14823,7 +14825,19 @@
     return d.toLocaleDateString([], {day:'numeric', month:'long', year: d.getFullYear()===now.getFullYear()?undefined:'numeric'});
   }
 
+  // Messages has two tabs: encrypted Nostr DMs and the Nostr-mailbox Email client. Email lives here
+  // (not Discover) to keep Discover uncluttered; the toggle is the same surface as a phone's mail/chat.
+  let _msgTab = 'dm';
+  function _msgTabBar(){
+    return `<div class="msg-tabs"><button class="mtab${_msgTab==='dm'?' on':''}" data-mt="dm">💬 DMs</button>`
+      + `<button class="mtab${_msgTab==='email'?' on':''}" data-mt="email">📧 Email${Mail.unread?` <span class="mtab-badge">${Mail.unread}</span>`:''}</button></div>`;
+  }
+  function _bindMsgTabs(root){ $$('.mtab',root).forEach(b=> b.onclick=()=>{ if(_msgTab===b.dataset.mt) return; _msgTab=b.dataset.mt; dmActive=null; renderMessages(); }); }
   function renderMessages(){
+    if(_msgTab==='email'){
+      const feed=$('#feed'); feed.innerHTML=_msgTabBar()+'<div id="mail-root" class="mail-root"></div>';
+      _bindMsgTabs(feed); return Mail.render($('#mail-root',feed));
+    }
     _dmUnread=0; ClientSettings.set('dmSeen', Math.floor(Date.now()/1000)); bumpDm();   // mark DMs read (persistent)
     if(!_dmLoaded){ ensureDMs(); }   // lazy-load on first open
     ensureDmInboxList();   // first DM use → publish our kind-10050 DM-inbox list (once/session, merge-not-replace)
@@ -14832,7 +14846,8 @@
     // rebuilds the whole list, which would otherwise reset scroll to the TOP — yanking you up as you
     // try to scroll (and a jump-to-top is what makes the mobile browser re-reveal its toolbar).
     const _prevList=$('#dm-list'); const _listScroll=_prevList?_prevList.scrollTop:0;
-    feed.innerHTML=`<div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">${_dmLoaded?'Select a conversation, or start one.':'Loading…'}</div></div></div>`;
+    feed.innerHTML=_msgTabBar()+`<div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">${_dmLoaded?'Select a conversation, or start one.':'Loading…'}</div></div></div>`;
+    _bindMsgTabs(feed);
     const list=$('#dm-list');
     // Optional privacy: don't reveal message previews in the list until you open the conversation.
     const hidePrev = ClientSettings.get('hideDmPreview', false);
@@ -14886,6 +14901,362 @@
     // (incoming DM, refresh) drops the class and bounces the user back to the conversation list.
     if(dmActive && dmPeers.has(dmActive)){ list.classList.add('has-active'); renderDmThread(dmActive); }
   }
+  // ---------- Email client (Nostr-native mailbox; Messages → 📧 Email tab) ----------
+  // The mailbox lives as encrypted kind-30078 events server-side; this GUI talks to /api/mail. IMAP/
+  // SMTP + at-rest encryption + Blossom attachments are all server-side. Themed via CSS vars (all 7
+  // themes) and collapses to a single-pane flow on mobile (see .mail-* in client.css).
+  function _mailDate(ts){ if(!ts) return ''; const d=new Date(ts*1000), now=new Date();
+    return d.toDateString()===now.toDateString() ? d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})
+      : d.toLocaleDateString([], {month:'short', day:'numeric', year: d.getFullYear()===now.getFullYear()?undefined:'numeric'}); }
+  function _fileB64(file){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onerror=()=>rej(r.error);
+    r.onload=()=>res(String(r.result).split(',',2)[1]||''); r.readAsDataURL(file); }); }
+  function _abB64(buf){ const u=new Uint8Array(buf); let s=''; const CH=0x8000; for(let i=0;i<u.length;i+=CH) s+=String.fromCharCode.apply(null, u.subarray(i,i+CH)); return btoa(s); }
+  // Attach an existing Blossom Drive file to an email: list the user's blobs (named via the Files
+  // index when known), fetch the chosen blob's bytes → base64 → hand back as a compose attachment.
+  /* Address book for the composer — the SAME encrypted CardDAV addressbooks the Contacts screen and
+   * your phone sync (/api/contacts), not a second list of people that drifts from them.
+   *
+   * Only cards with an email address are offered, because that is the only kind this can act on, and
+   * a picker full of un-pickable rows is worse than a short list. Cards are parsed with PCVcard so
+   * grouped properties (`item1.EMAIL`) are read the same way everywhere.
+   */
+  /* A sheet that STACKS over an open modal, on its own overlay.
+   *
+   * `modal()` appends to #modal-root but `closeModal()` empties the whole container, so a second
+   * modal opened from the composer destroys the composer with it: the picker returns an address to
+   * a form that no longer exists. uiConfirm already solved this by owning its overlay — the same
+   * reason, and these pickers are only ever opened from on top of the composer.
+   */
+  function _sheet(html, onMount){
+    const ov=document.createElement('div'); ov.className='modal-bg sheet-bg';
+    ov.innerHTML=`<div class="modal glass neon-border">${html}</div>`;
+    const close=()=>{ try{ ov.remove(); }catch(_){} };
+    ov.onclick=e=>{ if(e.target===ov){ e.preventDefault(); e.stopPropagation(); close(); } };
+    document.body.appendChild(ov);
+    const box=ov.querySelector('.modal');
+    if(onMount) onMount(box, close);
+    return { el: ov, box, close };
+  }
+
+  async function _mailContactPicker(onPick){
+    const V = window.PCVcard;
+    const sheet=_sheet(`<h3>👤 Contacts</h3>
+      <input class="input" id="mc-q" placeholder="🔍 Search contacts…" autocomplete="off">
+      <div id="mc-list" class="mc-list"><div class="spinner"></div></div>`);
+    const closeModal = sheet.close;                 // shadow: this picker closes ITSELF, not the composer
+    const $ = (sel, r) => (r || sheet.box).querySelector(sel);
+    const $$ = (sel, r) => Array.from((r || sheet.box).querySelectorAll(sel));
+    const box=$('#mc-list'); if(!box) return;
+    if(!V){ box.innerHTML='<div class="muted small">Contacts are not available on this node.</div>'; return; }
+    let people=[];
+    try{
+      const bs=await fetch('/api/contacts/books').then(r=>r.ok?r.json():{books:[]});
+      for(const b of (bs.books||[])){
+        const r=await fetch('/api/contacts/cards?book='+encodeURIComponent(b.id));
+        if(!r.ok) continue;
+        for(const rec of ((await r.json()).cards||[])){
+          let c; try{ c=V.parse(rec.ics||''); }catch(_){ continue; }
+          for(const e of (c.emails||[])){
+            if(e.value) people.push({ name: V.displayName(c), email: e.value, type: e.type||'', card: c });
+          }
+        }
+      }
+    }catch(_){ box.innerHTML='<div class="muted small">Could not reach your contacts.</div>'; return; }
+    if(!people.length){
+      box.innerHTML=`<div class="muted small">No contacts with an email address yet. Add them in
+        <b>Contacts</b>, or import a .vcf there.</div>`;
+      return;
+    }
+    people.sort((a,b)=>a.name.localeCompare(b.name));
+    const draw=(q)=>{
+      const hit=people.filter(p=> !q || (p.name+' '+p.email).toLowerCase().includes(q.toLowerCase()));
+      box.innerHTML = hit.length ? hit.map((p,i)=>`<button class="mc-item" data-i="${people.indexOf(p)}">
+          <span class="mc-name">${enc(p.name)}</span>
+          <span class="mc-mail muted small">${enc(p.email)}${p.type?' · '+enc(p.type):''}</span>
+        </button>`).join('') : '<div class="muted small">No contact matches that.</div>';
+      $$('.mc-item',box).forEach(b=> b.onclick=()=>{ onPick(people[+b.dataset.i]); closeModal(); });
+    };
+    draw('');
+    const q=$('#mc-q'); if(q){ q.oninput=()=>draw(q.value.trim()); q.focus(); }
+  }
+
+  async function _mailBlossomPicker(onPick){
+    const server=(CFG.blossom_url||mediaServer()||'').replace(/\/$/,'');
+    if(!server){ toast('Blossom not configured'); return; }
+    // Its OWN overlay, for the reason _sheet explains: closeModal() empties #modal-root, so the
+    // plain modal() this used meant attaching a file destroyed the half-written email underneath.
+    const sheet=_sheet(`<h3>🌸 Attach from Blossom Drive</h3><div id="bp-list" class="bp-list"><div class="spinner"></div></div>`);
+    const closeModal = sheet.close;
+    const $ = (sel, r) => (r || sheet.box).querySelector(sel);
+    const $$ = (sel, r) => Array.from((r || sheet.box).querySelectorAll(sel));
+    let list=null; try{ const r=await fetch(server+'/list/'+ME.pubkey); if(r.ok) list=await r.json(); }catch(_){}
+    const box=$('#bp-list'); if(!box) return;
+    if(!Array.isArray(list) || !list.length){ box.innerHTML='<div class="muted small">No Blossom files yet — upload some in Files first.</div>'; return; }
+    const nameOf=b=>{ try{ const f=FilesIdx&&FilesIdx.data&&FilesIdx.data.files&&FilesIdx.data.files[b.sha256]; if(f&&f.name) return f.name; }catch(_){}
+      const ext=(b.type||'').split('/')[1]||''; return (b.sha256||'file').slice(0,10)+(ext?'.'+ext:''); };
+    list.sort((a,b)=>(b.uploaded||b.size||0)-(a.uploaded||a.size||0));
+    box.innerHTML=list.map((b,i)=>`<button class="bp-item" data-i="${i}">📄 ${enc(nameOf(b))} <span class="muted small">${enc((b.type||'').split('/')[0]||'file')} · ${_fmtBytes(b.size||0)}</span></button>`).join('');
+    $$('.bp-item',box).forEach(btn=> btn.onclick=async()=>{ const b=list[+btn.dataset.i]; btn.disabled=true; const t=btn.textContent; btn.textContent='Loading…';
+      try{ const r=await fetch(server+'/'+b.sha256); if(!r.ok) throw 0; const buf=await r.arrayBuffer();
+        onPick({name:nameOf(b), type:b.type||'application/octet-stream', b64:_abB64(buf)}); closeModal(); toast('attached'); }
+      catch(_){ toast('could not load that file'); btn.disabled=false; btn.textContent=t; } });
+  }
+  const Mail = {
+    unread:0, root:null, accounts:[], acct:null, folder:'INBOX', folders:['INBOX','Sent','Drafts'], folderLabels:{}, msgs:[], openUid:null, q:'', _syncing:false, sel:null,
+    async api(path, opts){ const r=await fetch('/api/mail'+path, opts); if(!r.ok) throw new Error('http '+r.status); return r.json(); },
+    async render(root){
+      this.root=root; root.innerHTML='<div class="mail-loading"><div class="spinner"></div></div>';
+      try{ const a=await this.api('/accounts'); this.accounts=a.accounts||[]; }catch(_){ this.accounts=[]; }
+      if(!this.accounts.length){
+        root.innerHTML=`<div class="mail-empty"><div class="me-ico">📧</div><h3>Email</h3>
+          <p class="muted">No mail accounts yet. Add IMAP/SMTP accounts in <b>Settings → Mail</b>, then they sync here as an encrypted Nostr mailbox.</p>
+          <button class="btn btn-neon" id="mail-go-settings">Open Settings → Mail</button></div>`;
+        const b=$('#mail-go-settings',root); if(b) b.onclick=()=>switchView('settings');
+        return;
+      }
+      if(!this.acct || !this.accounts.some(a=>a.email===this.acct)) this.acct=this.accounts[0].email;
+      this.draw(); this.sync();   // "log in → fetch your mail": pull fresh on open
+    },
+    draw(){
+      const root=this.root; if(!root) return;
+      root.innerHTML=`<div class="mail-wrap">
+        <div class="mail-side">
+          <select class="input mail-acct" id="mail-acct" title="Account">${this.accounts.length>1?`<option value="__all"${this.acct==='__all'?' selected':''}>📥 All inboxes</option>`:''}${this.accounts.map(a=>`<option value="${enc(a.email)}"${a.email===this.acct?' selected':''}>${enc(a.email)}</option>`).join('')}</select>
+          <button class="btn btn-neon mail-compose" id="mail-compose">✏️ Compose</button>
+          <div class="mail-folders">${(this.acct==='__all'?['INBOX','Sent','Drafts']:this.folders).map(f=>`<button class="mail-folder${f===this.folder?' on':''}" data-folder="${enc(f)}">${this._folderLabel(f)}</button>`).join('')}</div>
+        </div>
+        <div class="mail-list">
+          <div class="mail-list-top"><input class="input mail-search" id="mail-search" placeholder="🔍 Search mail…" value="${enc(this.q)}"><button class="mini mail-refresh" id="mail-refresh" title="Refresh">🔄</button></div>
+          <div class="mail-bulk"><label class="mail-selall" title="Select all / none"><input type="checkbox" id="mail-selall"> Select</label><span class="mail-bulk-act" id="mail-bulk-act"></span></div>
+          <div class="mail-items" id="mail-items"><div class="spinner"></div></div>
+        </div>
+        <div class="mail-read" id="mail-read"><div class="empty">Select a message to read</div></div>
+      </div>`;
+      $('#mail-acct',root).onchange=e=>{ this.acct=e.target.value; this.openUid=null; this.q=''; this.folder='INBOX'; this.folders=['INBOX','Sent','Drafts']; if(this.sel) this.sel.clear(); this.draw(); this.loadList(); this.sync(); };
+      $('#mail-compose',root).onclick=()=>this.compose({});
+      $$('[data-folder]',root).forEach(b=> b.onclick=()=>this.selectFolder(b.dataset.folder));
+      { const s=$('#mail-search',root); if(s){ let t; s.oninput=()=>{ clearTimeout(t); t=setTimeout(()=>{ this.q=s.value.trim(); this.loadList(); },300); }; } }
+      $('#mail-refresh',root).onclick=()=>this.sync(true);
+      { const sa=$('#mail-selall',root); if(sa) sa.onchange=()=>{ this.sel=this.sel||new Set();
+        if(sa.checked) this.msgs.forEach(m=>this.sel.add(this._key(m))); else this.sel.clear(); this.drawList(); }; }
+      this.loadList(); this.loadFolders();
+    },
+    _folderLabel(f){ if(this.folderLabels && this.folderLabels[f]) return this.folderLabels[f];
+      const k={INBOX:'📥 Inbox',Sent:'📤 Sent',Drafts:'📝 Drafts',Trash:'🗑 Trash',Spam:'⚠️ Spam',Junk:'⚠️ Junk',Archive:'🗄 Archive'}; return k[f]||('📁 '+enc(String(f).split(/[./]/).pop()||f)); },
+    async loadFolders(){
+      if(this.acct==='__all' || !this.root) return;
+      let r; try{ r=await this.api('/folders?account='+encodeURIComponent(this.acct)); }catch(_){}
+      if(!r || !r.folders || !r.folders.length) return;
+      this.folders=r.folders; this.folderLabels=r.labels||{};
+      const box=this.root.querySelector('.mail-folders'); if(!box) return;
+      box.innerHTML=this.folders.map(f=>`<button class="mail-folder${f===this.folder?' on':''}" data-folder="${enc(f)}">${this._folderLabel(f)}</button>`).join('');
+      box.querySelectorAll('.mail-folder').forEach(b=> b.onclick=()=>this.selectFolder(b.dataset.folder));
+    },
+    async selectFolder(f){
+      this.folder=f; this.openUid=null; this.q=''; if(this.sel) this.sel.clear();
+      if(this.root){ this.root.querySelectorAll('.mail-folder').forEach(b=> b.classList.toggle('on', b.dataset.folder===f));
+        const b=$('#mail-items',this.root); if(b) b.innerHTML='<div class="spinner"></div>'; }
+      // INBOX/Sent are kept fresh by the main sync; Drafts is local; any OTHER folder is pulled on demand.
+      if(this.acct!=='__all' && !['INBOX','Sent','Drafts'].includes(f)){
+        try{ await this.api('/sync-folder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:this.acct,folder:f})}); }catch(_){}
+      }
+      this.loadList();
+    },
+    async loadList(){
+      const box=$('#mail-items', this.root); if(!box) return; box.innerHTML='<div class="spinner"></div>';
+      try{
+        const r = this.q
+          ? await this.api('/search?account='+encodeURIComponent(this.acct)+'&q='+encodeURIComponent(this.q))
+          : await this.api('/messages?account='+encodeURIComponent(this.acct)+'&folder='+encodeURIComponent(this.folder));
+        this.msgs=r.messages||[];
+      }catch(_){ this.msgs=[]; }
+      this.drawList();
+    },
+    _key(m){ return (m.account||this.acct)+'|'+(m.folder||this.folder)+'|'+m.uid; },
+    drawList(){
+      const box=$('#mail-items', this.root); if(!box) return;
+      this.sel=this.sel||new Set();
+      if(!this.msgs.length){ box.innerHTML='<div class="empty">'+(this.q?'No matches.':'No messages.')+'</div>'; this.updateBulk(); return; }
+      const isSent=this.folderLabels[this.folder]==='📤 Sent', unified=this.acct==='__all';
+      box.innerHTML=this.msgs.map(m=>{ const key=this._key(m);
+        return `<div class="mail-item${m.read?'':' unread'}${String(m.uid)===String(this.openUid)?' active':''}" data-uid="${enc(String(m.uid))}" data-folder="${enc(m.folder||this.folder)}" data-account="${enc(m.account||'')}" data-key="${enc(key)}">
+        <input type="checkbox" class="mi-chk"${this.sel.has(key)?' checked':''}>
+        <div class="mi-content">
+          <div class="mi-row"><span class="mi-from">${unified?`<span class="mi-acct">${enc((m.account||'').split('@')[0])}</span> `:''}${enc((isSent?('To: '+(m.to||'')):(m.from||'')).slice(0,42))}</span><span class="mi-date">${enc(_mailDate(m.ts))}</span></div>
+          <div class="mi-subj">${m.attachments?'📎 ':''}${enc(m.subject||'(no subject)')}</div>
+          <div class="mi-prev muted small">${enc(m.preview||'')}</div>
+        </div></div>`; }).join('');
+      $$('.mail-item',box).forEach(el=>{
+        const cb=el.querySelector('.mi-chk'); if(cb) cb.onclick=(e)=>{ e.stopPropagation(); if(cb.checked) this.sel.add(el.dataset.key); else this.sel.delete(el.dataset.key); this.updateBulk(); };
+        const c=el.querySelector('.mi-content'); if(c) c.onclick=()=>this.open(el.dataset.uid, el.dataset.folder, el.dataset.account);
+      });
+      this.updateBulk();
+    },
+    updateBulk(){
+      const sa=$('#mail-selall',this.root), act=$('#mail-bulk-act',this.root); const n=this.sel?this.sel.size:0;
+      if(sa) sa.checked = n>0 && n===this.msgs.length;
+      if(!act) return;
+      act.innerHTML = n ? `<span class="mail-bulk-n">${n} selected</span><button class="btn small" data-bulk="read">● Read</button><button class="btn small" data-bulk="archive">🗄 Archive</button><button class="btn btn-red small" data-bulk="delete">🗑 Delete</button>` : '';
+      act.querySelectorAll('[data-bulk]').forEach(b=> b.onclick=()=>this.bulk(b.dataset.bulk));
+    },
+    async bulk(action){
+      if(!this.sel || !this.sel.size) return;
+      if(action==='delete' && !confirm('Delete '+this.sel.size+' message(s)?')) return;
+      const keys=[...this.sel]; this.sel.clear(); this.updateBulk();
+      const path = action==='read' ? '/mark-read' : '/'+action;
+      for(const k of keys){ const i=k.indexOf('|'), j=k.indexOf('|', i+1);
+        const account=k.slice(0,i), folder=k.slice(i+1,j), uid=k.slice(j+1);
+        const body={account, folder, uid}; if(action==='read') body.read=true;
+        try{ await this.api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }catch(_){}
+      }
+      toast(action==='read'?'marked read':(action==='delete'?'deleted':'archived')); this.loadList();
+    },
+    async open(uid, folder, account){
+      folder=folder||this.folder; const acct=account||this.acct; this.openUid=uid; this.drawList();
+      let msg; try{ const r=await this.api('/message?account='+encodeURIComponent(acct)+'&folder='+encodeURIComponent(folder)+'&uid='+encodeURIComponent(uid)); msg=r.message; }catch(_){}
+      if(folder==='Drafts'){   // a draft opens back into the composer (prefilled) rather than a read pane
+        if(msg) this.compose({mode:'draft', draft:msg, acct});
+        else toast('draft unavailable');
+        return;
+      }
+      const pane=$('#mail-read', this.root); if(!pane) return; pane.innerHTML='<div class="spinner"></div>'; pane.classList.add('has-open');
+      if(!msg){ pane.innerHTML='<div class="empty">Could not load this message.</div>'; return; }
+      // Render the message immediately, then upgrade to the full conversation when /thread returns
+      // (threading scans the whole mailbox, so don't block the read on it).
+      this._renderThread(pane, [msg], folder, acct, uid);
+      this.api('/thread?account='+encodeURIComponent(acct)+'&folder='+encodeURIComponent(folder)+'&uid='+encodeURIComponent(uid))
+        .then(t=>{ if(t && t.messages && t.messages.length>1 && this.openUid===uid && pane.isConnected)
+          this._renderThread(pane, t.messages, folder, acct, uid); })
+        .catch(()=>{});
+    },
+    _msgBlock(m, folder, acct, expanded){
+      const atts=(m.attachments||[]).map((at,i)=>`<a class="mail-att" href="/api/mail/dl/${encodeURIComponent(m.account||acct)}/${encodeURIComponent(m.folder||folder)}/${encodeURIComponent(m.uid)}/${i}" target="_blank" rel="noopener">📎 ${enc(at.name||'attachment')} <span class="muted small">${_fmtBytes(at.size||0)}</span></a>`).join('');
+      // Untrusted email HTML → fully sandboxed iframe (no scripts/forms/same-origin); else plain text.
+      const body = m.body_html
+        ? `<iframe class="mail-html" sandbox srcdoc="${enc(m.body_html)}"></iframe>`
+        : `<div class="mail-text">${enc(m.body_text||'').replace(/\n/g,'<br>')}</div>`;
+      return `<div class="mail-msg${expanded?' open':''}">
+        <div class="mail-msg-hd"><div class="mm-who"><b>${enc(m.from||'')}</b><div class="muted small">To: ${enc((m.to||'').slice(0,90))}</div></div><span class="muted small mm-date">${enc(_mailDate(m.ts))}</span></div>
+        <div class="mail-msg-body">${atts?`<div class="mail-atts">${atts}</div>`:''}<div class="mail-body">${body}</div></div>
+      </div>`;
+    },
+    _renderThread(pane, thread, folder, acct, seedUid){
+      const latest=thread[thread.length-1];
+      // actions target the message the user actually OPENED (the seed), not just the newest in the thread
+      const target=thread.find(m=>String(m.uid)===String(seedUid)) || latest;
+      pane.innerHTML=`<div class="mail-read-hd"><button class="mini mail-back" id="mail-back" title="Back">←</button>
+          <div class="mr-meta"><div class="mr-subj">${enc(latest.subject||'(no subject)')}</div>
+            ${thread.length>1?`<div class="muted small">${thread.length} messages</div>`:''}</div></div>
+        <div class="mail-actions">
+          <button class="btn btn-cyan small" data-act="reply">↩ Reply</button>
+          <button class="btn small" data-act="replyall">↩↩ Reply all</button>
+          <button class="btn small" data-act="forward">↪ Forward</button>
+          <button class="btn small" data-act="unread">● Unread</button>
+          <button class="btn small" data-act="archive">🗄 Archive</button>
+          <button class="btn btn-red small" data-act="delete">🗑 Delete</button>
+        </div>
+        <div class="mail-thread">${thread.map((m,i)=>this._msgBlock(m, folder, acct, i===thread.length-1 || String(m.uid)===String(seedUid))).join('')}</div>`;
+      $('#mail-back',pane).onclick=()=>{ pane.classList.remove('has-open'); this.openUid=null; this.drawList(); };
+      $$('.mail-msg .mail-msg-hd',pane).forEach(hd=> hd.onclick=()=> hd.parentElement.classList.toggle('open'));   // collapse/expand
+      $$('[data-act]',pane).forEach(b=> b.onclick=()=>this.action(b.dataset.act, target, target.folder||folder, target.account||acct));
+    },
+    async action(act, msg, folder, acct){
+      acct=acct||this.acct; const uid=msg.uid;
+      if(act==='reply'||act==='replyall'||act==='forward') return this.compose({mode:act, msg, folder, acct});
+      if(act==='unread'){ try{ await this.api('/mark-read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:acct,folder,uid,read:false})}); }catch(_){}; toast('marked unread'); this.loadList(); return; }
+      if(act==='archive'||act==='delete'){
+        if(act==='delete' && !confirm('Delete this message?')) return;
+        try{ await this.api('/'+act,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:acct,folder,uid})}); }catch(_){ toast(act+' failed'); return; }
+        toast(act==='delete'?'deleted':'archived');
+        const pane=$('#mail-read',this.root); if(pane){ pane.classList.remove('has-open'); pane.innerHTML='<div class="empty">Select a message to read</div>'; }
+        this.openUid=null; this.loadList(); return;
+      }
+    },
+    compose(opts){
+      opts=opts||{}; const m=opts.msg; let to='', cc='', subj='', body='', draftUid=null;
+      const self=this, atts=[];
+      if(opts.mode==='reply'||opts.mode==='replyall'){ subj=/^re:/i.test(m.subject||'')?m.subject:('Re: '+(m.subject||'')); to=m.from_email||m.from||''; if(opts.mode==='replyall'&&m.to) cc=m.to; }
+      else if(opts.mode==='forward'){ subj=/^fwd:/i.test(m.subject||'')?m.subject:('Fwd: '+(m.subject||'')); body=`\n\n---------- Forwarded ----------\nFrom: ${m.from||''}\nSubject: ${m.subject||''}\n\n${m.body_text||''}`; }
+      else if(opts.mode==='draft'){ const dr=opts.draft||{}; to=dr.to||''; cc=dr.cc||''; subj=(dr.subject==='(no subject)'?'':(dr.subject||'')); body=dr.body_text||''; draftUid=dr.uid||null;
+        (dr.attachments||[]).forEach(a=>{ if(a&&a.b64) atts.push({name:a.name,type:a.type||'application/octet-stream',b64:a.b64}); }); }
+      const titles={forward:'Forward', reply:'Reply', replyall:'Reply all', draft:'Draft'};
+      // From account: the message's account for reply/forward/draft, else the selected/active account.
+      const fromAcct=(opts.acct && opts.acct!=='__all')?opts.acct:(this.acct!=='__all'?this.acct:((this.accounts[0]||{}).email||''));
+      const fromSel=this.accounts.length>1
+        ? `<label class="muted small mail-from">From <select class="input" id="cm-from">${this.accounts.map(a=>`<option value="${enc(a.email)}"${a.email===fromAcct?' selected':''}>${enc(a.email)}</option>`).join('')}</select></label>`
+        : `<div class="muted small" style="margin:-4px 0 8px">From: ${enc(fromAcct)}</div>`;
+      modal(`<h3>✉️ ${titles[opts.mode]||'New message'}</h3>
+        ${fromSel}
+        <input class="input" id="cm-to" placeholder="To (comma-separated)" value="${enc(to)}" autocomplete="off">
+        <input class="input" id="cm-cc" placeholder="Cc (optional)" value="${enc(cc)}" autocomplete="off">
+        <input class="input" id="cm-subj" placeholder="Subject" value="${enc(subj)}">
+        <textarea class="input" id="cm-body" rows="9" placeholder="Write your message…">${enc(body)}</textarea>
+        <div class="row cmp-tools"><button class="btn btn-ghost small" id="cm-contacts">👤 Contacts</button><button class="btn btn-ghost small" id="cm-attach">📎 Attach</button><button class="btn btn-ghost small" id="cm-blossom">🌸 Blossom</button><input type="file" id="cm-file" multiple hidden><span id="cm-atts" class="muted small"></span></div>
+        <div class="row"><button class="btn btn-ghost small" id="cm-draft">💾 Save draft</button><span class="spacer"></span><button class="btn btn-neon" id="cm-send">Send ▶</button></div>`);
+      const drawAtts=()=>{ const e=$('#cm-atts'); if(e) e.innerHTML=atts.map(a=>'📎 '+enc(a.name)).join('  '); };
+      drawAtts();
+      $('#cm-attach').onclick=()=>$('#cm-file').click();
+      { const cb=$('#cm-contacts'); if(cb) cb.onclick=()=>_mailContactPicker(p=>{
+          // Append to whichever field is focused; otherwise To, falling back to Cc once To is filled,
+          // which is what "add another person" means in every mail client.
+          const focused=document.activeElement;
+          const box=(focused && (focused.id==='cm-cc')) ? $('#cm-cc')
+                  : ($('#cm-to').value.trim() && !focused ? $('#cm-cc') : $('#cm-to'));
+          const cur=box.value.trim();
+          const addr = p.name && !/[<>]/.test(p.name) ? `${p.name} <${p.email}>` : p.email;
+          if(cur.split(',').map(x=>x.trim()).some(x=>x.includes(p.email))){ toast('already added'); return; }
+          box.value = cur ? cur.replace(/,\s*$/,'') + ', ' + addr : addr;
+          toast('added ' + p.email);
+        }); }
+      { const bb=$('#cm-blossom'); if(bb) bb.onclick=()=>_mailBlossomPicker(a=>{ atts.push(a); drawAtts(); }); }
+      $('#cm-file').onchange=async ev=>{ for(const f of [...ev.target.files]){ try{ atts.push({name:f.name,type:f.type||'application/octet-stream',b64:await _fileB64(f)}); }catch(_){} } ev.target.value=''; drawAtts(); };
+      const gather=()=>({to:$('#cm-to').value.trim(), cc:$('#cm-cc').value.trim(), subject:$('#cm-subj').value.trim(), body:$('#cm-body').value, attachments:atts});
+      const sendAcct=()=>{ const s=$('#cm-from'); return (s&&s.value)||fromAcct; };
+      // 💾 Save draft → encrypted Nostr doc in the Drafts folder (overwrites the same uid on re-save).
+      $('#cm-draft').onclick=async()=>{
+        const btn=$('#cm-draft'); btn.disabled=true; btn.textContent='Saving…';
+        try{ const r=await self.api('/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:sendAcct(), draft:{...gather(), uid:draftUid}})});
+          if(r.ok){ draftUid=r.uid; toast('draft saved'); closeModal(); if(self.folder==='Drafts') self.loadList(); }
+          else { toast('save failed'); btn.disabled=false; btn.textContent='💾 Save draft'; } }
+        catch(_){ toast('save failed'); btn.disabled=false; btn.textContent='💾 Save draft'; }
+      };
+      $('#cm-send').onclick=async()=>{
+        const payload={account:sendAcct(), ...gather()};
+        let path='/send';
+        if(opts.mode==='reply'||opts.mode==='replyall'){ path='/reply'; payload.uid=m.uid; payload.folder=opts.folder; payload.reply_all=opts.mode==='replyall'; }
+        else if(opts.mode==='forward'){ path='/forward'; payload.uid=m.uid; payload.folder=opts.folder; }
+        if((path==='/send'||path==='/forward') && !payload.to){ toast('add a recipient'); return; }
+        const btn=$('#cm-send'); btn.disabled=true; btn.textContent='Sending…';
+        try{ const r=await self.api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+          if(r.ok){ toast('sent ✉️');
+            if(draftUid){ try{ await self.api('/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:sendAcct(),folder:'Drafts',uid:draftUid})}); }catch(_){} }
+            closeModal(); if(self.folder==='Sent'||self.folder==='Drafts') self.sync(); }
+          else { toast(r.error||'send failed'); btn.disabled=false; btn.textContent='Send ▶'; } }
+        catch(_){ toast('send failed'); btn.disabled=false; btn.textContent='Send ▶'; }
+      };
+    },
+    async sync(manual){
+      if(this._syncing) return; this._syncing=true;
+      const rb=$('#mail-refresh',this.root); if(rb){ rb.textContent='⏳'; rb.disabled=true; }
+      try{ const r=await this.api('/sync',{method:'POST'});
+        const total=Object.values(r.new||{}).reduce((a,b)=>a+(+b||0),0);
+        if(total){ this.unread+=total; if(manual) toast(total+' new message'+(total>1?'s':'')); if(_msgTab==='email') {} else bumpDm(); }
+        if(this.root && this.acct) this.loadList();
+      }catch(_){ if(manual) toast('mail sync failed'); }
+      this._syncing=false; const rb2=$('#mail-refresh',this.root); if(rb2){ rb2.textContent='🔄'; rb2.disabled=false; }
+    },
+    // "log in → fetch your mail": pull IMAP → mailbox on login (background), notify on new mail, and
+    // surface the count on the Email tab badge — even before the user opens Messages.
+    async loginSync(){
+      try{
+        const a=await this.api('/accounts'); if(!(a.accounts||[]).length) return;
+        const r=await this.api('/sync',{method:'POST'});
+        const total=Object.values(r.new||{}).reduce((x,y)=>x+(+y||0),0);
+        if(total){ this.unread+=total; toast('📧 '+total+' new email'+(total>1?'s':''));
+          if(VIEW==='messages'){ try{ renderMessages(); }catch(_){} } }
+      }catch(_){}
+    },
+  };
   function safePk(v){ try{ if(v.startsWith('npub')){const d=NT().nip19.decode(v); return d.data;} if(/^[0-9a-f]{64}$/i.test(v))return v.toLowerCase(); }catch(_){} return null; }
   function newDmModal(){
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-mail"></use></svg>New message</h3>
