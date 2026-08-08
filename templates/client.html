@@ -211,15 +211,16 @@
         <div class="nav-search"><input id="nav-search-input" class="input" type="search" placeholder="🔍 Search" autocomplete="off"></div>
         <nav class="nav">
             {% if not nostr_only %}<button class="nav-item nav-ai" data-view="ai"><svg class="ic"><use href="#i-ai"></use></svg><span>AI<i id="ai-badge" class="badge hidden"></i></span></button>{% endif %}
+            <button class="nav-item" data-view="notifications"><svg class="ic"><use href="#i-bell"></use></svg><span>Notifications<i id="notif-badge" class="badge hidden"></i></span></button>
+            <!-- No Home item: Home is a tab on the timeline itself (see .tl-tabs), ditto.pub-style -->
+            <!-- "Social" not "Nostrverse": the timeline tab already says Nostrverse, so two would be redundant -->
+            <button class="nav-item active" data-view="global"><svg class="ic"><use href="#i-globe"></use></svg><span>Social</span></button>
             <!-- Web Search: the instance's SearXNG, with Save to Notes / Share / AI summaries. Top level
                  rather than inside Discover — it is a thing you reach for mid-thought, like AI. -->
             {% if not nostr_only %}<button class="nav-item" data-view="websearch"><svg class="ic"><use href="#i-search"></use></svg><span>Web Search</span></button>{% endif %}
             <!-- Calendar: this node's own CalDAV server, so the same calendar syncs to a phone. -->
             {% if not nostr_only %}<button class="nav-item" data-view="calendar"><svg class="ic"><use href="#i-clock"></use></svg><span>Calendar</span></button>{% endif %}
-            <!-- No Home item: Home is a tab on the timeline itself (see .tl-tabs), ditto.pub-style -->
-            <!-- "Social" not "Nostrverse": the timeline tab already says Nostrverse, so two would be redundant -->
-            <button class="nav-item active" data-view="global"><svg class="ic"><use href="#i-globe"></use></svg><span>Social</span></button>
-            <button class="nav-item" data-view="notifications"><svg class="ic"><use href="#i-bell"></use></svg><span>Notifications<i id="notif-badge" class="badge hidden"></i></span></button>
+            {% if not nostr_only %}<button class="nav-item" data-view="contacts"><svg class="ic"><use href="#i-user"></use></svg><span>Contacts</span></button>{% endif %}
             <button class="nav-item" data-view="messages"><svg class="ic"><use href="#i-mail"></use></svg><span>Messages<i id="dm-badge" class="badge hidden"></i></span></button>
             <button class="nav-item" data-view="bookmarks"><svg class="ic"><use href="#i-bookmark"></use></svg><span>Bookmarks</span></button>
             <button class="nav-item" data-view="calls"><svg class="ic"><use href="#i-phone"></use></svg><span>Calls</span></button>
