@@ -69,3 +69,8 @@ torpy
 # feature, so it MUST be in the nostr-only set too (this file is what the `nostr` Docker profile +
 # NOSTR_ONLY installer path install). Pulls in py-vapid + http-ece.
 pywebpush>=1.14.0
+
+# Calendar (bundled CalDAV, mounted at /caldav). Included in the lean Nostr build too: it is
+# relay-backed and has no AI dependency, so a Nostr-only node can still sync a phone's calendar.
+radicale>=3.3,<4
+a2wsgi>=1.10

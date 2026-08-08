@@ -185,3 +185,10 @@ omegaconf>=2.3.0
 pywebpush>=1.14.0
 defusedxml>=0.7.1  # SSRF/entity-safe XML parsing for the News RSS reader
 pyflakes>=3.0.0  # sync.sh pre-push gate: catches undefined names that py_compile cannot
+
+# Bundled CalDAV/CardDAV server (Calendar). Mounted INSIDE the app at /caldav — there is no separate
+# service to install or run, which is the whole point: a user adds https://<node>/caldav/<user>/ to
+# their phone and syncs. a2wsgi runs Radicale's synchronous WSGI app in a threadpool, which the
+# single-worker deployment needs (inline it would block every other request for the call).
+radicale>=3.3,<4
+a2wsgi>=1.10

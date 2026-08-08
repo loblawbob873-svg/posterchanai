@@ -352,11 +352,27 @@ def _ticket_user(tok: str):
 
 
 def _self_base(request: Request) -> str:
-    """This node's absolute base — the forwarded host behind a proxy, which is what a URL inside the
-    frame has to point back at."""
-    fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
-    fwd_proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
-    return f"{fwd_proto}://{fwd_host}".rstrip("/") if fwd_host else str(request.base_url).rstrip("/")
+    """This node's absolute base — what a URL inside the frame has to point back at.
+
+    The SCHEME is the awkward part. Behind the reverse proxy the upstream connection is plain HTTP,
+    so `request.url.scheme` says http even though the browser is on https; nginx here does not send
+    `x-forwarded-proto` either. Emitting http:// then makes every asset a mixed-content request that
+    the page's own `upgrade-insecure-requests` has to rescue — 38 CSP warnings per page, and a plain
+    failure anywhere that policy is absent.
+
+    So: the forwarded proto if there is one, else http ONLY for a loopback/private host (a LAN node
+    genuinely served over http), else https. A public hostname reached over a proxy is https in every
+    deployment this ships to.
+    """
+    fwd_host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip()
+    proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+    if not proto:
+        host_only = fwd_host.split(":")[0].lower()
+        local = (host_only in ("localhost", "127.0.0.1", "::1", "[::1]")
+                 or host_only.endswith(".lan") or host_only.endswith(".local")
+                 or host_only.startswith(("10.", "192.168.", "172.16.", "172.17.", "172.18.")))
+        proto = request.url.scheme if local else "https"
+    return f"{proto}://{fwd_host}".rstrip("/") if fwd_host else str(request.base_url).rstrip("/")
 
 
 def _page_viewer(request: Request, t: str = Query(""), db: Session = Depends(get_db)) -> User:
@@ -366,7 +382,15 @@ def _page_viewer(request: Request, t: str = Query(""), db: Session = Depends(get
         user = db.query(User).filter(User.id == uid).first()
         if user:
             return user
-    return get_current_user(request=request, credentials=None, db=db)
+    # No ticket → an ordinary session. The Authorization header has to be handed over explicitly:
+    # get_current_user only reads `credentials`, the cookie and `?token=`, so passing None silently
+    # ignored every Bearer-authenticated caller (the APK, the checks, curl) and answered 401.
+    creds = None
+    authz = request.headers.get("authorization") or ""
+    if authz.lower().startswith("bearer "):
+        from fastapi.security import HTTPAuthorizationCredentials
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=authz[7:].strip())
+    return get_current_user(request=request, credentials=creds, db=db)
 
 
 @router.post("/ticket")
@@ -509,10 +533,10 @@ async def render_page(
         return Response(content=body, media_type="text/html; charset=utf-8",
                         headers={"Content-Security-Policy": _PAGE_CSP, "X-Content-Type-Options": "nosniff",
                                  "Referrer-Policy": "no-referrer", "Cache-Control": "private, max-age=60"})
-    # This node's own absolute base — behind a reverse proxy it reflects the forwarded host, and in
-    # the bundled desktop app / APK it is the instance the frame was loaded from, which is exactly
-    # what a link inside the frame has to point back at.
-    self_base = str(request.base_url).rstrip("/")
+    # ONE place decides this node's public base (scheme included — see _self_base). Computing it
+    # here as `request.base_url` is what emitted http:// links on an https page: every asset became a
+    # mixed-content request that only `upgrade-insecure-requests` rescued, 38 CSP warnings deep.
+    self_base = _self_base(request)
     # Every URL this page will ask for — its stylesheets, images, fonts, and the links in it — is a
     # request the FRAME makes, and a frame carries no Authorization header (and, from a bundled app,
     # no cookie for this origin either). So they all travel with a ticket: the one this request came

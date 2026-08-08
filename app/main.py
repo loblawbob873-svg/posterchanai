@@ -237,6 +237,40 @@ app.include_router(social_login_router)   # /api/auth/{google,pleroma}/* — sig
 app.include_router(nostr_router)
 app.include_router(blossom_router)
 app.include_router(client_router)
+
+# The bundled CalDAV server (Radicale), mounted INSIDE this app at /caldav — no second port, no
+# second process, no certificate of its own, and nothing for a user to install: a phone syncs against
+# https://<node>/caldav/<user>/ over the app's own TLS. Calendars are stored as encrypted Nostr
+# events (app/services/caldav/storage.py); the working directory is only a cache.
+#
+# Mounted at import time and gated at REQUEST time: `caldav_enabled` lives in the relay-backed
+# settings store, which is not loaded yet while this module is being imported — reading it here
+# would answer "off" on every node and the mount would never happen. a2wsgi runs the (synchronous)
+# WSGI app in a threadpool, which the single-worker deployment requires.
+try:
+    from app.services.caldav.server import build_app as _build_caldav
+    _caldav_app = _build_caldav()
+    if _caldav_app is not None:
+        from a2wsgi import WSGIMiddleware as _WSGIMiddleware
+        from starlette.responses import PlainTextResponse as _PlainText
+
+        _caldav_asgi = _WSGIMiddleware(_caldav_app)
+
+        async def _caldav_entry(scope, receive, send):
+            from app.services import caldav_store as _cs
+            if not _cs.enabled():
+                await _PlainText("Calendar server is off (Admin → Calendar).", status_code=404)(
+                    scope, receive, send)
+                return
+            await _caldav_asgi(scope, receive, send)
+
+        app.mount("/caldav", _caldav_entry)
+except Exception as _caldav_err:      # never let the calendar stop the app from starting
+    # logging.getLogger, NOT a module-level `logger`: this block runs during import, and the name it
+    # used did not exist here — so the handler that was supposed to keep a calendar problem from
+    # taking the app down raised NameError and took the app down. Every request 502'd.
+    logging.getLogger(__name__).warning("[caldav] not mounted: %s", _caldav_err)
+
 # OpenAI-compatible API: use OPENAI_API_PREFIX if app is behind a reverse proxy subpath
 _openai_prefix = os.getenv("OPENAI_API_PREFIX", "").strip().rstrip("/")
 app.include_router(openai_api.router, prefix=_openai_prefix)

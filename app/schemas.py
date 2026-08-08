@@ -237,6 +237,9 @@ class SettingsResponse(BaseModel):
     video_watermark_enabled: str = "true"  # append the branded end-card outro to the clip
     # VRAM management
     vram_mode: str = "shared"  # "shared" (swap models) or "dedicated" (keep both)
+    # The bundled CalDAV server (Radicale, mounted at /caldav). OFF by default: it opens a
+    # password login surface, so an operator turns it on deliberately.
+    caldav_enabled: bool = False
     searxng_url: str = ""
     # The OFF switch for web search on this node. It exists because clearing searxng_url no longer
     # means "don't search": resolution falls through to a bundled instance and then to a public one,
