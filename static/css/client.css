@@ -6112,6 +6112,28 @@ body.os-on #os-root{pointer-events:auto}
    The app's own full-screen panes (mail reading pane, DM thread, notification drawer) need nothing:
    they are position:fixed only inside @media(max-width:820px), and the desktop refuses to open
    below 1024px. Guarded by check_os_desktop.py's modal-buried assertion. */
+/* Snap preview + Snap Layouts (Windows 11 style). The ghost is the whole point of edge snapping:
+   it says where the window is ABOUT to go, so releasing the pointer is never a surprise. It sits
+   under the windows (they are z-index'd from zTop upward) but above the wallpaper and the icons. */
+.os-ghost{position:absolute;display:none;z-index:1;border-radius:12px;pointer-events:none;
+  border:2px solid var(--neon);background:rgba(var(--accent-rgb),.14);
+  box-shadow:0 0 30px rgba(var(--accent-rgb),.28) inset;transition:left .09s,top .09s,width .09s,height .09s}
+.os-layouts{position:absolute;z-index:99999;display:grid;grid-template-columns:repeat(4,38px);
+  gap:6px;padding:9px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);
+  box-shadow:0 14px 34px rgba(0,0,0,.5)}
+.os-lay{width:38px;height:30px;border-radius:6px;border:1px solid var(--line);background:var(--panel);
+  cursor:pointer;padding:3px;display:block;position:relative}
+.os-lay:hover{border-color:var(--neon);background:rgba(var(--accent-rgb),.12)}
+/* Each button is a tiny picture of the zone: the filled block IS the half/quarter it snaps to. */
+.os-lay i{position:absolute;display:block;background:var(--neon);border-radius:2px;opacity:.85}
+.os-lay-left i {left:3px;top:3px;bottom:3px;width:14px}
+.os-lay-right i{right:3px;top:3px;bottom:3px;width:14px}
+.os-lay-max i  {inset:3px}
+.os-lay-tl i{left:3px;top:3px;width:14px;height:10px}
+.os-lay-tr i{right:3px;top:3px;width:14px;height:10px}
+.os-lay-bl i{left:3px;bottom:3px;width:14px;height:10px}
+.os-lay-br i{right:3px;bottom:3px;width:14px;height:10px}
+
 body.os-on .modal-bg{z-index:340}
 body.os-on .offline-bar{z-index:330}
 body.os-on #music-player.mp,body.os-on #music-player.mp-mini{z-index:332}

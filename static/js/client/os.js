@@ -144,7 +144,7 @@
     // Cascade, then wrap, so opening several windows does not land exactly on top of one another
     // (which reads as "only one opened") — and start to the RIGHT of the icon column, or the first
     // window covers the icons you just clicked.
-    const vw = window.innerWidth, vh = window.innerHeight - TASKBAR;
+    const vw = vwL(), vh = vhL() - TASKBAR;
     const w = Math.min(1100, Math.round((vw - ICON_COL) * 0.72));
     const h = Math.min(760, Math.round(vh * 0.78));
     const step = 38, n = i % 6;
@@ -192,6 +192,15 @@
       else if(a === 'max') toggleMax(w);
       else minimise(w);
     });
+    const maxBtn = $('.osw-b[data-w="max"]', el);
+    maxBtn.addEventListener('pointerenter', () => {
+      clearTimeout(layoutT);
+      layoutT = setTimeout(() => showLayouts(w, maxBtn), 380);
+    });
+    maxBtn.addEventListener('pointerleave', () => {
+      clearTimeout(layoutT);
+      layoutT = setTimeout(hideLayouts, 260);
+    });
     $('.osw-grip', el).addEventListener('pointerdown', e => { focusWin(w, false); startResize(w, e); });
     el.addEventListener('pointerdown', () => { if(!el.classList.contains('focused')) focusWin(w); }, true);
 
@@ -229,46 +238,179 @@
     if(next) focusWin(next); else drawBar();
   }
 
-  function toggleMax(w){
-    w.max = !w.max;
+  // ---- snapping (Windows 11 style) ------------------------------------------------------------
+  // Drag a window against a screen edge and it snaps: the sides give halves, the top maximises, the
+  // corners give quarters. A GHOST previews the zone before the pointer is released — a window that
+  // jumps somewhere unannounced reads as a bug, not a feature. Hovering Maximise opens the same
+  // zones as a menu, which is how Win11 offers them without a drag (and the only way to reach them
+  // with a finger, since a touch drag never hovers an edge long enough to be sure of the intent).
+  const EDGE = 26;                 // how close to an edge counts as being AT it (in pointer px)
+
+  // The client scales the whole document with body{zoom} on desktop (see --zf), which leaves TWO
+  // coordinate spaces in play: pointer events and getBoundingClientRect report ZOOMED css pixels,
+  // while style.left/width and offsetWidth are LAYOUT pixels. Mixing them is not cosmetic — at
+  // zoom .72 a window drags at 0.72x the speed of the cursor and a "half of the screen" snap covers
+  // a third of it (measured: 784px of a 2222px desktop). Everything below works in LAYOUT pixels
+  // and converts the viewport and the pointer deltas on the way in.
+  function zf(){
+    const z = parseFloat(getComputedStyle(document.body).zoom || '1');
+    return (z > 0 && isFinite(z)) ? z : 1;
+  }
+  const vwL = () => window.innerWidth / zf();
+  const vhL = () => window.innerHeight / zf();
+  let ghost = null, layoutFor = null, layoutT = 0;
+
+  function zones(){
+    const vw = vwL(), vh = vhL() - TASKBAR;
+    const hw = Math.round(vw / 2), hh = Math.round(vh / 2);
+    return { max:  { x: 0,       y: 0,       w: vw, h: vh },
+             left: { x: 0,       y: 0,       w: hw, h: vh },
+             right:{ x: vw - hw, y: 0,       w: hw, h: vh },
+             tl:   { x: 0,       y: 0,       w: hw, h: hh },
+             tr:   { x: vw - hw, y: 0,       w: hw, h: hh },
+             bl:   { x: 0,       y: vh - hh, w: hw, h: hh },
+             br:   { x: vw - hw, y: vh - hh, w: hw, h: hh } };
+  }
+
+  function zoneAt(x, y){
+    // x/y come straight from a pointer event, so this one comparison stays in pointer pixels.
+    const vw = window.innerWidth, vh = window.innerHeight - TASKBAR * zf();
+    const L = x <= EDGE, R = x >= vw - EDGE, T = y <= EDGE, B = y >= vh - EDGE;
+    if(T && L) return 'tl';
+    if(T && R) return 'tr';
+    if(B && L) return 'bl';
+    if(B && R) return 'br';
+    if(T) return 'max';
+    if(L) return 'left';
+    if(R) return 'right';
+    return '';
+  }
+
+  function rectOf(z){
+    const r = zones()[z];
+    return r && { left: (r.x + SNAP) + 'px', top: (r.y + SNAP) + 'px',
+                  width: (r.w - SNAP * 2) + 'px', height: (r.h - SNAP * 2) + 'px' };
+  }
+
+  function showGhost(z){
+    const css = z && rectOf(z);
+    if(!css){ hideGhost(); return; }
+    if(!ghost){ ghost = document.createElement('div'); ghost.className = 'os-ghost'; desk.appendChild(ghost); }
+    Object.assign(ghost.style, css, { display: 'block' });
+  }
+  function hideGhost(){ if(ghost) ghost.style.display = 'none'; }
+
+  // Remember the floating geometry BEFORE the first snap, so every later restore has something real
+  // to go back to — snapping an already-snapped window must not overwrite it with half the screen.
+  function keepRect(w){
+    if(w.snap || w.max) return;
+    w.rect = { x: parseInt(w.el.style.left, 10), y: parseInt(w.el.style.top, 10),
+               w: w.el.offsetWidth, h: w.el.offsetHeight };
+  }
+
+  function snapTo(w, z){
+    const css = rectOf(z);
+    if(!css) return;
+    keepRect(w);
+    w.snap = z;
+    w.max = (z === 'max');
     w.el.classList.toggle('maximised', w.max);
-    if(w.max){
-      w.rect = { x: parseInt(w.el.style.left, 10), y: parseInt(w.el.style.top, 10),
-                 w: w.el.offsetWidth, h: w.el.offsetHeight };
-      Object.assign(w.el.style, { left: SNAP + 'px', top: SNAP + 'px',
-        width: (window.innerWidth - SNAP * 2) + 'px',
-        height: (window.innerHeight - TASKBAR - SNAP * 2) + 'px' });
-    }else{
-      Object.assign(w.el.style, { left: w.rect.x + 'px', top: w.rect.y + 'px',
-        width: w.rect.w + 'px', height: w.rect.h + 'px' });
-    }
+    w.el.classList.add('snapped');
+    Object.assign(w.el.style, css);
     focusWin(w);
   }
 
+  function unsnap(w){
+    if(!w.snap && !w.max) return;
+    w.snap = null; w.max = false;
+    w.el.classList.remove('maximised', 'snapped');
+    Object.assign(w.el.style, { left: w.rect.x + 'px', top: w.rect.y + 'px',
+                                width: w.rect.w + 'px', height: w.rect.h + 'px' });
+  }
+
+  function toggleMax(w){
+    if(w.max || w.snap) unsnap(w); else snapTo(w, 'max');
+    focusWin(w);
+  }
+
+  // The Snap Layouts flyout: hover (or tap) Maximise to place the window without dragging at all.
+  const LAYOUTS = [['left','Left half'], ['right','Right half'], ['max','Full screen'],
+                   ['tl','Top left'], ['tr','Top right'], ['bl','Bottom left'], ['br','Bottom right']];
+
+  function hideLayouts(){
+    clearTimeout(layoutT);
+    desk.querySelectorAll('.os-layouts').forEach(n => n.remove());
+    layoutFor = null;
+  }
+
+  function showLayouts(w, btn){
+    if(layoutFor === w) return;
+    hideLayouts();
+    layoutFor = w;
+    const m = document.createElement('div');
+    m.className = 'os-layouts';
+    m.innerHTML = LAYOUTS.map(([z, t]) =>
+      `<button class="os-lay os-lay-${z}" data-z="${z}" title="${t}" aria-label="${t}"><i></i></button>`).join('');
+    desk.appendChild(m);
+    const r = btn.getBoundingClientRect(), dr = desk.getBoundingClientRect();
+    m.style.left = Math.max(8, Math.min(dr.width - 200, r.left - dr.left - 78)) + 'px';
+    m.style.top = (r.bottom - dr.top + 6) + 'px';
+    $$('.os-lay', m).forEach(b => b.onclick = (e) => {
+      e.stopPropagation();
+      snapTo(w, b.dataset.z);
+      hideLayouts();
+    });
+    m.addEventListener('pointerenter', () => clearTimeout(layoutT));
+    m.addEventListener('pointerleave', () => { layoutT = setTimeout(hideLayouts, 260); });
+  }
+
   function startDrag(w, ev){
-    if(w.max) return;
-    const sx = ev.clientX, sy = ev.clientY;
-    const ox = parseInt(w.el.style.left, 10), oy = parseInt(w.el.style.top, 10);
+    let sx = ev.clientX, sy = ev.clientY;
+    let ox = parseInt(w.el.style.left, 10), oy = parseInt(w.el.style.top, 10);
+    let zone = '';
+    hideLayouts();
     const move = (e) => {
+      // Win11: dragging a snapped or maximised window RESTORES its floating size and picks it up
+      // under the cursor, keeping the grab point roughly where it was along the title bar. Dragging
+      // a full-width pane around by its corner is the thing that feels broken.
+      if((w.snap || w.max) && (Math.abs(e.clientX - sx) > 6 || Math.abs(e.clientY - sy) > 6)){
+        const frac = Math.min(0.9, Math.max(0.1,
+                       (e.clientX - w.el.getBoundingClientRect().left) / w.el.offsetWidth));
+        unsnap(w);
+        ox = Math.round(e.clientX / zf() - w.el.offsetWidth * frac);
+        oy = Math.max(0, e.clientY / zf() - 18);
+        sx = e.clientX; sy = e.clientY;
+      }
       // Clamped so a window can never be dragged somewhere it cannot be dragged back from: the title
       // bar stays on screen and above the taskbar.
-      const x = Math.max(-w.el.offsetWidth + 120, Math.min(window.innerWidth - 120, ox + e.clientX - sx));
-      const y = Math.max(0, Math.min(window.innerHeight - TASKBAR - 34, oy + e.clientY - sy));
+      const k = zf();
+      const x = Math.max(-w.el.offsetWidth + 120, Math.min(vwL() - 120, ox + (e.clientX - sx) / k));
+      const y = Math.max(0, Math.min(vhL() - TASKBAR - 34, oy + (e.clientY - sy) / k));
       w.el.style.left = x + 'px'; w.el.style.top = y + 'px';
+      zone = zoneAt(e.clientX, e.clientY);
+      showGhost(zone);
     };
-    const up = () => { document.removeEventListener('pointermove', move);
-                       document.removeEventListener('pointerup', up); };
+    const up = () => {
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+      hideGhost();
+      if(zone) snapTo(w, zone);
+    };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
   }
 
   function startResize(w, ev){
     if(w.max) return;
+    // Resizing by hand means the window is no longer "the left half" — drop the snap, or a later
+    // restore yanks it back to a size the user has just replaced by hand.
+    if(w.snap){ w.snap = null; w.el.classList.remove('snapped'); }
     ev.preventDefault();
     const sx = ev.clientX, sy = ev.clientY, ow = w.el.offsetWidth, oh = w.el.offsetHeight;
     const move = (e) => {
-      w.el.style.width = Math.max(420, ow + e.clientX - sx) + 'px';
-      w.el.style.height = Math.max(260, oh + e.clientY - sy) + 'px';
+      const k = zf();
+      w.el.style.width = Math.max(420, ow + (e.clientX - sx) / k) + 'px';
+      w.el.style.height = Math.max(260, oh + (e.clientY - sy) / k) + 'px';
     };
     const up = () => { document.removeEventListener('pointermove', move);
                        document.removeEventListener('pointerup', up); };
@@ -445,6 +587,24 @@
     try{ if(settings().get(KEY, false) && fits()) enter(); }catch(_){}
   }
 
-  window.PCOS = { enter, exit, toggle, restore, isOn: () => on, openDoc,
+  // Win+Arrow. Meta, not Ctrl: Ctrl+Arrow is caret navigation inside every text box on this desktop.
+  document.addEventListener('keydown', (e) => {
+    if(!on || !e.metaKey || e.altKey || e.ctrlKey) return;
+    if(!/^Arrow(Left|Right|Up|Down)$/.test(e.key)) return;
+    const w = wins.find(x => x.el.classList.contains('focused'));
+    if(!w) return;
+    e.preventDefault();
+    const k = e.key.slice(5);
+    if(k === 'Up')        snapTo(w, w.snap === 'left' ? 'tl' : w.snap === 'right' ? 'tr' : 'max');
+    else if(k === 'Down'){
+      if(w.snap === 'left')       snapTo(w, 'bl');
+      else if(w.snap === 'right') snapTo(w, 'br');
+      else if(w.snap || w.max){ unsnap(w); focusWin(w); }
+      else minimise(w);
+    }
+    else snapTo(w, k === 'Left' ? 'left' : 'right');
+  });
+
+  window.PCOS = { enter, exit, toggle, restore, isOn: () => on, openDoc, snapTo,
                   windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min })) };
 })();

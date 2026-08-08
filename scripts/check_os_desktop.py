@@ -21,6 +21,12 @@ Assertions, each a way a window manager breaks:
   window-controls      Minimise / maximise / close do not do what they say.
   offscreen-window     A window can be dragged somewhere it cannot be dragged back from.
   mobile-not-gated     The desktop offers itself below 1024px, where it cannot work.
+  drag-not-1to1        A dragged window does not keep up with the pointer. The client scales the page
+                       with body{zoom}, so pointer deltas arrive in zoomed css pixels while
+                       style.left is layout pixels; applying one to the other directly moves the
+                       window by a factor of the zoom.
+  snap-broken          Dragging a window to a screen edge does not snap it to that half (or does it
+                       without previewing where it will land, or cannot be dragged back off).
   modal-buried         A modal is not clickable — .modal-bg was authored at z-index 100, below the
                        z-index:300 desktop, so reply / quote / confirm / settings opened INVISIBLY
                        behind it. Hit-tested with elementFromPoint, not by reading the stylesheet.
@@ -155,6 +161,51 @@ DRIVE = r"""(async () => {
     await sleep(80);
     out.docClosed = document.querySelectorAll('.osw').length - before;
   }
+
+  // Win11 snapping: drag to an edge, get a half; drag it off again, get the old size back.
+  {
+    document.querySelector('.os-icon').click();
+    await sleep(120);
+    const w0 = document.querySelector('.osw.focused');
+    const bar = w0.querySelector('.osw-bar');
+    const b0 = w0.getBoundingClientRect();
+    bar.dispatchEvent(new PointerEvent('pointerdown',
+      {bubbles:true, clientX:b0.left+80, clientY:b0.top+12, pointerId:1}));
+    for (const x of [400, 200, 60, 4]) {
+      document.dispatchEvent(new PointerEvent('pointermove',
+        {bubbles:true, clientX:x, clientY:300, pointerId:1}));
+      await sleep(16);
+    }
+    const g = document.querySelector('.os-ghost');
+    out.ghostShown = !!(g && getComputedStyle(g).display !== 'none' && g.offsetWidth > 100);
+    document.dispatchEvent(new PointerEvent('pointerup', {bubbles:true, clientX:4, clientY:300, pointerId:1}));
+    await sleep(120);
+    const b1 = w0.getBoundingClientRect();
+    const desk = document.querySelector('.os-desk');
+    out.dbg = { zoom: getComputedStyle(document.body).zoom,
+                innerW: window.innerWidth, deskW: desk.clientWidth,
+                winOffW: w0.offsetWidth, winOffL: w0.offsetLeft,
+                rectW: Math.round(b1.width), rectL: Math.round(b1.left) };
+    out.snappedHalf = Math.abs(w0.offsetWidth - (desk.clientWidth/2 - 16)) < 24 && w0.offsetLeft < 24;
+    // The drag must also track the cursor 1:1 — under body{zoom} it used to lag behind it.
+
+    out.ghostHidden = !document.querySelector('.os-ghost') ||
+                      getComputedStyle(document.querySelector('.os-ghost')).display === 'none';
+    // …and dragging it back off the edge restores the size it had before the snap.
+    const b2 = w0.getBoundingClientRect();
+    bar.dispatchEvent(new PointerEvent('pointerdown',
+      {bubbles:true, clientX:b2.left+80, clientY:b2.top+12, pointerId:1}));
+    for (const x of [300, 500, 700]) {
+      document.dispatchEvent(new PointerEvent('pointermove',
+        {bubbles:true, clientX:x, clientY:340, pointerId:1}));
+      await sleep(16);
+    }
+    document.dispatchEvent(new PointerEvent('pointerup', {bubbles:true, clientX:700, clientY:340, pointerId:1}));
+    await sleep(80);
+    out.unsnapped = Math.abs(w0.getBoundingClientRect().width - b0.width) < 24;
+    w0.querySelector('.osw-x').click();      // leave no window behind for the checks that follow
+    await sleep(80);
+  }
   out.composed = window.__composed;
   out.hasBar    = !!document.querySelector('.os-bar');
   out.hasStart  = !!document.querySelector('#os-start');
@@ -258,6 +309,7 @@ TOUCH = r"""(async () => {
   // touch-action must be none, or the browser takes the gesture as a scroll and nothing moves.
   const touchAction = cs.touchAction;
   const x0 = parseInt(w.style.left,10), y0 = parseInt(w.style.top,10);
+  const r0 = w.getBoundingClientRect();
   const pd = (type, x, y) => bar.dispatchEvent(new PointerEvent(type,
       {bubbles:true, cancelable:true, clientX:x, clientY:y, pointerType:'touch', isPrimary:true}));
   pd('pointerdown', x0+80, y0+16);
@@ -267,9 +319,13 @@ TOUCH = r"""(async () => {
   document.dispatchEvent(new PointerEvent('pointerup', {bubbles:true, pointerType:'touch'}));
   await sleep(60);
   const moved = { dx: parseInt(w.style.left,10) - x0, dy: parseInt(w.style.top,10) - y0 };
+  // What the FINGER sees. style.left is layout px and the pointer is in zoomed css px, so the
+  // window used to travel body{zoom} times as far as the finger did — visibly lagging behind it.
+  const r1 = w.getBoundingClientRect();
+  const onScreen = { dx: Math.round(r1.left - r0.left), dy: Math.round(r1.top - r0.top) };
   PCOS.exit();
   return { touchAction, btnH: Math.round(btn.height), btnW: Math.round(btn.width),
-           gripW: Math.round(grip.width), moved };
+           gripW: Math.round(grip.width), moved, onScreen, want: { dx: 140, dy: 124 } };
 })()"""
 
 
@@ -362,6 +418,13 @@ async def drive(url):
                         if t["moved"]["dx"] < 100 or t["moved"]["dy"] < 100:
                             problems.append((label, "touch-broken",
                                              f"a touch drag moved the window {t['moved']}"))
+                        elif (abs(t["onScreen"]["dx"] - t["want"]["dx"]) > 12
+                              or abs(t["onScreen"]["dy"] - t["want"]["dy"]) > 12):
+                            problems.append((label, "drag-not-1to1",
+                                             f"the finger moved {t['want']} but the window moved "
+                                             f"{t['onScreen']} on screen — the drag is being applied "
+                                             "in layout pixels to a body{zoom}'d page, so it lags "
+                                             "behind the pointer"))
                         if t["btnH"] < 40 or t["gripW"] < 24:
                             problems.append((label, "tiny-tap-target",
                                              f"window controls are {t['btnW']}x{t['btnH']}, grip "
@@ -376,6 +439,13 @@ async def drive(url):
                     problems.append((label, "clicks-dead",
                                      "a button a feature rendered inside a window did not fire — "
                                      f"hasBtn={r.get('hasBtn')} clicked={r.get('clicked')}"))
+                if not (r.get("ghostShown") and r.get("snappedHalf") and r.get("ghostHidden")
+                        and r.get("unsnapped")):
+                    problems.append((label, "snap-broken",
+                                     "Windows-11 edge snapping is not working — "
+                                     f"preview={r.get('ghostShown')} snapped-to-half={r.get('snappedHalf')} "
+                                     f"preview-cleared={r.get('ghostHidden')} "
+                                     f"restored-on-drag-off={r.get('unsnapped')} {r.get('dbg')}"))
                 if r.get("docWins") != 1 or r.get("docDedup") != 1 or not r.get("docFeed") \
                         or not r.get("docTask") or not r.get("docPaint") \
                         or r.get("docClosed") != 0:
