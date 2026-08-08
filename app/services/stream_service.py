@@ -211,13 +211,42 @@ def clamp_secret(cfg: Optional[dict] = None) -> str:
 
 
 def _port(cfg: dict, key: str, default: str) -> str:
-    """A port setting, digits or the default. EVERY port lands in generated text — the MediaMTX YAML and
-    the clamp shell script — so none of them may be passed through raw: a setting SYNCS FROM THE RELAY
-    across nodes, so it is not a trusted string. A newline in a port injects top-level MediaMTX keys
-    (`9997\\nauthMethod: internal` turns the publish auth hook off), and one in the script injects a
-    command. Same reasoning as _clamp_params and the pub_host regex below."""
+    """A port setting: a real TCP port number, or the default. EVERY port lands in generated text — the
+    MediaMTX YAML and the clamp shell script — so none may be passed through raw: a setting SYNCS FROM
+    THE RELAY across nodes, so it is not a trusted string. A newline in a port injects top-level MediaMTX
+    keys (`9997\\nauthMethod: internal` turns the publish auth hook off), and one in the script injects a
+    command. Same reasoning as _clamp_params and the pub_host regex below.
+
+    `str.isdigit()` alone is NOT that check: it is true for superscripts and Arabic-Indic digits
+    ('9997²' and '٩٩٩٧' both pass), which sail through validation and then make MediaMTX exit at startup
+    on an address it cannot parse — every stream on the node down, with the setting looking valid in the
+    admin UI. Range matters for the same reason ('0', '99999').
+
+    Substituting silently is its own failure — a wrong SRT port would render `srt: no` and every
+    publisher gets connection refused with nothing in any log — so a rejected value is logged. A BLANK
+    value is not a mistake: it means "off" for the optional ports, so it passes through as the default.
+    """
     p = (cfg.get(key, "") or "").strip()
-    return p if p.isdigit() else default
+    if not p:
+        return default
+    if p.isascii() and p.isdigit() and 1 <= int(p) <= 65535:
+        return p
+    logger.warning("[stream] %s=%r is not a valid port — using %r instead", key, p, default)
+    return default
+
+
+def api_port() -> str:
+    """The MediaMTX control-API port, validated. Everything that TALKS to the API must resolve it the
+    same way the generated config does, or the app queries a port MediaMTX never bound: `_upstream_path`
+    then never sees the clamp as ready and serves every viewer the unclamped source, and the end-of-
+    stream reaper can never confirm liveness — all silently."""
+    return _port(settings_store.all_settings(), "stream_api_port", "9997")
+
+
+def hls_port() -> str:
+    """The MediaMTX HLS port, validated — the HLS proxy builds an upstream URL from it, so a raw value
+    like `1@evil.com` would make the proxy fetch a REMOTE host and serve it to viewers as the stream."""
+    return _port(settings_store.all_settings(), "stream_hls_port", "8888")
 
 
 def _rtsp_port(cfg: dict) -> str:
@@ -351,7 +380,10 @@ def _write_clamp_script(cfg: dict) -> None:
     # Standing down is only safe where the viewer's url is resolved per request. With stream_hls_base set,
     # /api/streams/ingest bakes the CLAMPED path into the public playback url at go-live and that url rides
     # the kind-30311, so a path we decline to publish is a 404 for every viewer with no fallback.
-    standdown = 0 if (cfg.get("stream_hls_base", "") or "").strip() else 1
+    # Normalised exactly as streams.py does (_hls_base / stream_ingest), or a value those two treat as
+    # unset — a leftover "/" — would still disable stand-down here and transcode every stream on a node
+    # whose viewers are actually going through the proxy.
+    standdown = 0 if (cfg.get("stream_hls_base", "") or "").strip().rstrip("/") else 1
     secret = clamp_secret(cfg)
     try:
         from app.services.media_service import resolve_ffmpeg, _render_node
@@ -460,6 +492,7 @@ SETTLE=15                    # seconds to let the publisher's bitrate settle bef
 SAMPLE=10                    # length of one API measurement window — long enough that a single scene
                              # change or WebRTC probe cannot decide whether to clamp (see api_kbps)
 RECHECK=45                   # pause before a stood-down clamp exits and MediaMTX respawns it to re-measure
+RECHECK_SLOW=300             # …but far less often when only the expensive measurement is available
 STANDDOWN={standdown}        # 0 when the public url has the clamped path baked in (stream_hls_base)
 
 # WebRTC bandwidth estimation ramps UP over many seconds, so the opening of a WHIP publish is NOT
@@ -510,15 +543,18 @@ api_kbps() {{
   awk -v a="$_b1" -v b="$_b2" -v w="$1" 'BEGIN{{ if (b+0 > a+0 && w+0 > 0) printf "%d", (b-a)*8/w/1000; else print 0 }}'
 }}
 
-measure_kbps() {{
-  # The API if it answers, the RTSP remux otherwise — a node whose API moved or that has no curl keeps
-  # exactly the measurement it had before.
-  _k=$(api_kbps "$SAMPLE" 2>/dev/null) || _k=0
-  if [ "${{_k:-0}}" -gt 0 ]; then echo "$_k"; else measure_src_kbps; fi
-}}
-
 sleep "$SETTLE"
-SRC_KBPS=$(measure_kbps)
+# The API if it answers, the RTSP remux otherwise — a node whose API moved or that has no curl keeps
+# exactly the measurement it had before. The two cost wildly different amounts, and standing down makes
+# the measurement REPEAT (once per respawn cycle), so the pace has to follow the cost: the API sample is
+# two HTTP reads of a byte counter, while the remux attaches a second 4-second RTSP reader to the live
+# source — the contention api_kbps's comment blames for the decode corruption. Once a minute is fine for
+# the first; once every five is the most the second should ever run.
+SRC_KBPS=$(api_kbps "$SAMPLE" 2>/dev/null) || SRC_KBPS=0
+if [ "${{SRC_KBPS:-0}}" -le 0 ]; then
+  SRC_KBPS=$(measure_src_kbps)
+  RECHECK=$RECHECK_SLOW
+fi
 
 # ---- stand down when there is nothing to clamp ----------------------------------------------------
 # Transcoding a source that is ALREADY under the ceiling cannot save a viewer one byte. The ceiling

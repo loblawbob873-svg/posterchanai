@@ -17,6 +17,7 @@ which looks like it works) and the parts that are easy to "simplify" back into a
 No MediaMTX, ffmpeg or database needed — this is all config/script generation and pure helpers.
 """
 import os
+import re
 import subprocess
 import unittest
 from pathlib import Path
@@ -25,6 +26,36 @@ from unittest import mock
 import yaml
 
 from app.services import stream_service as S
+
+
+_MODULE_TMP = None
+_PATCHES = []
+
+
+def setUpModule():
+    """NOTHING in this file may write the node's real streamserver/ files. _write_config and
+    _write_clamp_script write to module-level paths, and MediaMTX re-reads clamp.sh by path on every
+    runOnReady — so a test that forgets to patch them silently rewrites the live script with its own
+    fixture config (wrong clamp secret, wrong encoder) and the next stream to go live publishes to a
+    path the auth hook denies, leaving every viewer on the unclamped source until MediaMTX restarts.
+    That happened here on 2026-08-07, and is the same class as test_git_proxy.py wiping proxy config on
+    live nodes. Patching for the whole module makes forgetting impossible rather than unlikely."""
+    global _MODULE_TMP
+    import tempfile
+    _MODULE_TMP = tempfile.TemporaryDirectory()
+    d = Path(_MODULE_TMP.name)
+    for attr, name in (("_STREAM_CFG", "mediamtx.gen.yml"), ("_CLAMP_SCRIPT", "clamp.sh")):
+        p = mock.patch.object(S, attr, d / name)
+        p.start()
+        _PATCHES.append(p)
+
+
+def tearDownModule():
+    for p in _PATCHES:
+        p.stop()
+    _PATCHES.clear()
+    if _MODULE_TMP:
+        _MODULE_TMP.cleanup()
 
 
 BASE = {
@@ -148,7 +179,7 @@ class TestGeneratedScript(_TmpMixin, unittest.TestCase):
         emitted after the first use the encoder would silently get an empty `-b:v k`."""
         _, script = _render(self.tmp)
         self.assertLess(script.index("VBUF=$((VMAX * 2))"), script.index("hw_ok; then"))
-        self.assertLess(script.index("SRC_KBPS=$(measure_kbps)"), script.index("VBUF=$((VMAX * 2))"))
+        self.assertLess(script.index("SRC_KBPS=$(api_kbps"), script.index("VBUF=$((VMAX * 2))"))
 
     def test_never_spends_more_than_the_source(self):
         """The ceiling is min(measured - audio, configured). Rate control alone cannot prevent inflating a
@@ -166,7 +197,7 @@ class TestGeneratedScript(_TmpMixin, unittest.TestCase):
         that for the whole session — a stable stream never restarts, so it never re-measures."""
         _, script = _render(self.tmp)
         self.assertIn("SETTLE=15", script)
-        self.assertLess(script.index('sleep "$SETTLE"'), script.index("SRC_KBPS=$(measure_kbps)"))
+        self.assertLess(script.index('sleep "$SETTLE"'), script.index("SRC_KBPS=$(api_kbps"))
 
     def test_audio_bitrate_scales_with_the_source(self):
         """At a fixed 128k a 200 kbit/s stream spends two-thirds of its budget on audio and the picture is
@@ -343,16 +374,30 @@ class TestPortsAreValidatedNotEscaped(_TmpMixin, unittest.TestCase):
     top-level MediaMTX key (`authMethod: internal` turns the publish auth hook off, an unknown key makes
     MediaMTX reject the config and crash-loop); a quote in the script injects a command."""
 
-    PAYLOADS = ('9997\nauthMethod: internal', '9997";touch /tmp/pwned;#', '99 97', '', 'nine-thousand')
+    PAYLOADS = ('9997\nauthMethod: internal', '9997";touch /tmp/pwned;#', '99 97', 'nine-thousand',
+                '9997²', '٩٩٩٧', '0', '99999')
 
     def test_no_payload_survives_into_the_config_or_the_script(self):
+        """Assert on the RAW generated text, not the parsed document. An injected `authMethod: internal`
+        is a DUPLICATE key that the later real one overwrites on parse, so every assertion against
+        yaml.safe_load passes while the file on disk carries the injected line."""
         for key in ("stream_api_port", "stream_rtmp_port", "stream_hls_port", "stream_rtsp_port",
                     "stream_webrtc_port", "stream_webrtc_udp_port", "stream_srt_port"):
             for bad in self.PAYLOADS:
                 doc, script = _render(self.tmp, **{key: bad})
-                self.assertNotIn("authMethod: internal", yaml.dump(doc), f"{key}={bad!r}")
+                raw = (self.tmp / "mediamtx.gen.yml").read_text()
+                self.assertNotIn("authMethod: internal", raw, f"{key}={bad!r}")
+                self.assertNotIn("pwned", raw, f"{key}={bad!r}")
                 self.assertNotIn("pwned", script, f"{key}={bad!r}")
-                self.assertNotIn("pwned", yaml.dump(doc), f"{key}={bad!r}")
+                # …and every address MediaMTX is asked to bind ends in a port it can actually parse —
+                # '9997²' and '٩٩٩٧' pass str.isdigit() and then make MediaMTX exit at startup.
+                for line in raw.splitlines():
+                    m = re.match(r"(?:api|rtsp|rtmp|hls|webrtc|webrtcLocalUDP|srt)Address:\s*\S*:(\S+)$",
+                                 line)
+                    if m:
+                        port = m.group(1)
+                        self.assertTrue(port.isascii() and port.isdigit() and 1 <= int(port) <= 65535,
+                                        f"{key}={bad!r} -> {line}")
                 # …and the config still parses as YAML at all, which is what stops the crash-loop.
                 self.assertIn("paths", doc, f"{key}={bad!r}")
 
@@ -469,7 +514,8 @@ if "matroska" in args:
     open(args[-1], "wb").write(bytes({remux_kbps} * 500))
 """)
         (binp / "ffprobe").write_text("#!/bin/sh\necho 4.0\n")
-        (binp / "sleep").write_text("#!/bin/sh\nexit 0\n")
+        slept = self.tmp / "slept.txt"
+        (binp / "sleep").write_text(f"#!/bin/sh\necho \"$1\" >> {slept}\nexit 0\n")
         for f in binp.iterdir():
             f.chmod(0o755)
         return binp, marker
@@ -495,6 +541,8 @@ if "matroska" in args:
             r = subprocess.run(["sh", str(script), "tok"], stdout=fh, stderr=fh,
                                env={**os.environ, "PATH": f"{binp}:{os.environ['PATH']}"}, timeout=30)
         ran = marker.read_text() if marker.exists() else ""
+        self.slept = [s for s in (self.tmp / "slept.txt").read_text().split()
+                      ] if (self.tmp / "slept.txt").exists() else []
         return out.read_text(), ran, r.returncode
 
     def test_a_source_under_the_ceiling_is_served_unchanged(self):
@@ -502,6 +550,7 @@ if "matroska" in args:
         self.assertIn("serving the source unchanged", text)
         self.assertNotIn("-c:v libx264", ran)
         self.assertEqual(rc, 0, "must exit 0 — MediaMTX respawns us, and that IS the re-measurement")
+        self.assertIn("45", self.slept, f"expected the fast re-check cadence, slept: {self.slept}")
 
     def test_a_fat_source_is_clamped(self):
         text, ran, _ = self._run(10000)
@@ -547,6 +596,10 @@ if "matroska" in args:
         self.assertIn("serving the source unchanged", text)
         self.assertNotIn("-c:v libx264", ran)
         self.assertEqual(rc, 0)
+        # …and it re-checks FAR less often, because standing down repeats the measurement once per
+        # respawn and this one attaches a second RTSP reader to the live source every time it runs.
+        self.assertIn("300", self.slept, f"expected the slow re-check cadence, slept: {self.slept}")
+        self.assertNotIn("45", self.slept)
 
     def test_standing_down_pauses_so_the_respawn_is_not_a_tight_loop(self):
         """MediaMTX applies no backoff of its own: exiting immediately would respawn this script in a busy

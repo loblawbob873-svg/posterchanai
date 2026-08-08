@@ -424,9 +424,9 @@ async def _live_stream_count() -> int:
         return _stream_count_cache["n"]
     n = 0
     try:
-        from app.services import settings_store
+        from app.services import settings_store, stream_service
         if (settings_store.get("stream_enabled", "false") or "").strip().lower() == "true":
-            api_port = (settings_store.get("stream_api_port", "9997") or "9997").strip()
+            api_port = stream_service.api_port()   # must match what MediaMTX actually bound
             import httpx
             async with httpx.AsyncClient(timeout=httpx.Timeout(2.5, connect=1.5)) as client:
                 r = await client.get(f"http://127.0.0.1:{api_port}/v3/paths/list")

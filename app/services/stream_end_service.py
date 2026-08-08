@@ -29,7 +29,7 @@ from typing import Optional
 
 from app.database import SessionLocal
 from app.models import UserSetting
-from app.services import nostr_store, settings_store
+from app.services import nostr_store, settings_store, stream_service
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +160,7 @@ async def is_publishing(token: str) -> Optional[bool]:
     must NOT score a strike. Ending a live stream is unrecoverable — the browser only signs a `live` event at
     Go Live, so nothing can put it back.
     """
-    port = (settings_store.get("stream_api_port", "") or "9997").strip()
+    port = stream_service.api_port()          # must match what MediaMTX actually bound
     import httpx
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=2.0)) as client:

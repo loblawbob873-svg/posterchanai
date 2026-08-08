@@ -139,12 +139,6 @@ def _stream_enabled() -> bool:
     return (settings_store.get("stream_enabled", "false") or "").strip().lower() == "true"
 
 
-def _hls_base() -> str:
-    """A direct HLS origin, if the operator configured one. Set = viewers fetch playlists straight from
-    MediaMTX and never pass through this app, which changes what we can know about them."""
-    return (settings_store.get("stream_hls_base", "") or "").strip().rstrip("/")
-
-
 def _user_token(db, user: User) -> str:
     """Stable per-user publish token (unguessable, in the public HLS path). Generated once."""
     row = db.query(UserSetting).filter(UserSetting.user_id == user.id, UserSetting.key == _TOKEN_SETTING).first()
@@ -583,7 +577,7 @@ async def stream_viewers(token: str):
         return JSONResponse({"error": "bad token"}, status_code=400)
     # HLS viewers counted from the proxy (the real headcount); MediaMTX readers only catch RTSP/RTMP/WebRTC.
     pc = _count_viewers(token)
-    api_port = (settings_store.get("stream_api_port", "9997") or "9997").strip()
+    api_port = stream_service.api_port()      # validated the same way the generated config is
     import httpx
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(4.0, connect=2.0)) as client:
@@ -596,17 +590,15 @@ async def stream_viewers(token: str):
     # Drop RTSP readers before counting. RTSP is bound to loopback and exists ONLY so the bitrate clamp can
     # read the source and publish the transcode back, so an rtspSession here is our own ffmpeg, never a
     # person — counting it reported "1 viewer" on every live stream that nobody was watching.
-    # An hlsMuxer is the same kind of phantom, but ONLY when viewers reach us through the proxy: then every
-    # real viewer is already counted in `pc` and the muxer is our own upstream reader, which MediaMTX keeps
-    # alive for its close-after window after the last viewer leaves — reporting "1 viewer" on an empty
-    # stream. It stayed hidden while the clamp always transcoded (the muxer sat on <token>_clamped, which
-    # this endpoint never queries) and reappears whenever the source is served unclamped.
-    # With stream_hls_base set, viewers fetch from MediaMTX directly and never touch the proxy, so `pc` is
-    # always 0 and that muxer is the ONLY evidence anyone is watching — dropping it there would publish
-    # current_participants: 0 to the public NIP-53 event for the whole stream.
-    skip = ("rtspSession", "hlsMuxer") if not _hls_base() else ("rtspSession",)
+    # An hlsMuxer on this path is NOT filtered, deliberately. It is a phantom when viewers come through
+    # the proxy — they are already counted in `pc`, and MediaMTX holds the muxer open for its close-after
+    # window, so an empty stream can report "1 viewer" whenever the source is served unclamped. But
+    # dropping it costs more than it saves: a viewer who reaches MediaMTX's HLS port directly (an operator
+    # fronting :8888 with their own nginx, or stream_hls_base) never touches `_mark_viewer`, so that muxer
+    # is the ONLY evidence anyone is watching, and a 0 here goes into the public NIP-53
+    # current_participants. Over-reporting one viewer beats reporting none while people are watching.
     readers = [x for x in (data.get("readers") or [])
-               if isinstance(x, dict) and x.get("type") not in skip]
+               if isinstance(x, dict) and x.get("type") != "rtspSession"]
     return {"live": bool(data.get("ready")), "viewers": max(len(readers), pc)}
 
 
@@ -637,7 +629,7 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
               else "video/mp4" if path.endswith((".mp4", ".m4s"))
               else "application/octet-stream")
         return Response(status_code=200, media_type=ct)
-    hls_port = (settings_store.get("stream_hls_port", "8888") or "8888").strip()
+    hls_port = stream_service.hls_port()      # validated: a raw value builds an upstream URL
 
     # Viewers always address the PUBLIC token (it's what rides the kind-30311); the clamped transcode is an
     # internal path they never see, so the swap happens here. Segment URLs inside a MediaMTX playlist are
