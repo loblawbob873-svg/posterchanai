@@ -322,6 +322,58 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   `video_free_music=true` makes a video render stop `acestep` (sudo systemctl) to reclaim VRAM,
   restarting it for music. New dep: `sentencepiece` (T5 tokenizer). Turn-key: `./install.sh --video`,
   Docker `POSTERCHANAI_VIDEO=1`. See `docs/VIDEO.md`.
+- **Web Search** (`static/js/client/websearch.js` + `app/routers/websearch.py`; sidebar → Web Search):
+  a front end to this node's SearXNG, plus Save to Notes / Share / summarize a link / an **AI overview**
+  of the results with numbered citations. The whole search lives in MODULE state, not the DOM —
+  `#feed` is shared by every view and app.js blanks it on entry, so leaving and returning repaints
+  query/filters/results/overview/scroll with no refetch. A result opens in an in-app READER with
+  `← Results` (a browser tab is a one-way door in a PWA/APK); `PCWebSearch.readerOpen()` lets the
+  Android back button close it before leaving the view.
+  **Where a node searches is now ONE resolution order** (`search_service.resolve_searxng_url`), shared
+  by the AI's web-search tool, the news digests, the bots (`bot_manager_service` injects the resolved
+  `SEARXNG_URL`) and this screen: the **"Web search enabled"** switch → Admin → Tools → the SearXNG
+  **bundled with this node** → a public instance. That last one is a fallback, not a plan — measured,
+  it 429s a server on both its JSON and HTML endpoints. It replaced a hardcoded `search.poster.place`,
+  so every node that never filled the field in was silently searching through one deployment's box.
+  The bundled instance is `posterchanai-searxng.service` (a systemd unit like every other service
+  here, `--network host`, branded + dark-themed, on 127.0.0.1:8899), installed by DEFAULT on a fresh
+  install, re-run on upgrade, and available as `./install.sh --searxng`; compose gets it from every AI
+  backend profile.
+  **Gotchas, each of which fails silently:** (1) SearXNG ships its **JSON API off**, and with it off
+  every search here is a 403 with an HTML body that every caller reads as "no results" —
+  `search.formats: [html, json]` is the load-bearing line, and it must come from a settings FILE:
+  `secret_key` is the ONLY setting this image maps to an env var, so a `SEARXNG_SEARCH_FORMATS=…`
+  compose service configures nothing at all. Both paths generate from `docker/searxng/settings.yml`.
+  (2) The bundled instance's ENGINE requests go through the proxy's **fallback listener**
+  (`proxy_fallback_port`, default 8119: Tor1 → Tor2 → direct), NOT the main `:8118`, which is Tor-only
+  because torrents share it — pointed there, one Tor outage turns every search into a timeout. Never
+  send torrent traffic to 8119. That is also why the container is `--network host`: from a bridge
+  network there is nothing at the proxy's loopback address. (3) **Only LOOPBACK being exempt from the
+  Tor transport is not enough** — Tor cannot route RFC1918 and the proxy returns a 502 *response*,
+  which `afallback_transport` never retries (it falls back on connect errors only), so an ordinary LAN
+  instance (`http://192.168.0.85:8888`) would fail every request; `_is_local_base` resolves the host
+  and treats private/link-local/`.lan`/`.local` as direct. (4) The probe demands 200 on `/healthz` AND
+  JSON from `/config`: `status < 500` let an unrelated listener's 404 pass and the node adopted it as
+  its search backend. (5) `searxng_enabled` reads a BLANK stored value as ON — `get_bool` treats `""`
+  as false, and a blank row would turn search off node-wide with nothing said; it is also checked
+  FIRST in the bots' resolver, or the app would stop searching while every bot carried on. (6) The
+  bots' copy of the resolved URL is **sticky for the process**: it feeds `NO_PROXY` and therefore
+  `_spec_sig`, so a flapping 5-minute probe would restart every running bot, mid-stream, on a timer —
+  and only a PRIVATE host may join `NO_PROXY`, since the public fallback landing there would send
+  every bot search direct from the node's real IP. (7) `/overview` re-runs the search server-side
+  rather than trusting client-supplied results, and **`fetch_url_content` re-checks the SSRF guard on
+  every REDIRECT HOP** (it followed redirects with only the first URL validated — one 302 reached
+  169.254.169.254 and the body came back to the caller and the model). (8) 8888 was the obvious port
+  for the bundled instance and is MediaMTX's HLS port on every streaming node. (9) The bind address
+  comes from **`GRANIAN_HOST`** — the image serves through granian, which ignores both
+  `SEARXNG_BIND_ADDRESS` and `server.bind_address`; measured, the first version listened on `*:8899`
+  with the limiter off. (10) The installer re-decides the outgoing-proxy block on EVERY run: on a
+  fresh install it probes before the app's proxy exists, so a frozen answer pins the node to direct
+  engine requests forever (and the container chowns its config dir, so the rewrite needs it back).
+  (11) A stored `search.poster.place` — the retired hardcoded default, seeded on older installs — is
+  treated as "not configured" rather than honoured, since the box behind it is gone.
+  See `docs/WEBSEARCH.md`; `tests/test_websearch.py` + `scripts/check_websearch_mobile.py` (the
+  generic `check_client_mobile.py` never opens this screen).
 - **Notes** (`static/js/client/notes.js` + `joplin.js`; sidebar → Notes, ☰ More on mobile): private
   encrypted note taking, offline-first. **ONE kind-30078 event PER NOTE** (`d=pcai:note:<id>`,
   folders `pcai:notefolder:<id>`, both tagged `l=pcai-notes` so the library is one indexed

@@ -39,6 +39,7 @@ source "$INSTALL_DIR/voice.sh"
 source "$INSTALL_DIR/turn.sh"
 source "$INSTALL_DIR/stream.sh"
 source "$INSTALL_DIR/sandbox.sh"
+source "$INSTALL_DIR/searxng.sh"
 
 # Handle --help and --packages options
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
@@ -70,6 +71,13 @@ fi
 # Add-on: install just the voice-cloning deps into the existing torch venv.
 if [ "$1" = "--voice" ]; then
     setup_voice_deps
+    exit $?
+fi
+
+# Add-on: run this node's own SearXNG (private metasearch) — what the AI's web search, the news
+# digests, the bots and the Web Search screen all query. Needs docker/podman.
+if [ "$1" = "--searxng" ]; then
+    setup_searxng
     exit $?
 fi
 
@@ -277,6 +285,12 @@ main() {
     # Shipped by DEFAULT so streaming is a single Admin toggle (no separate install step). Non-fatal —
     # a download hiccup just means streaming stays off until retried with ./install.sh --stream.
     setup_stream_server || print_warning "MediaMTX (streaming) download did not complete; enable later with ./install.sh --stream"
+
+    # Step 9d2: This node's own SearXNG — the metasearch behind the AI's web-search tool, the news
+    # digests, the bots and the Web Search screen. Shipped by DEFAULT (like MediaMTX and TURN) so a
+    # fresh node searches for itself instead of falling back to a public instance that rate-limits
+    # servers. Non-fatal: no docker just means Admin → Tools decides where this node searches.
+    setup_searxng || print_warning "SearXNG not installed (docker missing?); set Admin → Tools → SearXNG URL, or run ./install.sh --searxng later"
 
     # Step 9e: Build the built-in Pion TURN relay (voice/video-call NAT traversal). Shipped by DEFAULT so
     # calls are turnkey (no separate ./install.sh --turn step). Non-fatal — a missing Go toolchain just leaves

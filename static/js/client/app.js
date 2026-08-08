@@ -206,7 +206,7 @@
    * standalone install is not a degraded PosterChan, it is a Nostr client, and it should read like
    * one. Anyone who wants the rest can name an instance in Settings and they all come back. */
   const INSTANCE_VIEWS = new Set(['ai', 'translate', 'markets', 'news', 'torrents', '4chan',
-                                  'stats', 'meme', 'admin']);
+                                  'stats', 'meme', 'admin', 'websearch']);
   // Settings panes with nothing behind them without a server: server-side mail, the Telegram bridge,
   // the fediverse links, and API keys for the instance's AI API.
   const INSTANCE_SETTINGS_TABS = new Set(['mail', 'telegram', 'social', 'keys']);
@@ -1112,7 +1112,7 @@
       compose({ text: lines.join('\n\n') });
       return true;
     }
-    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','translate','news']);
+    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','translate','news','websearch']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
   }
@@ -1987,6 +1987,10 @@
           // Notes' folder drawer is an overlay too, and only exists on a phone — i.e. only where
           // this button does. Without this, Back left Notes with the drawer still standing open.
           if(window.PCNotes && PCNotes.drawerOpen && PCNotes.drawerOpen()){ try{ PCNotes.closeDrawer(); }catch(_){} return; }
+          // Web Search's reader is a sub-screen inside the view, not a view of its own, so Back must
+          // return to the results — otherwise it leaves the whole screen with the article still up
+          // and the results (which are the thing you were working through) gone.
+          if(window.PCWebSearch && PCWebSearch.readerOpen && PCWebSearch.readerOpen()){ try{ PCWebSearch.closeReader(); }catch(_){} return; }
           if(window.PCVault && PCVault.drawerOpen && PCVault.drawerOpen()){ try{ PCVault.closeDrawer(); }catch(_){} return; }
           const mini=document.getElementById('mini-player'); if(mini && mini.classList.contains('on')){ try{ closeMini(); }catch(_){} return; }
           if(typeof VIEW!=='undefined' && VIEW && VIEW!=='home'){ try{ history.back(); }catch(_){ switchView('home'); } return; }
@@ -3047,7 +3051,7 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', '4chan':'4chan', news:'News 🗞️', notes:'Notes 📝', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', '4chan':'4chan', news:'News 🗞️', websearch:'Web Search 🔎', notes:'Notes 📝', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
     { const tl = (v==='home'||v==='global'||v==='trending');   // the three views that carry the .tl-tabs header
@@ -3097,6 +3101,7 @@
     if (VIEW==='repos') return renderRepos();
     if (VIEW==='4chan') return render4chan();
     if (VIEW==='news'){ if(window.PCNews) return window.PCNews.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
+    if (VIEW==='websearch'){ if(window.PCWebSearch) return window.PCWebSearch.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='markets'){ if(window.PCMarkets) return window.PCMarkets.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='meme'){ if(window.PCMeme) return window.PCMeme.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='stats'){ if(window.PCStats) return window.PCStats.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
@@ -10789,8 +10794,9 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['ai','ai','PosterChan AI'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['settings','gear','Settings'],['logout','logout','Logout']]
+    const items=[['ai','ai','PosterChan AI'],['websearch','search','Web Search'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['settings','gear','Settings'],['logout','logout','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
+                   && !(window.PC_NOSTR_ONLY && v==='websearch')   // the search runs on the instance, so it needs one
                    && !(v==='__golive' && CFG.stream_enabled===false));   // hide AI+Translate in Nostr-only; Go Live only where the node streams
     const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
     // Live streams / calls ALWAYS show (even 0) so the counts are visible on phone too — matches the
@@ -19846,6 +19852,7 @@
     ['f', 'blossom',       'Files'],
     ['c', 'chat',          'Chat'],
     ['w', 'news',          'News'],
+    ['q', 'websearch',     'Web Search'],
     ['k', 'markets',       'Markets'],
     ['r', 'meme',          'Meme Builder'],
     ['u', 'stats',         'Server Stats'],

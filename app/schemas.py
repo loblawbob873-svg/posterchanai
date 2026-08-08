@@ -238,6 +238,10 @@ class SettingsResponse(BaseModel):
     # VRAM management
     vram_mode: str = "shared"  # "shared" (swap models) or "dedicated" (keep both)
     searxng_url: str = ""
+    # The OFF switch for web search on this node. It exists because clearing searxng_url no longer
+    # means "don't search": resolution falls through to a bundled instance and then to a public one,
+    # so a blank field would send every query — the user's, the AI's, the bots' — to a third party.
+    searxng_enabled: bool = True
     torrent_site_url: str = ""  # TorrentGalaxy or compatible site URL
     tts_voice: str = "en-GB-SoniaNeural"
     tts_rate: str = "+5%"
@@ -497,6 +501,11 @@ class SettingsResponse(BaseModel):
     proxy_enabled: str = "true"
     proxy_listen_host: str = "127.0.0.1"
     proxy_listen_port: str = "8118"
+    # Second listener on the same proxy process: Tor1 → Tor2 → DIRECT. Used by this node's own
+    # SearXNG (which has no fallback of its own, so a Tor outage would otherwise make every search —
+    # AI web lookups, news digests, the bots, Web Search — time out and read as "no results").
+    # NEVER point torrent traffic at it: the direct fallback is exactly what proxy_listen_port refuses.
+    proxy_fallback_port: str = "8119"
     # SOCKS target the HTTP proxy forwards to (the built-in Tor). Must be non-empty or the proxy
     # subprocess won't start ("no SOCKS5 target host configured"), defeating proxy_enabled.
     proxy_socks_host: str = "127.0.0.1"

@@ -1,0 +1,57 @@
+# PosterChanAI's bundled SearXNG — ONE settings file for both install paths:
+#
+#   * host install  — scripts/install/searxng.sh copies this to searxng/settings.yml (once), fills in
+#                     a generated secret and the outgoing-proxy line, and the systemd unit mounts it.
+#   * compose       — mounted read-only at /etc/searxng/settings.yml by the `searxng` service.
+#
+# It is a FILE and not a set of environment variables because this image maps exactly ONE setting to
+# an env var (`secret_key` ← SEARXNG_SECRET, searx/settings_defaults.py). `SEARXNG_SEARCH_FORMATS`
+# and friends do nothing — verified by reading the image, after a first version of this shipped
+# relying on them, which would have left the JSON API off (i.e. every search 403ing) on every compose
+# install while the app happily selected the instance.
+use_default_settings: true
+
+general:
+  instance_name: "PosterChan Search"
+  # This instance is not a public one — it exists for this node's own app. Nothing to donate to and
+  # no issue tracker of ours to point at.
+  donation_url: false
+  enable_metrics: false
+
+server:
+  # Replaced by the installer on a host install; supplied as SEARXNG_SECRET by compose. It signs
+  # preference cookies for an instance that only this node talks to.
+  secret_key: "ultrasecretkey"
+  # NO bind_address here. This image serves through granian, which binds from GRANIAN_HOST/
+  # GRANIAN_PORT and ignores both `server.bind_address` and SEARXNG_BIND_ADDRESS — measured: a
+  # settings file saying 0.0.0.0 and an env var saying 127.0.0.1 produced `*:8899`, i.e. the host
+  # install was listening on every interface of the box with the limiter off. The host unit sets
+  # GRANIAN_HOST=127.0.0.1; compose leaves the image's default (reachable by sibling containers only,
+  # since the service publishes no host port). Two places claiming to set the bind address is how one
+  # of them silently loses.
+  # OFF deliberately: the only client is this node's app. The limiter is exactly what makes PUBLIC
+  # instances answer a server with 429, which is the problem a bundled instance exists to solve.
+  limiter: false
+  image_proxy: true
+
+search:
+  # THE load-bearing line. SearXNG ships JSON OFF, and with it off every search this app makes gets a
+  # 403 with an HTML body — which every caller (AI web lookups, news digests, the bots, the Web
+  # Search screen) reads as "no results" rather than as a misconfiguration.
+  formats:
+    - html
+    - json
+  safe_search: 0
+  autocomplete: "duckduckgo"
+
+ui:
+  # Dark, to match the client it serves. `simple_style: auto` would follow the *viewer's* OS, which
+  # for an operator glancing at this instance is a coin flip.
+  default_theme: simple
+  theme_args:
+    simple_style: dark
+  center_alignment: true
+
+# @PC_OUTGOING@ — the installer replaces this marker with the `outgoing.proxies` block pointing at
+# this node's HTTP proxy (Tor1 → Tor2 → direct). Left as a comment when there is no proxy to use, and
+# on compose, where the app's proxy lives inside a different container's network namespace.

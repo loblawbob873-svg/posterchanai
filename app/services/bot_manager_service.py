@@ -119,6 +119,45 @@ def _nip05_full(v) -> str:
     return f"{v}@{dom}" if dom else v
 
 
+_searxng_env: dict = {"url": ""}
+
+
+def _bot_searxng_url() -> str:
+    """The SearXNG a spawned bot is told to use.
+
+    The bot must search wherever the NODE searches: `_GLOBAL_ENV_MAP` copies the raw `searxng_url`
+    setting, which is EMPTY on a node relying on the default — and an empty SEARXNG_URL makes
+    botframework/searxng.py print "SEARXNG_URL not configured" and return nothing, so the bot's web
+    search silently dies while the app's keeps working.
+
+    But this value is also part of `_spec_sig` (directly, and through the NO_PROXY it derives), so
+    whatever comes out of here decides whether the reconcile loop RESTARTS every running bot. Handing
+    it the live 5-minute probe meant one flaky probe killed every bot mid-stream, on a timer. So a
+    resolved BUNDLED instance is remembered for the life of the process: the value then changes only
+    when an admin edits the setting (which should restart them) or the app restarts.
+    """
+    try:
+        from app.services.search_service import local_searxng_url, search_enabled, DEFAULT_SEARXNG_URL
+        # FIRST, before anything can short-circuit it: "Web search enabled" is off means this node
+        # makes no search requests, and the bots are this node. Checked after the configured URL (or
+        # after the sticky cache) it would stop the app searching while every bot carried on.
+        if not search_enabled():
+            return ""
+    except Exception as e:
+        logger.warning("bots: could not resolve SearXNG URL: %s", e)
+        return ""
+    cfg = (settings_store.get("searxng_url") or "").strip().rstrip("/")
+    if cfg:
+        return cfg
+    if _searxng_env["url"]:
+        return _searxng_env["url"]
+    local = local_searxng_url()
+    if local:
+        _searxng_env["url"] = local     # sticky: a probe flap must not respawn every bot
+        return local
+    return DEFAULT_SEARXNG_URL          # NOT cached — a bundled instance installed later wins
+
+
 def _load_global_env():
     """Base env shared by every bot, derived from the global bots_* settings.
 
@@ -156,6 +195,9 @@ def _load_global_env():
         env["POSTERCHANAI_API_ENDPOINT"] = server
         env["OPENAI_ENDPOINT"] = server + "/api/chat/completions"
     env["USE_POSTERCHANAI"] = "true"   # always use the unified server (native diffusers)
+    resolved = _bot_searxng_url()
+    if resolved:
+        env["SEARXNG_URL"] = resolved
     # SQL_* base creds (per-bot SQL_DATABASE is added in _build_env when sql_database is set)
     env["_SQL_USER"] = settings_store.get("bots_sql_user", "")
     env["_SQL_PASS"] = settings_store.get("bots_sql_pass", "")
@@ -301,14 +343,21 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
         # add the hostnames of the configured internal endpoints so a LAN SearXNG/app server is
         # reached directly. (requests/httpx NO_PROXY matches by host, not CIDR — hence explicit
         # hosts rather than a subnet.)
+        # …but ONLY the ones that really are internal. This list used to take whatever host those
+        # variables named, and SEARXNG_URL can now resolve to a PUBLIC instance (the last-resort
+        # fallback) — which would have put a third-party search engine on the bypass list, sending
+        # every bot search direct from this node's real IP, deanonymising it and drawing exactly the
+        # rate-limiting that public instances apply to servers.
         from urllib.parse import urlparse
+        from app.services.search_service import _is_local_base
         no_proxy = ["localhost", "127.0.0.1", "::1"]
         for url_key in ("SEARXNG_URL", "POSTERCHANAI_API_ENDPOINT", "OPENAI_ENDPOINT"):
             u = env.get(url_key)
             if not u:
                 continue
-            host = urlparse(u if "://" in u else "http://" + u).hostname
-            if host and host not in no_proxy:
+            full = u if "://" in u else "http://" + u
+            host = urlparse(full).hostname
+            if host and host not in no_proxy and _is_local_base(full):
                 no_proxy.append(host)
         env["NO_PROXY"] = env["no_proxy"] = ",".join(no_proxy)
 

@@ -417,7 +417,12 @@ def init_db():
             "stream_rtsp_port": os.environ.get("POSTERCHANAI_STREAM_RTSP_PORT", "8554"),
             # VRAM management
             "vram_mode": os.environ.get("POSTERCHANAI_VRAM_MODE", "shared"),  # "shared" (swap models) or "dedicated" (keep both)
-            "searxng_url": "https://search.poster.place",
+            # EMPTY on purpose — resolved at search time by search_service.resolve_searxng_url()
+            # (Admin setting → the SearXNG bundled with this node → a public instance). Seeding a
+            # URL here is how every node that never touched the field ended up searching through one
+            # particular deployment's box, which then became a single point of failure for the AI's
+            # web search, the news digests and the bots.
+            "searxng_url": "",
             "torrent_site_url": "",  # TorrentGalaxy or compatible site URL
             "tts_voice": "en-GB-SoniaNeural",
             "tts_rate": "+5%",
@@ -561,6 +566,8 @@ When asked to write or modify code or files:
             "proxy_enabled": os.environ.get("POSTERCHANAI_PROXY_ENABLED", "true"),         # Enable built-in HTTP proxy
             "proxy_listen_host": "127.0.0.1", # HTTP proxy listen address
             "proxy_listen_port": "8118",      # HTTP proxy listen port
+            # Tor→Tor→DIRECT listener (search only — never torrents). See schemas.SettingsResponse.
+            "proxy_fallback_port": "8119",
             "proxy_socks_host": os.environ.get("POSTERCHANAI_PROXY_SOCKS_HOST", "127.0.0.1"),  # SOCKS5 target host (default: local built-in Tor)
             "proxy_socks_port": "9052",       # SOCKS5 target port
             # Built-in Tor client — the SOCKS5 backend the HTTP proxy forwards to (required for the

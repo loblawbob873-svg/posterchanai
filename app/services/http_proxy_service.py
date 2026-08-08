@@ -43,11 +43,18 @@ class HttpToSocksProxy:
         socks_host: str = "127.0.0.1",
         socks_port: int = 9052,
         socks_ports: Optional[list] = None,
+        allow_direct: bool = False,
     ):
         self.listen_host = listen_host
         self.listen_port = listen_port
         self.socks_host = socks_host
         self.socks_port = socks_port
+        # Try Tor first and, if EVERY circuit fails, connect DIRECTLY. Off by default and it must stay
+        # that way for the main listener: torrent traffic goes through here, and a silent direct
+        # connection there is an IP leak. It exists for the second listener (see `--fallback-port`),
+        # whose clients — this node's own SearXNG — would rather search from the node's own address
+        # than not search at all.
+        self.allow_direct = bool(allow_direct)
         # SOCKS backends to load-balance across (one per local Tor daemon). Defaults to the single
         # `socks_port`. Tor-ONLY: if every backend fails we raise (never fall back to a direct
         # connection) so torrent traffic can't leak the real IP.
@@ -329,7 +336,15 @@ class HttpToSocksProxy:
                 self._record(label, False)
                 tried.append(f"Tor[{label}]:{sp}")
                 logger.debug(f"[PROXY] Tor[{label}]:{sp} failed for {host}:{port}: {e}")
-        # every Tor circuit failed — name them so the failure is attributable (the relay then tries direct)
+        # Every Tor circuit failed. On the DIRECT-FALLBACK listener, connect straight out rather than
+        # failing the request; anywhere else, raise — named backends so the failure is attributable
+        # (the relay then tries direct).
+        if self.allow_direct:
+            logger.warning(f"[PROXY] {host}:{port} — all Tor backends failed ({', '.join(tried)}: {last_err}); "
+                           f"connecting DIRECT (fallback listener)")
+            rw = await asyncio.open_connection(host, port)
+            self._record("direct", True)
+            return rw
         raise Exception(f"all Tor backends failed ({', '.join(tried)}): {last_err}")
 
     def _record(self, label, ok):
@@ -491,20 +506,26 @@ def start_http_proxy_process(
     socks_host: str = "127.0.0.1",
     socks_port: int = 9052,
     socks_ports: Optional[list] = None,
+    fallback_port: int = 0,
 ) -> subprocess.Popen:
     """Spawn the proxy as a separate process. Idempotent (reuses a live child). `socks_ports` (one
-    port per local Tor daemon) is the load-balance set; defaults to the single `socks_port`."""
+    port per local Tor daemon) is the load-balance set; defaults to the single `socks_port`.
+    `fallback_port` additionally opens the Tor→Tor→DIRECT listener (0 = don't)."""
     global _proxy_process
     if _proxy_process and _proxy_process.poll() is None:
         return _proxy_process
     ports_csv = ",".join(str(p) for p in (socks_ports or [socks_port]))
-    _proxy_process = subprocess.Popen([
+    argv = [
         sys.executable, os.path.abspath(__file__),
         "--listen-host", str(listen_host), "--listen-port", str(listen_port),
         "--socks-host", str(socks_host), "--socks-ports", ports_csv,
-    ])
+    ]
+    if fallback_port:
+        argv += ["--fallback-port", str(fallback_port)]
+    _proxy_process = subprocess.Popen(argv)
     logger.info(f"HTTP proxy subprocess started (pid {_proxy_process.pid}) on "
-                f"{listen_host}:{listen_port} → SOCKS5 {socks_host}:[{ports_csv}]")
+                f"{listen_host}:{listen_port} → SOCKS5 {socks_host}:[{ports_csv}]"
+                + (f" (+ direct-fallback listener on {fallback_port})" if fallback_port else ""))
     return _proxy_process
 
 
@@ -529,6 +550,8 @@ def _run_standalone():
     parser.add_argument("--socks-host", default="127.0.0.1")
     parser.add_argument("--socks-port", type=int, default=9052)
     parser.add_argument("--socks-ports", default="", help="CSV of SOCKS ports to load-balance across (Tor daemons)")
+    parser.add_argument("--fallback-port", type=int, default=0,
+                        help="also listen here with Tor→Tor→DIRECT fallback (0 = don't)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [http-proxy] %(message)s")
     _specs = [p.strip() for p in args.socks_ports.split(",") if p.strip()] or [args.socks_port]
@@ -536,9 +559,34 @@ def _run_standalone():
         listen_host=args.listen_host, listen_port=args.listen_port,
         socks_host=args.socks_host, socks_ports=_specs,
     )
+    # The second listener, in the SAME process: same Tor backends and round-robin, but it falls back
+    # to a direct connection when every circuit is down. A separate PORT and not a flag on the main
+    # one, because who may connect directly is the entire distinction — torrents must never reach it.
+    fallback = None
+    if args.fallback_port and args.fallback_port != args.listen_port:
+        fallback = HttpToSocksProxy(
+            # LOOPBACK, always — never `args.listen_host`. The main proxy is deliberately bindable to
+            # a LAN address (a shared proxy for other nodes), but this one CONNECTS DIRECTLY when Tor
+            # is down: on a LAN address that is an open proxy anyone on the network can use to reach
+            # the internet from this box. Its only client is this node's own SearXNG, which runs in
+            # the host namespace precisely so loopback is enough.
+            listen_host="127.0.0.1", listen_port=args.fallback_port,
+            socks_host=args.socks_host, socks_ports=_specs, allow_direct=True,
+        )
 
     async def _serve():
         await proxy._start_server()
+        if fallback:
+            # NEVER fatal. This listener is a convenience for search; the one above carries the
+            # node's whole outbound stack, and a busy port (or a bad `proxy_fallback_port`) taking
+            # BOTH down would turn "search has no direct fallback" into "nothing has a proxy at all".
+            try:
+                await fallback._start_server()
+                asyncio.create_task(fallback._server.serve_forever())
+            except Exception as e:
+                logger.warning("[PROXY] direct-fallback listener on %s did not start (%s) — searches "
+                               "will use whatever Admin → Tools points at, through the Tor-only proxy",
+                               fallback.listen_port, e)
         await proxy._server.serve_forever()
 
     try:
@@ -574,9 +622,15 @@ def start_from_settings() -> bool:
     if _ss.get_bool("tor_enabled") and _ss.get_bool("tor2_enabled"):
         _l2 = ((_ss.get("tor2_exit_nodes", "{ca}") or "{ca}").strip().strip("{}").split(",")[0] or "tor2")
         _socks_ports.append(f"{_ss.get_int('tor2_socks_port', 9062)}:{_l2}")
+    # Second listener: Tor1 → Tor2 → DIRECT. This is what the node's own SearXNG points at, so a
+    # search rides Tor when Tor is up and still works when it isn't — SearXNG has no fallback of its
+    # own, so without this a Tor outage turns every search (AI web lookups, news, the bots, the Web
+    # Search screen) into a timeout that reads as "no results". Never used by torrents, which is why
+    # it is a separate PORT rather than a flag on the one above.
+    _fport = _ss.get_int("proxy_fallback_port", _pport + 1)
     start_http_proxy_process(
         listen_host=_ss.get("proxy_listen_host", "127.0.0.1"), listen_port=_pport,
-        socks_host=socks_host, socks_ports=_socks_ports)
-    logger.info("[PROXY] built-in HTTP proxy (subprocess) started on port %s -> SOCKS %s:%s",
-                _pport, socks_host, _socks_ports)
+        socks_host=socks_host, socks_ports=_socks_ports, fallback_port=_fport)
+    logger.info("[PROXY] built-in HTTP proxy (subprocess) started on port %s -> SOCKS %s:%s "
+                "(direct-fallback listener on %s)", _pport, socks_host, _socks_ports, _fport)
     return True

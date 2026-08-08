@@ -94,6 +94,14 @@ run_updates() {
     # 1c) ACE-Step music server (if installed): git pull + uv sync + re-swap torch + restart.
     update_music_server
 
+    # 1d) This node's own SearXNG. An UPGRADE is the path that matters most here: an existing install
+    # is exactly the one whose Admin → Tools points at some other box (or at nothing), and search —
+    # the AI's web lookups, the news digests, the bots, Web Search — silently returns nothing the day
+    # that box goes away. Idempotent: it keeps an existing settings.yml and just re-runs the
+    # container, and it pulls a newer image while it's here. Non-fatal (no docker = no bundled
+    # instance; the node falls back to whatever Admin → Tools says).
+    setup_searxng || print_warning "SearXNG setup skipped — Admin → Tools → SearXNG URL still decides where this node searches"
+
     # 2) Telegram Bot API server (rebuild to the latest upstream).
     if command -v telegram-bot-api >/dev/null 2>&1; then
         echo ""

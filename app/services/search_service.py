@@ -1,8 +1,10 @@
 import httpx
 import ipaddress
 import logging
+import os
 import re
 import socket
+import time
 from typing import Optional
 from urllib.parse import urlparse
 from sqlalchemy.orm import Session
@@ -10,6 +12,207 @@ from bs4 import BeautifulSoup
 from app.services import settings_store
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------------------------
+# Which SearXNG a node searches. ONE resolution order, used by EVERY consumer — the AI's web-search
+# tool, the news digests, the Web Search screen, and the bots (bot_manager_service hands them the
+# resolved value as SEARXNG_URL, so a bot can never end up searching somewhere else):
+#
+#   1. `searxng_url` in Admin → Tools, if set.
+#   2. A SearXNG BUNDLED WITH THIS NODE, if one answers. `./install.sh --searxng` runs one, and the
+#      docker-compose `searxng` profile is the same thing for container installs. Two candidates
+#      because the app is either on the host (loopback) or in the compose network (service name).
+#   3. A public instance, as a last resort.
+#
+# Step 3 is a fallback, not a plan: measured against this default from a server, it answers 429 Too
+# Many Requests to both its JSON and its HTML endpoint — public instances rate-limit clients that
+# don't look like a browser. That is exactly why a bundled instance sits in front of it.
+#
+# NOTE what is NOT here: this used to default to `https://search.poster.place`, hardcoded, so every
+# node that never filled the field in silently searched through one particular deployment's box.
+DEFAULT_SEARXNG_URL = "https://searx.tiekoetter.com"
+# 8899 and not SearXNG's own 8080 or the obvious 8888: 8888 is MediaMTX's HLS port on any node that
+# streams, i.e. every default install.
+DEFAULT_LOCAL_SEARXNG_PORT = "8899"
+# The installer writes the port it actually used here (repo-relative), because an env var set at
+# INSTALL time never reaches the app SERVICE: `POSTERCHANAI_SEARXNG_PORT=9000 ./install.sh --searxng`
+# published a container the app then looked for on 8899, found nothing, and quietly fell through to
+# the public instance while a healthy local one sat unused.
+_PORT_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                          "searxng", "port")
+_LOCAL_PROBE_TTL = 300           # re-probe every 5 minutes: a bundled instance can be started later
+_local_probe: dict = {"ts": 0.0, "url": ""}
+# host -> (ts, is_private). See _is_local_base: the lookup is blocking and sits on the search path.
+_DNS_TTL = 3600
+_dns_cache: dict = {}
+
+# The default this replaced. A node that still has it stored never CHOSE it — it was seeded by an
+# older install — and the box behind it is retired, so honouring it means every search on that node
+# fails with nothing to say why. Treated as "not configured" (the bundled instance then wins), rather
+# than deleted: mutating an operator's settings across every node on upgrade is a bigger hammer than
+# this needs, and the field still shows what is stored.
+LEGACY_SEARXNG_URLS = ("https://search.poster.place", "http://search.poster.place")
+
+
+def _local_port() -> str:
+    """The port the bundled instance was actually installed on: the env var if the app was given one,
+    else what the installer recorded, else the default."""
+    env = (os.environ.get("POSTERCHANAI_SEARXNG_PORT") or "").strip()
+    if env.isdigit():
+        return env
+    try:
+        with open(_PORT_FILE) as fh:
+            p = fh.read().strip()
+            if p.isdigit():
+                return p
+    except Exception:
+        pass
+    return DEFAULT_LOCAL_SEARXNG_PORT
+
+
+def local_searxng_urls() -> tuple:
+    """Where a bundled instance could be: this host (systemd/docker), or a sibling compose service."""
+    return (f"http://127.0.0.1:{_local_port()}", "http://searxng:8080")
+
+
+def _is_searxng(base: str) -> bool:
+    """Is a SearXNG — one that can answer THIS app — actually listening there?
+
+    Two requests, and both are load-bearing:
+
+      /healthz must answer **200**. `status < 500` was not enough: an unrelated listener (a reverse
+      proxy, a stale container) 404s, which passed, and the node then adopted it as its search
+      backend for the next five minutes — with the public fallback never tried, because the probe had
+      "succeeded".
+
+      /config must answer JSON. That is what distinguishes SearXNG from anything else that happens to
+      have a health endpoint, and it is nearly the same question as "will format=json work", which is
+      the one thing this app needs from an instance and the one SearXNG ships turned OFF.
+    """
+    try:
+        if httpx.get(f"{base}/healthz", timeout=1.5).status_code != 200:
+            return False
+        r = httpx.get(f"{base}/config", timeout=2.5)
+        if r.status_code != 200:
+            return False
+        return "json" in (r.headers.get("content-type") or "").lower()
+    except Exception:
+        return False
+
+
+def local_searxng_url() -> str:
+    """The bundled instance's URL if one is answering, else "". Cached, so this costs a request
+    every few minutes at most.
+
+    Deliberately SYNC (and called off-thread from async paths): the one caller that cannot await is
+    the bot manager, which builds each bot's environment at spawn time — and a bot searching
+    somewhere other than its own node is precisely the drift this resolution order exists to stop.
+    """
+    now = time.time()
+    if now - _local_probe["ts"] < _LOCAL_PROBE_TTL:
+        return _local_probe["url"]
+    found = ""
+    for base in local_searxng_urls():
+        if _is_searxng(base):
+            found = base
+            break
+    _local_probe.update({"ts": now, "url": found})
+    return found
+
+
+def search_enabled() -> bool:
+    """Is this node allowed to search at all?
+
+    An explicit switch, because clearing the URL no longer means "off": resolution now ends at a
+    public instance, so an operator who blanked the field to stop this node making external search
+    requests would instead have had every query — theirs, the AI's, the bots' — sent to an
+    unaffiliated third party. Off = `web_search` returns nothing, exactly as an empty URL used to.
+
+    An EMPTY stored value counts as "not set", i.e. ON. `settings_store.get_bool` takes the default
+    only for None and reads "" as FALSE — and a blank row is exactly what a legacy-table migration or
+    a half-written setting leaves behind, which would switch web search off across a node with
+    nothing said anywhere. Off has to be something an admin chose.
+    """
+    v = settings_store.get("searxng_enabled", None)
+    if v is None or str(v).strip() == "":
+        return True
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _configured_url() -> str:
+    """Admin -> Tools, normalised — and EMPTY when it still holds the retired hardcoded default."""
+    v = (settings_store.get("searxng_url") or "").strip().rstrip("/")
+    return "" if v in LEGACY_SEARXNG_URLS else v
+
+
+def resolve_searxng_url() -> str:
+    """The base URL to search, by the order documented above. "" when search is turned off."""
+    if not search_enabled():
+        return ""
+    configured = _configured_url()
+    if configured:
+        return configured
+    return local_searxng_url() or DEFAULT_SEARXNG_URL
+
+
+def _is_local_base(base: str) -> bool:
+    """Is this SearXNG somewhere the Tor proxy cannot reach — this machine, this LAN, or a sibling
+    container?
+
+    NOT just loopback. Tor cannot route RFC1918, and the built-in proxy answers an unroutable target
+    with a 502 **response**, which `afallback_transport` does not retry direct (it only falls back on
+    connect-level failures, deliberately, so a delivered request is never re-sent). So a perfectly
+    ordinary `http://192.168.0.85:8888` — the shape of every self-hosted instance, including this
+    deployment's own — would have gone through Tor and failed every single time, reported to the user
+    as "no results".
+    """
+    h = (urlparse(base).hostname or "").lower()
+    if not h:
+        return False
+    if h in ("localhost", "searxng") or h.endswith(".local") or h.endswith(".lan"):
+        return True
+    try:
+        ip = ipaddress.ip_address(h)
+    except ValueError:
+        # A NAME. Resolve it: split-horizon DNS is normal here (our own public names answer with a
+        # LAN address from inside), and a name that lands on a private IP is a private target.
+        #
+        # MEMOIZED, because this runs on the search path and `gethostbyname` BLOCKS: on the single
+        # uvicorn worker an unreachable resolver would stall every other request in flight, per
+        # search. Cached both ways for an hour — a SearXNG host moving between the LAN and the
+        # internet is not a thing that happens mid-session.
+        now = time.time()
+        hit = _dns_cache.get(h)
+        if hit and now - hit[0] < _DNS_TTL:
+            return hit[1]
+        try:
+            ip = ipaddress.ip_address(socket.gethostbyname(h))
+        except Exception:
+            _dns_cache[h] = (now, False)
+            return False        # unresolvable → treat as remote; the proxy is the safer default
+        verdict = ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+        _dns_cache[h] = (now, verdict)
+        return verdict
+    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+
+
+def search_transport(base: str):
+    """The httpx transport a SearXNG request should use.
+
+    A REMOTE instance is reached the way the rest of this app reaches the internet: through the
+    built-in HTTP proxy — which round-robins Tor1 and Tor2 — falling back to a direct connection when
+    the proxy can't be reached (proxy_utils.afallback_transport). Search queries are the last thing
+    that should carry this node's IP, and it is also what keeps a public instance from rate-limiting
+    one address into a 429.
+
+    A LOCAL or LAN instance is reached DIRECTLY — see _is_local_base for why that is not merely an
+    optimisation. For a bundled instance the hop that needs anonymising is SearXNG → the engines,
+    which is configured on the SearXNG side (see scripts/install/searxng.sh).
+    """
+    from app.services.proxy_utils import afallback_transport
+    if _is_local_base(base):
+        return httpx.AsyncHTTPTransport(retries=0)
+    return afallback_transport()
 
 
 def own_media_hosts() -> set:
@@ -134,8 +337,30 @@ class SearchService:
         self._load_settings()
 
     def _load_settings(self):
-        settings = settings_store.all_settings()
-        self.searxng_url = settings.get("searxng_url", "https://search.poster.place")
+        # The CONFIGURED value only. The bundled-instance probe happens per search (in `base()`), off
+        # the event loop — resolving it here would put a network probe in every constructor, including
+        # the many that never search at all (fetch_url_content, extract_urls).
+        #
+        # Trailing slash stripped in _configured_url, once: every call site builds f"{base}/search",
+        # so a URL pasted from a browser (which always carries the slash) would otherwise request
+        # `//search` — served by some instances and 404'd by others, i.e. a config that works on one
+        # node and not the next. It also drops the retired hardcoded default (see LEGACY_SEARXNG_URLS).
+        self.searxng_url = _configured_url()
+
+    async def base(self) -> str:
+        """Where THIS search goes: nowhere when search is switched off, else the configured instance,
+        else the bundled one, else the public fallback. The probe is sync, so it runs off-thread —
+        1.5s on the single uvicorn worker is not a thing to spend on a cold cache."""
+        if not search_enabled():
+            return ""
+        if self.searxng_url:
+            return self.searxng_url
+        import asyncio as _asyncio
+        try:
+            local = await _asyncio.to_thread(local_searxng_url)
+        except Exception:
+            local = ""
+        return local or DEFAULT_SEARXNG_URL
 
     async def web_search(
         self,
@@ -150,7 +375,8 @@ class SearchService:
         categories: optional SearXNG category (e.g. "news", "videos", "science").
         time_range: optional SearXNG time filter ("day", "week", "month", "year").
         """
-        if not self.searxng_url:
+        base = await self.base()
+        if not base:
             return []
 
         params = {
@@ -166,10 +392,10 @@ class SearchService:
         # Caller decides recency sort (e.g. news). When on, sort the most-recent first (SearXNG
         # returns `publishedDate` for some engines but doesn't globally sort by it).
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, transport=search_transport(base)) as client:
             try:
                 response = await client.get(
-                    f"{self.searxng_url}/search",
+                    f"{base}/search",
                     params=params,
                 )
                 response.raise_for_status()
@@ -209,15 +435,110 @@ class SearchService:
                 logger.error(f"Search error: {e}")
                 return []
 
+    # Categories the interactive Web Search UI is allowed to ask SearXNG for. An allowlist rather
+    # than a passthrough: `categories` reaches a third-party instance verbatim, and the client is
+    # not the place to decide what this node queries.
+    BROWSE_CATEGORIES = ("general", "news", "images", "videos", "music",
+                         "science", "it", "files", "social media", "map")
+    BROWSE_TIME_RANGES = ("day", "week", "month", "year")
+
+    async def search_page(
+        self,
+        query: str,
+        category: str = "general",
+        time_range: Optional[str] = None,
+        page: int = 1,
+        limit: int = 20,
+    ) -> dict:
+        """One PAGE of SearXNG results, for the browsable Web Search screen.
+
+        Deliberately separate from `web_search`, which is the LLM's tool: that one trims content to
+        300 chars, has no pagination and no thumbnails, and every AI path in the app depends on its
+        exact shape. Widening it to serve a UI is how a "search results look odd" change turns into
+        the model reading different snippets than it used to.
+
+        Returns a dict (never raises): `error` is a string when the search itself failed, so the UI
+        can say "search is not configured" instead of silently showing an empty page — which reads
+        as "no results for your query" and is the wrong answer.
+        """
+        base = await self.base()
+        if not base:
+            return {"results": [], "answers": [], "suggestions": [],
+                    "error": ("web search is turned off for this instance (Admin → Tools)"
+                              if not search_enabled() else "no SearXNG instance configured")}
+
+        category = (category or "general").strip().lower()
+        if category not in self.BROWSE_CATEGORIES:
+            category = "general"
+        time_range = (time_range or "").strip().lower() or None
+        if time_range and time_range not in self.BROWSE_TIME_RANGES:
+            time_range = None
+        page = max(1, min(int(page or 1), 20))
+
+        params = {
+            "q": query,
+            "format": "json",
+            "language": "en",
+            "categories": category,
+            "pageno": str(page),
+            # Thumbnails come back as URLs on the SearXNG host, so the browser never asks the
+            # image's own server for it — the same reason image_search sets it.
+            "image_proxy": "1",
+        }
+        if time_range:
+            params["time_range"] = time_range
+
+        async with httpx.AsyncClient(timeout=30, transport=search_transport(base)) as client:
+            try:
+                response = await client.get(f"{base}/search", params=params)
+                response.raise_for_status()
+                data = response.json()
+            except Exception as e:
+                logger.warning("Web search failed (%s): %s", query, e)
+                return {"results": [], "answers": [], "suggestions": [], "error": "search request failed"}
+
+        out = []
+        for r in (data.get("results") or [])[:limit]:
+            url = (r.get("url") or "").strip()
+            if not url:
+                continue
+            thumb = ((r.get("thumbnail_src") or "").strip()
+                     or (r.get("thumbnail") or "").strip()
+                     or (r.get("img_src") or "").strip())
+            if thumb and not (thumb.startswith("http") or thumb.startswith("data:")):
+                thumb = ""      # a relative/odd src is not something the page should try to load
+            out.append({
+                "title": (r.get("title") or url)[:300],
+                "url": url,
+                "content": (r.get("content") or "")[:600],
+                "engine": (r.get("engine") or "")[:60],
+                "published": str(r.get("publishedDate") or "")[:40],
+                "thumbnail": thumb,
+                # Images-category results need the FULL image, not just a thumb, to open at size.
+                "img_src": ((r.get("img_src") or "").strip() if category == "images" else ""),
+                "length": str(r.get("length") or "")[:20],
+            })
+
+        answers = []
+        for a in (data.get("answers") or [])[:3]:
+            # SearXNG 1.x answers are dicts ({answer, url, …}); older builds returned plain strings.
+            txt = (a.get("answer") if isinstance(a, dict) else a) or ""
+            if txt:
+                answers.append(str(txt)[:800])
+        suggestions = [str(s)[:100] for s in (data.get("suggestions") or [])[:8]]
+
+        return {"results": out, "answers": answers, "suggestions": suggestions, "error": None}
+
     async def image_search(self, query: str, limit: int = 10) -> list[dict]:
         """Search for images using SearXNG. Only return results with a non-empty thumbnail URL."""
-        if not self.searxng_url:
+        base = await self.base()
+        if not base:
             return []
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, transport=search_transport(base)) as client:
             try:
                 response = await client.get(
-                    f"{self.searxng_url}/search",
+                    f"{base}/search",
                     params={
                         "q": query,
                         "format": "json",
@@ -399,9 +720,33 @@ class SearchService:
             "Accept-Language": "en-US,en;q=0.5",
         }
 
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        # follow_redirects=False + a hand-rolled hop loop, NOT because redirects are unwanted (most
+        # article URLs take one) but because `is_safe_url` above only ever saw the FIRST url. Letting
+        # httpx follow made the guard advisory: `https://attacker.example/r` → 302 →
+        # `http://169.254.169.254/latest/meta-data/` was fetched and its body handed back to whoever
+        # asked. That matters more now that a search RESULT — a URL this node did not choose — can be
+        # the input, via Web Search's reader and its two summarize endpoints.
+        async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
             try:
-                response = await client.get(url, headers=headers)
+                response, hops = None, 0
+                next_url = url
+                while True:
+                    response = await client.get(next_url, headers=headers)
+                    if response.status_code not in (301, 302, 303, 307, 308):
+                        break
+                    loc = response.headers.get("location")
+                    if not loc:
+                        break
+                    hops += 1
+                    if hops > 5:
+                        return {"url": url, "title": url, "content": "", "error": "too many redirects"}
+                    # Relative Location is legal and common; resolve it against the hop we are on.
+                    next_url = str(httpx.URL(next_url).join(loc))
+                    ok, why = is_safe_url(next_url)
+                    if not ok:
+                        logger.warning("SSRF blocked (redirect): %s -> %s - %s", url, next_url, why)
+                        return {"url": url, "title": url, "content": "",
+                                "error": f"URL blocked: {why}"}
                 response.raise_for_status()
 
                 content_type = response.headers.get("content-type", "").lower()

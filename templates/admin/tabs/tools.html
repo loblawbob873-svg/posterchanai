@@ -5,8 +5,23 @@
     <fieldset>
         <legend>SearXNG (Search)</legend>
         <div class="form-group">
+            <label for="searxng_enabled">
+                <input type="checkbox" id="searxng_enabled" name="searxng_enabled" checked>
+                Web search enabled
+            </label>
+            <small>Off = this node makes no search requests at all: the AI's web lookups, the news
+                digests, the bots and Discover → Web Search all return nothing. (Clearing the URL
+                below does NOT do this — it falls back to the bundled instance, then to a public one.)</small>
+        </div>
+        <div class="form-group">
             <label for="searxng_url">URL</label>
             <input type="url" id="searxng_url" name="searxng_url" placeholder="https://search.example.com">
+            <small>Where this node searches — used by the AI's web search, the news digests, the bots
+                and Discover → Web Search. <b>Leave EMPTY</b> to use the SearXNG bundled with this node
+                (<code>./install.sh --searxng</code>, or the <code>searxng</code> compose profile), which
+                is probed automatically; with neither, searches fall back to a public instance
+                (<code>https://searx.tiekoetter.com</code>) that rate-limits servers. Requests to a
+                remote instance go through this node's Tor proxy, falling back to direct.</small>
         </div>
     </fieldset>
 

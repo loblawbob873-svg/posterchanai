@@ -393,9 +393,48 @@ services:
       - pc-proxy-conf:/etc/nginx/conf.d
       - pc-proxy-ssl:/etc/letsencrypt
 
+  # This node's own SearXNG — the metasearch behind the AI's web-search tool, the news digests, the
+  # bots and the Web Search screen. It comes up with EVERY AI backend profile (it is listed in all of
+  # them, and a service starts when ANY of its profiles is active), so
+  #
+  #   docker compose --profile cpu up -d
+  #
+  # gets search out of the box, on a new deployment and on an upgrade alike. Deliberately NOT in the
+  # `nostr` profile: that image exists to be lean and has no AI to search for. `--profile searxng`
+  # brings it up on its own if you want it there anyway.
+  #
+  # No setting to fill in: the app probes `http://searxng:8080/healthz` and uses it automatically
+  # whenever Admin → Tools → SearXNG URL is EMPTY (a value there always wins). Without it a node
+  # falls back to a PUBLIC instance, which rate-limits servers into 429s.
+  #
+  # Not published on a host port: the only client is the app, on this network.
+  searxng:
+    logging: *logging
+    profiles: ["cpu", "cuda", "rocm", "intel", "searxng"]
+    image: docker.io/searxng/searxng:latest
+    restart: unless-stopped
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080/
+      # `secret_key` is the ONE setting this image maps to an environment variable (verified in
+      # searx/settings_defaults.py). Everything else — the JSON API, the disabled limiter, the dark
+      # theme — must come from the settings FILE below: an earlier version of this service set
+      # SEARXNG_SEARCH_FORMATS and SEARXNG_SERVER_LIMITER, which do nothing at all, and would have
+      # left JSON off (every search 403ing) while the app happily selected the instance.
+      # Set SEARXNG_SECRET in .env to a random string. Left unset, the mounted settings file's
+      # upstream placeholder is used — fine for an instance this compose file never publishes (no
+      # host port; only the app on this network can reach it), but a value committed here would be a
+      # known key on every deployment, which is worse than an obvious placeholder.
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-ultrasecretkey}
+    volumes:
+      # The SAME file the host installer generates from, so the two install paths cannot drift.
+      # Read-only: it is config, and the image's entrypoint only writes it when absent.
+      - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - pc-searxng:/var/cache/searxng
+
 volumes:
   pc-data:
   pc-rag:  # legacy name; mounts /app/data (uploads, generated media)
   pc-pg:   # PostgreSQL data (app + Nostr relay)
   pc-proxy-conf:  # the proxy's nginx config — seeded once, then owned by the operator + certbot
   pc-proxy-ssl:   # the proxy's certificates: /etc/letsencrypt (self-signed + anything certbot issues)
+  pc-searxng:     # the bundled SearXNG's cache (/var/cache/searxng); its settings are a mounted file

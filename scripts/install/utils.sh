@@ -152,6 +152,7 @@ show_help() {
     echo "  --video          Install the videogeni (text-to-video) deps into the image venv"
     echo "  --turn           Build the built-in Pion TURN relay for voice/video calls"
     echo "  --stream         Install the built-in MediaMTX media server for OBS streaming"
+    echo "  --searxng        Run this node's own SearXNG (web search for the AI, news, bots, Web Search)"
     echo "  --sandbox        Set up the per-user Debian Docker sandbox (docker group + base image)"
     echo ""
     echo "Installation Types:"

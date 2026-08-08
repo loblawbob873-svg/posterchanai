@@ -104,6 +104,13 @@ turnserver/pion-turn
 # streamserver/ holds only generated artifacts (the MediaMTX binary, generated config, and MediaMTX's
 # auto-generated WebRTC/MoQ certs) — never track any of it.
 streamserver/
+# The bundled instance's GENERATED config (install.sh --searxng): a settings.yml with this node's
+# secret_key in it, plus the port marker and the branding copy. Per-node and secret — never track it.
+# ANCHORED: a bare `searxng/` also matches docker/searxng/, which is the settings TEMPLATE both
+# install paths read — untracked, `./install.sh --searxng` aborts on every node and the compose
+# service bind-mounts a path that doesn't exist (Docker then creates a DIRECTORY there and the
+# container crash-loops), so every node silently falls through to the public instance.
+/searxng/
 
 # Instance custom emoji (Pleroma/Akkoma-style packs, Admin → Site Settings → Custom emoji
 # directory). Operator content — hundreds of MB of images, per-node, never committed.
