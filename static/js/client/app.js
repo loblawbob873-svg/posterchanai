@@ -15162,6 +15162,24 @@
       }
       bar.innerHTML=`<span class="mail-busy-dot"></span>${enc(text)}`;
     },
+    /* Append the next page. Kept separate from loadList so paging never re-reads (or re-decrypts)
+     * what is already on screen — the point of a cursor. */
+    async loadMore(){
+      if(!this._next || this._paging) return;
+      this._paging = true;
+      const btn=$('#mail-more-btn', this.root);
+      if(btn){ btn.disabled=true; btn.textContent='Loading…'; }
+      try{
+        const r = await this.api('/messages?account='+encodeURIComponent(this.acct)
+                                 +'&folder='+encodeURIComponent(this.folder)
+                                 +'&until='+encodeURIComponent(this._next));
+        const seen=new Set(this.msgs.map(m=>this._key(m)));
+        for(const m of (r.messages||[])) if(!seen.has(this._key(m))) this.msgs.push(m);
+        this._next = r.next_until || 0;
+        this.drawList();
+      }catch(_){ if(btn){ btn.disabled=false; btn.textContent='Load older'; } }
+      this._paging = false;
+    },
     async loadList(){
       const box=$('#mail-items', this.root); if(!box) return;
       // Only spin when there is nothing to look at. Opening the screen runs draw → loadList → sync →
@@ -15173,7 +15191,8 @@
           ? await this.api('/search?account='+encodeURIComponent(this.acct)+'&q='+encodeURIComponent(this.q))
           : await this.api('/messages?account='+encodeURIComponent(this.acct)+'&folder='+encodeURIComponent(this.folder));
         this.msgs=r.messages||[];
-      }catch(_){ this.msgs=[]; }
+        this._next=r.next_until||0;
+      }catch(_){ this.msgs=[]; this._next=0; }
       this.drawList();
     },
     /* The IMAP name of the Sent folder for this account — 'Sent', 'Sent Messages' and 'INBOX.Sent'
@@ -15206,6 +15225,11 @@
           <div class="mi-subj">${m.attachments?'📎 ':''}${enc(m.subject||'(no subject)')}</div>
           <div class="mi-prev muted small">${enc(m.preview||'')}</div>
         </div></div>`; }).join('');
+      if(this._next){
+        box.insertAdjacentHTML('beforeend',
+          `<button class="btn btn-ghost full" id="mail-more-btn">Load older</button>`);
+        const mb=$('#mail-more-btn', this.root); if(mb) mb.onclick=()=>this.loadMore();
+      }
       $$('.mail-item',box).forEach(el=>{
         const cb=el.querySelector('.mi-chk'); if(cb) cb.onclick=(e)=>{ e.stopPropagation(); if(cb.checked) this.sel.add(el.dataset.key); else this.sel.delete(el.dataset.key); this.updateBulk(); };
         const c=el.querySelector('.mi-content'); if(c) c.onclick=()=>this.open(el.dataset.uid, el.dataset.folder, el.dataset.account);

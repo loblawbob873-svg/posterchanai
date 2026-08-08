@@ -243,7 +243,8 @@ async def get_doc(port: int, d_tag: str, *, seckey: bytes | None = None, pubkey:
 
 async def list_docs(port: int, prefix: str, *, seckey: bytes | None = None, pubkey: str | None = None,
                     encrypt: bool = True, kind: int = APP_KIND, strict: bool = False,
-                    limit: int = 5000) -> dict:
+                    limit: int = 5000, until: int | None = None,
+                    with_meta: bool = False) -> dict:
     """Return {d_tag: data} for every doc whose `d` tag starts with `prefix`, newest per d_tag.
 
     `strict=True` RAISES when the relay is unreachable rather than answering {} — use it in any
@@ -266,6 +267,11 @@ async def list_docs(port: int, prefix: str, *, seckey: bytes | None = None, pubk
     flt = {"authors": [pk], "kinds": [kind], "limit": limit}
     if prefix:
         flt["#d~"] = [prefix]
+    # `until` is NIP-01's cursor: results are ORDER BY created_at DESC, so paging is "give me the
+    # next page older than the oldest I have". It is what makes a long folder readable without
+    # re-reading (and re-decrypting) everything already on screen.
+    if until:
+        flt["until"] = int(until)
     evs = await _ws_query(port, [flt], strict=strict)
     best: dict = {}
     for ev in evs:
@@ -274,6 +280,11 @@ async def list_docs(port: int, prefix: str, *, seckey: bytes | None = None, pubk
             continue
         if d not in best or ev.get("created_at", 0) > best[d].get("created_at", 0):
             best[d] = ev
+    if with_meta:
+        # (value, created_at) — the caller needs the event's own timestamp to build the next cursor;
+        # the document's contents cannot supply it (a message's date is not when it was stored).
+        return {d: (_decode(ev.get("content", ""), seckey, encrypt), int(ev.get("created_at", 0)))
+                for d, ev in best.items()}
     return {d: _decode(ev.get("content", ""), seckey, encrypt) for d, ev in best.items()}
 
 

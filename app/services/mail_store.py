@@ -86,17 +86,39 @@ _PAGE = 200
 
 
 async def list_messages(seckey: bytes, account_email: str | None = None, folder: str | None = None,
-                        limit: int | None = None) -> list:
+                        limit: int | None = None, until: int | None = None) -> list:
     """Stored messages under (account[, folder]) — newest first, capped at `limit` (0/None = all).
 
     account=None → the whole mailbox (used by unified search).
     """
+    msgs, _ = await list_page(seckey, account_email, folder, limit=limit, until=until)
+    return msgs
+
+
+async def list_page(seckey: bytes, account_email: str | None = None, folder: str | None = None,
+                    limit: int | None = None, until: int | None = None) -> tuple:
+    """One page of messages plus the cursor for the NEXT one: (messages, next_until).
+
+    Paging is by the relay's `until` (event created_at, newest first), not by the message date —
+    a mailbox mirrored in one sync has thousands of messages whose dates span years but whose
+    STORED order is the order they arrived. The cursor is therefore opaque to the caller and only
+    ever handed back; the page itself is sorted by message date for display.
+
+    next_until is None when the page came back short, which is the only reliable end-of-list signal:
+    a count can lie when several documents share a created_at second.
+    """
     want = _SCAN_LIMIT if limit == 0 else int(limit or _PAGE)
     docs = await nostr_store.list_docs(_port(), _prefix(account_email, folder), seckey=seckey,
-                                       encrypt=True, limit=want)
-    msgs = [v for v in docs.values() if isinstance(v, dict)]
+                                       encrypt=True, limit=want, until=until, with_meta=True)
+    pairs = [(v, ts) for (v, ts) in docs.values() if isinstance(v, dict)]
+    msgs = [v for v, _ in pairs]
     msgs.sort(key=lambda m: m.get("ts", 0), reverse=True)
-    return msgs
+    nxt = None
+    if pairs and len(pairs) >= want:
+        # One second BEFORE the oldest we just read, or a document sharing that second would repeat
+        # on every page and the list would never advance.
+        nxt = min(ts for _, ts in pairs) - 1
+    return msgs, nxt
 
 
 async def set_flags(seckey: bytes, account_email: str, folder: str, uid: str, **flags) -> bool:

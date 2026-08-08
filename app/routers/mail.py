@@ -240,8 +240,9 @@ async def mail_do_sync(db: Session = Depends(get_db), current_user: User = Depen
 
 
 @router.get("/messages")
-async def mail_messages(account: str = "", folder: str = "INBOX",
+async def mail_messages(account: str = "", folder: str = "INBOX", until: int = 0,
                         db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """One page of a folder, newest first. `until` is the cursor from the previous page."""
     sk = _seckey(db, current_user)
     if account == "__all":
         # Unified view: this logical folder across EVERY account. Ask each account for the ONE
@@ -272,8 +273,8 @@ async def mail_messages(account: str = "", folder: str = "INBOX",
     acc = _resolve_account(db, current_user, account)
     if not acc:
         return {"messages": [], "account": None}
-    msgs = await mail_store.list_messages(sk, acc.email, folder)
-    return {"messages": [_summary(m) for m in msgs], "account": acc.email}
+    msgs, nxt = await mail_store.list_page(sk, acc.email, folder, until=until or None)
+    return {"messages": [_summary(m) for m in msgs], "account": acc.email, "next_until": nxt}
 
 
 @router.get("/message")
