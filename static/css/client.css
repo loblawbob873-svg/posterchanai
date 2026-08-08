@@ -3868,10 +3868,10 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
    Divided by --zf like every other full-height thing here: desktop scales the page with
    body{zoom:.67-.77} and viewport units are not rescaled by it. */
 .mail-compose-modal{width:min(calc(94vw / var(--zf, 1)), 1600px);max-width:none;
-  /* Roughly half the height it was (88dvh): a composer should be wide enough to read a quoted
-     thread and tall enough to write in, not a full-screen takeover on a desktop. Divided by --zf
-     like every other viewport-sized thing here, and floored so the body stays usable. */
-  height:calc((46dvh / var(--zf, 1)));max-height:none;min-height:340px;
+  /* Tall on purpose: writing an email is the one thing in this app people write pages in, so the
+     composer gets the screen. Divided by --zf like every other viewport-sized thing here, because
+     desktop scales the page with body{zoom:.67-.77} and viewport units are not rescaled by it. */
+  height:calc((88dvh / var(--zf, 1)));max-height:none;min-height:340px;
   display:flex;flex-direction:column;gap:0}
 .mail-compose-modal h3{flex:0 0 auto;margin-bottom:10px}
 .mail-compose-modal .input,.mail-compose-modal .mail-from{flex:0 0 auto}
