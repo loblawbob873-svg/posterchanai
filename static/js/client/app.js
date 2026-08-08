@@ -206,7 +206,7 @@
    * standalone install is not a degraded PosterChan, it is a Nostr client, and it should read like
    * one. Anyone who wants the rest can name an instance in Settings and they all come back. */
   const INSTANCE_VIEWS = new Set(['ai', 'translate', 'markets', 'news', 'torrents', '4chan',
-                                  'stats', 'meme', 'admin', 'websearch']);
+                                  'stats', 'meme', 'admin', 'websearch', 'calendar']);
   // Settings panes with nothing behind them without a server: server-side mail, the Telegram bridge,
   // the fediverse links, and API keys for the instance's AI API.
   const INSTANCE_SETTINGS_TABS = new Set(['mail', 'telegram', 'social', 'keys']);
@@ -1125,7 +1125,7 @@
       compose({ text: lines.join('\n\n') });
       return true;
     }
-    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','translate','news','websearch']);
+    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','translate','news','websearch','calendar']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
   }
@@ -3064,7 +3064,7 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', '4chan':'4chan', news:'News 🗞️', websearch:'Web Search 🔎', notes:'Notes 📝', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', '4chan':'4chan', news:'News 🗞️', websearch:'Web Search 🔎', calendar:'Calendar 📅', notes:'Notes 📝', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
     { const tl = (v==='home'||v==='global'||v==='trending');   // the three views that carry the .tl-tabs header
@@ -3115,6 +3115,7 @@
     if (VIEW==='4chan') return render4chan();
     if (VIEW==='news'){ if(window.PCNews) return window.PCNews.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='websearch'){ if(window.PCWebSearch) return window.PCWebSearch.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
+    if (VIEW==='calendar'){ if(window.PCCalendar) return window.PCCalendar.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='markets'){ if(window.PCMarkets) return window.PCMarkets.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='meme'){ if(window.PCMeme) return window.PCMeme.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='stats'){ if(window.PCStats) return window.PCStats.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
@@ -10807,7 +10808,7 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['ai','ai','PosterChan AI'],['websearch','search','Web Search'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['settings','gear','Settings'],['logout','logout','Logout']]
+    const items=[['ai','ai','PosterChan AI'],['websearch','search','Web Search'],['calendar','clock','Calendar'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['settings','gear','Settings'],['logout','logout','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
                    && !(window.PC_NOSTR_ONLY && v==='websearch')   // the search runs on the instance, so it needs one
                    && !(v==='__golive' && CFG.stream_enabled===false));   // hide AI+Translate in Nostr-only; Go Live only where the node streams
@@ -19866,6 +19867,7 @@
     ['c', 'chat',          'Chat'],
     ['w', 'news',          'News'],
     ['q', 'websearch',     'Web Search'],
+    ['y', 'calendar',      'Calendar'],
     ['k', 'markets',       'Markets'],
     ['r', 'meme',          'Meme Builder'],
     ['u', 'stats',         'Server Stats'],

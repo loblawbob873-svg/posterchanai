@@ -3,6 +3,21 @@
      News Sources + Effects from Site.) -->
 <div class="tab-content" id="tab-tools">
     <fieldset>
+        <legend>Calendar (CalDAV)</legend>
+        <div class="form-group">
+            <label for="caldav_enabled">
+                <input type="checkbox" id="caldav_enabled" name="caldav_enabled">
+                Calendar server enabled
+            </label>
+            <small>Serves this node's calendars over CalDAV at <code>/caldav</code>, so phones and
+                desktop calendar apps can sync them. Nothing to install — it runs inside this app.
+                Calendars are stored as encrypted Nostr events; each user generates a CalDAV-only app
+                password in the client (Settings → Calendar) to add it to a device.
+                <b>Off by default</b>, because turning it on opens a password login.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>SearXNG (Search)</legend>
         <div class="form-group">
             <label for="searxng_enabled">

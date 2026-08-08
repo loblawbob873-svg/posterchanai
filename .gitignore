@@ -111,6 +111,10 @@ streamserver/
 # service bind-mounts a path that doesn't exist (Docker then creates a DIRECTORY there and the
 # container crash-loops), so every node silently falls through to the public instance.
 /searxng/
+# The bundled CalDAV server's WORKING DIRECTORY: a cache of what the relay holds, and it holds
+# people's actual calendars. Per-node runtime state — never track it. (The record is the encrypted
+# Nostr events; this directory is rebuilt from them.)
+/caldav-data/
 
 # Instance custom emoji (Pleroma/Akkoma-style packs, Admin → Site Settings → Custom emoji
 # directory). Operator content — hundreds of MB of images, per-node, never committed.

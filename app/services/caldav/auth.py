@@ -45,7 +45,11 @@ def verify_password(password: str, stored: str) -> bool:
 
 
 class Auth(BaseAuth):
-    def login(self, login: str, password: str) -> str:
+    # `_login`, NOT `login`. Radicale marks `login()` @final — it owns the rate limiting, the login
+    # cache and the username normalisation — and dispatches to this. Overriding the public one is
+    # accepted silently at import and then raises "takes 3 positional arguments but 4 were given" on
+    # the FIRST request, i.e. every CalDAV call 500s while the server looks perfectly healthy.
+    def _login(self, login: str, password: str) -> str:
         """Return the username on success, "" on failure. Radicale calls this per request."""
         if not login or not password:
             return ""

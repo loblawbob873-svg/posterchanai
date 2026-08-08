@@ -45,6 +45,10 @@ def build_app():
         "web": {"type": "none"},                       # no Radicale web UI: the app has its own
         "logging": {"level": "warning"},
     }, "posterchanai", privileged=True)
+    # Radicale logs ~60 INFO lines about its own configuration on every construction — in this app
+    # that is journalctl noise on every restart, and it drowns the app's own startup. Its `logging`
+    # section is read before ours applies, so the level is set on the logger itself.
+    logging.getLogger("radicale").setLevel(logging.WARNING)
     _app = Application(cfg)
     logger.info("[caldav] Radicale mounted (storage: encrypted Nostr events; cache: %s)", working_dir())
     return _app

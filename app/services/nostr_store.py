@@ -195,12 +195,24 @@ async def get_doc(port: int, d_tag: str, *, seckey: bytes | None = None, pubkey:
 
 
 async def list_docs(port: int, prefix: str, *, seckey: bytes | None = None, pubkey: str | None = None,
-                    encrypt: bool = True, kind: int = APP_KIND) -> dict:
-    """Return {d_tag: data} for every doc whose `d` tag starts with `prefix`, newest per d_tag."""
+                    encrypt: bool = True, kind: int = APP_KIND, strict: bool = False,
+                    limit: int = 5000) -> dict:
+    """Return {d_tag: data} for every doc whose `d` tag starts with `prefix`, newest per d_tag.
+
+    `strict=True` RAISES when the relay is unreachable rather than answering {} — use it in any
+    caller that DECIDES something from an absence (deleting what is "no longer there", checking that
+    an id is free), because {} otherwise means both "nothing matches" and "I could not ask".
+
+    `limit` is a real constraint, not a formality: a Nostr filter cannot match a `d` PREFIX, so this
+    pulls the author's documents of that kind and filters here. The keyspace is shared — chat_store
+    writes one document per chat MESSAGE with the same key and kind — so a heavy chat user can fill
+    the window before another namespace's documents are reached. Callers reading a small namespace
+    that must be COMPLETE should raise it.
+    """
     pk = pubkey or (bip340.pubkey_from_seckey(seckey).hex() if seckey else None)
     if not pk:
         raise ValueError("list_docs needs seckey or pubkey")
-    evs = await _ws_query(port, [{"authors": [pk], "kinds": [kind], "limit": 5000}])
+    evs = await _ws_query(port, [{"authors": [pk], "kinds": [kind], "limit": limit}], strict=strict)
     best: dict = {}
     for ev in evs:
         d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), None)

@@ -322,6 +322,32 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   `video_free_music=true` makes a video render stop `acestep` (sudo systemctl) to reclaim VRAM,
   restarting it for music. New dep: `sentencepiece` (T5 tokenizer). Turn-key: `./install.sh --video`,
   Docker `POSTERCHANAI_VIDEO=1`. See `docs/VIDEO.md`.
+- **Calendar** (`static/js/client/calendar.js` + `app/routers/calendar.py` + `app/services/caldav*`;
+  sidebar → Calendar): a calendar whose events are **encrypted Nostr events**, served to phones and
+  desktop calendar apps over **CalDAV** by a Radicale that is MOUNTED INSIDE THIS APP at `/caldav` —
+  `radicale` + `a2wsgi` are dependencies, so Docker, `install.sh` and the updater ship it with nothing
+  extra to install, and it rides `posterchanai.service` (one port, one process, one certificate). OFF
+  by default (`caldav_enabled`, Admin → Tools).
+  **What "encrypted" means here is NOT what Notes/Budget mean**: a CalDAV client sends plaintext and
+  the server must answer it, so a calendar is encrypted at rest and on the relay with the user's
+  server-held storage key — the node CAN read it. That is the price of phone sync, and it is stated
+  first in `docs/CALENDAR.md` so nobody assumes otherwise.
+  **One event per item** (`pcai:cal:<calendar>:<uid>`, plus `pcai:calmeta:<calendar>`), for Notes'
+  reason: a per-calendar document is a read-modify-write of everything on every save and two devices
+  editing different events lose one. The storage plugin **subclasses Radicale's `multifilesystem`**
+  rather than reimplementing `BaseStorage` — sync tokens, history, locking and etags are the hard
+  parts and upstream has them right; the working directory is a CACHE that re-hydrates from the relay
+  (verified: `rm -rf caldav-data/collection-root`, restart, the events come back).
+  **Gotchas, each of which cost a session:** (1) the auth plugin implements **`_login`, not `login`** —
+  Radicale marks `login()` @final, and overriding it imports cleanly then 500s EVERY request; (2)
+  nothing may configure `[server]` — `hosts: ""` makes Radicale refuse to build, and since the app
+  builds it at import **that took the whole app down**; (3) the mount's `except` must use a logger that
+  exists at import time (the first one called an undefined `logger`, so the guard meant to prevent (2)
+  raised NameError and every request 502'd); (4) an app-side write calls `storage.forget_user()` or a
+  calendar made in the web UI is invisible to a phone until the app restarts; (5) items are stored as
+  the client PUT them (a whole VCALENDAR each), so export UNWRAPS them or the file nests calendars;
+  (6) import updates by UID rather than duplicating, so a re-import converges.
+  See `docs/CALENDAR.md`; `tests/test_calendar.py` + `scripts/check_calendar_mobile.py`.
 - **Web Search** (`static/js/client/websearch.js` + `app/routers/websearch.py`; sidebar → Web Search):
   a front end to this node's SearXNG, plus Save to Notes / Share / summarize a link / an **AI overview**
   of the results with numbered citations. The whole search lives in MODULE state, not the DOM —

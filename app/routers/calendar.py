@@ -20,11 +20,30 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.models import User, UserSetting
 from app.services import caldav_store
-from app.services.caldav import auth as caldav_auth
+
+# Radicale is imported LAZILY, inside the handlers. `app.services.caldav.auth` and `.storage` import
+# radicale at module level, and a node that has this code but not the library (sync.sh ships code,
+# not deps) would otherwise fail to start the entire app. caldav_store needs no radicale at all,
+# which is why the reads/writes above it are safe to import eagerly.
+SETTING_KEY = "caldav_password"
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/calendar", tags=["calendar"])
+
+# One import is one HTTP request and one relay burst; past this, ask for it in parts rather than
+# holding a connection open for minutes.
+_IMPORT_MAX_ITEMS = 5000
+
+
+def _forget(username: str):
+    """Tell the CalDAV storage layer to re-read this user from the relay. Lazy import so a node
+    without radicale still serves the app (and this API's read paths)."""
+    try:
+        from app.services.caldav import storage as caldav_storage
+        caldav_storage.forget_user(username)
+    except Exception as e:
+        logger.debug("[caldav] could not invalidate the disk cache: %s", e)
 
 
 def _require_enabled():
@@ -52,7 +71,7 @@ async def calendar_config(request: Request, current_user: User = Depends(get_cur
     base = f"{proto}://{host}" if host else str(request.base_url).rstrip("/")
     has_pw = bool(db.query(UserSetting).filter(
         UserSetting.user_id == current_user.id,
-        UserSetting.key == caldav_auth.SETTING_KEY).first())
+        UserSetting.key == SETTING_KEY).first())
     return {
         "enabled": caldav_store.enabled(),
         "url": f"{base}/caldav/{current_user.username}/",
@@ -77,10 +96,11 @@ async def new_password(current_user: User = Depends(get_current_user), db: Sessi
     _require_enabled()
     pw = "-".join(secrets.token_urlsafe(6) for _ in range(3))
     row = db.query(UserSetting).filter(UserSetting.user_id == current_user.id,
-                                       UserSetting.key == caldav_auth.SETTING_KEY).first()
+                                       UserSetting.key == SETTING_KEY).first()
     if not row:
-        row = UserSetting(user_id=current_user.id, key=caldav_auth.SETTING_KEY, value="")
+        row = UserSetting(user_id=current_user.id, key=SETTING_KEY, value="")
         db.add(row)
+    from app.services.caldav import auth as caldav_auth      # lazy: see the note above
     row.value = caldav_auth.hash_password(pw)
     db.commit()
     return {"password": pw}
@@ -90,7 +110,7 @@ async def new_password(current_user: User = Depends(get_current_user), db: Sessi
 async def clear_password(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Revoke: every device syncing with the old password stops immediately."""
     db.query(UserSetting).filter(UserSetting.user_id == current_user.id,
-                                 UserSetting.key == caldav_auth.SETTING_KEY).delete()
+                                 UserSetting.key == SETTING_KEY).delete()
     db.commit()
     return {"ok": True}
 
@@ -112,7 +132,14 @@ async def create_calendar(body: CalendarIn, current_user: User = Depends(get_cur
                           db: Session = Depends(get_db)):
     _require_enabled()
     cid = _slug(body.id or body.name)
-    existing = {c.get("id") for c in await caldav_store.list_calendars(db, current_user)}
+    # STRICT: the collision check is a decision made from what is NOT there, and an unreachable relay
+    # answers the same [] as "you have no calendars" — under which a new calendar reuses an existing
+    # id, and its metadata write then overwrites that calendar and merges both sets of items.
+    try:
+        existing = {c.get("id") for c in await caldav_store.list_calendars(db, current_user, strict=True)}
+    except Exception as e:
+        logger.warning("[caldav] calendar list unreadable, refusing to create: %s", e)
+        raise HTTPException(status_code=503, detail="Could not reach your calendars just now — try again.")
     if cid in existing:
         base, n = cid, 2
         while f"{base}-{n}" in existing:
@@ -121,6 +148,7 @@ async def create_calendar(body: CalendarIn, current_user: User = Depends(get_cur
     meta = {"displayname": body.name.strip() or cid, "color": body.color or ""}
     if not await caldav_store.put_calendar(db, current_user, cid, meta):
         raise HTTPException(status_code=502, detail="Could not save the calendar.")
+    _forget(current_user.username)   # so a phone sees it without waiting for a restart
     return {"id": cid, **meta}
 
 
@@ -129,6 +157,7 @@ async def delete_calendar(cal_id: str, current_user: User = Depends(get_current_
                           db: Session = Depends(get_db)):
     _require_enabled()
     n = await caldav_store.delete_calendar(db, current_user, cal_id)
+    _forget(current_user.username)
     return {"ok": True, "deleted": n}
 
 
@@ -155,6 +184,7 @@ async def put_item(body: ItemIn, current_user: User = Depends(get_current_user),
     comp = caldav_store.component_of(body.ics)
     if not await caldav_store.put_item(db, current_user, body.cal, uid, body.ics, comp):
         raise HTTPException(status_code=502, detail="Could not save the event.")
+    _forget(current_user.username)
     return {"ok": True, "uid": uid}
 
 
@@ -162,7 +192,9 @@ async def put_item(body: ItemIn, current_user: User = Depends(get_current_user),
 async def delete_item(cal: str = Query(...), uid: str = Query(...),
                       current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _require_enabled()
-    return {"ok": await caldav_store.delete_item(db, current_user, cal, uid)}
+    out = await caldav_store.delete_item(db, current_user, cal, uid)
+    _forget(current_user.username)
+    return {"ok": out}
 
 
 @router.get("/export", response_class=PlainTextResponse)
@@ -193,28 +225,63 @@ async def import_ics(cal: str = Query(""), file: UploadFile = File(...),
     thousands of items get interrupted and re-run.
     """
     _require_enabled()
-    raw = (await file.read())[:20_000_000]
+    # Read in CHUNKS against the cap rather than slicing an already-buffered body: the whole upload
+    # would otherwise sit in RAM on the single worker before the limit applied. Over the cap is an
+    # ERROR, not a silent truncation — a file cut mid-VEVENT imports a malformed last event.
+    MAX = 20_000_000
+    chunks, total = [], 0
+    while True:
+        chunk = await file.read(1 << 20)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX:
+            raise HTTPException(status_code=413,
+                                detail="That .ics is larger than 20 MB — split it and import the parts.")
+        chunks.append(chunk)
+    raw = b"".join(chunks)
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         text = raw.decode("latin-1", errors="replace")
 
     cid = _slug(cal or (file.filename or "imported").rsplit(".", 1)[0])
-    known = {c.get("id") for c in await caldav_store.list_calendars(db, current_user)}
+    try:
+        known = {c.get("id") for c in await caldav_store.list_calendars(db, current_user, strict=True)}
+    except Exception as e:
+        logger.warning("[caldav] calendar list unreadable, refusing to import: %s", e)
+        raise HTTPException(status_code=503, detail="Could not reach your calendars just now — try again.")
     if cid not in known:
-        await caldav_store.put_calendar(db, current_user, cid,
-                                        {"displayname": cal or (file.filename or "Imported").rsplit(".", 1)[0]})
+        # A failure here is fatal to the import, not a warning: without the calendar document the
+        # items land under an id that list_calendars never returns, so they exist on the relay and
+        # appear nowhere at all.
+        if not await caldav_store.put_calendar(
+                db, current_user, cid,
+                {"displayname": cal or (file.filename or "Imported").rsplit(".", 1)[0]}):
+            raise HTTPException(status_code=502, detail="Could not create the calendar for this import.")
 
-    added, skipped = 0, 0
-    for comp in caldav_store.split_ics(text):
+    comps = caldav_store.split_ics(text)
+    if len(comps) > _IMPORT_MAX_ITEMS:
+        raise HTTPException(status_code=413,
+                            detail=f"That file holds {len(comps)} items; import up to {_IMPORT_MAX_ITEMS} at a time.")
+
+    # CONCURRENTLY, in bounded batches. Each put is its own relay websocket plus a pure-Python
+    # signature, so a few thousand events done one after another is minutes of stalled single-worker
+    # process and an HTTP timeout for the person importing.
+    import asyncio as _asyncio
+    sem = _asyncio.Semaphore(8)
+
+    async def _one(comp):
         uid = caldav_store.uid_of(comp)
         if not uid:
-            skipped += 1        # a component with no UID is not addressable by CalDAV
-            continue
+            return False        # a component with no UID (a VTIMEZONE, say) is not a CalDAV resource
         body = caldav_store.wrap_ics([comp], cid)
-        if await caldav_store.put_item(db, current_user, cid, uid, body,
-                                       caldav_store.component_of(comp)):
-            added += 1
-        else:
-            skipped += 1
+        async with sem:
+            return await caldav_store.put_item(db, current_user, cid, uid, body,
+                                               caldav_store.component_of(comp))
+
+    results = await _asyncio.gather(*[_one(c) for c in comps], return_exceptions=True)
+    added = sum(1 for r in results if r is True)
+    skipped = len(results) - added
+    _forget(current_user.username)
     return {"ok": True, "calendar": cid, "imported": added, "skipped": skipped}

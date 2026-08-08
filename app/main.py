@@ -219,6 +219,16 @@ app.include_router(effects_api.router)
 app.include_router(media_api.router)
 app.include_router(news.router)
 app.include_router(websearch.router)  # /api/websearch/* (Web Search screen: SearXNG proxy, reader, AI overview)
+# /api/calendar/* — GUARDED, like the mount below. `radicale` is a NEW requirement and sync.sh
+# deploys code, not dependencies (CLAUDE.md), so on the first deploy a node has this file and not the
+# library: imported unguarded at module top, uvicorn exits and the whole node is down — chat, relay,
+# bots, the web UI — for a missing calendar. The router itself no longer imports radicale at module
+# level either (see app/routers/calendar.py).
+try:
+    from app.routers import calendar as calendar_router
+    app.include_router(calendar_router.router)
+except Exception as _cal_err:
+    logging.getLogger(__name__).warning("[caldav] calendar API not mounted: %s", _cal_err)
 app.include_router(mail.router)
 app.include_router(torrent.router)
 app.include_router(fourchan.router)

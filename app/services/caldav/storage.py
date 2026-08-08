@@ -18,7 +18,9 @@ client sends plaintext and this server must answer it.
 import asyncio
 import logging
 import os
+import shutil
 import threading
+import time
 
 from radicale.storage import multifilesystem
 
@@ -29,6 +31,31 @@ logger = logging.getLogger(__name__)
 # doing it once on first touch is the whole cost.
 _hydrated: set = set()
 _hydrate_lock = threading.Lock()
+# How recently a file must have been touched to be spared by the reconcile. A CalDAV client's write
+# lands on disk BEFORE its mirror reaches the relay, so a reconcile racing that gap would delete the
+# write the client just made.
+_DELETE_GRACE = 120
+# Paths this process wrote FROM the relay. The grace period above exists to protect a CalDAV
+# client's write that has not been mirrored yet — but a file the reconcile itself wrote is also
+# "recent", so without this distinction deleting an event in the web UI left it on the phone for two
+# minutes, which is exactly the ghost the reconcile was added to prevent.
+_ours: dict = {}
+
+
+def _safe_name(uid: str) -> str:
+    return "".join(c for c in uid if c.isalnum() or c in "-_.@") or "item"
+
+
+def forget_user(username: str) -> None:
+    """Drop the hydrate-once marker so the next CalDAV request re-reads this user from the relay.
+
+    Hydration is per PROCESS (it is a relay round trip per collection), which is right for a phone
+    syncing all day and wrong the moment the WEB UI writes: a calendar imported or created in the app
+    would not exist on disk, so the phone would not see it until the app restarted. Every app-side
+    write calls this.
+    """
+    with _hydrate_lock:
+        _hydrated.discard(username)
 
 
 def _run(coro):
@@ -149,57 +176,132 @@ class Storage(multifilesystem.Storage):
         return super().discover(path, depth, child_context_manager, user_groups)
 
     def _hydrate(self, username: str):
+        """Reconcile this user's working directory with the relay.
+
+        The marker is set only AFTER the work succeeds, and the lock is held FOR the work. Marking
+        first meant a relay hiccup during startup (or a phone opening several connections at once)
+        left the user permanently "hydrated" with an empty directory: the phone authenticated,
+        discovered ZERO calendars, and stayed that way until the service restarted — one WARNING line
+        in the journal the only sign that a calendar had not been lost.
+        """
         if not username:
             return
         with _hydrate_lock:
             if username in _hydrated:
                 return
-            _hydrated.add(username)
+            from app.services import caldav_store
 
+            def _load(db, user):
+                # STRICT, both of them: this reconcile DELETES files the relay no longer has, and an
+                # unreachable relay answers exactly like an empty one. Without it, a relay blip
+                # during a phone sync would wipe the working copy of every calendar the user owns.
+                cals = _run(caldav_store.list_calendars(db, user, strict=True))
+                seen = set()
+                for cal in cals:
+                    cid = cal.get("id")
+                    if not cid:
+                        continue
+                    seen.add(cid)
+                    items = _run(caldav_store.get_items(db, user, cid, strict=True))
+                    self._reconcile(username, cid, cal, items)
+                self._drop_missing(username, seen)
+                return len(cals)
+
+            n = _with_user(username, _load)      # raises → marker not set → retried next request
+            _hydrated.add(username)
+            if n:
+                logger.info("[caldav] reconciled %s calendar(s) for %s from the relay", n, username)
+
+    def _reconcile(self, username: str, cal_id: str, meta: dict, items: list):
+        """Make one calendar's directory match the relay: write what is missing, remove what is gone.
+
+        The first version returned early whenever the directory was non-empty, so hydration could
+        only ever materialise a BRAND-NEW calendar — an event added in the web UI to a calendar the
+        phone already had was never written to disk and the phone never saw it, restart or no
+        restart. And nothing ever deleted, so an event deleted in the web UI stayed on the phone and
+        could be edited there, which mirrored it straight back into the relay: deleted data
+        resurrecting itself.
+        """
+        import json as _json
         from app.services import caldav_store
 
-        def _load(db, user):
-            cals = _run(caldav_store.list_calendars(db, user))
-            for cal in cals:
-                cid = cal.get("id")
-                if not cid:
-                    continue
-                items = _run(caldav_store.get_items(db, user, cid))
-                self._write_cache(username, cid, cal, items)
-            return len(cals)
-
-        n = _with_user(username, _load)
-        if n:
-            logger.info("[caldav] hydrated %s calendar(s) for %s from the relay", n, username)
-
-    def _write_cache(self, username: str, cal_id: str, meta: dict, items: list):
-        """Materialise one calendar into the working directory, without disturbing anything already
-        there — the disk copy may be NEWER than what we just read (a client wrote while we were
-        fetching), and this runs before every discover."""
         root = os.path.join(self._get_collection_root_folder(), username, cal_id)
-        if os.path.isdir(root) and os.listdir(root):
-            return
         os.makedirs(root, exist_ok=True)
+
         props = {"tag": "VCALENDAR"}
-        for k in ("D:displayname", "displayname", "ICAL:calendar-color", "C:supported-calendar-component-set"):
-            if meta.get(k):
-                props[k] = meta[k]
-        if meta.get("displayname") and "D:displayname" not in props:
-            props["D:displayname"] = meta["displayname"]
+        name = meta.get("displayname") or meta.get("D:displayname") or cal_id
+        props["D:displayname"] = name
+        if meta.get("color") or meta.get("ICAL:calendar-color"):
+            props["ICAL:calendar-color"] = meta.get("color") or meta.get("ICAL:calendar-color")
         try:
-            import json as _json
             with open(os.path.join(root, ".Radicale.props"), "w", encoding="utf-8") as fh:
                 fh.write(_json.dumps(props))
         except Exception:
             pass
-        from app.services import caldav_store
+
+        wanted = {}
         for rec in items:
             uid = rec.get("uid")
             if not uid:
                 continue
             body = rec.get("ics") or ""
             if "BEGIN:VCALENDAR" not in body.upper():
-                body = caldav_store.wrap_ics([body], meta.get("displayname") or cal_id)
-            safe = "".join(c for c in uid if c.isalnum() or c in "-_.@") or "item"
-            with open(os.path.join(root, f"{safe}.ics"), "w", encoding="utf-8") as fh:
-                fh.write(body)
+                body = caldav_store.wrap_ics([body], name)
+            wanted[_safe_name(uid)] = body
+
+        for fname, body in wanted.items():
+            path = os.path.join(root, fname + ".ics")
+            try:
+                _ours[path] = time.time()     # ours, so a later pass may delete it without waiting
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as fh:
+                        if fh.read() == body:
+                            continue          # unchanged — don't churn the mtime a client syncs on
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(body)
+            except Exception as e:
+                logger.warning("[caldav] could not write %s: %s", path, e)
+
+        # …and remove what the relay no longer has. GRACE PERIOD: a file a CalDAV client wrote
+        # SECONDS ago may not have been mirrored to the relay yet (the mirror runs after the upload
+        # returns), and deleting it here would throw away the client's write.
+        now = time.time()
+        for fname in os.listdir(root):
+            if not fname.endswith(".ics"):
+                continue
+            stem = fname[:-4]
+            if stem in wanted:
+                continue
+            path = os.path.join(root, fname)
+            try:
+                # A file WE wrote from the relay goes as soon as the relay stops listing it. Only a
+                # file this process did not write gets the grace period, because that is a client's
+                # upload whose mirror may still be in flight.
+                if path not in _ours and now - os.path.getmtime(path) < _DELETE_GRACE:
+                    continue
+                os.remove(path)
+                _ours.pop(path, None)
+            except Exception:
+                pass
+
+    def _drop_missing(self, username: str, keep: set):
+        """Remove calendar directories the relay no longer lists — a calendar deleted in the web UI
+        must stop being served to a phone."""
+        base = os.path.join(self._get_collection_root_folder(), username)
+        if not os.path.isdir(base):
+            return
+        now = time.time()
+        for name in os.listdir(base):
+            path = os.path.join(base, name)
+            if not os.path.isdir(path) or name in keep:
+                continue
+            try:
+                ours = any(k.startswith(path + os.sep) for k in _ours)
+                if not ours and now - os.path.getmtime(path) < _DELETE_GRACE:
+                    continue          # just created by a client; its mirror may still be in flight
+                shutil.rmtree(path, ignore_errors=True)
+                for k in [k for k in _ours if k.startswith(path + os.sep)]:
+                    _ours.pop(k, None)
+                logger.info("[caldav] dropped %s/%s — no longer on the relay", username, name)
+            except Exception:
+                pass

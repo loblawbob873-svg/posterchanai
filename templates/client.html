@@ -214,6 +214,8 @@
             <!-- Web Search: the instance's SearXNG, with Save to Notes / Share / AI summaries. Top level
                  rather than inside Discover — it is a thing you reach for mid-thought, like AI. -->
             {% if not nostr_only %}<button class="nav-item" data-view="websearch"><svg class="ic"><use href="#i-search"></use></svg><span>Web Search</span></button>{% endif %}
+            <!-- Calendar: this node's own CalDAV server, so the same calendar syncs to a phone. -->
+            {% if not nostr_only %}<button class="nav-item" data-view="calendar"><svg class="ic"><use href="#i-clock"></use></svg><span>Calendar</span></button>{% endif %}
             <!-- No Home item: Home is a tab on the timeline itself (see .tl-tabs), ditto.pub-style -->
             <!-- "Social" not "Nostrverse": the timeline tab already says Nostrverse, so two would be redundant -->
             <button class="nav-item active" data-view="global"><svg class="ic"><use href="#i-globe"></use></svg><span>Social</span></button>
@@ -375,6 +377,7 @@
 <script src="/static/js/client/app.js?v={{ ver }}"></script>
 <script src="/static/js/client/news.js?v={{ ver }}"></script>
 <script src="/static/js/client/websearch.js?v={{ ver }}"></script>
+<script src="/static/js/client/calendar.js?v={{ ver }}"></script>
 <script src="/static/js/client/markets.js?v={{ ver }}"></script>
 <script src="/static/js/client/budget.js?v={{ ver }}"></script>
 <script src="/static/js/client/joplin.js?v={{ ver }}"></script>

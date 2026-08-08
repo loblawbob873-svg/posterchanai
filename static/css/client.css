@@ -1396,6 +1396,71 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
   .ws-go{padding:10px 12px}
 }
 
+/* Calendar (the bundled CalDAV server's own screen).
+   A month grid has one hard constraint on a phone: 7 columns must fit 360px without the page
+   scrolling sideways, so the cells size from a fraction of the row and the day number is what
+   shrinks — never the grid. */
+.cal-wrap{max-width:none;margin:0 auto;padding:0 6px 40px}
+.cal-bar{position:sticky;top:-8px;z-index:5;background:var(--canvas);background-attachment:fixed;
+  padding:14px 0 10px;box-shadow:var(--sticky-sh);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.cal-nav{display:flex;gap:6px;align-items:center;min-width:0}
+.cal-nav .btn{min-height:36px;min-width:36px}
+.cal-title{font-weight:800;font-size:17px;color:var(--text);margin-left:6px;white-space:nowrap}
+.cal-tools{display:flex;gap:8px;align-items:center;margin-left:auto;flex-wrap:wrap}
+.cal-tools .btn{min-height:36px}
+.cal-pick{width:auto;font-size:16px;padding:6px 10px;min-height:36px}   /* 16px: iOS zooms below it */
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin:10px 0 14px}
+.cal-dow{text-align:center;font-size:12px;color:var(--muted);padding:2px 0}
+.cal-day{aspect-ratio:1/1;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+  gap:4px;padding:6px 2px;border:1px solid var(--line);border-radius:10px;background:var(--panel);
+  color:var(--text);cursor:pointer;min-width:0;transition:border-color .15s}
+.cal-day:hover{border-color:var(--neon)}
+.cal-day.other{opacity:.42}
+.cal-day.today .cal-num{background:var(--neon);color:#04121a;border-radius:999px;padding:1px 7px}
+.cal-day.sel{outline:2px solid var(--neon);outline-offset:1px}
+.cal-num{font-size:14px;font-weight:700;line-height:1.3}
+.cal-dots{display:flex;gap:3px;flex-wrap:wrap;justify-content:center;align-items:center}
+.cal-dot{width:6px;height:6px;border-radius:999px;display:inline-block;flex:0 0 auto}
+.cal-more{font-size:10px;color:var(--muted)}
+.cal-day-panel{border-top:1px solid var(--line);padding-top:12px}
+.cal-day-hd{font-weight:800;font-size:15px;margin-bottom:10px;color:var(--text)}
+.cal-ev{display:flex;gap:10px;align-items:center;padding:10px;border:1px solid var(--line);
+  border-radius:12px;background:var(--panel);margin-bottom:8px;cursor:pointer}
+.cal-ev:hover{border-color:var(--neon)}
+.cal-evbar{width:4px;align-self:stretch;border-radius:999px;flex:0 0 auto}
+.cal-evbody{min-width:0;flex:1 1 auto}
+.cal-evtitle{font-weight:700;font-size:15px;overflow-wrap:anywhere}
+.cal-evmeta{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.cal-ev .btn{flex:0 0 auto;min-height:34px}
+.cal-off{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:18px;margin-top:12px}
+.cal-offhd{font-weight:800;font-size:16px;margin-bottom:6px;color:var(--text)}
+/* 16px, on a phone, on every text field in the event editor. Below 16px iOS Safari zooms the page
+   the moment the caret lands and never zooms back out — on a form whose whole job is typing. Scoped
+   to this form rather than restyling every modal in the app, which would move layouts elsewhere. */
+@media(max-width:820px){
+  .cal-form .input, .cal-form textarea, .cal-form input[type="date"], .cal-form input[type="time"]{font-size:16px}
+}
+.cal-times{display:flex;gap:10px}
+.cal-times .fld{flex:1 1 0;min-width:0}
+.cal-allday{display:flex;align-items:center;gap:8px}
+.cal-list{max-height:46vh;overflow:auto}
+.cal-row{display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.cal-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.cal-swatches{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.cal-sw{width:30px;height:30px;border-radius:999px;border:2px solid transparent;cursor:pointer}
+.cal-sw.on{border-color:var(--text)}
+.cal-pw{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+.cal-pw code{font-size:15px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+  padding:8px 10px;overflow-wrap:anywhere}
+@media(max-width:820px){
+  .cal-title{font-size:15px;margin-left:2px}
+  .cal-tools{width:100%;margin-left:0}
+  .cal-pick{flex:1 1 auto;min-width:0}
+  .cal-num{font-size:13px}
+  .cal-grid{gap:3px}
+  .cal-day{padding:4px 1px;border-radius:8px}
+}
+
 /* Markets (crypto digest) */
 .mkts-wrap{max-width:none;margin:0 auto;padding:8px 6px 40px}
 .mkts-top{font-weight:800;font-size:15px;color:var(--text);padding:6px 2px 12px}
