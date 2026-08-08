@@ -6168,8 +6168,11 @@ body.os-on #os-root{pointer-events:auto}
 .os-dot{position:absolute;top:1px;right:2px;min-width:15px;height:15px;padding:0 4px;border-radius:8px;
   background:var(--neon);color:#04222a;font-size:9.5px;font-weight:700;font-style:normal;
   display:flex;align-items:center;justify-content:center}
-.os-noti{position:fixed;right:8px;bottom:56px;z-index:330;width:min(400px,calc(100vw - 16px));
-  max-height:min(640px,calc(100vh - 76px));display:flex;flex-direction:column;border-radius:14px;
+/* Tall on purpose: this is a desktop, and the point of the centre over a phone's is that you can
+   see more than three items without scrolling. It stops 84px short of the viewport so it never
+   collides with the taskbar or runs off the top. */
+.os-noti{position:fixed;right:8px;bottom:56px;z-index:330;width:min(430px,calc(100vw - 16px));
+  max-height:calc(100vh - 84px);display:flex;flex-direction:column;border-radius:14px;
   background:var(--panel2);border:1px solid var(--line);box-shadow:0 18px 50px rgba(0,0,0,.55);
   overflow:hidden}
 .os-noti-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
@@ -6216,11 +6219,17 @@ body.os-on #os-root{pointer-events:auto}
 .os-me img{width:100%;height:100%;object-fit:cover;display:block}
 .os-me .ic{width:17px;height:17px;color:var(--muted)}
 
+.os-app-find{color:var(--neon)}
+.os-app-find .ic{color:var(--neon)}
+
 .os-stats{display:flex;flex-wrap:wrap;gap:6px 14px;padding:11px 4px 2px;margin-top:9px;
   border-top:1px solid var(--line)}
 .os-stat{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)}
-.os-stat .ic{width:14px;height:14px}
+.os-stat .ic{width:14px;height:14px;color:var(--muted)}
 .os-stat b{color:var(--text);font-weight:600}
+.os-stat i{font-style:normal}
+/* A non-zero counter lights its indicator; a zero one stays grey, so the row reads at a glance. */
+.os-stat.on .ic{color:var(--neon);filter:drop-shadow(0 0 4px rgba(var(--accent-rgb),.55))}
 
 body.os-on .modal-bg{z-index:340}
 body.os-on .offline-bar{z-index:330}

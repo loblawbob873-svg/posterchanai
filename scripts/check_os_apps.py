@@ -20,6 +20,9 @@ Assertions, each a way a feature breaks specifically INSIDE a window and nowhere
   escapes-window       A visible element sticks out past its window's edge. Usually a rule sized in
                        viewport units (100dvh / 100vw), which inside a window still measures the
                        SCREEN — the single most likely way a view misbehaves here and nowhere else.
+  reply-broken         Reply on a post inside a window does not open a usable dialog. Reply is a
+                       MODAL, and modals rendering behind the desktop was the bug that made half
+                       the apps look dead — this asserts the path, not the stylesheet.
   noti-centre          The clock does not open a working notification centre (off screen, stacked
                        under something, no rows and no empty state, no reply/react, or Escape does
                        not close it).
@@ -128,6 +131,30 @@ PROBE = r"""(async (view) => {
   out.err = window.__osErr;
   return out;
 })"""
+
+# Reply is a MODAL, and modals were the thing that broke on this desktop. Assert the path end to
+# end from inside a window rather than trusting that the z-index fix covers every caller.
+REPLY = r"""(async () => {
+  const sleep = ms => new Promise(r=>setTimeout(r,ms));
+  const btn = [...document.querySelectorAll('.os-icon')].find(b => b.dataset.view === 'global');
+  if (!btn) return { skip: 'no Social app' };
+  btn.click(); await sleep(1800);
+  const win = document.querySelector('.osw.focused');
+  const rb = win && win.querySelector('.act[data-a="reply"]');
+  if (!rb) return { skip: 'no post with a reply button in the timeline' };
+  rb.click(); await sleep(700);
+  const bg = document.querySelector('.modal-bg');
+  if (!bg) return { opened: false };
+  const box = bg.querySelector('.modal') || bg;
+  const r = box.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.left + r.width/2, r.top + 12);
+  const out = { opened: true, reachable: !!(hit && (bg.contains(hit) || hit === bg)),
+                coveredBy: '', onScreen: r.top >= -1 && r.bottom <= window.innerHeight + 1 };
+  if (!out.reachable && hit) out.coveredBy = (hit.id || hit.className || hit.tagName).toString().slice(0,40);
+  bg.remove(); document.body.classList.remove('modal-open');
+  return out;
+})()"""
+
 
 async def main():
     chrome = (shutil.which("google-chrome") or shutil.which("chromium")
@@ -267,6 +294,21 @@ async def main():
                                      "inside a window still measures the whole screen"))
                 mark = "ok  " if not any(p[0] == v for p in problems) else "FAIL"
                 print(f"    {mark} {v:<14} {r.get('text','')[:44]!r}")
+
+            rp = await js(REPLY, awaited=True)
+            if rp is None:
+                problems.append(("shell", "reply-broken", "the reply probe did not evaluate"))
+            elif rp.get("skip"):
+                skipped.append(f"reply ({rp['skip']})")
+            elif not rp.get("opened"):
+                problems.append(("shell", "reply-broken",
+                                 "clicking Reply on a post in a window opened no dialog"))
+            elif not rp.get("reachable"):
+                problems.append(("shell", "reply-broken",
+                                 f"the reply dialog is not clickable — its centre hits "
+                                 f"{rp.get('coveredBy')!r}"))
+            elif not rp.get("onScreen"):
+                problems.append(("shell", "reply-broken", "the reply dialog is partly off screen"))
     finally:
         proc.terminate()
         try:

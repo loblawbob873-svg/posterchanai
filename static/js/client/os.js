@@ -72,6 +72,8 @@
    * — could never have found it. `act` marks it as something to RUN rather than a view to open in a
    * window: it is a dialog that ends in a live stream, and the stream itself opens the Streams app. */
   const EXTRAS = [
+    { view: '__profile', label: 'My Profile', icon: '#i-user', act: () => PC().openProfile && PC().openProfile(),
+      when: () => { try{ return !!(PC().openProfile && window.ME && ME.pubkey); }catch(_){ return false; } } },
     { view: '__golive', label: 'Go Live', icon: '#i-live', act: () => PC().goLive && PC().goLive(),
       when: () => { try{ return !!(PC().goLive && window.ME && ME.pubkey); }catch(_){ return false; } } },
   ];
@@ -85,9 +87,15 @@
     return src || '/static/posterchan-relay.png';
   }
 
-  const iconSvg = (href) => href
-    ? `<svg class="ic" aria-hidden="true"><use href="${enc(href)}"></use></svg>`
-    : '<svg class="ic" aria-hidden="true"><use href="#i-app"></use></svg>';
+  /* The sidebar's own <use href> values carry the '#', but every hand-written call site here passes
+   * a bare id — and `<use href="i-wot">` resolves to NOTHING and draws nothing, with no error. That
+   * is why the start-menu stat icons and the Post/Profile/Search window-title icons were blank. Take
+   * either form. */
+  const iconSvg = (href) => {
+    const h = String(href || '').trim();
+    const id = !h ? '#i-app' : (h.charAt(0) === '#' ? h : '#' + h);
+    return `<svg class="ic" aria-hidden="true"><use href="${enc(id)}"></use></svg>`;
+  };
 
   // ---- the feed handoff -----------------------------------------------------------------------
 
@@ -125,6 +133,11 @@
     const holder = wins.find(x => realFeed.parentElement === x.body);
     if(holder) snapshot(holder);
     realHome.appendChild(realFeed);
+    // The admin panel's iframe host is a sibling of the feed and follows it (see _adminFrame). Send
+    // it home too, or leaving the desktop strands it in a window that is about to be destroyed —
+    // which throws away a loaded panel and forces a reload on the next open.
+    const ah = document.getElementById('admin-host');
+    if(ah && ah.parentElement !== realHome) realHome.appendChild(ah);
   }
 
   // ---- windows -------------------------------------------------------------------------------
@@ -161,6 +174,9 @@
   }
 
   function openApp(view, label, icon, render){
+    if(view === 'messages'){
+      try{ mailAck = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){}
+    }
     const extra = EXTRAS.find(x => x.view === view);
     if(extra){ try{ extra.act(); }catch(err){ try{ PC().toast('could not open ' + extra.label); }catch(_){} } return null; }
     const existing = wins.find(w => w.view === view);
@@ -227,6 +243,18 @@
     const existing = wins.find(w => w.view === view);
     if(existing){ focusWin(existing); return existing; }
     return openApp(view, label, icon, render);
+  }
+
+  /* Route a view switch to that feature's OWN window. Returns true when it has taken over (a window
+   * was created and has already repainted itself), false when the caller should paint where it is —
+   * which covers both "that window already exists, the feed has been moved into it" and "this view
+   * is not something the launcher knows about", where a window would be a surprise. */
+  function routeView(view){
+    if(!on || !view) return false;
+    if(!apps().some(a => a.view === view)) return false;
+    const w = wins.find(x => x.view === view);
+    if(w){ focusWin(w, false); return false; }   // already open: claim the feed, let the caller paint
+    return !!openApp(view);                       // creates it AND repaints through focusWin
   }
 
   // Focus the window already showing a document, without creating one. Back/forward must never
@@ -510,18 +538,18 @@
 
   function drawBar(){
     if(!bar) return;
+    // Remember whether the search box had the caret BEFORE the rebuild throws the element away.
+    try{ barFocused = barFocused || (document.activeElement && document.activeElement.id === 'os-q-bar'); }catch(_){}
     const t = new Date();
     const clock = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const date = t.toLocaleDateString([], { day: 'numeric', month: 'short' });
     bar.innerHTML =
       `<button class="os-start${startOpen ? ' on' : ''}" id="os-start" title="Start">
          <img src="${enc(brandLogo())}" alt="Start"></button>
-       <button class="os-new" id="os-new" title="New post">
-         <svg class="ic" aria-hidden="true"><use href="#i-plus"></use></svg><span>Post</span></button>
        <div class="os-qbox">
          <svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg>
          <input id="os-q-bar" class="os-qin" type="search" autocomplete="off"
-                placeholder="Search Nostr" aria-label="Search Nostr"></div>
+                value="${enc(barQuery)}" placeholder="Search Nostr" aria-label="Search Nostr"></div>
        <div class="os-tasks">${wins.map(w =>
          `<button class="os-task${w.el.classList.contains('focused') && !w.min ? ' on' : ''}"
                   data-id="${w.id}" title="${enc(w.title)}">
@@ -533,25 +561,34 @@
            <b>${enc(clock)}</b><span>${enc(date)}</span>${notiDot()}</button>
        </div>`;
     $('#os-start', bar).onclick = (e) => { e.stopPropagation(); toggleStart(); };
-    /* Posting needs a home here. In the classic UI it is a small ＋ floating inside the timeline,
-     * which in the desktop ends up tucked in the corner of whichever window happens to hold the
-     * feed — findable only if you already know it exists. On a desktop, "new" belongs on the
-     * taskbar. */
-    { const nb = $('#os-new', bar);
-      if(nb) nb.onclick = () => { try{ PC().compose && PC().compose(); }
-                                  catch(err){ PC().toast && PC().toast('could not open the composer'); } }; }
+    /* There is deliberately no New post button here. One was added when posting appeared impossible
+     * on the desktop — but the real cause was the compose MODAL rendering behind it (see the
+     * z-index block in client.css). With that fixed, the timeline's own composer works inside a
+     * window, and a second entry point on the taskbar is just clutter. */
     /* The taskbar box searches NOSTR, not the app list — the start menu already filters apps, and a
      * second app filter next to it would be the least useful thing that box could do. Results land
      * in their own window, so searching does not throw away whatever the focused app was showing. */
     { const qb = $('#os-q-bar', bar);
-      if(qb) qb.addEventListener('keydown', (e) => {
-        if(e.key !== 'Enter') return;
-        const q = qb.value.trim();
-        if(!q) return;
-        const run = () => { try{ PC().runSearch && PC().runSearch(q); }
-                            catch(err){ PC().toast && PC().toast('search is unavailable here'); } };
-        openDoc('search', 'Search', 'i-search', run);
-      }); }
+      if(qb){
+        /* drawBar() rebuilds the whole bar — on every window focus, and on the clock tick — so the
+         * text has to live outside the DOM or it is wiped mid-sentence. Kept here, restored above,
+         * and the caret put back if the box was the thing you were typing in. */
+        qb.addEventListener('input', () => { barQuery = qb.value; });
+        if(barFocused){ qb.focus(); try{ qb.setSelectionRange(barQuery.length, barQuery.length); }catch(_){} barFocused = false; }
+        qb.addEventListener('blur', () => { barFocused = false; });
+        qb.addEventListener('keydown', (e) => {
+          if(e.key === 'Escape'){ qb.value = ''; barQuery = ''; qb.blur(); return; }
+          if(e.key !== 'Enter') return;
+          const q = qb.value.trim();
+          if(!q) return;
+          // Submitting empties the box. It is a search bar, not a location bar — leaving the query
+          // sitting there just means the next search starts by clearing it.
+          qb.value = ''; barQuery = ''; qb.blur();
+          const run = () => { try{ PC().runSearch && PC().runSearch(q); }
+                              catch(err){ PC().toast && PC().toast('search is unavailable here'); } };
+          openDoc('search', 'Search', 'i-search', run);
+        });
+      } }
     { const mb = $('#os-me', bar);
       if(mb) mb.onclick = () => { try{ PC().openProfile && PC().openProfile(); }
                                   catch(err){ PC().toast && PC().toast('could not open your profile'); } }; }
@@ -570,7 +607,8 @@
   // rows (PC.notifHtml), not a second rendering of the same data: notifList is the single gate that
   // decides what counts as a notification, and a re-implementation here would drift from it silently
   // — exactly how kinds 1621/1617/42/1111 once got fetched, toasted and then never shown.
-  let notiOpen = false, notiSeen = 0;
+  let notiOpen = false, notiSeen = 0, mailAck = 0;
+  let barQuery = '', barFocused = false;   // the taskbar search box survives a drawBar() rebuild
 
   function notiCount(){
     try{ return (PC().notifItems && PC().notifItems(60).length) || 0; }catch(_){ return 0; }
@@ -580,7 +618,11 @@
     let n = 0, mail = 0;
     try{ n = notiCount() - notiSeen; }catch(_){}
     try{ mail = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){}
-    const total = Math.max(0, n) + mail;
+    // The tray count means "new since you last looked", not "unread forever" — opening Messages or
+    // the centre acknowledges what is there. Without this the number sat on the clock after you had
+    // read the mail, because Mail.unread only falls when a message is actually marked read.
+    if(mail < mailAck) mailAck = mail;          // mail really was read → let the ack fall with it
+    const total = Math.max(0, n) + Math.max(0, mail - mailAck);
     return total > 0 ? `<i class="os-dot">${enc(total > 99 ? '99+' : String(total))}</i>` : '';
   }
 
@@ -600,7 +642,7 @@
     panel.id = 'os-noti';
     panel.className = 'os-noti';
     let items = [];
-    try{ items = (PC().notifItems && PC().notifItems(30)) || []; }catch(_){}
+    try{ items = (PC().notifItems && PC().notifItems(60)) || []; }catch(_){}
     let mail = 0;
     try{ mail = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){}
     const mailRow = mail > 0
@@ -617,6 +659,7 @@
     root.appendChild(panel);
 
     if(mail > 0) $('#os-noti-mail', panel).onclick = () => { hideNoti(); openApp('messages'); };
+    mailAck = mail;                              // looking at the centre counts as looking
     $('#os-noti-all', panel).onclick = () => { hideNoti(); openApp('notifications'); };
 
     // Same wiring the Notifications view uses: the row opens the post, the avatar opens the sender.
@@ -683,7 +726,7 @@
       if(!on) return;
       let n = 0;
       try{ n = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){ return; }
-      if(mailSeen === null){ mailSeen = n; return; }   // first read is a baseline, not an arrival
+      if(mailSeen === null){ mailSeen = n; mailAck = n; return; }   // baseline, not an arrival
       if(n > mailSeen) osToast(`✉ <b>${n - mailSeen} new email</b>`, '');
       if(n !== mailSeen){ mailSeen = n; drawBar(); }
     }, 20000);
@@ -703,13 +746,29 @@
        <div class="os-applist" id="os-applist"></div>
        <div class="os-stats" id="os-stats"></div>`;
     root.appendChild(menu);
+    const searchNostr = (q) => {
+      toggleStart(false);
+      openDoc('search', 'Search', 'i-search', () => {
+        try{ PC().runSearch && PC().runSearch(q); }
+        catch(_){ try{ PC().toast('search is unavailable here'); }catch(__){} }
+      });
+    };
     const paint = (q) => {
       const list = apps().filter(a => !q || a.label.toLowerCase().includes(q.toLowerCase()));
-      $('#os-applist', menu).innerHTML = list.length
+      /* Typing here searches NOSTR — that row is FIRST, so it is what Enter runs, and it opens in
+       * its own window like every other result on this desktop. The app list stays underneath
+       * because the start menu is also how you find an app, and Windows puts both in one box. */
+      const nrow = q ? `<button class="os-app os-app-find" data-find="1">
+             <svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg>
+             <span>Search Nostr for “${enc(q)}”</span></button>` : '';
+      $('#os-applist', menu).innerHTML = nrow + (list.length
         ? list.map(a => `<button class="os-app" data-view="${enc(a.view)}">
              ${iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`).join('')
-        : '<div class="muted small" style="padding:10px">Nothing matches that.</div>';
-      $$('.os-app', menu).forEach(b => b.onclick = () => { toggleStart(false); openApp(b.dataset.view); });
+        : (q ? '' : '<div class="muted small" style="padding:10px">Nothing matches that.</div>'));
+      $$('.os-app', menu).forEach(b => b.onclick = () => {
+        if(b.dataset.find) return searchNostr(q);
+        toggleStart(false); openApp(b.dataset.view);
+      });
     };
     paint('');
     // The community counters live in the sidebar, which the desktop hides — so the start menu is
@@ -717,9 +776,10 @@
     // caller as a viewer, and polling it again from here would inflate "online now" by one.
     try{
       const st = (PC().communityStats && PC().communityStats()) || {};
-      const row = (icon, n, label) => (n > 0 || label === 'WoT')
-        ? `<span class="os-stat" title="${enc(label)}">${iconSvg(icon)}<b>${enc(String(n || 0))}</b>
-             <i>${enc(label)}</i></span>` : '';
+      /* All five, always — including the zeroes. "0 in call" is information; a row that vanishes
+       * when it is zero just looks like the feature is missing, which is what happened here. */
+      const row = (icon, n, label) =>
+        `<span class="os-stat${(n > 0) ? ' on' : ''}" title="${enc(label)}">${iconSvg(icon)}<b>${enc(String(n || 0))}</b><i>${enc(label)}</i></span>`;
       $('#os-stats', menu).innerHTML =
         row('i-wot', st.users, 'WoT') + row('i-livedot', st.online, 'online') +
         row('i-relay-dot', st.relay, 'on relay') + row('i-stream', st.streams, 'live') +
@@ -863,6 +923,6 @@
     else snapTo(w, k === 'Left' ? 'left' : 'right');
   });
 
-  window.PCOS = { enter, exit, toggle, restore, isOn: () => on, openDoc, focusDoc, snapTo, osToast,
+  window.PCOS = { enter, exit, toggle, restore, isOn: () => on, openDoc, focusDoc, routeView, snapTo, osToast,
                   windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min })) };
 })();

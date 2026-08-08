@@ -20,11 +20,23 @@ Assertions, each a way a window manager breaks:
                        or the classic UI renders into a detached node and goes blank.
   window-controls      Minimise / maximise / close do not do what they say.
   offscreen-window     A window can be dragged somewhere it cannot be dragged back from.
+  stray-post-button    The taskbar carries a New post button. It existed only because the compose
+                       MODAL was rendering behind the desktop, so posting looked impossible; with
+                       that fixed the timeline's own composer works in a window and the extra
+                       button is clutter.
   mobile-not-gated     The desktop offers itself below 1024px, where it cannot work.
   drag-not-1to1        A dragged window does not keep up with the pointer. The client scales the page
                        with body{zoom}, so pointer deltas arrive in zoomed css pixels while
                        style.left is layout pixels; applying one to the other directly moves the
                        window by a factor of the zoom.
+  dead-icon            A <use> in the desktop chrome names a symbol that does not exist, or is not
+                       an id at all (href="i-wot" rather than "#i-wot"). Both draw nothing and log
+                       nothing.
+  start-search         The start menu's box does not offer a Nostr search as its first result, so
+                       Enter opens an app instead of searching.
+  view-not-windowed    A feature opened from inside another feature (Meme Builder on a post, say)
+                       repaints the window it was launched from instead of getting its own — which
+                       destroys whatever that window was showing.
   snap-broken          Dragging a window to a screen edge does not snap it to that half (or does it
                        without previewing where it will land, or cannot be dragged back off).
   modal-buried         A modal is not clickable — .modal-bg was authored at z-index 100, below the
@@ -209,6 +221,27 @@ DRIVE = r"""(async () => {
     w0.querySelector('.osw-x').click();      // leave no window behind for the checks that follow
     await sleep(80);
   }
+
+  // A feature opened from INSIDE another feature gets its own window, and the window it was launched
+  // from survives. This is the Meme-Builder-from-a-post case: it used to repaint the Social window.
+  {
+    const base = document.querySelectorAll('.osw').length;
+    PCOS.routeView('global'); await sleep(120);
+    const firstEl = document.querySelector('.osw.focused');
+    const took = PCOS.routeView('meme'); await sleep(120);
+    out.routeTook  = !!took;
+    out.routeWins  = document.querySelectorAll('.osw').length - base;
+    out.routeKept  = !!(firstEl && firstEl.isConnected);
+    out.routeFeedIn = feedIn('.osw.focused');
+    // Re-routing to a view that is already open must FOCUS it, not open a second copy.
+    PCOS.routeView('global'); await sleep(120);
+    out.routeDedup = document.querySelectorAll('.osw').length - base;
+    // A view the launcher does not know about must not conjure a window at all.
+    out.routeUnknown = PCOS.routeView('no-such-view-xyz');
+    document.querySelectorAll('.osw .osw-x').forEach(b => b.click());
+    await sleep(120);
+    out.routeClosed = document.querySelectorAll('.osw').length;
+  }
   out.composed = window.__composed;
   out.hasBar    = !!document.querySelector('.os-bar');
   out.hasStart  = !!document.querySelector('#os-start');
@@ -228,7 +261,27 @@ DRIVE = r"""(async () => {
   out.menuApps  = [...document.querySelectorAll('.os-app')].map(b => b.dataset.view);
   const q = document.querySelector('#os-q');
   if (q) { q.value='cal'; q.dispatchEvent(new Event('input',{bubbles:true})); await sleep(80); }
-  out.filtered  = [...document.querySelectorAll('.os-app')].map(b => b.dataset.view);
+  // The first row is "Search Nostr for …" and carries no view — it is asserted separately below.
+  out.filtered  = [...document.querySelectorAll('.os-app[data-view]')].map(b => b.dataset.view);
+  // Every <use> in the desktop's own chrome must name a symbol that EXISTS and draw something. A
+  // bare id (href="i-wot" instead of "#i-wot") resolves to nothing and renders nothing, with no
+  // console error — which is exactly how the start-menu stat icons and the window-title icons for
+  // Post/Profile/Search shipped blank.
+  out.badIcons = [...document.querySelectorAll('#os-root svg use')].map(u => {
+    const h = u.getAttribute('href') || u.getAttribute('xlink:href') || '';
+    if (!h.startsWith('#')) return 'not-an-id:' + h;
+    if (!document.getElementById(h.slice(1))) return 'missing:' + h;
+    // Only icons that are SUPPOSED to be on screen. The taskbar search box is display:none below
+    // 1080px, and "an icon inside a deliberately hidden element has no size" is not a defect.
+    const svg = u.ownerSVGElement;
+    if (svg.checkVisibility && !svg.checkVisibility()) return null;
+    const r = svg.getBoundingClientRect();
+    return (r.width < 2 || r.height < 2) ? 'zero-sized:' + h : null;
+  }).filter(Boolean);
+  { const f = document.querySelector('.os-app[data-find]');
+    out.findRow = !!f;
+    out.findFirst = !!(f && f === document.querySelector('.os-app'));
+    out.findText = f ? (f.textContent||'').trim().slice(0, 40) : ''; }
   document.querySelector('#os-start').click(); await sleep(80);
 
   // Open two windows from the desktop icons.
@@ -442,6 +495,16 @@ async def drive(url):
                     problems.append((label, "clicks-dead",
                                      "a button a feature rendered inside a window did not fire — "
                                      f"hasBtn={r.get('hasBtn')} clicked={r.get('clicked')}"))
+                if not (r.get("routeTook") and r.get("routeWins") == 2 and r.get("routeKept")
+                        and r.get("routeFeedIn") and r.get("routeDedup") == 2
+                        and r.get("routeUnknown") is False and r.get("routeClosed") == 0):
+                    problems.append((label, "view-not-windowed",
+                                     "opening a feature from inside another must give it its own "
+                                     "window and leave the first one standing — "
+                                     f"took-over={r.get('routeTook')} opened={r.get('routeWins')} "
+                                     f"first-survived={r.get('routeKept')} feed-inside={r.get('routeFeedIn')} "
+                                     f"after-reopen={r.get('routeDedup')} "
+                                     f"unknown-view-routed={r.get('routeUnknown')}"))
                 if not (r.get("ghostShown") and r.get("snappedHalf") and r.get("ghostHidden")
                         and r.get("unsnapped")):
                     problems.append((label, "snap-broken",
@@ -463,11 +526,10 @@ async def drive(url):
                                      "a modal is not clickable on the desktop — the point at the "
                                      f"centre of its button hits {r.get('modalCoveredBy')!r}. Reply, "
                                      "quote, confirm and every settings dialog open this way."))
-                if not r.get("hasNew") or not r.get("composed"):
-                    problems.append((label, "cannot-post",
-                                     "there is no working New post button on the taskbar — the "
-                                     "classic + lives inside the timeline, which in a window is a "
-                                     "corner nobody finds"))
+                if r.get("hasNew"):
+                    problems.append((label, "stray-post-button",
+                                     "the taskbar still carries a New post button — posting is back "
+                                     "in the timeline composer now that Social works in a window"))
                 if not (r["entered"] and r["hasBar"] and r["hasStart"] and r["icons"]):
                     problems.append((label, "no-desktop",
                                      f"entered={r['entered']} bar={r['hasBar']} start={r['hasStart']} "
@@ -489,6 +551,16 @@ async def drive(url):
                                      f"the start menu lists {r['menuApps']}"))
                 # "cal" legitimately matches Calendar AND Calls — the filter is a substring match
                 # on the label, and narrowing it further would be worse.
+                if r.get("badIcons"):
+                    problems.append((label, "dead-icon",
+                                     "the desktop draws icon(s) that resolve to nothing: "
+                                     + ", ".join(sorted(set(r["badIcons"]))[:6])))
+                if not (r.get("findRow") and r.get("findFirst")):
+                    problems.append((label, "start-search",
+                                     "typing in the start menu must offer a Nostr search FIRST, so "
+                                     "Enter runs it — "
+                                     f"row={r.get('findRow')} first={r.get('findFirst')} "
+                                     f"{r.get('findText')!r}"))
                 if sorted(r["filtered"]) != ["calendar", "calls"]:
                     problems.append((label, "apps-missing",
                                      f"searching 'cal' gave {r['filtered']}"))

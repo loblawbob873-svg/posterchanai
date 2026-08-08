@@ -3068,6 +3068,18 @@
     // Deep links, a restored last-view and the keyboard can all name a view the nav no longer shows —
     // hiding the button is not the same as closing the door.
     if(_viewNeedsInstance(v)) v='global';
+    /* PosterChan OS: a feature opened from INSIDE another feature gets its OWN window rather than
+     * replacing the one it was launched from. Opening 🎞️ Meme Builder on a post used to repaint the
+     * Social window, destroying the timeline you were reading — on a desktop that is what a second
+     * window is for. Runs AFTER the normalisation above so the window is keyed on the view that will
+     * actually render. _routing is the back/forward button (see openThread), and _osIn stops the
+     * recursion when the new window repaints itself through this same function.
+     * This does NOT touch reply/quote/compose — those are modals and never come through here. */
+    if(window.PCOS && PCOS.isOn() && !switchView._osIn && !_routing){
+      switchView._osIn = 1;
+      try{ if(PCOS.routeView && PCOS.routeView(v)) return; }
+      finally{ switchView._osIn = 0; }
+    }
     // Leaving Messages clears the open conversation so RE-entering Messages shows the list (not the last
     // thread). The profile "message @user" action sets dmActive THEN calls switchView (from a non-messages
     // view), so this guard won't wipe it. Without it, fix for the mobile thread-overlay would auto-open.
@@ -16569,6 +16581,13 @@
     // panel slow + flickery and re-ran all its fetches.) After a deploy, a full page refresh picks up
     // new admin CSS/JS.
     const host=_ensureAdminHost();
+    /* The host is a SIBLING overlay of the feed, and on the desktop the feed has been moved into a
+     * window — so the host has to follow it there. Left parked in .main it renders underneath the
+     * z-index:300 desktop: invisible, unclickable, and the window it was opened from just goes
+     * blank, because the line below hides the feed. Re-parented on every open rather than once, so
+     * it tracks the feed between windows and back to the classic layout. */
+    const home = feed.parentElement;
+    if(home && host.parentElement !== home) home.appendChild(host);
     feed.style.display='none';   // hide the feed; the persistent iframe fills the main area
     host.style.display='block';
     const ifr=host.querySelector('iframe');
