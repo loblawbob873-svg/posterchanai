@@ -130,11 +130,15 @@
     // Re-render the feature into ITS window. Cheap for these modules — they hold their own state
     // and repaint from it, which is exactly what leaving and returning to a view already does.
     if(render !== false){
-      try{ PC().switchView ? PC().switchView(w.view) : null; }catch(err){ /* a view that refuses is not fatal */ }
+      // A DOCUMENT window (a single post) repaints itself; a FEATURE window repaints by switching
+      // the client back to its view. Both are needed because the one live #feed moves between
+      // windows on every focus, so whatever it holds must be redrawn on arrival.
+      if(w.render){ try{ w.render(); }catch(err){ /* a stale document is not fatal */ } }
+      else try{ PC().switchView ? PC().switchView(w.view) : null; }catch(err){ /* a view that refuses is not fatal */ }
     }
   }
 
-  const ICON_COL = 120;             // the desktop-icon column; windows open clear of it
+  const ICON_COL = 318;             // the desktop-icon grid (3 across); windows open clear of it
 
   function place(i){
     // Cascade, then wrap, so opening several windows does not land exactly on top of one another
@@ -147,7 +151,7 @@
     return { x: ICON_COL + 16 + n * step, y: Math.round(vh * 0.05) + n * step, w, h };
   }
 
-  function openApp(view, label, icon){
+  function openApp(view, label, icon, render){
     const existing = wins.find(w => w.view === view);
     if(existing){ focusWin(existing); return existing; }
     const app = apps().find(a => a.view === view) || {};
@@ -171,7 +175,7 @@
        <span class="osw-grip" aria-hidden="true"></span>`;
     desk.appendChild(el);
     const w = { id: ++seq, view, title: label, icon, el, body: $('.osw-body', el),
-                slot: $('.osw-slot', el), min: false, max: false, rect: r };
+                slot: $('.osw-slot', el), min: false, max: false, rect: r, render: render || null };
     wins.push(w);
 
     $('.osw-bar', el).addEventListener('pointerdown', e => {
@@ -193,6 +197,16 @@
 
     focusWin(w);
     return w;
+  }
+
+  // A post opens in its OWN window on the desktop, instead of replacing the timeline underneath it
+  // — that is the whole point of having windows. Keyed by id, so clicking the same post twice
+  // focuses the window it is already in rather than stacking duplicates.
+  function openDoc(key, label, icon, render){
+    const view = 'doc:' + key;
+    const existing = wins.find(w => w.view === view);
+    if(existing){ focusWin(existing); return existing; }
+    return openApp(view, label, icon, render);
   }
 
   function closeWin(w){
@@ -431,6 +445,6 @@
     try{ if(settings().get(KEY, false) && fits()) enter(); }catch(_){}
   }
 
-  window.PCOS = { enter, exit, toggle, restore, isOn: () => on,
+  window.PCOS = { enter, exit, toggle, restore, isOn: () => on, openDoc,
                   windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min })) };
 })();

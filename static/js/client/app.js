@@ -19858,6 +19858,14 @@
     // route) must NOT navigate to a thread and flash "Post not found on the relay" — just no-op.
     if(!id || typeof id!=='string' || id.length<10){ return; }
     const hints=(relays||[]).filter(u=>/^wss?:\/\//i.test(u));
+    // PosterChan OS: a post opens in its own window rather than replacing the timeline behind it.
+    // The window's render callback re-enters here with the guard set, so the navigation and the
+    // thread render below happen exactly once — inside the new window, which now holds the feed.
+    if(window.PCOS && PCOS.isOn() && !openThread._osIn){
+      openThread._osIn = 1;
+      try{ if(PCOS.openDoc('post:'+id, 'Post', 'i-note', ()=>openThread(id, hints))) return; }
+      finally{ openThread._osIn = 0; }
+    }
     try{ _navUrl('/'+NT().nip19.neventEncode(hints.length?{ id, relays:hints }:{ id })); }catch(_){ try{ _navUrl('/'+NT().nip19.noteEncode(id)); }catch(__){} }
     renderThread(id, hints);
   }

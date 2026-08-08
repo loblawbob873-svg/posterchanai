@@ -21,6 +21,11 @@ Assertions, each a way a window manager breaks:
   window-controls      Minimise / maximise / close do not do what they say.
   offscreen-window     A window can be dragged somewhere it cannot be dragged back from.
   mobile-not-gated     The desktop offers itself below 1024px, where it cannot work.
+  modal-buried         A modal is not clickable — .modal-bg was authored at z-index 100, below the
+                       z-index:300 desktop, so reply / quote / confirm / settings opened INVISIBLY
+                       behind it. Hit-tested with elementFromPoint, not by reading the stylesheet.
+  post-window-broken   Clicking a post does not open it in its own window (or opens a second one
+                       when the post is already open).
 
 Exit 0 = clean, 1 = problems (printed), 2 = could not run (no Chrome / websockets).
 """
@@ -106,6 +111,50 @@ DRIVE = r"""(async () => {
   const nb = document.querySelector('#os-new');
   out.hasNew = !!nb;
   if (nb) nb.click();
+
+  // A REAL modal, in the real #modal-root, hit-tested against the real CSS. Everything the apps do
+  // that isn't inline — reply, quote, confirm, settings, the AI splash actions — goes through here,
+  // and .modal-bg sitting below .os-root means the click lands on the desktop instead.
+  {
+    const bg = document.createElement('div');
+    bg.className = 'modal-bg';
+    bg.innerHTML = '<div class="modal glass neon-border"><button id="__probe">go</button></div>';
+    let mr = document.getElementById('modal-root');
+    if (!mr) { mr = document.createElement('div'); mr.id = 'modal-root'; document.body.appendChild(mr); }
+    mr.appendChild(bg);
+    document.body.classList.add('modal-open');
+    await sleep(60);
+    const b = document.getElementById('__probe');
+    const r = b.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width/2, r.top + r.height/2);
+    out.modalW = Math.round(r.width);
+    out.modalReachable = !!(hit && (hit === b || b.contains(hit)));
+    out.modalCoveredBy = out.modalReachable ? '' :
+      (hit ? (hit.id || hit.className || hit.tagName).toString().slice(0,40) : 'nothing');
+    bg.remove(); document.body.classList.remove('modal-open');
+  }
+
+  // A post opens in its OWN window (openDoc), the timeline window stays put, and clicking the same
+  // post again focuses that window instead of stacking a duplicate.
+  {
+    const before = document.querySelectorAll('.osw').length;
+    let painted = 0;
+    const render = () => { painted++; document.getElementById('feed').innerHTML = 'THREAD'; };
+    PCOS.openDoc('post:aaaa', 'Post', 'i-note', render);
+    await sleep(80);
+    out.docWins  = document.querySelectorAll('.osw').length - before;
+    out.docFeed  = feedIn('.osw.focused');
+    out.docTask  = [...document.querySelectorAll('.os-task')].some(t => /Post/.test(t.textContent));
+    PCOS.openDoc('post:aaaa', 'Post', 'i-note', render);
+    await sleep(80);
+    out.docDedup = document.querySelectorAll('.osw').length - before;
+    out.docPaint = painted;
+    // Close it again — this probe must not leave a window (or a feed full of 'THREAD') behind for
+    // the assertions that follow.
+    document.querySelector('.osw.focused .osw-x').click();
+    await sleep(80);
+    out.docClosed = document.querySelectorAll('.osw').length - before;
+  }
   out.composed = window.__composed;
   out.hasBar    = !!document.querySelector('.os-bar');
   out.hasStart  = !!document.querySelector('#os-start');
@@ -115,6 +164,10 @@ DRIVE = r"""(async () => {
   // second column marching across the desktop and over the windows.
   out.iconCols  = new Set([...document.querySelectorAll('.os-icon')]
                     .map(b => Math.round(b.getBoundingClientRect().left))).size;
+  // …and every one of them must be visible without scrolling: the taskbar is the floor.
+  const barTop = document.querySelector('.os-bar').getBoundingClientRect().top;
+  out.iconsOffscreen = [...document.querySelectorAll('.os-icon')]
+                         .filter(b => b.getBoundingClientRect().bottom > barTop + 1).length;
 
   // Start menu lists the same apps and can filter.
   document.querySelector('#os-start').click(); await sleep(120);
@@ -323,6 +376,20 @@ async def drive(url):
                     problems.append((label, "clicks-dead",
                                      "a button a feature rendered inside a window did not fire — "
                                      f"hasBtn={r.get('hasBtn')} clicked={r.get('clicked')}"))
+                if r.get("docWins") != 1 or r.get("docDedup") != 1 or not r.get("docFeed") \
+                        or not r.get("docTask") or not r.get("docPaint") \
+                        or r.get("docClosed") != 0:
+                    problems.append((label, "post-window-broken",
+                                     "opening a post on the desktop must give it its own window "
+                                     "(and re-opening it must focus that one, not add another) — "
+                                     f"opened={r.get('docWins')} after-reopen={r.get('docDedup')} "
+                                     f"feed-inside={r.get('docFeed')} taskbar={r.get('docTask')} "
+                                     f"repaints={r.get('docPaint')} left-open={r.get('docClosed')}"))
+                if not r.get("modalReachable"):
+                    problems.append((label, "modal-buried",
+                                     "a modal is not clickable on the desktop — the point at the "
+                                     f"centre of its button hits {r.get('modalCoveredBy')!r}. Reply, "
+                                     "quote, confirm and every settings dialog open this way."))
                 if not r.get("hasNew") or not r.get("composed"):
                     problems.append((label, "cannot-post",
                                      "there is no working New post button on the taskbar — the "
@@ -332,10 +399,15 @@ async def drive(url):
                     problems.append((label, "no-desktop",
                                      f"entered={r['entered']} bar={r['hasBar']} start={r['hasStart']} "
                                      f"icons={len(r['icons'])}"))
-                if r.get("iconCols", 1) != 1:
+                if r.get("iconsOffscreen"):
                     problems.append((label, "icons-not-left",
-                                     f"the desktop icons form {r['iconCols']} columns — they must be "
-                                     "one column down the left"))
+                                     f"{r['iconsOffscreen']} desktop icon(s) run below the taskbar — "
+                                     "present but unreachable"))
+                # A GRID in the top-left: rows that wrap, at most 3 across. One tall column ran off
+                # the bottom; more than three would march across the desktop into the windows.
+                if not (1 <= r.get("iconCols", 0) <= 3):
+                    problems.append((label, "icons-not-left",
+                                     f"the desktop icons form {r['iconCols']} columns — want 1-3"))
                 if r["icons"] != r["navViews"]:
                     problems.append((label, "apps-missing",
                                      f"desktop icons {r['icons']} do not match the sidebar {r['navViews']}"))
