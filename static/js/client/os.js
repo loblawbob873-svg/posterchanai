@@ -138,17 +138,17 @@
     }
   }
 
-  const ICON_COL = 318;             // the desktop-icon grid (3 across); windows open clear of it
+  let iconSpan = 318;               // width the icon grid actually took; windows open clear of it
 
   function place(i){
     // Cascade, then wrap, so opening several windows does not land exactly on top of one another
     // (which reads as "only one opened") — and start to the RIGHT of the icon column, or the first
     // window covers the icons you just clicked.
     const vw = vwL(), vh = vhL() - TASKBAR;
-    const w = Math.min(1100, Math.round((vw - ICON_COL) * 0.72));
+    const w = Math.min(1100, Math.round((vw - iconSpan) * 0.72));
     const h = Math.min(760, Math.round(vh * 0.78));
     const step = 38, n = i % 6;
-    return { x: ICON_COL + 16 + n * step, y: Math.round(vh * 0.05) + n * step, w, h };
+    return { x: iconSpan + 16 + n * step, y: Math.round(vh * 0.05) + n * step, w, h };
   }
 
   function openApp(view, label, icon, render){
@@ -365,10 +365,18 @@
   }
 
   function startDrag(w, ev){
+    // Dragging used to write style.left/top on every pointermove. The window CONTAINS the live feed
+    // — thousands of nodes — so each move forced a full layout of it, plus a getComputedStyle() for
+    // the zoom, on a device with a fraction of a laptop's budget. That is the tablet sluggishness.
+    // The gesture now runs entirely on the compositor: a transform per animation frame, committed
+    // to left/top once on release. The zoom is read once, since it cannot change mid-drag.
+    const k = zf();
     let sx = ev.clientX, sy = ev.clientY;
     let ox = parseInt(w.el.style.left, 10), oy = parseInt(w.el.style.top, 10);
-    let zone = '';
+    let curX = ox, curY = oy, zone = '', raf = 0;
     hideLayouts();
+    w.el.classList.add('dragging');
+    const paint = () => { raf = 0; w.el.style.transform = `translate(${curX - ox}px, ${curY - oy}px)`; };
     const move = (e) => {
       // Win11: dragging a snapped or maximised window RESTORES its floating size and picks it up
       // under the cursor, keeping the grab point roughly where it was along the title bar. Dragging
@@ -377,22 +385,28 @@
         const frac = Math.min(0.9, Math.max(0.1,
                        (e.clientX - w.el.getBoundingClientRect().left) / w.el.offsetWidth));
         unsnap(w);
-        ox = Math.round(e.clientX / zf() - w.el.offsetWidth * frac);
-        oy = Math.max(0, e.clientY / zf() - 18);
+        ox = curX = Math.round(e.clientX / k - w.el.offsetWidth * frac);
+        oy = curY = Math.max(0, e.clientY / k - 18);
         sx = e.clientX; sy = e.clientY;
+        w.el.style.transform = '';
+        w.el.style.left = ox + 'px'; w.el.style.top = oy + 'px';
       }
       // Clamped so a window can never be dragged somewhere it cannot be dragged back from: the title
       // bar stays on screen and above the taskbar.
-      const k = zf();
-      const x = Math.max(-w.el.offsetWidth + 120, Math.min(vwL() - 120, ox + (e.clientX - sx) / k));
-      const y = Math.max(0, Math.min(vhL() - TASKBAR - 34, oy + (e.clientY - sy) / k));
-      w.el.style.left = x + 'px'; w.el.style.top = y + 'px';
-      zone = zoneAt(e.clientX, e.clientY);
-      showGhost(zone);
+      curX = Math.max(-w.el.offsetWidth + 120, Math.min(vwL() - 120, ox + (e.clientX - sx) / k));
+      curY = Math.max(0, Math.min(vhL() - TASKBAR - 34, oy + (e.clientY - sy) / k));
+      if(!raf) raf = requestAnimationFrame(paint);
+      const z = zoneAt(e.clientX, e.clientY);
+      if(z !== zone){ zone = z; showGhost(zone); }     // only when it CHANGES — not 120 times a second
     };
     const up = () => {
       document.removeEventListener('pointermove', move);
       document.removeEventListener('pointerup', up);
+      if(raf) cancelAnimationFrame(raf);
+      w.el.classList.remove('dragging');
+      w.el.style.transform = '';
+      w.el.style.left = Math.round(curX) + 'px';
+      w.el.style.top = Math.round(curY) + 'px';
       hideGhost();
       if(zone) snapTo(w, zone);
     };
@@ -407,26 +421,52 @@
     if(w.snap){ w.snap = null; w.el.classList.remove('snapped'); }
     ev.preventDefault();
     const sx = ev.clientX, sy = ev.clientY, ow = w.el.offsetWidth, oh = w.el.offsetHeight;
+    // A resize really does have to relayout the contents, so the saving here is doing it ONCE per
+    // animation frame instead of once per pointer event — a touchscreen fires far more of those.
+    const k = zf();
+    let nw = ow, nh = oh, raf = 0;
+    const paint = () => { raf = 0; w.el.style.width = nw + 'px'; w.el.style.height = nh + 'px'; };
     const move = (e) => {
-      const k = zf();
-      w.el.style.width = Math.max(420, ow + (e.clientX - sx) / k) + 'px';
-      w.el.style.height = Math.max(260, oh + (e.clientY - sy) / k) + 'px';
+      nw = Math.max(420, ow + (e.clientX - sx) / k);
+      nh = Math.max(260, oh + (e.clientY - sy) / k);
+      if(!raf) raf = requestAnimationFrame(paint);
     };
     const up = () => { document.removeEventListener('pointermove', move);
-                       document.removeEventListener('pointerup', up); };
+                       document.removeEventListener('pointerup', up);
+                       if(raf){ cancelAnimationFrame(raf); paint(); } };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
   }
 
   // ---- desktop, taskbar, start menu -----------------------------------------------------------
 
+  // Icon tile geometry, in LAYOUT pixels — the same space style.left/width live in. Kept here
+  // rather than only in the stylesheet because the column count is computed, not authored.
+  const ICON_W = 96, ICON_H = 80, ICON_GAP = 4, ICON_PAD = 14;   // matches .os-icon in the stylesheet
+
+  // How many columns it takes to fit EVERY app in the height available. A fixed three columns fits
+  // a 900px laptop and cuts the last rows off a tablet in landscape, where the desktop is short —
+  // and an icon you cannot see is an app you cannot open. Width is the other bound: never take more
+  // than a third of the desktop, or the launcher starts competing with the windows.
+  function iconCols(n){
+    const availH = (vhL() - TASKBAR) - ICON_PAD * 2;
+    const availW = vwL() / 3;
+    const perCol = Math.max(1, Math.floor((availH + ICON_GAP) / (ICON_H + ICON_GAP)));
+    const maxCols = Math.max(1, Math.floor((availW + ICON_GAP) / (ICON_W + ICON_GAP)));
+    return Math.max(1, Math.min(maxCols, Math.ceil(n / perCol)));
+  }
+
   function drawDesktop(){
-    desk.querySelectorAll('.os-icon').forEach(n => n.remove());
+    desk.querySelectorAll('.os-icons').forEach(n => n.remove());
     const grid = document.createElement('div');
     grid.className = 'os-icons';
     grid.innerHTML = apps().map(a =>
       `<button class="os-icon" data-view="${enc(a.view)}" title="${enc(a.label)}">
          ${iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`).join('');
+    const cols = iconCols(apps().length);
+    grid.style.gridTemplateColumns = `repeat(${cols}, ${ICON_W}px)`;
+    // Windows open clear of whatever the launcher actually takes, not a hardcoded guess.
+    iconSpan = ICON_PAD * 2 + cols * ICON_W + (cols - 1) * ICON_GAP;
     desk.appendChild(grid);
     $$('.os-icon', grid).forEach(b => {
       // Single click opens. A desktop double-click is the convention, but this is a web app people
@@ -561,11 +601,23 @@
    * The remembered flag is deliberately NOT cleared here: this is the screen being too narrow, not
    * the user choosing to leave. */
   function onResize(){
-    if(!on || fits()) return;
-    const remember = settings().get(KEY, false);
-    exit();
-    if(remember) settings().set(KEY, true);
-    try{ PC().toast && PC().toast('Turn the device sideways for the desktop'); }catch(_){}
+    if(!on) return;
+    if(!fits()){
+      const remember = settings().get(KEY, false);
+      exit();
+      if(remember) settings().set(KEY, true);
+      try{ PC().toast && PC().toast('Turn the device sideways for the desktop'); }catch(_){}
+      return;
+    }
+    // A rotation or a resized browser changes how many icon columns fit and where the snap zones
+    // are. Without this a tablet turned sideways keeps the portrait column count and the last rows
+    // sit under the taskbar — visible only by scrolling, which is how they got "cut off".
+    drawDesktop();
+    wins.forEach(w => {
+      if(!w.snap) return;
+      const css = rectOf(w.snap);
+      if(css) Object.assign(w.el.style, css);
+    });
   }
 
   function onKey(e){

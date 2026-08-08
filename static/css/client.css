@@ -6019,6 +6019,11 @@ body.os-on #os-root{pointer-events:auto}
    icon on screen at once, no scrollbar, and it still reads as a desktop. */
 .os-icons{position:absolute;left:14px;top:14px;display:grid;grid-auto-flow:row;
   grid-template-columns:repeat(3, 96px);gap:4px;align-content:start;justify-items:start}
+/* The column count is set inline by os.js (iconCols), computed from the space actually available —
+   three is only the fallback. Tile geometry is therefore fixed in LAYOUT pixels and must not be
+   rescaled per breakpoint, or the script's arithmetic and the stylesheet disagree and the bottom
+   row lands under the taskbar. At body{zoom} .67 a 96x80 tile still presents ~64x54 css px, which
+   is comfortably over the 44px tap minimum. */
 /* COMPACT ROWS, not tiles. Seventeen 84px tiles need 1428px of column and simply run off the
    bottom of any screen — the icons were all there and half of them unreachable. A 40px row fits the
    whole navbar in ~700px, so everything is visible at once without a second column marching across
@@ -6038,6 +6043,11 @@ body.os-on #os-root{pointer-events:auto}
 .osw.focused{border-color:color-mix(in srgb, var(--neon) 55%, var(--line));
   box-shadow:0 22px 64px rgba(0,0,0,.62)}
 .osw.minimised{display:none}
+/* While a window is being dragged it is moved with a transform on the compositor, so promote it to
+   its own layer and stop hit-testing its contents — on a tablet the pointer-events work alone was
+   showing up in the gesture. Both are removed on release. */
+.osw.dragging{will-change:transform}
+.osw.dragging .osw-body{pointer-events:none}
 /* touch-action:none is what makes dragging work with a FINGER. Pointer events fire on touch either
    way, but without this the browser claims the gesture as a scroll and the window never moves —
    which is the whole feature on an Android tablet. Same for the resize grip. */
@@ -6165,10 +6175,6 @@ body.os-on #upload-badge.upbadge{z-index:333}
   .osw-b{width:calc(46px / var(--zf, 1));height:calc(44px / var(--zf, 1));
          font-size:calc(15px / var(--zf, 1))}
   .osw-grip{width:calc(30px / var(--zf, 1));height:calc(30px / var(--zf, 1))}
-  .os-icons{grid-template-columns:repeat(3, calc(104px / var(--zf, 1)))}
-  .os-icon{width:calc(104px / var(--zf, 1));height:calc(88px / var(--zf, 1))}
-  .os-icon .ic{width:calc(28px / var(--zf, 1));height:calc(28px / var(--zf, 1))}
-  .os-icon span{font-size:calc(11px / var(--zf, 1))}
   .os-task{height:calc(42px / var(--zf, 1));padding:0 calc(13px / var(--zf, 1))}
   .os-start{width:calc(42px / var(--zf, 1));height:calc(42px / var(--zf, 1))}
   .os-app{min-height:calc(46px / var(--zf, 1))}

@@ -46,7 +46,10 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # (w, h, wide, touch) — a tablet in landscape, and a tablet upright which must be refused.
-WIDTHS = [(1600, 900, True, False), (1280, 800, True, True), (800, 1280, False, True)]
+# A short landscape tablet is in here deliberately: it is the case where a fixed icon column count
+# runs the last rows under the taskbar, which reads as "the icons are cut off".
+WIDTHS = [(1600, 900, True, False), (1280, 800, True, True), (1024, 600, True, True),
+          (800, 1280, False, True)]
 PORT = 9486
 PROFILE = "/tmp/pc-os-check"
 
