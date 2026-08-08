@@ -56,6 +56,13 @@ _OWNED = (
     ("app/services/command_service/", (APP, WORKER)),
     ("app/main.py", (APP,)),
     ("templates/", (APP,)),
+    # Web search: the SearXNG resolver + the page/URL fetchers. MEASURED the same way app/routers/
+    # was — importing relay_main, app.worker, tor_service, http_proxy_service, git_http_service and
+    # stream_service leaves `app.services.search_service` out of sys.modules in every one of them.
+    # Unmapped it meant "everything", so adding the Web Search screen restarted the RELAY on both
+    # nodes and dropped every connected Nostr client, for a file the relay never loads. WORKER is the
+    # same cheap hedge the router rule carries: the news/markets pollers reach it by a lazy import.
+    ("app/services/search_service.py", (APP, WORKER)),
     ("relay_main.py", (RELAY,)),
     ("app/services/nostr_relay/", (RELAY,)),
     ("app/worker.py", (WORKER,)),
@@ -109,7 +116,15 @@ _INERT_PREFIXES = ("static/", "docs/", "tests/", "scripts/", ".github/", "README
                    # affect anything", so editing one hook's log message restarted all seven units on
                    # both nodes, dropping every connected Nostr client. That is precisely the outage
                    # the role split removed, caused by the tooling that exists to prevent it.
-                   "git_hooks/")
+                   "git_hooks/",
+                   # The CONTAINER build: docker-compose.yml, the Dockerfiles, and docker/ (nginx conf,
+                   # the bundled SearXNG's settings template). A systemd node runs none of it — compose
+                   # is the other way to deploy this app, and docker/searxng/settings.yml is read by
+                   # ./install.sh, which is a person running a command, not a service. Unmapped they
+                   # meant "could affect anything", so adding a compose SERVICE restarted all seven
+                   # units on both bare-metal nodes: every connected Nostr client dropped for a file
+                   # neither node opens.
+                   "docker/", "docker-compose", "Dockerfile")
 _INERT_SUFFIXES = (".md",
                    # Templates BY DEFINITION: *.example is a file you copy and edit, so nothing reads
                    # the original at runtime — a service that loaded one would be loading a sample.

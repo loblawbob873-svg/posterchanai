@@ -24,7 +24,7 @@ import asyncio
 import logging
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -156,7 +156,26 @@ _PAGE_STRIP = ("script", "noscript", "iframe", "frame", "frameset", "object", "e
                "form", "input", "button", "select", "textarea", "template")
 
 
-def _render_page(html: str, final_url: str) -> str:
+def _self_link(self_base: str, absolute: str, token: str) -> str:
+    """A link back through this endpoint, ABSOLUTE.
+
+    It cannot be root-relative: the document carries `<base href="<the site>">`, so `/api/websearch/
+    page?url=…` inside the frame resolves against the SITE — the browser then asks github.com for our
+    path, gets a 404 page, and Firefox shows "github.com will not allow … to display the page if
+    another site has embedded it". Which reads as our frame being blocked when nothing of ours was
+    ever requested.
+
+    The token rides along for the same reason the frame's own src carries one: a navigation cannot
+    send an Authorization header, and in the bundled app there is no cookie for this origin either.
+    """
+    from urllib.parse import quote
+    out = f"{self_base}/api/websearch/page?url=" + quote(absolute, safe="")
+    if token:
+        out += "&token=" + quote(token, safe="")
+    return out
+
+
+def _render_page(html: str, final_url: str, self_base: str = "", token: str = "") -> str:
     """Someone else's page, made safe to show inside ours.
 
     Not a "reader mode" — the CSS, the images and the layout are the page's own, because that is what
@@ -166,7 +185,7 @@ def _render_page(html: str, final_url: str) -> str:
     always one tap away in the bar above.
     """
     from bs4 import BeautifulSoup
-    from urllib.parse import urljoin, quote
+    from urllib.parse import urljoin
 
     soup = BeautifulSoup(html, "lxml")
     for tag in soup(list(_PAGE_STRIP)):
@@ -229,7 +248,7 @@ def _render_page(html: str, final_url: str) -> str:
             continue
         absolute = urljoin(final_url, href)
         if absolute.lower().startswith(("http://", "https://")):
-            a["href"] = "/api/websearch/page?url=" + quote(absolute, safe="")
+            a["href"] = _self_link(self_base, absolute, token)
             a["target"] = "_self"
         else:
             del a["href"]      # mailto:, tel:, anything else — not ours to open from a frame
@@ -239,6 +258,7 @@ def _render_page(html: str, final_url: str) -> str:
 
 @router.get("/page")
 async def render_page(
+    request: Request,
     url: str = Query(..., max_length=2000),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -265,8 +285,13 @@ async def render_page(
         return Response(content=body, media_type="text/html; charset=utf-8",
                         headers={"Content-Security-Policy": _PAGE_CSP, "X-Content-Type-Options": "nosniff",
                                  "Referrer-Policy": "no-referrer", "Cache-Control": "private, max-age=60"})
+    # This node's own absolute base — behind a reverse proxy it reflects the forwarded host, and in
+    # the bundled desktop app / APK it is the instance the frame was loaded from, which is exactly
+    # what a link inside the frame has to point back at.
+    self_base = str(request.base_url).rstrip("/")
+    token = request.query_params.get("token") or ""
     try:
-        html = _render_page(out["html"], out["url"])
+        html = _render_page(out["html"], out["url"], self_base, token)
     except Exception as e:
         logger.warning("page render failed for %s: %s", url, e)
         raise HTTPException(status_code=502, detail="Could not render that page.")

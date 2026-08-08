@@ -33,6 +33,26 @@ class Mapping(unittest.TestCase):
         for p in ("relay_main.py", "app/services/nostr_relay/server.py"):
             self.assertEqual(dt.units_for([p]), [dt.RELAY], p)
 
+    def test_web_search_spares_the_relay(self):
+        """search_service is the app's and the pollers' — MEASURED: relay_main, app.worker,
+        tor_service, http_proxy_service, git_http_service and stream_service all leave it out of
+        sys.modules. Unmapped it meant "everything", so shipping the Web Search screen dropped every
+        connected Nostr client on both nodes for a file the relay never loads."""
+        got = dt.units_for(["app/services/search_service.py"])
+        self.assertIn(dt.APP, got)
+        self.assertNotIn(dt.RELAY, got)
+        self.assertNotIn(dt.MEDIA, got)
+        self.assertEqual(dt.units_for(["app/routers/websearch.py"]), dt.units_for(["app/routers/client.py"]))
+
+    def test_the_container_build_restarts_nothing(self):
+        """A systemd node runs none of it: compose is the OTHER way to deploy this app, and
+        docker/searxng/settings.yml is read by ./install.sh — a person running a command, not a
+        service. Unmapped, adding a compose service restarted all seven units on both bare-metal
+        nodes."""
+        for p in ("docker-compose.yml", "Dockerfile", "docker/searxng/settings.yml",
+                  "docker/proxy/nginx.conf"):
+            self.assertEqual(dt.units_for([p]), [], p)
+
     def test_a_bot_change_restarts_only_the_bots(self):
         self.assertEqual(dt.units_for(["botframework/main.py"]), [dt.BOTS])
         self.assertEqual(dt.units_for(["app/services/bot_manager_service.py"]), [dt.BOTS])

@@ -332,7 +332,8 @@ class PageRenderTests(unittest.TestCase):
     </body></html>"""
 
     def setUp(self):
-        self.out = W._render_page(self.HTML, "https://site.example/dir/page")
+        self.out = W._render_page(self.HTML, "https://site.example/dir/page",
+                                  "https://node.example", "tok123")
 
     def test_nothing_executes(self):
         low = self.out.lower()
@@ -351,8 +352,16 @@ class PageRenderTests(unittest.TestCase):
         """A <base> the page brought with it would point every relative URL wherever it says."""
         self.assertNotIn("evil.example", self.out)
 
-    def test_links_stay_in_the_app(self):
-        self.assertIn("/api/websearch/page?url=https%3A%2F%2Fsite.example%2Fpage2", self.out)
+    def test_links_stay_in_the_app_and_are_absolute(self):
+        """ABSOLUTE, because the document carries `<base href="<the site>">`: a root-relative
+        /api/websearch/page inside the frame resolves against the SITE, so the browser asks github.com
+        for our path and Firefox reports "github.com will not allow … to display the page if another
+        site has embedded it" — our frame blamed for a request that never reached us."""
+        self.assertIn("https://node.example/api/websearch/page?url=https%3A%2F%2Fsite.example%2Fpage2",
+                      self.out)
+        # …and the token rides along: a navigation carries no Authorization header, and the bundled
+        # app has no cookie for this origin.
+        self.assertIn("token=tok123", self.out)
         self.assertNotIn("mailto:", self.out)     # not ours to open from a frame
 
     def test_the_csp_allows_the_base_it_injects(self):
@@ -368,7 +377,10 @@ class PageRenderTests(unittest.TestCase):
             return {"url": url, "html": "", "content_type": "", "error": "URL blocked: Private IP not allowed"}
         svc.fetch_url_raw = _blocked
         with mock.patch.object(W, "get_search_service", return_value=svc):
-            resp = run(W.render_page(url="http://10.0.0.1/", db=None, current_user=_User()))
+            req = mock.Mock()
+            req.base_url = "https://node.example/"
+            req.query_params = {}
+            resp = run(W.render_page(request=req, url="http://10.0.0.1/", db=None, current_user=_User()))
         body = resp.body.decode()
         self.assertIn("can't be shown here", body)
         self.assertIn("Open the original", body)

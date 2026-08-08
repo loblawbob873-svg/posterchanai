@@ -1329,7 +1329,13 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 /* images */
 .ws-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
 .ws-img{position:relative;display:block;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel2)}
+.ws-imga{display:block}
 .ws-img img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover}
+/* ⧉ = the page this picture is on, as opposed to the picture itself. Always visible on touch (there
+   is no hover to reveal it) and a real thumb target. */
+.ws-imgpg{position:absolute;top:6px;right:6px;width:32px;height:32px;border-radius:8px;cursor:pointer;
+  border:1px solid var(--line);background:rgba(0,0,0,.55);color:#fff;font-size:15px;line-height:1}
+.ws-imgpg:hover{border-color:var(--neon);color:var(--neon)}
 .ws-imglbl{position:absolute;left:0;right:0;bottom:0;padding:4px 6px;font-size:11px;color:#fff;
   background:linear-gradient(transparent,rgba(0,0,0,.72));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* AI overview */

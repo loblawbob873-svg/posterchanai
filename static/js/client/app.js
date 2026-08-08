@@ -22051,6 +22051,13 @@
     // The bearer token itself, for the ONE case a header cannot be attached: an <iframe src> (Web
     // Search's page view). get_current_user accepts it as ?token=. Everything else must use authFetch.
     aiToken: () => _aiToken || '',
+    // The INSTANCE's origin, absolute. Root-relative works everywhere the page is served BY the
+    // instance; in the bundled desktop app and the APK the page's own origin is app://posterchan (or
+    // the WebView's), and a root-relative <iframe src> resolves against THAT — which is how Web
+    // Search's page view came up blank on Windows with "Blocked script execution in
+    // 'app://posterchan/api/websearch/page…'". fetch() is rewritten by the bundle's shim; an iframe
+    // src is not, so anything that builds a URL for the browser to navigate must go through here.
+    apiBase: _instanceBase,
     // NIP-44 decrypt with the current signer (any login type) — games use it to read their own
     // encrypted hole cards from a public game-state doc.
     nip44dec: (peer, ct) => (signer && signer.nip44dec) ? signer.nip44dec(peer, ct) : Promise.reject(new Error('no nip44')),
@@ -22091,6 +22098,10 @@
     // file picker — folders, encrypted-blob hygiene and thumbnails included; sub-modules must use it
     // rather than listing /list/<pubkey> into a grid of their own.
     mediaServer, modal, closeModal, blossomPicker,
+    // The app's own lightbox (pager, zoom, swipe, keyboard) — so Web Search's Images tab opens a
+    // picture the way every other picture in this app opens, instead of throwing you out to a
+    // browser tab. Signature: (src, kind, {items:[{src,kind}], i}).
+    openLightbox,
     // The voice studio, so the Meme Builder can put a cloned line on the timeline without a second
     // copy of the library, the recorder or the queue handling (see openVoiceStudio's opts.onTake).
     openVoiceStudio,

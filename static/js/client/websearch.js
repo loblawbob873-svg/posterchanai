@@ -239,6 +239,23 @@
       paint();
       if(r.mode === 'text') loadText();
     }
+    /* An image result, in the app's own lightbox — with the whole page of results as its pager, so
+     * ←/→ walk the search the way they walk a post's gallery. */
+    function openImage(i){
+      const r = S.results[i]; if(!r) return;
+      const shots = S.results
+        .map(x => ({ src: safeUrl(x.img_src || x.thumbnail), title: x.title, url: x.url }))
+        .filter(x => x.src);
+      const at = Math.max(0, shots.findIndex(x => x.url === r.url));
+      if(PC.openLightbox){
+        PC.openLightbox(shots[at] ? shots[at].src : safeUrl(r.img_src || r.thumbnail), null,
+                        { items: shots.map(x => ({ src:x.src, kind:null })), i: at });
+        return;
+      }
+      // No lightbox on this build (an older bundled client): the page it came from is the next best
+      // thing, and it is still IN the app.
+      openReader(r);
+    }
     function closeReader(){
       if(!S.reader) return false;
       S.reader = null;
@@ -331,12 +348,24 @@
         </div></article>`;
     }
 
+    /* An image result opens IN the app too — the app's own lightbox (pager, zoom, swipe, Esc), the
+     * same one every other picture here opens in, rather than a browser tab. The tile stays a real
+     * <a> to the source page so ctrl/⌘/middle-click still works and the status bar shows where it
+     * goes; the plain click is intercepted.
+     *
+     * ⧉ opens the PAGE the image is on, in the frame — the two are different things you might want,
+     * and a picture with no way back to its context is half a search result. */
     function imageCard(r, i){
       const src = safeUrl(r.thumbnail || r.img_src);
       if(!src) return '';
-      return `<a class="ws-img" href="${enc(safeUrl(r.url)||'#')}" target="_blank" rel="noopener noreferrer" title="${enc(r.title||'')}">
-        <img src="${enc(src)}" alt="${enc(r.title||'')}" loading="lazy" onerror="this.closest('.ws-img').remove()">
-        <span class="ws-imglbl">${enc(host(r.url) || '')}</span></a>`;
+      return `<div class="ws-img" data-i="${i}">
+        <a class="ws-imga" href="${enc(safeUrl(r.url)||'#')}" target="_blank" rel="noopener noreferrer"
+           title="${enc(r.title||'')}" data-i="${i}">
+          <img src="${enc(src)}" alt="${enc(r.title||'')}" loading="lazy" onerror="this.closest('.ws-img').remove()">
+          <span class="ws-imglbl">${enc(host(r.url) || '')}</span></a>
+        <button class="ws-imgpg" data-i="${i}" title="Open the page this image is on"
+                aria-label="Open the page this image is on">⧉</button>
+      </div>`;
     }
 
     function overviewCard(){
@@ -435,9 +464,17 @@
      * out and does nothing else.
      */
     function pageUrl(u){
-      let s = '/api/websearch/page?url=' + encodeURIComponent(u);
-      // An <iframe src> cannot carry an Authorization header, and on the APK the WebView origin is
-      // not the API host, so the cookie is not there either. get_current_user accepts ?token=.
+      // ABSOLUTE against the instance, never root-relative. The bundled desktop app and the APK serve
+      // this page from app://posterchan (or the WebView's own origin) and rewrite fetch() through a
+      // shim — but an <iframe src> is a NAVIGATION, which the shim never sees, so a root-relative URL
+      // resolves against the bundle and the frame comes up blank ("Blocked script execution in
+      // 'app://posterchan/api/websearch/page…'" on Windows).
+      let base = '';
+      try{ base = (PC.apiBase && PC.apiBase()) || ''; }catch(_){}
+      let s = base + '/api/websearch/page?url=' + encodeURIComponent(u);
+      // …and an <iframe src> cannot carry an Authorization header either; on the APK the WebView
+      // origin is not the API host, so there is no cookie to fall back on. get_current_user accepts
+      // ?token=, which is why this is the one place that reads the bearer token directly.
       try{ const t = PC.aiToken && PC.aiToken(); if(t) s += '&token=' + encodeURIComponent(t); }catch(_){}
       return s;
     }
@@ -447,7 +484,7 @@
       const isPage = r.mode !== 'text';
       const body = isPage
         ? `<iframe class="ws-frame" id="ws-frame" src="${enc(pageUrl(r.url))}"
-                   sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+                   sandbox="allow-popups allow-popups-to-escape-sandbox"
                    referrerpolicy="no-referrer" title="${enc(r.title || host(url))}"></iframe>`
         : (r.loading ? '<div class="spinner"></div>'
            : r.error ? `<div class="ws-err">${enc(r.error)} — the page is still there, open it in a tab.</div>`
@@ -511,6 +548,17 @@
       $$('.ws-card', root).forEach(card => card.onclick = (e)=>{
         if(e.target.closest('a, button')) return;
         const r = at(card.dataset.i); if(r) openReader(r);
+      });
+      // Images: the picture in the app's lightbox (with the whole page of results as its pager), the
+      // ⧉ button for the page it came from. Modified clicks are left alone — that is the browser's.
+      $$('.ws-imga', root).forEach(a => a.onclick = (e)=>{
+        if(e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
+        e.preventDefault();
+        openImage(+a.dataset.i);
+      });
+      $$('.ws-imgpg', root).forEach(b => b.onclick = (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        const r = at(b.dataset.i); if(r) openReader(r);
       });
       $$('.ws-share', root).forEach(b => b.onclick = ()=>{ const r = at(b.dataset.i);
         if(r) compose({ text: (r.title||'') + '\n\n' + r.url }); });
