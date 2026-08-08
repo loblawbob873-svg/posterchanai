@@ -168,8 +168,19 @@ async def put_doc(port: int, seckey: bytes, d_tag: str, data,
     signer pubkey is in preserve_pubkeys. NEVER add a NIP-40 `expiration` tag here — the expiration
     sweep ignores kind AND preserve, so it WOULD delete settings/accounts/chats. (See store.py.)"""
     payload = data if isinstance(data, str) else json.dumps(data, separators=(",", ":"))
-    content = nip44.encrypt_self(seckey, payload) if encrypt else payload
-    ev = build_event(seckey, kind, content, tags=[["d", d_tag]] + (tags or []))
+
+    # OFF THE EVENT LOOP. Encrypting (NIP-44) and signing (pure-Python secp256k1) are CPU-bound and
+    # were running inline in an async function, so a caller that writes many documents in a row —
+    # a mailbox sync, a calendar import — held the loop for the whole run. This app serves on a
+    # SINGLE uvicorn worker, so that is not "a bit slower": measured during a mail sync, /status
+    # took 2s instead of ~10ms and a framed web page took 4.6s, which reads as the app hanging and
+    # renders a search result as a white screen. A thread still contends for the GIL, but the
+    # interpreter switches every few milliseconds, so the loop gets to answer requests in between.
+    def _seal():
+        body = nip44.encrypt_self(seckey, payload) if encrypt else payload
+        return build_event(seckey, kind, body, tags=[["d", d_tag]] + (tags or []))
+
+    ev = await asyncio.to_thread(_seal)
     ok, msg = await _ws_publish(port, ev)
     if not ok:
         logger.warning("[nostr-store] put %s rejected: %s", d_tag, msg)
