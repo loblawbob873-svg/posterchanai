@@ -66,6 +66,15 @@
     }).filter(Boolean);
   }
 
+  /* The start button wears the instance's own logo — the same image the sidebar brand shows, read
+   * live rather than hardcoded, so a deployment that set a custom logo (Admin → Site) gets ITS mark
+   * on the start button instead of PosterChan's. */
+  function brandLogo(){
+    const img = document.querySelector('.brand-logo');
+    const src = img && (img.getAttribute('src') || img.src);
+    return src || '/static/posterchan-relay.png';
+  }
+
   const iconSvg = (href) => href
     ? `<svg class="ic" aria-hidden="true"><use href="${enc(href)}"></use></svg>`
     : '<svg class="ic" aria-hidden="true"><use href="#i-app"></use></svg>';
@@ -258,7 +267,7 @@
     const date = t.toLocaleDateString([], { day: 'numeric', month: 'short' });
     bar.innerHTML =
       `<button class="os-start${startOpen ? ' on' : ''}" id="os-start" title="Start">
-         <img src="/static/posterchan-relay.png" alt="Start"></button>
+         <img src="${enc(brandLogo())}" alt="Start"></button>
        <div class="os-tasks">${wins.map(w =>
          `<button class="os-task${w.el.classList.contains('focused') && !w.min ? ' on' : ''}"
                   data-id="${w.id}" title="${enc(w.title)}">
