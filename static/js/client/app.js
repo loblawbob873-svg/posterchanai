@@ -15310,9 +15310,10 @@
         <input class="input" id="cm-to" placeholder="To (comma-separated)" value="${enc(to)}" autocomplete="off">
         <input class="input" id="cm-cc" placeholder="Cc (optional)" value="${enc(cc)}" autocomplete="off">
         <input class="input" id="cm-subj" placeholder="Subject" value="${enc(subj)}">
-        <textarea class="input" id="cm-body" rows="9" placeholder="Write your message…">${enc(body)}</textarea>
+        <textarea class="input" id="cm-body" placeholder="Write your message…">${enc(body)}</textarea>
         <div class="row cmp-tools"><button class="btn btn-ghost small" id="cm-contacts">👤 Contacts</button><button class="btn btn-ghost small" id="cm-attach">📎 Attach</button><button class="btn btn-ghost small" id="cm-blossom">🌸 Blossom</button><input type="file" id="cm-file" multiple hidden><span id="cm-atts" class="muted small"></span></div>
-        <div class="row"><button class="btn btn-ghost small" id="cm-draft">💾 Save draft</button><span class="spacer"></span><button class="btn btn-neon" id="cm-send">Send ▶</button></div>`);
+        <div class="row cm-actions"><button class="btn btn-ghost small" id="cm-draft">💾 Save draft</button><span class="spacer"></span><button class="btn btn-neon" id="cm-send">Send ▶</button></div>`,
+        box => box.classList.add('mail-compose-modal'));
       const drawAtts=()=>{ const e=$('#cm-atts'); if(e) e.innerHTML=atts.map(a=>'📎 '+enc(a.name)).join('  '); };
       drawAtts();
       $('#cm-attach').onclick=()=>$('#cm-file').click();

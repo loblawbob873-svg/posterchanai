@@ -183,7 +183,20 @@ OPEN_MESSAGE = r"""(async () => {
            coversList: !!(r && r.width >= window.innerWidth - 2),
            wide: !!(r && Math.round(r.width) > window.innerWidth + 1),
            paneH: r ? Math.round(r.height) : 0,
-           bodyH: br ? Math.round(br.height) : 0 };
+           bodyH: br ? Math.round(br.height) : 0,
+           acts: (() => {
+             const bar = document.querySelector('.mail-actions');
+             if (!bar) return null;
+             const bs = [...bar.querySelectorAll('.btn')];
+             const tops = new Set(bs.map(b => Math.round(b.getBoundingClientRect().top)));
+             return { n: bs.length, rows: tops.size,
+                      short: bs.filter(b => b.getBoundingClientRect().height < 32).length,
+                      overflows: bar.scrollWidth > bar.clientWidth + 1 };
+           })(),
+           hdrOverflow: (() => {
+             const hd = document.querySelector('.mail-msg-hd');
+             return hd ? hd.scrollWidth > hd.clientWidth + 1 : false;
+           })() };
 })()"""
 
 COMPOSE_CONTACTS = r"""(async () => {
@@ -195,6 +208,12 @@ COMPOSE_CONTACTS = r"""(async () => {
   if (!m) return {error:'composer did not open'};
   const mr = m.getBoundingClientRect();
   const wide = Math.round(mr.width) > window.innerWidth + 1;
+  // A composer is a window you write pages in, not a dialog. Measure how much of the screen it takes
+  // and how much of ITSELF the message body gets.
+  const bodyEl = m.querySelector('#cm-body');
+  const br = bodyEl ? bodyEl.getBoundingClientRect() : null;
+  const fill = { w: mr.width / window.innerWidth, h: mr.height / window.innerHeight,
+                 bodyH: br ? Math.round(br.height) : 0, boxH: Math.round(mr.height) };
   const TEXTY = ['text','search','email','url','tel','number','password',''];
   const small = [...m.querySelectorAll('input, textarea')]
     .filter(i => !(i.tagName === 'INPUT' && !TEXTY.includes((i.type||'').toLowerCase())))
@@ -227,7 +246,7 @@ COMPOSE_CONTACTS = r"""(async () => {
   const firstAuto = document.querySelector('.mc-auto-item');
   if (firstAuto) firstAuto.dispatchEvent(new MouseEvent('mousedown', {bubbles:true}));
   await new Promise(r=>setTimeout(r,150));
-  return { wide, small, rows, tiny, qFont, to: picked,
+  return { wide, small, rows, tiny, qFont, to: picked, fill,
            suggested, tinyAuto, completed: to.value };
 })()"""
 
@@ -350,6 +369,25 @@ async def drive(url):
                     if op["wide"]:
                         problems.append((label, "horizontal-overflow",
                                          "the reading pane is wider than the screen"))
+                    a = op.get("acts")
+                    if not a or a["n"] < 6:
+                        problems.append((label, "actions-broken",
+                                         f"the message actions row has {a and a['n']} buttons"))
+                    else:
+                        # One row. Six buttons wrapping into a ragged block is what "not displaying
+                        # good" looked like; a pane too narrow for them scrolls sideways instead.
+                        if a["rows"] > 1:
+                            problems.append((label, "actions-broken",
+                                             f"the actions wrapped onto {a['rows']} rows"))
+                        # Phone only: desktop scales the whole UI with body{zoom:.67-.77}, so a
+                        # 36px control paints at 24 device px there and EVERY button in the app
+                        # would fail this. The tap-target rule is about thumbs, not zoomed pixels.
+                        if phone and a["short"]:
+                            problems.append((label, "tiny-tap-target",
+                                             f"{a['short']} action button(s) under 32px"))
+                    if op.get("hdrOverflow"):
+                        problems.append((label, "horizontal-overflow",
+                                         "a long From/To pushes the message header out of the pane"))
                     # The body must use most of the pane it is given. This is a plain-text stub
                     # message, so the floor is deliberately modest — it catches a body pinned to a
                     # fixed height inside a much taller pane, not a short mail.
@@ -387,6 +425,19 @@ async def drive(url):
                     if cc["wide"]:
                         problems.append((label, "compose-overflow",
                                          "the composer is wider than the screen"))
+                    f = cc.get("fill") or {}
+                    # Phone: the whole screen. Desktop: a real window, not a 720px dialog.
+                    want_h = 0.9 if phone else 0.6
+                    want_w = 0.98 if phone else 0.55
+                    if f.get("h", 0) < want_h or f.get("w", 0) < want_w:
+                        problems.append((label, "compose-too-small",
+                                         f"the composer is {f.get('w',0)*100:.0f}% x "
+                                         f"{f.get('h',0)*100:.0f}% of the screen"))
+                    # …and the message body must own most of that window, not a fixed nine rows.
+                    if f.get("boxH", 0) and f.get("bodyH", 0) < 0.3 * f["boxH"]:
+                        problems.append((label, "compose-too-small",
+                                         f"the message body is {f.get('bodyH')}px inside a "
+                                         f"{f.get('boxH')}px composer"))
                     # Two of the three stub cards have an email; the third must not be offered.
                     if sorted(cc["rows"]) != ["ann@example.com", "labelled@example.com"]:
                         problems.append((label, "contacts-broken",
