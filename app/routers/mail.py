@@ -243,10 +243,31 @@ async def mail_do_sync(db: Session = Depends(get_db), current_user: User = Depen
 async def mail_messages(account: str = "", folder: str = "INBOX",
                         db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     sk = _seckey(db, current_user)
-    if account == "__all":   # unified view: this logical folder across EVERY account (real folder
-        # names differ per account, so match the logical tag — or the local 'Drafts' folder).
-        msgs = [m for m in await mail_store.list_messages(sk, None, None)
-                if m.get("logical") == folder or m.get("folder") == folder]
+    if account == "__all":
+        # Unified view: this logical folder across EVERY account. Ask each account for the ONE
+        # folder that plays the role, rather than pulling the whole mailbox and filtering in Python.
+        #
+        # That is not only cheaper, it is the difference between right and wrong: the relay clamps
+        # any limit to 5000, so "read everything and filter" silently returned the newest 5000
+        # documents ACROSS ALL FOLDERS — for a mailbox of nine thousand that is a handful of INBOX
+        # mail and the rest missing, with nothing to say so. Real folder names differ per account
+        # (and the user can now map them), so the name comes from the same resolver the sync uses.
+        msgs = []
+        for acc in (get_user_mail_accounts(current_user.id, db) or []):
+            real = folder
+            if folder != "INBOX":
+                try:
+                    meta = await _asyncio.to_thread(_list_special_folders, current_user.id, db, acc.email)
+                    key = {"Sent": "sent", "Drafts": "drafts", "Trash": "trash",
+                           "Spam": "junk", "Archive": "archive"}.get(folder)
+                    real = (meta.get(key) if key else None) or folder
+                except Exception:
+                    real = folder
+            try:
+                msgs += await mail_store.list_messages(sk, acc.email, real)
+            except Exception as e:
+                logger.warning("[mail] unified view: %s/%s unreadable: %s", acc.email, real, e)
+        msgs.sort(key=lambda m: m.get("ts", 0), reverse=True)
         return {"messages": [_summary(m) for m in msgs], "account": "__all"}
     acc = _resolve_account(db, current_user, account)
     if not acc:
@@ -287,10 +308,10 @@ async def mail_search(q: str, account: str = "", folder: str = "",
                       db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     sk = _seckey(db, current_user)
     if account == "__all":
-        msgs = await mail_store.list_messages(sk, None, None)
+        msgs = await mail_store.list_messages(sk, None, None, limit=0)
     else:
         acc = _resolve_account(db, current_user, account)
-        msgs = await mail_store.list_messages(sk, acc.email if acc else None, folder or None)
+        msgs = await mail_store.list_messages(sk, acc.email if acc else None, folder or None, limit=0)
     return {"messages": [_summary(m) for m in mail_store.search(msgs, q)]}
 
 
@@ -597,7 +618,7 @@ async def mail_thread(account: str, uid: str, folder: str = "INBOX",
     sk = _seckey(db, current_user)
     acc = None
     if account == "__all":
-        seed = next((m for m in await mail_store.list_messages(sk, None, None)
+        seed = next((m for m in await mail_store.list_messages(sk, None, None, limit=0)
                      if str(m.get("uid")) == str(uid) and m.get("folder") == folder), None)
     else:
         acc = _resolve_account(db, current_user, account)
@@ -611,7 +632,7 @@ async def mail_thread(account: str, uid: str, folder: str = "INBOX",
     if not (seed.get("in_reply_to") or (seed.get("references") or "").strip()):
         thread = [seed]
     else:
-        allm = await mail_store.list_messages(sk, acc.email if acc else None, None)
+        allm = await mail_store.list_messages(sk, acc.email if acc else None, None, limit=0)
         thread = _build_thread(seed, allm)
     for m in thread:                                    # rehydrate offloaded bodies (bounded by thread size)
         if m.get("body_ref"):

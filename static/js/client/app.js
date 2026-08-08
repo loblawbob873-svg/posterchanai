@@ -19563,8 +19563,59 @@
       <input class="input" data-f="smtp_server" placeholder="SMTP server" value="${enc(a.smtp_server||'')}">
       <input class="input" data-f="smtp_port" placeholder="587" value="${enc(String(a.smtp_port||587))}">
       <input class="input" data-f="password" type="password" placeholder="${a.password?'•••• (kept — blank keeps it)':'password'}">
-      <button class="mini us-mail-del" data-i="${i}" title="remove"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>`).join('');
+      <button class="mini us-mail-del" data-i="${i}" title="remove"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
+      ${a.email ? `<button class="btn btn-ghost small us-mail-folders" data-email="${enc(a.email)}">📂 Folders</button>` : ''}
+      </div>`).join('');
     $$('.us-mail-del',wrap).forEach(b=> b.onclick=()=>{ _usMail.splice(+b.dataset.i,1); usRenderMail(); });
+    $$('.us-mail-folders',wrap).forEach(b=> b.onclick=()=> usMailFolders(b.dataset.email));
+  }
+
+  /* Which real folder plays each role, for one account.
+   *
+   * Detection (RFC 6154 special-use, then name heuristics) is right on most servers and wrong on
+   * some — and when Sent is wrong, a message you just sent is filed where this app never looks,
+   * which reads as "it never sent". This node has THREE sent-like folders (Sent, Sent Messages,
+   * INBOX.Sent), so there is nothing for a heuristic to be confident about.
+   *
+   * "Detect automatically" is a real choice, not a blank: it clears the override so detection runs
+   * again, rather than leaving the account with no Sent folder at all.
+   */
+  async function usMailFolders(email){
+    const ROLES=[['sent','📤 Sent'],['drafts','📝 Drafts'],['trash','🗑 Trash'],
+                 ['junk','⚠️ Spam / Junk'],['archive','🗄 Archive']];
+    modal(`<h3>📂 Folders — ${enc(email)}</h3><div id="usf-body"><div class="spinner"></div></div>`);
+    let d=null;
+    try{ d=await fetch('/api/mail/folder-map?account='+encodeURIComponent(email)).then(r=>r.json()); }
+    catch(_){}
+    const box=$('#usf-body'); if(!box) return;
+    if(!d || d.detail || !Array.isArray(d.folders)){
+      box.innerHTML=`<div class="muted small">Could not reach that mailbox. Check the server and
+        password above, save, then try again.</div>`;
+      return;
+    }
+    if(!d.folders.length){ box.innerHTML='<div class="muted small">That account reported no folders.</div>'; return; }
+    box.innerHTML=`<p class="muted small">Pick which folder on the server plays each role. Leave one
+        on <b>Detect automatically</b> to keep using what the server reports.</p>
+      <div class="usf-grid">${ROLES.map(([k,label])=>{
+        const chosen=(d.mapping||{})[k]||'';
+        const auto=(d.detected||{})[k];
+        return `<label class="usf-row"><span class="usf-lbl">${label}</span>
+          <select class="input usf-sel" data-role="${k}">
+            <option value=""${chosen?'':' selected'}>Detect automatically${auto?` (${enc(auto)})`:''}</option>
+            ${d.folders.map(f=>`<option value="${enc(f)}"${f===chosen?' selected':''}>${enc(f)}</option>`).join('')}
+          </select></label>`; }).join('')}</div>
+      <div class="row" style="margin-top:14px"><button class="btn btn-cyan" id="usf-save">Save folders</button></div>`;
+    $('#usf-save').onclick=async()=>{
+      const mapping={};
+      $$('.usf-sel').forEach(sel=>{ if(sel.value) mapping[sel.dataset.role]=sel.value; });
+      const btn=$('#usf-save'); btn.disabled=true; btn.textContent='Saving…';
+      try{
+        const r=await fetch('/api/mail/folder-map',{method:'PUT',headers:{'Content-Type':'application/json'},
+                                                    body:JSON.stringify({account:email, mapping})}).then(r=>r.json());
+        if(r && r.ok){ closeModal(); toast('folders saved'); }
+        else throw new Error((r&&r.detail)||'failed');
+      }catch(err){ toast('could not save: '+((err&&err.message)||'error')); btn.disabled=false; btn.textContent='Save folders'; }
+    };
   }
   function usCollectMail(){
     const wrap=$('#us-mail-list'); if(!wrap) return _usMail;

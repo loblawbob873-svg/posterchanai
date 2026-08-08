@@ -3784,9 +3784,26 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
    they broke into two lines of different lengths with a gap hanging off the end; forcing one row
    with overflow-x clipped the last three out of sight instead. auto-fit keeps every button the same
    width and reflows to however many columns the pane can hold. */
-.mail-actions{flex:0 0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));
+/* Six actions that FIT and are all filled. minmax(112px,·) needed 672px of pane before it would
+   wrap, so on a narrower reading pane the last column — Delete — ran past the edge and was cut off.
+   minmax(0,1fr) lets the columns shrink instead, and the labels ellipsis rather than overflow.
+   Every button is filled: Reply cyan (primary), Delete red (destructive), the rest a solid neutral,
+   so the row reads as one control strip instead of two filled buttons among four outlines. */
+.mail-actions{flex:0 0 auto;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));
   gap:6px;padding:10px 18px;border-bottom:1px solid var(--line);align-items:stretch}
-.mail-actions .btn{min-height:36px;white-space:nowrap;justify-content:center;padding:7px 8px}
+.mail-actions .btn{min-height:36px;min-width:0;justify-content:center;padding:7px 6px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  background:color-mix(in srgb, var(--neon) 16%, var(--panel2));
+  border-color:color-mix(in srgb, var(--neon) 42%, var(--line));color:var(--text)}
+.mail-actions .btn-cyan{background:linear-gradient(135deg,#0bb6cf,var(--cyan));border:none;color:#04222a}
+.mail-actions .btn-red{background:linear-gradient(135deg,#ff3366,#ff5a7d);border:none;color:#fff}
+/* Narrow pane: two rows of three rather than six slivers nothing can be read in. */
+@media(max-width:1500px){ .mail-actions{grid-template-columns:repeat(3,minmax(0,1fr))} }
+
+/* The bulk actions are the same family of control, so they get the same fill. */
+.mail-bulk-act .btn{background:color-mix(in srgb, var(--neon) 16%, var(--panel2));
+  border-color:color-mix(in srgb, var(--neon) 42%, var(--line));color:var(--text)}
+.mail-bulk-act .btn-red{background:linear-gradient(135deg,#ff3366,#ff5a7d);border:none;color:#fff}
 
 /* The BULK bar under Select. Its buttons were appended inline after the "n selected" label, so they
    sat hard against it and wrapped under the checkbox at any narrow width. The label holds the left,
@@ -3834,8 +3851,8 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
   .mail-read.has-open{display:flex;position:fixed;inset:0;z-index:46;background:var(--bg);padding-bottom:calc(62px + env(safe-area-inset-bottom))}
   .mail-html{height:auto;min-height:60dvh}
   .mail-back{display:inline-flex}
-  .mail-actions{padding:8px 10px;gap:5px;grid-template-columns:repeat(3,1fr)}
-  .mail-actions .btn{min-height:40px;font-size:13px;padding:7px 6px}
+  .mail-actions{padding:8px 10px;gap:5px;grid-template-columns:repeat(3,minmax(0,1fr))}
+  .mail-actions .btn{min-height:40px;font-size:12.5px;padding:7px 4px}
   .mail-read-hd{padding:12px 12px 8px}
   .mr-subj{font-size:16px}
 }
@@ -3873,6 +3890,16 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .mc-auto-item{display:flex;flex-direction:column;align-items:flex-start;gap:0;width:100%;text-align:left;
   padding:8px 10px;border:0;background:transparent;color:inherit;cursor:pointer;min-height:44px}
 .mc-auto-item.on,.mc-auto-item:hover{background:var(--panel2)}
+/* Settings → Mail → 📂 Folders */
+.usf-grid{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.usf-row{display:flex;align-items:center;gap:10px}
+.usf-lbl{flex:0 0 132px;font-size:13px;color:var(--muted)}
+.usf-sel{flex:1 1 auto;min-width:0}
+@media(max-width:820px){
+  .usf-row{flex-direction:column;align-items:stretch;gap:3px}
+  .usf-lbl{flex:none}
+  .usf-sel{font-size:16px}      /* 16px or iOS zooms on focus and never zooms back */
+}
 .mc-list{max-height:46vh;overflow:auto;margin-top:10px;display:flex;flex-direction:column;gap:2px}
 .mc-item{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;text-align:left;
   padding:9px 10px;border:1px solid transparent;border-radius:10px;background:transparent;

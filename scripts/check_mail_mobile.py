@@ -189,8 +189,21 @@ OPEN_MESSAGE = r"""(async () => {
              if (!bar) return null;
              const bs = [...bar.querySelectorAll('.btn')];
              const tops = new Set(bs.map(b => Math.round(b.getBoundingClientRect().top)));
+             const br = bar.getBoundingClientRect();
              return { n: bs.length, rows: tops.size,
                       short: bs.filter(b => b.getBoundingClientRect().height < 32).length,
+                      // A button whose right edge is past the row's is CUT OFF — which is what a
+                      // 112px minimum column did to Delete on a narrow reading pane.
+                      clipped: bs.filter(b => b.getBoundingClientRect().right > br.right + 1).length,
+                      // "Filled" means a solid colour OR a gradient — the primary and destructive
+                      // buttons paint with background-image, where backgroundColor reads transparent.
+                      unfilled: bs.filter(b => {
+                        const st = getComputedStyle(b);
+                        const solid = st.backgroundColor !== 'rgba(0, 0, 0, 0)'
+                                   && st.backgroundColor !== 'transparent';
+                        const grad = (st.backgroundImage || 'none') !== 'none';
+                        return !solid && !grad;
+                      }).length,
                       overflows: bar.scrollWidth > bar.clientWidth + 1 };
            })(),
            hdrOverflow: (() => {
@@ -384,6 +397,13 @@ async def drive(url):
                         if a["overflows"]:
                             problems.append((label, "actions-broken",
                                              "the actions row is clipped — buttons out of reach"))
+                        if a.get("clipped"):
+                            problems.append((label, "actions-broken",
+                                             f"{a['clipped']} action button(s) run past the pane edge"))
+                        if a.get("unfilled"):
+                            problems.append((label, "actions-broken",
+                                             f"{a['unfilled']} action button(s) have no fill — the row "
+                                             "should read as one control strip"))
                         # Phone only: desktop scales the whole UI with body{zoom:.67-.77}, so a
                         # 36px control paints at 24 device px there and EVERY button in the app
                         # would fail this. The tap-target rule is about thumbs, not zoomed pixels.

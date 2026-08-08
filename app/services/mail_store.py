@@ -26,7 +26,11 @@ NS_MAIL = "pcai:mail:"
 # a real mailbox sitting alongside them, and truncation is not a slow read: `have_uids` would come
 # back short, the sync would read that as "never seen this message", and it would re-download and
 # re-write the whole mailbox. That write-storm is what took this feature down in June 2026.
-_SCAN_LIMIT = 50000
+# The relay clamps any filter limit to 5000 (nostr_relay/store.py), so this is a ceiling, not a
+# promise: a read that would exceed it comes back TRUNCATED and newest-first, with nothing to say
+# so. Every read here is prefix-filtered to one folder, which keeps it far below — the unified view
+# is the one that used to blow through it, and it now asks per account and folder for that reason.
+_SCAN_LIMIT = 5000
 
 # THIS FEATURE IS LOCAL TO THIS NODE, DELIBERATELY. `_broadcastable` in nostr_relay/server.py returns
 # False for every kind-30078 carrying a `pcai:` d-tag, so mail is not copied to the public upstream
@@ -73,11 +77,23 @@ async def get_message(seckey: bytes, account_email: str, folder: str, uid: str) 
     return await nostr_store.get_doc(_port(), _d(account_email, folder, uid), seckey=seckey, encrypt=True)
 
 
-async def list_messages(seckey: bytes, account_email: str | None = None, folder: str | None = None) -> list:
-    """All stored messages under (account[, folder]) — newest first. account=None → the whole mailbox
-    (used by unified search)."""
+# How many messages a folder view loads. Every one of them is a separate NIP-44 decrypt, and the
+# list only shows a subject, a sender and a date — so opening an Archive of a thousand meant a
+# thousand decrypts to draw one screen. The relay returns newest-first (ORDER BY created_at DESC),
+# so a cap is "the most recent N", which is what a mail client shows anyway. Search passes 0 for the
+# whole mailbox, because a search that only looks at the newest page is not a search.
+_PAGE = 200
+
+
+async def list_messages(seckey: bytes, account_email: str | None = None, folder: str | None = None,
+                        limit: int | None = None) -> list:
+    """Stored messages under (account[, folder]) — newest first, capped at `limit` (0/None = all).
+
+    account=None → the whole mailbox (used by unified search).
+    """
+    want = _SCAN_LIMIT if limit == 0 else int(limit or _PAGE)
     docs = await nostr_store.list_docs(_port(), _prefix(account_email, folder), seckey=seckey,
-                                       encrypt=True, limit=_SCAN_LIMIT)
+                                       encrypt=True, limit=want)
     msgs = [v for v in docs.values() if isinstance(v, dict)]
     msgs.sort(key=lambda m: m.get("ts", 0), reverse=True)
     return msgs
