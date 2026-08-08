@@ -134,6 +134,101 @@ class NestedComponentTests(unittest.TestCase):
         self.assertEqual(out.count("BEGIN:VALARM"), 1)
 
 
+class TimezoneCarryTests(unittest.TestCase):
+    """A VTIMEZONE has no UID, so the import dropped every one of them.
+
+    Measured on a real 707-event Radicale export: 577 events referenced a TZID and NOT ONE of the
+    definitions survived the import. `DTSTART;TZID=America/Denver:20220109T100000` with no matching
+    VTIMEZONE is an invalid resource — a strict client refuses it and a lenient one reads the time as
+    floating, shifting the appointment by the UTC offset. Nothing errored; the calendar just quietly
+    became wrong.
+    """
+    FILE = ("BEGIN:VCALENDAR\nVERSION:2.0\n"
+            "BEGIN:VTIMEZONE\nTZID:America/Denver\nBEGIN:STANDARD\nDTSTART:20071104T030000\n"
+            "TZOFFSETFROM:-0600\nTZOFFSETTO:-0700\nEND:STANDARD\nEND:VTIMEZONE\n"
+            "BEGIN:VTIMEZONE\nTZID:Europe/Helsinki\nBEGIN:STANDARD\nDTSTART:19701025T040000\n"
+            "TZOFFSETFROM:+0300\nTZOFFSETTO:+0200\nEND:STANDARD\nEND:VTIMEZONE\n"
+            "BEGIN:VEVENT\nUID:zoned\nDTSTART;TZID=America/Denver:20220109T100000\n"
+            "SUMMARY:Vineyard Cafe\nEND:VEVENT\n"
+            "BEGIN:VEVENT\nUID:utc\nDTSTART:20260811T090000Z\nSUMMARY:Standup\nEND:VEVENT\n"
+            "END:VCALENDAR\n")
+
+    def test_the_definitions_are_found(self):
+        self.assertEqual(sorted(CS.timezones_of(self.FILE)), ["America/Denver", "Europe/Helsinki"])
+
+    def test_a_reference_is_a_parameter_not_prose(self):
+        self.assertEqual(CS.tzids_in("BEGIN:VEVENT\nDTSTART;TZID=America/Denver:20220109T100000\n"
+                                     "DESCRIPTION:we discussed TZID=Europe/Oslo at length\n"
+                                     "END:VEVENT"), {"America/Denver"})
+
+    def test_a_folded_parameter_is_still_a_reference(self):
+        # A long DTSTART wraps mid-parameter; a line-by-line scan never sees the TZID.
+        self.assertEqual(CS.tzids_in("BEGIN:VEVENT\r\nDTSTART;TZ\r\n ID=America/Denver:20220109T100000"
+                                     "\r\nEND:VEVENT"), {"America/Denver"})
+
+    def test_the_stored_resource_carries_the_timezone_it_uses(self):
+        tzs = CS.timezones_of(self.FILE)
+        uid, comp, parts = next(r for r in CS.group_resources(self.FILE) if r[0] == "zoned")
+        body = CS.wrap_ics(parts, "Main", timezones=tzs)
+        self.assertIn("TZID:America/Denver", body)
+        self.assertEqual(body.count("BEGIN:VEVENT"), 1)
+
+    def test_it_carries_only_the_timezone_it_uses(self):
+        # Attaching every definition to every event turns a 700-event export into a wall of
+        # duplicated VTIMEZONEs.
+        tzs = CS.timezones_of(self.FILE)
+        uid, comp, parts = next(r for r in CS.group_resources(self.FILE) if r[0] == "zoned")
+        self.assertNotIn("Europe/Helsinki", CS.wrap_ics(parts, "Main", timezones=tzs))
+
+    def test_an_event_that_needs_no_timezone_gets_none(self):
+        tzs = CS.timezones_of(self.FILE)
+        uid, comp, parts = next(r for r in CS.group_resources(self.FILE) if r[0] == "utc")
+        self.assertNotIn("BEGIN:VTIMEZONE", CS.wrap_ics(parts, "Main", timezones=tzs))
+
+    def test_an_export_carries_each_definition_once(self):
+        tzs = CS.timezones_of(self.FILE)
+        stored = [CS.wrap_ics(p, "Main", timezones=tzs) for _, _, p in CS.group_resources(self.FILE)]
+        out = CS.wrap_ics(stored, "Main")
+        self.assertEqual(out.count("BEGIN:VTIMEZONE"), 1)          # deduped, not one per event
+        self.assertIn("TZID:America/Denver", out)
+        self.assertEqual(out.count("BEGIN:VEVENT"), 2)
+
+
+class ResourceGroupingTests(unittest.TestCase):
+    """Components sharing a UID are ONE resource.
+
+    A recurring event with an edited occurrence is a master VEVENT plus a VEVENT carrying
+    RECURRENCE-ID under the SAME UID. Stored one document per UID as separate items, the second write
+    silently overwrites the first: the master disappears and the calendar shows a lone stray
+    occurrence.
+    """
+    FILE = ("BEGIN:VCALENDAR\nVERSION:2.0\n"
+            "BEGIN:VEVENT\nUID:weekly\nDTSTART:20260803T090000Z\nRRULE:FREQ=WEEKLY\n"
+            "SUMMARY:Standup\nEND:VEVENT\n"
+            "BEGIN:VEVENT\nUID:weekly\nRECURRENCE-ID:20260810T090000Z\nDTSTART:20260810T103000Z\n"
+            "SUMMARY:Standup (moved)\nEND:VEVENT\n"
+            "BEGIN:VTODO\nUID:task\nSUMMARY:Renew passport\nEND:VTODO\n"
+            "END:VCALENDAR\n")
+
+    def test_one_resource_per_uid(self):
+        self.assertEqual([(u, k, len(p)) for u, k, p in CS.group_resources(self.FILE)],
+                         [("weekly", "VEVENT", 2), ("task", "VTODO", 1)])
+
+    def test_the_override_travels_with_its_master(self):
+        _, _, parts = CS.group_resources(self.FILE)[0]
+        body = CS.wrap_ics(parts, "Main")
+        self.assertIn("RRULE:FREQ=WEEKLY", body)
+        self.assertIn("RECURRENCE-ID:20260810T090000Z", body)
+        self.assertEqual(body.count("BEGIN:VEVENT"), 2)
+
+    def test_a_todo_is_a_resource_too(self):
+        # 10 of the user's 707 items are VTODOs; keying only on VEVENT would drop them.
+        self.assertIn("VTODO", [k for _, k, _ in CS.group_resources(self.FILE)])
+
+    def test_a_timezone_is_not_a_resource(self):
+        self.assertNotIn("VTIMEZONE", [k for _, k, _ in CS.group_resources(TimezoneCarryTests.FILE)])
+
+
 class ImportGuardTests(unittest.TestCase):
     """A read that FAILED must never be read as "there is nothing there"."""
 

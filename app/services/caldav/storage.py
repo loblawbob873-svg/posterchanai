@@ -46,6 +46,25 @@ def _safe_name(uid: str) -> str:
     return "".join(c for c in uid if c.isalnum() or c in "-_.@") or "item"
 
 
+def collection_props(meta: dict, cal_id: str):
+    """(Radicale props, item file extension) for one collection.
+
+    Split out of the reconcile so it can be tested without a Radicale instance: getting either half
+    wrong is silent. A vCard written into `<uid>.ics` inside a collection that announces itself as a
+    VCALENDAR gives a phone an addressbook with no contacts and a calendar it cannot parse, and
+    neither side logs anything.
+    """
+    from app.services import caldav_store
+    kind = caldav_store.kind_of(meta)
+    name = meta.get("displayname") or meta.get("D:displayname") or cal_id
+    props = {"tag": kind, "D:displayname": name}
+    color = meta.get("color") or meta.get("ICAL:calendar-color")
+    if color:
+        props["ICAL:calendar-color"] = color
+    ext = ".vcf" if kind == caldav_store.KIND_ADDRESSBOOK else ".ics"
+    return props, ext
+
+
 def forget_user(username: str) -> None:
     """Drop the hydrate-once marker so the next CalDAV request re-reads this user from the relay.
 
@@ -195,7 +214,14 @@ class Storage(multifilesystem.Storage):
                 # STRICT, both of them: this reconcile DELETES files the relay no longer has, and an
                 # unreachable relay answers exactly like an empty one. Without it, a relay blip
                 # during a phone sync would wipe the working copy of every calendar the user owns.
-                cals = _run(caldav_store.list_calendars(db, user, strict=True))
+                #
+                # list_COLLECTIONS, not list_calendars: addressbooks live in the same id space and
+                # are served by this same plugin. Listing only calendars meant no addressbook was
+                # ever written to disk — CardDAV discovery returned nothing, so the whole Contacts
+                # feature was invisible over the protocol it exists for — and, worse, an addressbook
+                # a phone had created was absent from `seen` below, so _drop_missing deleted its
+                # directory and every card the phone had written but not yet mirrored.
+                cals = _run(caldav_store.list_collections(db, user, strict=True))
                 seen = set()
                 for cal in cals:
                     cid = cal.get("id")
@@ -228,11 +254,14 @@ class Storage(multifilesystem.Storage):
         root = os.path.join(self._get_collection_root_folder(), username, cal_id)
         os.makedirs(root, exist_ok=True)
 
-        props = {"tag": "VCALENDAR"}
-        name = meta.get("displayname") or meta.get("D:displayname") or cal_id
-        props["D:displayname"] = name
-        if meta.get("color") or meta.get("ICAL:calendar-color"):
-            props["ICAL:calendar-color"] = meta.get("color") or meta.get("ICAL:calendar-color")
+        # A collection is a calendar or an ADDRESSBOOK, and everything below differs: the tag
+        # Radicale reports to a client, the file extension it discovers items by, and whether an
+        # item is wrapped. Hardcoding the calendar answers wrote vCards into `<uid>.ics` files inside
+        # a collection announcing itself as a VCALENDAR — a phone then syncs an addressbook that
+        # contains no contacts and a calendar that cannot be parsed.
+        props, ext = collection_props(meta, cal_id)
+        book = props["tag"] == caldav_store.KIND_ADDRESSBOOK
+        name = props["D:displayname"]
         try:
             with open(os.path.join(root, ".Radicale.props"), "w", encoding="utf-8") as fh:
                 fh.write(_json.dumps(props))
@@ -245,12 +274,14 @@ class Storage(multifilesystem.Storage):
             if not uid:
                 continue
             body = rec.get("ics") or ""
-            if "BEGIN:VCALENDAR" not in body.upper():
+            if book:
+                pass                                   # a vCard is stored exactly as it is served
+            elif "BEGIN:VCALENDAR" not in body.upper():
                 body = caldav_store.wrap_ics([body], name)
             wanted[_safe_name(uid)] = body
 
         for fname, body in wanted.items():
-            path = os.path.join(root, fname + ".ics")
+            path = os.path.join(root, fname + ext)
             try:
                 _ours[path] = time.time()     # ours, so a later pass may delete it without waiting
                 if os.path.exists(path):
@@ -267,9 +298,12 @@ class Storage(multifilesystem.Storage):
         # returns), and deleting it here would throw away the client's write.
         now = time.time()
         for fname in os.listdir(root):
-            if not fname.endswith(".ics"):
+            # Only this collection's own item files. Matching ".ics" unconditionally meant an
+            # addressbook's .vcf files were never reconciled, so a contact deleted in the web UI
+            # stayed on the phone and could be edited back into existence.
+            if not fname.endswith(ext):
                 continue
-            stem = fname[:-4]
+            stem = fname[:-len(ext)]
             if stem in wanted:
                 continue
             path = os.path.join(root, fname)

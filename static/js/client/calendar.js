@@ -26,6 +26,7 @@
     ready:false, enabled:null,
     cals:[], cal:'',           // calendars, and the one being edited into
     items:{},                  // calendarId -> [{uid, ics, …}]
+    rev:0,                     // bumped on every load; the occurrence index keys off it
     month:null,                // Date, first of the shown month
     sel:null,                  // 'YYYY-MM-DD' selected day
     loading:false, error:'',
@@ -81,56 +82,144 @@
     function buildIcs(ev){
       const uid = ev.uid || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + '-pc');
       const now = icsUtc(new Date());
-      const L = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//PosterChan//Calendar//EN','BEGIN:VEVENT',
-                 'UID:' + uid, 'DTSTAMP:' + now];
+      const raw = ev.raw || { keep: [], overrides: [], timezones: [], component: 'VEVENT' };
+      // A VTODO stays a VTODO. Rewriting one as a VEVENT turns a task into an appointment on every
+      // synced device — 10 of one real imported calendar's items are todos.
+      const comp = (raw.component === 'VTODO') ? 'VTODO' : 'VEVENT';
+      const endProp = (comp === 'VTODO') ? 'DUE' : 'DTEND';
+      const L = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//PosterChan//Calendar//EN'];
+      // Timezone tables the untouched parts still refer to (an edited occurrence keeps its TZID).
+      for(const tz of (raw.timezones || [])) L.push(...tz.split('\n'));
+      L.push('BEGIN:' + comp, 'UID:' + uid, 'DTSTAMP:' + now);
       if(ev.allDay){
         const s = new Date(ev.date + 'T00:00:00');
         const e = new Date(s.getTime() + 86400000);          // DTEND is exclusive for a date value
-        L.push('DTSTART;VALUE=DATE:' + icsDate(s), 'DTEND;VALUE=DATE:' + icsDate(e));
+        L.push('DTSTART;VALUE=DATE:' + icsDate(s), endProp + ';VALUE=DATE:' + icsDate(e));
       }else{
         const s = new Date(`${ev.date}T${ev.start || '09:00'}:00`);
         const e = new Date(`${ev.date}T${ev.end || ev.start || '10:00'}:00`);
-        L.push('DTSTART:' + icsUtc(s), 'DTEND:' + icsUtc(e.getTime() > s.getTime() ? e
-                                                          : new Date(s.getTime() + 3600000)));
+        L.push('DTSTART:' + icsUtc(s), endProp + ':' + icsUtc(e.getTime() > s.getTime() ? e
+                                                              : new Date(s.getTime() + 3600000)));
       }
       L.push('SUMMARY:' + icsText(ev.title || '(no title)'));
       if(ev.location) L.push('LOCATION:' + icsText(ev.location));
       if(ev.notes) L.push('DESCRIPTION:' + icsText(ev.notes));
-      L.push('END:VEVENT','END:VCALENDAR');
+      // Everything this form does not manage — the repeat rule and its exceptions, VALARM
+      // reminders, ATTENDEE/ORGANIZER, STATUS, CATEGORIES, URL, X- properties — verbatim. Dropping
+      // the rule alone turned "fix a typo in the title of a weekly delivery" into "delete every
+      // future delivery", and dropping the rest silently deleted people's reminders.
+      for(const line of (raw.keep || [])) L.push(line);
+      L.push('END:' + comp);
+      // Occurrences edited individually are their own components under the same UID; they are not
+      // reachable from this form, so they travel through untouched.
+      for(const o of (raw.overrides || [])) L.push(...o.split('\n'));
+      L.push('END:VCALENDAR');
       return { uid, ics: L.join('\r\n') + '\r\n' };
     }
 
-    /* Parse just enough of a stored item to place it on the grid: when it starts, whether it is all
-     * day, and what to call it. NOT a full iCalendar parser, deliberately — the file is stored and
-     * exported verbatim, so anything this does not understand survives untouched; it only has to be
-     * right about the fields the month view draws. */
+    /* Reading iCalendar is PCIcal's job (client/ical.js) — it is DOM-free so recurrence can be
+     * tested against real rules under node instead of eyeballed in a month grid. This file only
+     * decides how an occurrence is drawn. */
+    const decorate = o => Object.assign({}, o, {
+      time: (o.start && !o.allDay) ? `${pad(o.start.getHours())}:${pad(o.start.getMinutes())}` : '',
+      todo: String(o.component || 'VEVENT').toUpperCase() === 'VTODO',
+    });
+
+    /* One stored item → the fields the editor shows, taken from the series MASTER.
+     *
+     * `raw` carries the parts this screen has no UI for — the repeat rule, its exceptions, and any
+     * individually-edited occurrences. Saving re-emits them verbatim: rebuilding an event from the
+     * form alone would silently flatten a weekly series into one appointment the first time someone
+     * fixed a typo in its title. */
     function parseItem(rec){
-      const text = (rec.ics || '').replace(/\r\n[ \t]/g, '').replace(/\r\n/g, '\n');   // unfold
-      const get = re => { const m = text.match(re); return m ? m[1].trim() : ''; };
-      const dtRaw = get(/^DTSTART(?:;[^:\n]*)?:(.+)$/m);
-      const allDay = /^DTSTART;[^:\n]*VALUE=DATE(?:;|:)/m.test(text) || /^\d{8}$/.test(dtRaw);
-      let start = null;
-      if(/^\d{8}T\d{6}Z$/.test(dtRaw)){
-        start = new Date(Date.UTC(+dtRaw.slice(0,4), +dtRaw.slice(4,6)-1, +dtRaw.slice(6,8),
-                                  +dtRaw.slice(9,11), +dtRaw.slice(11,13), +dtRaw.slice(13,15)));
-      }else if(/^\d{8}T\d{6}$/.test(dtRaw)){         // floating local time, as some clients write
-        start = new Date(+dtRaw.slice(0,4), +dtRaw.slice(4,6)-1, +dtRaw.slice(6,8),
-                         +dtRaw.slice(9,11), +dtRaw.slice(11,13));
-      }else if(/^\d{8}$/.test(dtRaw)){
-        start = new Date(+dtRaw.slice(0,4), +dtRaw.slice(4,6)-1, +dtRaw.slice(6,8));
-      }
-      const unesc = s => s.replace(/\\n/g,'\n').replace(/\\,/g,',').replace(/\\;/g,';').replace(/\\\\/g,'\\');
+      const I = window.PCIcal;
+      const res = I.parseResource(rec);
+      const m = res.master || {};
       return {
-        uid: rec.uid,
-        cal: rec.cal,
-        title: unesc(get(/^SUMMARY:(.*)$/m)) || '(no title)',
-        location: unesc(get(/^LOCATION:(.*)$/m)),
-        notes: unesc(get(/^DESCRIPTION:(.*)$/m)),
-        allDay, start,
-        key: start ? ymd(start) : '',
-        time: (start && !allDay) ? `${pad(start.getHours())}:${pad(start.getMinutes())}` : '',
-        todo: (rec.component || 'VEVENT').toUpperCase() === 'VTODO',
+        uid: rec.uid, cal: rec.cal,
+        title: m.title || '(no title)', location: m.location || '', notes: m.notes || '',
+        allDay: !!m.allDay, start: m.start || null,
+        key: m.start ? ymd(m.start) : '',
+        time: (m.start && !m.allDay) ? `${pad(m.start.getHours())}:${pad(m.start.getMinutes())}` : '',
+        todo: String(rec.component || res.component || 'VEVENT').toUpperCase() === 'VTODO',
+        repeats: !!(m.rrule && m.rrule.freq),
+        raw: rawSeries(rec.ics || ''),
       };
+    }
+
+    /* EVERYTHING in the stored master this form has no field for, kept verbatim — plus any
+     * RECURRENCE-ID components and the timezone tables.
+     *
+     * This is the rule vcard.js follows for contacts, and it belongs here just as much. The editor
+     * has fields for eight properties; a real event carries far more. An earlier version kept only
+     * the repeat rule, so saving a change of title silently deleted the VALARM reminders (200 of one
+     * real 707-event calendar had one), the ATTENDEE and ORGANIZER lines, STATUS, CATEGORIES, URL,
+     * every X- property a phone had written — and rewrote a VTODO as a VEVENT. The event still
+     * looked right on this screen and lost half of itself everywhere else.
+     *
+     * MANAGED is the small set the form rewrites; a nested VALARM is copied through as a whole
+     * block, since its lines are not the event's own.
+     */
+    const MANAGED = ['UID','DTSTAMP','DTSTART','DTEND','DUE','DURATION','SUMMARY','LOCATION',
+                     'DESCRIPTION','LAST-MODIFIED'];
+    function rawSeries(ics){
+      const I = window.PCIcal;
+      const all = I.splitComponents(ics);
+      const comps = all.filter(c => I.nameOf(c) !== 'VTIMEZONE');
+      const overrides = comps.filter(c => /^RECURRENCE-ID[;:]/m.test(I.unfold(c)));
+      const master = comps.find(c => overrides.indexOf(c) < 0);
+      const keep = [];
+      let component = 'VEVENT';
+      if(master){
+        component = I.nameOf(master);
+        let depth = 0;
+        for(const raw of I.unfold(master).split('\n')){
+          const line = raw.trim();
+          if(!line) continue;
+          if(/^BEGIN:V/.test(line) && line !== 'BEGIN:' + component){ depth++; keep.push(line); continue; }
+          if(depth){                                  // inside a VALARM (or anything else nested)
+            keep.push(line);
+            if(/^END:V/.test(line)) depth--;
+            continue;
+          }
+          if(line === 'BEGIN:' + component || line === 'END:' + component) continue;
+          const name = line.split(/[;:]/)[0].toUpperCase();
+          if(MANAGED.indexOf(name) < 0) keep.push(line);
+        }
+      }
+      return { keep, overrides, component,
+               timezones: all.filter(c => I.nameOf(c) === 'VTIMEZONE') };
+    }
+
+    /* The occurrences of every calendar, for the 42 days the grid shows, keyed by day.
+     *
+     * Built ONCE per (month, load) rather than per cell: the old code re-parsed every stored item
+     * inside all 42 cells, which on a 700-event calendar is ~30,000 parses per repaint. Recurrence
+     * expansion on top of that would have made every month change visibly stutter.
+     */
+    let _index = null, _indexSig = '';
+    function occurrenceIndex(){
+      const m = S.month || firstOf(new Date());
+      const start = gridStart(m);
+      const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 42);
+      const sig = `${ymd(start)}|${S.rev}`;
+      if(_index && _indexSig === sig) return _index;
+      const I = window.PCIcal, map = {};
+      for(const cid of Object.keys(S.items)){
+        for(const rec of (S.items[cid] || [])){
+          let occ = [];
+          // One malformed item must not blank the whole month.
+          try{ occ = I.occurrences(I.parseResource(Object.assign({ cal: cid }, rec)), start, end); }
+          catch(err){ occ = []; }
+          for(const o of occ) (map[o.key] = map[o.key] || []).push(decorate(o));
+        }
+      }
+      for(const k of Object.keys(map)){
+        map[k].sort((a, b) => (a.allDay === b.allDay) ? (a.time || '').localeCompare(b.time || '')
+                                                      : (a.allDay ? -1 : 1));
+      }
+      _index = map; _indexSig = sig;
+      return map;
     }
 
     const colorOf = cal => {
@@ -139,17 +228,59 @@
       const i = Math.max(0, S.cals.findIndex(c => c.id === cal));
       return PALETTE[i % PALETTE.length];
     };
-    function eventsFor(key){
+    const eventsFor = key => occurrenceIndex()[key] || [];
+
+    /* The month a stored item's series STARTS in, as [year, monthIndex] — cheap, because it only
+     * reads DTSTART rather than expanding anything. */
+    function itemMonths(){
       const out = [];
       for(const cid of Object.keys(S.items)){
         for(const rec of (S.items[cid] || [])){
-          const p = parseItem(rec);
-          if(p.key === key) out.push(p);
+          try{
+            const m = window.PCIcal.parseResource(rec).master;
+            if(m && m.start) out.push(m.start);
+          }catch(_){}
         }
       }
-      out.sort((a,b) => (a.allDay === b.allDay) ? (a.time || '').localeCompare(b.time || '')
-                                                : (a.allDay ? -1 : 1));
       return out;
+    }
+
+    /* An imported calendar is usually a HISTORY: of one real 707-event export, exactly one event
+     * fell in the month it was imported in. Landing on an empty grid after a successful import is
+     * indistinguishable from the import having failed, so after one we move to a month that has
+     * something in it. Only after an import — never on an ordinary load, which would fight the
+     * person's own navigation. */
+    function jumpToContent(){
+      if(Object.keys(occurrenceIndex()).length) return;      // this month already shows something
+      const all = itemMonths();
+      if(!all.length) return;
+      const now = new Date();
+      // The nearest month to today that has an event, preferring the future when it is a tie.
+      let best = null;
+      for(const d of all){
+        if(!best || Math.abs(d - now) < Math.abs(best - now)) best = d;
+      }
+      if(!best) return;
+      S.month = firstOf(best);
+      S.sel = ymd(best);
+      paint();
+    }
+
+    /* When the shown month is empty but the calendar is not, say so — and offer the jump rather than
+     * making someone page backwards through years of empty grids. */
+    function emptyHint(){
+      if(Object.keys(occurrenceIndex()).length) return '';
+      const all = itemMonths();
+      if(!all.length) return '';
+      const now = new Date();
+      let near = all[0];
+      for(const d of all) if(Math.abs(d - now) < Math.abs(near - now)) near = d;
+      const n = all.length;
+      return `<div class="cal-hint">
+        <span>Nothing in ${MONTHS[(S.month||firstOf(now)).getMonth()]}
+          ${(S.month||firstOf(now)).getFullYear()} — this calendar has ${n} item${n===1?'':'s'},
+          nearest ${MONTHS[near.getMonth()]} ${near.getFullYear()}.</span>
+        <button class="btn btn-ghost small" id="cal-jump">Go there</button></div>`;
     }
 
     // ---- load --------------------------------------------------------------------------------
@@ -169,6 +300,7 @@
           catch(_){ items[c.id] = []; }
         }
         S.items = items;
+        S.rev++;                        // invalidates the occurrence index
       }catch(e){
         // 404 is the server being off, which is a state to explain rather than an error to report.
         S.enabled = /off on this node/i.test((e && e.message) || '') ? false : S.enabled;
@@ -251,7 +383,7 @@
       const feed = $('#feed'); if(!feed) return;
       if(S.loading && !S.ready){ feed.innerHTML = '<div class="cal-wrap"><div class="spinner"></div></div>'; return; }
       if(S.enabled === false || S.error){ feed.innerHTML = `<div class="cal-wrap">${offScreen()}</div>`; return; }
-      feed.innerHTML = `<div class="cal-wrap">${head()}${grid()}${dayPanel()}</div>`;
+      feed.innerHTML = `<div class="cal-wrap">${head()}${emptyHint()}${grid()}${dayPanel()}</div>`;
       wire(feed);
       const s = scroller();
       if(s) requestAnimationFrame(()=>{ try{ s.scrollTop = S.scroll || 0; }catch(_){} });
@@ -264,6 +396,7 @@
       on('#cal-today', ()=>{ S.month = firstOf(new Date()); S.sel = todayKey(); paint(); });
       on('#cal-new', ()=> editEvent(null));
       on('#cal-menu', openMenu);
+      on('#cal-jump', ()=>{ jumpToContent(); });
       const pick = $('#cal-pick', root);
       if(pick) pick.onchange = ()=>{ S.cal = pick.value; paint(); };
       $$('.cal-day', root).forEach(b => b.onclick = ()=>{ S.sel = b.dataset.key; paint(); });
@@ -299,6 +432,8 @@
         </div>
         <label class="fld">Where <span class="muted small">(optional)</span><input class="input" id="cev-loc" value="${enc(e.location||'')}"></label>
         <label class="fld">Notes <span class="muted small">(optional)</span><textarea class="input" id="cev-notes" rows="3">${enc(e.notes||'')}</textarea></label>
+        ${e.repeats ? '<div class="muted small cal-repeats">This event repeats. Saving changes every'
+                      + ' occurrence; the repeat rule itself is kept as it is.</div>' : ''}
         </div>
         <div class="row" style="margin-top:14px">
           <button class="btn btn-cyan" id="cev-save">Save</button>
@@ -313,6 +448,7 @@
             allDay: !!(ad && ad.checked),
             start: $('#cev-start', root).value, end: $('#cev-end', root).value,
             location: $('#cev-loc', root).value.trim(), notes: $('#cev-notes', root).value.trim(),
+            raw: e.raw || null,          // repeat rule, exceptions and edited occurrences, verbatim
           };
           if(!body.title){ toast('give it a title'); return; }
           const built = buildIcs(body);
@@ -355,16 +491,35 @@
         $('#cal-file', root).onchange = async (e)=>{
           const f = e.target.files && e.target.files[0]; if(!f) return;
           const fd = new FormData(); fd.append('file', f);
+          /* A real calendar is hundreds of events and each one is its own signed, encrypted write,
+           * so this takes tens of seconds. With no feedback the modal just sits there and the only
+           * honest reading is "nothing happened" — so the panel becomes a progress state, and it
+           * says what is being worked on rather than spinning anonymously. */
+          const busy = document.createElement('div');
+          busy.className = 'cal-importing';
+          busy.innerHTML = `<div class="spinner"></div>
+            <div>Importing <b>${enc(f.name)}</b>…</div>
+            <div class="muted small">Every event is signed and encrypted on the way in. A few
+              hundred takes a moment; you can leave this open.</div>`;
+          const body = root.querySelector('.cal-list');
+          if(body) body.replaceWith(busy); else root.appendChild(busy);
+          $$('.btn', root).forEach(b => { b.disabled = true; });
           try{
             await ensureAiSession();
             const target = S.cal || f.name.replace(/\.ics$/i, '');
             const r = await authFetch('/api/calendar/import?cal=' + encodeURIComponent(target),
                                       { method:'POST', body: fd }).then(r => r.json());
+            if(r && r.detail) throw new Error(r.detail);
             closeModal();
             toast(`imported ${r.imported || 0} event${(r.imported||0)===1?'':'s'}`
                   + (r.skipped ? ` (${r.skipped} skipped)` : ''));
+            if(r.calendar) S.cal = r.calendar;
             await load();
-          }catch(err){ toast('import failed: ' + ((err && err.message) || 'error')); }
+            jumpToContent();
+          }catch(err){
+            closeModal();
+            toast('import failed: ' + ((err && err.message) || 'error'));
+          }
         };
         $$('.cal-del', root).forEach(b => b.onclick = async ()=>{
           if(!(await uiConfirm('Delete this calendar and everything in it?'))) return;

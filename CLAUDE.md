@@ -347,7 +347,43 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   calendar made in the web UI is invisible to a phone until the app restarts; (5) items are stored as
   the client PUT them (a whole VCALENDAR each), so export UNWRAPS them or the file nests calendars;
   (6) import updates by UID rather than duplicating, so a re-import converges.
+  **An import stores a RESOURCE, not a component**, and the three ways that differ were each measured
+  silent on a real 707-event Radicale export: a `VTIMEZONE` has no UID, so keying on UID dropped every
+  one (577 events kept a `TZID` referring to a definition no longer in the file — invalid to a strict
+  client, an offset-shifted appointment to a lenient one); components sharing a UID (a master plus its
+  `RECURRENCE-ID` overrides) are ONE resource, and stored separately the second write silently
+  overwrote the first; and 10 items were `VTODO`s, which keying on `VEVENT` drops. `group_resources()`
+  + `wrap_ics(..., timezones=…)` in `caldav_store.py`.
+  **Recurrence lives in `static/js/client/ical.js`** — DOM-free, so `tests/test_ical_recurrence.py`
+  runs the shipped parser under node against real rules. The grid used to place only `DTSTART`, so 59
+  of those 707 events (every weekly delivery, every birthday) drew exactly once and the calendar
+  looked empty. Expansion JUMPS to the period containing the window rather than stepping from
+  `DTSTART` (a daily series from 2011 is ~5500 iterations per repaint); `COUNT` is the exception and
+  is bounded by itself. Editing a recurring event re-emits the rule, its `EXDATE`s and its overrides
+  VERBATIM — rebuilding from the form flattens a weekly series into one appointment the first time
+  someone fixes a typo. An imported calendar is a HISTORY (1 of those 707 events fell in the month it
+  was imported in), so the view jumps to a month with content and the import shows progress; an empty
+  grid after a successful import is indistinguishable from a failed one.
   See `docs/CALENDAR.md`; `tests/test_calendar.py` + `scripts/check_calendar_mobile.py`.
+- **Contacts** (`static/js/client/contacts.js` + `vcard.js` + `app/routers/contacts.py`; sidebar →
+  Contacts): CardDAV, served by the SAME Radicale mount and the same account/password/URL as the
+  calendar — one identity per user, not two. An addressbook is just a collection whose metadata
+  carries `kind: VADDRESSBOOK`, stored in the same `pcai:cal:`/`pcai:calmeta:` namespace, so hydration
+  stays a single relay pass. Same encryption trade as the calendar (this node CAN read it — a CardDAV
+  client sends plaintext), stated first in `docs/CONTACTS.md`.
+  **Cards are stored as the owner's phone wrote them, and that is the design.** A real book carries
+  base64 `PHOTO`s, Apple-style grouped properties (`item1.EMAIL` labelled by `item1.X-ABLABEL`), a
+  foreign `PRODID` and `X-*` fields; this app has fields for ~8 properties, so `vcard.js` rewrites
+  only what it manages and carries every other line through untouched **with its group prefix**, or a
+  saved phone number silently strips the photo everywhere else.
+  **Gotchas:** (1) a collection with no `kind` must default to a CALENDAR — anything else hides every
+  calendar that existed before addressbooks did, data intact and nothing logged; (2) the reconcile
+  picks BOTH the Radicale tag and the file extension from the kind, and the delete half matters as
+  much as the write half — matching `.ics` unconditionally meant an addressbook's `.vcf` files were
+  never reconciled, so a contact deleted in the web UI stayed on the phone and could be edited back
+  into existence; (3) a `.vcf` has no envelope (it IS a concatenation), unlike iCalendar.
+  See `docs/CONTACTS.md`; `tests/test_contacts.py` + `tests/test_vcard.py` +
+  `scripts/check_contacts_mobile.py` (the generic and calendar checks never open this screen).
 - **Web Search** (`static/js/client/websearch.js` + `app/routers/websearch.py`; sidebar → Web Search):
   a front end to this node's SearXNG, plus Save to Notes / Share / summarize a link / an **AI overview**
   of the results with numbered citations. The whole search lives in MODULE state, not the DOM —
@@ -507,6 +543,13 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   unsaved dedup id makes the next scan re-credit it anyway), a LAPSE WARNING asserts a fact about the
   clock, so it sends FIRST and marks only what went out — marking first lets one transient publish
   failure swallow the only warning a subscriber gets before their posts are deleted.
+  **The tiered rules' `kind IN (_PRUNABLE_KINDS)` qualifier is load-bearing far beyond feed posts.**
+  They are the only rules in the codebase that can delete an `origin='direct'` event, and the app's
+  own datastore — settings, chats, Notes, calendars, contacts — is direct-published kind 30078. It is
+  easy to read a rule as "age out this stranger's old direct writes" and not notice that a calendar is
+  one. `tests/test_relay_prune.py::test_calendars_and_contacts_survive_every_cleaner` asserts it by
+  name against every cleaner at once with the paid tier ON: drop that clause and **all** of a
+  non-subscriber's calendar and addressbook documents are deleted.
   See `docs/PAY_TO_STAY.md`; `tests/test_paid_retention.py`.
 - **Live-stream bitrate clamp** (`stream_service._write_clamp_script` + the `stream_clamp_*` settings,
   Admin → Live → OBS Streaming): MediaMTX is a pure remux, so without this whatever OBS sends is what

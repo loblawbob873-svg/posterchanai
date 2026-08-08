@@ -206,7 +206,7 @@
    * standalone install is not a degraded PosterChan, it is a Nostr client, and it should read like
    * one. Anyone who wants the rest can name an instance in Settings and they all come back. */
   const INSTANCE_VIEWS = new Set(['ai', 'translate', 'markets', 'news', 'torrents', '4chan',
-                                  'stats', 'meme', 'admin', 'websearch', 'calendar']);
+                                  'stats', 'meme', 'admin', 'websearch', 'calendar', 'contacts']);
   // Settings panes with nothing behind them without a server: server-side mail, the Telegram bridge,
   // the fediverse links, and API keys for the instance's AI API.
   const INSTANCE_SETTINGS_TABS = new Set(['mail', 'telegram', 'social', 'keys']);
@@ -1125,7 +1125,7 @@
       compose({ text: lines.join('\n\n') });
       return true;
     }
-    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','translate','news','websearch','calendar']);
+    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','translate','news','websearch','calendar','contacts']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
   }
@@ -3064,7 +3064,7 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', '4chan':'4chan', news:'News 🗞️', websearch:'Web Search 🔎', calendar:'Calendar 📅', notes:'Notes 📝', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', '4chan':'4chan', news:'News 🗞️', websearch:'Web Search 🔎', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
     { const tl = (v==='home'||v==='global'||v==='trending');   // the three views that carry the .tl-tabs header
@@ -3116,6 +3116,7 @@
     if (VIEW==='news'){ if(window.PCNews) return window.PCNews.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='websearch'){ if(window.PCWebSearch) return window.PCWebSearch.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='calendar'){ if(window.PCCalendar) return window.PCCalendar.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
+    if (VIEW==='contacts'){ if(window.PCContacts) return window.PCContacts.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='markets'){ if(window.PCMarkets) return window.PCMarkets.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='meme'){ if(window.PCMeme) return window.PCMeme.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='stats'){ if(window.PCStats) return window.PCStats.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
@@ -10808,7 +10809,7 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['ai','ai','PosterChan AI'],['websearch','search','Web Search'],['calendar','clock','Calendar'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['settings','gear','Settings'],['logout','logout','Logout']]
+    const items=[['ai','ai','PosterChan AI'],['websearch','search','Web Search'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['settings','gear','Settings'],['logout','logout','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
                    && !(window.PC_NOSTR_ONLY && v==='websearch')   // the search runs on the instance, so it needs one
                    && !(v==='__golive' && CFG.stream_enabled===false));   // hide AI+Translate in Nostr-only; Go Live only where the node streams
@@ -14320,6 +14321,26 @@
     if(VIEW!=='notifications' || _notifRT) return;
     _notifRT=setTimeout(()=>{ _notifRT=null; if(VIEW==='notifications') try{ renderNotifications(); }catch(_){} }, 300);
   }
+  /* What the next render WOULD produce, as a short string: the filter, how many rows, whether the
+   * updater row is up, and each row's identity plus whether its context post has arrived yet.
+   *
+   * Notifications re-render on every arriving event, every profile that lands, and every context
+   * post that resolves — and the render is one `feed.innerHTML = …`, which destroys and rebuilds
+   * every node in the list. A row's context is `quotedDiv`, i.e. the real media gallery, so each of
+   * those rebuilds tears down and re-creates live <video> elements: the flashing. Most of those
+   * renders change nothing that is visible, so comparing first turns them into no-ops. */
+  let _notifSig = '';
+  function _notifSigOf(list, upd){
+    const part = e => {
+      let id = e.id || '';
+      if(e.type === 'group') id = 'g' + e.events.length + ':' + ((e.events[0]||{}).id || '');
+      let ctx = '';
+      try{ const c = _notifCtxId(e); ctx = c ? (Store.get(c) ? '+' : '-') : ''; }catch(_){}
+      return id + ctx;
+    };
+    return `${_notifFilter}|${_notifShown}|${upd ? 1 : 0}|${list.map(part).join(',')}`;
+  }
+
   function renderNotifications(){
     if(_notifRT){ clearTimeout(_notifRT); _notifRT=null; }   // a direct render satisfies any pending one
     const feed=$('#feed');
@@ -14328,6 +14349,12 @@
     const tabs=`<div class="notif-tabs">${_NOTIF_TABS.map(([k,l])=>`<button class="ntab${k===_notifFilter?' on':''}" data-nf="${k}">${enc(l)}</button>`).join('')}</div>`;
     // In-app updater: pinned above the list when a new build is ready to install.
     const upd = _updNotifHtml('upd-notif');
+    // Nothing visible changed AND the list is still on screen → leave the DOM alone. #feed is shared
+    // and blanked when a view is entered, so the tab strip's presence is what proves our rows are
+    // still there; without that check the guard would skip the first render after coming back.
+    const sig = _notifSigOf(list, upd);
+    if(sig === _notifSig && feed.querySelector('.notif-tabs')){ markNotifsRead(); return; }
+    _notifSig = sig;
     feed.innerHTML = tabs + upd + (all.length
       ? list.map(notifHtml).join('') + (all.length>_notifShown
           ? `<button class="btn btn-ghost full" id="notif-more">Load ${Math.min(25, all.length-_notifShown)} more (${all.length-_notifShown})</button>` : '')

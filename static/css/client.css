@@ -1364,9 +1364,15 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
    frame has to be a definite size or it collapses to 150px (the iframe default) and the page inside
    it scrolls in a letterbox. dvh, never vh — vh on a phone is the address-bar-expanded height, so the
    bottom of the page would sit permanently under the browser chrome. The subtractions are the bar +
-   the action row; on mobile also the fixed .mobilenav and the safe area. */
-.ws-frame{width:100%;height:calc(100dvh - 190px);min-height:340px;border:1px solid var(--line);
-  border-radius:12px;background:#fff;display:block}
+   the action row; on mobile also the fixed .mobilenav and the safe area.
+
+   DIVIDE BY --zf. Desktop scales the whole page with body{zoom:.67-.77}, and viewport units are NOT
+   rescaled by zoom — that is why every other full-height container here is height:calc(100dvh/.77).
+   A raw 100dvh inside a 0.67 body paints at 0.67 of the height it asked for, in an .app that is
+   1/0.67 taller than the screen: the page came up as a small box floating in a large empty column,
+   worse the smaller the laptop. --zf is unset on mobile, where the fallback of 1 is correct. */
+.ws-frame{width:100%;height:calc((100dvh / var(--zf, 1)) - 190px);min-height:340px;
+  border:1px solid var(--line);border-radius:12px;background:#fff;display:block}
 .ws-rtitle{font-size:22px;line-height:1.3;margin:6px 0 2px;color:var(--text);overflow-wrap:anywhere}
 .ws-rsrc{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
 .ws-racts{margin:10px 0 6px}
@@ -1449,6 +1455,72 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .cal-swatches{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
 .cal-sw{width:30px;height:30px;border-radius:999px;border:2px solid transparent;cursor:pointer}
 .cal-sw.on{border-color:var(--text)}
+/* An import of a real calendar is hundreds of signed, encrypted writes — tens of seconds with no
+   output. Without this panel the modal simply sits there, which reads as "nothing happened". */
+.cal-importing{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;
+  padding:20px 8px}
+/* An imported calendar is usually a history: the month you land on can be genuinely empty while the
+   calendar holds hundreds of events. Say so, and offer the jump. */
+.cal-hint{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between;
+  border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:10px 12px;
+  margin:10px 0 0;font-size:13px;color:var(--muted)}
+.cal-hint .btn{flex:0 0 auto}
+.cal-repeats{margin-top:2px}
+
+/* ---- Contacts ------------------------------------------------------------------------------- */
+.ct-wrap{max-width:none;margin:0 auto;padding:0 6px 40px}
+.ct-bar{position:sticky;top:-8px;z-index:5;background:var(--canvas);background-attachment:fixed;
+  display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 2px 8px}
+.ct-search{flex:1 1 240px;min-width:0;display:flex;align-items:center;gap:8px;
+  border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:0 10px}
+.ct-search .input{border:0;background:transparent;flex:1 1 auto;min-width:0}
+/* 36px, the same floor the calendar's toolbar uses: `.btn.small` alone lands at 31px, which is under
+   the size a thumb reliably hits. */
+.ct-tools{display:flex;gap:8px;align-items:center;margin-left:auto}
+.ct-tools .btn{min-height:36px}
+.ct-pick{width:auto;font-size:16px;padding:6px 10px;min-height:36px}   /* 16px: iOS zooms below it */
+.ct-count{width:100%}
+.ct-listwrap{display:flex;gap:6px;align-items:flex-start}
+.ct-list{flex:1 1 auto;min-width:0}
+.ct-letter{position:sticky;top:52px;background:var(--canvas);font-weight:800;font-size:12px;
+  color:var(--muted);padding:6px 4px 4px;letter-spacing:.08em}
+.ct-row{display:flex;gap:10px;align-items:center;width:100%;text-align:left;padding:8px;
+  border:1px solid transparent;border-radius:12px;background:transparent;cursor:pointer;color:inherit}
+.ct-row:hover{border-color:var(--neon);background:var(--panel)}
+.ct-face{width:40px;height:40px;border-radius:999px;flex:0 0 auto;object-fit:cover;
+  background:var(--panel2);border:1px solid var(--line)}
+.ct-init{display:flex;align-items:center;justify-content:center;font-style:normal;font-weight:800;
+  font-size:15px;color:var(--muted)}
+.ct-body{min-width:0;flex:1 1 auto;display:flex;flex-direction:column}
+.ct-name{font-weight:700;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ct-sub{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The A–Z rail is the only way to reach the middle of a long book on a phone without flinging. */
+.ct-rail{position:sticky;top:56px;display:flex;flex-direction:column;gap:0;flex:0 0 auto;
+  padding:2px 0;max-height:calc(100dvh - 140px);overflow:hidden}
+.ct-jump{font-size:10px;line-height:1.15;padding:0 4px;background:none;border:0;cursor:pointer;
+  color:var(--neon);font-weight:700}
+.ct-jump.off{color:var(--muted);opacity:.35;cursor:default}
+.ct-empty{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:22px 16px;
+  margin-top:14px;text-align:center}
+.ct-emptyhd{font-weight:800;font-size:16px;margin-bottom:6px;color:var(--text)}
+.ct-names{display:flex;gap:10px}
+.ct-names .fld{flex:1 1 0;min-width:0}
+.ct-group{margin:10px 0}
+.ct-glabel{font-size:12px;color:var(--muted);font-weight:700;margin-bottom:4px}
+.ct-multi{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+.ct-mv{flex:2 1 0;min-width:0}
+.ct-mt{flex:1 1 0;min-width:0;max-width:110px}
+.ct-mdel{flex:0 0 auto;min-height:34px}
+.ct-bigface{width:84px;height:84px;border-radius:999px;object-fit:cover;display:block;margin:0 auto 10px;
+  border:1px solid var(--line)}
+/* 16px on a phone, for the reason the event editor does it: below 16px iOS zooms on focus and never
+   zooms back, on a form that is nothing but text fields. */
+@media(max-width:820px){
+  .ct-form .input, .ct-form textarea{font-size:16px}
+  .ct-search .input{font-size:16px}
+  .ct-tools{width:100%;margin-left:0}
+  .ct-mt{max-width:88px}
+}
 .cal-pw{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
 .cal-pw code{font-size:15px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
   padding:8px 10px;overflow-wrap:anywhere}

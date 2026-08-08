@@ -229,6 +229,12 @@ try:
     app.include_router(calendar_router.router)
 except Exception as _cal_err:
     logging.getLogger(__name__).warning("[caldav] calendar API not mounted: %s", _cal_err)
+# /api/contacts/* — the CardDAV side of the same server, guarded for the same reason.
+try:
+    from app.routers import contacts as contacts_router
+    app.include_router(contacts_router.router)
+except Exception as _card_err:
+    logging.getLogger(__name__).warning("[carddav] contacts API not mounted: %s", _card_err)
 app.include_router(mail.router)
 app.include_router(torrent.router)
 app.include_router(fourchan.router)

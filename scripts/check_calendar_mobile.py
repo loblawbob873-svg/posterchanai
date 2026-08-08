@@ -68,6 +68,8 @@ window.__today = TODAY;
 const ITEMS = [
   { uid:'timed-1', cal:'work', component:'VEVENT',
     ics:'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:timed-1\r\nDTSTART:'+YMD+'T140000Z\r\nDTEND:'+YMD+'T150000Z\r\nSUMMARY:Dentist\r\nLOCATION:High Street\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n' },
+  { uid:'weekly-1', cal:'work', component:'VEVENT',
+    ics:'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:weekly-1\r\nDTSTART:20220104T160000Z\r\nSUMMARY:Weekly delivery\r\nRRULE:FREQ=WEEKLY\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n' },
   { uid:'allday-1', cal:'work', component:'VEVENT',
     ics:'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:allday-1\r\nDTSTART;VALUE=DATE:'+YMD+'\r\nDTEND;VALUE=DATE:'+YMD+'\r\nSUMMARY:Public holiday\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n' },
 ];
@@ -101,6 +103,7 @@ window.__PC = {
   get VIEW(){ return window.__view; },
 };
 </script>
+<script src="/static/js/client/ical.js"></script>
 <script src="/static/js/client/calendar.js"></script>
 <script>
 (async function(){
@@ -115,7 +118,8 @@ window.__PC = {
 
 AUDIT = r"""(() => {
   const out = {overflow:false, days:0, dow:0, title:'', hasNew:false, small:[], zoomy:[],
-               panelBottom:0, navTop:0, evTitles:[], evMeta:[], monthDays:0, firstCol:''};
+               panelBottom:0, navTop:0, evTitles:[], evMeta:[], monthDays:0, firstCol:'',
+               daysWithDots:0};
   out.overflow = document.documentElement.scrollWidth > window.innerWidth + 1;
   const vis = el => el && (!el.checkVisibility || el.checkVisibility());
   out.days = document.querySelectorAll('.cal-day').length;
@@ -125,6 +129,11 @@ AUDIT = r"""(() => {
   out.hasNew = !!document.querySelector('#cal-new');
   // Cells belonging to the shown month (not greyed) — must equal the real length of that month.
   out.monthDays = document.querySelectorAll('.cal-day:not(.other)').length;
+  // How many days of this month carry at least one event dot. A weekly series that is not expanded
+  // shows up on exactly one day (its DTSTART, often years ago) — indistinguishable from a one-off
+  // unless the days are counted.
+  out.daysWithDots = [...document.querySelectorAll('.cal-day:not(.other)')]
+                       .filter(d => d.querySelector('.cal-dot')).length;
   out.evTitles = [...document.querySelectorAll('.cal-evtitle')].map(e => e.textContent.trim());
   out.evMeta = [...document.querySelectorAll('.cal-evmeta')].map(e => e.textContent.trim());
   document.querySelectorAll('.cal-day, .cal-nav .btn, .cal-tools .btn, .cal-ev .btn').forEach(b => {
@@ -269,6 +278,13 @@ async def drive(url):
                 if r["firstCol"].strip() != "Mon":
                     problems.append((label, "wrong-day-count",
                                      f"the grid starts on {r['firstCol']!r} — the cells are computed Monday-first"))
+                # A weekly series running since 2022 must land on 4-6 days of any month. Drawing
+                # it once (on a DTSTART years in the past) is what made an imported calendar of 707
+                # events look almost empty.
+                if r["daysWithDots"] < 4:
+                    problems.append((label, "recurrence-not-expanded",
+                                     f"only {r['daysWithDots']} day(s) of this month carry an event; "
+                                     "a weekly series should land on at least 4"))
                 if not r["title"] or not r["hasNew"]:
                     problems.append((label, "missing-control", "no month title or no ＋ Event button"))
                 # Both of today's events must be on today.

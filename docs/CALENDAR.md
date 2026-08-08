@@ -103,6 +103,62 @@ Items are stored exactly as the client PUT them, which is a whole `VCALENDAR` ea
 **unwraps** them — otherwise the file has a calendar inside a calendar, which some programs import as
 one broken entry and others refuse outright.
 
+### What an import stores, and why it is a RESOURCE and not a component
+
+An `.ics` file is a flat list of components; CalDAV addresses **resources**. The two differ in ways
+that were measured on a real 707-event Radicale export, where getting them wrong was silent:
+
+* **A `VTIMEZONE` has no UID.** Keyed on UID alone, every one of them was dropped: 577 of those 707
+  events referenced a `TZID` and **not one** definition survived the import.
+  `DTSTART;TZID=America/Denver:20220109T100000` with no matching `VTIMEZONE` is an invalid resource —
+  a strict client refuses it, and a lenient one reads the time as floating and shifts the appointment
+  by the UTC offset. `wrap_ics(..., timezones=…)` now attaches the definitions a resource actually
+  uses, hoisted to the front and deduped, so an export carries each one once rather than once per
+  event.
+* **Components sharing a UID are ONE resource.** A recurring event with an edited occurrence is a
+  master `VEVENT` plus a `VEVENT` carrying `RECURRENCE-ID`, both under the same UID. Stored as
+  separate documents the second write silently overwrote the first: the master disappeared and the
+  calendar showed a lone stray occurrence.
+* **`VTODO`s are resources too.** 10 of those 707 items were todos; keying on `VEVENT` drops them.
+
+`group_resources()` and `timezones_of()` in `caldav_store.py` do this, and `tests/test_calendar.py`
+pins each case — including that a `DESCRIPTION` containing the literal text `TZID=` is prose and not
+a reference, and that a folded `DTSTART;TZ\r\n ID=…` still is one.
+
+Three of that calendar's events reference `TZID:GMT-0600`, which their source file never defines and
+which is not an IANA zone. Nothing can be recovered there, and nothing is invented: they are stored
+the way Radicale stores them, and the client falls back to floating local time rather than throwing.
+
+### Recurring events
+
+`static/js/client/ical.js` expands `RRULE` for the month being drawn — `FREQ` daily/weekly/monthly/
+yearly with `INTERVAL`, `COUNT`, `UNTIL`, `BYDAY` (including ordinals like `-1FR`), `BYMONTHDAY` and
+`BYMONTH`, plus `EXDATE` exclusions and `RECURRENCE-ID` overrides.
+
+It is a **separate, DOM-free file** so `tests/test_ical_recurrence.py` can run the shipped parser
+under node against real rules. That matters because the grid previously placed only `DTSTART`: a
+weekly delivery running since 2025 drew on one Friday in 2025 and never again, and an imported
+calendar of 707 events looked almost empty with nothing in any log.
+
+Expansion **jumps to the period containing the window** instead of stepping from `DTSTART` — a daily
+series from 2011 is ~5500 iterations away from today, done for every rule on every repaint. `COUNT`
+is the exception, since it can only be known by counting from the beginning; that is bounded by the
+count itself.
+
+Editing a recurring event from the web UI keeps the series: the repeat rule, its exceptions and any
+individually-edited occurrences are re-emitted **verbatim**, because rebuilding an event from the
+form alone would flatten a weekly series into one appointment the first time somebody fixed a typo in
+its title.
+
+### An imported calendar is usually a history
+
+Of that real 707-event export, exactly **one** event fell in the month it was imported in. Landing on
+an empty grid after a successful import is indistinguishable from the import having failed, so after
+an import the view moves to a month that has something in it, and an otherwise-empty month says how
+many items the calendar holds and offers the jump. The import itself shows progress — a few hundred
+signed, encrypted writes take tens of seconds, and a modal that just sits there reads as "nothing
+happened".
+
 ## Gotchas, each of which cost a debugging session
 
 1. **The auth plugin implements `_login`, not `login`.** Radicale marks `login()` `@final` (it owns

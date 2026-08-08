@@ -135,17 +135,19 @@ async def create_calendar(body: CalendarIn, current_user: User = Depends(get_cur
     # STRICT: the collision check is a decision made from what is NOT there, and an unreachable relay
     # answers the same [] as "you have no calendars" — under which a new calendar reuses an existing
     # id, and its metadata write then overwrites that calendar and merges both sets of items.
+    #
+    # And across BOTH kinds: an addressbook shares this id space, so checking only calendars finds no
+    # collision and the write below replaces `pcai:calmeta:<id>` without its `kind` — converting the
+    # addressbook into a calendar, hiding it from Contacts, and leaving its vCards as calendar items
+    # that a later "delete this calendar" would erase.
     try:
-        existing = {c.get("id") for c in await caldav_store.list_calendars(db, current_user, strict=True)}
+        existing = await caldav_store.collection_kinds(db, current_user)
     except Exception as e:
         logger.warning("[caldav] calendar list unreadable, refusing to create: %s", e)
         raise HTTPException(status_code=503, detail="Could not reach your calendars just now — try again.")
-    if cid in existing:
-        base, n = cid, 2
-        while f"{base}-{n}" in existing:
-            n += 1
-        cid = f"{base}-{n}"
-    meta = {"displayname": body.name.strip() or cid, "color": body.color or ""}
+    cid = caldav_store.free_id(cid, existing)
+    meta = {"displayname": body.name.strip() or cid, "color": body.color or "",
+            "kind": caldav_store.KIND_CALENDAR}
     if not await caldav_store.put_calendar(db, current_user, cid, meta):
         raise HTTPException(status_code=502, detail="Could not save the calendar.")
     _forget(current_user.username)   # so a phone sees it without waiting for a restart
@@ -247,23 +249,32 @@ async def import_ics(cal: str = Query(""), file: UploadFile = File(...),
 
     cid = _slug(cal or (file.filename or "imported").rsplit(".", 1)[0])
     try:
-        known = {c.get("id") for c in await caldav_store.list_calendars(db, current_user, strict=True)}
+        known = await caldav_store.collection_kinds(db, current_user)
     except Exception as e:
         logger.warning("[caldav] calendar list unreadable, refusing to import: %s", e)
         raise HTTPException(status_code=503, detail="Could not reach your calendars just now — try again.")
+    # Importing INTO an existing calendar is the point (a re-import converges). Importing into an
+    # id that belongs to an ADDRESSBOOK is not: the events would be stored among someone's contacts
+    # under a collection the calendar UI never lists. Take the next free id instead.
+    if known.get(cid) == caldav_store.KIND_ADDRESSBOOK:
+        cid = caldav_store.free_id(cid, known)
     if cid not in known:
         # A failure here is fatal to the import, not a warning: without the calendar document the
         # items land under an id that list_calendars never returns, so they exist on the relay and
         # appear nowhere at all.
         if not await caldav_store.put_calendar(
                 db, current_user, cid,
-                {"displayname": cal or (file.filename or "Imported").rsplit(".", 1)[0]}):
+                {"displayname": cal or (file.filename or "Imported").rsplit(".", 1)[0],
+                 "kind": caldav_store.KIND_CALENDAR}):
             raise HTTPException(status_code=502, detail="Could not create the calendar for this import.")
 
-    comps = caldav_store.split_ics(text)
-    if len(comps) > _IMPORT_MAX_ITEMS:
+    # Whole RESOURCES, not loose components: a UID's recurrence overrides belong in one item, and the
+    # VTIMEZONEs an event refers to have to be stored with it (see caldav_store.wrap_ics).
+    resources = caldav_store.group_resources(text)
+    tzs = caldav_store.timezones_of(text)
+    if len(resources) > _IMPORT_MAX_ITEMS:
         raise HTTPException(status_code=413,
-                            detail=f"That file holds {len(comps)} items; import up to {_IMPORT_MAX_ITEMS} at a time.")
+                            detail=f"That file holds {len(resources)} items; import up to {_IMPORT_MAX_ITEMS} at a time.")
 
     # CONCURRENTLY, in bounded batches. Each put is its own relay websocket plus a pure-Python
     # signature, so a few thousand events done one after another is minutes of stalled single-worker
@@ -271,16 +282,13 @@ async def import_ics(cal: str = Query(""), file: UploadFile = File(...),
     import asyncio as _asyncio
     sem = _asyncio.Semaphore(8)
 
-    async def _one(comp):
-        uid = caldav_store.uid_of(comp)
-        if not uid:
-            return False        # a component with no UID (a VTIMEZONE, say) is not a CalDAV resource
-        body = caldav_store.wrap_ics([comp], cid)
+    async def _one(res):
+        uid, comp, parts = res
+        body = caldav_store.wrap_ics(parts, cid, timezones=tzs)
         async with sem:
-            return await caldav_store.put_item(db, current_user, cid, uid, body,
-                                               caldav_store.component_of(comp))
+            return await caldav_store.put_item(db, current_user, cid, uid, body, comp)
 
-    results = await _asyncio.gather(*[_one(c) for c in comps], return_exceptions=True)
+    results = await _asyncio.gather(*[_one(r) for r in resources], return_exceptions=True)
     added = sum(1 for r in results if r is True)
     skipped = len(results) - added
     _forget(current_user.username)

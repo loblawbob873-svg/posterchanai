@@ -388,6 +388,15 @@ async def drive(url):
                 else:
                     if not rd["reader"] or not rd["frame"]:
                         problems.append((label, "reader-dead-end", "opening a result showed no page"))
+                    # DESKTOP: the frame must actually FILL the column. Desktop applies
+                    # body{zoom:.67-.77} and viewport units are not rescaled by zoom, so a raw
+                    # 100dvh height paints at ~2/3 of what it asked for — a small box floating in a
+                    # large empty column. A >200px floor never caught it.
+                    if not phone and rd["frame"] and rd["frameH"] < 0.7 * h:
+                        problems.append((label, "frame-too-small",
+                                         f"the page frame is {rd['frameH']}px tall in a {h}px "
+                                         "viewport — is the height compensating for body{zoom} "
+                                         "(calc(100dvh / var(--zf)))?"))
                     if rd["frame"] and rd["frameH"] < 200:
                         problems.append((label, "reader-dead-end",
                                          f"the page frame is only {rd['frameH']}px tall — an <iframe> with no "

@@ -284,3 +284,93 @@ def test_default_chunk_is_bounded():
     prevent — the ingestion stall was the whole reason for chunking."""
     assert _PRUNE_CHUNK and _PRUNE_CHUNK > 0
     assert _PRUNE_CHUNK <= 50000, "a pass this large is long enough to stall ingestion"
+
+
+def test_calendars_and_contacts_survive_every_cleaner(store_factory):
+    """A calendar and an addressbook are kind 30078 (`pcai:cal:*`, `pcai:calmeta:*`), and they are
+    written by the app itself, so they land with `origin = 'direct'`.
+
+    That combination is the one worth pinning by name. Everything a person publishes normally is
+    protected by the kind allowlist, but PAY-TO-STAY's tiered rules are the only rules in this file
+    that can delete a direct write at all — they exist to age out a non-subscriber's own feed posts.
+    Their third qualifier, `kind IN (_PRUNABLE_KINDS)`, is the single clause standing between a
+    relay with the paid tier switched on and somebody's entire calendar and phone book. It is easy
+    to read that rule as "delete this stranger's old direct writes" and not notice that a calendar
+    is one.
+
+    Run against every cleaner at once, with pay-to-stay ON and the author NOT a subscriber and NOT
+    preserved — the worst case the tiered rules can construct.
+    """
+    async def go(loop):
+        # retention_days=0 → the age rule deletes everything it is allowed to; max_events=1 forces
+        # the count cap; free_retention_days=1 with a 400-day-old event puts it far past the free
+        # window a non-subscriber gets.
+        store = store_factory(loop, retention_days=0, max_events=1)
+        store.free_retention_days = 1
+        store.paid_retention_days = 30
+        store.set_subscribers([], ledger_ok=True)      # nobody has paid; the tiered rules may run
+        stranger = "c" * 64
+        soon = int(time.time()) + 1
+        # DISTINCT `d` tags. Kind 30078 is parameterized-replaceable, so events sharing one
+        # (pubkey, kind, d) coordinate collapse to the newest — seven tagless events would prove
+        # nothing except that replacement works.
+        dtags = [f"pcai:cal:main:uid-{i}" for i in range(1, 6)] + \
+                ["pcai:calmeta:main", "pcai:cal:contacts:card-1"]
+        cal = []
+        for i, d in enumerate(dtags, start=1):          # events, their metadata, and a vCard
+            ev = _ev(i, kind=30078, age_days=400, expiration=soon, pubkey=stranger)
+            ev["tags"] = [["d", d]] + ev["tags"]
+            cal.append(ev)
+        noise = [_ev(i, kind=1, age_days=400, pubkey=stranger) for i in range(200, 220)]
+        # origin="direct": what the APP's own writes are, and the only origin the tiered
+        # rules can delete. Storing these as "wot" would leave the rule this test exists for
+        # completely unexercised — it would pass with the guard removed.
+        await store.add_events_bulk(cal, origin="direct")
+        await store.add_events_bulk(noise, origin="direct")
+
+        await asyncio.sleep(1.6)                       # let the expiration fall due
+        for _ in range(4):
+            await store.prune(chunk=3)
+
+        left = await store.query([{"kinds": [30078], "limit": 50}])
+        assert len(left) == 7, (
+            "a calendar/addressbook was pruned — appointments and contacts are gone and there is no "
+            "second copy. Keep 30078 out of _PRUNABLE_KINDS and in _NEVER_EXPIRE_KINDS; never relax "
+            "this test")
+
+    _run(go)
+
+
+def test_the_tiered_rules_only_ever_touch_feed_kinds(store_factory):
+    """The qualifier above, asserted directly rather than through its effect.
+
+    `_tiered_rules` is the only place in the codebase that can delete an `origin='direct'` event, so
+    its SQL is worth reading in a test: every rule it produces must be restricted to the prunable
+    feed kinds. A rule that ever loses that clause deletes the app's own datastore — settings,
+    chats, notes, calendars, contacts — for any author without an account here.
+    """
+    async def go(loop):
+        store = store_factory(loop)
+        store.free_retention_days = 1
+        store.paid_retention_days = 30
+        store.set_subscribers([], ledger_ok=True)
+        rules = store._tiered_rules(int(time.time()))
+        assert rules, "pay-to-stay is on, so there should be rules to inspect"
+        for label, where, _params in rules:
+            assert "kind IN (" in where, f"the {label} rule is not restricted to any kind at all"
+            assert "30078" not in where, f"the {label} rule names the datastore kind"
+            assert "origin = 'direct'" in where, f"the {label} rule is not limited to direct writes"
+
+    _run(go)
+
+
+def test_the_tiered_rules_stay_off_when_the_ledger_could_not_be_read(store_factory):
+    """Fail closed. An unreadable ledger and "nobody subscribed" are the same empty list, and acting
+    on the second when it was the first deletes what people paid to keep."""
+    async def go(loop):
+        store = store_factory(loop)
+        store.free_retention_days = 1
+        store.set_subscribers([], ledger_ok=False)
+        assert store._tiered_rules(int(time.time())) == []
+
+    _run(go)
