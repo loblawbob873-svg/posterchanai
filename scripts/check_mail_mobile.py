@@ -165,6 +165,26 @@ AUDIT = r"""(() => {
   return out;
 })()"""
 
+BULK_BAR = r"""(async () => {
+  const cb = document.querySelector('.mail-item .mi-chk');
+  if (!cb) return {error:'no checkbox on a row'};
+  cb.click();
+  await new Promise(r=>setTimeout(r,250));
+  const bar = document.querySelector('.mail-bulk');
+  const act = document.querySelector('.mail-bulk-act');
+  if (!bar || !act) return {error:'no bulk bar'};
+  const br = bar.getBoundingClientRect();
+  const bs = [...act.querySelectorAll('.btn')];
+  return { n: bs.length,
+           labels: bs.map(b => b.textContent.trim()),
+           // Past the BAR's right edge, or hidden inside a scroll container: either way the action
+           // cannot be reached. The list column is ~330px, so this is the tight case.
+           clipped: bs.filter(b => b.getBoundingClientRect().right > br.right + 1).length,
+           hidden: act.scrollWidth > act.clientWidth + 1,
+           barW: Math.round(br.width),
+           barBottom: Math.round(br.bottom), barTop: Math.round(br.top) };
+})()"""
+
 OPEN_MESSAGE = r"""(async () => {
   const c = document.querySelector('.mail-item .mi-content');
   if (!c) return {error:'no message row'};
@@ -370,6 +390,18 @@ async def drive(url):
                         problems.append((label, "under-nav",
                                          f"the message list's bottom ({r['listBottom']}px) is under "
                                          f"the nav ({r['navTop']}px)"))
+
+                bb = await js(BULK_BAR, awaited=True)
+                if not bb or bb.get("error"):
+                    problems.append((label, "bulk-bar-broken", f"{(bb or {}).get('error')}"))
+                else:
+                    if bb["n"] != 3:
+                        problems.append((label, "bulk-bar-broken",
+                                         f"selecting a message showed {bb['n']} bulk actions, want 3"))
+                    if bb["clipped"] or bb["hidden"]:
+                        problems.append((label, "bulk-bar-broken",
+                                         f"{bb['clipped']} bulk action(s) cut off in a "
+                                         f"{bb['barW']}px bar ({bb['labels']})"))
 
                 op = await js(OPEN_MESSAGE, awaited=True)
                 if not op or op.get("error"):

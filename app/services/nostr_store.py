@@ -94,54 +94,83 @@ _RELOAD_DEBOUNCE = 20.0
 
 
 # ---- local-relay WebSocket I/O (mirrors client.py's proven signup-follow path) ----
-# ONE connection, reused. Opening a WebSocket per document — TCP handshake, HTTP upgrade,
-# per-connection state on the relay, teardown — was the dominant cost of a bulk write: mirroring a
-# mail folder at ~550 documents a minute meant 550 connect/close cycles a minute, on both sides, to
-# deliver 550 small frames. The relay is on loopback and the writes are strictly sequential (each
-# waits for its own OK), so a single long-lived socket behind a lock is both simpler and faster.
+# The pooled socket is PER EVENT LOOP, and that is not a detail.
 #
-# It is a CACHE, never a requirement: any failure drops the socket and the call retries once on a
-# fresh one, so a relay restart costs one retry instead of an error.
-_pub_ws = None
-_pub_lock: "asyncio.Lock | None" = None
+# A websocket belongs to the loop it was opened on. Several callers here run on their own
+# short-lived loop — caldav/storage.py builds one per storage call, because Radicale's API is
+# synchronous — so a single module-global socket was being handed to a loop that did not own it. It
+# still worked (the retry below reconnects), but every such call ABANDONED a connection and its
+# keepalive task: a leak per call, and no pooling benefit for the caller that leaked.
+#
+# So: reuse only within the loop that opened it, and a caller on a throwaway loop gets a plain
+# connection that is dropped with that loop instead of outliving it.
+_pub_pool: dict = {}          # id(loop) -> (loop, websocket)
+_pub_locks: dict = {}         # id(loop) -> asyncio.Lock
 
 
-async def _publish_once(port: int, event: dict, timeout: float, reuse: bool) -> tuple[bool, str]:
-    global _pub_ws
-    import websockets
-    uri = f"ws://127.0.0.1:{port}/relay"
-    ws = _pub_ws if reuse else None
-    if ws is None:
-        ws = await websockets.connect(uri, open_timeout=timeout, close_timeout=2, max_size=None)
-        _pub_ws = ws
+def _pub_state():
+    """(loop, key, lock) for the running loop, pruning entries whose loop has since closed."""
+    loop = asyncio.get_running_loop()
+    for k, (lp, _ws) in list(_pub_pool.items()):
+        if lp.is_closed():
+            _pub_pool.pop(k, None)
+            _pub_locks.pop(k, None)
+    key = id(loop)
+    if key not in _pub_locks:
+        _pub_locks[key] = asyncio.Lock()
+    return loop, key, _pub_locks[key]
+
+
+async def _publish_once(port: int, event: dict, timeout: float, ws) -> tuple[bool, str]:
     await ws.send(json.dumps(["EVENT", event]))
     while True:
         msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
-        # Anything that is not our OK is another client's traffic on this shared socket (the relay
-        # sends nothing unsolicited to a subscription-less connection, but be explicit rather than
-        # assume it): skip it and keep waiting for the id we published.
+        # Anything that is not our OK is other traffic on this connection (the relay sends nothing
+        # unsolicited to a subscription-less socket, but be explicit rather than assume it).
         if msg and msg[0] == "OK" and msg[1] == event["id"]:
             return bool(msg[2]), (msg[3] if len(msg) > 3 else "")
 
 
 async def _ws_publish(port: int, event: dict, timeout: float = 8.0) -> tuple[bool, str]:
-    global _pub_ws, _pub_lock
-    if _pub_lock is None:
-        _pub_lock = asyncio.Lock()
-    async with _pub_lock:
-        for attempt in (True, False):        # reuse the pooled socket, then a fresh one
+    import websockets
+    uri = f"ws://127.0.0.1:{port}/relay"
+    loop, key, lock = _pub_state()
+    async with lock:
+        for _attempt in (0, 1):
+            entry = _pub_pool.get(key)
+            ws = entry[1] if entry else None
+            fresh = ws is None
             try:
-                return await _publish_once(port, event, timeout, reuse=attempt)
+                if ws is None:
+                    ws = await websockets.connect(uri, open_timeout=timeout, close_timeout=2,
+                                                  max_size=None)
+                    _pub_pool[key] = (loop, ws)
+                return await _publish_once(port, event, timeout, ws)
             except Exception as e:
+                _pub_pool.pop(key, None)
                 try:
-                    if _pub_ws is not None:
-                        await _pub_ws.close()
+                    await ws.close()
                 except Exception:
                     pass
-                _pub_ws = None
-                if not attempt:
+                if fresh:      # a brand-new connection failed — the relay is the problem, not reuse
                     return False, str(e)
     return False, "unreachable"
+
+
+async def close_pooled_connection() -> None:
+    """Close this loop's pooled socket. Optional tidiness for a caller that owns a short-lived loop;
+    without it the entry is simply pruned once that loop is closed."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    entry = _pub_pool.pop(id(loop), None)
+    _pub_locks.pop(id(loop), None)
+    if entry:
+        try:
+            await entry[1].close()
+        except Exception:
+            pass
 
 
 async def publish_event(port: int, event: dict, timeout: float = 8.0) -> tuple[bool, str]:
