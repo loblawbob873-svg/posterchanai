@@ -329,6 +329,9 @@ def _write_clamp_script(cfg: dict) -> None:
     p = _clamp_params(cfg)
     encoder = _clamp_encoder(cfg)
     rtsp = _rtsp_port(cfg)
+    # The control API is loopback-only and excluded from the auth hook, so the script can read a path's
+    # byte counters with no credentials — that is what lets it measure the source without reading it.
+    api_port = (cfg.get("stream_api_port", "") or "9997").strip()
     secret = clamp_secret(cfg)
     try:
         from app.services.media_service import resolve_ffmpeg, _render_node
@@ -434,6 +437,7 @@ AUD_CFG={audio_kbps}         # configured AAC bitrate; scaled DOWN on weak sourc
 VMIN=150                     # never target something absurd if the probe reads very low
 AUD_MIN=48                   # below this speech stops being intelligible
 SETTLE=15                    # seconds to let the publisher's bitrate settle before measuring
+SAMPLE=5                     # length of one API measurement window (see api_kbps)
 
 # WebRTC bandwidth estimation ramps UP over many seconds, so the opening of a WHIP publish is NOT
 # representative. Measured against a real phone: steady state 1489 kbit/s, but sampling at t=3-7s read
@@ -465,8 +469,87 @@ measure_src_kbps() {{
   awk -v b="$_b" -v d="$_d" 'BEGIN{{ if (d+0 > 0.5) printf "%d", b*8/d/1000; else print 0 }}'
 }}
 
+api_kbps() {{
+  # The same measurement WITHOUT touching the stream: MediaMTX counts the bytes it receives on the source
+  # path, so two samples $1 seconds apart are the publisher's bitrate. Preferred over measure_src_kbps
+  # because that one opens a SECOND RTSP reader on a live path for four seconds — two readers contending
+  # for the same source is where the `co located POCs unavailable` / `error while decoding MB` warnings
+  # clustered — and because it is cheap enough to repeat for the whole length of a stream (see the watch
+  # loop below), which a 4-second remux per sample is not.
+  _u="http://127.0.0.1:{api_port}/v3/paths/get/$SRC"
+  _b1=$(curl -sS -m 4 "$_u" 2>/dev/null | tr ',' '\\n' \\
+        | sed -n 's/.*"bytesReceived"[: ]*\\([0-9][0-9]*\\).*/\\1/p' | head -1)
+  [ -n "${{_b1:-}}" ] || return 1
+  sleep "$1"
+  _b2=$(curl -sS -m 4 "$_u" 2>/dev/null | tr ',' '\\n' \\
+        | sed -n 's/.*"bytesReceived"[: ]*\\([0-9][0-9]*\\).*/\\1/p' | head -1)
+  [ -n "${{_b2:-}}" ] || return 1
+  awk -v a="$_b1" -v b="$_b2" -v w="$1" 'BEGIN{{ if (b+0 > a+0 && w+0 > 0) printf "%d", (b-a)*8/w/1000; else print 0 }}'
+}}
+
+measure_kbps() {{
+  # API first, the RTSP remux as the fallback — a node whose API moved or whose curl is missing keeps the
+  # behaviour it had before, rather than losing the measurement and clamping every stream blind.
+  _k=$(api_kbps "$SAMPLE" 2>/dev/null) || _k=0
+  if [ "${{_k:-0}}" -gt 0 ]; then
+    echo "$_k"
+  else
+    measure_src_kbps
+  fi
+}}
+
 sleep "$SETTLE"
-SRC_KBPS=$(measure_src_kbps)
+SRC_KBPS=$(measure_kbps)
+
+# ---- stand down when there is nothing to clamp ----------------------------------------------------
+# Transcoding a source that is ALREADY under the ceiling cannot save a viewer one byte. The ceiling
+# computed below is min(configured, 125% of what the source sends), so for an under-ceiling source the
+# output is no SMALLER than the input — just decoded, rescaled, re-encoded and visibly worse, while
+# costing a continuous transcode per stream. Measured: a 916 kbit/s source produced a 1017 kbit/s ceiling,
+# i.e. the clamp was authorised to spend MORE than the stream it was clamping.
+#
+# So the clamp now decides whether to run at all, which is the one thing measure_src_kbps had all the
+# information for and never did. Standing down means exiting nothing and publishing nothing: with no
+# clamped path, the HLS proxy serves the source (_upstream_path falls back to it), which is already what
+# every viewer gets during the settle above.
+#
+# It is NOT a one-shot decision. OBS's bitrate can change mid-stream — measured across one evening on this
+# node: 916 kbit/s early, 10 Mbit/s later, and five viewers at 10 Mbit/s is 50 Mbit/s of upload, exactly
+# what this feature exists to prevent. So a stood-down clamp keeps watching and starts transcoding the
+# moment the source is genuinely over. Hysteresis matters because starting mid-stream moves every viewer
+# from the source path to the clamped one: OVER_PCT ignores a source that is merely at the ceiling (a 10%
+# saving is not worth a transcode plus a playlist switch), and after standing down it takes OVER_HITS
+# consecutive samples to escalate, so ordinary variation can never flap viewers between the two paths.
+# The FIRST decision is immediate, though — a fat source is clamped from the start, as it always was.
+#
+# An explicitly chosen tier is never skipped: that is the streamer asking for a specific quality for their
+# viewers, not the node protecting its uplink, and it stays honoured even when the source is already small.
+CHECK=30            # seconds between samples while stood down
+OVER_PCT=120        # % of the total ceiling the source must exceed to be worth transcoding
+OVER_HITS=2         # consecutive over-samples required to escalate (the first decision needs only one)
+if [ "$Q" = auto ] && [ "${{SRC_KBPS:-0}}" -gt 0 ]; then
+  CEIL_TOTAL=$((VMAX_CFG + AUD_CFG))
+  NEED=1
+  HITS=0
+  while [ "${{SRC_KBPS:-0}}" -gt 0 ]; do
+    if [ $((SRC_KBPS * 100)) -ge $((CEIL_TOTAL * OVER_PCT)) ]; then
+      HITS=$((HITS + 1))
+      if [ "$HITS" -ge "$NEED" ]; then
+        [ "$NEED" = 1 ] || echo "clamp: $SRC rose to $SRC_KBPS kbit/s (ceiling $CEIL_TOTAL) — clamping it now" >&2
+        break
+      fi
+    else
+      HITS=0
+    fi
+    if [ "$NEED" = 1 ]; then
+      echo "clamp: $SRC is $SRC_KBPS kbit/s, within the $CEIL_TOTAL kbit/s ceiling — serving the source unchanged" >&2
+      NEED=$OVER_HITS
+    fi
+    sleep "$CHECK"
+    SRC_KBPS=$(measure_kbps)
+  done
+fi
+
 if [ "${{SRC_KBPS:-0}}" -gt 0 ]; then
   # Audio scales down with the source. At the configured 128k a 200 kbit/s stream would spend nearly
   # two-thirds of its budget on audio and leave the picture unwatchable; cap it at a quarter of the
