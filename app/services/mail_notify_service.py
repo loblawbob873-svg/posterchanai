@@ -171,9 +171,6 @@ def start_mail_notify_scheduler() -> None:
     IMAP round trip per account is exactly the kind of long await that should not share an event
     loop with the web UI."""
     global _scheduler
-    if not enabled():
-        logger.info("[mail-notify] mail polling is off (mail_poll_enabled)")
-        return
     if _scheduler is not None:
         return
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -194,7 +191,12 @@ def start_mail_notify_scheduler() -> None:
     _scheduler.add_job(_job, "interval", minutes=mins, id="mail_notify",
                        max_instances=1, coalesce=True)
     _scheduler.start()
-    logger.info("[mail-notify] mail poller started (every %s min)", mins)
+    # The JOB is always scheduled; `poll_once` is what respects the switch. Gating the scheduler on
+    # the setting instead meant turning mail notifications on in Admin did nothing at all until
+    # somebody restarted the worker — with the switch showing "on" the whole time. That is the
+    # worker gotcha this repo already has a note about, and it is invisible from the UI.
+    logger.info("[mail-notify] mail poller scheduled every %s min (currently %s)",
+                mins, "ON" if enabled() else "off — flip mail_poll_enabled in Admin → Tools")
 
 
 def stop_mail_notify_scheduler() -> None:

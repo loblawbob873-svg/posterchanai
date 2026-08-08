@@ -14835,7 +14835,15 @@
   function _bindMsgTabs(root){ $$('.mtab',root).forEach(b=> b.onclick=()=>{ if(_msgTab===b.dataset.mt) return; _msgTab=b.dataset.mt; dmActive=null; renderMessages(); }); }
   function renderMessages(){
     if(_msgTab==='email'){
-      const feed=$('#feed'); feed.innerHTML=_msgTabBar()+'<div id="mail-root" class="mail-root"></div>';
+      const feed=$('#feed');
+      // ALREADY MOUNTED → leave it alone. renderMessages() is reached from twelve places (an
+      // arriving DM, a notification landing, a profile resolving), and rebuilding #feed on each one
+      // tore the mail client down and started a fresh full IMAP sync. That is a render loop
+      // hammering /sync and /folders — the documented root cause of the incident this feature was
+      // removed for, and on the desktop app it showed up as Messages reloading without end.
+      const mounted=$('#mail-root', feed);
+      if(mounted && Mail.root===mounted) return;
+      feed.innerHTML=_msgTabBar()+'<div id="mail-root" class="mail-root"></div>';
       _bindMsgTabs(feed); return Mail.render($('#mail-root',feed));
     }
     _dmUnread=0; ClientSettings.set('dmSeen', Math.floor(Date.now()/1000)); bumpDm();   // mark DMs read (persistent)
@@ -14938,69 +14946,136 @@
     return { el: ov, box, close };
   }
 
-  async function _mailContactPicker(onPick){
+  /* Every emailable contact, loaded once per session from the same encrypted CardDAV addressbooks
+   * the Contacts screen and your phone sync. Shared by the 👤 picker and the recipient autocomplete
+   * so the two can never disagree about who exists. */
+  let _mailPeople = null;
+  async function _mailContacts(){
+    if(_mailPeople) return _mailPeople;
     const V = window.PCVcard;
-    const sheet=_sheet(`<h3>👤 Contacts</h3>
-      <input class="input" id="mc-q" placeholder="🔍 Search contacts…" autocomplete="off">
-      <div id="mc-list" class="mc-list"><div class="spinner"></div></div>`);
-    const closeModal = sheet.close;                 // shadow: this picker closes ITSELF, not the composer
-    const $ = (sel, r) => (r || sheet.box).querySelector(sel);
-    const $$ = (sel, r) => Array.from((r || sheet.box).querySelectorAll(sel));
-    const box=$('#mc-list'); if(!box) return;
-    if(!V){ box.innerHTML='<div class="muted small">Contacts are not available on this node.</div>'; return; }
-    let people=[];
+    if(!V) return [];
+    const out = [];
     try{
-      const bs=await fetch('/api/contacts/books').then(r=>r.ok?r.json():{books:[]});
-      for(const b of (bs.books||[])){
-        const r=await fetch('/api/contacts/cards?book='+encodeURIComponent(b.id));
+      const bs = await fetch('/api/contacts/books').then(r => r.ok ? r.json() : {books:[]});
+      for(const b of (bs.books || [])){
+        const r = await fetch('/api/contacts/cards?book=' + encodeURIComponent(b.id));
         if(!r.ok) continue;
-        for(const rec of ((await r.json()).cards||[])){
-          let c; try{ c=V.parse(rec.ics||''); }catch(_){ continue; }
-          for(const e of (c.emails||[])){
-            if(e.value) people.push({ name: V.displayName(c), email: e.value, type: e.type||'', card: c });
+        for(const rec of ((await r.json()).cards || [])){
+          let c; try{ c = V.parse(rec.ics || ''); }catch(_){ continue; }
+          for(const e of (c.emails || [])){
+            if(e.value) out.push({ name: V.displayName(c), email: e.value, type: e.type || '' });
           }
         }
       }
-    }catch(_){ box.innerHTML='<div class="muted small">Could not reach your contacts.</div>'; return; }
+    }catch(_){ return []; }
+    out.sort((a, b) => a.name.localeCompare(b.name));
+    _mailPeople = out;
+    return out;
+  }
+
+  const _mailAddr = p => (p.name && !/[<>,]/.test(p.name)) ? `${p.name} <${p.email}>` : p.email;
+
+  /* Type-ahead on To/Cc. A recipient field is where you already know who you mean, so opening a
+   * modal to find them is the slow path — this completes as you type and leaves the 👤 button for
+   * browsing. Matches on name OR address, and only ever completes the address being edited (the
+   * one after the last comma), so it cannot eat recipients already entered. */
+  function _attachRecipientAutocomplete(input){
+    if(!input) return;
+    let box = null, items = [], sel = -1;
+    const kill = () => { if(box){ box.remove(); box = null; } items = []; sel = -1; };
+    const term = () => (input.value.split(',').pop() || '').trim();
+    const put = (p) => {
+      const parts = input.value.split(',');
+      parts[parts.length - 1] = ' ' + _mailAddr(p);
+      input.value = parts.join(',').replace(/^\s+/, '') + ', ';
+      kill(); input.focus();
+    };
+    const draw = async () => {
+      const q = term().toLowerCase();
+      if(q.length < 2){ kill(); return; }
+      const already = input.value.toLowerCase();
+      const people = (await _mailContacts()).filter(p =>
+        (p.name + ' ' + p.email).toLowerCase().includes(q) &&
+        !already.slice(0, already.lastIndexOf(',') + 1).includes(p.email.toLowerCase()));
+      items = people.slice(0, 6);
+      if(!items.length){ kill(); return; }
+      if(!box){
+        box = document.createElement('div');
+        box.className = 'mc-auto';
+        input.parentElement.style.position = input.parentElement.style.position || 'relative';
+        input.insertAdjacentElement('afterend', box);
+      }
+      sel = 0;
+      box.innerHTML = items.map((p, i) =>
+        `<button class="mc-auto-item${i === 0 ? ' on' : ''}" data-i="${i}">
+           <span class="mc-name">${enc(p.name)}</span>
+           <span class="mc-mail muted small">${enc(p.email)}</span></button>`).join('');
+      box.querySelectorAll('[data-i]').forEach(b =>
+        b.onmousedown = (e) => { e.preventDefault(); put(items[+b.dataset.i]); });
+    };
+    input.addEventListener('input', draw);
+    input.addEventListener('blur', () => setTimeout(kill, 120));
+    input.addEventListener('keydown', (e) => {
+      if(!items.length) return;
+      if(e.key === 'ArrowDown' || e.key === 'ArrowUp'){
+        e.preventDefault();
+        sel = (sel + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length;
+        box.querySelectorAll('.mc-auto-item').forEach((el, i) => el.classList.toggle('on', i === sel));
+      }else if(e.key === 'Enter' || e.key === 'Tab'){
+        // Enter completes the highlighted contact rather than submitting — the same bargain every
+        // autocomplete makes, and Escape gets you out without one.
+        if(sel >= 0){ e.preventDefault(); put(items[sel]); }
+      }else if(e.key === 'Escape'){ kill(); }
+    });
+  }
+
+  async function _mailContactPicker(onPick){
+    const sheet=_sheet(`<h3>👤 Contacts</h3>
+      <input class="input" id="mc-q" placeholder="🔍 Search contacts…" autocomplete="off">
+      <div id="mc-list" class="mc-list"><div class="spinner"></div></div>`);
+    const $ = (sel, r) => (r || sheet.box).querySelector(sel);
+    const $$ = (sel, r) => Array.from((r || sheet.box).querySelectorAll(sel));
+    const box = $('#mc-list'); if(!box) return;
+    const people = await _mailContacts();
     if(!people.length){
-      box.innerHTML=`<div class="muted small">No contacts with an email address yet. Add them in
+      box.innerHTML = `<div class="muted small">No contacts with an email address yet. Add them in
         <b>Contacts</b>, or import a .vcf there.</div>`;
       return;
     }
-    people.sort((a,b)=>a.name.localeCompare(b.name));
-    const draw=(q)=>{
-      const hit=people.filter(p=> !q || (p.name+' '+p.email).toLowerCase().includes(q.toLowerCase()));
-      box.innerHTML = hit.length ? hit.map((p,i)=>`<button class="mc-item" data-i="${people.indexOf(p)}">
+    const draw = (q) => {
+      const hit = people.filter(p => !q || (p.name + ' ' + p.email).toLowerCase().includes(q.toLowerCase()));
+      box.innerHTML = hit.length ? hit.map(p => `<button class="mc-item" data-i="${people.indexOf(p)}">
           <span class="mc-name">${enc(p.name)}</span>
-          <span class="mc-mail muted small">${enc(p.email)}${p.type?' · '+enc(p.type):''}</span>
+          <span class="mc-mail muted small">${enc(p.email)}${p.type ? ' · ' + enc(p.type) : ''}</span>
         </button>`).join('') : '<div class="muted small">No contact matches that.</div>';
-      $$('.mc-item',box).forEach(b=> b.onclick=()=>{ onPick(people[+b.dataset.i]); closeModal(); });
+      $$('.mc-item', box).forEach(b => b.onclick = () => { onPick(people[+b.dataset.i]); sheet.close(); });
     };
     draw('');
-    const q=$('#mc-q'); if(q){ q.oninput=()=>draw(q.value.trim()); q.focus(); }
+    const q = $('#mc-q'); if(q){ q.oninput = () => draw(q.value.trim()); q.focus(); }
   }
 
+  /* Attach from Blossom — the app's OWN picker, the same one the post composer, chat and every
+   * other attach button open. It was a hand-rolled list here: no folders, no Escape, no focus trap,
+   * no filtering of the octet-stream noise (encrypted ciphertext and stale index blobs), and its own
+   * bug where closing it took the half-written email with it.
+   *
+   * Mail needs the BYTES, not a URL, because an attachment is encrypted and uploaded per message —
+   * so this is the standard picker plus a fetch of what was picked.
+   */
   async function _mailBlossomPicker(onPick){
-    const server=(CFG.blossom_url||mediaServer()||'').replace(/\/$/,'');
-    if(!server){ toast('Blossom not configured'); return; }
-    // Its OWN overlay, for the reason _sheet explains: closeModal() empties #modal-root, so the
-    // plain modal() this used meant attaching a file destroyed the half-written email underneath.
-    const sheet=_sheet(`<h3>🌸 Attach from Blossom Drive</h3><div id="bp-list" class="bp-list"><div class="spinner"></div></div>`);
-    const closeModal = sheet.close;
-    const $ = (sel, r) => (r || sheet.box).querySelector(sel);
-    const $$ = (sel, r) => Array.from((r || sheet.box).querySelectorAll(sel));
-    let list=null; try{ const r=await fetch(server+'/list/'+ME.pubkey); if(r.ok) list=await r.json(); }catch(_){}
-    const box=$('#bp-list'); if(!box) return;
-    if(!Array.isArray(list) || !list.length){ box.innerHTML='<div class="muted small">No Blossom files yet — upload some in Files first.</div>'; return; }
-    const nameOf=b=>{ try{ const f=FilesIdx&&FilesIdx.data&&FilesIdx.data.files&&FilesIdx.data.files[b.sha256]; if(f&&f.name) return f.name; }catch(_){}
-      const ext=(b.type||'').split('/')[1]||''; return (b.sha256||'file').slice(0,10)+(ext?'.'+ext:''); };
-    list.sort((a,b)=>(b.uploaded||b.size||0)-(a.uploaded||a.size||0));
-    box.innerHTML=list.map((b,i)=>`<button class="bp-item" data-i="${i}">📄 ${enc(nameOf(b))} <span class="muted small">${enc((b.type||'').split('/')[0]||'file')} · ${_fmtBytes(b.size||0)}</span></button>`).join('');
-    $$('.bp-item',box).forEach(btn=> btn.onclick=async()=>{ const b=list[+btn.dataset.i]; btn.disabled=true; const t=btn.textContent; btn.textContent='Loading…';
-      try{ const r=await fetch(server+'/'+b.sha256); if(!r.ok) throw 0; const buf=await r.arrayBuffer();
-        onPick({name:nameOf(b), type:b.type||'application/octet-stream', b64:_abB64(buf)}); closeModal(); toast('attached'); }
-      catch(_){ toast('could not load that file'); btn.disabled=false; btn.textContent=t; } });
+    blossomPicker(null, async ({url, type, ext}) => {
+      const name = decodeURIComponent((url.split('?')[0].split('/').pop() || 'file'))
+                 + (ext && !/\.[a-z0-9]{1,8}$/i.test(url.split('?')[0]) ? '.' + ext : '');
+      try{
+        toast('fetching…');
+        const r = await fetch(url);
+        if(!r.ok) throw new Error('http ' + r.status);
+        onPick({ name, type: type || 'application/octet-stream', b64: _abB64(await r.arrayBuffer()) });
+        toast('attached');
+      }catch(err){ toast('could not attach that file'); }
+    }, { title: '🌸 Attach from Blossom' });
   }
+
   const Mail = {
     unread:0, root:null, accounts:[], acct:null, folder:'INBOX', folders:['INBOX','Sent','Drafts'], folderLabels:{}, msgs:[], openUid:null, q:'', _syncing:false, sel:null,
     async api(path, opts){ const r=await fetch('/api/mail'+path, opts); if(!r.ok) throw new Error('http '+r.status); return r.json(); },
@@ -15015,7 +15090,11 @@
         return;
       }
       if(!this.acct || !this.accounts.some(a=>a.email===this.acct)) this.acct=this.accounts[0].email;
-      this.draw(); this.sync();   // "log in → fetch your mail": pull fresh on open
+      this.draw();
+      // Pull fresh on OPEN, not on every mount. sync() is a full IMAP round trip per account; with
+      // no floor, anything that remounted this screen started another one on top of the last.
+      // The 🔄 button and loginSync still force one — this only bounds the automatic path.
+      if(!this._lastSync || Date.now()-this._lastSync > 120000) this.sync();
     },
     draw(){
       const root=this.root; if(!root) return;
@@ -15053,17 +15132,42 @@
       box.querySelectorAll('.mail-folder').forEach(b=> b.onclick=()=>this.selectFolder(b.dataset.folder));
     },
     async selectFolder(f){
-      this.folder=f; this.openUid=null; this.q=''; if(this.sel) this.sel.clear();
-      if(this.root){ this.root.querySelectorAll('.mail-folder').forEach(b=> b.classList.toggle('on', b.dataset.folder===f));
-        const b=$('#mail-items',this.root); if(b) b.innerHTML='<div class="spinner"></div>'; }
-      // INBOX/Sent are kept fresh by the main sync; Drafts is local; any OTHER folder is pulled on demand.
+      this.folder=f; this.openUid=null; this.q=''; this.msgs=[]; if(this.sel) this.sel.clear();
+      if(this.root) this.root.querySelectorAll('.mail-folder').forEach(b=> b.classList.toggle('on', b.dataset.folder===f));
+      // SHOW WHAT IS ALREADY MIRRORED FIRST. This used to await a full IMAP pull of the folder
+      // before rendering anything, so opening an Archive of thousands of messages was a spinner for
+      // minutes with no way to tell whether it was working. Whatever has been synced before appears
+      // at once; the pull then runs in the background and the list refreshes when it lands.
+      await this.loadList();
+      // INBOX/Sent are kept fresh by the main sync; Drafts is local; any OTHER folder is on demand.
       if(this.acct!=='__all' && !['INBOX','Sent','Drafts'].includes(f)){
-        try{ await this.api('/sync-folder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:this.acct,folder:f})}); }catch(_){}
+        const mine=f;
+        this.setBusy(`Fetching ${f} from the mail server…`);
+        this.api('/sync-folder',{method:'POST',headers:{'Content-Type':'application/json'},
+                                 body:JSON.stringify({account:this.acct,folder:f})})
+          .then(()=>{ if(this.folder===mine) this.loadList(); })
+          .catch(()=>{ if(this.folder===mine) toast('could not fetch that folder'); })
+          .finally(()=>{ if(this.folder===mine) this.setBusy(''); });
       }
-      this.loadList();
+    },
+    /* A one-line status above the list. A big folder takes as long as it takes; what it must not do
+     * is look identical to a hung screen. */
+    setBusy(text){
+      const box=$('#mail-items', this.root); if(!box) return;
+      let bar=$('.mail-busy', this.root);
+      if(!text){ if(bar) bar.remove(); return; }
+      if(!bar){
+        bar=document.createElement('div'); bar.className='mail-busy';
+        box.parentElement.insertBefore(bar, box);
+      }
+      bar.innerHTML=`<span class="mail-busy-dot"></span>${enc(text)}`;
     },
     async loadList(){
-      const box=$('#mail-items', this.root); if(!box) return; box.innerHTML='<div class="spinner"></div>';
+      const box=$('#mail-items', this.root); if(!box) return;
+      // Only spin when there is nothing to look at. Opening the screen runs draw → loadList → sync →
+      // loadList, and blanking to a spinner each time made the whole list flash and jump twice
+      // before settling. A refresh over an existing list swaps the rows in place instead.
+      if(!this.msgs.length) box.innerHTML='<div class="spinner"></div>';
       try{
         const r = this.q
           ? await this.api('/search?account='+encodeURIComponent(this.acct)+'&q='+encodeURIComponent(this.q))
@@ -15071,6 +15175,22 @@
         this.msgs=r.messages||[];
       }catch(_){ this.msgs=[]; }
       this.drawList();
+    },
+    /* The IMAP name of the Sent folder for this account — 'Sent', 'Sent Messages' and 'INBOX.Sent'
+     * are all in the wild, so it is resolved from the server's own labelling rather than guessed. */
+    _sentFolder(){
+      for(const f of Object.keys(this.folderLabels || {})){
+        if(String(this.folderLabels[f]).includes('Sent')) return f;
+      }
+      return (this.folders || []).find(f => /(^|[./])sent/i.test(f)) || 'Sent';
+    },
+    async syncSent(account){
+      const folder=this._sentFolder();
+      try{
+        await this.api('/sync-folder',{method:'POST',headers:{'Content-Type':'application/json'},
+                                       body:JSON.stringify({account: account||this.acct, folder})});
+      }catch(_){}
+      if(this.folder===folder || this.folder==='Sent' || this.folder==='Drafts') this.loadList();
     },
     _key(m){ return (m.account||this.acct)+'|'+(m.folder||this.folder)+'|'+m.uid; },
     drawList(){
@@ -15196,6 +15316,9 @@
       const drawAtts=()=>{ const e=$('#cm-atts'); if(e) e.innerHTML=atts.map(a=>'📎 '+enc(a.name)).join('  '); };
       drawAtts();
       $('#cm-attach').onclick=()=>$('#cm-file').click();
+      _attachRecipientAutocomplete($('#cm-to'));
+      _attachRecipientAutocomplete($('#cm-cc'));
+      _mailContacts();                      // warm the list so the first keystroke completes
       { const cb=$('#cm-contacts'); if(cb) cb.onclick=()=>_mailContactPicker(p=>{
           // Append to whichever field is focused; otherwise To, falling back to Cc once To is filled,
           // which is what "add another person" means in every mail client.
@@ -15203,7 +15326,7 @@
           const box=(focused && (focused.id==='cm-cc')) ? $('#cm-cc')
                   : ($('#cm-to').value.trim() && !focused ? $('#cm-cc') : $('#cm-to'));
           const cur=box.value.trim();
-          const addr = p.name && !/[<>]/.test(p.name) ? `${p.name} <${p.email}>` : p.email;
+          const addr = _mailAddr(p);
           if(cur.split(',').map(x=>x.trim()).some(x=>x.includes(p.email))){ toast('already added'); return; }
           box.value = cur ? cur.replace(/,\s*$/,'') + ', ' + addr : addr;
           toast('added ' + p.email);
@@ -15230,13 +15353,17 @@
         try{ const r=await self.api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
           if(r.ok){ toast('sent ✉️');
             if(draftUid){ try{ await self.api('/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:sendAcct(),folder:'Drafts',uid:draftUid})}); }catch(_){} }
-            closeModal(); if(self.folder==='Sent'||self.folder==='Drafts') self.sync(); }
+            closeModal();
+            // Pull the SENT folder. The server files the sent copy over IMAP, but this client only
+            // refreshed when you happened to be LOOKING at Sent — so a message you had just sent
+            // was in Thunderbird and missing here, which reads as "it never sent".
+            self.syncSent(sendAcct()); }
           else { toast(r.error||'send failed'); btn.disabled=false; btn.textContent='Send ▶'; } }
         catch(_){ toast('send failed'); btn.disabled=false; btn.textContent='Send ▶'; }
       };
     },
     async sync(manual){
-      if(this._syncing) return; this._syncing=true;
+      if(this._syncing) return; this._syncing=true; this._lastSync=Date.now();
       const rb=$('#mail-refresh',this.root); if(rb){ rb.textContent='⏳'; rb.disabled=true; }
       try{ const r=await this.api('/sync',{method:'POST'});
         const total=Object.values(r.new||{}).reduce((a,b)=>a+(+b||0),0);

@@ -1373,6 +1373,7 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
    worse the smaller the laptop. --zf is unset on mobile, where the fallback of 1 is correct. */
 .ws-frame{width:100%;height:calc((100dvh / var(--zf, 1)) - 190px);min-height:340px;
   border:1px solid var(--line);border-radius:12px;background:#fff;display:block}
+
 .ws-rtitle{font-size:22px;line-height:1.3;margin:6px 0 2px;color:var(--text);overflow-wrap:anywhere}
 .ws-rsrc{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
 .ws-racts{margin:10px 0 6px}
@@ -3785,7 +3786,18 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .mail-att:hover{border-color:var(--neon)}
 .mail-body{padding:16px 18px;color:var(--text);line-height:1.5;overflow-wrap:anywhere}
 .mail-body .mail-text{white-space:pre-wrap}
-.mail-html{width:100%;min-height:55vh;border:none;background:#fff;border-radius:8px}
+/* THE MESSAGE FILLS THE PANE. A fixed 55vh left a band of empty pane under every short mail and
+   made every long one scroll inside a letterbox — two scrollbars, one inside the other.
+   Divided by --zf for the reason .ws-frame is: desktop scales the page with body{zoom:.67-.77} and
+   viewport units are NOT rescaled by it, so a raw vh paints at two thirds of what it asked for. */
+.mail-html{width:100%;border:none;background:#fff;border-radius:8px;
+  height:calc((100dvh / var(--zf, 1)) - 300px);min-height:420px}
+/* When a thread holds ONE message (the common case) that message owns the pane, so the body grows
+   instead of the pane keeping slack under it. */
+.mail-thread:only-child .mail-msg:only-child{display:flex;flex-direction:column;min-height:0;flex:1}
+.mail-thread:only-child .mail-msg:only-child>.mail-msg-body{flex:1;min-height:0;display:flex;flex-direction:column}
+.mail-thread:only-child .mail-msg:only-child .mail-body{flex:1;min-height:0;display:flex;flex-direction:column}
+.mail-thread:only-child .mail-msg:only-child .mail-html{flex:1}
 .mail-acct-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
 .mar-meta{min-width:0}
 .mar-meta b{word-break:break-all}
@@ -3809,12 +3821,20 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
   .mail-items{padding-bottom:calc(62px + env(safe-area-inset-bottom))}
   .mail-read{display:none}
   .mail-read.has-open{display:flex;position:fixed;inset:0;z-index:46;background:var(--bg);padding-bottom:calc(62px + env(safe-area-inset-bottom))}
+  .mail-html{height:auto;min-height:60dvh}
   .mail-back{display:inline-flex}
 }
 /* Compose → 👤 Contacts: the same encrypted addressbooks the Contacts screen and your phone sync. */
 /* Stacks OVER the composer: closeModal() empties #modal-root, so a picker opened as a plain modal
    takes the half-written email with it when it closes. Above .modal-bg (100), below uiConfirm (500). */
 .sheet-bg{z-index:220}
+/* Recipient type-ahead. Anchored to the field it completes, above the modal's own stacking so it is
+   not clipped by the composer's scroll container. */
+.mc-auto{position:relative;z-index:5;margin:-6px 0 8px;border:1px solid var(--line);border-radius:10px;
+  background:var(--panel);overflow:hidden;max-height:210px;overflow-y:auto}
+.mc-auto-item{display:flex;flex-direction:column;align-items:flex-start;gap:0;width:100%;text-align:left;
+  padding:8px 10px;border:0;background:transparent;color:inherit;cursor:pointer;min-height:44px}
+.mc-auto-item.on,.mc-auto-item:hover{background:var(--panel2)}
 .mc-list{max-height:46vh;overflow:auto;margin-top:10px;display:flex;flex-direction:column;gap:2px}
 .mc-item{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;text-align:left;
   padding:9px 10px;border:1px solid transparent;border-radius:10px;background:transparent;
@@ -3834,12 +3854,19 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .mail-item{display:flex;align-items:flex-start;gap:9px}
 .mi-chk{margin-top:3px;flex:0 0 auto;cursor:pointer;width:16px;height:16px}
 .mi-content{flex:1;min-width:0;cursor:pointer}
+/* "still working" for a folder pull that legitimately takes minutes — a bare spinner over an empty
+   list is indistinguishable from a hung screen. */
+.mail-busy{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:12.5px;
+  color:var(--muted);border-bottom:1px solid var(--line);background:var(--panel)}
+.mail-busy-dot{width:8px;height:8px;border-radius:50%;background:var(--cyan);flex:0 0 auto;
+  animation:mailPulse 1.1s ease-in-out infinite}
+@keyframes mailPulse{0%,100%{opacity:.25}50%{opacity:1}}
 .mail-bulk{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:6px 10px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--muted);flex-wrap:wrap}
 .mail-selall{display:inline-flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap}
 .mail-bulk-act{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .mail-bulk-n{color:var(--cyan);font-weight:600}
 /* mail conversation thread + Blossom attach picker */
-.mail-thread{display:flex;flex-direction:column}
+.mail-thread{display:flex;flex-direction:column;flex:1;min-height:0}
 .mail-msg{border-bottom:1px solid var(--line)}
 .mail-msg-hd{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px 18px;cursor:pointer}
 .mail-msg-hd:hover{background:var(--panel2)}

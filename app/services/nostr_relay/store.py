@@ -332,31 +332,49 @@ class RelayStore:
                         return False  # a newer (or tie-winning) version already stored
             elif _PARAM_REPLACEABLE(kind):
                 d = next((t[1] for t in tags if len(t) >= 2 and t[0] == "d"), "")
-                cur = conn.execute(
-                    "SELECT e.id, e.created_at FROM events e WHERE e.pubkey=? AND e.kind=?",
-                    (pubkey, kind))
+                # JOIN on the `d` tag — do NOT walk this author's events asking for each one's tag.
+                #
+                # That is one query per row, and the row set is every kind-30078 document the author
+                # owns: this app's whole datastore lives in that kind, so a key with a calendar, an
+                # addressbook and a mailbox reaches thousands. MEASURED on this node: 2405 documents
+                # for one user, so storing ONE more message cost 2405 single-row lookups, and the
+                # cost grew with every message stored. A mail sync of a few hundred was hundreds of
+                # thousands of tiny queries — Postgres pinned at ~62% with nothing slow in
+                # pg_stat_activity, because each query really was sub-millisecond.
+                #
+                # `idx_event_tags_tv (tag, value)` already exists, so this is one indexed lookup. An
+                # empty `d` is the tagless case the old code represented as "" and must still match,
+                # hence the LEFT JOIN branch rather than an inner join on a value that isn't there.
+                if d:
+                    cur = conn.execute(
+                        "SELECT e.id, e.created_at FROM events e "
+                        "JOIN event_tags t ON t.event_id = e.id AND t.tag='d' AND t.value=? "
+                        "WHERE e.pubkey=? AND e.kind=?", (d, pubkey, kind))
+                else:
+                    cur = conn.execute(
+                        "SELECT e.id, e.created_at FROM events e "
+                        "WHERE e.pubkey=? AND e.kind=? AND NOT EXISTS ("
+                        "  SELECT 1 FROM event_tags t WHERE t.event_id = e.id AND t.tag='d')",
+                        (pubkey, kind))
+                # Every row returned now IS a same-coordinate match, so there is nothing left to
+                # compare but the NIP-01 tie-break.
                 for row in cur.fetchall():
-                    rd = conn.execute(
-                        "SELECT value FROM event_tags WHERE event_id=? AND tag='d' LIMIT 1",
-                        (row["id"],)).fetchone()
-                    rdv = rd["value"] if rd else ""
-                    if rdv == d:
-                        # NIP-01's tie-break: on EQUAL created_at the lower event id wins. This used
-                        # to hand a tie to the newcomer and delete the incumbent, which is not just
-                        # non-conformant — it makes two relays that mirror each other disagree
-                        # forever. Save the same note from two devices inside one second and each
-                        # node keeps flipping to whatever the other last sent it, re-arming the
-                        # mirror's "is this new?" guard on every flip, because the losing version is
-                        # DELETED and so always looks new again. The rule has to be total and
-                        # identical on both ends, and lowest-id is the one the spec defines.
-                        if row["id"] == eid:
-                            continue
-                        older = row["created_at"] < created
-                        tie_lost = row["created_at"] == created and eid < row["id"]
-                        if older or tie_lost:
-                            self._delete_sync(conn, row["id"])
-                        else:
-                            return False
+                    # On EQUAL created_at the lower event id wins. This used to hand a tie to the
+                    # newcomer and delete the incumbent, which is not just non-conformant — it makes
+                    # two relays that mirror each other disagree forever. Save the same note from two
+                    # devices inside one second and each node keeps flipping to whatever the other
+                    # last sent it, re-arming the mirror's "is this new?" guard on every flip,
+                    # because the losing version is DELETED and so always looks new again. The rule
+                    # has to be total and identical on both ends, and lowest-id is what the spec
+                    # defines.
+                    if row["id"] == eid:
+                        continue
+                    older = row["created_at"] < created
+                    tie_lost = row["created_at"] == created and eid < row["id"]
+                    if older or tie_lost:
+                        self._delete_sync(conn, row["id"])
+                    else:
+                        return False
 
             conn.execute(
                 "INSERT INTO events "

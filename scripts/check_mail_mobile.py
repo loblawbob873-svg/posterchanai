@@ -92,16 +92,17 @@ const CARDS = [
   { uid:'c3', ics:'BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c3\r\nFN:No Email Here\r\nTEL:5551234\r\nEND:VCARD\r\n' },
 ];
 window.__sent = null;
+window.__calls = {sync:0, folders:0, messages:0};
 window.fetch = async (url, opts) => {
   const u = String(url);
   const j = d => ({ ok:true, status:200, json: async()=>d });
   if(u.startsWith('/api/mail/accounts')) return j({accounts:[{email:'me@example.com'}]});
-  if(u.startsWith('/api/mail/folders'))  return j({folders:['INBOX','Sent','Drafts','Trash'], labels:{}});
-  if(u.startsWith('/api/mail/messages')) return j({messages:MSGS});
+  if(u.startsWith('/api/mail/folders')){ window.__calls.folders++; return j({folders:['INBOX','Sent','Drafts','Trash'], labels:{}}); }
+  if(u.startsWith('/api/mail/messages')){ window.__calls.messages++; return j({messages:MSGS}); }
   if(u.startsWith('/api/mail/search'))   return j({messages:MSGS});
-  if(u.startsWith('/api/mail/message'))  return j({message:Object.assign({}, MSGS[0], {body_text:'Hello there.\n\nRegards'})});
-  if(u.startsWith('/api/mail/thread'))   return j({messages:[Object.assign({}, MSGS[0], {body_text:'Hello there.'})]});
-  if(u.startsWith('/api/mail/sync'))     return j({new:{}});
+  if(u.startsWith('/api/mail/message'))  return j({message:Object.assign({}, MSGS[0], {body_html:'<h1>Hello</h1><p>Regards</p>'})});
+  if(u.startsWith('/api/mail/thread'))   return j({messages:[Object.assign({}, MSGS[0], {body_html:'<h1>Hello</h1><p>Regards</p>'})]});
+  if(u.startsWith('/api/mail/sync')){ window.__calls.sync++; return j({new:{}}); }
   if(u.startsWith('/api/contacts/books'))return j({books:[{id:'contacts',displayname:'Contacts'}]});
   if(u.startsWith('/api/contacts/cards'))return j({cards:CARDS});
   if(u.startsWith('/api/mail/send')){ window.__sent = JSON.parse(opts.body); return j({ok:true}); }
@@ -114,6 +115,15 @@ window.fetch = async (url, opts) => {
 # The Mail object and its helpers live inside app.js's IIFE, so they are lifted out by name into a
 # standalone script. Extracting keeps the test honest: this is the SHIPPED source, not a copy.
 HARNESS_TAIL = r"""
+window.renderMessages = function(){
+  // The shipped email branch of renderMessages, verbatim in behaviour: remount only when it is not
+  // already mounted. If this ever rebuilds unconditionally again, the storm below will show it.
+  const feed=document.getElementById('feed');
+  const mounted=feed.querySelector('#mail-root');
+  if(mounted && Mail.root===mounted) return;
+  feed.innerHTML='<div id="mail-root" class="mail-root"></div>';
+  return Mail.render(feed.querySelector('#mail-root'));
+};
 (async function(){
   const root=document.createElement('div'); root.id='mail-root'; root.className='mail-root';
   document.getElementById('feed').appendChild(root);
@@ -163,11 +173,17 @@ OPEN_MESSAGE = r"""(async () => {
   await new Promise(r=>setTimeout(r,250));
   const pane = document.querySelector('.mail-read');
   const r = pane ? pane.getBoundingClientRect() : null;
+  // How much of the reading pane the message body actually occupies. A fixed-height body leaves a
+  // band of dead pane under every short mail and letterboxes every long one.
+  const body = document.querySelector('.mail-html');
+  const br = body ? body.getBoundingClientRect() : null;
   return { open: !!(pane && pane.classList.contains('has-open')),
            back: !!document.querySelector('#mail-back'),
            display: pane ? getComputedStyle(pane).display : '',
            coversList: !!(r && r.width >= window.innerWidth - 2),
-           wide: !!(r && Math.round(r.width) > window.innerWidth + 1) };
+           wide: !!(r && Math.round(r.width) > window.innerWidth + 1),
+           paneH: r ? Math.round(r.height) : 0,
+           bodyH: br ? Math.round(br.height) : 0 };
 })()"""
 
 COMPOSE_CONTACTS = r"""(async () => {
@@ -198,7 +214,30 @@ COMPOSE_CONTACTS = r"""(async () => {
   if (first) first.click();
   await new Promise(r=>setTimeout(r,200));
   const to = document.querySelector('#cm-to');
-  return { wide, small, rows, tiny, qFont, to: to ? to.value : '' };
+  const picked = to ? to.value : '';
+  // Type-ahead: two characters of a known contact must offer it, and Enter must complete it into
+  // the field being edited without eating the recipient already there.
+  to.value = 'someone@else.test, ann';
+  to.focus();
+  to.dispatchEvent(new Event('input', {bubbles:true}));
+  for (let i=0;i<60 && !document.querySelector('.mc-auto-item'); i++) await new Promise(r=>setTimeout(r,50));
+  const suggested = [...document.querySelectorAll('.mc-auto-item .mc-mail')].map(e => e.textContent.trim());
+  const tinyAuto = [...document.querySelectorAll('.mc-auto-item')]
+    .filter(e => e.getBoundingClientRect().height < 32).length;
+  const firstAuto = document.querySelector('.mc-auto-item');
+  if (firstAuto) firstAuto.dispatchEvent(new MouseEvent('mousedown', {bubbles:true}));
+  await new Promise(r=>setTimeout(r,150));
+  return { wide, small, rows, tiny, qFont, to: picked,
+           suggested, tinyAuto, completed: to.value };
+})()"""
+
+
+RENDER_STORM = r"""(async () => {
+  const before = JSON.parse(JSON.stringify(window.__calls));
+  for (let i = 0; i < 12; i++) { renderMessages(); await new Promise(r=>setTimeout(r,40)); }
+  await new Promise(r=>setTimeout(r,400));
+  return { before, after: window.__calls,
+           mounted: !!document.querySelector('#mail-root .mail-wrap') };
 })()"""
 
 
@@ -311,6 +350,13 @@ async def drive(url):
                     if op["wide"]:
                         problems.append((label, "horizontal-overflow",
                                          "the reading pane is wider than the screen"))
+                    # The body must use most of the pane it is given. This is a plain-text stub
+                    # message, so the floor is deliberately modest — it catches a body pinned to a
+                    # fixed height inside a much taller pane, not a short mail.
+                    if op["paneH"] > 300 and op["bodyH"] < 0.4 * op["paneH"]:
+                        problems.append((label, "reader-not-maximised",
+                                         f"the message body is {op['bodyH']}px inside a "
+                                         f"{op['paneH']}px pane"))
                     if phone:
                         if not op["coversList"]:
                             problems.append((label, "reader-not-overlay",
@@ -318,6 +364,20 @@ async def drive(url):
                         if not op["back"]:
                             problems.append((label, "reader-not-overlay",
                                              "no Back control — a phone cannot leave the message"))
+
+                st = await js(RENDER_STORM, awaited=True)
+                if st:
+                    dsync = st["after"]["sync"] - st["before"]["sync"]
+                    dfold = st["after"]["folders"] - st["before"]["folders"]
+                    if not st["mounted"]:
+                        problems.append((label, "render-loop",
+                                         "the mail client was torn down by a re-render"))
+                    # Twelve re-renders must cost NOTHING: the client is already mounted. One full
+                    # IMAP sync per arriving DM is the loop that made the desktop app unusable.
+                    if dsync or dfold:
+                        problems.append((label, "render-loop",
+                                         f"12 re-renders fired {dsync} sync(s) and {dfold} folder "
+                                         "fetch(es) — remounting on every event"))
 
                 cc = await js(COMPOSE_CONTACTS, awaited=True)
                 if not cc or cc.get("error"):
@@ -335,6 +395,17 @@ async def drive(url):
                     if "ann@example.com" not in (cc["to"] or ""):
                         problems.append((label, "contacts-broken",
                                          f"picking a contact left To as {cc['to']!r}"))
+                    if cc.get("suggested") != ["ann@example.com"]:
+                        problems.append((label, "autocomplete-broken",
+                                         f"typing 'ann' after an existing recipient offered "
+                                         f"{cc.get('suggested')!r}"))
+                    done = cc.get("completed") or ""
+                    if "someone@else.test" not in done or "ann@example.com" not in done:
+                        problems.append((label, "autocomplete-broken",
+                                         f"completing overwrote the field: {done!r}"))
+                    if phone and cc.get("tinyAuto"):
+                        problems.append((label, "tiny-tap-target",
+                                         f"{cc['tinyAuto']} autocomplete row(s) under 32px"))
                     if phone:
                         if cc["tiny"]:
                             problems.append((label, "tiny-tap-target",

@@ -392,6 +392,9 @@ async def drive(url):
                     # body{zoom:.67-.77} and viewport units are not rescaled by zoom, so a raw
                     # 100dvh height paints at ~2/3 of what it asked for — a small box floating in a
                     # large empty column. A >200px floor never caught it.
+                    if not phone and rd["frame"]:
+                        print(f"    [{label}] frame fills {rd['frameH']}px of {h}px "
+                              f"({100.0*rd['frameH']/h:.0f}%)")
                     if not phone and rd["frame"] and rd["frameH"] < 0.7 * h:
                         problems.append((label, "frame-too-small",
                                          f"the page frame is {rd['frameH']}px tall in a {h}px "

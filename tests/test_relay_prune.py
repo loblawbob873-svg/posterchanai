@@ -374,3 +374,78 @@ def test_the_tiered_rules_stay_off_when_the_ledger_could_not_be_read(store_facto
         assert store._tiered_rules(int(time.time())) == []
 
     _run(go)
+
+
+def test_a_replaceable_write_does_not_walk_the_authors_whole_kind(store_factory):
+    """Storing one document must cost ONE lookup, not one per document the author already has.
+
+    Every parameterized-replaceable write used to SELECT all of that author's events of that kind
+    and then ask `event_tags` for each row's `d` value, one row at a time. This app keeps its entire
+    datastore in kind 30078 — settings, chats, calendars, contacts, mail — so the row set is not a
+    handful. Measured on a live node: 2405 documents for one user, meaning a single new message cost
+    2405 single-row queries, and the cost grew with every message stored. A mail sync of a few
+    hundred was hundreds of thousands of tiny queries and pinned Postgres at ~62% with nothing slow
+    in pg_stat_activity, because each one really was sub-millisecond.
+
+    This asserts the BEHAVIOUR the rewrite had to preserve — replacement, isolation between
+    different d-tags, the tie-break both ways round, and a tagless document being its own
+    coordinate. It does NOT measure the query count: the speed-up is visible in the plan (one
+    indexed lookup on the existing idx_event_tags_tv, 0.073 ms against the live table) rather than
+    from here. What this guards is that making it fast did not change what it decides.
+    """
+    async def go(loop):
+        store = store_factory(loop)
+        pk = "d" * 64
+
+        def ev(i, d, age=0, ident=None):
+            e = _ev(i, kind=30078, age_days=age, pubkey=pk)
+            if ident:
+                e["id"] = ident
+            e["tags"] = [["d", d]]
+            return e
+
+        # 40 unrelated documents under the same key — the neighbours a write must not walk.
+        # A day old, so the replacement below is genuinely NEWER. Created in the same second they
+        # would tie, and a tie is settled by the lower id — which is a different rule under test.
+        await store.add_events_bulk([ev(i, f"pcai:cal:main:uid-{i}", age=1) for i in range(1, 41)],
+                                    origin="direct")
+        assert len(await store.query([{"kinds": [30078], "authors": [pk], "limit": 200}])) == 40
+
+        # A NEWER version of one of them replaces exactly that one, and nothing else.
+        await store.add_event(ev(500, "pcai:cal:main:uid-7"), origin="direct")
+        left = await store.query([{"kinds": [30078], "authors": [pk], "limit": 200}])
+        assert len(left) == 40, "replacement must not add or remove neighbours"
+        ids = {e["id"] for e in left}
+        assert f"{500:064x}" in ids and f"{7:064x}" not in ids, "the newer version must win"
+
+        # An OLDER version of a stored document is refused outright.
+        await store.add_event(ev(501, "pcai:cal:main:uid-7", age=5), origin="direct")
+        ids = {e["id"] for e in await store.query([{"kinds": [30078], "authors": [pk], "limit": 200}])}
+        assert f"{501:064x}" not in ids and f"{500:064x}" in ids, "an older version must not win"
+
+        # NIP-01 tie-break: equal created_at is settled by the LOWER id, both ways round.
+        same = (await store.query([{"kinds": [30078], "authors": [pk], "#d": ["pcai:cal:main:uid-7"],
+                                    "limit": 5}]))[0]
+        hi = "f" * 64
+        e_hi = ev(0, "pcai:cal:main:uid-7", ident=hi)
+        e_hi["created_at"] = same["created_at"]
+        await store.add_event(e_hi, origin="direct")
+        ids = {e["id"] for e in await store.query([{"kinds": [30078], "authors": [pk], "limit": 200}])}
+        assert hi not in ids, "a tie must go to the LOWER id, so the higher-id newcomer loses"
+
+        # Low enough to win the tie against 0x1f4, but NOT an id already used by a neighbour
+        # (ids 1-40 are 0…01 to 0…28, so 0…01 would have collided with uid-1's event).
+        lo = f"{0x100:064x}"
+        e_lo = ev(0, "pcai:cal:main:uid-7", ident=lo)
+        e_lo["created_at"] = same["created_at"]
+        await store.add_event(e_lo, origin="direct")
+        ids = {e["id"] for e in await store.query([{"kinds": [30078], "authors": [pk], "limit": 200}])}
+        assert lo in ids, "a tie must go to the LOWER id, so the lower-id newcomer wins"
+
+        # A tagless document is its own coordinate and must not collide with the tagged ones.
+        bare = _ev(600, kind=30078, pubkey=pk)
+        bare["tags"] = []
+        await store.add_event(bare, origin="direct")
+        assert len(await store.query([{"kinds": [30078], "authors": [pk], "limit": 200}])) == 41
+
+    _run(go)
