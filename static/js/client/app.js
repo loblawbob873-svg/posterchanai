@@ -14181,6 +14181,10 @@
   }
   // `html` is trusted markup (callers build names via emojiName + enc their content) — do NOT re-escape it.
   function notifToast(html, pic){
+    // On the desktop these become Windows-style cards in the bottom-right corner instead. Routed
+    // here rather than detected again in os.js: this function is already the ONE place a live
+    // notification or DM announces itself, so the two can never disagree about what arrived.
+    try{ if(window.PCOS && PCOS.isOn() && PCOS.osToast){ PCOS.osToast(html, pic); return; } }catch(_){}
     const t=document.createElement('div'); t.className='toast notif-toast';
     t.innerHTML=`<img src="${enc(pic||LOGO)}" onerror="this.src='${LOGO}'"><span>${html}</span>`;
     t.onclick=()=>{ switchView('notifications'); t.remove(); };
@@ -22810,6 +22814,17 @@
     runSearch,                                                // → the desktop's taskbar search box
     // The desktop hides the sidebar, and #me-card was the only way to reach your own profile.
     openProfile: (pk) => renderProfileView(pk || (window.ME && ME.pubkey)),
+    openThread,                                               // → a post window from the notification centre
+    goLive: _goLive,                                          // → the desktop's Go Live launcher entry
+    /* The desktop's notification centre renders the SAME rows the Notifications view does, through
+     * the same notifHtml, so the two can never drift apart in appearance or in what counts as a
+     * notification (notifList is the gate that decides that — see the comment on it). */
+    notifItems: (n) => { try{ return notifGrouped(notifList().filter(_notifMatch)).slice(0, n || 30); }
+                         catch(_){ return []; } },
+    notifHtml,
+    notifsRead: () => { try{ markNotifsRead(); }catch(_){} },
+    reactTo: (id, pk, btn) => pickEmoji(id, pk, btn),
+    mailUnread: () => { try{ return Number(Mail.unread) || 0; }catch(_){ return 0; } },
     // The community counters the sidebar shows under ONLINE. The desktop hides the sidebar, so it
     // reads them from here rather than polling /client/stats a second time — that endpoint counts
     // the caller as a viewer, and a second caller with its own id would inflate "online now".

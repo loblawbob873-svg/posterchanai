@@ -64,8 +64,17 @@
       const label = (btn.querySelector('span') || {}).textContent || view;
       return { view, label: String(label).replace(/\d+$/, '').trim(),
                icon: use ? (use.getAttribute('href') || use.getAttribute('xlink:href') || '') : '' };
-    }).filter(Boolean);
+    }).filter(Boolean).concat(EXTRAS.filter(x => x.when()));
   }
+
+  /* Entries that are not sidebar nav items. Go Live lives in the mobile "More" sheet and in the
+   * rightbar, neither of which the desktop shows, so the launcher — which reads .nav-item[data-view]
+   * — could never have found it. `act` marks it as something to RUN rather than a view to open in a
+   * window: it is a dialog that ends in a live stream, and the stream itself opens the Streams app. */
+  const EXTRAS = [
+    { view: '__golive', label: 'Go Live', icon: '#i-live', act: () => PC().goLive && PC().goLive(),
+      when: () => { try{ return !!(PC().goLive && window.ME && ME.pubkey); }catch(_){ return false; } } },
+  ];
 
   /* The start button wears the instance's own logo — the same image the sidebar brand shows, read
    * live rather than hardcoded, so a deployment that set a custom logo (Admin → Site) gets ITS mark
@@ -152,6 +161,8 @@
   }
 
   function openApp(view, label, icon, render){
+    const extra = EXTRAS.find(x => x.view === view);
+    if(extra){ try{ extra.act(); }catch(err){ try{ PC().toast('could not open ' + extra.label); }catch(_){} } return null; }
     const existing = wins.find(w => w.view === view);
     if(existing){ focusWin(existing); return existing; }
     const app = apps().find(a => a.view === view) || {};
@@ -518,7 +529,8 @@
        <div class="os-tray">
          ${meAvatar()}
          <button class="os-exit" id="os-exit" title="Leave the desktop">⤢ Classic</button>
-         <div class="os-clock"><b>${enc(clock)}</b><span>${enc(date)}</span></div>
+         <button class="os-clock${notiOpen ? ' on' : ''}" id="os-clock" title="Notifications">
+           <b>${enc(clock)}</b><span>${enc(date)}</span>${notiDot()}</button>
        </div>`;
     $('#os-start', bar).onclick = (e) => { e.stopPropagation(); toggleStart(); };
     /* Posting needs a home here. In the classic UI it is a small ＋ floating inside the timeline,
@@ -543,6 +555,7 @@
     { const mb = $('#os-me', bar);
       if(mb) mb.onclick = () => { try{ PC().openProfile && PC().openProfile(); }
                                   catch(err){ PC().toast && PC().toast('could not open your profile'); } }; }
+    { const cb = $('#os-clock', bar); if(cb) cb.onclick = (e) => { e.stopPropagation(); toggleNoti(); }; }
     $('#os-exit', bar).onclick = () => exit();
     $$('.os-task', bar).forEach(b => b.onclick = () => {
       const w = wins.find(x => String(x.id) === b.dataset.id);
@@ -552,10 +565,135 @@
     });
   }
 
+  // ---- notification centre ---------------------------------------------------------------------
+  // Windows opens this from the clock, and so does this. The rows are the client's OWN notification
+  // rows (PC.notifHtml), not a second rendering of the same data: notifList is the single gate that
+  // decides what counts as a notification, and a re-implementation here would drift from it silently
+  // — exactly how kinds 1621/1617/42/1111 once got fetched, toasted and then never shown.
+  let notiOpen = false, notiSeen = 0;
+
+  function notiCount(){
+    try{ return (PC().notifItems && PC().notifItems(60).length) || 0; }catch(_){ return 0; }
+  }
+
+  function notiDot(){
+    let n = 0, mail = 0;
+    try{ n = notiCount() - notiSeen; }catch(_){}
+    try{ mail = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){}
+    const total = Math.max(0, n) + mail;
+    return total > 0 ? `<i class="os-dot">${enc(total > 99 ? '99+' : String(total))}</i>` : '';
+  }
+
+  function hideNoti(){
+    notiOpen = false;
+    const p = $('#os-noti', root);
+    if(p) p.remove();
+  }
+
+  function toggleNoti(force){
+    notiOpen = (force === undefined) ? !notiOpen : !!force;
+    const old = $('#os-noti', root);
+    if(old) old.remove();
+    if(!notiOpen){ drawBar(); return; }
+    toggleStart(false);
+    const panel = document.createElement('div');
+    panel.id = 'os-noti';
+    panel.className = 'os-noti';
+    let items = [];
+    try{ items = (PC().notifItems && PC().notifItems(30)) || []; }catch(_){}
+    let mail = 0;
+    try{ mail = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){}
+    const mailRow = mail > 0
+      ? `<button class="os-noti-mail" id="os-noti-mail">
+           <svg class="ic" aria-hidden="true"><use href="#i-mail"></use></svg>
+           <b>${enc(String(mail))}</b><span>unread email</span></button>` : '';
+    let rows = '';
+    try{ rows = items.map(e => `<div class="os-noti-row">${PC().notifHtml(e)}</div>`).join(''); }catch(_){}
+    panel.innerHTML =
+      `<div class="os-noti-head"><b>Notifications</b>
+         <button class="os-noti-x" id="os-noti-all" title="Open the Notifications app">Open all</button></div>
+       ${mailRow}
+       <div class="os-noti-list">${rows || '<div class="empty">Nothing new.</div>'}</div>`;
+    root.appendChild(panel);
+
+    if(mail > 0) $('#os-noti-mail', panel).onclick = () => { hideNoti(); openApp('messages'); };
+    $('#os-noti-all', panel).onclick = () => { hideNoti(); openApp('notifications'); };
+
+    // Same wiring the Notifications view uses: the row opens the post, the avatar opens the sender.
+    // Both land in their own window, which is where reply and react already live in full.
+    panel.querySelectorAll('.notif:not(.upd-notif)').forEach(n => {
+      n.onclick = (ev) => {
+        if(ev.target.closest('.os-noti-act')) return;
+        hideNoti();
+        try{
+          if(n.dataset.prof) PC().openProfile(n.dataset.prof);
+          else if(n.dataset.open) PC().openThread(n.dataset.open);
+        }catch(_){}
+      };
+      // …plus reply and react right here, so acknowledging something never costs a window.
+      const id = n.dataset.open, pk = n.dataset.pk || '';
+      if(!id) return;
+      const acts = document.createElement('div');
+      acts.className = 'os-noti-act';
+      acts.innerHTML =
+        `<button class="os-na" data-a="reply" title="Reply"><svg class="ic" aria-hidden="true"><use href="#i-reply"></use></svg></button>
+         <button class="os-na" data-a="react" title="React"><svg class="ic" aria-hidden="true"><use href="#i-heart"></use></svg></button>`;
+      n.appendChild(acts);
+      $$('.os-na', acts).forEach(b => b.onclick = (ev) => {
+        ev.stopPropagation();
+        try{
+          if(b.dataset.a === 'reply'){ hideNoti(); PC().compose({ reply: id, replyPk: pk }); }
+          else PC().reactTo(id, pk, b);       // the emoji picker anchors itself to this button
+        }catch(_){ try{ PC().toast('could not do that here'); }catch(__){} }
+      });
+    });
+
+    notiSeen = notiCount();
+    try{ PC().notifsRead && PC().notifsRead(); }catch(_){}
+    drawBar();
+  }
+
+  // Arrival toasts, bottom-right. app.js's notifToast routes here while the desktop is up, so this
+  // fires for exactly the things the classic UI toasts and nothing else.
+  let toastHost = null, mailSeen = null, mailT = 0;
+
+  function osToast(html, pic){
+    if(!on) return;
+    if(!toastHost || !toastHost.isConnected){
+      toastHost = document.createElement('div');
+      toastHost.className = 'os-toasts';
+      root.appendChild(toastHost);
+    }
+    const t = document.createElement('div');
+    t.className = 'os-toast';
+    t.innerHTML = (pic ? `<img src="${enc(pic)}" alt="" style="width:26px;height:26px;border-radius:50%;object-fit:cover;flex:0 0 auto">`
+                       : '<svg class="ic" aria-hidden="true"><use href="#i-bell"></use></svg>')
+                + `<div><span>${html}</span></div>`;
+    t.onclick = () => { t.remove(); toggleNoti(true); };
+    toastHost.appendChild(t);
+    setTimeout(() => t.remove(), 7000);       // a desktop toast can afford to linger past the app's 5s
+    drawBar();                                 // refresh the tray count
+  }
+
+  // Email has no live arrival event in the client — the unread number is updated by the mail poll —
+  // so it is watched instead. Cheap: it reads one integer, and only while the desktop is up.
+  function watchMail(){
+    clearInterval(mailT);
+    mailT = setInterval(() => {
+      if(!on) return;
+      let n = 0;
+      try{ n = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){ return; }
+      if(mailSeen === null){ mailSeen = n; return; }   // first read is a baseline, not an arrival
+      if(n > mailSeen) osToast(`✉ <b>${n - mailSeen} new email</b>`, '');
+      if(n !== mailSeen){ mailSeen = n; drawBar(); }
+    }, 20000);
+  }
+
   function toggleStart(force){
     startOpen = (force === undefined) ? !startOpen : !!force;
     let menu = $('#os-startmenu', root);
     if(!startOpen){ if(menu) menu.remove(); drawBar(); return; }
+    if(notiOpen){ notiOpen = false; const np = $('#os-noti', root); if(np) np.remove(); }
     if(menu) menu.remove();
     menu = document.createElement('div');
     menu.id = 'os-startmenu';
@@ -621,10 +759,20 @@
     document.body.classList.add('os-on');
     desk = $('#os-desk', root);
     bar = $('#os-bar', root);
-    desk.addEventListener('pointerdown', (e) => { if(e.target === desk || e.target.closest('.os-icons') === e.target) toggleStart(false); });
+    desk.addEventListener('pointerdown', (e) => {
+      if(e.target === desk || e.target.closest('.os-icons') === e.target){ toggleStart(false); toggleNoti(false); }
+    });
+    // …and so does clicking anywhere that is not the panel or the clock itself. Without this the
+    // only way to close it is the clock, which is not where anyone's hand is by then.
+    document.addEventListener('pointerdown', (e) => {
+      if(!notiOpen) return;
+      if(e.target.closest('#os-noti') || e.target.closest('#os-clock') || e.target.closest('.modal-bg')) return;
+      toggleNoti(false);
+    }, true);
     drawDesktop();
     drawBar();
-    _clock = setInterval(() => { if(on && !startOpen) drawBar(); }, 30000);
+    _clock = setInterval(() => { if(on && !startOpen && !notiOpen) drawBar(); }, 30000);
+    watchMail();
     document.addEventListener('keydown', onKey, true);
     window.addEventListener('resize', onResize);
     settings().set(KEY, true);
@@ -634,6 +782,8 @@
     if(!on) return;
     on = false;
     clearInterval(_clock); _clock = null;
+    clearInterval(mailT); mailT = 0; mailSeen = null;
+    toastHost = null; notiOpen = false;
     document.removeEventListener('keydown', onKey, true);
     window.removeEventListener('resize', onResize);
     // Hand the id back BEFORE the windows go, then repaint the classic view into it.
@@ -677,6 +827,7 @@
 
   function onKey(e){
     if(!on) return;
+    if(e.key === 'Escape' && notiOpen){ e.stopPropagation(); toggleNoti(false); return; }
     if(e.key === 'Escape' && startOpen){ e.stopPropagation(); toggleStart(false); return; }
     // Alt+W closes the focused window — Ctrl+W is the browser's tab and must not be taken.
     if(e.altKey && (e.key === 'w' || e.key === 'W')){
@@ -712,6 +863,6 @@
     else snapTo(w, k === 'Left' ? 'left' : 'right');
   });
 
-  window.PCOS = { enter, exit, toggle, restore, isOn: () => on, openDoc, focusDoc, snapTo,
+  window.PCOS = { enter, exit, toggle, restore, isOn: () => on, openDoc, focusDoc, snapTo, osToast,
                   windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min })) };
 })();

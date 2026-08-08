@@ -20,6 +20,9 @@ Assertions, each a way a feature breaks specifically INSIDE a window and nowhere
   escapes-window       A visible element sticks out past its window's edge. Usually a rule sized in
                        viewport units (100dvh / 100vw), which inside a window still measures the
                        SCREEN — the single most likely way a view misbehaves here and nowhere else.
+  noti-centre          The clock does not open a working notification centre (off screen, stacked
+                       under something, no rows and no empty state, no reply/react, or Escape does
+                       not close it).
   feed-astray          After opening a window, the live #feed is not inside it. Everything renders
                        into #feed, so if it is elsewhere the feature painted where nobody looks.
 
@@ -47,7 +50,29 @@ ENTER = r"""(async () => {
   if (!PCOS.isOn()) { PCOS.enter(); await sleep(400); }
   const icons = [...document.querySelectorAll('.os-icon')].map(b => ({
     view: b.dataset.view || '', label: (b.textContent||'').trim() }));
-  return { on: PCOS.isOn(), icons };
+
+  // The clock is the notification centre, the way Windows does it.
+  const clock = document.getElementById('os-clock');
+  let noti = { hasClock: !!clock };
+  if (clock) {
+    clock.click(); await sleep(400);
+    const p = document.getElementById('os-noti');
+    noti.opened = !!p;
+    if (p) {
+      const pr = p.getBoundingClientRect();
+      noti.onScreen = pr.right <= window.innerWidth + 1 && pr.top >= -1 && pr.width > 200;
+      noti.rows = p.querySelectorAll('.notif').length;
+      noti.acts = p.querySelectorAll('.os-noti-act .os-na').length;
+      noti.empty = !!p.querySelector('.empty');
+      // Above the desktop, or it is open and unclickable — the bug modals had.
+      const hit = document.elementFromPoint(pr.left + pr.width/2, pr.top + 24);
+      noti.reachable = !!(hit && p.contains(hit));
+    }
+    document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
+    await sleep(250);
+    noti.closes = !document.getElementById('os-noti');
+  }
+  return { on: PCOS.isOn(), icons, noti };
 })()"""
 
 # Open one app, let it settle, then measure the window it landed in.
@@ -186,7 +211,31 @@ async def main():
             if not g or not g.get("on"):
                 print(f"SKIP  the desktop did not open: {g}")
                 return 2
-            views = [i["view"] for i in g["icons"] if i["view"]]
+            nc = g.get("noti") or {}
+            if not nc.get("hasClock"):
+                problems.append(("shell", "no-clock", "the taskbar has no clock to open notifications from"))
+            elif not nc.get("opened"):
+                problems.append(("shell", "noti-centre", "clicking the clock opened no notification centre"))
+            else:
+                if not nc.get("onScreen"):
+                    problems.append(("shell", "noti-centre", "the notification centre is off screen"))
+                if not nc.get("reachable"):
+                    problems.append(("shell", "noti-centre",
+                                     "the notification centre is not clickable — something is stacked "
+                                     "over it (the bug modals had against .os-root)"))
+                if not nc.get("rows") and not nc.get("empty"):
+                    problems.append(("shell", "noti-centre",
+                                     "the centre rendered neither notification rows nor an empty state"))
+                if nc.get("rows") and not nc.get("acts"):
+                    problems.append(("shell", "noti-centre",
+                                     "notification rows have no reply/react buttons"))
+                if not nc.get("closes"):
+                    problems.append(("shell", "noti-centre", "Escape does not close the notification centre"))
+            if not any(i["view"] == "__golive" for i in g["icons"]):
+                skipped.append("Go Live (guest — the launcher hides it without a key)")
+
+            # __golive RUNS rather than opening a window, so it has no window to measure.
+            views = [i["view"] for i in g["icons"] if i["view"] and not i["view"].startswith("__")]
             print(f"  {len(views)} app(s) in the launcher at {VIEWPORT[0]}x{VIEWPORT[1]}")
 
             for v in views:

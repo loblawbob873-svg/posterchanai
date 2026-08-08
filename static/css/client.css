@@ -6108,8 +6108,6 @@ body.os-on #os-root{pointer-events:auto}
 .os-exit{height:34px;padding:0 12px;border-radius:9px;border:1px solid var(--line);
   background:transparent;color:var(--muted);cursor:pointer;font-size:12px}
 .os-exit:hover{color:var(--text);border-color:var(--neon)}
-.os-clock{display:flex;flex-direction:column;align-items:flex-end;line-height:1.15;font-size:11.5px;
-  color:var(--muted)}
 .os-clock b{font-size:13px;color:var(--text);font-weight:600}
 
 /* Start menu */
@@ -6159,6 +6157,58 @@ body.os-on #os-root{pointer-events:auto}
 @media (max-width:1080px){ .os-qbox{display:none} }
 
 /* The community counters, moved into the start menu because the desktop hides the sidebar. */
+/* Notification centre — the flyout Windows opens from the clock. Above .os-root (300) and the start
+   menu (320) for the same reason modals are, and below the lightbox (400). */
+.os-clock{position:relative;display:flex;flex-direction:column;align-items:flex-end;justify-content:center;
+  gap:1px;padding:0 12px;height:40px;border:0;border-radius:8px;background:none;color:var(--text);
+  cursor:pointer;line-height:1.15;font-family:inherit}
+.os-clock:hover,.os-clock.on{background:var(--panel2)}
+.os-clock b{font-size:12.5px;font-weight:600}
+.os-clock span{font-size:10.5px;color:var(--muted)}
+.os-dot{position:absolute;top:1px;right:2px;min-width:15px;height:15px;padding:0 4px;border-radius:8px;
+  background:var(--neon);color:#04222a;font-size:9.5px;font-weight:700;font-style:normal;
+  display:flex;align-items:center;justify-content:center}
+.os-noti{position:fixed;right:8px;bottom:56px;z-index:330;width:min(400px,calc(100vw - 16px));
+  max-height:min(640px,calc(100vh - 76px));display:flex;flex-direction:column;border-radius:14px;
+  background:var(--panel2);border:1px solid var(--line);box-shadow:0 18px 50px rgba(0,0,0,.55);
+  overflow:hidden}
+.os-noti-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:12px 14px;border-bottom:1px solid var(--line)}
+.os-noti-head b{font-size:14px;letter-spacing:.4px}
+.os-noti-x{background:none;border:0;color:var(--neon);cursor:pointer;font-size:12.5px;
+  font-family:inherit;padding:4px 6px;border-radius:6px}
+.os-noti-x:hover{background:rgba(var(--accent-rgb),.12)}
+.os-noti-mail{display:flex;align-items:center;gap:9px;width:100%;padding:11px 14px;background:none;
+  border:0;border-bottom:1px solid var(--line);color:var(--text);cursor:pointer;font-family:inherit;
+  font-size:13px;text-align:left}
+.os-noti-mail:hover{background:rgba(var(--accent-rgb),.09)}
+.os-noti-mail .ic{width:17px;height:17px;color:var(--neon);flex:0 0 auto}
+.os-noti-mail span{color:var(--muted)}
+.os-noti-list{overflow-y:auto;overscroll-behavior:contain;padding:4px 0}
+/* The rows are the client's own .notif markup, so only the extra action strip is styled here. */
+.os-noti-row .notif{position:relative;padding-right:74px}
+.os-noti-act{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:flex;gap:4px}
+.os-na{width:29px;height:29px;border-radius:8px;border:1px solid var(--line);background:var(--panel);
+  color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.os-na:hover{border-color:var(--neon);color:var(--neon)}
+.os-na .ic{width:14px;height:14px}
+
+/* Arrival toasts, bottom-right, the way Windows does them. Above the notification centre so one
+   landing while the panel is open is still readable. */
+.os-toasts{position:fixed;right:10px;bottom:58px;z-index:345;display:flex;flex-direction:column-reverse;
+  gap:8px;pointer-events:none;max-width:min(370px,calc(100vw - 20px))}
+.os-toast{pointer-events:auto;display:flex;align-items:flex-start;gap:10px;padding:11px 13px;
+  border-radius:12px;background:var(--panel2);border:1px solid var(--line);
+  box-shadow:0 14px 36px rgba(0,0,0,.5);cursor:pointer;animation:os-slide .18s ease-out}
+.os-toast:hover{border-color:var(--neon)}
+.os-toast .ic{width:17px;height:17px;color:var(--neon);flex:0 0 auto;margin-top:1px}
+.os-toast div{min-width:0}
+.os-toast b{display:block;font-size:12.5px;margin-bottom:2px}
+.os-toast span{display:block;font-size:12px;color:var(--muted);overflow:hidden;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+@keyframes os-slide{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){ .os-toast{animation:none} }
+
 .os-me{width:32px;height:32px;border-radius:50%;overflow:hidden;padding:0;flex:0 0 auto;
   border:1px solid var(--line);background:var(--panel2);cursor:pointer;display:flex;
   align-items:center;justify-content:center}
