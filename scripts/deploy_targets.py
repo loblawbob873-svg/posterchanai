@@ -71,6 +71,12 @@ _OWNED = (
     ("app/services/nostr_store.py", (APP, WORKER, MEDIA)),
     ("app/services/caldav_store.py", (APP, WORKER)),
     ("app/services/caldav/", (APP,)),          # the Radicale plugins live in the app's own process
+    # The calendar alarm poller and the mailbox both run in the app process. Left unmapped they mean
+    # "everything", which restarts the relay and drops every connected Nostr client for a change that
+    # cannot affect it.
+    ("app/services/calendar_notify_service.py", (APP,)),
+    ("app/services/mail_store.py", (APP,)),
+    ("app/services/mail_sync.py", (APP,)),
     ("relay_main.py", (RELAY,)),
     ("app/services/nostr_relay/", (RELAY,)),
     ("app/worker.py", (WORKER,)),

@@ -537,6 +537,15 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error starting reminder scheduler: {e}", exc_info=True)
             try:
+                # Turn calendar VALARMs into reminder rows, so an appointment reaches a phone that
+                # is not open. Runs beside the reminder poller (it only WRITES rows; that poller
+                # delivers them) and reads the calendar once an HOUR — a pass decrypts every event
+                # the user has, which is the one thing that must not run on a short interval.
+                from app.services.calendar_notify_service import start_calendar_notify_scheduler
+                start_calendar_notify_scheduler()
+            except Exception as e:
+                logging.error(f"Error starting calendar notify scheduler: {e}", exc_info=True)
+            try:
                 # Start the scheduled-posts poller (publishes pre-signed notes at their scheduled time)
                 from app.services.scheduled_posts_service import start_scheduled_posts_scheduler
                 start_scheduled_posts_scheduler()
@@ -838,6 +847,11 @@ async def shutdown():
         try:
             from app.services.reminder_service import stop_reminder_scheduler
             stop_reminder_scheduler()
+        except Exception:
+            pass
+        try:
+            from app.services.calendar_notify_service import stop_calendar_notify_scheduler
+            stop_calendar_notify_scheduler()
         except Exception:
             pass
         # Stop the scheduled-posts poller
