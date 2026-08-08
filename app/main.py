@@ -1129,8 +1129,12 @@ async def browser_search(request: Request, q: str = ""):
 async def opensearch_descriptor(request: Request):
     """OpenSearch descriptor, linked from the client shell. Chrome/Firefox pick it up on first visit
     and then `poster.place` (or a keyword) in the URL bar searches through this node."""
-    base = str(request.base_url).rstrip("/")
-    # A public-facing node is behind a reverse proxy; base_url already reflects the forwarded host.
+    # x-forwarded-*, not base_url: behind this deployment's proxy the upstream connection is plain
+    # HTTP, so base_url advertises http://… and a browser that adds the engine would issue cleartext
+    # searches. The client shell a few lines away reads the same headers for the same reason.
+    fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    fwd_proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+    base = f"{fwd_proto}://{fwd_host}".rstrip("/") if fwd_host else str(request.base_url).rstrip("/")
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
   <ShortName>PosterChan</ShortName>

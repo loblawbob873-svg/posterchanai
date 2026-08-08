@@ -212,9 +212,15 @@
     // Opening a result shows the PAGE. The extracted text is fetched only if the reader is actually
     // switched to Reader (or Summarize asks for it) — in page mode that request buys nothing, and it
     // is a second full fetch of the same URL through this node.
-    function openReader(r){
+    async function openReader(r){
       S.scroll = scrollTop();                              // remember where the results were
       S.reader = { url:r.url, title:r.title, mode:'page', content:'', error:'', loading:false, scroll:0 };
+      // In the bundled apps the frame needs its ticket BEFORE it is painted, or the first load 401s
+      // and the user sees an empty page they then have to back out of. One request per 15 minutes.
+      if(bundled()){
+        try{ await ensureTicket(); }catch(_){}
+        if(!S.reader || S.reader.url !== r.url) return;    // they moved on while we asked
+      }
       paint();
     }
     async function loadText(){
@@ -463,6 +469,55 @@
      * endpoint strips everything that executes and serves a no-script CSP, so the frame lays itself
      * out and does nothing else.
      */
+    /* The frame's key.
+     *
+     * On the WEB the frame is same-origin and the session cookie rides along, so nothing goes in the
+     * URL at all — which matters, because the URL is what nginx and Cloudflare write to their logs.
+     * Only the BUNDLED shells (app://posterchan, the APK WebView) need a value, and what they get is
+     * a ticket: 15 minutes, this endpoint only, useless for anything else. The session JWT never
+     * goes near a query string.
+     */
+    let _ticket = { v:'', exp:0 };
+    const bundled = () => { try{ const b = PC.apiBase && PC.apiBase(); return !!b && b !== location.origin; }
+                            catch(_){ return false; } };
+    async function ensureTicket(){
+      if(!bundled()) return '';
+      if(_ticket.v && Date.now() < _ticket.exp) return _ticket.v;
+      try{
+        const r = await jsonPost('/api/websearch/ticket', {});
+        _ticket = { v: r.ticket || '', exp: Date.now() + Math.max(60, (r.expires_in || 900) - 60) * 1000 };
+      }catch(_){ _ticket = { v:'', exp:0 }; }
+      return _ticket.v;
+    }
+    /* A VIDEO result PLAYS, rather than showing the site's script-only page.
+     *
+     * YouTube's watch page is an application: with scripts off it is a blank rectangle, and no amount
+     * of proxying changes that — a player IS its scripts. But these sites all publish an EMBED meant
+     * to be framed by other people, so that is what a video result gets, straight from the site.
+     * (-nocookie for YouTube: the same URL every privacy-minded embed uses.)
+     */
+    function embedUrl(u){
+      try{
+        const x = new URL(u);
+        const h = x.hostname.replace(/^www\./, '');
+        if(h === 'youtube.com' || h === 'm.youtube.com'){
+          const v = x.searchParams.get('v');
+          if(v) return 'https://www.youtube-nocookie.com/embed/' + encodeURIComponent(v);
+          const m = x.pathname.match(/^\/(?:shorts|embed|live)\/([\w-]+)/);
+          if(m) return 'https://www.youtube-nocookie.com/embed/' + m[1];
+        }
+        if(h === 'youtu.be'){
+          const id = x.pathname.slice(1).split('/')[0];
+          if(id) return 'https://www.youtube-nocookie.com/embed/' + encodeURIComponent(id);
+        }
+        if(h === 'vimeo.com'){
+          const id = (x.pathname.match(/\/(\d+)/) || [])[1];
+          if(id) return 'https://player.vimeo.com/video/' + id;
+        }
+        if(h === 'odysee.com') return u.replace('odysee.com/', 'odysee.com/$/embed/');
+      }catch(_){}
+      return '';
+    }
     function pageUrl(u){
       // ABSOLUTE against the instance, never root-relative. The bundled desktop app and the APK serve
       // this page from app://posterchan (or the WebView's own origin) and rewrite fetch() through a
@@ -472,19 +527,31 @@
       let base = '';
       try{ base = (PC.apiBase && PC.apiBase()) || ''; }catch(_){}
       let s = base + '/api/websearch/page?url=' + encodeURIComponent(u);
-      // …and an <iframe src> cannot carry an Authorization header either; on the APK the WebView
-      // origin is not the API host, so there is no cookie to fall back on. get_current_user accepts
-      // ?token=, which is why this is the one place that reads the bearer token directly.
-      try{ const t = PC.aiToken && PC.aiToken(); if(t) s += '&token=' + encodeURIComponent(t); }catch(_){}
+      if(_ticket.v && Date.now() < _ticket.exp) s += '&t=' + encodeURIComponent(_ticket.v);
       return s;
     }
     function readerView(){
       const r = S.reader;
       const url = safeUrl(r.url);
       const isPage = r.mode !== 'text';
-      const body = isPage
+      const embed = isPage ? embedUrl(r.url) : '';
+      const body = embed
+        // The site's OWN player, framed straight from the site — NOT through our proxy, which strips
+        // the scripts a player is made of. This is the ordinary thing any page embedding a video
+        // does, and it is why a video result plays instead of showing a script-only shell.
+        ? `<iframe class="ws-frame" id="ws-frame" src="${enc(embed)}" allowfullscreen
+                   referrerpolicy="no-referrer"
+                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture; fullscreen"
+                   title="${enc(r.title || host(url))}"></iframe>`
+        : isPage
+        /* allow-same-origin is BACK, and it is not a loosening: without it the frame gets an opaque
+         * origin, and a page's own fonts and CORS-fetched images are then refused ("blocked by CORS
+         * policy … from origin 'null'" — measured on apple.com), so the page renders half-dressed.
+         * What actually keeps this safe is the response's CSP: `default-src 'none'` with no
+         * script-src at all, plus every script, handler and form stripped server-side. The document
+         * is inert markup; giving inert markup our origin buys it nothing. */
         ? `<iframe class="ws-frame" id="ws-frame" src="${enc(pageUrl(r.url))}"
-                   sandbox="allow-popups allow-popups-to-escape-sandbox"
+                   sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
                    referrerpolicy="no-referrer" title="${enc(r.title || host(url))}"></iframe>`
         : (r.loading ? '<div class="spinner"></div>'
            : r.error ? `<div class="ws-err">${enc(r.error)} — the page is still there, open it in a tab.</div>`

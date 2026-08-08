@@ -1093,18 +1093,10 @@
     }catch(_){ return false; }
   }
   function _consumeLaunchParams(){
-    let sp; try{ sp = new URLSearchParams(location.search); }catch(_){ return false; }
-    if(![...sp.keys()].length) return false;
-    // ?shared just marks "a share is waiting" — clean the flag but DON'T take over the view here. The
-    // actual drain runs from startApp (so it works for a fresh launch AND a guest who then logs in), and
-    // letting the normal default view render first means a failed/empty/guest drain never leaves a blank app.
-    if(sp.has('shared')){ try{ history.replaceState({},'','/client'); }catch(_){} }
-    if(![...sp.keys()].filter(k=>k!=='shared').length) return false;
-    const view = sp.get('view'), wantCompose = sp.has('compose');
-    /* `poster.place/search?q=…` — this node as the browser's search engine (see /opensearch.xml).
-     * Handled BEFORE the share-target branch, because a search from the URL bar arrives as a plain
-     * ?q= and the composer path would otherwise never see it. Only on /search, so a ?q on any other
-     * screen keeps whatever meaning that screen gives it. */
+    let sp; try{ sp = new URLSearchParams(location.search); }catch(_){ sp = new URLSearchParams(); }
+    /* `/search` is a LANDING PATH, not a parameter — the OpenSearch descriptor's SearchForm is a bare
+     * https://<node>/search, and so is a reload after clearing the box. Checked before the
+     * empty-params guard below, which returned first and dropped both onto the home timeline. */
     if(location.pathname === '/search'){
       const q = (sp.get('q') || '').trim();
       try{ history.replaceState({}, '', '/search'); }catch(_){}
@@ -1115,6 +1107,13 @@
       }
       return true;
     }
+    if(![...sp.keys()].length) return false;
+    // ?shared just marks "a share is waiting" — clean the flag but DON'T take over the view here. The
+    // actual drain runs from startApp (so it works for a fresh launch AND a guest who then logs in), and
+    // letting the normal default view render first means a failed/empty/guest drain never leaves a blank app.
+    if(sp.has('shared')){ try{ history.replaceState({},'','/client'); }catch(_){} }
+    if(![...sp.keys()].filter(k=>k!=='shared').length) return false;
+    const view = sp.get('view'), wantCompose = sp.has('compose');
     const shared = ['title','text','url'].map(k=>(sp.get(k)||'').trim()).filter(Boolean);
     const _clean = ()=>{ try{ const base=(location.pathname==='/client'||location.pathname.startsWith('/client/'))?'/client':'/'; history.replaceState({},'',base); }catch(_){} };
     // Share target / compose shortcut → open the composer pre-filled (de-duped: a shared URL is

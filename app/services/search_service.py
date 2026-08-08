@@ -715,33 +715,95 @@ class SearchService:
             async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
                 current, hops = url, 0
                 while True:
-                    r = await client.get(current, headers=headers)
-                    if r.status_code not in (301, 302, 303, 307, 308):
-                        break
-                    loc = r.headers.get("location")
-                    if not loc:
-                        break
-                    hops += 1
-                    if hops > 5:
-                        return {"url": current, "html": "", "content_type": "", "error": "too many redirects"}
-                    current = str(httpx.URL(current).join(loc))
-                    ok, why = is_safe_url(current)
-                    if not ok:
-                        logger.warning("SSRF blocked (redirect): %s -> %s - %s", url, current, why)
-                        return {"url": url, "html": "", "content_type": "", "error": f"URL blocked: {why}"}
-                ctype = (r.headers.get("content-type") or "").lower()
-                if "html" not in ctype:
-                    # A PDF or an image is not something to re-serve through here; the client offers
-                    # the original link for those.
-                    return {"url": current, "html": "", "content_type": ctype,
-                            "error": f"not a web page ({ctype.split(';')[0] or 'unknown type'})"}
-                body = r.content[:max_bytes]
-                enc = r.encoding or "utf-8"
-                return {"url": current, "html": body.decode(enc, errors="replace"),
-                        "content_type": ctype, "error": None}
+                    # STREAMED, so `max_bytes` is a real limit rather than a slice taken after the
+                    # fact. `client.get()` reads the whole body into memory first: a result URL this
+                    # node did not choose could point at a multi-hundred-MB file, and the single
+                    # uvicorn worker would buffer all of it — and then reject it as "not a web page".
+                    # Now the content-type is checked from the HEADERS, and the read stops at the cap.
+                    async with client.stream("GET", current, headers=headers) as r:
+                        if r.status_code in (301, 302, 303, 307, 308):
+                            loc = r.headers.get("location")
+                            if loc:
+                                hops += 1
+                                if hops > 5:
+                                    return {"url": current, "html": "", "content_type": "",
+                                            "error": "too many redirects"}
+                                current = str(httpx.URL(current).join(loc))
+                                ok, why = is_safe_url(current)
+                                if not ok:
+                                    logger.warning("SSRF blocked (redirect): %s -> %s - %s", url, current, why)
+                                    return {"url": url, "html": "", "content_type": "",
+                                            "error": f"URL blocked: {why}"}
+                                continue
+                        ctype = (r.headers.get("content-type") or "").lower()
+                        if "html" not in ctype:
+                            # A PDF or an image is not something to re-serve through here; the client
+                            # offers the original link for those.
+                            return {"url": current, "html": "", "content_type": ctype,
+                                    "error": f"not a web page ({ctype.split(';')[0] or 'unknown type'})"}
+                        chunks, total = [], 0
+                        async for chunk in r.aiter_bytes():
+                            chunks.append(chunk)
+                            total += len(chunk)
+                            if total >= max_bytes:
+                                break
+                        enc = r.encoding or "utf-8"
+                        return {"url": current, "html": b"".join(chunks)[:max_bytes].decode(enc, errors="replace"),
+                                "content_type": ctype, "error": None}
         except Exception as e:
             logger.info("page fetch failed for %s: %s", url, e)
             return {"url": url, "html": "", "content_type": "", "error": str(e)[:200]}
+
+    async def fetch_asset(self, url: str, max_bytes: int = 8_000_000, allow: tuple = ()) -> dict:
+        """One SUBRESOURCE of a framed page — a stylesheet, an image, a font.
+
+        Same SSRF guard per redirect hop as everything else here, streamed against a hard cap, and
+        limited to types a document lays itself out with. Returns {url, body, content_type, error}.
+        """
+        ok, why = is_safe_url(url)
+        if not ok:
+            return {"url": url, "body": b"", "content_type": "", "error": f"URL blocked: {why}"}
+        headers = {
+            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                           "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+            "Accept": "*/*",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+                current, hops = url, 0
+                while True:
+                    async with client.stream("GET", current, headers=headers) as r:
+                        if r.status_code in (301, 302, 303, 307, 308):
+                            loc = r.headers.get("location")
+                            if loc:
+                                hops += 1
+                                if hops > 4:
+                                    return {"url": current, "body": b"", "content_type": "",
+                                            "error": "too many redirects"}
+                                current = str(httpx.URL(current).join(loc))
+                                ok, why = is_safe_url(current)
+                                if not ok:
+                                    return {"url": url, "body": b"", "content_type": "",
+                                            "error": f"URL blocked: {why}"}
+                                continue
+                        if r.status_code >= 400:
+                            return {"url": current, "body": b"", "content_type": "",
+                                    "error": f"upstream {r.status_code}"}
+                        ctype = (r.headers.get("content-type") or "").split(";")[0].strip().lower()
+                        if allow and not any(ctype.startswith(a) for a in allow):
+                            return {"url": current, "body": b"", "content_type": ctype,
+                                    "error": f"type not served here ({ctype or 'unknown'})"}
+                        chunks, total = [], 0
+                        async for chunk in r.aiter_bytes():
+                            chunks.append(chunk)
+                            total += len(chunk)
+                            if total >= max_bytes:
+                                break
+                        return {"url": current, "body": b"".join(chunks)[:max_bytes],
+                                "content_type": r.headers.get("content-type") or ctype, "error": None}
+        except Exception as e:
+            logger.info("asset fetch failed for %s: %s", url, e)
+            return {"url": url, "body": b"", "content_type": "", "error": str(e)[:200]}
 
     async def fetch_url_content(self, url: str, max_length: int = 15000) -> Optional[dict]:
         """Fetch and extract text content from a URL"""

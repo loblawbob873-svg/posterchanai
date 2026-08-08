@@ -22,6 +22,8 @@ stops "summarize this link" from being a request to 169.254.169.254.
 """
 import asyncio
 import logging
+import re
+import secrets
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -145,13 +147,18 @@ _PAGE_CSP = (
     # they load from the site itself, so this is not an anonymising proxy and does not pretend to be.
     "default-src 'none'; "
     "img-src * data: blob:; style-src * 'unsafe-inline'; font-src * data:; media-src *; "
-    "form-action 'none'; frame-ancestors 'self'"
+    # frame-ancestors lists the BUNDLED shells as well as 'self'. In the Electron app the embedding
+    # document is app://posterchan and in the APK it is the WebView's own origin — neither is 'self'
+    # relative to the instance, so with 'self' alone the browser refuses to render the frame at all,
+    # no matter how right the URL is. (That was the second half of "Windows won't load sites".)
+    "form-action 'none'; frame-ancestors 'self' app://posterchan https://localhost capacitor://localhost"
     # NO `base-uri 'none'` — the ONE <base> in this document is the one we inject (every other is
     # stripped), and with the directive on, the browser ignores it and every relative URL on the page
     # resolves against /api/websearch/page instead of the site. Stylesheets and images 404 and the
     # "real page" renders as unstyled text, which is the thing this endpoint exists to avoid.
 )
 # Elements that either execute, phone home invisibly, or would frame something else inside the frame.
+_SCHEME_JUNK = re.compile(r"[\x00-\x20\x7f]")   # what a browser ignores inside a URL scheme
 _PAGE_STRIP = ("script", "noscript", "iframe", "frame", "frameset", "object", "embed", "applet",
                "form", "input", "button", "select", "textarea", "template")
 
@@ -171,7 +178,7 @@ def _self_link(self_base: str, absolute: str, token: str) -> str:
     from urllib.parse import quote
     out = f"{self_base}/api/websearch/page?url=" + quote(absolute, safe="")
     if token:
-        out += "&token=" + quote(token, safe="")
+        out += "&t=" + quote(token, safe="")
     return out
 
 
@@ -207,7 +214,11 @@ def _render_page(html: str, final_url: str, self_base: str = "", token: str = ""
             del el[attr]
         for attr in ("href", "src", "action", "poster", "srcset", "data-src"):
             v = el.get(attr)
-            if isinstance(v, str) and v.strip().lower().startswith(("javascript:", "vbscript:", "data:text/html")):
+            # Entity decoding happens BEFORE we see the value, so `java&#9;script:` arrives as
+            # "java\tscript:" and a bare startswith misses it. Strip every ASCII whitespace/control
+            # character out of the comparison — the browser ignores them in a scheme, so we must too.
+            if isinstance(v, str) and _SCHEME_JUNK.sub("", v).lower().startswith(
+                    ("javascript:", "vbscript:", "data:text/html")):
                 del el[attr]
         # Lazy-loaded images: the real URL sits in data-src and the src is a placeholder, so without
         # this half a page renders blank inside the frame (the loader that would swap them is gone).
@@ -223,12 +234,34 @@ def _render_page(html: str, final_url: str, self_base: str = "", token: str = ""
         # endpoint exists to avoid — so the common attributes are pinned here.
         for attr in ("src", "poster"):
             v = el.get(attr)
-            if isinstance(v, str) and v and not v.startswith(("http://", "https://", "data:", "blob:", "#")):
-                el[attr] = urljoin(final_url, v)
+            if not isinstance(v, str):
+                continue
+            v = v.strip()
+            if not v:
+                del el[attr]          # src="" asks the browser for the PAGE again (and logs ERR_INVALID_URL)
+                continue
+            if v.startswith(("data:", "blob:", "#")):
+                continue
+            try:
+                el[attr] = _asset_link(self_base, urljoin(final_url, v), token)
+            except Exception:
+                del el[attr]
+        # Stylesheets, images and fonts go through the ASSET proxy: framed from our origin, a page
+        # cannot load its own webfonts (fonts are always a CORS fetch) or any CORS-mode image, so
+        # without this it renders half-dressed — which is what "open the page" was supposed to fix.
         if el.name == "link" and isinstance(el.get("href"), str):
-            h = el["href"]
-            if h and not h.startswith(("http://", "https://", "data:", "#")):
-                el["href"] = urljoin(final_url, h)
+            rels = " ".join(el.get("rel") or []).lower()
+            h = el["href"].strip()
+            if h and not h.startswith(("data:", "#")):
+                absolute = urljoin(final_url, h)
+                el["href"] = (_asset_link(self_base, absolute, token)
+                              if ("stylesheet" in rels or "icon" in rels) else absolute)
+        # A lazy <source> keeps the real value in data-srcset, exactly as a lazy <img> keeps it in
+        # data-src — and with no JS to promote it, the <picture> renders as a broken box.
+        if not el.get("srcset"):
+            lazy_set = el.get("data-srcset") or el.get("data-lazy-srcset")
+            if lazy_set:
+                el["srcset"] = lazy_set
         srcset = el.get("srcset")
         if isinstance(srcset, str) and srcset:
             parts = []
@@ -236,11 +269,38 @@ def _render_page(html: str, final_url: str, self_base: str = "", token: str = ""
                 bits = cand.strip().split(None, 1)
                 if not bits:
                     continue
-                u = bits[0]
-                if not u.startswith(("http://", "https://", "data:")):
-                    u = urljoin(final_url, u)
+                u = bits[0].strip()
+                # Empty or whitespace-bearing candidates are what the browser reports as
+                # ERR_INVALID_URL; a srcset entry is a URL and cannot contain a space.
+                if not u or any(c.isspace() for c in u):
+                    continue
+                if not u.startswith("data:"):
+                    u = _asset_link(self_base, urljoin(final_url, u), token)
                 parts.append(" ".join([u] + bits[1:]))
             el["srcset"] = ", ".join(parts)
+
+    # INLINE css: a <style> block and a style="" attribute reference images and fonts exactly like a
+    # stylesheet does, and a page that keeps its hero image in one renders blank without this.
+    for st in soup.find_all("style"):
+        if st.string:
+            st.string.replace_with(_rewrite_css(st.string, final_url, self_base, token))
+    for el in soup.find_all(style=True):
+        v = el.get("style")
+        if isinstance(v, str) and "url(" in v.lower():
+            el["style"] = _rewrite_css(v, final_url, self_base, token)
+
+    # A meta refresh would navigate the FRAME to the raw site (which then refuses to be framed) —
+    # a link out of the proxy that nobody clicked.
+    for m in soup.find_all("meta"):
+        if (m.get("http-equiv") or "").lower() == "refresh":
+            m.decompose()
+
+    # SVG's own image reference, which is not `src`.
+    for im in soup.find_all(["image", "use"]):
+        for attr in ("href", "xlink:href"):
+            v = im.get(attr)
+            if isinstance(v, str) and v.strip() and not v.strip().startswith(("data:", "#")):
+                im[attr] = _asset_link(self_base, urljoin(final_url, v.strip()), token)
 
     for a in soup.find_all("a", href=True):
         href = a["href"].strip()
@@ -256,12 +316,169 @@ def _render_page(html: str, final_url: str, self_base: str = "", token: str = ""
     return str(soup)
 
 
+# ---- framing tickets ---------------------------------------------------------------------------
+# An <iframe src> is a NAVIGATION: no Authorization header, and in the bundled desktop app / APK no
+# cookie either, because the page's origin is not the API host. The first version therefore put the
+# session JWT in the query string — where nginx and Cloudflare log the full request line and the
+# browser keeps it in history. app.js already rejected exactly that for the admin iframe (it hands
+# its token over by postMessage, "so no secret lands in history, a Referer or a log").
+#
+# So: a ticket. Random, 15 minutes, one user, and it opens NOTHING but this read-only endpoint — a
+# capability rather than a credential. A web client never needs one (its cookie rides along on the
+# same origin); only the bundled shells mint one.
+_TICKET_TTL = 900
+_TICKETS: dict[str, tuple[float, int]] = {}
+
+
+def _mint_ticket(user_id: int) -> str:
+    now = time.time()
+    for k, (exp, _) in list(_TICKETS.items()):     # opportunistic sweep; this dict stays small
+        if exp < now:
+            _TICKETS.pop(k, None)
+    tok = secrets.token_urlsafe(24)
+    _TICKETS[tok] = (now + _TICKET_TTL, user_id)
+    return tok
+
+
+def _ticket_user(tok: str):
+    hit = _TICKETS.get(tok or "")
+    if not hit:
+        return None
+    exp, uid = hit
+    if exp < time.time():
+        _TICKETS.pop(tok, None)
+        return None
+    return uid
+
+
+def _self_base(request: Request) -> str:
+    """This node's absolute base — the forwarded host behind a proxy, which is what a URL inside the
+    frame has to point back at."""
+    fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    fwd_proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+    return f"{fwd_proto}://{fwd_host}".rstrip("/") if fwd_host else str(request.base_url).rstrip("/")
+
+
+def _page_viewer(request: Request, t: str = Query(""), db: Session = Depends(get_db)) -> User:
+    """Who is asking for this frame: a ticket, else an ordinary session (cookie / header / ?token=)."""
+    uid = _ticket_user(t)
+    if uid:
+        user = db.query(User).filter(User.id == uid).first()
+        if user:
+            return user
+    return get_current_user(request=request, credentials=None, db=db)
+
+
+@router.post("/ticket")
+async def page_ticket(current_user: User = Depends(get_current_user)):
+    """A short-lived key for the page frame — see _mint_ticket."""
+    return {"ticket": _mint_ticket(current_user.id), "expires_in": _TICKET_TTL}
+
+
+# Subresource types worth re-serving. Everything else the page asks for is simply not fetched — the
+# frame is showing a document, not proxying an application.
+_ASSET_TYPES = ("text/css", "image/", "font/", "application/font", "application/x-font",
+                "application/vnd.ms-fontobject", "image/svg+xml")
+_ASSET_MAX = 8_000_000
+
+
+def _asset_link(self_base: str, absolute: str, token: str) -> str:
+    from urllib.parse import quote
+    out = f"{self_base}/api/websearch/asset?url=" + quote(absolute, safe="")
+    if token:
+        out += "&t=" + quote(token, safe="")
+    return out
+
+
+def _rewrite_css(css: str, css_url: str, self_base: str, token: str) -> str:
+    """Point a stylesheet's own `url(...)` and `@import` at the proxy.
+
+    Without this, proxying the CSS makes things WORSE: its relative urls would resolve against
+    /api/websearch/asset instead of the site, so every background image and @font-face in it 404s.
+    """
+    from urllib.parse import urljoin
+
+    def _u(m):
+        raw = (m.group(2) or "").strip()
+        if not raw or raw.startswith(("data:", "blob:", "#")):
+            return m.group(0)
+        return f"{m.group(1)}{_asset_link(self_base, urljoin(css_url, raw), token)}{m.group(3)}"
+
+    css = re.sub(r"(url\(\s*[\"\']?)([^)\"\']+)([\"\']?\s*\))", _u, css)
+    css = re.sub(r"(@import\s+[\"\'])([^\"\']+)([\"\'])", _u, css)
+    return css
+
+
+@router.get("/asset")
+async def render_asset(
+    request: Request,
+    url: str = Query(..., max_length=2000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_page_viewer),
+):
+    """A stylesheet, image or font belonging to a framed page, re-served from this node.
+
+    Not gold-plating: a page framed from OUR origin cannot load its own WEBFONTS (fonts are always
+    fetched in CORS mode, and a site's font server has no reason to allow poster.place), and any
+    image the page requests in CORS mode fails the same way — "blocked by CORS policy … from origin
+    'null'", then from our origin. Proxying is what makes a framed page look like the page.
+
+    It also means the reader's browser never contacts the site directly, which is a happy side
+    effect rather than a promise: the NODE still does.
+    """
+    svc = get_search_service(db)
+    out = await svc.fetch_asset(url.strip(), max_bytes=_ASSET_MAX, allow=_ASSET_TYPES)
+    if out.get("error"):
+        # A type this endpoint does not serve (a script, a video, an XHR payload a stylesheet points
+        # at) is not an ERROR — the page simply doesn't get it, and the CSP was going to refuse it
+        # anyway. Answering 502 only wrote red lines into the console for a document that rendered
+        # perfectly. Anything else (an upstream 404, a refused host) keeps its own meaning.
+        if "type not served here" in out["error"]:
+            return Response(content=b"", status_code=204,
+                            headers={"Cache-Control": "private, max-age=600"})
+        raise HTTPException(status_code=502, detail=out["error"][:200])
+    body, ctype = out["body"], out["content_type"]
+    if ctype.startswith("text/css"):
+        self_base = _self_base(request)
+        token = request.query_params.get("t") or ""
+        from starlette.concurrency import run_in_threadpool
+        css = await run_in_threadpool(_rewrite_css, body.decode("utf-8", errors="replace"),
+                                      out["url"], self_base, token)
+        body = css.encode("utf-8")
+    return Response(content=body, media_type=ctype or "application/octet-stream",
+                    headers={"Cache-Control": "private, max-age=600", "Referrer-Policy": "no-referrer"})
+
+
+def _looks_empty(html: str) -> bool:
+    """Did the sanitised document end up with nothing to read?"""
+    from bs4 import BeautifulSoup
+    try:
+        body = BeautifulSoup(html, "lxml").body
+        return len((body.get_text(" ", strip=True) if body else "")) < 200
+    except Exception:
+        return False
+
+
+def _needs_js_page(url: str) -> str:
+    from html import escape as _esc
+    href = _esc(url, quote=True) if url.lower().startswith(("http://", "https://")) else ""
+    return ("<!doctype html><meta charset=utf-8><style>body{font:16px/1.7 system-ui;padding:28px;"
+            "color:#e8e8f0;background:#111}a{color:#3ce8ff}.h{font-size:19px;font-weight:700;"
+            "margin-bottom:10px}.m{color:#9fa1c6}</style>"
+            "<div class=h>This page is built by JavaScript</div>"
+            "<p class=m>Pages are shown here with scripts turned off, so a site that draws itself "
+            "with JavaScript (YouTube's player page, most shops) arrives empty. Nothing is wrong with "
+            "the link.</p>"
+            "<p class=m>Try <b>Reader</b> above for the text, or open it in a tab:</p>"
+            + (f'<p><a href="{href}" target="_blank" rel="noopener noreferrer">{href}</a></p>' if href else ""))
+
+
 @router.get("/page")
 async def render_page(
     request: Request,
     url: str = Query(..., max_length=2000),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(_page_viewer),
 ):
     """The result's ACTUAL page, rendered in the app.
 
@@ -277,11 +494,18 @@ async def render_page(
     """
     out = await get_search_service(db).fetch_url_raw(url.strip())
     if out.get("error"):
-        safe = (out["error"] or "")[:300]
+        # ESCAPED, both of them. `url` is caller-supplied and the error text can echo it back, and
+        # this page is served from OUR origin inside the app's own frame — unescaped, a crafted link
+        # renders attacker markup on poster.place. (Scripts are dead either way under the CSP; text
+        # and styling are quite enough to make a page say anything.)
+        from html import escape as _esc
+        safe = _esc((out["error"] or "")[:300])
+        href = _esc(url, quote=True) if url.lower().startswith(("http://", "https://")) else ""
         body = (f"<!doctype html><meta charset=utf-8><style>body{{font:16px/1.6 system-ui;padding:24px;"
                 f"color:#ddd;background:#111}}a{{color:#3ce8ff}}</style>"
                 f"<p>This page can't be shown here: {safe}</p>"
-                f"<p><a href=\"{url}\" target=\"_blank\" rel=\"noopener noreferrer\">Open the original</a></p>")
+                + (f"<p><a href=\"{href}\" target=\"_blank\" rel=\"noopener noreferrer\">Open the original</a></p>"
+                   if href else ""))
         return Response(content=body, media_type="text/html; charset=utf-8",
                         headers={"Content-Security-Policy": _PAGE_CSP, "X-Content-Type-Options": "nosniff",
                                  "Referrer-Policy": "no-referrer", "Cache-Control": "private, max-age=60"})
@@ -289,14 +513,38 @@ async def render_page(
     # the bundled desktop app / APK it is the instance the frame was loaded from, which is exactly
     # what a link inside the frame has to point back at.
     self_base = str(request.base_url).rstrip("/")
-    token = request.query_params.get("token") or ""
+    # Every URL this page will ask for — its stylesheets, images, fonts, and the links in it — is a
+    # request the FRAME makes, and a frame carries no Authorization header (and, from a bundled app,
+    # no cookie for this origin either). So they all travel with a ticket: the one this request came
+    # with, or a fresh one when the frame itself was opened with an ordinary session.
+    #
+    # Without this every subresource 401s and the page renders naked with no images — which is what
+    # scripts/check_websearch_pages.py found across all five test sites, and exactly the failure the
+    # page view exists to avoid.
+    token = request.query_params.get("t") or _mint_ticket(current_user.id)
     try:
-        html = _render_page(out["html"], out["url"], self_base, token)
+        # OFF the event loop: this is an lxml parse plus a full-tree attribute walk over up to 3 MB of
+        # someone else's markup, and the deployment runs a SINGLE uvicorn worker — inline, one heavy
+        # page stalls every in-flight LLM stream, relay proxy hop and Telegram webhook for seconds.
+        from starlette.concurrency import run_in_threadpool
+        html = await run_in_threadpool(_render_page, out["html"], out["url"], self_base, token)
+        # A page that is ALL JavaScript renders as a blank white rectangle here — YouTube's watch page
+        # and Amazon's product pages are both shells an app fills in, and this endpoint runs no
+        # scripts by design. A blank frame reads as "your app is broken"; say what happened instead,
+        # and offer the two things that do work.
+        if _looks_empty(html):
+            html = _needs_js_page(url)
     except Exception as e:
         logger.warning("page render failed for %s: %s", url, e)
         raise HTTPException(status_code=502, detail="Could not render that page.")
+    # NO `X-Content-Type-Options: nosniff` here, deliberately. It applies to this document's
+    # SUBRESOURCES too: with it, Chrome refuses any stylesheet whose own server sends a blank or
+    # wrong Content-Type — measured on apple.com ("Refused to apply style … MIME type ('')"), which
+    # renders the page unstyled, i.e. the thing this endpoint exists to avoid. The response's own
+    # type is stated exactly and the CSP forbids scripts outright, so there is nothing here for
+    # sniffing to escalate.
     return Response(content=html, media_type="text/html; charset=utf-8",
-                    headers={"Content-Security-Policy": _PAGE_CSP, "X-Content-Type-Options": "nosniff",
+                    headers={"Content-Security-Policy": _PAGE_CSP,
                              "Referrer-Policy": "no-referrer", "Cache-Control": "private, max-age=60"})
 
 

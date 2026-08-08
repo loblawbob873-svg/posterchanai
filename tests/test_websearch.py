@@ -333,7 +333,7 @@ class PageRenderTests(unittest.TestCase):
 
     def setUp(self):
         self.out = W._render_page(self.HTML, "https://site.example/dir/page",
-                                  "https://node.example", "tok123")
+                                  "https://node.example", "ticket123")
 
     def test_nothing_executes(self):
         low = self.out.lower()
@@ -341,12 +341,28 @@ class PageRenderTests(unittest.TestCase):
             self.assertNotIn(dead, low, f"{dead} survived the sanitiser")
 
     def test_the_page_still_looks_like_itself(self):
-        """Stylesheets and images are kept and absolutised — resolved against /api/websearch/page they
-        would 404 and the 'real page' would render as unstyled text."""
-        self.assertIn('href="https://site.example/style.css"', self.out)
-        self.assertIn("https://site.example/real.png", self.out)     # data-src promoted (no JS to do it)
-        self.assertIn("https://site.example/a.png 1x", self.out)     # srcset absolutised
+        """Stylesheets, images and fonts are kept and routed through the ASSET proxy.
+
+        Not merely absolutised: a page framed from our origin cannot load its own webfonts (a font is
+        always a CORS fetch, and a site's font host has no reason to allow us) or any CORS-mode
+        image — measured on apple.com as "blocked by CORS policy … from origin 'null'". Proxying is
+        what makes a framed page look like the page. Verified end to end by
+        scripts/check_websearch_pages.py, which renders real sites and counts applied stylesheets."""
+        self.assertIn("/api/websearch/asset?url=https%3A%2F%2Fsite.example%2Fstyle.css", self.out)
+        self.assertIn("Fsite.example%2Freal.png", self.out)          # data-src promoted (no JS to do it)
+        self.assertIn("Fsite.example%2Fa.png", self.out)             # srcset routed
         self.assertIn('<base href="https://site.example/dir/page"', self.out)
+
+    def test_a_stylesheets_own_urls_are_rewritten_too(self):
+        """Proxying the CSS without this makes things WORSE: its relative url()s would resolve
+        against /api/websearch/asset, so every background and @font-face inside it 404s."""
+        css = W._rewrite_css('@import "a.css"; body{background:url(../img/x.png)} '
+                             '@font-face{src:url("f.woff2") format("woff2")}',
+                             "https://site.example/css/main.css", "https://node.example", "tk")
+        self.assertIn("Fsite.example%2Fcss%2Fa.css", css)
+        self.assertIn("Fsite.example%2Fimg%2Fx.png", css)
+        self.assertIn("Fsite.example%2Fcss%2Ff.woff2", css)
+        self.assertIn("t=tk", css)
 
     def test_the_pages_own_base_is_replaced_not_kept(self):
         """A <base> the page brought with it would point every relative URL wherever it says."""
@@ -359,9 +375,10 @@ class PageRenderTests(unittest.TestCase):
         site has embedded it" — our frame blamed for a request that never reached us."""
         self.assertIn("https://node.example/api/websearch/page?url=https%3A%2F%2Fsite.example%2Fpage2",
                       self.out)
-        # …and the token rides along: a navigation carries no Authorization header, and the bundled
-        # app has no cookie for this origin.
-        self.assertIn("token=tok123", self.out)
+        # …and the TICKET rides along (never the session token): a navigation carries no
+        # Authorization header, and the bundled app has no cookie for this origin.
+        self.assertIn("t=ticket123", self.out)
+        self.assertNotIn("token=", self.out)
         self.assertNotIn("mailto:", self.out)     # not ours to open from a frame
 
     def test_the_csp_allows_the_base_it_injects(self):
@@ -370,6 +387,42 @@ class PageRenderTests(unittest.TestCase):
         self.assertNotIn("base-uri", W._PAGE_CSP)
         self.assertIn("default-src 'none'", W._PAGE_CSP)     # …and still no scripts, ever
         self.assertNotIn("script-src", W._PAGE_CSP)
+
+    def test_the_error_page_escapes_what_the_caller_sent(self):
+        """It is served from OUR origin inside the app's own frame, so unescaped markup here renders
+        on poster.place. Scripts are dead under the CSP; text and styling are quite enough."""
+        svc = mock.Mock()
+        async def _blocked(url, max_bytes=0):
+            return {"url": url, "html": "", "content_type": "",
+                    "error": 'URL blocked: <img src=x onerror=1> "quoted"'}
+        svc.fetch_url_raw = _blocked
+        evil = 'http://10.0.0.1/"><h1>Your session expired</h1>'
+        with mock.patch.object(W, "get_search_service", return_value=svc):
+            req = mock.Mock(); req.base_url = "https://node.example/"; req.query_params = {}
+            resp = run(W.render_page(request=req, url=evil, db=None, current_user=_User()))
+        body = resp.body.decode()
+        self.assertNotIn("<h1>Your session expired</h1>", body)
+        self.assertNotIn("<img src=x", body)
+
+    def test_the_bundled_shells_may_frame_it(self):
+        """frame-ancestors 'self' alone forbids the Electron app (app://posterchan) and the APK
+        WebView from rendering the frame AT ALL, however right the URL is."""
+        self.assertIn("app://posterchan", W._PAGE_CSP)
+        self.assertIn("frame-ancestors 'self'", W._PAGE_CSP)
+
+    def test_a_ticket_opens_the_frame_and_nothing_else(self):
+        tok = W._mint_ticket(42)
+        self.assertEqual(W._ticket_user(tok), 42)
+        self.assertIsNone(W._ticket_user("not-a-ticket"))
+        W._TICKETS[tok] = (0.0, 42)                     # expired
+        self.assertIsNone(W._ticket_user(tok), "an expired ticket must stop working")
+
+    def test_scheme_filter_survives_the_usual_obfuscation(self):
+        """Entity decoding happens before the sanitiser sees the value, so `java&#9;script:` arrives
+        as a real tab inside the scheme."""
+        out = W._render_page('<a href="java\tscript:alert(1)">x</a><img src=" JaVaScRiPt:alert(1)">',
+                             "https://site.example/", "https://node.example", "")
+        self.assertNotIn("script:alert", out.replace("\t", ""))
 
     def test_a_blocked_url_is_a_readable_page_not_a_stack_trace(self):
         svc = mock.Mock()
@@ -412,6 +465,20 @@ class KeyboardWiringTests(unittest.TestCase):
         for key, sel in re.findall(r"(\w+):'\.([\w-]+)'", m.group(1)):
             self.assertIn(f'ws-{sel.split("ws-")[-1]}', self.ws_js,
                           f"key '{key}' presses .{sel}, which websearch.js does not render")
+
+    def test_video_results_use_the_sites_own_embed(self):
+        """A player IS its scripts, and this frame runs none — so YouTube's watch page arrives blank
+        no matter how well it is proxied. Every one of these sites publishes an embed meant to be
+        framed, which is what a video result gets instead."""
+        import re
+        m = re.search(r"function embedUrl\(u\)\{(.+?)\n    \}", self.ws_js, re.S)
+        self.assertIsNotNone(m, "embedUrl is gone — video results would frame a blank page")
+        body = m.group(1)
+        for host in ("youtube.com", "youtu.be", "vimeo.com"):
+            self.assertIn(host, body)
+        self.assertIn("youtube-nocookie.com/embed/", body)
+        # …and it must NOT go through our page proxy, which is what strips the player.
+        self.assertNotIn("websearch/page", body)
 
     def test_escape_closes_the_open_page(self):
         self.assertIn("Escape", self.ws_js)
