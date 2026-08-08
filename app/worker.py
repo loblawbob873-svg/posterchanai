@@ -38,6 +38,10 @@ _SCHEDULERS = [
     ("fedi-nostr-writeback", "app.services.fedi_nostr_writeback_service", "start_fedi_writeback_listener"),
     ("fedi-nostr-personal", "app.services.fedi_nostr_personal_service", "start_fedi_personal_scheduler"),
     ("nostr-push", "app.services.nostr_push_service", "start_nostr_push_scheduler"),
+    # New mail → push, for a phone whose screen is off. Self-gating: start_* is a no-op unless
+    # `mail_poll_enabled` is on, and it lives HERE rather than in the app process because an IMAP
+    # round trip per account is exactly the long await that should not share the request loop.
+    ("mail-notify", "app.services.mail_notify_service", "start_mail_notify_scheduler"),
 ]
 
 _worker_process: Optional[subprocess.Popen] = None

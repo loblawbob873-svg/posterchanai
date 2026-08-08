@@ -240,6 +240,11 @@ class SettingsResponse(BaseModel):
     # The bundled CalDAV server (Radicale, mounted at /caldav). OFF by default: it opens a
     # password login surface, so an operator turns it on deliberately.
     caldav_enabled: bool = False
+    # Background IMAP poll that pushes new mail to a phone whose screen is off. OFF by default: a
+    # background poll across every account is the shape of the load that took the Email client down
+    # once, so an operator turns it on deliberately. Floor of 2 minutes, enforced in the service.
+    mail_poll_enabled: bool = False
+    mail_poll_minutes: int = 10
     searxng_url: str = ""
     # The OFF switch for web search on this node. It exists because clearing searxng_url no longer
     # means "don't search": resolution falls through to a bundled instance and then to a public one,

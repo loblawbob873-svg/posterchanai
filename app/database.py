@@ -418,6 +418,8 @@ def init_db():
             # VRAM management
             "vram_mode": os.environ.get("POSTERCHANAI_VRAM_MODE", "shared"),  # "shared" (swap models) or "dedicated" (keep both)
             "caldav_enabled": "false",   # bundled CalDAV server — opt-in (see docs/CALENDAR.md)
+            "mail_poll_enabled": "false",  # background mail poll + push — opt-in (see docs/MAIL.md)
+            "mail_poll_minutes": "10",
             # EMPTY on purpose — resolved at search time by search_service.resolve_searxng_url()
             # (Admin setting → the SearXNG bundled with this node → a public instance). Seeding a
             # URL here is how every node that never touched the field ended up searching through one

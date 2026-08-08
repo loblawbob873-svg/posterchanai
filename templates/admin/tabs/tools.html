@@ -15,6 +15,31 @@
                 password in the client (Settings → Calendar) to add it to a device.
                 <b>Off by default</b>, because turning it on opens a password login.</small>
         </div>
+        <small>Calendar reminders need nothing here: an event's own alarm ("remind me 15 minutes
+            before") becomes a reminder, which already reaches the web UI, a phone by push, and
+            Telegram when it is linked.</small>
+    </fieldset>
+
+    <fieldset>
+        <legend>Email notifications</legend>
+        <div class="form-group">
+            <label for="mail_poll_enabled">
+                <input type="checkbox" id="mail_poll_enabled" name="mail_poll_enabled">
+                Check for new mail in the background
+            </label>
+            <small>Polls each user's IMAP INBOX and pushes new mail to their phone even when nothing
+                is open. Without it, mail is fetched when the client opens or on login — fine at a
+                desk, no use on a locked phone. <b>Off by default</b>: a background poll across every
+                account on the node is real, recurring load, and this feature has been taken down by
+                exactly that once before. Runs in the worker process, never the one serving pages.</small>
+        </div>
+        <div class="form-group">
+            <label for="mail_poll_minutes">How often (minutes)</label>
+            <input type="number" id="mail_poll_minutes" name="mail_poll_minutes" min="2" step="1">
+            <small>Minimum 2, and the service enforces that floor whatever is typed here. 10 is a
+                sensible default; shorter intervals mean an IMAP round trip per account, that often,
+                forever.</small>
+        </div>
     </fieldset>
 
     <fieldset>
