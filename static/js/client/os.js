@@ -142,6 +142,8 @@
 
   // ---- windows -------------------------------------------------------------------------------
 
+  let repainting = 0;      // >0 while a window is repainting itself; see focusWin
+
   function focusWin(w, render){
     if(!w) return;
     wins.forEach(x => x.el.classList.toggle('focused', x === w));
@@ -155,8 +157,15 @@
       // A DOCUMENT window (a single post) repaints itself; a FEATURE window repaints by switching
       // the client back to its view. Both are needed because the one live #feed moves between
       // windows on every focus, so whatever it holds must be redrawn on arrival.
-      if(w.render){ try{ w.render(); }catch(err){ /* a stale document is not fatal */ } }
-      else try{ PC().switchView ? PC().switchView(w.view) : null; }catch(err){ /* a view that refuses is not fatal */ }
+      /* A repaint is NOT a navigation. Both paths below end in code that pushes a history entry
+       * (_navUrl), so without this every click between two windows added one — and the back button
+       * then walked window focus instead of navigation, landing on the profile again and again
+       * instead of returning to the timeline. */
+      repainting++;
+      try{
+        if(w.render){ try{ w.render(); }catch(err){ /* a stale document is not fatal */ } }
+        else try{ PC().switchView ? PC().switchView(w.view) : null; }catch(err){ /* a view that refuses is not fatal */ }
+      }finally{ repainting--; }
     }
   }
 
@@ -249,11 +258,13 @@
    * was created and has already repainted itself), false when the caller should paint where it is —
    * which covers both "that window already exists, the feed has been moved into it" and "this view
    * is not something the launcher knows about", where a window would be a surprise. */
-  function routeView(view){
+  function routeView(view, focusOnly){
     if(!on || !view) return false;
     if(!apps().some(a => a.view === view)) return false;
     const w = wins.find(x => x.view === view);
     if(w){ focusWin(w, false); return false; }   // already open: claim the feed, let the caller paint
+    // Back/forward passes focusOnly: it may bring a window forward, never conjure one.
+    if(focusOnly) return false;
     return !!openApp(view);                       // creates it AND repaints through focusWin
   }
 
@@ -589,9 +600,16 @@
           openDoc('search', 'Search', 'i-search', run);
         });
       } }
+    /* The tray avatar opens the ACCOUNTS sheet, not the profile directly — the sheet's first row is
+     * the identity you are signed in as and opens the profile, so nothing is lost, and switching
+     * between a few keys gets the place a desktop expects it: the corner with your face in it. */
     { const mb = $('#os-me', bar);
-      if(mb) mb.onclick = () => { try{ PC().openProfile && PC().openProfile(); }
-                                  catch(err){ PC().toast && PC().toast('could not open your profile'); } }; }
+      if(mb) mb.onclick = () => {
+        try{
+          if(PC().accountMenu) PC().accountMenu();
+          else if(PC().openProfile) PC().openProfile();
+        }catch(err){ PC().toast && PC().toast('could not open your accounts'); }
+      }; }
     { const cb = $('#os-clock', bar); if(cb) cb.onclick = (e) => { e.stopPropagation(); toggleNoti(); }; }
     $('#os-exit', bar).onclick = () => exit();
     $$('.os-task', bar).forEach(b => b.onclick = () => {
@@ -653,7 +671,12 @@
     try{ rows = items.map(e => `<div class="os-noti-row">${PC().notifHtml(e)}</div>`).join(''); }catch(_){}
     panel.innerHTML =
       `<div class="os-noti-head"><b>Notifications</b>
-         <button class="os-noti-x" id="os-noti-all" title="Open the Notifications app">Open all</button></div>
+         <span class="os-noti-hb">
+           <button class="os-noti-x" id="os-noti-ding"
+                   title="${settings().get('osDing', true) ? 'Mute the arrival sound' : 'Unmute the arrival sound'}"
+                   aria-label="Notification sound">${settings().get('osDing', true) ? '🔔' : '🔕'}</button>
+           <button class="os-noti-x" id="os-noti-all" title="Open the Notifications app">Open all</button>
+         </span></div>
        ${mailRow}
        <div class="os-noti-list">${rows || '<div class="empty">Nothing new.</div>'}</div>`;
     root.appendChild(panel);
@@ -661,6 +684,13 @@
     if(mail > 0) $('#os-noti-mail', panel).onclick = () => { hideNoti(); openApp('messages'); };
     mailAck = mail;                              // looking at the centre counts as looking
     $('#os-noti-all', panel).onclick = () => { hideNoti(); openApp('notifications'); };
+    $('#os-noti-ding', panel).onclick = (e) => {
+      e.stopPropagation();
+      const nowOn = !settings().get('osDing', true);
+      settings().set('osDing', nowOn);
+      if(nowOn) ding();                    // hear what you just switched on
+      toggleNoti(true);                    // repaint the header
+    };
 
     // Same wiring the Notifications view uses: the row opens the post, the avatar opens the sender.
     // Both land in their own window, which is where reply and react already live in full.
@@ -700,8 +730,42 @@
   // fires for exactly the things the classic UI toasts and nothing else.
   let toastHost = null, mailSeen = null, mailT = 0;
 
+  /* The arrival chime. Synthesised rather than shipped as a file: no asset in the bundle, no fetch
+   * (so it works offline and in the desktop app), no decode. A soft chime, not a beep — C5 with a
+   * quiet fifth above it, triangle waves rolled off by a lowpass, a gentle 40ms attack and a long
+   * tail. Sharp attacks and high sines are what make notification sounds grating; this is meant to
+   * be liveable at forty a day. Browsers refuse audio until the page has been interacted with, and a
+   * desktop restored from the remembered toggle has had no click yet, so a blocked play is swallowed
+   * rather than thrown — the toast is the notification, the sound is the courtesy. */
+  let _ac = null;
+  function ding(){
+    if(!settings().get('osDing', true)) return;
+    try{
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if(!AC) return;
+      _ac = _ac || new AC();
+      if(_ac.state === 'suspended') _ac.resume().catch(() => {});
+      const t0 = _ac.currentTime;
+      const lp = _ac.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 1800;
+      const out = _ac.createGain();
+      out.gain.setValueAtTime(0.0001, t0);
+      out.gain.exponentialRampToValueAtTime(0.075, t0 + 0.04);
+      out.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.1);
+      lp.connect(out); out.connect(_ac.destination);
+      [[523.25, 1], [783.99, 0.45]].forEach(([f, lvl]) => {
+        const o = _ac.createOscillator(), g = _ac.createGain();
+        o.type = 'triangle'; o.frequency.value = f;
+        g.gain.value = lvl;
+        o.connect(g); g.connect(lp);
+        o.start(t0); o.stop(t0 + 1.2);
+      });
+    }catch(_){ /* no audio here — the toast still is the notification */ }
+  }
+
   function osToast(html, pic){
     if(!on) return;
+    ding();
     if(!toastHost || !toastHost.isConnected){
       toastHost = document.createElement('div');
       toastHost.className = 'os-toasts';
@@ -924,5 +988,6 @@
   });
 
   window.PCOS = { enter, exit, toggle, restore, isOn: () => on, openDoc, focusDoc, routeView, snapTo, osToast,
+                  isRepainting: () => repainting > 0,
                   windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min })) };
 })();

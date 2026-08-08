@@ -316,7 +316,36 @@
   const Session = {
     save(s){ localStorage.setItem('pc_nostr_session', JSON.stringify(s)); },
     load(){ try { return JSON.parse(localStorage.getItem('pc_nostr_session')||'null'); } catch(_){ return null; } },
-    clear(){ localStorage.removeItem('pc_nostr_session'); }
+    clear(){ localStorage.removeItem('pc_nostr_session'); },
+
+    /* Remembered accounts, so a few identities can be kept side by side and swapped between.
+     * A SEPARATE key from the live session on purpose: signing out clears the session, and the list
+     * has to survive that or "switch account" would only ever work while you were already signed in.
+     * Each entry is the session object it takes to sign back in, plus enough profile to draw a row.
+     * The secrets here are exactly the ones `pc_nostr_session` already holds — this stores no key
+     * that was not on this device a moment ago — but it does hold SEVERAL, so forget() is wired to
+     * sign-out rather than being a hidden setting nobody finds. */
+    accounts(){
+      try { const a = JSON.parse(localStorage.getItem('pc_nostr_accounts')||'[]'); return Array.isArray(a)?a:[]; }
+      catch(_){ return []; }
+    },
+    remember(sess, meta){
+      const pk = (meta && meta.pubkey) || (sess && sess.pubkey);
+      if(!pk || !sess) return;
+      const list = Session.accounts().filter(a => a.pubkey !== pk);
+      // Keep whatever we already knew about the profile when this call cannot say — renderMe fills
+      // the name and picture in later, and a login knows neither yet.
+      const prev = Session.accounts().find(a => a.pubkey === pk) || {};
+      list.unshift({ pubkey: pk, sess,
+                     npub: (meta && meta.npub) || prev.npub || '',
+                     name: (meta && meta.name) || prev.name || '',
+                     picture: (meta && meta.picture) || prev.picture || '' });
+      try { localStorage.setItem('pc_nostr_accounts', JSON.stringify(list.slice(0, 12))); } catch(_){}
+    },
+    forget(pk){
+      try { localStorage.setItem('pc_nostr_accounts',
+              JSON.stringify(Session.accounts().filter(a => a.pubkey !== pk))); } catch(_){}
+    }
   };
 
   // ---- client settings (browser-side) ----

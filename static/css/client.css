@@ -6178,6 +6178,7 @@ body.os-on #os-root{pointer-events:auto}
 .os-noti-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
   padding:12px 14px;border-bottom:1px solid var(--line)}
 .os-noti-head b{font-size:14px;letter-spacing:.4px}
+.os-noti-hb{display:flex;align-items:center;gap:2px}
 .os-noti-x{background:none;border:0;color:var(--neon);cursor:pointer;font-size:12.5px;
   font-family:inherit;padding:4px 6px;border-radius:6px}
 .os-noti-x:hover{background:rgba(var(--accent-rgb),.12)}
@@ -6211,6 +6212,35 @@ body.os-on #os-root{pointer-events:auto}
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 @keyframes os-slide{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){ .os-toast{animation:none} }
+
+/* "Click me for Desktop Mode" — a speech bubble off the instance logo, desktop widths only (the
+   script gates on that too; this is belt and braces because the sidebar is hidden on mobile anyway). */
+.brand{position:relative}
+.os-hint{position:absolute;left:calc(100% + 12px);top:50%;transform:translateY(-50%);z-index:30;
+  display:flex;align-items:center;gap:6px;white-space:nowrap;padding:7px 9px 7px 11px;border-radius:10px;
+  background:var(--panel2);border:1px solid var(--neon);color:var(--text);font-size:12px;
+  box-shadow:0 6px 22px rgba(0,0,0,.45);animation:os-hint-in .25s ease-out}
+.os-hint span{cursor:pointer}
+.os-hint::before{content:'';position:absolute;right:100%;top:50%;transform:translateY(-50%);
+  border:6px solid transparent;border-right-color:var(--neon)}
+.os-hint-x{background:none;border:0;color:var(--muted);cursor:pointer;font-size:11px;line-height:1;
+  padding:2px 3px;border-radius:5px;font-family:inherit}
+.os-hint-x:hover{color:var(--text);background:var(--panel)}
+@keyframes os-hint-in{from{opacity:0;transform:translateY(-50%) translateX(-6px)}to{opacity:1}}
+@media (max-width:1023px){ .os-hint{display:none} }
+@media (prefers-reduced-motion:reduce){ .os-hint{animation:none} }
+
+/* Account switcher rows */
+.acct-list{display:flex;flex-direction:column;gap:6px;max-height:52vh;overflow-y:auto}
+.acct-row{display:flex;align-items:center;gap:10px;text-align:left;padding:8px 10px}
+.acct-row img{width:30px;height:30px;border-radius:50%;object-fit:cover;flex:0 0 auto}
+.acct-n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acct-m{font-style:normal;font-size:10.5px;color:var(--muted);margin-left:6px;border:1px solid var(--line);
+  border-radius:5px;padding:1px 4px}
+.acct-cur{font-size:11px;color:var(--neon);font-weight:600;flex:0 0 auto}
+.acct-x{font-style:normal;color:var(--muted);font-size:12px;padding:2px 5px;border-radius:6px;flex:0 0 auto}
+.acct-x:hover{color:var(--bad,#f66);background:var(--panel)}
+.acct-row.on{border-color:var(--neon)}
 
 .os-me{width:32px;height:32px;border-radius:50%;overflow:hidden;padding:0;flex:0 0 auto;
   border:1px solid var(--line);background:var(--panel2);cursor:pointer;display:flex;

@@ -893,6 +893,10 @@
   let _routing = false;
   function _navUrl(path){
     if(_routing) return;                       // don't re-push while we're decoding the current URL
+    // Nor while a desktop window repaints itself on focus. Clicking between two windows is not
+    // navigation, and pushing an entry for it made the back button walk window focus instead of
+    // history — "back on Social took me to my profile twice".
+    try{ if(window.PCOS && PCOS.isRepainting && PCOS.isRepainting()) return; }catch(_){}
     // Stay INSIDE the PWA scope (/client, per the manifest). Pushing a bare "/" (or "/note1…") sends the
     // URL OUT of scope, which makes the browser reveal its address-bar/toolbar — the "toolbar appears on
     // login" bug (login's first switchView pushes "/"). When served under /client, prefix the base so the
@@ -1754,6 +1758,10 @@
   // ---------- app start ----------
   function startApp(){
     GUEST = !signer;   // a real login always has a signer; the guest sentinel does not
+    // Remember this identity so it can be switched back to later. Done HERE rather than at each of
+    // the six login paths, because this is the one place they all arrive with both a session and a
+    // pubkey; the name and picture are filled in by renderMe once the profile loads.
+    if(!GUEST) try{ Session.remember(Session.load(), { pubkey: ME.pubkey, npub: ME.npub }); }catch(_){}
     document.body.classList.toggle('guest', GUEST);
     /* ?next=/admin — where the server sent us to sign in from. /admin has no login page of its own
      * (the password UI is retired; the cookie a Nostr sign-in sets IS the admin session), so a
@@ -2189,7 +2197,11 @@
     // survives a logout unless it is asked to go. A handed-down phone would otherwise keep
     // autofilling the previous user's passwords into every app on it.
     try{ if(window.PCVault && PCVault.forget) PCVault.forget(); }catch(_){}
- Session.clear(); try{ localStorage.removeItem('pc_settings_cache'); }catch(_){}   // per-user cache — never leak/save it across identities on a shared install
+ // Signing out also FORGETS this identity in the switcher. The list holds real keys, so "log out"
+    // has to mean the key is gone from this device — leaving it behind under a different storage key
+    // would be a quiet downgrade of what that button has always promised.
+    try{ if(!GUEST && ME && ME.pubkey) Session.forget(ME.pubkey); }catch(_){}
+    Session.clear(); try{ localStorage.removeItem('pc_settings_cache'); }catch(_){}   // per-user cache — never leak/save it across identities on a shared install
     try{ fetch('/api/auth/logout',{method:'POST'}); }catch(_){}   // clear the server session cookie too
     Relay.worker.call('clearKey',{}); location.reload(); }
 
@@ -2548,6 +2560,61 @@
     // the NIP-05 handle, then a short npub. (No separate npub line cluttering it under the name.)
     const label = p.name || p.display_name || niceNip05(p.nip05) || (ME.npub.slice(0, 12) + '…');
     $('#me-card').innerHTML = `<img src="${enc(av)}" onerror="this.src='${LOGO}'"><div><div class="mn">${enc(label)}</div></div>`;
+    // Keep the switcher's row for this identity in step with the profile as it loads.
+    try{ Session.remember(Session.load(), { pubkey: ME.pubkey, npub: ME.npub, name: label,
+                                            picture: p.picture || '' }); }catch(_){}
+  }
+
+  /* ---------- switching between a few accounts ----------
+   * The client has always held ONE session. This keeps a list of them and swaps which is live, then
+   * RELOADS: an identity owns the event cache, the open subscriptions, the vault key, the follow and
+   * mute lists and the server session cookie, and unpicking all of that in place is how you end up
+   * posting from the wrong key. A reload costs a second and cannot get it wrong.
+   * A nip07/nip46 entry is listed but cannot be forced — the extension or the remote signer decides
+   * which key it hands back, so choosing one only tells the app which to EXPECT; it is labelled so
+   * that is not a surprise. */
+  function accountMenu(){
+    const list = (function(){ try{ return Session.accounts(); }catch(_){ return []; } })();
+    const me = (!GUEST && ME && ME.pubkey) || '';
+    const row = (a) => {
+      const ext = a.sess && a.sess.mode !== 'local';
+      return `<button class="btn btn-ghost full acct-row${a.pubkey === me ? ' on' : ''}" data-pk="${enc(a.pubkey)}">
+        <img src="${enc(a.picture || LOGO)}" onerror="this.src='${LOGO}'" alt="">
+        <span class="acct-n">${enc(a.name || (a.npub ? a.npub.slice(0, 14) + '…' : a.pubkey.slice(0, 12) + '…'))}
+          ${ext ? `<i class="acct-m">${enc(a.sess.mode)}</i>` : ''}</span>
+        ${a.pubkey === me ? '<b class="acct-cur">signed in</b>'
+                          : `<i class="acct-x" data-forget="${enc(a.pubkey)}" title="Forget this account">✕</i>`}
+      </button>`;
+    };
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-user"></use></svg>Accounts</h3>
+      <div class="acct-list">${list.length ? list.map(row).join('')
+        : '<div class="muted small" style="padding:8px 2px">No other accounts remembered yet.</div>'}</div>
+      <div class="row" style="margin-top:14px;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-neon" id="acct-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add an account</button>
+      </div>`, root => {
+      $('#acct-add', root).onclick = () => {
+        // Sign out of the live session ONLY. The remembered list is a different key, so the account
+        // you are leaving is still there to come back to — that is the whole point.
+        try{ Session.clear(); }catch(_){}
+        try{ fetch('/api/auth/logout', { method:'POST' }); }catch(_){}
+        try{ Relay.worker.call('clearKey', {}); }catch(_){}
+        location.reload();
+      };
+      $$('.acct-row', root).forEach(b => b.onclick = (ev) => {
+        const x = ev.target.closest('[data-forget]');
+        if(x){ ev.stopPropagation(); try{ Session.forget(x.dataset.forget); }catch(_){} closeModal(); accountMenu(); return; }
+        const pk = b.dataset.pk;
+        if(pk === me){ closeModal(); renderProfileView(pk); return; }
+        const a = list.find(z => z.pubkey === pk);
+        if(!a || !a.sess) return;
+        try{ Session.save(a.sess); }catch(_){}
+        try{ localStorage.removeItem('pc_settings_cache'); }catch(_){}   // per-user — never carry it across identities
+        try{ if(window.PCVault && PCVault.forget) PCVault.forget(); }catch(_){}
+        try{ Relay.worker.call('clearKey', {}); }catch(_){}
+        try{ fetch('/api/auth/logout', { method:'POST' }); }catch(_){}
+        location.reload();
+      });
+    });
   }
 
   // ---------- follows + profiles ----------
@@ -3058,8 +3125,37 @@
     logo.setAttribute('tabindex', '0');
     logo.setAttribute('title', 'PosterChan OS — open the desktop');
     const go = () => { try{ window.PCOS && window.PCOS.toggle(); }catch(err){ toast('could not open the desktop'); } };
-    logo.onclick = go;
-    logo.onkeydown = (e) => { if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); go(); } };
+    logo.onclick = () => { _dismissOsHint(); go(); };
+    logo.onkeydown = (e) => { if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); _dismissOsHint(); go(); } };
+    _osHint();
+  }
+
+  /* Nothing about a logo says "this opens a desktop", so it says so once. Shown only where the
+   * desktop can actually run — os.js refuses below 1024px, and dangling the offer at a phone is
+   * just a tease — and only until it is used or dismissed, because a permanent bubble over your own
+   * logo is an advert. */
+  function _dismissOsHint(){
+    try{ ClientSettings.set('osHintSeen', true); }catch(_){}
+    const b = document.getElementById('os-hint');
+    if(b) b.remove();
+  }
+  function _osHint(){
+    try{
+      if(ClientSettings.get('osHintSeen', false)) return;
+      if(ClientSettings.get('osMode', false)) return;          // already a desktop user
+      if(Math.min(window.innerWidth, window.innerHeight) < 700 || window.innerWidth < 1024) return;
+      const logo = $('.brand-logo'), brand = logo && logo.closest('.brand');
+      if(!brand || document.getElementById('os-hint')) return;
+      const b = document.createElement('div');
+      b.id = 'os-hint';
+      b.className = 'os-hint';
+      b.innerHTML = '<span>Click me for Desktop Mode</span><button class="os-hint-x" aria-label="Dismiss">✕</button>';
+      b.querySelector('.os-hint-x').onclick = (e) => { e.stopPropagation(); _dismissOsHint(); };
+      b.querySelector('span').onclick = () => { _dismissOsHint(); try{ PCOS.toggle(); }catch(_){} };
+      brand.appendChild(b);
+      // It has said its piece after a while; leaving it up forever is the advert case again.
+      setTimeout(() => { const n = document.getElementById('os-hint'); if(n) n.remove(); }, 20000);
+    }catch(_){}
   }
 
   function switchView(v){
@@ -3075,9 +3171,12 @@
      * actually render. _routing is the back/forward button (see openThread), and _osIn stops the
      * recursion when the new window repaints itself through this same function.
      * This does NOT touch reply/quote/compose — those are modals and never come through here. */
-    if(window.PCOS && PCOS.isOn() && !switchView._osIn && !_routing){
+    if(window.PCOS && PCOS.isOn() && !switchView._osIn){
       switchView._osIn = 1;
-      try{ if(PCOS.routeView && PCOS.routeView(v)) return; }
+      // While ROUTING (back/forward) it may only bring an existing window forward — so going back to
+      // the timeline focuses the Social window that already has it, rather than repainting whatever
+      // window happened to be in front (which turned the Profile window into a timeline).
+      try{ if(PCOS.routeView && PCOS.routeView(v, _routing)) return; }
       finally{ switchView._osIn = 0; }
     }
     // Leaving Messages clears the open conversation so RE-entering Messages shows the list (not the last
@@ -10852,7 +10951,7 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['ai','ai','PosterChan AI'],['websearch','search','Web Search'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['settings','gear','Settings'],['logout','logout','Logout']]
+    const items=[['ai','ai','PosterChan AI'],['websearch','search','Web Search'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__accounts','user','Switch account'],['settings','gear','Settings'],['logout','logout','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
                    && !(window.PC_NOSTR_ONLY && v==='websearch')   // the search runs on the instance, so it needs one
                    && !(v==='__golive' && CFG.stream_enabled===false));   // hide AI+Translate in Nostr-only; Go Live only where the node streams
@@ -10870,7 +10969,7 @@
     const _act=`<span title="Live streams right now">${STREAM_ICON} ${_lastStreams.toLocaleString()} live</span><span title="People in a call right now">${CALL_ICON} ${_lastCalls.toLocaleString()} in call</span>`;
     const _stat=`<div class="more-stats muted small">${_net?`<div class="ms-row">${_net}</div>`:''}<div class="ms-row">${_act}</div></div>`;
     modal(`<h3>More</h3>${_stat}<div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
-      $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; if(v==='__discover'){ closeModal(); discoverMenu(); return; } if(v==='__games'){ closeModal(); gamesMenu(); return; } if(v==='__files'){ closeModal(); filesMenu(); return; } if(v==='__golive'){ closeModal(); _goLive(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
+      $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; if(v==='__discover'){ closeModal(); discoverMenu(); return; } if(v==='__games'){ closeModal(); gamesMenu(); return; } if(v==='__files'){ closeModal(); filesMenu(); return; } if(v==='__golive'){ closeModal(); _goLive(); return; } if(v==='__accounts'){ closeModal(); accountMenu(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
     });
   }
   function filesMenu(){   // mobile Files sub-sheet — mirrors the desktop sidebar's Files group
@@ -22833,6 +22932,8 @@
     runSearch,                                                // → the desktop's taskbar search box
     // The desktop hides the sidebar, and #me-card was the only way to reach your own profile.
     openProfile: (pk) => renderProfileView(pk || (window.ME && ME.pubkey)),
+    accountMenu,                                              // → the desktop's tray avatar
+    accountCount: () => { try{ return Session.accounts().length; }catch(_){ return 0; } },
     openThread,                                               // → a post window from the notification centre
     goLive: _goLive,                                          // → the desktop's Go Live launcher entry
     /* The desktop's notification centre renders the SAME rows the Notifications view does, through
