@@ -523,3 +523,65 @@ def test_a_prefix_tag_filter_reads_one_namespace_not_the_whole_key(store_factory
         assert len(one) == 1
 
     _run(go)
+
+
+def test_deleting_a_backup_document_still_federates():
+    """The private-deletion guard must not swallow the DR-backup namespaces.
+
+    `_broadcastable` deliberately DOES send settings/accounts/per-user config/bots upstream when
+    `backup_datastore` is on (it defaults on), so those documents exist on relays we do not control.
+    Their TOMBSTONES therefore have to travel too. Suppressing them leaves the upstream copy
+    permanent: delete a bot, rebuild the node, restore from upstream with the operator nsec, and the
+    bot is back and posting. Same for a deleted user and an unset setting — the resurrection
+    CLAUDE.md documents for settings, extended to accounts.
+    """
+    from app.services.nostr_relay.server import _broadcastable
+    pk = "a" * 64
+    cfg = {"backup_datastore": True}
+    for ns in ("pcai:setting:foo", "pcai:user:npub1x", "pcai:usercfg:npub1x", "pcai:bot:shobot"):
+        ev = {"kind": 5, "tags": [["a", f"30078:{pk}:{ns}"]]}
+        assert _broadcastable(ev, cfg), f"{ns} is backed up upstream, so its delete must federate"
+    # …and the private libraries still stay home, backup or not.
+    for ns in ("pcai:mail:me@example.com:INBOX:1", "pcai:note:abc", "pcai:cal:main:u1",
+               "pcai:pw:entry"):
+        ev = {"kind": 5, "tags": [["a", f"30078:{pk}:{ns}"]]}
+        assert not _broadcastable(ev, cfg), ns
+        assert not _broadcastable(ev, {"backup_datastore": False}), ns
+
+
+def test_an_explicit_empty_d_tag_still_replaces(store_factory):
+    """`["d",""]` is the same coordinate as no `d` tag at all, and must replace rather than pile up.
+
+    Ingest indexes empty tag values, so a NOT EXISTS-only lookup could not see an incumbent that
+    carried an explicit empty `d` — every revision accumulated under one coordinate, a `#d`
+    query returned the whole history instead of one document, and the relay grew without bound on
+    firehose traffic from any client that emits one.
+    """
+    async def go(loop):
+        store = store_factory(loop)
+        pk = "b" * 64
+
+        def ev(i, tags, age=0):
+            e = _ev(i, kind=30078, age_days=age, pubkey=pk)
+            e["tags"] = tags
+            return e
+
+        # Ages differ deliberately: created in the same second these would TIE, and a tie is
+        # settled by the lower id — a different rule, tested elsewhere.
+        await store.add_event(ev(1, [["d", ""]], age=2), origin="direct")
+        await store.add_event(ev(2, [["d", ""]], age=1), origin="direct")
+        left = await store.query([{"authors": [pk], "kinds": [30078], "limit": 50}])
+        assert len(left) == 1, f"an explicit empty d must replace, got {len(left)} revisions"
+        assert left[0]["id"] == f"{2:064x}"
+
+        # A tagless revision addresses that same coordinate and replaces it too.
+        await store.add_event(ev(3, []), origin="direct")   # newest (age 0)
+        left = await store.query([{"authors": [pk], "kinds": [30078], "limit": 50}])
+        assert len(left) == 1, "no-d and empty-d are one coordinate"
+        assert left[0]["id"] == f"{3:064x}"
+
+        # …and a real d-tag beside it is untouched.
+        await store.add_event(ev(4, [["d", "pcai:kv:real"]]), origin="direct")
+        assert len(await store.query([{"authors": [pk], "kinds": [30078], "limit": 50}])) == 2
+
+    _run(go)

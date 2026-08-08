@@ -15025,7 +15025,11 @@
         // Enter completes the highlighted contact rather than submitting — the same bargain every
         // autocomplete makes, and Escape gets you out without one.
         if(sel >= 0){ e.preventDefault(); put(items[sel]); }
-      }else if(e.key === 'Escape'){ kill(); }
+      }else if(e.key === 'Escape'){
+        // Close the SUGGESTIONS, not the composer. Left to bubble, Escape reached the modal's own
+        // handler and threw away the half-written email behind the dropdown.
+        e.preventDefault(); e.stopPropagation(); kill();
+      }
     });
   }
 

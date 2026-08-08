@@ -484,7 +484,7 @@ async def drive(url):
                                          "the composer is wider than the screen"))
                     f = cc.get("fill") or {}
                     # Phone: the whole screen. Desktop: a real window, not a 720px dialog.
-                    want_h = 0.9 if phone else 0.6
+                    want_h = 0.9 if phone else 0.4   # desktop composer is ~46dvh by design
                     want_w = 0.98 if phone else 0.55
                     if f.get("h", 0) < want_h or f.get("w", 0) < want_w:
                         problems.append((label, "compose-too-small",

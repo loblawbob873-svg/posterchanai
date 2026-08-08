@@ -351,10 +351,15 @@ class RelayStore:
                         "JOIN event_tags t ON t.event_id = e.id AND t.tag='d' AND t.value=? "
                         "WHERE e.pubkey=? AND e.kind=?", (d, pubkey, kind))
                 else:
+                    # An empty `d` is BOTH "no d tag at all" and an explicit ["d",""] — ingest
+                    # indexes the empty value, so a NOT EXISTS alone missed the explicit form and
+                    # every revision of that coordinate accumulated instead of replacing.
                     cur = conn.execute(
                         "SELECT e.id, e.created_at FROM events e "
-                        "WHERE e.pubkey=? AND e.kind=? AND NOT EXISTS ("
-                        "  SELECT 1 FROM event_tags t WHERE t.event_id = e.id AND t.tag='d')",
+                        "WHERE e.pubkey=? AND e.kind=? AND (NOT EXISTS ("
+                        "  SELECT 1 FROM event_tags t WHERE t.event_id = e.id AND t.tag='d')"
+                        " OR EXISTS (SELECT 1 FROM event_tags t2 WHERE t2.event_id = e.id"
+                        "            AND t2.tag='d' AND t2.value=''))",
                         (pubkey, kind))
                 # Every row returned now IS a same-coordinate match, so there is nothing left to
                 # compare but the NIP-01 tie-break.

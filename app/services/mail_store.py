@@ -99,25 +99,37 @@ async def list_page(seckey: bytes, account_email: str | None = None, folder: str
                     limit: int | None = None, until: int | None = None) -> tuple:
     """One page of messages plus the cursor for the NEXT one: (messages, next_until).
 
-    Paging is by the relay's `until` (event created_at, newest first), not by the message date —
-    a mailbox mirrored in one sync has thousands of messages whose dates span years but whose
-    STORED order is the order they arrived. The cursor is therefore opaque to the caller and only
-    ever handed back; the page itself is sorted by message date for display.
+    Paging is by the relay's `until` (event created_at, newest first), not by the message date — a
+    mailbox mirrored in one sync holds thousands of messages whose dates span years but whose STORED
+    order is the order they arrived. The cursor is opaque to the caller and only ever handed back;
+    each page is sorted by date for display, and the caller accumulates.
 
-    next_until is None when the page came back short, which is the only reliable end-of-list signal:
-    a count can lie when several documents share a created_at second.
+    TWO THINGS THIS GETS RIGHT, both of which silently lost mail when it did not:
+
+    * The cursor is `min(created_at)`, INCLUSIVE, not `min - 1`. Documents written by one sync share
+      a second — at ~9 writes/second, many do — and the relay's LIMIT cuts mid-second, so stepping
+      the cursor past that second drops every sibling that did not fit on the page. The overlap this
+      creates is the price, and the caller de-duplicates by uid (the client already does).
+    * "Is there more?" is decided by how many EVENTS the relay returned, not by how many decoded.
+      One undecryptable document made the page look short, which read as end-of-list and hid every
+      older message in the folder behind it.
     """
     want = _SCAN_LIMIT if limit == 0 else int(limit or _PAGE)
     docs = await nostr_store.list_docs(_port(), _prefix(account_email, folder), seckey=seckey,
                                        encrypt=True, limit=want, until=until, with_meta=True)
+    raw = len(docs)
     pairs = [(v, ts) for (v, ts) in docs.values() if isinstance(v, dict)]
     msgs = [v for v, _ in pairs]
     msgs.sort(key=lambda m: m.get("ts", 0), reverse=True)
     nxt = None
-    if pairs and len(pairs) >= want:
-        # One second BEFORE the oldest we just read, or a document sharing that second would repeat
-        # on every page and the list would never advance.
-        nxt = min(ts for _, ts in pairs) - 1
+    if raw >= want and docs:
+        oldest = min(ts for (_v, ts) in docs.values())
+        # Only advance if the page actually spans more than one second; otherwise an entire page of
+        # ties would hand back the same cursor forever. In that case step past it and accept that a
+        # second holding more than `want` documents cannot be paged through — vanishingly rare, and
+        # far better than an infinite "Load older".
+        newest = max(ts for (_v, ts) in docs.values())
+        nxt = oldest if oldest != newest else oldest - 1
     return msgs, nxt
 
 
@@ -143,8 +155,26 @@ async def have_uids(seckey: bytes, account_email: str, folder: str) -> set:
     the last d-tag segment, so this reads d-tags WITHOUT decrypting any content (sync ran a NIP-44
     decrypt of the whole folder here on every pass, pegging the event loop — see the CPU-spike fix)."""
     prefix = _prefix(account_email, folder)
-    dtags = await nostr_store.list_dtags(_port(), prefix, seckey=seckey, limit=_SCAN_LIMIT)
-    return {d[len(prefix):] for d in dtags if len(d) > len(prefix)}
+    # PAGED, because the relay clamps any limit to 5000 and this set is the sync's dedup. A folder
+    # with more than 5000 mirrored messages returned only the newest 5000, so every pass saw the
+    # remainder as "never seen", re-fetched them over IMAP and re-wrote them — forever. That is the
+    # write-storm the module header describes, arriving by a different road, and nothing logs when a
+    # read hits the cap. Walking the cursor to exhaustion is the only honest way to answer
+    # "what do I already have?".
+    out, until, guard = set(), None, 0
+    while guard < 200:                       # 200 pages x 5000 = a million documents; a real bound
+        guard += 1
+        dtags, nxt, seen = await nostr_store.list_dtags(_port(), prefix, seckey=seckey,
+                                                        limit=_SCAN_LIMIT, until=until,
+                                                        with_meta=True)
+        out |= {d[len(prefix):] for d in dtags if len(d) > len(prefix)}
+        if not nxt or not seen:
+            break
+        until = nxt if until != nxt else nxt - 1     # never hand back the same cursor
+    else:
+        logger.warning("[mail] have_uids for %s/%s stopped at the page guard — dedup may be partial",
+                       account_email, folder)
+    return out
 
 
 def search(messages: list, query: str) -> list:

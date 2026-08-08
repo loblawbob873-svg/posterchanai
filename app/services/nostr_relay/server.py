@@ -108,8 +108,21 @@ def _broadcastable(ev, cfg=None) -> bool:
     # events times twenty relays, which is how the outbox queue pinned and the relay pegged.
     if k == 5:
         for t in ev.get("tags", []):
-            if len(t) >= 2 and t[0] == "a" and ":pcai:" in str(t[1]):
-                return False
+            if len(t) < 2 or t[0] != "a":
+                continue
+            coord = str(t[1])
+            if ":pcai:" not in coord:
+                continue
+            # …EXCEPT the DR-backup namespaces, which _broadcastable deliberately DOES federate when
+            # `backup_datastore` is on (settings, accounts, per-user config, bots). Those documents
+            # are upstream, so their TOMBSTONES have to be too — suppressing the delete leaves the
+            # upstream copy permanent, and a rebuilt node restoring from upstream brings back the
+            # bot you removed, the user you deleted and the setting you unset. That is the same
+            # resurrection CLAUDE.md documents for settings, and it would apply to accounts here.
+            d = coord.split(":", 2)[2] if coord.count(":") >= 2 else ""
+            if cfg and cfg.get("backup_datastore") and d.startswith(_BACKUP_NS):
+                continue
+            return False
     # Opt-out marker: e.g. game bots tag the mid-game move boards so only the opening + final post
     # federate to the wider network (the middle plays stay local-only — anti-spam).
     if any(t and len(t) >= 1 and t[0] == "nofederate" for t in ev.get("tags", [])):

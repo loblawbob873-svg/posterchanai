@@ -113,7 +113,28 @@ A companion **browser extension** (Firefox, and Chrome / Brave via MV3) makes yo
 
 ### PIM & productivity
 
-- **Email**: read and send mail via IMAP/SMTP
+- **Email**: a full mail client (Messages → 📧 Email) over your own IMAP/SMTP accounts. The mailbox
+  is mirrored into **encrypted Nostr events** — one per message — so it is searchable without an
+  IMAP round trip and syncs across your devices; **attachments are AES-GCM encrypted and stored in
+  Blossom**, with the key held only inside the (already encrypted) message document. Threads,
+  folders, bulk actions, drafts, a unified *All inboxes* view, contacts autocomplete in the
+  composer, and per-account **folder mapping** (Settings → Mail → 📂 Folders) for servers whose
+  Sent/Drafts mailboxes don't match the guess. The mailbox is **local to your node** and never
+  federated. Optional background polling pushes new mail to a locked phone. See
+  **[docs/MAIL.md](docs/MAIL.md)**
+- **Calendar (CalDAV)**: a calendar server *inside* the app at `/caldav` — your phone and desktop
+  calendar app sync with it like any other CalDAV server, no extra service to run. Events are
+  encrypted Nostr events; the web client has a month grid, an event editor, `.ics` import/export and
+  recurring-event support, and an event's own alarm becomes a reminder that reaches a locked phone.
+  See **[docs/CALENDAR.md](docs/CALENDAR.md)**
+- **Contacts (CardDAV)**: your addressbook, same server, same account and password — one setup gets
+  both calendar and contacts on a phone. Cards are stored **exactly as your phone wrote them**
+  (photos, labels and all), with search, `.vcf` import/export, and reuse in the mail composer. See
+  **[docs/CONTACTS.md](docs/CONTACTS.md)**
+- **Web search**: a **SearXNG instance bundled with your node** (installed by default, branded and
+  dark-themed) behind a search screen with AI overviews and citations, Save to Notes, and a reader
+  that opens the page *inside* the app. Your node can also be added as your browser's own search
+  engine. See **[docs/WEBSEARCH.md](docs/WEBSEARCH.md)**
 - **News**: LLM news summaries from chat (`news` / `dailynews`), plus a full **RSS reader** in the web client (see [Nostr web client](#nostr-web-client))
 - **Budget**: bills, monthly summary and spending plans in the web client (Discover → Budget), stored as a Nostr event **encrypted to your own key** — the server can't read it
 - **To-do**: quick personal task list from chat (`todo`)
@@ -383,7 +404,11 @@ the Arc environment.
 - **[docs/NOSTR_DOCKER.md](docs/NOSTR_DOCKER.md)** — Nostr-only instance, start to finish: empty VPS → HTTPS → claiming admin → relay/NIP-05/Blossom config → backups
 - **[docs/BOTS.md](docs/BOTS.md)** — Bot manager: the merged `botframework/`, Admin → Bots, per-bot config, the single server endpoint, and per-node cutover
 - **[docs/ADVANCED.md](docs/ADVANCED.md)** — LLM backends, image generation, load balancing, Intel IPEX
-- **docs/** — Email, nginx, and other feature documentation
+- **[docs/MAIL.md](docs/MAIL.md)** — The mail client: how the mailbox is stored, why it is local to your node, encrypted attachments, folder mapping and notifications
+- **[docs/CALENDAR.md](docs/CALENDAR.md)** — Bundled CalDAV: what "encrypted" does and does not mean here, adding it to a phone, import/export and recurrence
+- **[docs/CONTACTS.md](docs/CONTACTS.md)** — Bundled CardDAV: one account for calendar *and* contacts, and why cards round-trip byte for byte
+- **[docs/WEBSEARCH.md](docs/WEBSEARCH.md)** — The bundled SearXNG, the in-app reader, and where a node actually searches
+- **docs/** — nginx and other feature documentation
 
 ---
 

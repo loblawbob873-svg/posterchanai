@@ -319,7 +319,8 @@ async def list_docs(port: int, prefix: str, *, seckey: bytes | None = None, pubk
 
 async def list_dtags(port: int, prefix: str, *, seckey: bytes | None = None,
                      pubkey: str | None = None, kind: int = APP_KIND,
-                     limit: int = 5000) -> set:
+                     limit: int = 5000, until: int | None = None,
+                     with_meta: bool = False) -> set | tuple:
     """Just the d-tags under `prefix` — NO content decryption.
 
     For existence/UID checks where the key is encoded in the d-tag itself (mailbox dedup), so a sync
@@ -339,12 +340,19 @@ async def list_dtags(port: int, prefix: str, *, seckey: bytes | None = None,
     flt = {"authors": [pk], "kinds": [kind], "limit": limit}
     if prefix:
         flt["#d~"] = [prefix]      # see list_docs: ask for the namespace, not the whole key
+    if until:
+        flt["until"] = int(until)
     evs = await _ws_query(port, [flt])
     out = set()
+    oldest = None
     for ev in evs:
         d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), None)
         if d and d.startswith(prefix):
             out.add(d)
+        ts = int(ev.get("created_at", 0))
+        oldest = ts if oldest is None else min(oldest, ts)
+    if with_meta:
+        return out, (oldest if len(evs) >= limit else None), len(evs)
     return out
 
 

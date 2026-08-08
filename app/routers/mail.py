@@ -245,31 +245,46 @@ async def mail_messages(account: str = "", folder: str = "INBOX", until: int = 0
     """One page of a folder, newest first. `until` is the cursor from the previous page."""
     sk = _seckey(db, current_user)
     if account == "__all":
-        # Unified view: this logical folder across EVERY account. Ask each account for the ONE
-        # folder that plays the role, rather than pulling the whole mailbox and filtering in Python.
-        #
-        # That is not only cheaper, it is the difference between right and wrong: the relay clamps
-        # any limit to 5000, so "read everything and filter" silently returned the newest 5000
-        # documents ACROSS ALL FOLDERS — for a mailbox of nine thousand that is a handful of INBOX
-        # mail and the rest missing, with nothing to say so. Real folder names differ per account
-        # (and the user can now map them), so the name comes from the same resolver the sync uses.
-        msgs = []
+        # Unified view: this logical folder across EVERY account. Ask each account for the folder(s)
+        # that play the role rather than pulling the whole mailbox and filtering in Python — the
+        # relay clamps any limit to 5000, so "read everything and filter" silently returned the
+        # newest 5000 documents ACROSS ALL FOLDERS and showed whatever survived.
+        msgs, nexts = [], []
         for acc in (get_user_mail_accounts(current_user.id, db) or []):
-            real = folder
+            names = [folder]
             if folder != "INBOX":
                 try:
                     meta = await _asyncio.to_thread(_list_special_folders, current_user.id, db, acc.email)
                     key = {"Sent": "sent", "Drafts": "drafts", "Trash": "trash",
                            "Spam": "junk", "Archive": "archive"}.get(folder)
-                    real = (meta.get(key) if key else None) or folder
+                    real = (meta.get(key) if key else None)
+                    # BOTH names, not one. A compose draft is saved locally under the literal
+                    # "Drafts" while the server's own drafts mailbox may be "[Gmail]/Drafts" or
+                    # "INBOX.Drafts" — resolving to the real name alone made every draft written in
+                    # this app disappear from All inboxes → Drafts.
+                    if real and real != folder:
+                        names.append(real)
                 except Exception:
-                    real = folder
-            try:
-                msgs += await mail_store.list_messages(sk, acc.email, real)
-            except Exception as e:
-                logger.warning("[mail] unified view: %s/%s unreadable: %s", acc.email, real, e)
-        msgs.sort(key=lambda m: m.get("ts", 0), reverse=True)
-        return {"messages": [_summary(m) for m in msgs], "account": "__all"}
+                    pass
+            for name in names:
+                try:
+                    page, nxt = await mail_store.list_page(sk, acc.email, name, until=until or None)
+                    msgs += page
+                    if nxt:
+                        nexts.append(nxt)
+                except Exception as e:
+                    logger.warning("[mail] unified view: %s/%s unreadable: %s", acc.email, name, e)
+        seen, uniq = set(), []
+        for m in sorted(msgs, key=lambda m: m.get("ts", 0), reverse=True):
+            k = (m.get("account"), m.get("folder"), m.get("uid"))
+            if k in seen:
+                continue
+            seen.add(k)
+            uniq.append(m)
+        # The OLDEST cursor across the accounts, so "Load older" keeps every account advancing
+        # rather than stopping at whichever ran out first.
+        return {"messages": [_summary(m) for m in uniq], "account": "__all",
+                "next_until": (min(nexts) if nexts else None)}
     acc = _resolve_account(db, current_user, account)
     if not acc:
         return {"messages": [], "account": None}
