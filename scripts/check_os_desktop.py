@@ -53,6 +53,16 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
       <button class="nav-item" data-view="calendar"><svg class="ic"><use href="#i-clock"></use></svg><span>Calendar</span></button>
       <button class="nav-item" data-view="contacts"><svg class="ic"><use href="#i-user"></use></svg><span>Contacts</span></button>
       <button class="nav-item" data-view="messages"><svg class="ic"><use href="#i-mail"></use></svg><span>Messages</span></button>
+      <button class="nav-item" data-view="bookmarks"><svg class="ic"><use href="#i-bookmark"></use></svg><span>Bookmarks</span></button>
+      <button class="nav-item" data-view="calls"><svg class="ic"><use href="#i-phone"></use></svg><span>Calls</span></button>
+      <button class="nav-item" data-view="notes"><svg class="ic"><use href="#i-note"></use></svg><span>Notes</span></button>
+      <button class="nav-item" data-view="vault"><svg class="ic"><use href="#i-key"></use></svg><span>Passwords</span></button>
+      <button class="nav-item" data-view="drafts"><svg class="ic"><use href="#i-draft"></use></svg><span>Drafts</span></button>
+      <button class="nav-item" data-view="meme"><svg class="ic"><use href="#i-tv"></use></svg><span>Meme Builder</span></button>
+      <button class="nav-item" data-view="websearch"><svg class="ic"><use href="#i-search"></use></svg><span>Web Search</span></button>
+      <button class="nav-item" data-view="markets"><svg class="ic"><use href="#i-chart"></use></svg><span>Markets</span></button>
+      <button class="nav-item" data-view="news"><svg class="ic"><use href="#i-news"></use></svg><span>News</span></button>
+      <button class="nav-item" data-view="stats"><svg class="ic"><use href="#i-chart"></use></svg><span>Server Stats</span></button>
     </nav>
   </aside>
   <div class="main"><div id="feed" class="feed">CLASSIC</div></div>
@@ -61,8 +71,10 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <script>
 // A stub of the one contract os.js depends on: switchView paints the named view into #feed.
 window.__rendered = [];
+window.__composed = 0;
 window.__PC = {
   toast: m => (window.__toasts = window.__toasts || []).push(m),
+  compose: () => { window.__composed++; },
   get VIEW(){ return window.__view || 'global'; },
   switchView: v => {
     window.__view = v; window.__rendered.push(v);
@@ -84,10 +96,18 @@ DRIVE = r"""(async () => {
   out.classicFeedText = (document.getElementById('feed')||{}).textContent;
   PCOS.enter(); await sleep(150);
   out.entered   = PCOS.isOn();
+  const nb = document.querySelector('#os-new');
+  out.hasNew = !!nb;
+  if (nb) nb.click();
+  out.composed = window.__composed;
   out.hasBar    = !!document.querySelector('.os-bar');
   out.hasStart  = !!document.querySelector('#os-start');
   out.icons     = [...document.querySelectorAll('.os-icon')].map(b => b.dataset.view);
   out.navViews  = [...document.querySelectorAll('.sidebar .nav .nav-item[data-view]')].map(b => b.dataset.view);
+  // Distinct left edges = number of icon columns. With ~18 entries a grid would spill into a
+  // second column marching across the desktop and over the windows.
+  out.iconCols  = new Set([...document.querySelectorAll('.os-icon')]
+                    .map(b => Math.round(b.getBoundingClientRect().left))).size;
 
   // Start menu lists the same apps and can filter.
   document.querySelector('#os-start').click(); await sleep(120);
@@ -273,17 +293,28 @@ async def drive(url):
                     print(f"SKIP  {label}: the desktop script did not evaluate")
                     return 2
 
+                if not r.get("hasNew") or not r.get("composed"):
+                    problems.append((label, "cannot-post",
+                                     "there is no working New post button on the taskbar — the "
+                                     "classic + lives inside the timeline, which in a window is a "
+                                     "corner nobody finds"))
                 if not (r["entered"] and r["hasBar"] and r["hasStart"] and r["icons"]):
                     problems.append((label, "no-desktop",
                                      f"entered={r['entered']} bar={r['hasBar']} start={r['hasStart']} "
                                      f"icons={len(r['icons'])}"))
+                if r.get("iconCols", 1) != 1:
+                    problems.append((label, "icons-not-left",
+                                     f"the desktop icons form {r['iconCols']} columns — they must be "
+                                     "one column down the left"))
                 if r["icons"] != r["navViews"]:
                     problems.append((label, "apps-missing",
                                      f"desktop icons {r['icons']} do not match the sidebar {r['navViews']}"))
                 if r["menuApps"] != r["navViews"]:
                     problems.append((label, "apps-missing",
                                      f"the start menu lists {r['menuApps']}"))
-                if r["filtered"] != ["calendar"]:
+                # "cal" legitimately matches Calendar AND Calls — the filter is a substring match
+                # on the label, and narrowing it further would be worse.
+                if sorted(r["filtered"]) != ["calendar", "calls"]:
                     problems.append((label, "apps-missing",
                                      f"searching 'cal' gave {r['filtered']}"))
                 if r["windows"] != 2 or r["tasks"] != 2:

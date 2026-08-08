@@ -6013,12 +6013,16 @@ body.os-on #os-root{pointer-events:auto}
              linear-gradient(160deg, var(--bg), var(--bg2, var(--bg)));}
 .os-desk{position:relative;flex:1;min-height:0;overflow:hidden}
 
-/* Desktop icons — a column grid down the left, like a desktop. */
-.os-icons{position:absolute;inset:14px auto 14px 14px;display:grid;grid-auto-flow:column;
-  grid-template-rows:repeat(auto-fill,88px);gap:6px;align-content:start}
-.os-icon{width:92px;height:88px;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:6px;background:transparent;border:1px solid transparent;border-radius:10px;color:var(--text);
-  cursor:pointer;padding:6px 4px}
+/* Desktop icons — ONE column down the left, always. A real desktop fills a column and starts a
+   second one to the right, but this launcher mirrors the sidebar (~18 entries), and a second column
+   marching across the desktop is both untidy and in the way of the windows. It scrolls instead. */
+.os-icons{position:absolute;left:14px;top:14px;bottom:14px;display:flex;flex-direction:column;
+  gap:4px;align-items:flex-start;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;
+  padding-right:2px}
+.os-icons::-webkit-scrollbar{display:none}
+.os-icon{flex:0 0 auto;width:92px;height:84px;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:6px;background:transparent;border:1px solid transparent;
+  border-radius:10px;color:var(--text);cursor:pointer;padding:6px 4px}
 .os-icon:hover,.os-icon:focus-visible{background:rgba(255,255,255,.09);border-color:var(--line)}
 .os-icon .ic{width:30px;height:30px;color:var(--neon)}
 .os-icon span{font-size:11.5px;line-height:1.15;text-align:center;max-width:86px;
@@ -6064,6 +6068,14 @@ body.os-on #os-root{pointer-events:auto}
 /* Round, and big enough to read as a face — it is a character head, not a glyph. */
 .os-start img{width:30px;height:30px;border-radius:50%;display:block;object-fit:cover}
 .os-start:hover,.os-start.on{background:rgba(255,255,255,.12);border-color:var(--line)}
+/* "New post" beside Start. The classic ＋ lives inside the timeline; in a windowed desktop that is
+   the corner of one window, so the action gets a taskbar button of its own. */
+.os-new{flex:0 0 auto;display:flex;align-items:center;gap:6px;height:38px;padding:0 14px;
+  border-radius:9px;border:0;cursor:pointer;font-size:12.5px;font-weight:600;
+  background:linear-gradient(135deg,var(--neon),var(--neon2));color:#fff}
+.os-new:hover{filter:brightness(1.08)}
+.os-new .ic{width:15px;height:15px}
+@media (pointer:coarse){ .os-new{height:calc(42px / var(--zf, 1))} }
 .os-tasks{flex:0 1 auto;min-width:0;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
 .os-tasks::-webkit-scrollbar{display:none}
 .os-task{flex:0 0 auto;max-width:190px;display:flex;align-items:center;gap:7px;height:38px;

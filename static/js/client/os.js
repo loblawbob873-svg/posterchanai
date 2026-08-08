@@ -268,6 +268,8 @@
     bar.innerHTML =
       `<button class="os-start${startOpen ? ' on' : ''}" id="os-start" title="Start">
          <img src="${enc(brandLogo())}" alt="Start"></button>
+       <button class="os-new" id="os-new" title="New post">
+         <svg class="ic" aria-hidden="true"><use href="#i-plus"></use></svg><span>Post</span></button>
        <div class="os-tasks">${wins.map(w =>
          `<button class="os-task${w.el.classList.contains('focused') && !w.min ? ' on' : ''}"
                   data-id="${w.id}" title="${enc(w.title)}">
@@ -277,6 +279,13 @@
          <div class="os-clock"><b>${enc(clock)}</b><span>${enc(date)}</span></div>
        </div>`;
     $('#os-start', bar).onclick = (e) => { e.stopPropagation(); toggleStart(); };
+    /* Posting needs a home here. In the classic UI it is a small ＋ floating inside the timeline,
+     * which in the desktop ends up tucked in the corner of whichever window happens to hold the
+     * feed — findable only if you already know it exists. On a desktop, "new" belongs on the
+     * taskbar. */
+    { const nb = $('#os-new', bar);
+      if(nb) nb.onclick = () => { try{ PC().compose && PC().compose(); }
+                                  catch(err){ PC().toast && PC().toast('could not open the composer'); } }; }
     $('#os-exit', bar).onclick = () => exit();
     $$('.os-task', bar).forEach(b => b.onclick = () => {
       const w = wins.find(x => String(x.id) === b.dataset.id);
