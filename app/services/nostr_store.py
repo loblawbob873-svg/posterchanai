@@ -94,18 +94,54 @@ _RELOAD_DEBOUNCE = 20.0
 
 
 # ---- local-relay WebSocket I/O (mirrors client.py's proven signup-follow path) ----
-async def _ws_publish(port: int, event: dict, timeout: float = 8.0) -> tuple[bool, str]:
+# ONE connection, reused. Opening a WebSocket per document — TCP handshake, HTTP upgrade,
+# per-connection state on the relay, teardown — was the dominant cost of a bulk write: mirroring a
+# mail folder at ~550 documents a minute meant 550 connect/close cycles a minute, on both sides, to
+# deliver 550 small frames. The relay is on loopback and the writes are strictly sequential (each
+# waits for its own OK), so a single long-lived socket behind a lock is both simpler and faster.
+#
+# It is a CACHE, never a requirement: any failure drops the socket and the call retries once on a
+# fresh one, so a relay restart costs one retry instead of an error.
+_pub_ws = None
+_pub_lock: "asyncio.Lock | None" = None
+
+
+async def _publish_once(port: int, event: dict, timeout: float, reuse: bool) -> tuple[bool, str]:
+    global _pub_ws
     import websockets
     uri = f"ws://127.0.0.1:{port}/relay"
-    try:
-        async with websockets.connect(uri, open_timeout=timeout, close_timeout=2) as ws:
-            await ws.send(json.dumps(["EVENT", event]))
-            while True:
-                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
-                if msg[0] == "OK" and msg[1] == event["id"]:
-                    return bool(msg[2]), (msg[3] if len(msg) > 3 else "")
-    except Exception as e:
-        return False, str(e)
+    ws = _pub_ws if reuse else None
+    if ws is None:
+        ws = await websockets.connect(uri, open_timeout=timeout, close_timeout=2, max_size=None)
+        _pub_ws = ws
+    await ws.send(json.dumps(["EVENT", event]))
+    while True:
+        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+        # Anything that is not our OK is another client's traffic on this shared socket (the relay
+        # sends nothing unsolicited to a subscription-less connection, but be explicit rather than
+        # assume it): skip it and keep waiting for the id we published.
+        if msg and msg[0] == "OK" and msg[1] == event["id"]:
+            return bool(msg[2]), (msg[3] if len(msg) > 3 else "")
+
+
+async def _ws_publish(port: int, event: dict, timeout: float = 8.0) -> tuple[bool, str]:
+    global _pub_ws, _pub_lock
+    if _pub_lock is None:
+        _pub_lock = asyncio.Lock()
+    async with _pub_lock:
+        for attempt in (True, False):        # reuse the pooled socket, then a fresh one
+            try:
+                return await _publish_once(port, event, timeout, reuse=attempt)
+            except Exception as e:
+                try:
+                    if _pub_ws is not None:
+                        await _pub_ws.close()
+                except Exception:
+                    pass
+                _pub_ws = None
+                if not attempt:
+                    return False, str(e)
+    return False, "unreachable"
 
 
 async def publish_event(port: int, event: dict, timeout: float = 8.0) -> tuple[bool, str]:

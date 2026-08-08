@@ -3780,13 +3780,12 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .mr-subj{font-size:18px;font-weight:700;color:var(--text);line-height:1.3;word-break:break-word}
 .mr-from{margin-top:4px;color:var(--text)}
 .mr-to{margin-top:2px;word-break:break-all}
-/* Six actions on one row. They used to be default .btn.small, which wrapped into a ragged two-line
-   block on a narrow reading pane and gave 31px tap targets. Now they share the row evenly, keep a
-   36px floor, and scroll sideways rather than wrapping when the pane is genuinely too narrow. */
-.mail-actions{flex:0 0 auto;display:flex;flex-wrap:nowrap;gap:6px;padding:10px 18px;
-  border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
-.mail-actions::-webkit-scrollbar{display:none}
+/* Reply, Forward, ⋯ — three controls that fit any pane. Six wrapped into a ragged two-line block,
+   and forcing them onto one row with overflow-x merely clipped the last three out of sight. */
+.mail-actions{flex:0 0 auto;display:flex;gap:6px;padding:10px 18px;
+  border-bottom:1px solid var(--line);align-items:center}
 .mail-actions .btn{flex:0 0 auto;min-height:36px;white-space:nowrap}
+#mail-more{margin-left:auto;font-size:18px;line-height:1;padding:4px 14px}
 .mail-atts{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:8px;padding:10px 18px}
 .mail-att{display:inline-flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:6px 10px;color:var(--cyan);text-decoration:none;font-size:13px}
 .mail-att:hover{border-color:var(--neon)}

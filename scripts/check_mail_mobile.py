@@ -370,9 +370,11 @@ async def drive(url):
                         problems.append((label, "horizontal-overflow",
                                          "the reading pane is wider than the screen"))
                     a = op.get("acts")
-                    if not a or a["n"] < 6:
+                    # Reply, Forward and ⋯ — everything else is in the overflow menu, so a narrow
+                    # pane never wraps or clips.
+                    if not a or a["n"] != 3:
                         problems.append((label, "actions-broken",
-                                         f"the message actions row has {a and a['n']} buttons"))
+                                         f"the message actions row has {a and a['n']} buttons, want 3"))
                     else:
                         # One row. Six buttons wrapping into a ragged block is what "not displaying
                         # good" looked like; a pane too narrow for them scrolls sideways instead.
