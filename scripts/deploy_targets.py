@@ -63,6 +63,14 @@ _OWNED = (
     # nodes and dropped every connected Nostr client, for a file the relay never loads. WORKER is the
     # same cheap hedge the router rule carries: the news/markets pollers reach it by a lazy import.
     ("app/services/search_service.py", (APP, WORKER)),
+    # The datastore CLIENT (documents on the relay), and the calendar layer on top of it. MEASURED
+    # the same way: relay_main, tor, proxy, git and the worker leave `app.services.nostr_store` out
+    # of sys.modules; only stream_service (MEDIA) pulls it in, and the worker reaches it lazily.
+    # Unmapped it meant "everything", so a change to a document helper restarted the RELAY and
+    # dropped every connected Nostr client — the outage the role split exists to prevent.
+    ("app/services/nostr_store.py", (APP, WORKER, MEDIA)),
+    ("app/services/caldav_store.py", (APP, WORKER)),
+    ("app/services/caldav/", (APP,)),          # the Radicale plugins live in the app's own process
     ("relay_main.py", (RELAY,)),
     ("app/services/nostr_relay/", (RELAY,)),
     ("app/worker.py", (WORKER,)),

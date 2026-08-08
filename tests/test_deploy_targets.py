@@ -53,6 +53,16 @@ class Mapping(unittest.TestCase):
                   "docker/proxy/nginx.conf"):
             self.assertEqual(dt.units_for([p]), [], p)
 
+    def test_the_calendar_and_the_document_store_spare_the_relay(self):
+        """MEASURED: relay_main, tor, proxy and git leave nostr_store out of sys.modules, and the
+        CalDAV plugins run in the app's own process. Unmapped they meant "everything", so editing a
+        document helper dropped every connected Nostr client."""
+        for p in ("app/services/nostr_store.py", "app/services/caldav_store.py",
+                  "app/services/caldav/storage.py"):
+            got = dt.units_for([p])
+            self.assertIn(dt.APP, got, p)
+            self.assertNotIn(dt.RELAY, got, p)
+
     def test_a_bot_change_restarts_only_the_bots(self):
         self.assertEqual(dt.units_for(["botframework/main.py"]), [dt.BOTS])
         self.assertEqual(dt.units_for(["app/services/bot_manager_service.py"]), [dt.BOTS])
