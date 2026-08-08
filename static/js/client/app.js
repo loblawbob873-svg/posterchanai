@@ -4226,6 +4226,11 @@
     if(/^pcres:[0-9a-f]{64}$/i.test(u)) return u;
     return /^(https?:\/\/|\/)/i.test(u) ? u : ''; }
   function mdInline(s){
+    // Code spans, LONGEST FENCE FIRST. ```x``` on one line is an inline span, not a block (a code
+    // fence's info string cannot contain backticks), and a note pasted with a URL wrapped that way
+    // is common. Matching single backticks first would eat the inner pair and leave stray ticks.
+    s=s.replace(/```([^`\n](?:[^`]|`(?!``))*)```/g,(m,c)=>`<code>${c}</code>`);
+    s=s.replace(/``([^`\n](?:[^`]|`(?!`))*)``/g,(m,c)=>`<code>${c}</code>`);
     s=s.replace(/`([^`]+)`/g,(m,c)=>`<code>${c}</code>`);
     // Escaped inline HTML from the source markdown (GitHub-style READMEs use <div align=center>, <img>,
     // <br>, <picture>…): render a SAFE subset rather than show the escaped tag as literal text.
@@ -4251,7 +4256,11 @@
     const flush=()=>{ if(para.length){ html+='<p>'+mdInline(para.join('<br>'))+'</p>'; para=[]; } };
     while(i<lines.length){
       const ln=lines[i];
-      if(/^```/.test(ln)){ flush(); i++; const code=[]; while(i<lines.length && !/^```/.test(lines[i])){ code.push(lines[i]); i++; } i++; html+='<pre><code>'+code.join('\n')+'</code></pre>'; continue; }
+      // A fence OPENS a block only if it does not also close on the same line. ```url``` is an
+      // inline span (CommonMark: an info string cannot contain backticks) — treating it as an
+      // opener made the renderer swallow the rest of the note looking for a close that never came,
+      // and show an empty code bubble.
+      if(/^```/.test(ln) && !/^```.*`{3}\s*$/.test(ln)){ flush(); i++; const code=[]; while(i<lines.length && !/^```/.test(lines[i])){ code.push(lines[i]); i++; } i++; html+='<pre><code>'+code.join('\n')+'</code></pre>'; continue; }
       const h=ln.match(/^(#{1,6})\s+(.*)$/); if(h){ flush(); const lvl=Math.min(h[1].length+1,6); html+=`<h${lvl}>${mdInline(h[2])}</h${lvl}>`; i++; continue; }
       if(/^\s*([-*_])\1\1+\s*$/.test(ln)){ flush(); html+='<hr>'; i++; continue; }
       if(/^\s*&gt;\s?/.test(ln)){ flush(); const q=[]; while(i<lines.length && /^\s*&gt;\s?/.test(lines[i])){ q.push(lines[i].replace(/^\s*&gt;\s?/,'')); i++; } html+='<blockquote>'+mdInline(q.join('<br>'))+'</blockquote>'; continue; }
