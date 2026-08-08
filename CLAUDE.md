@@ -344,10 +344,12 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   `search.formats: [html, json]` is the load-bearing line, and it must come from a settings FILE:
   `secret_key` is the ONLY setting this image maps to an env var, so a `SEARXNG_SEARCH_FORMATS=…`
   compose service configures nothing at all. Both paths generate from `docker/searxng/settings.yml`.
-  (2) The bundled instance's ENGINE requests go through the proxy's **fallback listener**
-  (`proxy_fallback_port`, default 8119: Tor1 → Tor2 → direct), NOT the main `:8118`, which is Tor-only
-  because torrents share it — pointed there, one Tor outage turns every search into a timeout. Never
-  send torrent traffic to 8119. That is also why the container is `--network host`: from a bridge
+  (2) The bundled instance's ENGINE requests CAN go through the proxy's **fallback listener**
+  (`proxy_fallback_port`, default 8119: Tor1 → Tor2 → direct) — never the main `:8118`, which is
+  Tor-only because torrents share it — but it is **off by default**: MEASURED, the default engines
+  answer a Tor exit with "too many requests"/"access denied"/CAPTCHA and SearXNG suspends them for an
+  hour, giving 0 results vs 25 direct. `SEARXNG_TOR=1` opts in (and needs `request_timeout: 12.0`;
+  the 3s default times out over Tor on its own). Never send torrent traffic to 8119. That is also why the container is `--network host`: from a bridge
   network there is nothing at the proxy's loopback address. (3) **Only LOOPBACK being exempt from the
   Tor transport is not enough** — Tor cannot route RFC1918 and the proxy returns a 502 *response*,
   which `afallback_transport` never retries (it falls back on connect errors only), so an ordinary LAN

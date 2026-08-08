@@ -100,9 +100,17 @@ Two different hops, each proxied where it belongs:
   resolves the host and treats loopback/private/link-local — and `.lan`/`.local` names — as direct.
   Without that, an ordinary self-hosted `http://192.168.0.85:8888` fails every request and reports
   "no results".
-* **The bundled instance → the ENGINES** goes through the proxy's **fallback listener**
-  (`proxy_fallback_port`, default **8119**): Tor1 → Tor2 → **direct**. The installer probes for it and
-  writes `outgoing.proxies` into `settings.yml`.
+* **The bundled instance → the ENGINES** can go through the proxy's **fallback listener**
+  (`proxy_fallback_port`, default **8119**: Tor1 → Tor2 → **direct**), but it is **off by default**,
+  and that is a measurement rather than a preference. Through Tor the default engine set does not slow
+  down, it stops answering: Brave and Google CSE return "too many requests", DuckDuckGo "access
+  denied", Startpage a CAPTCHA, and SearXNG then suspends each engine for up to an hour. Measured on
+  one node, same query, same minute: **25 results direct, 0 through Tor with all four engines
+  suspended**. Search engines block exit nodes; timeout tuning doesn't change that (though a Tor run
+  does also need `request_timeout: 12.0` — the 3s default times out on its own).
+
+  Opt in with `SEARXNG_TOR=1 ./install.sh --searxng`, which probes the proxy and writes
+  `outgoing.proxies` into `settings.yml`.
 
 That second listener exists because the main `:8118` is **Tor-only by design** — torrent traffic
 shares it and a silent direct connection there would be an IP leak. SearXNG has no fallback of its
