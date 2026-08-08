@@ -449,3 +449,30 @@ def test_a_replaceable_write_does_not_walk_the_authors_whole_kind(store_factory)
         assert len(await store.query([{"kinds": [30078], "authors": [pk], "limit": 200}])) == 41
 
     _run(go)
+
+
+def test_deleting_a_private_document_is_not_broadcast():
+    """A kind-5 removing an app-datastore document must never reach the public upstreams.
+
+    The document itself was never federated — kind 30078 with a `pcai:` d-tag is excluded — but a
+    deletion is an ordinary event, and it carries the coordinate it removes IN THE CLEAR:
+
+        ["a", "30078:<pubkey>:pcai:mail:someone@example.com:INBOX:6623"]
+
+    The mail is ciphertext; that tag publishes the account's email address, its folder names and the
+    message id to ~20 relays run by other people, permanently, with no way to withdraw it. The same
+    shape leaks note ids, calendar uids and contact uids. It is also what pins the outbox: emptying
+    a folder is one broadcast per message, times every upstream.
+    """
+    from app.services.nostr_relay.server import _broadcastable
+    pk = "d" * 64
+    private = [f"30078:{pk}:pcai:mail:someone@example.com:INBOX:6623",
+               f"30078:{pk}:pcai:cal:main:uid-1",
+               f"30078:{pk}:pcai:note:abc",
+               f"30078:{pk}:pcai:pw:entry-1"]
+    for coord in private:
+        assert not _broadcastable({"kind": 5, "tags": [["e", "x" * 64], ["a", coord]]}), coord
+
+    # …while an ordinary deletion still federates, or retracting a post would stop working.
+    assert _broadcastable({"kind": 5, "tags": [["e", "y" * 64]]})
+    assert _broadcastable({"kind": 5, "tags": [["a", f"30023:{pk}:my-article"]]})

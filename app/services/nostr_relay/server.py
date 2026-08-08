@@ -94,6 +94,22 @@ def _broadcastable(ev, cfg=None) -> bool:
             if cfg and cfg.get("backup_datastore") and d.startswith(_BACKUP_NS):
                 return True
             return False
+    # A DELETION of a private datastore document must not be broadcast either — and this one is a
+    # DISCLOSURE, not just load. The document it removes was never federated (kind 30078 with a
+    # `pcai:` d-tag, above), but a kind-5 is an ordinary event that fans out to every upstream, and
+    # it carries the coordinate it deletes in the clear:
+    #
+    #   ["a", "30078:<pubkey>:pcai:mail:someone@example.com:INBOX:6623"]
+    #
+    # The mail itself is ciphertext; that tag publishes the account's email address, the folder name
+    # and the message id to ~20 relays somebody else runs, permanently, where nothing can withdraw
+    # it. The same shape leaks note ids, calendar item uids and contact uids. Emptying a folder or
+    # deleting a calendar also means one broadcast per item — a thousand deletions is a thousand
+    # events times twenty relays, which is how the outbox queue pinned and the relay pegged.
+    if k == 5:
+        for t in ev.get("tags", []):
+            if len(t) >= 2 and t[0] == "a" and ":pcai:" in str(t[1]):
+                return False
     # Opt-out marker: e.g. game bots tag the mid-game move boards so only the opening + final post
     # federate to the wider network (the middle plays stay local-only — anti-spam).
     if any(t and len(t) >= 1 and t[0] == "nofederate" for t in ev.get("tags", [])):
