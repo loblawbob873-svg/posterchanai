@@ -117,3 +117,7 @@ desktop/www/
 desktop/resources/
 # The Capacitor bundle, same story (mobile/build-www.sh assembles it per build).
 mobile/www/
+
+# Stray ffmpeg captures: probing a live path by hand (ffmpeg -i rtsp://... -t 4 -c copy out.mkv)
+# drops the file in the repo root, and it is never something we want committed.
+/*.mkv
