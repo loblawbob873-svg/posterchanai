@@ -1482,9 +1482,9 @@ def frames_to_video(frames, fps: int = 14, loops: int = 1) -> bytes:
     list first is hundreds of MB for no reason). `loops > 1` has to replay the pass, so it
     still materialises.
 
-    Used by the animated "effect" gags (fire/blood/cum) — the effect content is
-    re-rendered per frame so the flames flicker / drips run, rather than the flat
-    still that the camera-motion modifiers (zoom/shake) move.
+    Used by the animated "effect" gags (fire) — the effect content is re-rendered per
+    frame so the flames flicker, rather than the flat still that the camera-motion
+    modifiers (zoom/shake) move.
     """
     global _video_encoder_cache
     ffmpeg = resolve_ffmpeg()

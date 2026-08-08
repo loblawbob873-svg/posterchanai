@@ -1,5 +1,5 @@
 """Auto-split from the original effects_service.py monolith. No behavior change."""
-from ._common import List, OutputFile, Path, Tuple, _BLOOD_COLORS, _CUM_COLORS, _DILDO_COLORS, _FIRE_ANIM_FPS, _FIRE_ANIM_FRAMES, _FIRE_ANIM_LOOPS, _POO_COLORS, _SCATTER_ANIM_FPS, _alive_or_still, _effects_animate, _gradient_cylinder, _gradient_sphere, _human_size, _scatter_frames, _scatter_overlay, _shade, io, is_image, logger
+from ._common import List, OutputFile, Path, Tuple, _BLOOD_COLORS, _CUM_COLORS, _DILDO_COLORS, _FIRE_ANIM_FPS, _FIRE_ANIM_FRAMES, _FIRE_ANIM_LOOPS, _POO_COLORS, _alive_or_still, _effects_animate, _gradient_cylinder, _gradient_sphere, _human_size, _scatter_overlay, _shade, io, is_image, logger
 
 def _make_dildo(h: int):
     """Render one shaded, semi-anatomical dildo (pointing up) on a transparent tile.
@@ -561,27 +561,14 @@ def add_blood(data: bytes, count: int = 0) -> bytes:
     return _scatter_overlay(data, _make_blood, count)
 
 
-def _blood_tile(size: int, seed: int, grow: float):
-    """One seeded blood tile (stable shape, `grow`-scaled throw) for the animator."""
-    import random
-    return _make_blood(size, rng=random.Random(seed), grow=grow)
-
-
-def add_blood_animated(data: bytes, count: int = 0) -> bytes:
-    """Scatter blood as a short MP4 — each splatter throws outward then holds.
-    Silent H.264 bytes. Full spin, like the still."""
-    from app.services.media_service import frames_to_video
-    frames = _scatter_frames(data, _blood_tile, count=count)
-    return frames_to_video(frames, fps=_SCATTER_ANIM_FPS, loops=1)
-
-
 def blood_attachments(
     attachments: List[Tuple[str, bytes, str]],
 ) -> Tuple[List[OutputFile], str]:
     """Scatter blood over the first image attachment.
 
-    Returns (output_files, summary_text). Mirrors cum_attachments so the web UI,
-    Telegram and the fedi bots share one delivery path.
+    Always a still JPEG (the full, fully-grown splatter) — NOT the animated MP4, even when effect
+    animation is enabled. Mirrors cum_attachments so the web UI, Telegram and the fedi bots share
+    one delivery path.
     """
     images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
     if not images:
@@ -590,20 +577,8 @@ def blood_attachments(
     filename, data, _ = images[0]
     stem = Path(filename).stem or "image"
     try:
-        if _effects_animate():
-            try:
-                result = add_blood_animated(data)
-                out: OutputFile = {
-                    "filename": f"{stem}_blood.mp4",
-                    "data": result,
-                    "content_type": "video/mp4",
-                }
-                summary = f"## 🩸 Blood\n\n🩸 {filename}: {_human_size(len(result))}"
-                return [out], summary
-            except Exception as e:
-                logger.warning(f"animated blood failed for {filename}, using still: {e}")
-        result = add_blood(data)
-        out = {
+        result = add_blood(data)   # full splatter, fully-grown (grow=1.0); still image, no video
+        out: OutputFile = {
             "filename": f"{stem}_blood.jpg",
             "data": result,
             "content_type": "image/jpeg",

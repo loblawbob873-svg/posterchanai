@@ -28,10 +28,6 @@ _MEME_FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
     "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
 ]
-_SCATTER_ANIM_FRAMES = 36
-_SCATTER_ANIM_FPS = 14
-_SCATTER_ANIM_MAXDIM = 1280   # cap the working long edge so re-render + encode stay cheap
-_SCATTER_ANIM_MAXTILES = 30   # cap tile count for animation (the still allows up to 60)
 _DILDO_COLORS = [
     (240, 200, 175, 255),  # light flesh
     (212, 162, 130, 255),  # medium flesh
@@ -808,72 +804,11 @@ def _scatter_overlay(data: bytes, make_tile, count: int = 0,
         return out.getvalue()
 
 
-def _scatter_frames(data: bytes, make_tile_seeded, count: int = 0,
-                    max_rotation: float = 180.0, n_frames: int = _SCATTER_ANIM_FRAMES,
-                    ramp_frac: float = 0.55, start_grow: float = 0.12):
-    """Build the animation frames for a scatter gag. `make_tile_seeded(size, seed,
-    grow)` must render one RGBA tile deterministically for a given seed (stable shape)
-    with `grow` in [0,1] scaling its drip/streak extent."""
-    import random
-    from PIL import Image, ImageOps
-    try:
-        from pillow_heif import register_heif_opener
-        register_heif_opener()
-    except Exception:
-        pass
-
-    with Image.open(io.BytesIO(data)) as img:
-        img = ImageOps.exif_transpose(img)
-        if img.mode in ("RGBA", "LA", "P"):
-            background = Image.new("RGB", img.size, (255, 255, 255))
-            rgba = img.convert("RGBA")
-            background.paste(rgba, mask=rgba.split()[-1])
-            img = background
-        elif img.mode != "RGB":
-            img = img.convert("RGB")
-        # Bound the working resolution so re-rendering N frames stays affordable.
-        if max(img.size) > _SCATTER_ANIM_MAXDIM:
-            img.thumbnail((_SCATTER_ANIM_MAXDIM, _SCATTER_ANIM_MAXDIM), Image.LANCZOS)
-        base_rgb = img.convert("RGB")
-
-    W, H = base_rgb.size
-    if count <= 0:
-        count = max(14, min(60, (W * H) // 38000))
-    count = min(count, _SCATTER_ANIM_MAXTILES)
-    base = min(W, H)
-    lo, hi = max(int(base * 0.12), 12), max(int(base * 0.28), 24)
-
-    # Fix the layout once. Position is picked from a full-grow render's rotated size;
-    # the tile canvas is grow-independent, so every frame's tile lands identically.
-    layout = []
-    for _ in range(count):
-        size = random.randint(lo, hi)
-        angle = random.uniform(-max_rotation, max_rotation)
-        seed = random.randrange(1 << 30)
-        sample = make_tile_seeded(size, seed, 1.0).rotate(
-            angle, expand=True, resample=Image.BICUBIC)
-        x = random.randint(-sample.width // 3, max(W - sample.width * 2 // 3, 1))
-        y = random.randint(-sample.height // 3, max(H - sample.height * 2 // 3, 1))
-        layout.append((size, angle, seed, x, y))
-
-    frames = []
-    for fi in range(n_frames):
-        # grow ramps start_grow→1 (smoothstep) over the first `ramp_frac`, then holds.
-        p = min(fi / max(n_frames * ramp_frac, 1.0), 1.0)
-        grow = start_grow + (1.0 - start_grow) * (p * p * (3 - 2 * p))
-        layer = base_rgb.convert("RGBA")
-        for size, angle, seed, x, y in layout:
-            tile = make_tile_seeded(size, seed, grow).rotate(
-                angle, expand=True, resample=Image.BICUBIC)
-            layer.alpha_composite(tile, (x, y))
-        frames.append(layer.convert("RGB"))
-    return frames
-
-
 def _effects_animate() -> bool:
-    """Whether the animatable effects (fire/blood/cum) render as a moving MP4 rather
-    than a flat still. On by default; set EFFECTS_ANIMATE=0 to fall back to stills
-    (no redeploy needed — flip the env on the service and restart)."""
+    """Whether the animatable effects (fire) render as a moving MP4 rather than a
+    flat still. The scatter gags (blood/cum) are always stills. On by default; set
+    EFFECTS_ANIMATE=0 to fall back to stills (no redeploy needed — flip the env on
+    the service and restart)."""
     return os.environ.get("EFFECTS_ANIMATE", "1").strip().lower() not in ("0", "false", "no")
 
 
