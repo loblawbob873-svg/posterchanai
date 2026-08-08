@@ -14841,7 +14841,10 @@
     return `<div class="msg-tabs"><button class="mtab${_msgTab==='dm'?' on':''}" data-mt="dm">💬 DMs</button>`
       + `<button class="mtab${_msgTab==='email'?' on':''}" data-mt="email">📧 Email${Mail.unread?` <span class="mtab-badge">${Mail.unread}</span>`:''}</button></div>`;
   }
-  function _bindMsgTabs(root){ $$('.mtab',root).forEach(b=> b.onclick=()=>{ if(_msgTab===b.dataset.mt) return; _msgTab=b.dataset.mt; dmActive=null; renderMessages(); }); }
+  function _bindMsgTabs(root){ $$('.mtab',root).forEach(b=> b.onclick=()=>{ if(_msgTab===b.dataset.mt) return;
+    _msgTab=b.dataset.mt; dmActive=null;
+    if(_msgTab!=='email' && _mailKeysOff) _mailKeysOff();   // don't hold j/k on the DM tab
+    renderMessages(); }); }
   function renderMessages(){
     if(_msgTab==='email'){
       const feed=$('#feed');
@@ -15089,6 +15092,91 @@
     }, { title: '🌸 Attach from Blossom' });
   }
 
+  /* Keyboard for the mail client — mutt/Gmail single keys, scoped to this screen.
+   *
+   * Not Alt+key like the global SHORTCUTS table: this is a focused surface where a bare j/k is what
+   * every mail client has trained people to expect, and the guards below make it safe — nothing
+   * fires while a text field has focus, while a modal is open, or when the Email tab is not the one
+   * showing. hjkl-style extras follow the app's Vim toggle; j/k work either way, as they do in
+   * Gmail, which has no vim mode at all.
+   */
+  let _mailKeysOff = null;
+  function _mailKeys(M){
+    if(_mailKeysOff) _mailKeysOff();
+    const onKey = (e) => {
+      if(e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+      // The mail client being MOUNTED is the condition — not two globals describing where we think
+      // we are. If its root is not in the document, this screen is not showing and these keys are
+      // somebody else's.
+      if(!M.root || !M.root.isConnected) return;
+      if(document.body.classList.contains('modal-open')) return;
+      const t = e.target;
+      if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ''))) return;
+      const open = !!(M.root && M.root.querySelector('.mail-read.has-open')) || !!M.openUid;
+      const k = e.key;
+      const go = (n) => {
+        const rows = M.msgs || [];
+        if(!rows.length) return;
+        M.cursor = Math.max(0, Math.min(rows.length - 1, (M.cursor == null ? -1 : M.cursor) + n));
+        M.drawList();
+        const el = M.root && M.root.querySelector('.mail-item.cursor');
+        if(el) el.scrollIntoView({ block: 'nearest' });
+      };
+      const act = (name) => {
+        const m = (M.msgs || [])[M.cursor];
+        if(!m) return;
+        M.action(name, m, m.folder || M.folder, m.account || M.acct);
+      };
+      switch(k){
+        case 'j': case 'ArrowDown':  e.preventDefault(); go(+1); return;
+        case 'k': case 'ArrowUp':    e.preventDefault(); go(-1); return;
+        case 'g': _mailG = (_mailG === 'g') ? (M.cursor = 0, M.drawList(), null) : 'g'; return;
+        case 'G': e.preventDefault(); M.cursor = Math.max(0, (M.msgs||[]).length - 1); M.drawList(); return;
+        case 'Enter': case 'o': {
+          const m = (M.msgs || [])[M.cursor];
+          if(m){ e.preventDefault(); M.open(m.uid, m.folder || M.folder, m.account); }
+          return;
+        }
+        case 'Escape': case 'q': {
+          if(!open) return;
+          e.preventDefault();
+          const pane = M.root && M.root.querySelector('.mail-read');
+          if(pane){ pane.classList.remove('has-open'); }
+          M.openUid = null; M.drawList();
+          return;
+        }
+        case 'c': e.preventDefault(); M.compose({}); return;
+        case 'r': e.preventDefault(); act('reply'); return;
+        case 'a': e.preventDefault(); act('replyall'); return;
+        case 'f': e.preventDefault(); act('forward'); return;
+        case 'u': e.preventDefault(); act('unread'); return;
+        case 'e': e.preventDefault(); act('archive'); return;
+        case '#': e.preventDefault(); act('delete'); return;
+        case '/': {
+          const q = M.root && M.root.querySelector('#mail-search');
+          if(q){ e.preventDefault(); q.focus(); q.select(); }
+          return;
+        }
+        case '?': e.preventDefault(); _mailKeysHelp(); return;
+      }
+      if(k !== 'g') _mailG = null;
+    };
+    document.addEventListener('keydown', onKey);
+    _mailKeysOff = () => { document.removeEventListener('keydown', onKey); _mailKeysOff = null; };
+    return _mailKeysOff;
+  }
+  let _mailG = null;
+
+  function _mailKeysHelp(){
+    const rows = [['j / k', 'next / previous message'], ['Enter or o', 'open'],
+                  ['Esc or q', 'back to the list'], ['gg / G', 'first / last'],
+                  ['c', 'compose'], ['r / a / f', 'reply / reply all / forward'],
+                  ['u', 'mark unread'], ['e', 'archive'], ['#', 'delete'],
+                  ['/', 'search this mailbox'], ['?', 'this list']];
+    modal('<h3>⌨️ Email shortcuts</h3><div class="ks-grid">'
+      + rows.map(([k, d]) => `<kbd>${enc(k)}</kbd><span>${enc(d)}</span>`).join('') + '</div>');
+  }
+
   const Mail = {
     unread:0, root:null, accounts:[], acct:null, folder:'INBOX', folders:['INBOX','Sent','Drafts'], folderLabels:{}, msgs:[], openUid:null, q:'', _syncing:false, sel:null,
     async api(path, opts){ const r=await fetch('/api/mail'+path, opts); if(!r.ok) throw new Error('http '+r.status); return r.json(); },
@@ -15102,7 +15190,12 @@
         const b=$('#mail-go-settings',root); if(b) b.onclick=()=>switchView('settings');
         return;
       }
-      if(!this.acct || !this.accounts.some(a=>a.email===this.acct)) this.acct=this.accounts[0].email;
+      if(!this.acct || (this.acct !== '__all' && !this.accounts.some(a=>a.email===this.acct))){
+        // With more than one account the unified inbox is what you actually want to see first —
+        // opening on whichever account happened to be first in the list hides the rest.
+        this.acct = this.accounts.length > 1 ? '__all' : this.accounts[0].email;
+      }
+      _mailKeys(this);          // j/k/Enter/… while this screen is the one showing
       this.draw();
       // Pull fresh on OPEN, not on every mount. sync() is a full IMAP round trip per account; with
       // no floor, anything that remounted this screen started another one on top of the last.
@@ -15231,7 +15324,8 @@
       if(!this.msgs.length){ box.innerHTML='<div class="empty">'+(this.q?'No matches.':'No messages.')+'</div>'; this.updateBulk(); return; }
       const isSent=this.folderLabels[this.folder]==='📤 Sent', unified=this.acct==='__all';
       box.innerHTML=this.msgs.map(m=>{ const key=this._key(m);
-        return `<div class="mail-item${m.read?'':' unread'}${String(m.uid)===String(this.openUid)?' active':''}" data-uid="${enc(String(m.uid))}" data-folder="${enc(m.folder||this.folder)}" data-account="${enc(m.account||'')}" data-key="${enc(key)}">
+        const cur = (this.msgs.indexOf(m) === this.cursor) ? ' cursor' : '';
+        return `<div class="mail-item${m.read?'':' unread'}${cur}${String(m.uid)===String(this.openUid)?' active':''}" data-uid="${enc(String(m.uid))}" data-folder="${enc(m.folder||this.folder)}" data-account="${enc(m.account||'')}" data-key="${enc(key)}">
         <input type="checkbox" class="mi-chk"${this.sel.has(key)?' checked':''}>
         <div class="mi-content">
           <div class="mi-row"><span class="mi-from">${unified?`<span class="mi-acct">${enc((m.account||'').split('@')[0])}</span> `:''}${enc((isSent?('To: '+(m.to||'')):(m.from||'')).slice(0,42))}</span><span class="mi-date">${enc(_mailDate(m.ts))}</span></div>
@@ -15245,7 +15339,9 @@
       }
       $$('.mail-item',box).forEach(el=>{
         const cb=el.querySelector('.mi-chk'); if(cb) cb.onclick=(e)=>{ e.stopPropagation(); if(cb.checked) this.sel.add(el.dataset.key); else this.sel.delete(el.dataset.key); this.updateBulk(); };
-        const c=el.querySelector('.mi-content'); if(c) c.onclick=()=>this.open(el.dataset.uid, el.dataset.folder, el.dataset.account);
+        const c=el.querySelector('.mi-content');
+        if(c) c.onclick=()=>{ this.cursor=this.msgs.findIndex(m=>String(m.uid)===String(el.dataset.uid));
+                              this.open(el.dataset.uid, el.dataset.folder, el.dataset.account); };
       });
       this.updateBulk();
     },

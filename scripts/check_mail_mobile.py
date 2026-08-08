@@ -165,6 +165,29 @@ AUDIT = r"""(() => {
   return out;
 })()"""
 
+KEYS = r"""(async () => {
+  const key = (k) => document.dispatchEvent(
+    new KeyboardEvent('keydown', {key:k, bubbles:true, cancelable:true}));
+  const cur = () => {
+    const c = document.querySelector('.mail-item.cursor');
+    return c ? [...document.querySelectorAll('.mail-item')].indexOf(c) : -1;
+  };
+  key('j'); await new Promise(r=>setTimeout(r,120)); const afterJ = cur();
+  key('j'); await new Promise(r=>setTimeout(r,120)); const afterJJ = cur();
+  key('k'); await new Promise(r=>setTimeout(r,120)); const afterK = cur();
+  // A key aimed at a text field must NOT move the cursor — typing "j" in search is just a letter.
+  const q = document.querySelector('#mail-search');
+  if (q) { q.focus(); q.dispatchEvent(new KeyboardEvent('keydown',{key:'j',bubbles:true,cancelable:true}));
+           await new Promise(r=>setTimeout(r,120)); }
+  const afterTyping = cur();
+  if (q) q.blur();
+  key('Enter'); await new Promise(r=>setTimeout(r,300));
+  const opened = !!document.querySelector('.mail-read.has-open');
+  key('Escape'); await new Promise(r=>setTimeout(r,250));
+  const closed = !document.querySelector('.mail-read.has-open');
+  return { afterJ, afterJJ, afterK, afterTyping, opened, closed };
+})()"""
+
 BULK_BAR = r"""(async () => {
   const cb = document.querySelector('.mail-item .mi-chk');
   if (!cb) return {error:'no checkbox on a row'};
@@ -390,6 +413,22 @@ async def drive(url):
                         problems.append((label, "under-nav",
                                          f"the message list's bottom ({r['listBottom']}px) is under "
                                          f"the nav ({r['navTop']}px)"))
+
+                kb = await js(KEYS, awaited=True)
+                if not kb:
+                    problems.append((label, "keys-broken", "the keyboard test did not run"))
+                else:
+                    if kb["afterJ"] != 0 or kb["afterJJ"] != 1 or kb["afterK"] != 0:
+                        problems.append((label, "keys-broken",
+                                         f"j/k moved the cursor to {kb['afterJ']}/{kb['afterJJ']}/"
+                                         f"{kb['afterK']}, want 0/1/0"))
+                    if kb["afterTyping"] != kb["afterK"]:
+                        problems.append((label, "keys-broken",
+                                         "typing a letter in the search box moved the message cursor"))
+                    if not kb["opened"]:
+                        problems.append((label, "keys-broken", "Enter did not open the message"))
+                    if not kb["closed"]:
+                        problems.append((label, "keys-broken", "Escape did not close the message"))
 
                 bb = await js(BULK_BAR, awaited=True)
                 if not bb or bb.get("error"):

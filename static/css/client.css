@@ -3920,6 +3920,9 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .mail-from select{margin-top:3px}
 /* mail bulk-select */
 .mail-item{display:flex;align-items:flex-start;gap:9px}
+/* The keyboard cursor. Distinct from .active (the message actually OPEN) — with j/k you move the
+   cursor without opening anything, and the two must not look the same. */
+.mail-item.cursor{outline:2px solid var(--neon);outline-offset:-2px;border-radius:8px}
 .mi-chk{margin-top:3px;flex:0 0 auto;cursor:pointer;width:16px;height:16px}
 .mi-content{flex:1;min-width:0;cursor:pointer}
 /* "still working" for a folder pull that legitimately takes minutes — a bare spinner over an empty
