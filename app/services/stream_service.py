@@ -126,7 +126,11 @@ _SIG_KEYS = ("stream_rtmp_port", "stream_hls_port", "stream_srt_port",
              # Same reasoning as the recording keys: the clamp is a `runOnReady` command baked into the
              # generated config + script, so MediaMTX must be respawned for a change to take effect.
              "stream_clamp_enabled", "stream_clamp_height", "stream_clamp_fps", "stream_clamp_bitrate",
-             "stream_clamp_audio_bitrate", "stream_clamp_encoder", "stream_rtsp_port")
+             "stream_clamp_audio_bitrate", "stream_clamp_encoder", "stream_rtsp_port",
+             # stream_hls_base decides whether the clamp may stand down (a direct HLS origin bakes the
+             # clamped path into the public url, so a path we don't publish 404s every viewer). It is baked
+             # into the generated script, so without a respawn the change silently does not take effect.
+             "stream_hls_base")
 
 
 def _ensure_hook_secret(cfg: dict) -> str:
@@ -206,9 +210,18 @@ def clamp_secret(cfg: Optional[dict] = None) -> str:
     return _hmac.new(parent.encode(), b"pcai-stream-clamp", hashlib.sha256).hexdigest()[:32]
 
 
+def _port(cfg: dict, key: str, default: str) -> str:
+    """A port setting, digits or the default. EVERY port lands in generated text — the MediaMTX YAML and
+    the clamp shell script — so none of them may be passed through raw: a setting SYNCS FROM THE RELAY
+    across nodes, so it is not a trusted string. A newline in a port injects top-level MediaMTX keys
+    (`9997\\nauthMethod: internal` turns the publish auth hook off), and one in the script injects a
+    command. Same reasoning as _clamp_params and the pub_host regex below."""
+    p = (cfg.get(key, "") or "").strip()
+    return p if p.isdigit() else default
+
+
 def _rtsp_port(cfg: dict) -> str:
-    p = (cfg.get("stream_rtsp_port", "") or "8554").strip()
-    return p if p.isdigit() else "8554"
+    return _port(cfg, "stream_rtsp_port", "8554")
 
 
 def _clamp_params(cfg: dict) -> dict:
@@ -331,7 +344,14 @@ def _write_clamp_script(cfg: dict) -> None:
     rtsp = _rtsp_port(cfg)
     # The control API is loopback-only and excluded from the auth hook, so the script can read a path's
     # byte counters with no credentials — that is what lets it measure the source without reading it.
-    api_port = (cfg.get("stream_api_port", "") or "9997").strip()
+    # Digits or the default, like every other value that lands in the generated script (see _rtsp_port and
+    # _clamp_params): an admin setting SYNCS FROM THE RELAY across nodes, so it is not a trusted string, and
+    # `9997";touch /tmp/pwned;#` would otherwise run as the MediaMTX user on every live stream.
+    api_port = _port(cfg, "stream_api_port", "9997")
+    # Standing down is only safe where the viewer's url is resolved per request. With stream_hls_base set,
+    # /api/streams/ingest bakes the CLAMPED path into the public playback url at go-live and that url rides
+    # the kind-30311, so a path we decline to publish is a 404 for every viewer with no fallback.
+    standdown = 0 if (cfg.get("stream_hls_base", "") or "").strip() else 1
     secret = clamp_secret(cfg)
     try:
         from app.services.media_service import resolve_ffmpeg, _render_node
@@ -437,7 +457,10 @@ AUD_CFG={audio_kbps}         # configured AAC bitrate; scaled DOWN on weak sourc
 VMIN=150                     # never target something absurd if the probe reads very low
 AUD_MIN=48                   # below this speech stops being intelligible
 SETTLE=15                    # seconds to let the publisher's bitrate settle before measuring
-SAMPLE=5                     # length of one API measurement window (see api_kbps)
+SAMPLE=10                    # length of one API measurement window — long enough that a single scene
+                             # change or WebRTC probe cannot decide whether to clamp (see api_kbps)
+RECHECK=45                   # pause before a stood-down clamp exits and MediaMTX respawns it to re-measure
+STANDDOWN={standdown}        # 0 when the public url has the clamped path baked in (stream_hls_base)
 
 # WebRTC bandwidth estimation ramps UP over many seconds, so the opening of a WHIP publish is NOT
 # representative. Measured against a real phone: steady state 1489 kbit/s, but sampling at t=3-7s read
@@ -474,8 +497,8 @@ api_kbps() {{
   # path, so two samples $1 seconds apart are the publisher's bitrate. Preferred over measure_src_kbps
   # because that one opens a SECOND RTSP reader on a live path for four seconds — two readers contending
   # for the same source is where the `co located POCs unavailable` / `error while decoding MB` warnings
-  # clustered — and because it is cheap enough to repeat for the whole length of a stream (see the watch
-  # loop below), which a 4-second remux per sample is not.
+  # clustered — and because it is cheap enough to run once a minute for the whole length of a stream (see
+  # the stand-down block below), which a 4-second remux is not.
   _u="http://127.0.0.1:{api_port}/v3/paths/get/$SRC"
   _b1=$(curl -sS -m 4 "$_u" 2>/dev/null | tr ',' '\\n' \\
         | sed -n 's/.*"bytesReceived"[: ]*\\([0-9][0-9]*\\).*/\\1/p' | head -1)
@@ -488,14 +511,10 @@ api_kbps() {{
 }}
 
 measure_kbps() {{
-  # API first, the RTSP remux as the fallback — a node whose API moved or whose curl is missing keeps the
-  # behaviour it had before, rather than losing the measurement and clamping every stream blind.
+  # The API if it answers, the RTSP remux otherwise — a node whose API moved or that has no curl keeps
+  # exactly the measurement it had before.
   _k=$(api_kbps "$SAMPLE" 2>/dev/null) || _k=0
-  if [ "${{_k:-0}}" -gt 0 ]; then
-    echo "$_k"
-  else
-    measure_src_kbps
-  fi
+  if [ "${{_k:-0}}" -gt 0 ]; then echo "$_k"; else measure_src_kbps; fi
 }}
 
 sleep "$SETTLE"
@@ -508,46 +527,31 @@ SRC_KBPS=$(measure_kbps)
 # costing a continuous transcode per stream. Measured: a 916 kbit/s source produced a 1017 kbit/s ceiling,
 # i.e. the clamp was authorised to spend MORE than the stream it was clamping.
 #
-# So the clamp now decides whether to run at all, which is the one thing measure_src_kbps had all the
-# information for and never did. Standing down means exiting nothing and publishing nothing: with no
-# clamped path, the HLS proxy serves the source (_upstream_path falls back to it), which is already what
-# every viewer gets during the settle above.
+# Standing down publishes nothing: with no clamped path the HLS proxy serves the source (_upstream_path
+# falls back to it), which is already what every viewer gets during the settle above.
 #
-# It is NOT a one-shot decision. OBS's bitrate can change mid-stream — measured across one evening on this
-# node: 916 kbit/s early, 10 Mbit/s later, and five viewers at 10 Mbit/s is 50 Mbit/s of upload, exactly
-# what this feature exists to prevent. So a stood-down clamp keeps watching and starts transcoding the
-# moment the source is genuinely over. Hysteresis matters because starting mid-stream moves every viewer
-# from the source path to the clamped one: OVER_PCT ignores a source that is merely at the ceiling (a 10%
-# saving is not worth a transcode plus a playlist switch), and after standing down it takes OVER_HITS
-# consecutive samples to escalate, so ordinary variation can never flap viewers between the two paths.
-# The FIRST decision is immediate, though — a fat source is clamped from the start, as it always was.
+# WATCHING FOR A CHANGE COSTS NO CODE, because MediaMTX is already the supervisor. `runOnReadyRestart: yes`
+# respawns this script whenever it exits while the source is up, so exiting IS the re-check: we sleep,
+# re-measure and decide again roughly once a minute for the whole stream. OBS's bitrate can change
+# mid-stream — measured across one evening on this node, 916 kbit/s early and 10 Mbit/s later, and five
+# viewers at 10 Mbit/s is 50 Mbit/s of upload — and the next cycle catches it. No watch loop, no counters,
+# no second state machine to get wrong: the only decision this script makes is the one it already made.
 #
-# An explicitly chosen tier is never skipped: that is the streamer asking for a specific quality for their
-# viewers, not the node protecting its uplink, and it stays honoured even when the source is already small.
-CHECK=30            # seconds between samples while stood down
-OVER_PCT=120        # % of the total ceiling the source must exceed to be worth transcoding
-OVER_HITS=2         # consecutive over-samples required to escalate (the first decision needs only one)
-if [ "$Q" = auto ] && [ "${{SRC_KBPS:-0}}" -gt 0 ]; then
-  CEIL_TOTAL=$((VMAX_CFG + AUD_CFG))
-  NEED=1
-  HITS=0
-  while [ "${{SRC_KBPS:-0}}" -gt 0 ]; do
-    if [ $((SRC_KBPS * 100)) -ge $((CEIL_TOTAL * OVER_PCT)) ]; then
-      HITS=$((HITS + 1))
-      if [ "$HITS" -ge "$NEED" ]; then
-        [ "$NEED" = 1 ] || echo "clamp: $SRC rose to $SRC_KBPS kbit/s (ceiling $CEIL_TOTAL) — clamping it now" >&2
-        break
-      fi
-    else
-      HITS=0
-    fi
-    if [ "$NEED" = 1 ]; then
-      echo "clamp: $SRC is $SRC_KBPS kbit/s, within the $CEIL_TOTAL kbit/s ceiling — serving the source unchanged" >&2
-      NEED=$OVER_HITS
-    fi
-    sleep "$CHECK"
-    SRC_KBPS=$(measure_kbps)
-  done
+# The ceiling stays a CEILING: anything above it is clamped, exactly as before. The only new outcome is for
+# a source at or under it. SAMPLE is long enough that one scene change cannot decide the question.
+#
+# Two cases deliberately never stand down:
+#   - an explicitly chosen tier, which is the streamer asking for a quality for their viewers rather than
+#     the node protecting its uplink;
+#   - a node with stream_hls_base set, where the PUBLIC playback url has the clamped path baked
+#     into it at go-live (streams.py appends it whenever the clamp is enabled) and that url rides
+#     the kind-30311 external clients read. There is no _upstream_path fallback there, so a path we
+#     never publish is a 404 for every viewer, on this app and on zap.stream alike.
+if [ "$STANDDOWN" = 1 ] && [ "$Q" = auto ] && [ "${{SRC_KBPS:-0}}" -gt 0 ] \
+   && [ "$SRC_KBPS" -le $((VMAX_CFG + AUD_CFG)) ]; then
+  echo "clamp: $SRC is $SRC_KBPS kbit/s, within the $((VMAX_CFG + AUD_CFG)) kbit/s ceiling — serving the source unchanged" >&2
+  sleep "$RECHECK"          # MediaMTX respawns us on exit; this is what paces the re-measurement
+  exit 0
 fi
 
 if [ "${{SRC_KBPS:-0}}" -gt 0 ]; then
@@ -676,11 +680,11 @@ def _write_config(cfg: dict) -> None:
     Playback (HLS reads) is public; publishing is gated by the /api/streams/auth hook (API-key check).
     Kept intentionally small — only the transports we use are enabled.
     """
-    rtmp_port = (cfg.get("stream_rtmp_port", "") or "1935").strip()
-    hls_port = (cfg.get("stream_hls_port", "") or "8888").strip()
-    srt_port = (cfg.get("stream_srt_port", "") or "").strip()
-    webrtc_port = (cfg.get("stream_webrtc_port", "") or "8889").strip()
-    webrtc_udp = (cfg.get("stream_webrtc_udp_port", "") or "8189").strip()
+    rtmp_port = _port(cfg, "stream_rtmp_port", "1935")
+    hls_port = _port(cfg, "stream_hls_port", "8888")
+    srt_port = _port(cfg, "stream_srt_port", "")   # blank stays blank: SRT is off unless a port is set
+    webrtc_port = _port(cfg, "stream_webrtc_port", "8889")
+    webrtc_udp = _port(cfg, "stream_webrtc_udp_port", "8189")
     # Public host advertised in WebRTC ICE candidates so a phone can reach the server's media port.
     # Sanitize to hostname/IP characters only — it's interpolated into the YAML, so a stray quote/bracket
     # (accidental or malicious) must not be able to inject config keys or produce an unparseable file.
@@ -690,7 +694,7 @@ def _write_config(cfg: dict) -> None:
     secret = (cfg.get("stream_auth_secret", "") or "").strip()
     auth_url = f"http://127.0.0.1:{_app_port()}/api/streams/auth?hook={secret}"
     # Config keys target the pinned MediaMTX v1.19.2 (see install.sh / Dockerfile MEDIAMTX_VERSION).
-    api_port = (cfg.get("stream_api_port", "") or "9997").strip()
+    api_port = _port(cfg, "stream_api_port", "9997")
     clamp = clamp_enabled(cfg)
     if clamp:
         _write_clamp_script(cfg)

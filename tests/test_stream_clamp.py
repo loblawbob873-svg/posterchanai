@@ -337,6 +337,31 @@ class TestClampSecret(unittest.TestCase):
         self.assertEqual(S.clamp_secret({"stream_auth_secret": ""}), "")
 
 
+class TestPortsAreValidatedNotEscaped(_TmpMixin, unittest.TestCase):
+    """Every port lands in GENERATED TEXT — the MediaMTX YAML and the clamp shell script — and settings
+    sync from the relay across nodes, so none of them is a trusted string. A newline in a port injects a
+    top-level MediaMTX key (`authMethod: internal` turns the publish auth hook off, an unknown key makes
+    MediaMTX reject the config and crash-loop); a quote in the script injects a command."""
+
+    PAYLOADS = ('9997\nauthMethod: internal', '9997";touch /tmp/pwned;#', '99 97', '', 'nine-thousand')
+
+    def test_no_payload_survives_into_the_config_or_the_script(self):
+        for key in ("stream_api_port", "stream_rtmp_port", "stream_hls_port", "stream_rtsp_port",
+                    "stream_webrtc_port", "stream_webrtc_udp_port", "stream_srt_port"):
+            for bad in self.PAYLOADS:
+                doc, script = _render(self.tmp, **{key: bad})
+                self.assertNotIn("authMethod: internal", yaml.dump(doc), f"{key}={bad!r}")
+                self.assertNotIn("pwned", script, f"{key}={bad!r}")
+                self.assertNotIn("pwned", yaml.dump(doc), f"{key}={bad!r}")
+                # …and the config still parses as YAML at all, which is what stops the crash-loop.
+                self.assertIn("paths", doc, f"{key}={bad!r}")
+
+    def test_a_change_of_hls_base_respawns_mediamtx(self):
+        """stream_hls_base decides whether the clamp may stand down and is baked into the generated
+        script, so without it in the signature the change silently does not take effect."""
+        self.assertIn("stream_hls_base", S._SIG_KEYS)
+
+
 class TestSettingsContract(unittest.TestCase):
     """Every clamp setting must live on the relay and hydrate like any other admin setting.
 
@@ -393,118 +418,143 @@ class TestClampEnabled(unittest.TestCase):
         self.assertFalse(S.clamp_enabled({"stream_clamp_enabled": "false"}))
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestStandDown(_TmpMixin, unittest.TestCase):
     """The clamp must decide WHETHER to run, not only how hard.
 
-    Re-encoding a source that is already under the ceiling cannot save a viewer a byte — the ceiling is
-    min(configured, 125% of the source), so the output is no smaller than the input, just worse. These run
-    the REAL generated script with stubbed curl/ffmpeg/sleep, because the decision lives in shell
-    arithmetic: no assertion about the script's TEXT can tell whether it actually stood down.
+    Re-encoding a source already under the ceiling cannot save a viewer a byte — the ceiling is
+    min(configured, 125% of the source), so the output is no smaller than the input, just worse. Standing
+    down means exiting without publishing; MediaMTX's runOnReadyRestart respawns the script, so the exit IS
+    the re-measurement and there is no watch loop to get wrong.
+
+    These run the REAL generated script with stubbed curl/ffmpeg/ffprobe/sleep, because the decision lives
+    in shell arithmetic and no assertion about the script's TEXT can tell whether it actually stood down.
     """
 
     CFG = {"stream_clamp_height": "720", "stream_clamp_fps": "30", "stream_clamp_bitrate": "1500k",
            "stream_clamp_audio_bitrate": "128k", "stream_clamp_encoder": "libx264",
            "stream_rtsp_port": "8554", "stream_api_port": "9997", "stream_auth_secret": "s3cret"}
+    CEIL_TOTAL = 1628                       # stream_clamp_bitrate + stream_clamp_audio_bitrate
 
-    def _stubs(self, kbps_per_round):
-        """A PATH of stubs: curl reports a byte counter that advances at the given per-round bitrate,
-        ffmpeg records that it ran, sleep returns immediately so a 30s watch loop takes microseconds."""
+    def _stubs(self, api_kbps, remux_kbps=None):
+        """A PATH of stubs. `curl` reports a MediaMTX byte counter that advances at `api_kbps` across one
+        SAMPLE window; `ffmpeg` records its args and, for the measurement remux, writes a file whose SIZE
+        encodes `remux_kbps` so the RTSP fallback measures a real rate rather than 0; `sleep` returns at
+        once so a 45s pause costs nothing."""
+        remux_kbps = api_kbps if remux_kbps is None else remux_kbps
         binp = self.tmp / "bin"
         binp.mkdir()
         state = self.tmp / "bytes.state"
         marker = self.tmp / "ffmpeg.ran"
-        rates = ",".join(str(k) for k in kbps_per_round)
-        # Each api_kbps() call pair is one round: the 2nd call of a pair advances the counter by exactly
-        # one SAMPLE window at that round's bitrate, so the script computes back the rate we staged.
         (binp / "curl").write_text(f"""#!/usr/bin/env python3
-import sys, os
-state, rates = {str(state)!r}, [int(x) for x in {rates!r}.split(",")]
+import sys
+state = {str(state)!r}
 try:
-    n, total = open(state).read().split()
-    n, total = int(n), int(total)
+    n, total = (int(x) for x in open(state).read().split())
 except Exception:
     n, total = 0, 0
-rnd = n // 2
-if n % 2 == 1:                      # second sample of this round -> advance one 5s window
-    total += rates[min(rnd, len(rates) - 1)] * 625
+if n % 2 == 1:                       # 2nd call of a pair: advance one SAMPLE window at the staged rate
+    total += {api_kbps} * 1250       # kbit/s -> bytes over 10s
 open(state, "w").write(f"{{n + 1}} {{total}}")
 print('{{"name":"t","ready":true,"bytesReceived":%d,"readers":[]}}' % total)
 """)
+        # The remux measurement is `ffmpeg ... -t 4 -c copy -f matroska -y <tmp>`, then ffprobe reads its
+        # duration. Writing rate*500 bytes makes bytes*8/4s/1000 come back as `remux_kbps`.
+        (binp / "ffmpeg").write_text(f"""#!/usr/bin/env python3
+import sys
+args = sys.argv[1:]
+open({str(marker)!r}, "a").write(" ".join(args) + chr(10))
+if "matroska" in args:
+    open(args[-1], "wb").write(bytes({remux_kbps} * 500))
+""")
+        (binp / "ffprobe").write_text("#!/bin/sh\necho 4.0\n")
         (binp / "sleep").write_text("#!/bin/sh\nexit 0\n")
-        (binp / "ffmpeg").write_text(f"#!/bin/sh\necho \"$@\" >> {marker}\nexit 0\n")
-        (binp / "ffprobe").write_text("#!/bin/sh\nexit 1\n")
         for f in binp.iterdir():
             f.chmod(0o755)
         return binp, marker
 
-    def _run(self, kbps_per_round, tier=None, timeout=8):
-        binp, marker = self._stubs(kbps_per_round)
+    def _run(self, api_kbps, tier=None, remux_kbps=None, no_curl=False, **cfg_over):
+        binp, marker = self._stubs(api_kbps, remux_kbps)
+        if no_curl:
+            (binp / "curl").write_text("#!/bin/sh\nexit 7\n")     # no curl / wrong port / API down
+            (binp / "curl").chmod(0o755)
         qdir = self.tmp / "quality"
         qdir.mkdir()
         if tier:
             (qdir / "tok").write_text(tier)
         script = self.tmp / "clamp.sh"
+        cfg = dict(self.CFG)
+        cfg.update(cfg_over)
         with mock.patch.object(S, "_CLAMP_SCRIPT", script), \
              mock.patch.object(S, "quality_dir", lambda: str(qdir)), \
              mock.patch("app.services.media_service.resolve_ffmpeg", lambda: str(binp / "ffmpeg")):
-            S._write_clamp_script(dict(self.CFG))
+            S._write_clamp_script(cfg)
         out = self.tmp / "out.txt"
-        timed_out = False
         with open(out, "w") as fh:
-            try:
-                subprocess.run(["sh", str(script), "tok"], stdout=fh, stderr=fh,
-                               env={**os.environ, "PATH": f"{binp}:{os.environ['PATH']}"},
-                               timeout=timeout)
-            except subprocess.TimeoutExpired:
-                timed_out = True          # still watching — that IS standing down
+            r = subprocess.run(["sh", str(script), "tok"], stdout=fh, stderr=fh,
+                               env={**os.environ, "PATH": f"{binp}:{os.environ['PATH']}"}, timeout=30)
         ran = marker.read_text() if marker.exists() else ""
-        return out.read_text(), ran, timed_out
+        return out.read_text(), ran, r.returncode
 
     def test_a_source_under_the_ceiling_is_served_unchanged(self):
-        text, ran_ffmpeg, timed_out = self._run([500])
+        text, ran, rc = self._run(500)
         self.assertIn("serving the source unchanged", text)
-        self.assertFalse(ran_ffmpeg, f"transcoded a 500 kbit/s source under a 1628 kbit/s ceiling:\n{text}")
-        self.assertTrue(timed_out, "the clamp stopped watching instead of standing down")
+        self.assertNotIn("-c:v libx264", ran)
+        self.assertEqual(rc, 0, "must exit 0 — MediaMTX respawns us, and that IS the re-measurement")
 
-    def test_a_fat_source_is_clamped_immediately(self):
-        """The first decision must not wait for confirmation — this is the case the feature exists for."""
-        text, ran_ffmpeg, _ = self._run([10000])
+    def test_a_fat_source_is_clamped(self):
+        text, ran, _ = self._run(10000)
         self.assertNotIn("serving the source unchanged", text)
-        self.assertTrue(ran_ffmpeg, f"did not transcode a 10 Mbit/s source:\n{text}")
+        self.assertIn("-c:v libx264", ran)
 
-    def test_a_stood_down_clamp_picks_up_a_source_that_grows(self):
-        """OBS's bitrate can be raised mid-stream; measured on this node, 916 kbit/s became 10 Mbit/s in one
-        evening. A one-shot decision would serve that to every viewer for the rest of the stream."""
-        text, ran_ffmpeg, _ = self._run([500, 10000, 10000])
-        self.assertIn("serving the source unchanged", text)
-        self.assertIn("rose to", text)
-        self.assertTrue(ran_ffmpeg, f"never escalated:\n{text}")
-
-    def test_a_source_merely_at_the_ceiling_does_not_flap_the_stream(self):
-        """Escalating moves every viewer from the source path to the clamped one. A source hovering around
-        the ceiling must not do that for a saving of a few percent."""
-        text, ran_ffmpeg, timed_out = self._run([1700, 1700, 1700])
-        self.assertIn("serving the source unchanged", text)
-        self.assertFalse(ran_ffmpeg, f"transcoded for a ~4% saving:\n{text}")
-        self.assertTrue(timed_out)
+    def test_the_ceiling_is_a_ceiling_even_when_only_just_exceeded(self):
+        """A blind band above the ceiling would quietly authorise a permanent overrun of a number the admin
+        set as a hard limit: 1700 kbit/s x 20 viewers is 34 Mbit/s against the 32.5 they allowed."""
+        text, ran, _ = self._run(self.CEIL_TOTAL + 72)
+        self.assertNotIn("serving the source unchanged", text)
+        self.assertIn("-c:v libx264", ran)
 
     def test_an_explicit_tier_is_always_honoured(self):
         """A tier is the streamer asking for a quality for their viewers, not the node protecting its
         uplink — it must not be skipped just because the source is already small."""
-        text, ran_ffmpeg, _ = self._run([500], tier="480")
+        text, ran, _ = self._run(500, tier="480")
         self.assertNotIn("serving the source unchanged", text)
-        self.assertTrue(ran_ffmpeg, f"ignored the streamer's 480p tier:\n{text}")
+        self.assertIn("min(480,iw)", ran)
+
+    def test_a_direct_hls_origin_never_stands_down(self):
+        """With stream_hls_base set, /api/streams/ingest bakes the CLAMPED path into the public playback
+        url at go-live and that url rides the kind-30311. There is no per-request fallback on that route,
+        so a path we decline to publish is a 404 for every viewer, on this app and on zap.stream."""
+        text, ran, _ = self._run(500, stream_hls_base="https://stream.example")
+        self.assertNotIn("serving the source unchanged", text)
+        self.assertIn("-c:v libx264", ran)
 
     def test_the_measurement_does_not_open_a_second_reader_when_the_api_answers(self):
         """measure_src_kbps copies 4s off the live RTSP path — a second reader on the source, which is
         where the decode warnings clustered. With the API answering it must not be reached."""
-        text, ran_ffmpeg, _ = self._run([10000])
-        self.assertNotIn("-f matroska", ran_ffmpeg)   # the remux measurement must never have been reached
-        self.assertIn("-c:v libx264", ran_ffmpeg)     # …while the transcode itself did run
+        _, ran, _ = self._run(10000)
+        self.assertNotIn("matroska", ran)
+
+    def test_a_node_without_the_control_api_still_stands_down(self):
+        """The fallback measurement is what a node with no curl / a wrong API port has, and it is enough to
+        make this decision. Gating stand-down on the API instead would re-encode every weak stream on such
+        a node to a ceiling ABOVE its own bitrate — the inflation the measurement exists to prevent."""
+        text, ran, rc = self._run(500, no_curl=True)
+        self.assertIn("matroska", ran)                  # the remux fallback really ran…
+        self.assertNotIn("could not measure", text)     # …and produced a usable number, not 0
+        self.assertIn("500 kbit/s", text)
+        self.assertIn("serving the source unchanged", text)
+        self.assertNotIn("-c:v libx264", ran)
+        self.assertEqual(rc, 0)
+
+    def test_standing_down_pauses_so_the_respawn_is_not_a_tight_loop(self):
+        """MediaMTX applies no backoff of its own: exiting immediately would respawn this script in a busy
+        loop for the whole stream."""
+        S._write_clamp_script(dict(self.CFG))
+        t = Path(str(S._CLAMP_SCRIPT)).read_text()
+        block = t[t.index("serving the source unchanged"):]
+        self.assertLess(block.index('sleep "$RECHECK"'), block.index("exit 0"))
 
 
 class TestPerStreamerQualityTiers(unittest.TestCase):
@@ -576,3 +626,7 @@ class TestPerStreamerQualityTiers(unittest.TestCase):
             with self.assertRaises(ValueError):
                 S.set_quality(bad, "480")
             self.assertEqual(S.get_quality(bad), "auto")
+
+
+if __name__ == "__main__":
+    unittest.main()

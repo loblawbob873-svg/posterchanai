@@ -139,6 +139,12 @@ def _stream_enabled() -> bool:
     return (settings_store.get("stream_enabled", "false") or "").strip().lower() == "true"
 
 
+def _hls_base() -> str:
+    """A direct HLS origin, if the operator configured one. Set = viewers fetch playlists straight from
+    MediaMTX and never pass through this app, which changes what we can know about them."""
+    return (settings_store.get("stream_hls_base", "") or "").strip().rstrip("/")
+
+
 def _user_token(db, user: User) -> str:
     """Stable per-user publish token (unguessable, in the public HLS path). Generated once."""
     row = db.query(UserSetting).filter(UserSetting.user_id == user.id, UserSetting.key == _TOKEN_SETTING).first()
@@ -590,8 +596,17 @@ async def stream_viewers(token: str):
     # Drop RTSP readers before counting. RTSP is bound to loopback and exists ONLY so the bitrate clamp can
     # read the source and publish the transcode back, so an rtspSession here is our own ffmpeg, never a
     # person — counting it reported "1 viewer" on every live stream that nobody was watching.
+    # An hlsMuxer is the same kind of phantom, but ONLY when viewers reach us through the proxy: then every
+    # real viewer is already counted in `pc` and the muxer is our own upstream reader, which MediaMTX keeps
+    # alive for its close-after window after the last viewer leaves — reporting "1 viewer" on an empty
+    # stream. It stayed hidden while the clamp always transcoded (the muxer sat on <token>_clamped, which
+    # this endpoint never queries) and reappears whenever the source is served unclamped.
+    # With stream_hls_base set, viewers fetch from MediaMTX directly and never touch the proxy, so `pc` is
+    # always 0 and that muxer is the ONLY evidence anyone is watching — dropping it there would publish
+    # current_participants: 0 to the public NIP-53 event for the whole stream.
+    skip = ("rtspSession", "hlsMuxer") if not _hls_base() else ("rtspSession",)
     readers = [x for x in (data.get("readers") or [])
-               if isinstance(x, dict) and x.get("type") != "rtspSession"]
+               if isinstance(x, dict) and x.get("type") not in skip]
     return {"live": bool(data.get("ready")), "viewers": max(len(readers), pc)}
 
 
