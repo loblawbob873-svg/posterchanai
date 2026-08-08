@@ -372,15 +372,18 @@ async def drive(url):
                     a = op.get("acts")
                     # Reply, Forward and ⋯ — everything else is in the overflow menu, so a narrow
                     # pane never wraps or clips.
-                    if not a or a["n"] != 3:
+                    if not a or a["n"] != 6:
                         problems.append((label, "actions-broken",
-                                         f"the message actions row has {a and a['n']} buttons, want 3"))
+                                         f"the message actions row has {a and a['n']} buttons, want 6"))
                     else:
                         # One row. Six buttons wrapping into a ragged block is what "not displaying
                         # good" looked like; a pane too narrow for them scrolls sideways instead.
-                        if a["rows"] > 1:
+                        if a["rows"] > 2:
                             problems.append((label, "actions-broken",
-                                             f"the actions wrapped onto {a['rows']} rows"))
+                                             f"the actions spread over {a['rows']} rows"))
+                        if a["overflows"]:
+                            problems.append((label, "actions-broken",
+                                             "the actions row is clipped — buttons out of reach"))
                         # Phone only: desktop scales the whole UI with body{zoom:.67-.77}, so a
                         # 36px control paints at 24 device px there and EVERY button in the app
                         # would fail this. The tap-target rule is about thumbs, not zoomed pixels.

@@ -15269,25 +15269,17 @@
             ${thread.length>1?`<div class="muted small">${thread.length} messages</div>`:''}</div></div>
         <div class="mail-actions">
           <button class="btn btn-cyan small" data-act="reply">↩ Reply</button>
+          <button class="btn small" data-act="replyall">↩↩ Reply all</button>
           <button class="btn small" data-act="forward">↪ Forward</button>
-          <button class="btn small" id="mail-more" aria-label="More actions">⋯</button>
+          <button class="btn small" data-act="unread">● Unread</button>
+          <button class="btn small" data-act="archive">🗄 Archive</button>
+          <button class="btn btn-red small" data-act="delete">🗑 Delete</button>
         </div>
         <div class="mail-thread">${thread.map((m,i)=>this._msgBlock(m, folder, acct, i===thread.length-1 || String(m.uid)===String(seedUid))).join('')}</div>`;
       $('#mail-back',pane).onclick=()=>{ pane.classList.remove('has-open'); this.openUid=null; this.drawList(); };
       $$('.mail-msg .mail-msg-hd',pane).forEach(hd=> hd.onclick=()=> hd.parentElement.classList.toggle('open'));   // collapse/expand
       $$('[data-act]',pane).forEach(b=> b.onclick=()=>this.action(b.dataset.act, target, target.folder||folder, target.account||acct));
-      /* Reply and Forward are what you reach for; the rest live behind ⋯.
-       *
-       * Six buttons never fitted the reading pane. As default small buttons they wrapped into a
-       * ragged two-line block; forcing one row with overflow-x just clipped the last three out of
-       * sight, which is worse — an action you cannot see is an action you do not have. This is the
-       * same openMenuPopover the composer's 📎 and the timeline's ⋯ already use, so it behaves
-       * like every other overflow menu in the app and needs no room at all. */
-      { const more=$('#mail-more',pane);
-        if(more) more.onclick=(e)=>{ e.stopPropagation();
-          openMenuPopover(more, [['replyall','↩↩ Reply all'],['unread','● Mark unread'],
-                                 ['archive','🗄 Archive'],['delete','🗑 Delete']],
-            a=>this.action(a, target, target.folder||folder, target.account||acct)); }; }
+
     },
     async action(act, msg, folder, acct){
       acct=acct||this.acct; const uid=msg.uid;

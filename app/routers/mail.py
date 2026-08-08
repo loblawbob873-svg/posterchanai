@@ -187,7 +187,7 @@ import base64
 import asyncio as _asyncio
 from fastapi import Request
 from fastapi.responses import JSONResponse
-from app.services import mail_store, mail_sync, nostr_store
+from app.services import mail_store, mail_sync, nostr_store, mail_service
 from app.services.nostr import nostr_service as _ns
 
 
@@ -446,6 +446,43 @@ async def mail_save_draft(request: Request, db: Session = Depends(get_db), curre
     doc = await mail_sync.offload_body(db, _ns.derive_pubkey(sk), doc)   # large draft body → encrypted blob
     ok = await mail_store.store_message(sk, acc.email, "Drafts", doc)
     return {"ok": bool(ok), "uid": uid}
+
+
+@router.get("/folder-map")
+async def mail_folder_map(account: str = "", db: Session = Depends(get_db),
+                          current_user: User = Depends(get_current_user)):
+    """What this account's folders are, and which one currently plays each role.
+
+    `detected` is what the server reports (RFC 6154 special-use, then name heuristics); `mapping` is
+    the user's own override. The UI shows the effective choice and can tell the two apart.
+    """
+    acc = _resolve_account(db, current_user, account)
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    meta = await _asyncio.to_thread(_list_special_folders, current_user.id, db, acc.email)
+    saved = (mail_service.get_folder_map(current_user.id, db) or {}).get(acc.email, {})
+    return {"account": acc.email, "folders": meta.get("all") or [],
+            "detected": {k: meta.get(k) for k in ("sent", "drafts", "trash", "junk", "archive")},
+            "mapping": saved}
+
+
+@router.put("/folder-map")
+async def mail_folder_map_save(request: Request, db: Session = Depends(get_db),
+                               current_user: User = Depends(get_current_user)):
+    """Save the mapping, then mirror it to the relay so it survives this node."""
+    d = await request.json()
+    acc = _resolve_account(db, current_user, d.get("account", ""))
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    full = mail_service.set_folder_map(current_user.id, db, acc.email, d.get("mapping") or {})
+    # Persist off-box in the same breath. Waiting for some later sync would mean a mapping that
+    # looks saved and is gone after a restore — the whole point of putting user kv on the relay.
+    try:
+        from app.services import users_store
+        await users_store.sync_user_kv(db, current_user)
+    except Exception as e:
+        logger.warning("[mail] folder map saved locally but not mirrored: %s", e)
+    return {"ok": True, "mapping": full.get(acc.email, {})}
 
 
 @router.get("/folders")

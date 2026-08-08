@@ -1616,6 +1616,54 @@ def _account_by_email(user_id: int, db: Session, account_email: str):
     return None
 
 
+FOLDER_MAP_KEY = "mail_folders"      # UserSetting: {account_email: {sent/drafts/trash/junk/archive}}
+_FOLDER_ROLES = ("sent", "drafts", "trash", "junk", "archive")
+
+
+def get_folder_map(user_id: int, db: Session) -> dict:
+    """The user's manual folder mapping, or {}.
+
+    Lives in its OWN UserSetting rather than inside `mail_accounts` so it survives a password change
+    and is not entangled with credentials. Like every other non-exempt UserSetting it is mirrored to
+    the relay by users_store.sync_user_kv and restored by hydrate_user_kv, so a rebuilt node comes
+    back with the mapping intact.
+    """
+    import json as _json
+    from app.models import UserSetting
+    row = db.query(UserSetting).filter(UserSetting.user_id == user_id,
+                                       UserSetting.key == FOLDER_MAP_KEY).first()
+    if not row or not row.value:
+        return {}
+    try:
+        out = _json.loads(row.value)
+        return out if isinstance(out, dict) else {}
+    except Exception:
+        return {}
+
+
+def set_folder_map(user_id: int, db: Session, account_email: str, mapping: dict) -> dict:
+    """Store the mapping for one account. An empty value for a role means "go back to detecting it"
+    rather than "there is no such folder" — otherwise clearing a wrong guess would leave the account
+    with no Sent folder at all."""
+    import json as _json
+    from app.models import UserSetting
+    full = get_folder_map(user_id, db)
+    clean = {r: str(mapping.get(r) or "").strip() for r in _FOLDER_ROLES}
+    clean = {r: v for r, v in clean.items() if v}
+    if clean:
+        full[account_email] = clean
+    else:
+        full.pop(account_email, None)
+    row = db.query(UserSetting).filter(UserSetting.user_id == user_id,
+                                       UserSetting.key == FOLDER_MAP_KEY).first()
+    if not row:
+        row = UserSetting(user_id=user_id, key=FOLDER_MAP_KEY, value="")
+        db.add(row)
+    row.value = _json.dumps(full, separators=(",", ":"))
+    db.commit()
+    return full
+
+
 def list_special_folders(user_id: int, db: Session, account_email: str) -> dict:
     """Resolve an account's real folders + special-use mailboxes (RFC 6154 \\Sent etc., with name
     heuristics as a fallback). Returns {'all':[names], 'sent':name|None, 'drafts':.., 'trash':..,
@@ -1647,6 +1695,20 @@ def list_special_folders(user_id: int, db: Session, account_email: str) -> dict:
                             ("\\junk", "junk"), ("\\archive", "archive")):
                 if su in flags and not out[key]:
                     out[key] = name
+        # THE USER'S OWN MAPPING WINS. RFC 6154 special-use flags plus name heuristics get this
+        # right on most servers and wrong on some — and when Sent is wrong, a message you just sent
+        # is filed somewhere this app never looks, which reads as "it never sent". An explicit
+        # choice in Settings → Mail overrides the guess; a role left blank keeps being detected.
+        try:
+            override = (get_folder_map(user_id, db) or {}).get(account_email) or {}
+            for key in _FOLDER_ROLES:
+                v = str(override.get(key) or "").strip()
+                if v:
+                    out[key] = v
+                    if v not in out["all"]:
+                        out["all"].append(v)
+        except Exception as e:
+            logger.debug("[mail] folder override unreadable: %s", e)
 
         def _heur(*subs):
             for n in out["all"]:
