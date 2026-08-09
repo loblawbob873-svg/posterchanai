@@ -17270,7 +17270,24 @@
   function _dmPinBottom(m){
     if(!m) return;
     let stop=false;
-    const pin=()=>{ if(!stop && m.isConnected) m.scrollTop=m.scrollHeight; };
+    /* WATCH WHERE THE PANE ACTUALLY IS, don't just keep shoving it down.
+     *
+     * 'touchmove'/'wheel' were the only way out of this loop, and on a phone that is not enough: a
+     * fling scrolls on ONE touchmove and then coasts, and the momentum scroll that follows is not a
+     * touch event at all. Worse, the loop is re-armed for four seconds by things that happen long
+     * after the render — every message decrypting, every attachment decorating — so scrolling up in a
+     * DM was undone again and again ("I can't scroll up, it keeps moving me down").
+     *
+     * So remember the offset we last SET, and compare it to where the pane is now. Anything that
+     * moved it other than us is the user, and we stop immediately rather than fight them. Kinetic
+     * scrolling, a scrollbar drag, a keyboard — all of them look the same to this and none of them
+     * needed their own listener. */
+    let mine=-1;
+    const pin=()=>{
+      if(stop || !m.isConnected) return;
+      if(mine>=0 && Math.abs(m.scrollTop-mine)>4){ done(); return; }   // moved by someone who isn't us
+      m.scrollTop=m.scrollHeight; mine=m.scrollTop;
+    };
     const done=()=>{ stop=true; try{ obs.disconnect(); }catch(_){ } };
     // Watch for the CONTENT changing rather than guessing how long it takes. Decryption patches each
     // bubble as it finishes — over hundreds of milliseconds on a long thread — and a fixed frame budget
@@ -17575,7 +17592,13 @@
         _patched=true;
       } } }
     // Bubbles grew from placeholders to full text — if we were pinned to the bottom, stay pinned.
-    if(_patched && _atBottom && !_wantTop){ _dmPinBottom($('#dm-msgs')); }
+    // `_atBottom` was measured before the FIRST message was decrypted, and the loop above awaits an
+    // ECDH+AES round per message — on a long thread that is seconds. Trusting it here yanked anyone
+    // who read history in the meantime back down to the newest message. Ask the pane where it is NOW.
+    if(_patched && _atBottom && !_wantTop){
+      const m=$('#dm-msgs');
+      if(m && m.scrollHeight - m.scrollTop - m.clientHeight < 80) _dmPinBottom(m);
+    }
   }
 
   // ---------- profile ----------

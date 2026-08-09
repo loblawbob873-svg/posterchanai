@@ -2020,13 +2020,22 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   .cmp-modal .cmp-actions{margin-top:6px}
 }
 /* YouTube inline embed (click the thumbnail facade to load the player) */
-.yt-embed{position:relative;display:block;max-width:480px;width:100%;margin-top:8px;cursor:pointer;border-radius:12px;overflow:hidden;border:1px solid var(--line)}
+/* WIDTH IS A LENGTH, NOT A PERCENTAGE, and the cap is the percentage — the reverse of how these two
+   were written. In a container of known width the two spellings are identical (480 capped by the
+   container, or the container capped at 480 — same number either way). In a SHRINK-TO-FIT one they
+   are not: a percentage cannot be resolved against a width that is still being computed from the
+   contents, so it contributes nothing and the box collapses onto whatever else is inside.
+   A DM bubble is width:fit-content, and .yt-frame's only child is position:absolute — i.e. nothing
+   else is inside — so pressing play on a YouTube link in a DM replaced a correctly-sized facade with
+   a frame that resolved to about zero: "video gets big then shrinks to a tiny tiny square". The
+   facade survived only because .yt-thumb is a real <img> with an intrinsic size to fall back on. */
+.yt-embed{position:relative;display:block;width:480px;max-width:100%;margin-top:8px;cursor:pointer;border-radius:12px;overflow:hidden;border:1px solid var(--line)}
 .yt-thumb{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}
 .yt-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:40px;color:#fff;background:rgba(0,0,0,.28);transition:background .15s}
 .yt-embed:hover .yt-play{background:rgba(0,0,0,.12)}
 /* Data-saver YouTube chip: compact tappable label, no external thumbnail fetch. */
 .yt-embed.yt-ds{display:inline-block;width:auto;max-width:none;margin-top:8px;padding:6px 12px;color:var(--cyan);font-size:13px;background:rgba(var(--accent-rgb),.06)}
-.yt-frame{position:relative;max-width:480px;width:100%;aspect-ratio:16/9;margin-top:8px;border-radius:12px;overflow:hidden}
+.yt-frame{position:relative;width:480px;max-width:100%;aspect-ratio:16/9;margin-top:8px;border-radius:12px;overflow:hidden}
 .yt-frame iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
 /* NIP-05 verified blue check */
 .vchk{display:inline-flex;vertical-align:middle}
