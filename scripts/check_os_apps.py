@@ -29,6 +29,8 @@ Assertions, each a way a feature breaks specifically INSIDE a window and nowhere
                        for a guest" is how a gate that was broken for EVERYBODY stayed hidden.
   folder-broken        The Nostr Games folder does not hold the games, does not open one when
                        clicked, or steals the live #feed from the window that had it.
+  no-launcher-refresh  The desktop cannot rebuild its launcher when the identity arrives. Icons are
+                       built once at enter(), and a remembered desktop opens before login resolves.
   music-not-an-app     Music does not open as a window. It is a library you browse; the floating
                        player bar is the transport, not the app.
   noti-centre          The clock does not open a working notification centre (off screen, stacked
@@ -97,7 +99,13 @@ ENTER = r"""(async () => {
     const real = window.__PC.me;
     window.__PC.me = () => ({ pubkey: 'f'.repeat(64), npub: 'npub1testtesttest' });
     try {
-      PCOS.exit(); await sleep(200); PCOS.enter(); await sleep(500);
+      /* Deliberately WITHOUT re-entering: this is the real boot order — the desktop is already open
+       * (a remembered osMode opens during boot) and the identity arrives afterwards. PCOS.refresh()
+       * is what has to notice. Tearing the desktop down and rebuilding it would test a path that
+       * never happens and would have passed while the desktop was missing Music, My Profile, Go Live
+       * and the tray avatar for the whole session. */
+      if (PCOS.refresh) PCOS.refresh(); else asUser.noRefresh = true;
+      await sleep(400);
       asUser.stubbed = true;
       asUser.icons = [...document.querySelectorAll('.os-icon')].map(b => b.dataset.view || '');
       asUser.tray  = !!document.getElementById('os-me');
@@ -125,7 +133,8 @@ ENTER = r"""(async () => {
       }
     } finally {
       window.__PC.me = real;
-      PCOS.exit(); await sleep(200); PCOS.enter(); await sleep(400);
+      if (PCOS.refresh) PCOS.refresh();
+      await sleep(300);
     }
   }
   /* The Nostr Games folder. Three things it must not get wrong: it holds the games, opening one
@@ -335,6 +344,11 @@ async def main():
                 if not nc.get("closes"):
                     problems.append(("shell", "noti-centre", "Escape does not close the notification centre"))
             au = g.get("asUser") or {}
+            if au.get("noRefresh"):
+                problems.append(("shell", "no-launcher-refresh",
+                                 "PCOS.refresh() does not exist — the desktop builds its icons once "
+                                 "at enter(), which on a remembered desktop happens BEFORE login, so "
+                                 "the signed-in entries never appear for the whole session"))
             if au.get("stubbed"):
                 want = {"__profile": "My Profile", "__music": "Music", "__golive": "Go Live"}
                 have = set(au.get("icons") or [])

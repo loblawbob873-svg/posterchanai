@@ -1095,7 +1095,18 @@
     else snapTo(w, k === 'Left' ? 'left' : 'right');
   });
 
-  window.PCOS = { enter, exit, toggle, restore, isOn: () => on, openDoc, focusDoc, routeView, snapTo, osToast,
+  /* Re-read the launcher and repaint the chrome. The desktop icons are built ONCE at enter(), and
+   * the entries gated on being signed in — My Profile, Music, Go Live, and the tray avatar — are
+   * decided at that moment. A remembered desktop opens during boot, BEFORE the identity resolves, so
+   * those were simply absent for the rest of the session; the start menu is built on each open and
+   * therefore had them, which is what "it is in the start menu but not on the desktop" was. */
+  function refresh(){
+    if(!on) return;
+    drawDesktop();
+    drawBar();
+  }
+
+  window.PCOS = { enter, exit, toggle, restore, refresh, isOn: () => on, openDoc, focusDoc, routeView, snapTo, osToast,
                   isRepainting: () => repainting > 0,
                   windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min })) };
 })();

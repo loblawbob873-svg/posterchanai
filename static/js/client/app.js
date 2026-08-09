@@ -1762,6 +1762,9 @@
     // the six login paths, because this is the one place they all arrive with both a session and a
     // pubkey; the name and picture are filled in by renderMe once the profile loads.
     if(!GUEST) try{ Session.remember(Session.load(), { pubkey: ME.pubkey, npub: ME.npub }); }catch(_){}
+    // A remembered desktop opens during boot, before this point — so tell it the identity has landed
+    // and let it rebuild the launcher. Without this the signed-in entries are missing for the session.
+    try{ if(window.PCOS && PCOS.refresh) PCOS.refresh(); }catch(_){}
     document.body.classList.toggle('guest', GUEST);
     /* ?next=/admin — where the server sent us to sign in from. /admin has no login page of its own
      * (the password UI is retired; the cookie a Nostr sign-in sets IS the admin session), so a
@@ -2568,6 +2571,8 @@
     // Keep the switcher's row for this identity in step with the profile as it loads.
     try{ Session.remember(Session.load(), { pubkey: ME.pubkey, npub: ME.npub, name: label,
                                             picture: p.picture || '' }); }catch(_){}
+    // …and the desktop's tray avatar, which is read from this card.
+    try{ if(window.PCOS && PCOS.refresh) PCOS.refresh(); }catch(_){}
   }
 
   /* ---------- switching between a few accounts ----------
