@@ -1,0 +1,227 @@
+"""The folder-sync executor, driven with fake adapters under node.
+
+Run: venv-unified/bin/python -m unittest tests.client.test_sync_run
+
+foldersync.js decides WHAT should happen; syncrun.js decides in what ORDER, and what to do when a
+step fails. That is where a sync actually loses data, and none of it needs a filesystem to test —
+the adapters are injected, so the fakes here can fail on demand, which a real disk will not do to
+order.
+
+Each case is one of the four ordering rules, or the thing that breaks if it is ignored:
+
+  * a conflict renames the local copy BEFORE writing the incoming one. The other order means a crash
+    in between has overwritten an edit that then exists nowhere.
+  * `base` advances PER FILE and only for files that moved. Advancing the whole plan at the end turns
+    one failed upload into a file silently deleted on the next sweep — base says synced, the scan
+    says gone, so the engine reads it as "deleted here".
+  * one failure is not a failed sweep. A single locked file must not block the folder forever.
+  * an oversized file is REPORTED, and does not record agreement. A file that never syncs and never
+    says so is the worst outcome available.
+"""
+import json
+import os
+import shutil
+import subprocess
+import textwrap
+import unittest
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+RUN = os.path.join(REPO, "static", "js", "client", "syncrun.js")
+NODE = shutil.which("node") or shutil.which("nodejs")
+
+HARNESS = r"""
+const R = require(%s);
+
+function makeFs(files, failures){
+  const calls = [];
+  const F = failures || {};
+  return {
+    calls,
+    async scan(){ return { files: JSON.parse(JSON.stringify(files)), skipped: [] }; },
+    async read(id, p){
+      calls.push(['read', p]);
+      if(F.read && F.read[p]) throw new Error(F.read[p]);
+      return new Uint8Array([1,2,3]);
+    },
+    async write(id, p, bytes, mtime){
+      calls.push(['write', p]);
+      if(F.write && F.write[p]) throw new Error(F.write[p]);
+      files[p] = { size: bytes.length, mtime: mtime || 1 };
+      return { size: bytes.length, mtime: mtime || 1 };
+    },
+    async move(id, a, b){
+      calls.push(['move', a, b]);
+      if(F.move && F.move[a]) throw new Error(F.move[a]);
+      files[b] = files[a]; delete files[a]; return true;
+    },
+    async trash(id, p){
+      calls.push(['trash', p]);
+      if(F.trash && F.trash[p]) throw new Error(F.trash[p]);
+      delete files[p]; return '.pc-trash/x/' + p;
+    },
+  };
+}
+
+function makeStore(manifest, base, failures){
+  const F = failures || {};
+  const saved = [];
+  return {
+    saved,
+    async manifest(){ return JSON.parse(JSON.stringify(manifest)); },
+    async base(){ return JSON.parse(JSON.stringify(base)); },
+    async getBlob(sha){ if(F.get && F.get[sha]) throw new Error(F.get[sha]); return new Uint8Array([9]); },
+    async putBlob(){ if(F.put) throw new Error(F.put); return 'SHA_NEW'; },
+    async save(id, s){ saved.push(JSON.parse(JSON.stringify(s))); },
+  };
+}
+"""
+
+
+@unittest.skipIf(not NODE, "no node on this node")
+class TestSyncRun(unittest.TestCase):
+    def run_js(self, body):
+        js = (HARNESS % json.dumps(RUN)) + textwrap.dedent(body)
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=90)
+        if r.returncode != 0:
+            raise AssertionError("node failed:\n" + r.stderr[-3000:])
+        return json.loads(r.stdout)
+
+    def test_a_conflict_renames_before_it_writes(self):
+        out = self.run_js("""
+          (async () => {
+            const fs = makeFs({'doc.txt': {sha:'LOCAL', size:5, mtime:2000}});
+            const store = makeStore({'doc.txt': {sha:'REMOTE', size:5, mtime:3000, device:'phone'}},
+                                    {'doc.txt': {sha:'OLD', size:5, mtime:1000}});
+            const rep = await R.sweep(fs, store, {id:'r1', device:'laptop', now:5000});
+            process.stdout.write(JSON.stringify({calls: fs.calls, rep}));
+          })();
+        """)
+        kinds = [c[0] for c in out["calls"]]
+        self.assertEqual(kinds[0], "move",
+                         "the local copy must be renamed BEFORE the incoming one is written — the "
+                         "other order loses the edit if it crashes in between")
+        self.assertEqual(kinds[1], "write")
+        self.assertEqual(len(out["rep"]["conflicted"]), 1)
+
+    def test_a_failed_upload_does_not_record_agreement(self):
+        """The one that silently deletes files. If base says a file is synced and the next scan
+        cannot find it, the engine reads that as 'deleted here' and removes it everywhere."""
+        out = self.run_js("""
+          (async () => {
+            const fs = makeFs({'a.txt': {sha:'A', size:3, mtime:1}, 'b.txt': {sha:'B', size:3, mtime:1}},
+                              {read: {'a.txt': 'EACCES'}});
+            const store = makeStore({}, {});
+            const rep = await R.sweep(fs, store, {id:'r1', device:'laptop', now:5000});
+            process.stdout.write(JSON.stringify({rep, saved: store.saved}));
+          })();
+        """)
+        rep, saved = out["rep"], out["saved"]
+        self.assertEqual(rep["uploaded"], ["b.txt"])
+        self.assertEqual([f["path"] for f in rep["failed"]], ["a.txt"])
+        self.assertNotIn("a.txt", saved[-1]["base"],
+                         "base recorded a file whose upload failed — the next sweep will read it as "
+                         "deleted and remove it from every device")
+        self.assertIn("b.txt", saved[-1]["base"])
+
+    def test_one_failure_does_not_abort_the_sweep(self):
+        out = self.run_js("""
+          (async () => {
+            const fs = makeFs({}, {write: {'x.txt': 'EBUSY'}});
+            const store = makeStore({'x.txt': {sha:'X', size:1, mtime:1},
+                                     'y.txt': {sha:'Y', size:1, mtime:1}}, {});
+            const rep = await R.sweep(fs, store, {id:'r1', device:'laptop', now:5000});
+            process.stdout.write(JSON.stringify(rep));
+          })();
+        """)
+        self.assertEqual(out["downloaded"], ["y.txt"],
+                         "a locked file must not block every other file in the folder")
+        self.assertEqual(len(out["failed"]), 1)
+        self.assertFalse(out["ok"])
+
+    def test_an_oversized_file_is_reported_and_not_agreed(self):
+        out = self.run_js("""
+          (async () => {
+            const fs = makeFs({'big.bin': {sha:'BIG', size:999, mtime:1}});
+            const store = makeStore({}, {});
+            const rep = await R.sweep(fs, store, {id:'r1', device:'laptop', now:5000, maxBytes:100});
+            process.stdout.write(JSON.stringify({rep, saved: store.saved}));
+          })();
+        """)
+        self.assertEqual(out["rep"]["uploaded"], [])
+        self.assertTrue(any(s["path"] == "big.bin" and s["why"] == "too big"
+                            for s in out["rep"]["skipped"]),
+                        "an oversized file must be reported, never silently dropped")
+        for s in out["saved"]:
+            self.assertNotIn("big.bin", s["base"])
+
+    def test_a_local_delete_becomes_a_remote_tombstone(self):
+        out = self.run_js("""
+          (async () => {
+            const fs = makeFs({});
+            const store = makeStore({'g.txt': {sha:'G', size:1, mtime:1}},
+                                    {'g.txt': {sha:'G', size:1, mtime:1}});
+            const rep = await R.sweep(fs, store, {id:'r1', device:'laptop', now:5000});
+            process.stdout.write(JSON.stringify({rep, saved: store.saved}));
+          })();
+        """)
+        self.assertEqual(out["rep"]["removedRemote"], ["g.txt"])
+        self.assertEqual(out["saved"][-1]["manifest"]["g.txt"]["deletedAt"], 5000,
+                         "the manifest must carry a tombstone so other devices learn of the delete")
+
+    def test_a_remote_delete_goes_to_the_trash_not_to_unlink(self):
+        out = self.run_js("""
+          (async () => {
+            const fs = makeFs({'g.txt': {sha:'G', size:1, mtime:1}});
+            const store = makeStore({'g.txt': {deletedAt: 4000}},
+                                    {'g.txt': {sha:'G', size:1, mtime:1}});
+            const rep = await R.sweep(fs, store, {id:'r1', device:'laptop', now:5000});
+            process.stdout.write(JSON.stringify({calls: fs.calls, rep}));
+          })();
+        """)
+        self.assertEqual([c[0] for c in out["calls"]], ["trash"])
+        self.assertEqual(out["rep"]["trashed"][0]["path"], "g.txt")
+
+    def test_a_settled_sweep_writes_nothing_and_the_next_one_is_quiet(self):
+        out = self.run_js("""
+          (async () => {
+            const same = {'a.txt': {sha:'A', size:3, mtime:1000}};
+            const fs = makeFs(JSON.parse(JSON.stringify(same)));
+            const store = makeStore(JSON.parse(JSON.stringify(same)), JSON.parse(JSON.stringify(same)));
+            const rep = await R.sweep(fs, store, {id:'r1', device:'laptop', now:5000});
+            process.stdout.write(JSON.stringify({rep, calls: fs.calls, saves: store.saved.length}));
+          })();
+        """)
+        self.assertEqual(out["rep"]["unchanged"], 1)
+        self.assertEqual(out["calls"], [], "a settled folder must touch no files")
+        self.assertEqual(out["saves"], 0, "a settled folder must not rewrite the manifest")
+
+    def test_dry_run_touches_nothing(self):
+        out = self.run_js("""
+          (async () => {
+            const fs = makeFs({'a.txt': {sha:'A', size:3, mtime:1}});
+            const store = makeStore({}, {});
+            const rep = await R.sweep(fs, store, {id:'r1', device:'laptop', now:5000, dryRun:true});
+            process.stdout.write(JSON.stringify({rep, calls: fs.calls, saves: store.saved.length}));
+          })();
+        """)
+        self.assertEqual(out["calls"], [])
+        self.assertEqual(out["saves"], 0)
+        self.assertEqual(len(out["rep"]["plan"]["upload"]), 1,
+                         "a dry run must still say what it WOULD do")
+
+    def test_excluded_paths_never_reach_the_filesystem(self):
+        out = self.run_js("""
+          (async () => {
+            const fs = makeFs({'a.jpg': {sha:'A', size:3, mtime:1}, 'Old/x.jpg': {sha:'X', size:3, mtime:1}});
+            const store = makeStore({}, {});
+            const rep = await R.sweep(fs, store, {id:'r1', device:'laptop', now:5000, excludes:['Old']});
+            process.stdout.write(JSON.stringify({rep, calls: fs.calls}));
+          })();
+        """)
+        self.assertEqual(out["rep"]["uploaded"], ["a.jpg"])
+        self.assertEqual([c[1] for c in out["calls"]], ["a.jpg"])
+        self.assertEqual(out["rep"]["excluded"], 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
