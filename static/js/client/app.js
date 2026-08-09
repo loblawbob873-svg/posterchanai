@@ -11622,7 +11622,7 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['ai','ai','PosterChan AI'],['websearch','search','Web Search'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__accounts','user','Switch account'],['settings','gear','Settings'],['logout','logout','Logout']]
+    const items=[['ai','ai','PosterChan AI'],['websearch','search','Web Search'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['__music','music','Music'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__accounts','user','Switch account'],['settings','gear','Settings'],['logout','logout','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
                    && !(window.PC_NOSTR_ONLY && v==='websearch')   // the search runs on the instance, so it needs one
                    && !(v==='__golive' && CFG.stream_enabled===false));   // hide AI+Translate in Nostr-only; Go Live only where the node streams
@@ -11640,7 +11640,13 @@
     const _act=`<span title="Live streams right now">${STREAM_ICON} ${_lastStreams.toLocaleString()} live</span><span title="People in a call right now">${CALL_ICON} ${_lastCalls.toLocaleString()} in call</span>`;
     const _stat=`<div class="more-stats muted small">${_net?`<div class="ms-row">${_net}</div>`:''}<div class="ms-row">${_act}</div></div>`;
     modal(`<h3>More</h3>${_stat}<div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
-      $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; if(v==='__discover'){ closeModal(); discoverMenu(); return; } if(v==='__games'){ closeModal(); gamesMenu(); return; } if(v==='__files'){ closeModal(); filesMenu(); return; } if(v==='__golive'){ closeModal(); _goLive(); return; } if(v==='__accounts'){ closeModal(); accountMenu(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
+      $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; if(v==='__discover'){ closeModal(); discoverMenu(); return; } if(v==='__games'){ closeModal(); gamesMenu(); return; }
+        /* Music is a TOP-LEVEL entry here, not only Files → Music. On a phone this is the app's
+         * music player; leaving its only door inside a folder called Files is two taps behind a
+         * name nobody would guess held their songs. Opens the LIBRARY (renderMusicApp), not
+         * openMusic's immediate shuffle — the nav button's job is to take you there, and
+         * deciding what plays is the user's. */
+        if(v==='__music'){ closeModal(); renderMusicApp(); return; } if(v==='__files'){ closeModal(); filesMenu(); return; } if(v==='__golive'){ closeModal(); _goLive(); return; } if(v==='__accounts'){ closeModal(); accountMenu(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
     });
   }
   function filesMenu(){   // mobile Files sub-sheet — mirrors the desktop sidebar's Files group
@@ -23052,19 +23058,22 @@
     if(GUEST || !ME){ _guestPrompt&&_guestPrompt(); return; }
     try{
       toast('saving to Blossom…');
-      // OUR OWN media is AUTHED and a credential-less fetch never gets it: an AI-chat artifact lives at
-      // /api/files/… (session/Bearer-gated → 401) or /client/file/… (ownership-cookie-gated → 403), so
-      // "save the image I just generated/compressed" died before it ever reached Blossom. Send the
-      // credentials for anything on the instance origin — exactly what Copy (_lbCopyImg) and Save
-      // (_lbSaveMedia) already do — and keep 'omit' for third-party timeline hosts, where cookies are
-      // useless and would make the CORS request fail outright.
-      const org=_serverOrigin(), mine=!!org && src.indexOf(org+'/')===0;
-      const r=await fetch(src, mine ? { headers:(_aiToken?{'Authorization':'Bearer '+_aiToken}:{}), credentials:'include' }
-                                    : { credentials:'omit' });
-      if(!r.ok) throw new Error('could not fetch it ('+r.status+')');
-      const blob=await r.blob();
-      let name=''; try{ name=decodeURIComponent(new URL(src, location.href).pathname.split('/').pop()||''); }catch(_){ }
-      name=(name||'media').split('?')[0].slice(0,48) || 'media';
+      /* Through the app's ONE fetch pipeline, the same as Save-to-disk.
+       *
+       * This did its own `fetch(src)` — and a third-party host that sends no CORS headers cannot be
+       * read by the page AT ALL, so the browser threw "Failed to fetch" before Blossom was ever in
+       * the picture. Which host you happened to pick decided whether the button worked: reported as
+       * "unable to save photos from Web Search → Images … some images worked", and measured — of
+       * four real image results, two threw and two did not, purely on their CORS headers.
+       *
+       * fetchMediaBlob already solved this for the Save button: our origin gets credentials, a
+       * third-party host gets a credential-less try, and anything the browser refuses goes through
+       * our own SSRF-guarded proxy, which fetches it server-side where CORS does not apply. There is
+       * no reason for two buttons on the same toolbar to disagree about how to read the same
+       * picture. fileNameFor comes with it, so the upload is named from the bytes rather than from a
+       * URL's last segment — which for a Blossom link is a bare sha256 with no extension. */
+      const { blob, disp } = await fetchMediaBlob(src);
+      const name = fileNameFor(src, blob, '', disp, await sniffExt(blob)) || 'media';
       const url=await uploadBlob(new File([blob], name, { type: blob.type || 'application/octet-stream' }));
       try{ await navigator.clipboard.writeText(url); toast('saved to Blossom — link copied'); }
       catch(_){ toast('saved to Blossom'); }
