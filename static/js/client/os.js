@@ -798,7 +798,7 @@
     }catch(_){ /* no audio here — the toast still is the notification */ }
   }
 
-  function osToast(html, pic){
+  function osToast(html, pic, onClick){
     if(!on) return;
     ding();
     if(!toastHost || !toastHost.isConnected){
@@ -811,7 +811,9 @@
     t.innerHTML = (pic ? `<img src="${enc(pic)}" alt="" style="width:26px;height:26px;border-radius:50%;object-fit:cover;flex:0 0 auto">`
                        : '<svg class="ic" aria-hidden="true"><use href="#i-bell"></use></svg>')
                 + `<div><span>${html}</span></div>`;
-    t.onclick = () => { t.remove(); toggleNoti(true); };
+    // Clicking the card goes where the notification points — the notification centre by default,
+    // but Messages for email, which is not in that centre's list.
+    t.onclick = () => { t.remove(); if(onClick){ try{ onClick(); return; }catch(_){} } toggleNoti(true); };
     toastHost.appendChild(t);
     setTimeout(() => t.remove(), 7000);       // a desktop toast can afford to linger past the app's 5s
     drawBar();                                 // refresh the tray count
@@ -826,7 +828,8 @@
       let n = 0;
       try{ n = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){ return; }
       if(mailSeen === null){ mailSeen = n; mailAck = n; return; }   // baseline, not an arrival
-      if(n > mailSeen) osToast(`✉ <b>${n - mailSeen} new email</b>`, '');
+      if(n > mailSeen) osToast(`✉ <b>${n - mailSeen} new email</b>`, '',
+                               () => { try{ openApp('messages'); }catch(_){} });
       if(n !== mailSeen){ mailSeen = n; drawBar(); }
     }, 20000);
   }

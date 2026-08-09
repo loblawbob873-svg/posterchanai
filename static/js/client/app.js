@@ -14389,14 +14389,17 @@
     try{ if(window.Notification && Notification.permission==='granted') new Notification('PosterChan', { body:`${who} ${what}`.replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim(), icon:p.picture||LOGO }); }catch(_){}   // OS notif is plain text → drop shortcodes
   }
   // `html` is trusted markup (callers build names via emojiName + enc their content) — do NOT re-escape it.
-  function notifToast(html, pic){
-    // On the desktop these become Windows-style cards in the bottom-right corner instead. Routed
-    // here rather than detected again in os.js: this function is already the ONE place a live
-    // notification or DM announces itself, so the two can never disagree about what arrived.
-    try{ if(window.PCOS && PCOS.isOn() && PCOS.osToast){ PCOS.osToast(html, pic); return; } }catch(_){}
+  function notifToast(html, pic, onClick){
+    // On the desktop these become Windows-style cards in the bottom-right corner instead (with the
+    // arrival chime). Routed here rather than detected again in os.js: this function is already the
+    // ONE place a live notification, DM or new email announces itself, so the two cannot disagree
+    // about what arrived. onClick names where the card should GO — email belongs in Messages, not in
+    // the Notifications view this used to send everything to.
+    const go = onClick || (() => switchView('notifications'));
+    try{ if(window.PCOS && PCOS.isOn() && PCOS.osToast){ PCOS.osToast(html, pic, go); return; } }catch(_){}
     const t=document.createElement('div'); t.className='toast notif-toast';
     t.innerHTML=`<img src="${enc(pic||LOGO)}" onerror="this.src='${LOGO}'"><span>${html}</span>`;
-    t.onclick=()=>{ switchView('notifications'); t.remove(); };
+    t.onclick=()=>{ go(); t.remove(); };
     $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),5000);
   }
   function notifList(){
@@ -15735,7 +15738,11 @@
       const rb=$('#mail-refresh',this.root); if(rb){ rb.textContent='⏳'; rb.disabled=true; }
       try{ const r=await this.api('/sync',{method:'POST'});
         const total=Object.values(r.new||{}).reduce((a,b)=>a+(+b||0),0);
-        if(total){ this.unread+=total; if(manual) toast(total+' new message'+(total>1?'s':'')); if(_msgTab==='email') {} else bumpDm(); }
+        if(total){ this.unread+=total;
+          if(manual) toast(total+' new message'+(total>1?'s':''));
+          else notifToast('📧 <b>'+total+' new email'+(total>1?'s':'')+'</b>', LOGO,
+                          () => { _msgTab='email'; switchView('messages'); });
+          if(_msgTab==='email') {} else bumpDm(); }
         if(this.root && this.acct) this.loadList();
       }catch(_){ if(manual) toast('mail sync failed'); }
       this._syncing=false; const rb2=$('#mail-refresh',this.root); if(rb2){ rb2.textContent='🔄'; rb2.disabled=false; }
@@ -15747,7 +15754,11 @@
         const a=await this.api('/accounts'); if(!(a.accounts||[]).length) return;
         const r=await this.api('/sync',{method:'POST'});
         const total=Object.values(r.new||{}).reduce((x,y)=>x+(+y||0),0);
-        if(total){ this.unread+=total; toast('📧 '+total+' new email'+(total>1?'s':''));
+        if(total){ this.unread+=total;
+          // A NOTIFICATION, not a plain toast: this is the one moment the client learns mail has
+          // arrived, and going through notifToast is what gives it the desktop card and the chime.
+          notifToast('📧 <b>'+total+' new email'+(total>1?'s':'')+'</b>', LOGO,
+                     () => { _msgTab='email'; switchView('messages'); });
           if(VIEW==='messages'){ try{ renderMessages(); }catch(_){} } }
       }catch(_){}
     },
