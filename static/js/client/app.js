@@ -102,6 +102,28 @@
     bar.querySelector('.iih-x').onclick=()=>{ try{ localStorage.setItem('pc_ios_install_dismissed','1'); }catch(_){} bar.remove(); };
     document.body.appendChild(bar);
   }
+  /* Carry the SIZE HINTS from the element being replaced onto its replacement.
+   *
+   * The swaps below hand a laid-out <img> to a freshly-built <video>, and `v.className = el.className`
+   * copies the layout CLASS while dropping everything the box is actually reserved from: the
+   * width/height attributes and the inline --arn/--nw (see _dimAttrs). Without them the CSS `width`
+   * is invalid and falls back to `auto` — which on a replaced element means "the media's own pixels,
+   * never scaled up".
+   *
+   * MEASURED, in a real DM: an extensionless Blossom URL renders as an <img> holding a 270px box,
+   * __blobFallback swaps in a hintless <video>, and the moment you press PLAY and metadata arrives the
+   * element becomes the clip's literal 128x128 — and a bubble is width:fit-content, so the whole
+   * message collapsed with it, from 297px wide to 154px. Reported as "video gets big then shrinks to a
+   * tiny tiny square". It is not a DM bug: every surface that renders an extensionless blob is on this
+   * path — it is only in a DM that the container shrink-wraps the damage.
+   *
+   * data-dim comes along too, so _dimLearn still corrects a guessed shape on loadedmetadata. */
+  function _carryDims(from, to){
+    if(!from || !to) return;
+    for(const a of ['width','height']){ const v = from.getAttribute && from.getAttribute(a); if(v) to.setAttribute(a, v); }
+    for(const p of ['--arn','--nw']){ const v = from.style && from.style.getPropertyValue(p); if(v) to.style.setProperty(p, v); }
+    if(from.dataset && from.dataset.dim) to.dataset.dim = from.dataset.dim;
+  }
   // Extensionless Blossom blobs (/<sha256>) carry NO type in the URL, so we render them as <img>;
   // if that fails the blob is likely a video (bots post bare video URLs) — try <video>, and only
   // if THAT fails fall back to a plain link. (Fixes videos showing as a link instead of playing.)
@@ -116,7 +138,7 @@
         const r = await fetch(url, { headers: (_aiToken ? {'Authorization':'Bearer '+_aiToken} : {}), credentials:'include' });
         if(r.ok){ const b = await r.blob(); const bu = URL.createObjectURL(b);
           if((b.type||'').startsWith('video/')){   // extensionless blossom VIDEO rendered as <img> → swap to a real <video> with the blob
-            const v=document.createElement('video'); v.src=bu; v.controls=true; v.playsInline=true; v.preload='none'; v.className=el.className; el.replaceWith(v); return;
+            const v=document.createElement('video'); v.src=bu; v.controls=true; v.playsInline=true; v.preload='none'; v.className=el.className; _carryDims(el, v); el.replaceWith(v); return;
           }
           el.onload = ()=>{ try{ URL.revokeObjectURL(bu); }catch(_){} };   // free the blob URL once decoded (else it leaks for the page's life)
           el.src = bu; return;
@@ -126,7 +148,8 @@
     const src = el.currentSrc || el.src;
     if(el.tagName === 'IMG'){
       const v=document.createElement('video'); v.src=src; v.controls=true; v.playsInline=true;
-      v.preload='none'; v.className=el.className; v.onerror=()=>window.__blobFallback(v); el.replaceWith(v);   // don't auto-download on scroll
+      v.preload='none'; v.className=el.className; _carryDims(el, v);
+      v.onerror=()=>window.__blobFallback(v); el.replaceWith(v);   // don't auto-download on scroll
     } else {
       const a=document.createElement('a'); a.href=src; a.target='_blank'; a.rel='noopener'; a.textContent=src; el.replaceWith(a);
     }
