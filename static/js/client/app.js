@@ -13627,6 +13627,12 @@
       if(_uploadCancel) break;
       const stat=big?null:$('#up-stat-'+i);
       try{
+        if(music && i===0){
+          // Learn what the server ACTUALLY holds before the first dedup decision, so a stale index
+          // entry cannot refuse an upload. Best effort — a failure leaves _blobHave null, which the
+          // check reads as "unknown" and falls back to the old behaviour.
+          try{ await _refreshBlobHave(); }catch(_){}
+        }
         if(music){
           if(!_looksAudio(files[i])){ skip++;
             const seen = files[i].type || 'no file type';
@@ -13905,7 +13911,23 @@
     const ck=await crypto.subtle.importKey('raw',mk,'AES-GCM',false,['decrypt']);
     return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv},ck,ct)); }
   // Already-imported check (resume a bulk import): match a source file by name+size.
-  function _musicHasSrc(file){ const fs=FilesIdx._norm().files; for(const sha in fs){ const m=fs[sha]; if(m&&m.folder==='Music'&&m.srcName===file.name&&m.srcSize===file.size) return true; } return false; }
+  /* Is this song ALREADY in the library? The index is not enough to answer that, because an index
+   * entry can outlive its blob: deleting your files removes the bytes from Blossom and leaves the
+   * entry behind. musicTracks() already knows this — it hides any track whose sha the server does not
+   * list — so the two disagreed, and the disagreement was a DEADLOCK: the library showed "no music
+   * yet" while every re-upload was refused as "already imported". Someone who cleared their drive
+   * could never put their music back. Same existence test as musicTracks, including its null rule
+   * (never fetched → behave as before rather than treat everything as missing). */
+  function _musicHasSrc(file){
+    const fs=FilesIdx._norm().files;
+    for(const sha in fs){
+      const m=fs[sha];
+      if(!(m && m.folder==='Music' && m.srcName===file.name && m.srcSize===file.size)) continue;
+      if(_blobHave && !_blobHave.has(sha)) continue;   // the entry is a leftover; the bytes are gone
+      return true;
+    }
+    return false;
+  }
   async function uploadMusicTrack(file, statEl){
     if(!signer.nip44enc) throw new Error('signer can\'t encrypt (needs NIP-44)');
     const setS=t=>{ if(statEl) statEl.textContent=t; };

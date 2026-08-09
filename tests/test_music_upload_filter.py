@@ -82,3 +82,53 @@ def test_plain_mime_check_would_still_fail_these():
     """
     dropped = [(n, t) for n, t, want in CASES if want and not t.startswith("audio/")]
     assert len(dropped) >= 6, "the interesting cases have gone missing from CASES"
+
+
+def _extract_has_src():
+    src = APP.read_text()
+    m = re.search(r"function _musicHasSrc\(file\)\{.*?\n  \}", src, re.S)
+    assert m, "_musicHasSrc not found in app.js"
+    return m.group(0)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_a_deleted_track_is_not_treated_as_already_imported():
+    """The deadlock: index entry survives, blob does not, and the library can never be restored.
+
+    Deleting your files removes the bytes from Blossom but leaves the entry in the files index.
+    musicTracks() hides any track the server no longer lists, so the library reads "no music yet" —
+    while _musicHasSrc, which only looked at the index, refused every re-upload as "already
+    imported". Someone who cleared their drive could never put their music back.
+
+    The null case matters as much as the missing one: _blobHave is null until the server list has
+    been fetched, and treating unknown as "gone" would make every dedup check fail open and
+    re-upload the whole library.
+    """
+    fn = _extract_has_src()
+    harness = """
+      const FilesIdx = { _norm: () => ({ files: {
+        aaa: { folder:'Music', srcName:'song.mp3', srcSize:100 },
+        bbb: { folder:'Music', srcName:'other.mp3', srcSize:200 },
+        ccc: { folder:'Docs',  srcName:'song.mp3', srcSize:100 },
+      }}) };
+      let _blobHave = null;
+      %s
+      const f = { name:'song.mp3', size:100 };
+      const out = {};
+      _blobHave = new Set(['aaa','bbb']);      out.blobPresent = _musicHasSrc(f);
+      _blobHave = new Set(['bbb']);            out.blobDeleted = _musicHasSrc(f);
+      _blobHave = null;                        out.notFetchedYet = _musicHasSrc(f);
+      _blobHave = new Set(['aaa']);            out.wrongFolderIgnored = _musicHasSrc({name:'song.mp3', size:999});
+      console.log(JSON.stringify(out));
+    """ % fn
+    out = subprocess.run(["node", "-e", harness], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    got = json.loads(out.stdout.strip())
+    assert got["blobPresent"] is True, "a track whose blob is still on the server IS already imported"
+    assert got["blobDeleted"] is False, (
+        "a track whose blob was DELETED must not count as already imported — that is the deadlock "
+        "that makes a cleared library impossible to restore")
+    assert got["notFetchedYet"] is True, (
+        "_blobHave null means 'not fetched yet', not 'everything is gone' — treating it as missing "
+        "would re-upload the entire library")
+    assert got["wrongFolderIgnored"] is False
