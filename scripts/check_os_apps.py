@@ -111,7 +111,23 @@ ENTER = r"""(async () => {
       await sleep(400);
       asUser.stubbed = true;
       asUser.icons = [...document.querySelectorAll('.os-icon')].map(b => b.dataset.view || '');
-      asUser.tray  = !!document.getElementById('os-me');
+      // The account lives at the foot of the START MENU now, the way Windows 11 does it.
+      document.getElementById('os-start').click(); await sleep(350);
+      const chip = document.getElementById('os-acct');
+      asUser.tray = !!chip;
+      if (chip) {
+        chip.click(); await sleep(350);
+        const pop = document.querySelector('.acct-pop');
+        asUser.switcher = !!pop;
+        if (pop) {
+          const pr = pop.getBoundingClientRect();
+          const hit = document.elementFromPoint(pr.left + pr.width/2, pr.top + 10);
+          asUser.switcherReachable = !!(hit && pop.contains(hit));
+          asUser.switcherAdd = !!pop.querySelector('[data-act="add"]');
+          pop.remove();
+        }
+      }
+      document.querySelectorAll('.os-startmenu').forEach(n => n.remove());
       // Music must open as a WINDOW holding the live feed, not merely start playing.
       const mb = [...document.querySelectorAll('.os-icon')].find(b => b.dataset.view === '__music');
       if (mb) {
@@ -123,18 +139,6 @@ ENTER = r"""(async () => {
         asUser.musicPlayer = !!(w && w.querySelector('.music-app .ma-ctl'));
         document.querySelectorAll('.osw .osw-x').forEach(b => b.click());
         await sleep(150);
-      }
-      if (asUser.tray) {
-        document.getElementById('os-me').click(); await sleep(300);
-        const pop = document.querySelector('.acct-pop');
-        asUser.switcher = !!pop;
-        if (pop) {
-          const pr = pop.getBoundingClientRect();
-          const hit = document.elementFromPoint(pr.left + pr.width/2, pr.top + 10);
-          asUser.switcherReachable = !!(hit && pop.contains(hit));
-          asUser.switcherAdd = !!pop.querySelector('[data-act="add"]');
-          pop.remove();
-        }
       }
     } finally {
       window.__PC.me = real;
@@ -381,7 +385,7 @@ async def main():
                                      f"window={au.get('musicWin')} feed-inside={au.get('musicFeed')}"))
                 if not au.get("tray"):
                     problems.append(("shell", "no-account-switcher",
-                                     "signed in, the taskbar has no account avatar — which is the "
+                                     "signed in, the start menu has no account chip — which is the "
                                      "only way to the account switcher on the desktop"))
                 elif not au.get("switcher") or not au.get("switcherReachable") \
                         or not au.get("switcherAdd"):

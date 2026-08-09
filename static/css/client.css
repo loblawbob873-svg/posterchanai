@@ -6283,12 +6283,16 @@ body.os-on #os-root{pointer-events:auto}
 .ma-ctl .btn.on{border-color:var(--neon);color:var(--neon)}
 .music-app .music-list{flex:1;min-height:0;overflow-y:auto}
 
-.os-me{width:32px;height:32px;border-radius:50%;overflow:hidden;padding:0;flex:0 0 auto;
-  border:1px solid var(--line);background:var(--panel2);cursor:pointer;display:flex;
-  align-items:center;justify-content:center}
-.os-me:hover{border-color:var(--neon)}
-.os-me img{width:100%;height:100%;object-fit:cover;display:block}
-.os-me .ic{width:17px;height:17px;color:var(--muted)}
+/* The account chip at the foot of the start menu — where Windows 11 keeps it. */
+.os-foot{display:flex;align-items:center;padding:9px 4px 2px;margin-top:8px;border-top:1px solid var(--line)}
+.os-acct{display:flex;align-items:center;gap:9px;padding:6px 9px;border-radius:9px;border:0;
+  background:none;color:var(--text);cursor:pointer;font-family:inherit;font-size:13px;
+  max-width:100%;min-width:0}
+.os-acct:hover{background:rgba(var(--accent-rgb),.12)}
+.os-acct img{width:28px;height:28px;border-radius:50%;object-fit:cover;flex:0 0 auto}
+.os-acct > .ic{width:18px;height:18px;color:var(--muted);flex:0 0 auto}
+.os-acct span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.os-acct i{font-style:normal;color:var(--muted);font-size:10px;flex:0 0 auto}
 
 .os-app-find{color:var(--neon)}
 .os-app-find .ic{color:var(--neon)}

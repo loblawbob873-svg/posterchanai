@@ -631,16 +631,22 @@
     });
   }
 
-  // Your own account, in the tray. The classic UI reaches your profile through #me-card in the
-  // sidebar, which the desktop hides — so without this there is no way to open your own profile at
-  // all. The picture is read from that card rather than re-fetched, so it can never disagree with it.
-  function meAvatar(){
+  /* Your account, at the foot of the start menu — where Windows 11 puts it. The classic UI reaches
+   * your profile through #me-card in the sidebar, which the desktop hides, so without this there is
+   * no route to your own profile or to the account switcher at all. The picture and the name are
+   * read from that card rather than re-fetched, so they can never disagree with it. */
+  function meChip(){
     if(!me()) return '';
-    let src = '';
-    try{ const img = document.querySelector('#me-card img'); if(img) src = img.getAttribute('src') || ''; }catch(_){}
-    const inner = src ? `<img src="${enc(src)}" alt="">`
-                      : '<svg class="ic" aria-hidden="true"><use href="#i-user"></use></svg>';
-    return `<button class="os-me" id="os-me" title="My profile" aria-label="My profile">${inner}</button>`;
+    let src = '', name = '';
+    try{
+      const img = document.querySelector('#me-card img'); if(img) src = img.getAttribute('src') || '';
+      const mn = document.querySelector('#me-card .mn'); if(mn) name = (mn.textContent || '').trim();
+    }catch(_){}
+    const pic = src ? `<img src="${enc(src)}" alt="">`
+                    : '<svg class="ic" aria-hidden="true"><use href="#i-user"></use></svg>';
+    return `<button class="os-acct" id="os-acct" title="Accounts">${pic}
+              <span>${enc(name || 'My account')}</span>
+              <i aria-hidden="true">⌃</i></button>`;
   }
 
   function drawBar(){
@@ -662,7 +668,6 @@
                   data-id="${w.id}" title="${enc(w.title)}">
             ${iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')}</div>
        <div class="os-tray">
-         ${meAvatar()}
          <button class="os-exit" id="os-exit" title="Leave the desktop">⤢ Classic</button>
          <button class="os-clock${notiOpen ? ' on' : ''}" id="os-clock" title="Notifications">
            <b>${enc(clock)}</b><span>${enc(date)}</span>${notiDot()}</button>
@@ -696,16 +701,6 @@
           openDoc('search', 'Search', 'i-search', run);
         });
       } }
-    /* The tray avatar opens the ACCOUNTS sheet, not the profile directly — the sheet's first row is
-     * the identity you are signed in as and opens the profile, so nothing is lost, and switching
-     * between a few keys gets the place a desktop expects it: the corner with your face in it. */
-    { const mb = $('#os-me', bar);
-      if(mb) mb.onclick = () => {
-        try{
-          if(PC().accountMenu) PC().accountMenu(mb);   // anchored to the avatar → one click to switch
-          else if(PC().openProfile) PC().openProfile();
-        }catch(err){ PC().toast && PC().toast('could not open your accounts'); }
-      }; }
     { const cb = $('#os-clock', bar); if(cb) cb.onclick = (e) => { e.stopPropagation(); toggleNoti(); }; }
     $('#os-exit', bar).onclick = () => exit();
     $$('.os-task', bar).forEach(b => b.onclick = () => {
@@ -907,7 +902,8 @@
     menu.innerHTML =
       `<input class="input os-search" id="os-q" placeholder="Search apps" autocomplete="off">
        <div class="os-applist" id="os-applist"></div>
-       <div class="os-stats" id="os-stats"></div>`;
+       <div class="os-stats" id="os-stats"></div>
+       <div class="os-foot">${meChip()}</div>`;
     root.appendChild(menu);
     const searchNostr = (q) => {
       toggleStart(false);
@@ -951,6 +947,18 @@
         row('i-relay-dot', st.relay, 'on relay') + row('i-stream', st.streams, 'live') +
         row('i-call', st.calls, 'in call');
     }catch(_){ /* no instance (standalone build) → no community counters, which is correct */ }
+    /* The account chip opens the switcher, anchored to itself. Its first row is the identity you are
+     * signed in as and opens your profile, so nothing that used to be reachable has moved further
+     * away. */
+    { const ab = $('#os-acct', menu);
+      if(ab) ab.onclick = (e) => {
+        e.stopPropagation();
+        toggleStart(false);
+        try{
+          if(PC().accountMenu) PC().accountMenu(ab);
+          else if(PC().openProfile) PC().openProfile();
+        }catch(err){ PC().toast && PC().toast('could not open your accounts'); }
+      }; }
     const q = $('#os-q', menu);
     q.oninput = () => paint(q.value.trim());
     q.onkeydown = (e) => {
