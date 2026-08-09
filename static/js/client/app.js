@@ -21391,8 +21391,43 @@
     const m=u.match(/(?:youtube\.com\/(?:watch\?(?:[^#]*&)?v=|shorts\/|embed\/|v\/|live\/)|youtu\.be\/)([\w-]{11})/i);
     return m?m[1]:null;
   }
+  /* What a plain link SHOWS. The href is always the whole URL; this is only its label.
+   *
+   * A URL can be enormous, and the ones that are tend to carry an identifier rather than anything a
+   * reader can use — a nostr `naddr1…` pointer inside a query string is ~400 characters. Printed in
+   * full it is four lines of base32 that dominate the note, push everything else under a "Show
+   * more" clamp, and say nothing: the host is the part a reader judges a link by. So a very long one
+   * is cut, and the cut is generous enough that an ordinary link — including a long article slug —
+   * is left exactly as it was.
+   *
+   * The full URL stays in `title`, and nothing about where the link GOES changes. */
+  const _LINK_LABEL_MAX = 72;
+  function _linkLabel(u){
+    const bare = String(u).replace(/^https?:\/\//i, '');
+    if(bare.length <= _LINK_LABEL_MAX) return u;   // untouched — the common case
+    return bare.slice(0, _LINK_LABEL_MAX - 1) + '…';
+  }
   function linkify(txt){
-    let h=enc(txt);
+    /* A URL is lifted OUT of the text before anything else runs here, and put back at the very end.
+     *
+     * Every pass below rewrites PLAIN TEXT into HTML, and once the first pass has emitted an <a>,
+     * the URL is no longer plain text — it is markup, twice over (the href and the link's own
+     * label). A later pass that matches inside it does not decorate anything; it shatters the tag.
+     *
+     * Which is not hypothetical: `https://…/paja/?pointer=naddr1…` was rendered as one anchor and
+     * then the nostr-entity pass matched `=naddr1…` — `=` is not a word character, so the "part of
+     * a URL" guard let it through — and replaced it, inside the href, with a <div>. The note came
+     * out as a ~50px-wide column of one word per line with `" target="_blank" rel="noopener">https…`
+     * showing as body text. Extending that guard character by character is a game you lose: `?`,
+     * `&`, `=`, `#` and a hundred more all appear before a path segment.
+     *
+     * Held in slots instead, so the passes below CANNOT see a URL at all — which is also right for
+     * hashtags (a `#fragment` is not a tag) and for anything added here later. */
+    // Same shape as aiFormat's stash, and the same NUL sentinel: nothing enc() emits contains one.
+    // Stripped from the INPUT all the same, or a note could write its own placeholder and address
+    // somebody else's slot.
+    const _slot=[]; const _stash=x=>{ _slot.push(x); return ` L${_slot.length-1} `; };
+    let h=enc(String(txt==null?'':txt).replace(/ /g,''));
     // images / video / audio embed (extension may be followed by ?query or #frag); else link.
     h=h.replace(/(https?:\/\/[^\s<]+)/g, url=>{
       const u=url.replace(/[)\].,!?]+$/,'');          // don't swallow trailing punctuation
@@ -21408,9 +21443,9 @@
       // says "unreadable link" instead, having fetched nothing.
       if(u.indexOf(_ENC_MARK) > 0){
         const _ref = encAttParse(u);
-        return `<span class="encatt" data-encatt="${enc(u)}">🔒 <span class="muted small">${
+        return _stash(`<span class="encatt" data-encatt="${enc(u)}">🔒 <span class="muted small">${
           _ref ? enc(_ref.name || 'encrypted attachment') + ' — decrypting…'
-               : 'encrypted attachment'}</span></span>` + tail;
+               : 'encrypted attachment'}</span></span>`) + tail;
       }
       const yid=ytId(u);
       if(yid) tag = NO_IMAGES
@@ -21422,8 +21457,8 @@
       // extensionless Blossom hash URLs (e.g. media.poster.place/<sha256>) — bots post these for
       // nitter/fedi media. Try as an image; if it isn't one, swap to a plain link on error.
       else if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)) tag=_media(u, null, 'm', BLOBF);
-      else tag=`<a href="${u}" target="_blank" rel="noopener">${u}</a>`;
-      return tag+tail;
+      else tag=`<a href="${u}" target="_blank" rel="noopener" title="${u}">${_linkLabel(u)}</a>`;
+      return _stash(tag)+tail;
     });
     // nostr entities: npub/nprofile → profile mention; note/nevent → EMBEDDED note preview
     // (fetched + patched in place, like a quote); naddr → openable article/addressable link.
@@ -21469,7 +21504,8 @@
     });
     // #hashtags → clickable (only when preceded by start/space, so URL #fragments aren't touched)
     h=h.replace(/(^|\s)#([a-z0-9_]{2,30})\b/gi, (m,pre,tag)=>`${pre}<a href="#" class="hashtag" data-tag="${tag.toLowerCase()}">#${tag}</a>`);
-    return h;
+    // …and the URLs go back in, now that no pass can mistake one for text.
+    return h.replace(/ L(\d+) /g, (m,i)=>_slot[+i]!==undefined ? _slot[+i] : '');
   }
 
   // ---------- modal + toast ----------
