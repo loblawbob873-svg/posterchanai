@@ -13617,17 +13617,24 @@
       const _seen=new Set(FilesIdx.folders());
       for(let i=0;i<files.length;i++){ const tf=_subFolder(i); if(tf && !_seen.has(tf)){ _seen.add(tf); try{ FilesIdx.addFolder(tf); }catch(_){} } }
     }
-    let done=0, ok=0, skip=0, fail=0;
+    /* "skipped" was one bucket covering two very different outcomes — a file REJECTED as non-audio
+     * and a file ALREADY imported — and in a batch of more than 20 there are no per-file rows, so all
+     * anyone saw was "⏭ 1 skipped" with no reason at all. Counted apart, and the first reason is
+     * carried into the summary, because a skip you cannot explain is indistinguishable from a bug. */
+    let done=0, ok=0, skip=0, dup=0, fail=0, why='';
     for(let i=0;i<files.length;i++){
       if(_uploadCancel) break;
       const stat=big?null:$('#up-stat-'+i);
       try{
         if(music){
           if(!_looksAudio(files[i])){ skip++;
-            // Say WHY, and say what it saw. A bare "skipped (not audio)" on a file you know is a
-            // song is indistinguishable from the feature being broken.
-            if(stat) stat.textContent='skipped — not audio (' + ((files[i].type||'no file type')) + ')'; }
-          else if(_musicHasSrc(files[i])){ skip++; if(stat){ stat.textContent='already imported ✓'; stat.className='up-stat ok'; } }   // resume
+            const seen = files[i].type || 'no file type';
+            if(!why) why = `“${files[i].name}” was not recognised as audio (${seen})`;
+            console.warn('[music] rejected', files[i].name, 'type=', files[i].type, 'size=', files[i].size);
+            if(stat) stat.textContent='skipped — not audio (' + seen + ')'; }
+          else if(_musicHasSrc(files[i])){ dup++;
+            if(!why) why = `“${files[i].name}” is already in your library`;
+            if(stat){ stat.textContent='already imported ✓'; stat.className='up-stat ok'; } }   // resume
           else { await uploadMusicTrack(files[i], stat); ok++; if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
             if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); } }   // checkpoint so a crash keeps progress
         } else if(encFolder){
@@ -13642,13 +13649,14 @@
           if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); }
         }
       }catch(e){ fail++; if(_blossomDenied(e)) requestBlossomAccess(); if(stat){ stat.textContent='✗'; stat.className='up-stat err'; stat.title=e.message||'failed'; } }
-      const prog=`${i+1} / ${files.length} · ✓${ok}${skip?' ⏭'+skip:''}${fail?' ✗'+fail:''}`;
+      const prog=`${i+1} / ${files.length} · ✓${ok}${dup?' ↺'+dup:''}${skip?' ⏭'+skip:''}${fail?' ✗'+fail:''}`;
       _uploadBadge('Uploading '+prog);   // persists across views
       if(big){ const s=$('#up-sum'); if(s) s.textContent='Uploading… '+prog; }
     }
     await FilesIdx.endBatch();
     _uploadBatchAuth=null;   // the batch auth never outlives its batch (it commits only to THESE hashes)
-    const summary=`${_uploadCancel?'Stopped':'Done'} — ✓ ${ok} added${skip?(' · ⏭ '+skip+' skipped'):''}${fail?(' · ✗ '+fail+' failed'):''}`;
+    const summary=`${_uploadCancel?'Stopped':'Done'} — ✓ ${ok} added${dup?(' · ↺ '+dup+' already there'):''}${skip?(' · ⏭ '+skip+' skipped'):''}${fail?(' · ✗ '+fail+' failed'):''}`
+      + ((skip||dup) && why ? ` — ${why}` : '');
     _uploadBadge(summary, true);   // self-removes after 12s (timer lives in _uploadBadge)
     if(big&&q){ const s=$('#up-sum'); if(s) s.textContent=summary; }
     toast(summary);
