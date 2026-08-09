@@ -4450,10 +4450,25 @@
     s=s.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/__([^_]+)__/g,'<b>$1</b>');
     s=s.replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g,'$1<i>$2</i>');
     s=s.replace(/(^|\s)_([^_\s][^_]*?)_(?=\s|$)/g,'$1<i>$2</i>');
+    /* CommonMark autolink — <https://example.com>. The source is escaped before we get here, so it
+     * arrives as &lt;…&gt;, and the bare-URL rule below would swallow the trailing &gt; INTO the href
+     * (and show it). Handled first, and the bare rule now stops at an entity. */
+    s=s.replace(/&lt;(https?:\/\/[^\s&]+)&gt;/g,(m,url)=>{
+      const u=_mdUrl(url); return u?`<a href="${u}" target="_blank" rel="noopener">${url}</a>`:url; });
     // bare URLs not already inside an href/src
-    s=s.replace(/(^|[^"\/>=])(https?:\/\/[^\s<]+)/g,(m,pre,url)=>`${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
+    s=s.replace(/(^|[^"\/>=])(https?:\/\/[^\s<&]+)/g,(m,pre,url)=>`${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
     return s;
   }
+  // A GFM table's delimiter row: |---|:--:|---:| , with the outer pipes optional.
+  const _mdIsDelim = (ln) => /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(ln) && ln.indexOf('-')>=0;
+  // Split a row into cells, dropping the optional leading/trailing pipe. An escaped \| stays literal.
+  function _mdCells(row){
+    let r=String(row).trim();
+    if(r.startsWith('|')) r=r.slice(1);
+    if(r.endsWith('|') && !r.endsWith('\\|')) r=r.slice(0,-1);
+    return r.split(/(?<!\\)\|/).map(c=>c.replace(/\\\|/g,'|').trim());
+  }
+
   function mdToHtml(src){
     const lines=enc(src||'').split('\n'); let html='', i=0, para=[];
     const flush=()=>{ if(para.length){ html+='<p>'+mdInline(para.join('<br>'))+'</p>'; para=[]; } };
@@ -4469,6 +4484,28 @@
       if(/^\s*&gt;\s?/.test(ln)){ flush(); const q=[]; while(i<lines.length && /^\s*&gt;\s?/.test(lines[i])){ q.push(lines[i].replace(/^\s*&gt;\s?/,'')); i++; } html+='<blockquote>'+mdInline(q.join('<br>'))+'</blockquote>'; continue; }
       if(/^\s*[-*]\s+/.test(ln)){ flush(); const it=[]; while(i<lines.length && /^\s*[-*]\s+/.test(lines[i])){ it.push('<li>'+mdInline(lines[i].replace(/^\s*[-*]\s+/,''))+'</li>'); i++; } html+='<ul>'+it.join('')+'</ul>'; continue; }
       if(/^\s*\d+\.\s+/.test(ln)){ flush(); const it=[]; while(i<lines.length && /^\s*\d+\.\s+/.test(lines[i])){ it.push('<li>'+mdInline(lines[i].replace(/^\s*\d+\.\s+/,''))+'</li>'); i++; } html+='<ol>'+it.join('')+'</ol>'; continue; }
+      /* GFM pipe table: a header row, a delimiter row of ---/:--:/---:, then body rows. Recognised by
+       * the DELIMITER line, which is what distinguishes a table from a paragraph that happens to
+       * contain pipes. A README's feature matrix rendered as a wall of |---|---| without this. */
+      if(ln.indexOf('|')>=0 && i+1<lines.length && _mdIsDelim(lines[i+1])){
+        flush();
+        const aligns=_mdCells(lines[i+1]).map(c=>{
+          const t=c.trim();
+          return (t.startsWith(':')&&t.endsWith(':')) ? 'center' : (t.endsWith(':') ? 'right' : (t.startsWith(':') ? 'left' : ''));
+        });
+        const al=k=> aligns[k] ? ` style="text-align:${aligns[k]}"` : '';
+        const head=_mdCells(ln);
+        i+=2;
+        const body=[];
+        while(i<lines.length && lines[i].indexOf('|')>=0 && !/^\s*$/.test(lines[i])){ body.push(_mdCells(lines[i])); i++; }
+        // Its own scroll container: a wide table must not make the whole page scroll sideways.
+        html+='<div class="md-table"><table><thead><tr>'
+            + head.map((c,k)=>`<th${al(k)}>${mdInline(c)}</th>`).join('')
+            + '</tr></thead>'
+            + (body.length ? '<tbody>'+body.map(r=>'<tr>'+r.map((c,k)=>`<td${al(k)}>${mdInline(c)}</td>`).join('')+'</tr>').join('')+'</tbody>' : '')
+            + '</table></div>';
+        continue;
+      }
       if(/^\s*$/.test(ln)){ flush(); i++; continue; }
       para.push(ln); i++;
     }

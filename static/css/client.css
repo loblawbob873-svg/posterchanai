@@ -6275,6 +6275,15 @@ body.os-on #os-root{pointer-events:auto}
 .track.gone .track-name{text-decoration:line-through}
 .track.gone .track-play{color:var(--muted);display:flex;align-items:center;justify-content:center}
 
+/* Markdown tables (GFM) — READMEs use them for feature matrices. Their own scroll container, so a
+   wide table scrolls inside itself instead of making the page scroll sideways. */
+.md-table{overflow-x:auto;margin:12px 0;-webkit-overflow-scrolling:touch}
+.md-table table{border-collapse:collapse;width:auto;min-width:100%;font-size:13.5px}
+.md-table th,.md-table td{border:1px solid var(--line);padding:7px 11px;text-align:left;vertical-align:top}
+.md-table thead th{background:var(--panel2);font-weight:600;white-space:nowrap}
+.md-table tbody tr:nth-child(even){background:rgba(255,255,255,.02)}
+.md-table code{white-space:nowrap}
+
 /* The Music APP — a player, not the file manager's Music folder. */
 .music-app{display:flex;flex-direction:column;gap:14px;padding:14px 12px;min-height:0}
 .ma-now{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px;border-radius:14px;
