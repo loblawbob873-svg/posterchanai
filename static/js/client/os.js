@@ -152,10 +152,49 @@
    * live at a time — so the window losing it keeps a static snapshot of what it was showing, and
    * refocusing moves the real element back and re-renders.
    */
+  /* PARK this window's content — MOVE the real nodes into its own slot, never a copy of their HTML.
+   *
+   * This used to be `slot.innerHTML = realFeed.innerHTML`, and that one line is where the desktop's
+   * three worst papercuts came from. A serialised copy is DEAD: no event handlers, no scroll
+   * position, and no memory of where you had navigated inside the view. So a background window
+   * showed a picture of itself, the first click on it did nothing at all, and focusing it re-rendered
+   * the view from scratch — landing you at the top of the default screen. "Click a post and it just
+   * loads the window again", "you lose your spot", and "open a 4chan thread, come back, it's the /g/
+   * catalog again" are all the same line.
+   *
+   * appendChild MOVES a node and keeps its listeners, so parking and unparking is lossless and the
+   * window keeps showing exactly what it showed. Nothing has to be re-rendered to bring it back. */
   function snapshot(w){
     if(!w || !realFeed || realFeed.parentElement !== w.body) return;
     const slot = w.slot;
-    if(slot) slot.innerHTML = realFeed.innerHTML;   // a picture of it, for the unfocused window
+    if(!slot) return;
+    w.scrollTop = realFeed.scrollTop || 0;
+    w.feedClass = realFeed.className;      // .feed-ai/.feed-chat etc. decide how it scrolls
+    slot.innerHTML = '';
+    while(realFeed.firstChild) slot.appendChild(realFeed.firstChild);
+    slot.scrollTop = w.scrollTop;
+    w.parked = true;
+  }
+
+  /* Put the feed back where this window left it.
+   *
+   * Retried rather than set once: a view may await the relay before it has any content, and
+   * scrollTop against a zero-height element silently does nothing — which is the difference between
+   * "restores your spot" and "looks like it tried". Bounded at ~1s, and abandoned the moment the
+   * feed belongs to some other window, so a slow view cannot scroll a window you have left. */
+  function restoreScroll(w){
+    const want = w && w.scrollTop || 0;
+    if(!want || !realFeed) return;
+    let tries = 0;
+    const put = () => {
+      if(++tries > 40 || !realFeed || realFeed.parentElement !== w.body) return;
+      if(realFeed.scrollHeight > realFeed.clientHeight){
+        realFeed.scrollTop = want;
+        if(Math.abs(realFeed.scrollTop - want) <= 2) return;   // landed (or clamped to the bottom)
+      }
+      setTimeout(put, 25);
+    };
+    put();
   }
 
   function claimFeed(w){
@@ -163,13 +202,28 @@
     const holder = wins.find(x => realFeed.parentElement === x.body);
     if(holder) snapshot(holder);
     w.body.appendChild(realFeed);
-    if(w.slot) w.slot.innerHTML = '';               // the live element replaces the snapshot
+    if(w.parked && w.slot){
+      // Move this window's own nodes back into the live feed, exactly as they were.
+      realFeed.innerHTML = '';
+      while(w.slot.firstChild) realFeed.appendChild(w.slot.firstChild);
+      if(w.feedClass) realFeed.className = w.feedClass;
+      w.parked = false;
+      w.restored = true;                            // → focusWin skips the repaint entirely
+    } else if(w.slot) w.slot.innerHTML = '';
   }
 
-  function releaseFeed(){
+  /* Send the live feed back to the CLASSIC container.
+   *
+   * `park` decides whether the holder keeps a copy of what it was showing, and the default is NO —
+   * which matters because parking MOVES the nodes out of the feed. Leaving the desktop with parking
+   * on would hand classic an EMPTY #feed and rely on the repaint at the end of exit() to refill it;
+   * that repaint does run, but "classic renders nothing if anything above it throws" is not a
+   * guarantee worth trading away. Only minimise wants the content kept, because that window is
+   * coming back. */
+  function releaseFeed(park){
     if(!realFeed || !realHome) return;
     const holder = wins.find(x => realFeed.parentElement === x.body);
-    if(holder) snapshot(holder);
+    if(holder && park) snapshot(holder);
     realHome.appendChild(realFeed);
     try{ PC().syncPlayer && PC().syncPlayer(); }catch(_){}   // the music app may have just been unmounted
     // The admin panel's iframe host is a sibling of the feed and follows it (see _adminFrame). Send
@@ -200,12 +254,27 @@
        * (_navUrl), so without this every click between two windows added one — and the back button
        * then walked window focus instead of navigation, landing on the profile again and again
        * instead of returning to the timeline. */
+      if(w.restored){
+        /* The window's REAL DOM is back — handlers, scroll offset, and wherever you had navigated
+         * inside it. Nothing needs painting; only the app's bookkeeping has to agree with what is
+         * already on screen (nav highlight, view title, the VIEW global that later renders key on).
+         * A doc window is a document rather than a view, so it has no VIEW to adopt. */
+        w.restored = false;
+        if(w.view && w.view.indexOf('doc:') !== 0){
+          repainting++;
+          try{ PC().switchView && PC().switchView(w.view, true); }catch(err){ /* bookkeeping only */ }
+          finally{ repainting--; }
+        }
+        restoreScroll(w);
+        return;
+      }
       repainting++;
       try{
         if(w.render){ try{ w.render(); }catch(err){ /* a stale document is not fatal */ } }
         else try{ PC().switchView ? PC().switchView(w.view) : null; }catch(err){ /* a view that refuses is not fatal */ }
       }finally{ repainting--; }
     }
+    restoreScroll(w);   // …and land back where this window was, once its content exists
   }
 
   let iconSpan = 318;               // width the icon grid actually took; windows open clear of it
@@ -284,41 +353,12 @@
       layoutT = setTimeout(hideLayouts, 260);
     });
     $('.osw-grip', el).addEventListener('pointerdown', e => { focusWin(w, false); startResize(w, e); });
-    /* Clicking a BACKGROUND window has to do the thing you clicked on, not just wake the window.
-     *
-     * There is one live #feed and it lives inside whichever window has focus; every other window
-     * shows a SNAPSHOT (see claimFeed/snapshot) — static HTML with no event handlers on any of it.
-     * So the first click on a background window did nothing at all: the card under the cursor was
-     * inert, and the pointerdown then activated the window, which swapped the snapshot for the live
-     * feed and repainted it. Reported, accurately, as "click a post and it just loads the window
-     * again" — and it applied to every window, Messages included.
-     *
-     * So carry the INTENT across the swap: note which item was aimed at, activate, then click the
-     * same item once the live feed has painted it. Keyed on the id the card already carries, so this
-     * needs no per-view knowledge and works for a post, a DM, a notification alike. */
-    el.addEventListener('pointerdown', (e) => {
-      if(el.classList.contains('focused')) return;
-      let key = '';
-      try{
-        const item = e.target.closest && e.target.closest('[data-open],[data-id]');
-        if(item) key = item.dataset.open || item.dataset.id || '';
-      }catch(_){}
-      focusWin(w);
-      if(!key) return;
-      /* The repaint can await the relay, so the item may not exist for a few frames. Poll briefly
-       * rather than fire once into an empty feed — and stop the moment the user has moved on, so a
-       * slow view can never replay a click into a window they have since left. */
-      let tries = 0;
-      const replay = () => {
-        if(++tries > 40 || !w.el.isConnected || !w.el.classList.contains('focused')) return;
-        let live = null;
-        try{
-          const sel = '[data-open],[data-id]';
-          live = [...w.body.querySelectorAll(sel)].find(n => (n.dataset.open || n.dataset.id) === key);
-        }catch(_){}
-        if(live) live.click(); else setTimeout(replay, 25);
-      };
-      setTimeout(replay, 25);
+    /* Just focus. The content of a background window is LIVE now (see snapshot/claimFeed), so the
+     * card under the cursor carries its own handler and the click does what it says — no replaying
+     * the intent across a re-render, and deliberately no synthetic second click, which would double
+     * every action now that the real one lands. */
+    el.addEventListener('pointerdown', () => {
+      if(!el.classList.contains('focused')) focusWin(w);
     }, true);
 
     focusWin(w);
@@ -404,7 +444,7 @@
   function minimise(w){
     w.min = true;
     w.el.classList.add('minimised');
-    if(realFeed && realFeed.parentElement === w.body) releaseFeed();
+    if(realFeed && realFeed.parentElement === w.body) releaseFeed(true);   // it is coming back
     const next = wins.filter(x => !x.min).pop();
     if(next) focusWin(next); else drawBar();
   }

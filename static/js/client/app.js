@@ -3361,7 +3361,7 @@
     }catch(_){}
   }
 
-  function switchView(v){
+  function switchView(v, quiet){
     _onLandingView = false;   // an explicit navigation — a late pref restore must not move them now
     if(window.PC_NOSTR_ONLY && (v==='ai' || v==='markets')) v='home';   // AI-backed views disabled in Nostr-only deployments
     // Deep links, a restored last-view and the keyboard can all name a view the nav no longer shows —
@@ -3410,7 +3410,10 @@
     { const tl = (v==='home'||v==='global'||v==='trending');   // the three views that carry the .tl-tabs header
       document.body.classList.toggle('tl-view', tl);   // desktop hides the now-empty topbar on these views
       const vt=$('#view-title'); if(vt) vt.classList.toggle('hidden', tl); }
-    renderView(true);
+    /* `quiet` = adopt this view WITHOUT painting it. The desktop restores a window's REAL DOM when
+     * you focus it, so the screen is already correct and only the bookkeeping above needs to agree.
+     * Optional and falsy by default, so every existing caller — all of classic mode — is unchanged. */
+    if(!quiet) renderView(true);
   }
   function renderView(reset){
     cleanupInlineStream();   // leaving a view tears down the inline stream player (unless popped out)
