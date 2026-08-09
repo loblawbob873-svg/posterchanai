@@ -13757,7 +13757,7 @@
         if(!this._pullOk){
           console.warn('files-index: server index unreadable — not saving (would overwrite it)');
           try{ toast('⚠️ Couldn\'t read your folders from the server — not saving, so your existing folders aren\'t overwritten. Try reloading.'); }catch(_){}
-          return;
+          return false;
         }
       }
       this._saving=true;   // while a save's index-blob upload + POST is in flight the server is NOT yet
@@ -13795,7 +13795,7 @@
           if(!intended){
             this._dirty=true;
             try{ toast('Kept your file list — nothing was changed on the server.'); }catch(_){}
-            return;
+            return false;
           }
           const auth2=await sign(27235,'files-index',[['p',ME.pubkey]]);
           const fr=await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -13806,17 +13806,33 @@
         // standalone backup of every filename and folder on the drive — deleting it to reclaim
         // that space is what left a wiped index with nothing to restore from.
         if(ptr.indexSha){ this._lastIndexSha=ptr.indexSha; this._indexShas.add(ptr.indexSha); }
+        this._saveFailed=false;
+        return true;
       }catch(e){
         // The edit is NOT saved, so it must not stay marked clean: `_dirty=false` was set at the
         // capture point above, and leaving it there tells the next pull() it's free to overwrite local
         // with the server's copy — silently discarding the rename/move/upload that just failed.
         this._dirty=true;
         console.warn('files-index save failed', e);
+        /* …and SAY so. This was a console.warn and nothing else, which is how "Remove 2422 missing
+         * tracks" reported success twice while the server kept all 3990 entries: the signer could not
+         * sign the write (a remote signer that is not answering), the whole save threw in here, and
+         * the caller's own "removed 2422 tracks" toast fired regardless because _save swallowed it.
+         *
+         * Once per run of failures, not per attempt: a save retries on a debounce and an offline
+         * device would otherwise toast on a timer. Cleared by the next success. */
+        if(!this._saveFailed){
+          this._saveFailed=true;
+          try{ toast('⚠️ Couldn\'t save your file list to the server — the change is only on this '
+                     + 'device for now. If you sign with a remote signer, check it is reachable.'); }catch(_){}
+        }
+        return false;
       }
       finally{ this._saving=false; }
     },
     beginBatch(){ this._batch=true; },
-    async endBatch(){ this._batch=false; await this._save(); },
+    // Answers whether the batch actually REACHED the server, so a caller can stop claiming it did.
+    async endBatch(){ this._batch=false; return await this._save(); },
     folders(){ return this._norm().folders; },
     isEncFolder(name){ return name==='Music' || this._norm().encFolders.includes(name); },   // Music is always encrypted
     addFolder(name, enc){ name=(name||'').trim().slice(0,40); if(!name||this._norm().folders.includes(name)) return false; this.data.folders.push(name); if(enc&&!this.data.encFolders.includes(name)) this.data.encFolders.push(name); this.push(); return true; },
@@ -14695,8 +14711,13 @@
                           + `entries. Anything still playable is untouched.`)) return;
         FilesIdx.beginBatch();
         dead.forEach(sha=>{ try{ FilesIdx.forget(sha); }catch(_){} });
-        await FilesIdx.endBatch();
-        toast(`removed ${dead.length} missing track${dead.length>1?'s':''}`);
+        /* Report what the SERVER did, not what we asked it to do. This said "removed N" no matter
+         * what, because _save() swallowed every failure — so a tidy that never reached the server
+         * looked done, and the entries were all back on the next load. Twice, over two days, for
+         * 2422 tracks. _save's own toast gives the reason; this one is only the verdict. */
+        const saved = await FilesIdx.endBatch();
+        toast(saved ? `removed ${dead.length} missing track${dead.length>1?'s':''}`
+                    : `not saved — your library on the server is unchanged`);
         _renderMusicList(grid, list, q);
         try{ _musicAppNow(); }catch(_){}
       }; }
