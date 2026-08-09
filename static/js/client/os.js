@@ -170,6 +170,20 @@
     if(!slot) return;
     w.scrollTop = realFeed.scrollTop || 0;
     w.feedClass = realFeed.className;      // .feed-ai/.feed-chat etc. decide how it scrolls
+    /* …and WHICH VIEW the client believes it is showing, so refocusing can hand that back.
+     *
+     * The client keeps ONE `VIEW` global and every painter keys on it — flushLive, _drawTimeline
+     * and onFeedScroll all ask "am I the timeline?" and then paint into `$('#feed')`, wherever that
+     * element currently lives. So a window holding the feed while VIEW names a DIFFERENT window's
+     * feature is not a cosmetic mismatch: the timeline prepends live posts, redraws on EOSE and
+     * paginates on scroll straight into a Profile window. That is the reported "opened a profile in
+     * a new window and timeline posts started filling it in".
+     *
+     * Read at PARK time rather than mapped from w.view, because the two genuinely differ: a doc
+     * window is a thread/profile/music library with no view name of its own, and a feature window
+     * navigated INSIDE itself (a hashtag or a search opened from the timeline) is no longer showing
+     * the view it was opened as. */
+    try{ const v = PC().VIEW; if(v) w.appView = v; }catch(_){}
     slot.innerHTML = '';
     while(realFeed.firstChild) slot.appendChild(realFeed.firstChild);
     slot.scrollTop = w.scrollTop;
@@ -258,11 +272,21 @@
         /* The window's REAL DOM is back — handlers, scroll offset, and wherever you had navigated
          * inside it. Nothing needs painting; only the app's bookkeeping has to agree with what is
          * already on screen (nav highlight, view title, the VIEW global that later renders key on).
-         * A doc window is a document rather than a view, so it has no VIEW to adopt. */
+         *
+         * That last one is not merely cosmetic, and it is why a DOC window has to adopt a view too.
+         * VIEW is what every painter tests before writing into `$('#feed')` — and `#feed` is this
+         * window now. Left naming the window you came FROM, a Profile or Post window quietly became
+         * the timeline's canvas: live posts prepended into it, the EOSE redraw rebuilt the composer
+         * and tabs over the profile, and scrolling to the bottom paged in older timeline posts.
+         *
+         * `appView` is what the client actually reported when this window was parked (see snapshot),
+         * so it is right for a document, and right for a feature window that was navigated inside
+         * itself. Falling back to w.view covers a feature window parked before any of that. */
         w.restored = false;
-        if(w.view && w.view.indexOf('doc:') !== 0){
+        const adopt = w.appView || (w.view && w.view.indexOf('doc:') !== 0 ? w.view : null);
+        if(adopt){
           repainting++;
-          try{ PC().switchView && PC().switchView(w.view, true); }catch(err){ /* bookkeeping only */ }
+          try{ PC().switchView && PC().switchView(adopt, true); }catch(err){ /* bookkeeping only */ }
           finally{ repainting--; }
         }
         restoreScroll(w);

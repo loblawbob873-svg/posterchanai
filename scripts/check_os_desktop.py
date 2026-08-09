@@ -53,6 +53,11 @@ Assertions, each a way a window manager breaks:
                        behind it. Hit-tested with elementFromPoint, not by reading the stylesheet.
   post-window-broken   Clicking a post does not open it in its own window (or opens a second one
                        when the post is already open).
+  stale-view           Refocusing a window leaves the client's VIEW naming the window you came from.
+                       Every painter tests VIEW and then writes into `#feed` — which is the window
+                       in front — so the timeline prepends its live posts, redraws on EOSE and
+                       paginates on scroll into a Profile or Post window. Shipped as "opened a
+                       profile in a new window and timeline posts started filling it in".
 
 Exit 0 = clean, 1 = problems (printed), 2 = could not run (no Chrome / websockets).
 """
@@ -111,8 +116,12 @@ window.__PC = {
   toast: m => (window.__toasts = window.__toasts || []).push(m),
   compose: () => { window.__composed++; },
   get VIEW(){ return window.__view || 'global'; },
-  switchView: v => {
+  // `quiet` = adopt the view WITHOUT painting. The desktop asks for it every time it refocuses a
+  // window whose real DOM it still has, so a stub that painted anyway would hide the very thing
+  // parking exists to keep — and would make an adopted view indistinguishable from a repaint.
+  switchView: (v, quiet) => {
     window.__view = v; window.__rendered.push(v);
+    if (quiet) return;
     const f = document.getElementById('feed');
     if (f) {
       f.innerHTML = '<div class="stub-view" data-v="' + v + '">' + v + ' rendered'
@@ -231,6 +240,35 @@ DRIVE = r"""(async () => {
     document.querySelector('.osw.focused .osw-x').click();
     await sleep(80);
     out.docClosed = document.querySelectorAll('.osw').length - before;
+  }
+
+  /* Refocusing a window must hand the client back the VIEW that window is showing.
+   *
+   * `#feed` is one element that MOVES, and every painter in the client tests the VIEW global before
+   * writing into it. So a window that holds the feed while VIEW still names the window you came from
+   * is not a bookkeeping detail: the timeline prepends its live posts, redraws on EOSE and paginates
+   * on scroll straight into whatever is in front. Shipped as "opened a profile in a new window and
+   * timeline posts started filling it in". A DOC window has no view name of its own, which is
+   * exactly why it was the one left behind.
+   */
+  {
+    const before = document.querySelectorAll('.osw').length;
+    const task = re => [...document.querySelectorAll('.os-task')].find(t => re.test(t.textContent));
+    document.querySelector('.os-icon[data-view="calendar"]').click(); await sleep(150);
+    PCOS.openDoc('prof:zz', 'Profile', 'i-user', () => {
+      window.__view = 'profile';    // renderProfileView sets VIEW itself on the way in
+      document.getElementById('feed').innerHTML = '<div class="stub-doc">PROFILE</div>';
+    });
+    await sleep(150);
+    task(/Calendar/i).click(); await sleep(150);
+    out.viewOnFeature = window.__view;
+    task(/Profile/i).click(); await sleep(200);
+    out.viewOnDoc     = window.__view;
+    out.docFeedBack   = !!(document.getElementById('feed') || {}).querySelector('.stub-doc');
+    for (const x of [...document.querySelectorAll('.osw')].slice(0, 2)){
+      x.querySelector('.osw-x').click(); await sleep(60);
+    }
+    out.viewWinsClosed = document.querySelectorAll('.osw').length - before;
   }
 
   // Win11 snapping: drag to an edge, get a half; drag it off again, get the old size back.
@@ -608,6 +646,15 @@ async def drive(url):
                                      f"opened={r.get('docWins')} after-reopen={r.get('docDedup')} "
                                      f"feed-inside={r.get('docFeed')} taskbar={r.get('docTask')} "
                                      f"repaints={r.get('docPaint')} left-open={r.get('docClosed')}"))
+                if r.get("viewOnDoc") != "profile" or r.get("viewOnFeature") != "calendar" \
+                        or not r.get("docFeedBack") or r.get("viewWinsClosed") != 0:
+                    problems.append((label, "stale-view",
+                                     "refocusing a window did not hand the client back the view that "
+                                     "window is showing — every painter keys on VIEW and writes into "
+                                     "#feed, so the timeline fills whatever window is in front "
+                                     f"(feature={r.get('viewOnFeature')!r} doc={r.get('viewOnDoc')!r} "
+                                     f"kept-its-dom={r.get('docFeedBack')} "
+                                     f"left-open={r.get('viewWinsClosed')})"))
                 if not r.get("reminderReachable"):
                     problems.append((label, "reminder-buried",
                                      "a fired reminder is not clickable on the desktop — its Dismiss "

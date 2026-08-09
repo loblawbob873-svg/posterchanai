@@ -546,7 +546,7 @@
   const NIP46_SINCE_SKEW = 900;
 
   const Nip46 = {
-    ws:null, relay:null, appSk:null, appPk:null, remotePk:null, userPk:null,
+    relay:null, appSk:null, appPk:null, remotePk:null, userPk:null,
     /* The encryption this SESSION writes with, settled once at pairing and then never changed.
      * NIP-46 began on NIP-04 and the current spec is NIP-44, so both are in the wild — Amber reads
      * either, a modern bunker may read only NIP-44, an old one only NIP-04. Defaults to nip04
@@ -556,7 +556,12 @@
     _lastDec:null,        // scheme the last decodable message ARRIVED in (diagnostic + connect ack)
     _encOk:false,         // the peer decrypted something we sent → our scheme is right
     _pending:new Map(), _subId:null, _onEvent:null,
-    reset(){ this._wantOpen=false; this._enc='nip04'; this._lastDec=null; this._encOk=false; try{ if(this.ws){ this.ws.onclose=null; this.ws.close(); } }catch(_){} this.ws=null;
+    /* Every relay socket this session holds — not one. See _openAll. */
+    _socks:[],
+    _live(){ return (this._socks||[]).filter(w => w && w.readyState === 1); },
+    reset(){ this._wantOpen=false; this._enc='nip04'; this._lastDec=null; this._encOk=false; this._encSeen=null;
+      (this._socks||[]).forEach(w=>{ try{ w.onclose=w.onerror=w.onmessage=null; w.close(); }catch(_){} });
+      this._socks=[]; this.relay=null; this._subId=null;
       this._pending.forEach(p=>{ try{ p.rej(new Error('signer disconnected')); }catch(_){} }); this._pending.clear();
       // Fail the queued work too — otherwise jobs waiting for a slot hang on a socket that's gone.
       const q=this._queue||[]; this._queue=[]; this._inflight=0;
@@ -593,68 +598,74 @@
       const r = await Relay.worker.call('setKey', { sk: g.sk });
       this.appSk = g.sk; this.appPk = r.pubkey; return this.appPk;
     },
+    // The response subscription, sent on every socket the moment it opens.
+    _req(ws){
+      ws.send(JSON.stringify(['REQ', this._subId,
+        { kinds:[24133], '#p':[this.appPk], since: Math.floor(Date.now()/1000)-NIP46_SINCE_SKEW }]));
+    },
+    /* Wire one open socket into the session: subscribe, listen, and reconnect if it drops.
+     *
+     * A remote signer is contacted only when signing, so a relay will idle-drop us between
+     * signatures — reconnecting (and re-subscribing) is what lets the next sign go through without
+     * forcing a re-pair. Only while `_wantOpen`, so reset() genuinely disconnects. */
+    _adopt(ws, url){
+      if(this._socks.indexOf(ws) < 0) this._socks.push(ws);
+      if(!this.relay) this.relay = url;             // the first to open names the session's relay
+      this._subId = this._subId || ('n46'+Math.random().toString(36).slice(2,8));
+      this._req(ws);
+      ws.onerror = null;
+      ws.onmessage = (e)=>this._recv(e.data);
+      ws.onclose = ()=>{
+        this._socks = this._socks.filter(w => w !== ws);
+        if(!this._wantOpen) return;
+        setTimeout(()=>{ if(this._wantOpen && !this._socks.some(w => w._pcUrl === url))
+                           this._openRelay(url).catch(()=>{}); }, 2000);
+      };
+      ws._pcUrl = url;
+    },
     // open a socket to the signer's relay + subscribe for responses addressed to our app key
     _openRelay(relay){
       this._wantOpen=true;
       return new Promise((res,rej)=>{
-        let done=false; const ws=new WebSocket(relay); this.ws=ws; this.relay=relay;
-        ws.onopen=()=>{ this._subId='n46'+Math.random().toString(36).slice(2,8);
-          ws.send(JSON.stringify(['REQ', this._subId, { kinds:[24133], '#p':[this.appPk], since: Math.floor(Date.now()/1000)-NIP46_SINCE_SKEW }]));
-          if(!done){ done=true; res(); } };
+        let done=false; const ws=new WebSocket(relay);
+        ws.onopen=()=>{ this._adopt(ws, relay); if(!done){ done=true; res(relay); } };
         ws.onmessage=(e)=>this._recv(e.data);
         ws.onerror=()=>{ if(!done){ done=true; rej(new Error('cannot reach signer relay')); } };
-        // a remote signer is contacted only when signing, so the relay may idle-drop us — reconnect
-        // (and re-subscribe) so the next sign still gets through without forcing a re-pair.
-        ws.onclose=()=>{ if(this._wantOpen && this.ws===ws){ this.ws=null; setTimeout(()=>{ if(this._wantOpen && !this.ws) this._openRelay(relay).catch(()=>{}); }, 2000); } };
         setTimeout(()=>{ if(!done){ done=true; rej(new Error('signer relay timed out')); } }, 9000);
       });
     },
-    /* Open the FIRST of several relays to answer, rather than each in turn.
+    /* Open EVERY relay this session knows, and keep them all.
      *
-     * Sequentially — which is what this was — four relays at a 9s timeout apiece is up to 36 seconds
-     * of a button reading "preparing…" and nothing else, which is what a user reasonably calls stuck.
-     * It is worst exactly where it matters most: on a relays-only install there is no instance relay,
-     * so the list is entirely public ones, and over Tor every one of them is slow. Racing costs the
-     * same sockets, finishes in the time of the FASTEST, and makes the ORDER of the list nearly
-     * irrelevant — which is the real win, because ordering it correctly for both "a signer must be
-     * able to reach it" and "the user's own relay should count" has no single right answer.
+     * This raced them and kept only the first to open, and that is wrong in the one way that matters:
+     * the signer is not on all of them. A bunker:// URI lists the relays the signer is LISTENING on,
+     * while a resumed session adds this instance's own relay as a fallback — so "fastest socket wins"
+     * routinely picked our relay, which is nearby and always up, and sent every request to a room the
+     * signer is not in. Nothing errors: the request is published, the relay accepts it, and the app
+     * waits out its 120s ceiling. Reported as "existing sessions say waiting for signer and nothing
+     * shows up in Amber", and it is also why a dead stored relay used to look identical.
      *
-     * The losers are closed the instant there is a winner, with their handlers detached first so a
-     * loser's own close event cannot be counted as a failure of the race it already lost. */
-    _openFirstOf(list, ms){
+     * So a request goes to ALL of them (see _rpc) and a reply is taken from whichever answers —
+     * every one is matched by request id, so a duplicate from a second relay settles nothing twice.
+     * This resolves on the FIRST socket to open, because a login must not wait for the slowest, and
+     * the others join as they arrive. It rejects only when every one of them has failed. */
+    _openAll(list, ms){
       const urls=[...new Set((Array.isArray(list)?list:[list]).filter(Boolean))];
       if(!urls.length) return Promise.reject(new Error('no signer relay configured'));
       this._wantOpen=true;
       return new Promise((res,rej)=>{
-        let settled=false, dead=0;
-        const socks=[];
-        const drop=(w)=>{ try{ w.onopen=w.onerror=w.onclose=w.onmessage=null; w.close(); }catch(_){} };
-        const fail=()=>{ if(settled || ++dead < urls.length) return;
-          settled=true; clearTimeout(to); socks.forEach(drop);
+        let opened=false, dead=0;
+        const fail=()=>{ if(opened || ++dead < urls.length) return;
+          clearTimeout(to);
           rej(new Error('no signer relay is reachable right now — try again in a minute')); };
-        const to=setTimeout(()=>{ if(settled) return; settled=true; socks.forEach(drop);
+        const to=setTimeout(()=>{ if(!opened)
           rej(new Error('signer relays timed out')); }, ms||9000);
         urls.forEach(url=>{
           let ws; try{ ws=new WebSocket(url); }catch(_){ fail(); return; }
-          socks.push(ws);
           ws.onerror=fail; ws.onclose=fail;
           ws.onopen=()=>{
-            if(settled){ drop(ws); return; }              // someone else got there first
-            settled=true; clearTimeout(to);
-            socks.forEach(w=>{ if(w!==ws) drop(w); });
-            // Commit the winner into instance state — the same wiring _openRelay does for one socket.
-            this.ws=ws; this.relay=url;
-            this._subId='n46'+Math.random().toString(36).slice(2,8);
-            try{ ws.send(JSON.stringify(['REQ', this._subId,
-              { kinds:[24133], '#p':[this.appPk], since: Math.floor(Date.now()/1000)-NIP46_SINCE_SKEW }])); }
-            catch(e){ return rej(e); }
-            ws.onerror=null;
-            ws.onmessage=(e)=>this._recv(e.data);
-            // A remote signer is contacted only when signing, so the relay may idle-drop us —
-            // reconnect (and re-subscribe) so the next sign still gets through without re-pairing.
-            ws.onclose=()=>{ if(this._wantOpen && this.ws===ws){ this.ws=null;
-              setTimeout(()=>{ if(this._wantOpen && !this.ws) this._openRelay(url).catch(()=>{}); }, 2000); } };
-            res(url);
+            if(!this._wantOpen){ try{ ws.close(); }catch(_){} return; }   // reset() while we connected
+            this._adopt(ws, url);
+            if(!opened){ opened=true; clearTimeout(to); res(url); }
           };
         });
       });
@@ -666,8 +677,11 @@
       const payload=await this._decode(ev.pubkey, ev.content); if(!payload) return;
       // A payload carrying one of OUR request ids means the peer read what we sent, whatever it
       // replied with. That — not the reply's own encoding — is what confirms our outbound scheme,
-      // and it counts even for an auth_url, which never settles the pending promise.
-      if(payload && payload.id && this._pending.has(payload.id)) this._encOk = true;
+      // and it counts even for an auth_url, which never settles the pending promise. `_encSeen` is
+      // the scheme THAT request went out in, which is the part a two-probe pairing needs to know.
+      if(payload && payload.id && this._pending.has(payload.id)){
+        this._encOk = true; this._encSeen = (this._pending.get(payload.id)||{}).enc || this._encSeen;
+      }
       if(this._onEvent) try{ this._onEvent(ev, payload); }catch(_){}   // nostrconnect handshake hook
       // the signer needs the user to approve in-app → open the deep link / approval URL
       if(payload.result==='auth_url' || (payload.error && /^https?:\/\//i.test(payload.error||''))){
@@ -733,37 +747,62 @@
      * the user is watching a pairing screen, a wrong guess costs 12 seconds rather than a session,
      * and `_encOk` confirms on the peer having READ us rather than on what it chose to write back.
      *
-     * A short ceiling, and quiet: "waiting for your signer…" during a probe we intend to abandon
-     * would be a lie. An auth_url counts as success — it proves the request was decrypted. */
+     * The second attempt is ADDED, never a replacement: the first stays outstanding at the full
+     * ceiling. Approving a connect is a human act on a phone — Amber puts a dialog in front of
+     * someone who may be several seconds from picking the handset up — and a probe that retired its
+     * own request after twelve of them threw away the approval when it finally came, then sat
+     * waiting for an answer to a request nobody had been asked about. Whichever attempt is answered
+     * settles the scheme; a signer that reads both simply answers the first.
+     *
+     * Quiet, and no retry: "waiting for your signer…" during a probe would be a lie, and _send's
+     * retry-once turns each probe into two connects (two prompts) for a signer that is merely slow.
+     * An auth_url counts as read — it proves the request was decrypted. */
     async _negotiateConnect(remote, secret){
-      let lastErr = null;
-      for(const enc of ['nip44', 'nip04']){
-        this._encOk = false;
-        try{
-          const r = await this._send('connect', [remote, secret], { enc, timeout: 12000, quiet: true });
-          this._enc = enc;
-          return r;
-        }catch(e){
-          lastErr = e;
-          // The peer READ us but is waiting on a human (auth_url) — the scheme is right, so keep it
-          // and let the caller's own get_public_key wait on the approval at full length.
-          if(this._encOk){ this._enc = enc; return null; }
-          const m = String((e && e.message) || e).toLowerCase();
-          if(!m.includes('timed out')) throw e;   // a real refusal is not a reason to try again louder
-        }
+      this._encOk = false; this._encSeen = null;
+      const tries = [], errs = [];
+      const fire = enc => {
+        const p = this._rpc('connect', [remote, secret], { enc, quiet: true })
+                      .then(r => ({ enc, r }), e => { errs.push(e); throw e; });
+        tries.push(p);
+        return p;
+      };
+      fire('nip44');
+      // …and if that is still silent after 12s, ask again in NIP-04, keeping the first alive.
+      const silent = await Promise.race([
+        tries[0].then(() => false, () => false),
+        new Promise(r => setTimeout(() => r(true), 12000)),
+      ]);
+      if(silent && !this._encOk) fire('nip04');
+      try{
+        const w = await Promise.any(tries);
+        this._enc = w.enc;
+        return w.r;
+      }catch(_){
+        // Nothing was ANSWERED — but if the signer read one of them (an auth_url, or an approval
+        // still pending on the phone), that scheme is settled and the caller's own get_public_key
+        // waits on the human at full length.
+        if(this._encOk){ this._enc = this._encSeen || 'nip04'; return null; }
+        const refusal = errs.find(e => !/timed out/i.test(String((e && e.message) || e)));
+        throw refusal || errs[0] || new Error('the signer did not answer in either encryption scheme');
       }
-      throw lastErr || new Error('the signer did not answer in either encryption scheme');
     },
     async _rpc(method, params, opts){
-      if(!this.remotePk || !this.ws) throw new Error('signer not connected');
+      if(!this.remotePk || !this._live().length) throw new Error('signer not connected');
       const id='r'+Math.random().toString(36).slice(2,10);
       const enc=(opts && opts.enc) || this._enc || 'nip04';
       const ct=(await Relay.worker.call(enc+'enc',{peer:this.remotePk, text:JSON.stringify({ id, method, params })})).ct;
       const tpl={ kind:24133, content:ct, tags:[['p',this.remotePk]], created_at:Math.floor(Date.now()/1000), pubkey:this.appPk };
       const signed=await Relay.worker.call('sign',{ event:tpl });
       return new Promise((res,rej)=>{
-        this._pending.set(id,{res,rej});
-        try{ this.ws.send(JSON.stringify(['EVENT', signed])); }catch(e){ this._pending.delete(id); return rej(e); }
+        /* Which scheme this request went out in, kept WITH the request. Two connect probes can be
+         * outstanding at once during pairing, so a bare "something was read" flag cannot say which
+         * of them the signer decrypted — and that is the whole answer the probe is asking for. */
+        this._pending.set(id,{res,rej,enc});
+        // To EVERY relay this session holds. The signer listens on the ones its bunker link named,
+        // which is not necessarily the one that opened first — see _openAll.
+        const live=this._live(); let sent=0;
+        for(const w of live){ try{ w.send(JSON.stringify(['EVENT', signed])); sent++; }catch(_){} }
+        if(!sent){ this._pending.delete(id); return rej(new Error('signer not connected')); }
         /* Say something LONG before the ceiling. The 120s is deliberate — approving on a phone is a
          * physical act — but two minutes of a button that does nothing is indistinguishable from a
          * broken one, and that is exactly how it was reported ("click send, nothing happens").
@@ -781,16 +820,24 @@
       const remote=mm[1].toLowerCase(); const qs=new URLSearchParams(mm[2]||'');
       const relays=qs.getAll('relay'); const secret=qs.get('secret')||'';
       if(!relays.length) throw new Error('bunker link is missing its relay');
-      /* RACE every relay the bunker link names, not just relays[0]. A bunker:// URL routinely
-       * carries four, the signer is listening on all of them, and opening only the first made a
-       * login fail whenever that one relay was down — with three healthy ones sitting unused in the
-       * same string we had just parsed. _openFirstOf commits the winner to this.relay, which is what
-       * the session below stores. */
-      await this._ensureAppKey(); await this._openFirstOf(relays); this.remotePk=remote;
+      /* OPEN every relay the bunker link names, not just relays[0] and not just the fastest. A
+       * bunker:// URL routinely carries four and the signer is listening on all of them, so opening
+       * only the first made a login fail whenever that one relay was down — with three healthy ones
+       * sitting unused in the same string we had just parsed.
+       *
+       * ALL of them are stored on the session, too. Keeping only the winner threw away the signer's
+       * own answer to "where can I be reached", and left a later session with one relay that may be
+       * the one that has since died.
+       *
+       * Starting from reset(), because a pairing gets a FRESH app key: any socket left over from an
+       * earlier session (or an earlier attempt at this one) is subscribed for a pubkey no reply will
+       * carry, so it can only publish — which is how one connect went out twice. */
+      this.reset();
+      await this._ensureAppKey(); await this._openAll(relays); this.remotePk=remote;
       await this._negotiateConnect(remote, secret);
       const userPk=await this._send('get_public_key',[]);
       this.userPk=userPk;
-      return { userPk, session:{ mode:'nip46', sk:this.appSk, relay:this.relay, remotePk:remote, userPk, enc:this._enc } };
+      return { userPk, session:{ mode:'nip46', sk:this.appSk, relay:this.relay, relays, remotePk:remote, userPk, enc:this._enc } };
     },
     /* The client URL a signer is shown, or '' when there is nothing a signer could make sense of.
      * Web and PWA give an https origin; the desktop bundle gives `app://posterchan` and the APK gives
@@ -810,9 +857,10 @@
     // "cannot reach signer relay" and there was nothing the user could do.
     async beginNostrConnect(relays, name){
       const list=(Array.isArray(relays)?relays:[relays]).filter(Boolean);
+      this.reset();                 // fresh app key → any earlier socket can publish but never hear
       await this._ensureAppKey();
-      await this._openFirstOf(list);
-      const relay=this.relay;
+      await this._openAll(list);
+      const relay=this.relay;   // the first to open — the one relay the QR can point the signer at
       const secret=Math.random().toString(36).slice(2,12);
       // Permissions we request up front. Amber prompts per-action so an empty list still works,
       // but iOS signers like Clave PRE-authorize from this list and deny anything not in it
@@ -845,26 +893,31 @@
            * not from whatever happens to arrive later. */
           this._enc = this._lastDec || 'nip04';
           try{ const pk=await this._send('get_public_key',[]); this.userPk=pk;
-            res({ userPk:pk, session:{ mode:'nip46', sk:this.appSk, relay, remotePk:this.remotePk, userPk:pk, enc:this._enc } }); }
+            res({ userPk:pk, session:{ mode:'nip46', sk:this.appSk, relay, relays:[relay], remotePk:this.remotePk, userPk:pk, enc:this._enc } }); }
           catch(e){ rej(e); }
         };
       });
       return { uri, done };
     },
     async resume(s){
-      /* The session stores the ONE relay that carried the pairing, and a relay can die between
-       * sessions — relay.poster.place sat on an expired certificate for months, and relay.nsec.app
-       * answers 502. Pinned to a dead relay, every later signature is sent into a socket nobody is
-       * listening on and the only feedback is a 120s timeout, so the app looks like it has simply
-       * stopped signing. Try the stored relay FIRST (the signer is definitely there if it is up),
-       * then this node's current signer relays. */
+      /* Reconnect to the relays this session was PAIRED on, and to this node's own as well.
+       *
+       * The signer is on the paired ones and nowhere else — ours is here only because a relay can
+       * die between sessions (relay.poster.place sat on an expired certificate for months, and
+       * relay.nsec.app answers 502) and a session pinned to a dead relay signs into a socket nobody
+       * is listening on, with a 120s timeout for feedback. Which is why they are all OPENED and each
+       * request goes to all of them (see _openAll): choosing between them is the mistake — picking
+       * the fastest picks ours, and ours is exactly the one the signer is not on. */
       await this._ensureAppKey(s.sk);
       // A session paired before this existed has no `enc` — nip04 is what it was using, so that is
       // the only safe default. Never re-negotiate on resume: the signer already knows this session.
       this._enc = (s.enc === 'nip44') ? 'nip44' : 'nip04';
-      const relays = [s.relay].concat(_ncRelays()).filter(Boolean);
-      try{ await this._openFirstOf(relays); }
-      catch(e){ await this._openRelay(s.relay); }   // keep the original error shape if none open
+      // `relays` is what newer pairings store (a bunker link names several); `relay` is the single
+      // one older sessions kept, and dropping it would strand every session paired before today.
+      const paired = (Array.isArray(s.relays) && s.relays.length ? s.relays : [s.relay]).filter(Boolean);
+      const relays = paired.concat(_ncRelays()).filter(Boolean);
+      try{ await this._openAll(relays); }
+      catch(e){ await this._openRelay(paired[0] || s.relay); }   // keep the original error shape if none open
       this.remotePk=s.remotePk; this.userPk=s.userPk||null;
       if(!this.userPk) this.userPk=await this._send('get_public_key',[]);
       return this.userPk;
@@ -1532,10 +1585,11 @@
    * primal both log "connection interrupted" — three sockets opened on every login attempt, to
    * strangers' infrastructure, that we then rate-limit against for nothing.
    *
-   * Worse than noise, they made the pairing lossy. _openFirstOf keeps only the socket that opens
-   * FIRST and the URI advertises that one relay, so which relay carried a login was a race between
-   * four boxes on the public internet. A signer that answered anywhere else was never heard, and the
-   * browser sat on "waiting for the signer to approve…" while Amber reported success.
+   * Worse than noise, they made the pairing lossy: the QR can advertise only one relay, and it is
+   * the first socket to open, so which relay carried a login was a race between four boxes on the
+   * public internet. A signer that answered anywhere else was never heard, and the browser sat on
+   * "waiting for the signer to approve…" while Amber reported success. (A SESSION now listens on
+   * every relay it knows — see _openAll — but a QR still names one, so this list still matters.)
    *
    * Ours is the right answer and not merely the convenient one: it is reachable by the phone, it is
    * not rate-limited against us, and it deliberately carries this traffic — the relay accepts kind
