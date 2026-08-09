@@ -2076,6 +2076,50 @@ def _is_public_host(host: str) -> bool:
         return False
 
 
+async def _is_public_host_async(host: str) -> bool:
+    """The same guard, OFF the event loop.
+
+    `socket.getaddrinfo` blocks, and every caller of this is an async handler on a single uvicorn
+    worker — so each lookup stops the node from serving anything at all, including the page itself.
+    That is not theoretical: a timeline hydrating its link cards fired 813 previews inside one
+    ten-second window, and while they resolved, `GET /client` timed out at 20 seconds three times
+    running, 45 scheduler jobs were "missed by" up to 18s, and the uptime monitor called the site
+    down. Every one of those requests was doing a blocking DNS lookup before it did anything else.
+
+    A resolver that is merely slow multiplies straight into that, which is why this is a thread and
+    not an optimisation to consider later."""
+    return await asyncio.to_thread(_is_public_host, host)
+
+
+"""How many link previews this node will fetch AT ONCE, for everybody.
+
+A client asks for one per link card, and a timeline is hundreds of cards. The browser now paces
+itself, but a browser is not the only thing that can call a public endpoint — and each of these is an
+outbound connection, a TLS handshake, up to 512KB read, and a regex pass over it, all on one worker.
+Six at a time keeps the node answerable no matter who is asking; the rest wait briefly and then give
+up with no card, which is what the client already does for a site that has no OpenGraph tags."""
+_PREVIEW_MAX = 6
+_PREVIEW_WAIT = 8.0                       # seconds a request will queue for a slot before giving up
+_PREVIEW_HOPS = 3                         # redirects followed, each re-checked against the SSRF guard
+_preview_gate = asyncio.Semaphore(_PREVIEW_MAX)
+_preview_client = None                    # one httpx client, reused: a per-request pool re-does TLS
+
+
+async def _preview_http():
+    global _preview_client
+    if _preview_client is None:
+        import httpx
+        _preview_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(6.0, connect=4.0),
+            # Redirects are followed BY HAND below so every hop can be re-checked. Following them
+            # here would validate only the first URL — the exact hole that let one 302 reach
+            # 169.254.169.254 in the web-search fetcher.
+            follow_redirects=False,
+            limits=httpx.Limits(max_connections=_PREVIEW_MAX * 2, max_keepalive_connections=_PREVIEW_MAX),
+            headers={"User-Agent": "Mozilla/5.0 (compatible; PosterChanBot/1.0)"})
+    return _preview_client
+
+
 @router.get("/preview")
 async def link_preview(url: str):
     """Fetch OpenGraph/Twitter-card metadata for a URL so the client can show a link card.
@@ -2089,14 +2133,35 @@ async def link_preview(url: str):
     if hit and hit[0] > now:
         return JSONResponse(hit[1])
     host = urlparse(url).hostname or ""
-    if not host or not _is_public_host(host):
+    if not host or not await _is_public_host_async(host):
+        return JSONResponse({})
+    # Queue for one of the node's few fetch slots. Giving up empty-handed after a short wait is
+    # better than holding a connection open behind a queue nobody is draining — and it is NOT
+    # cached, so the card fills normally on the next visit once the rush is over.
+    try:
+        await asyncio.wait_for(_preview_gate.acquire(), timeout=_PREVIEW_WAIT)
+    except (asyncio.TimeoutError, TimeoutError):
         return JSONResponse({})
     data = {}
     try:
-        import httpx
-        async with httpx.AsyncClient(timeout=httpx.Timeout(6.0, connect=4.0), follow_redirects=True,
-                                     headers={"User-Agent": "Mozilla/5.0 (compatible; PosterChanBot/1.0)"}) as client:
-            async with client.stream("GET", url) as resp:
+        client = await _preview_http()
+        # Follow redirects BY HAND, re-checking the guard on every hop: validating only the first URL
+        # is what let a 302 reach a link-local address elsewhere in this codebase.
+        target, hops = url, 0
+        while True:
+            async with client.stream("GET", target) as resp:
+                if resp.status_code in (301, 302, 303, 307, 308) and resp.headers.get("location"):
+                    hops += 1
+                    if hops > _PREVIEW_HOPS:
+                        break
+                    nxt = urljoin(target, resp.headers["location"])
+                    if not nxt.startswith(("http://", "https://")):
+                        break
+                    nhost = urlparse(nxt).hostname or ""
+                    if not nhost or not await _is_public_host_async(nhost):
+                        break
+                    target = nxt
+                    continue
                 ctype = resp.headers.get("content-type", "")
                 if resp.status_code == 200 and "text/html" in ctype:
                     body = b""
@@ -2122,11 +2187,14 @@ async def link_preview(url: str):
                         title = tm.group(1).strip() if tm else None
                     img = meta("og:image", "twitter:image", "twitter:image:src")
                     if img:
-                        img = urljoin(url, img)
+                        img = urljoin(target, img)   # relative to where we ENDED, not where we asked
                     data = {"url": url, "title": title, "description": meta("og:description", "twitter:description", "description"),
                             "image": img, "site": meta("og:site_name") or host}
+                break
     except Exception as e:
         logger.debug("[client] preview fetch failed for %s: %s", url, e)
+    finally:
+        _preview_gate.release()
     # cache (even negatives, briefly) to avoid refetch storms
     _preview_cache[url] = (now + _PREVIEW_TTL, data)
     if len(_preview_cache) > 2000:
@@ -2671,7 +2739,7 @@ async def nip05_proxy(domain: str, name: str = "_"):
     hit = _nip05_cache.get(key)
     if hit and hit[0] > now:
         return JSONResponse(hit[1])
-    if not _is_public_host(domain):
+    if not await _is_public_host_async(domain):
         # cache the negative too, so a bad/unresolvable domain shared by many profiles isn't
         # re-resolved on every blue-check attempt
         _nip05_cache[key] = (now + _NIP05_TTL, {"names": {}})
@@ -2731,7 +2799,7 @@ async def lnurl_proxy(url: str):
     if not url.startswith("https://"):
         return JSONResponse({"status": "ERROR", "reason": "https required"}, status_code=400)
     host = urlparse(url).hostname or ""
-    if not host or not _is_public_host(host):
+    if not host or not await _is_public_host_async(host):
         return JSONResponse({"status": "ERROR", "reason": "host not allowed"}, status_code=400)
     try:
         import httpx
