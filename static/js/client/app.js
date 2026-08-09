@@ -13675,6 +13675,8 @@
     // state in which writing anything would destroy it. The three are not the same thing, and
     // conflating _pullDone with "we have the index" is what wiped a drive's folders: see _save/_gc.
     data: { folders: ['Music'], files: {}, encFolders: [] }, _pulled:false, _pulling:false, _pullDone:false, _pullOk:false, _pullBlocked:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null, _indexShas:new Set(), _dirty:false, _saving:false,
+    // A collapsing write the user has already confirmed, and the retry that follows a failure.
+    _forceOk:false, _saveFailed:false, _retryT:null, _retryN:0,
     _key(){ return 'pc_files_idx_'+((ME&&ME.pubkey)||'anon'); },
     _norm(){ if(!this.data||typeof this.data!=='object') this.data={folders:['Music'],files:{},encFolders:[]};
       if(!Array.isArray(this.data.folders)) this.data.folders=['Music'];
@@ -13878,8 +13880,16 @@
           ptr.indexSha=_shaFromUrl(url);
         }
         const auth=await sign(27235,'files-index',[['p',ME.pubkey]]);
+        /* Already confirmed once? Then send FORCE with the first request.
+         *
+         * The 409 path costs TWO signatures for one action — and with a remote signer each is a
+         * prompt on a phone, so the second one is a second chance to lose the write. That is how a
+         * confirmed mass-delete kept failing: the user said yes, the second signature went out, and
+         * whatever happened to it took the whole save with it. Remembered until the write lands, so
+         * a retry is one signature and no second prompt. */
         const sr=await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth)),index:ptr})});
+          body:JSON.stringify(Object.assign({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth)),index:ptr},
+                                            this._forceOk?{force:true}:{}))});
         // 409 = the server refused a write that would collapse the index. That is right when it's a
         // bug and wrong when the user genuinely just deleted a big folder — and since nothing else
         // ever sets `force`, without this branch the guard makes a legitimate mass-delete impossible.
@@ -13891,10 +13901,11 @@
             ').\n\nIf you just deleted a folder, that\'s expected — continue?\n\nIf you did NOT expect this, cancel: '+
             'your file list is still safe on the server.');
           if(!intended){
-            this._dirty=true;
+            this._dirty=true; this._forceOk=false;
             try{ toast('Kept your file list — nothing was changed on the server.'); }catch(_){}
             return false;
           }
+          this._forceOk=true;   // said yes — a retry must not ask again, or sign twice again
           const auth2=await sign(27235,'files-index',[['p',ME.pubkey]]);
           const fr=await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
             body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth2)),index:ptr,force:true})});
@@ -13904,7 +13915,8 @@
         // standalone backup of every filename and folder on the drive — deleting it to reclaim
         // that space is what left a wiped index with nothing to restore from.
         if(ptr.indexSha){ this._lastIndexSha=ptr.indexSha; this._indexShas.add(ptr.indexSha); }
-        this._saveFailed=false;
+        this._saveFailed=false; this._forceOk=false; this._retryAt=0;
+        clearTimeout(this._retryT); this._retryT=null;
         return true;
       }catch(e){
         // The edit is NOT saved, so it must not stay marked clean: `_dirty=false` was set at the
@@ -13924,9 +13936,33 @@
           try{ toast('⚠️ Couldn\'t save your file list to the server — the change is only on this '
                      + 'device for now. If you sign with a remote signer, check it is reachable.'); }catch(_){}
         }
+        this._retryLater();
         return false;
       }
       finally{ this._saving=false; }
+    },
+    /* TRY AGAIN. Nothing did.
+     *
+     * A failed save left `_dirty` set and stopped there, and the only thing that ever calls _save()
+     * again is another edit — but the edit that failed has usually removed its own way back: once
+     * "Remove 2422 missing" has emptied the local list, that button is gone, so clicking it again
+     * does nothing at all and the change can never reach the server. Reported as "I already did all
+     * that", with the server still holding every entry.
+     *
+     * Backs off (20s, 1m, 3m, 10m, then every 10m) because the usual cause is a signer nobody is
+     * holding — and it is silent: _save's own toast is once-per-run, so a retry does not nag. A
+     * confirmed collapsing write carries its `force` along (see _forceOk), so a retry needs one
+     * signature and no second prompt. */
+    _RETRY_STEPS: [20000, 60000, 180000, 600000],
+    _retryLater(){
+      if(this._retryT) return;                       // one timer, however many failures
+      const step=this._RETRY_STEPS[Math.min(this._retryN||0, this._RETRY_STEPS.length-1)];
+      this._retryN=(this._retryN||0)+1;
+      this._retryT=setTimeout(()=>{
+        this._retryT=null;
+        if(!this._dirty){ this._retryN=0; return; }   // something else saved it in the meantime
+        this._save().then(ok=>{ if(ok) this._retryN=0; });
+      }, step);
     },
     beginBatch(){ this._batch=true; },
     // Answers whether the batch actually REACHED the server, so a caller can stop claiming it did.

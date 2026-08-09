@@ -45,20 +45,35 @@ def _fn(src, name, opener):
 def _save_method():
     with open(APP) as fh:
         src = fh.read()
-    return _fn(src, "_save", "async _save(){")
+    # The retry is part of the contract: a failed save that nobody ever tries again is the same
+    # silence, one level along — and the edit that failed has usually removed its own way back
+    # (once "Remove N missing" empties the local list, that button is gone).
+    retry = _fn(src, "_retryLater", "_retryLater(){")
+    steps = re.search(r"_RETRY_STEPS: \[[^\]]*\],", src)
+    assert steps, "the retry backoff is gone"
+    return ",\n".join([_fn(src, "_save", "async _save(){"), retry, steps.group(0).rstrip(",")])
 
 
 PAGE = """<!doctype html><meta charset="utf-8"><pre id="out"></pre><script>
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
 const toasts = [];
 const toast = m => toasts.push(String(m));
 let ME = { pubkey: 'ab'.repeat(32) };
-let signOk = true, fetchStatus = 200;
-const sign = async () => { if (!signOk) throw new Error('signer request timed out'); return {id:'e'}; };
-const fetch = async () => ({ ok: fetchStatus < 400, status: fetchStatus, json: async () => ({}) });
+let signOk = true, fetchStatus = 200, signs = 0, bodies = [], confirmAnswer = true;
+const sign = async () => { signs++; if (!signOk) throw new Error('signer request timed out'); return {id:'e'}; };
+const uiConfirm = async () => confirmAnswer;
+const fetch = async (u, o) => {
+  try{ bodies.push(JSON.parse((o||{}).body||'{}')); }catch(_){ }
+  const last = bodies[bodies.length-1] || {};
+  // The real server refuses a collapsing write UNLESS the request carries force.
+  if (fetchStatus === 409)
+    return last.force ? { ok:true, status:200, json: async () => ({}) }
+                      : { ok:false, status:409, json: async () => ({error:'refused: 3990 -> 1568'}) };
+  return { ok: fetchStatus < 400, status: fetchStatus, json: async () => ({}) };
+};
 const uploadBlob = async () => 'https://x/' + 'cd'.repeat(32);
 const _masterEncrypt = async (mk, b) => b;
 const _shaFromUrl = u => (String(u).match(/([0-9a-f]{64})/i) || [,''])[1];
-const uiConfirm = async () => true;
 
 // The object the method lives on, reduced to what it touches.
 function makeIdx(){
@@ -66,6 +81,7 @@ function makeIdx(){
     data: { folders: ['Music'], files: { a: {name:'x'} }, encFolders: [] },
     _pullOk: true, _dirty: true, _saving: false, _batch: false,
     _indexShas: new Set(), _mkWrapped: 'wrapped',
+    _forceOk: false, _saveFailed: false, _retryT: null, _retryN: 0,
     _norm(){ return this.data; },
     saveLocal(){},
     async pull(){ return this.data; },
@@ -97,6 +113,37 @@ function makeIdx(){
     out.okReturned = await idx._save();
     out.okToasted  = toasts.length;
     out.okDirty    = idx._dirty;
+  }
+  // 4. a failure must schedule a RETRY — nothing else ever calls _save again, and the button that
+  //    started it is gone once the local list is already clean
+  {
+    const idx = makeIdx(); signOk = false; fetchStatus = 200;
+    idx._RETRY_STEPS = [40];                       // the rule is that it retries, not how long it waits
+    await idx._save();
+    out.retryArmed = !!idx._retryT;
+    signOk = true;                                 // the signer comes back
+    await sleep(200);
+    out.retriedClean = idx._dirty === false;       // …and the pending edit went out on its own
+  }
+  // 5. a collapsing write, confirmed once, must not ask (or sign) twice on the way back
+  {
+    const idx = makeIdx(); signOk = true; fetchStatus = 409; confirmAnswer = true;
+    signs = 0; bodies.length = 0;
+    out.collapseSaved = await idx._save();
+    out.collapseSigns = signs;                     // 409 + confirm + forced write = two
+    out.collapseForced = bodies.some(b => b.force === true);
+    // the same edit again (as a retry would) — one signature, no prompt
+    idx._dirty = true; idx._forceOk = true; signs = 0; bodies.length = 0;
+    await idx._save();
+    out.retrySigns = signs;
+    out.retryForcedFirst = !!(bodies[0] && bodies[0].force);
+  }
+  // 6. answering NO must not force anything, then or later
+  {
+    const idx = makeIdx(); signOk = true; fetchStatus = 409; confirmAnswer = false;
+    bodies.length = 0;
+    out.refusedSaved = await idx._save();
+    out.refusedForceRemembered = idx._forceOk;
   }
   document.getElementById('out').textContent = JSON.stringify(out);
 })();
@@ -143,6 +190,27 @@ class FilesIndexSaveReports(unittest.TestCase):
         self.assertIs(self.r["okReturned"], True)
         self.assertEqual(self.r["okToasted"], 0, "a save that worked is not worth a toast")
         self.assertFalse(self.r["okDirty"])
+
+    def test_a_failed_save_is_retried_on_its_own(self):
+        """Nothing else ever calls _save again — and the edit that failed has usually removed its own
+        way back, since "Remove N missing" is gone once the local list is clean. Reported as "I
+        already did all that", with the server still holding every entry."""
+        self.assertTrue(self.r["retryArmed"], "a failure must arm a retry")
+        self.assertTrue(self.r["retriedClean"], "the pending edit must go out when the signer returns")
+
+    def test_a_confirmed_collapse_is_not_asked_or_signed_twice(self):
+        """The 409 path costs TWO signatures for one action, and with a remote signer each is a prompt
+        on a phone — the second was where a confirmed mass-delete kept dying."""
+        self.assertIs(self.r["collapseSaved"], True)
+        self.assertEqual(self.r["collapseSigns"], 2, "first attempt + the forced one")
+        self.assertTrue(self.r["collapseForced"])
+        self.assertEqual(self.r["retrySigns"], 1, "a retry of a confirmed collapse is one signature")
+        self.assertTrue(self.r["retryForcedFirst"], "…and carries force on the FIRST request")
+
+    def test_answering_no_never_forces(self):
+        self.assertIs(self.r["refusedSaved"], False)
+        self.assertFalse(self.r["refusedForceRemembered"],
+                         "a declined collapse must not be remembered as approved")
 
     def test_the_music_tidy_reports_the_verdict_it_was_given(self):
         """The caller is half the bug: with a truthful _save it can still claim success by ignoring
