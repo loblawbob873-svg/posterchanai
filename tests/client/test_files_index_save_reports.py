@@ -48,10 +48,12 @@ def _save_method():
     # The retry is part of the contract: a failed save that nobody ever tries again is the same
     # silence, one level along — and the edit that failed has usually removed its own way back
     # (once "Remove N missing" empties the local list, that button is gone).
+    single = _fn(src, "_save", "_save(){")          # the single-flight wrapper
     retry = _fn(src, "_retryLater", "_retryLater(){")
     steps = re.search(r"_RETRY_STEPS: \[[^\]]*\],", src)
     assert steps, "the retry backoff is gone"
-    return ",\n".join([_fn(src, "_save", "async _save(){"), retry, steps.group(0).rstrip(",")])
+    return ",\n".join([_fn(src, "_saveOnce", "async _saveOnce(){"), single, retry,
+                       steps.group(0).rstrip(",")])
 
 
 PAGE = """<!doctype html><meta charset="utf-8"><pre id="out"></pre><script>
@@ -59,9 +61,10 @@ const sleep = ms => new Promise(r=>setTimeout(r,ms));
 const toasts = [];
 const toast = m => toasts.push(String(m));
 let ME = { pubkey: 'ab'.repeat(32) };
-let signOk = true, fetchStatus = 200, signs = 0, bodies = [], confirmAnswer = true;
+let signOk = true, fetchStatus = 200, signs = 0, bodies = [], confirmAnswer = true, asked = 0;
 const sign = async () => { signs++; if (!signOk) throw new Error('signer request timed out'); return {id:'e'}; };
-const uiConfirm = async () => confirmAnswer;
+// Counts, because "how many times were you asked" is the whole question in the storm case.
+const uiConfirm = async () => { asked++; return confirmAnswer; };
 const fetch = async (u, o) => {
   try{ bodies.push(JSON.parse((o||{}).body||'{}')); }catch(_){ }
   const last = bodies[bodies.length-1] || {};
@@ -82,6 +85,8 @@ function makeIdx(){
     _pullOk: true, _dirty: true, _saving: false, _batch: false,
     _indexShas: new Set(), _mkWrapped: 'wrapped',
     _forceOk: false, _saveFailed: false, _retryT: null, _retryN: 0,
+    _saveAgain: false, _savingP: null, _syncedAt: 0,
+    _synced(){ this._syncedAt = 1; },
     _norm(){ return this.data; },
     saveLocal(){},
     async pull(){ return this.data; },
@@ -92,6 +97,16 @@ function makeIdx(){
 
 (async () => {
   const out = {};
+  // 0. THE DIALOG STORM. Runs FIRST: a later scenario's retry timer would otherwise fire against
+  //    the same stub mid-count and answer questions nobody asked. Ten saves fired at once — an upload adding a file a second while the
+  //    server disagrees — must ask ONE question, not ten. A save that can open a dialog and is not
+  //    single-flight turns a folder upload into hundreds of prompts.
+  {
+    const idx = makeIdx(); signOk = true; fetchStatus = 409; confirmAnswer = true;
+    asked = 0; signs = 0; bodies.length = 0;
+    await Promise.all(Array.from({length: 10}, () => idx._save()));
+    out.stormAsked = asked;
+  }
   // 1. the signer will not answer — the exact shape of the reported failure
   {
     const idx = makeIdx(); signOk = false; fetchStatus = 200; toasts.length = 0;
@@ -138,7 +153,7 @@ function makeIdx(){
     out.retrySigns = signs;
     out.retryForcedFirst = !!(bodies[0] && bodies[0].force);
   }
-  // 6. answering NO must not force anything, then or later
+  // 7. answering NO must not force anything, then or later
   {
     const idx = makeIdx(); signOk = true; fetchStatus = 409; confirmAnswer = false;
     bodies.length = 0;
@@ -206,6 +221,14 @@ class FilesIndexSaveReports(unittest.TestCase):
         self.assertTrue(self.r["collapseForced"])
         self.assertEqual(self.r["retrySigns"], 1, "a retry of a confirmed collapse is one signature")
         self.assertTrue(self.r["retryForcedFirst"], "…and carries force on the FIRST request")
+
+    def test_ten_concurrent_saves_ask_one_question(self):
+        """A save can open a "this removes most of your file list" dialog, and nothing made saves
+        single-flight — so an upload adding a file a second against a disagreeing server produced a
+        refused save every two seconds, each one a fresh prompt, on a screen the user was just
+        adding songs to."""
+        self.assertEqual(self.r["stormAsked"], 1,
+                         f"{self.r['stormAsked']} dialogs for one pending edit")
 
     def test_answering_no_never_forces(self):
         self.assertIs(self.r["refusedSaved"], False)

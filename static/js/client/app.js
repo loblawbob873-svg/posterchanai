@@ -13682,7 +13682,11 @@
     // conflating _pullDone with "we have the index" is what wiped a drive's folders: see _save/_gc.
     data: { folders: ['Music'], files: {}, encFolders: [] }, _pulled:false, _pulling:false, _pullDone:false, _pullOk:false, _pullBlocked:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null, _indexShas:new Set(), _dirty:false, _saving:false,
     // A collapsing write the user has already confirmed, and the retry that follows a failure.
-    _forceOk:false, _saveFailed:false, _retryT:null, _retryN:0,
+    _forceOk:false, _saveFailed:false, _retryT:null, _retryN:0, _saveAgain:false, _savingP:null,
+    /* When this device last AGREED with the server, in unix seconds. It is what tells a
+     * deletion made elsewhere apart from a file added here — see _mergeFiles. Persisted, or a
+     * reload would forget every deletion it had already accepted. */
+    _syncedAt:0,
     _key(){ return 'pc_files_idx_'+((ME&&ME.pubkey)||'anon'); },
     _norm(){ if(!this.data||typeof this.data!=='object') this.data={folders:['Music'],files:{},encFolders:[]};
       if(!Array.isArray(this.data.folders)) this.data.folders=['Music'];
@@ -13690,8 +13694,12 @@
       if(!Array.isArray(this.data.encFolders)) this.data.encFolders=[];   // names of encrypted folders
       if(!this.data.folders.includes('Music')) this.data.folders.unshift('Music'); return this.data; },
     loadLocal(){ try{ const d=JSON.parse(localStorage.getItem(this._key())||'null'); if(d) this.data=d; }catch(_){}
+      try{ this._syncedAt = +(localStorage.getItem(this._key()+'_sync')||0) || 0; }catch(_){}
       try{ this._mkWrapped = localStorage.getItem(this._key()+'_mk') || this._mkWrapped; }catch(_){} return this._norm(); },
-    saveLocal(){ this._norm(); try{ localStorage.setItem(this._key(), JSON.stringify(this.data)); if(this._mkWrapped) localStorage.setItem(this._key()+'_mk', this._mkWrapped); }catch(_){} },
+    saveLocal(){ this._norm(); try{ localStorage.setItem(this._key(), JSON.stringify(this.data)); if(this._mkWrapped) localStorage.setItem(this._key()+'_mk', this._mkWrapped); if(this._syncedAt) localStorage.setItem(this._key()+'_sync', String(this._syncedAt)); }catch(_){} },
+    // We and the server now hold the same thing. Everything before this moment that the server does
+    // not have was deleted by somebody, not added by us (see _mergeFiles).
+    _synced(){ this._syncedAt = Math.floor(Date.now()/1000); this.saveLocal(); },
     // The master key (AES-256) is generated once, NIP-44 self-wrapped, and kept in the index pointer.
     async _ensureMK(){
       if(this.mk) return this.mk;
@@ -13762,13 +13770,45 @@
        The known cost is that a folder deleted locally in that window can come back; resurrecting a
        folder is recoverable, replacing 400 files' metadata with nothing is not. (A deleted FILE is
        covered — see the tombstones above.) */
+    /* A DELETION MADE ON ANOTHER DEVICE, without publishing a tombstone list.
+     *
+     * The local tombstones above only speak for THIS device. The phone that never saw the deletion
+     * merges its own copy back, `Object.assign` restores every entry, and the file list the user
+     * deleted on their laptop comes back — that is exactly what happened: 2422 entries removed on a
+     * desktop, resurrected by a phone still holding the pre-deletion library, and then the desktop's
+     * next save refused as "collapsing" against them.
+     *
+     * The signal is TIME. Every entry carries the `ts` it was added at, and we know when this device
+     * last successfully synced with the server. So for a file we hold that the server does NOT:
+     *
+     *   ts <= syncedAt  →  the server knew about it when we last agreed, and no longer does.
+     *                      Somebody deleted it. Let it go.
+     *   ts >  syncedAt  →  we added it here since; the server has simply not been told yet. Keep it.
+     *
+     * Which needs no extra bytes in the document — publishing 2422 sha256s would be ~155KB on a
+     * 133KB index — and it degrades safely: with no recorded sync (`_syncedAt` 0) nothing is
+     * dropped and this is the old union, which is the behaviour that never loses data. */
+    _mergeFiles(srv, loc){
+      const out=Object.assign({}, srv.files||{}, loc.files||{});
+      const since=this._syncedAt||0;
+      if(since){
+        const s=srv.files||{};
+        for(const sha in out){
+          if(s[sha]) continue;                            // the server still has it
+          if(!(loc.files||{})[sha]) continue;             // not ours to judge
+          const ts=+((loc.files[sha]||{}).ts)||0;
+          if(ts && ts <= since) delete out[sha];          // known before our last sync, gone now
+        }
+      }
+      return this._dropDeleted(out);
+    },
     _merge(srv){
       this._norm();
       const loc=this.data;
       this.data={ folders:[...new Set([...(srv.folders||[]), ...loc.folders])],
                   encFolders:[...new Set([...(srv.encFolders||[]), ...loc.encFolders])],
                   deleted: loc.deleted,
-                  files:this._dropDeleted(Object.assign({}, srv.files||{}, loc.files||{})) };
+                  files:this._mergeFiles(srv, loc) };
       this.saveLocal();
     },
     async pull(){
@@ -13814,7 +13854,24 @@
               // this whole guard-set exists to stop). Blindly applying the server copy here is what
               // would finish the job: the last good index would be overwritten by the bad one and the
               // drive's folders would be gone for good. Keep ours, fold theirs under it, push it back.
-              const locN=Object.keys(this._norm().files||{}).length, srvN=Object.keys(idx.files||{}).length;
+              /* …but count only what a truncation could explain.
+               *
+               * "I hold more than the server" has two causes and this rule assumed the wrong one.
+               * The other is that somebody DELETED those files on another device — and then this
+               * branch fires, calls it a truncation, and pushes them all back. Which is precisely
+               * what happened: a phone holding a pre-deletion library restored 2422 entries a
+               * desktop had removed, and announced it as "Restored 3990 files from this device".
+               *
+               * A file the server no longer has, that we already knew about at our last sync, is a
+               * deletion — not evidence of truncation. Only the rest counts here, and _mergeFiles
+               * applies the same rule if we do decide to repair. */
+              const locFiles=this._norm().files||{}, srvFiles=idx.files||{}, since=this._syncedAt||0;
+              const locN=Object.keys(locFiles).filter(sha=>{
+                if(srvFiles[sha] || !since) return true;
+                const ts=+((locFiles[sha]||{}).ts)||0;
+                return !(ts && ts <= since);          // deleted elsewhere → not ours to restore
+              }).length;
+              const srvN=Object.keys(srvFiles).length;
               if(locN >= 5 && locN > srvN + 4){
                 this._merge(idx);
                 this._dirty=true;
@@ -13838,7 +13895,7 @@
           // Did we actually GET the index? A pointer that names a blob we couldn't fetch or decrypt is
           // the dangerous case: the server HAS folders, we're holding an empty default, and the next
           // save would replace theirs with ours. Flag it and refuse to write until a pull succeeds.
-          if(idx) this._pullOk=true;
+          if(idx){ this._pullOk=true; if(!this._dirty && !this._saving) this._synced(); }
           else if(ptr.indexSha || (ptr.files && Object.keys(ptr.files).length)) this._pullBlocked=true;
           else this._pullOk=true;                 // a pointer with nothing in it: server really is empty
         } else if(r && r.ok){
@@ -13849,7 +13906,28 @@
       return this._norm();
     },
     push(){ this._dirty=true; this.saveLocal(); if(this._batch) return; clearTimeout(this._t); this._t=setTimeout(()=>this._save(), 900); },
-    async _save(){
+    /* ONE save at a time, always.
+     *
+     * Nothing enforced this: _saving was set but never checked on the way IN, so every scheduled
+     * save started its own request. That is survivable until a save can ASK A QUESTION — and it can,
+     * on a collapsing write. Uploading a folder while the server disagreed produced a refused save
+     * every two seconds, each one a fresh "This removes most of your file list" dialog, hundreds of
+     * them, on a screen the user was just adding songs to.
+     *
+     * Collapsed into one: a save that arrives while another is running does not queue a second
+     * request, it asks the one in flight to go round again when it lands (`_saveAgain`). So the
+     * question is asked at most once per answer, and the pending edits ride along with whatever the
+     * in-flight save is already sending. */
+    _save(){
+      if(this._saving){ this._saveAgain=true; return this._savingP || Promise.resolve(false); }
+      this._savingP = this._saveOnce().then(async ok=>{
+        if(this._saveAgain && this._dirty){ this._saveAgain=false; return await this._save(); }
+        this._saveAgain=false;
+        return ok;
+      });
+      return this._savingP;
+    },
+    async _saveOnce(){
       // NEVER overwrite a server index we failed to READ. The doc is replaceable, so one save from a
       // browser holding the empty default (fresh device, cleared storage, a blob fetch that 404'd)
       // replaces every folder and filename with nothing — which is exactly how a drive lost its
@@ -13921,6 +13999,7 @@
         // standalone backup of every filename and folder on the drive — deleting it to reclaim
         // that space is what left a wiped index with nothing to restore from.
         if(ptr.indexSha){ this._lastIndexSha=ptr.indexSha; this._indexShas.add(ptr.indexSha); }
+        this._synced();                       // the server now holds exactly what we just sent
         this._saveFailed=false; this._forceOk=false; this._retryAt=0;
         clearTimeout(this._retryT); this._retryT=null;
         return true;
@@ -13971,8 +14050,17 @@
       }, step);
     },
     beginBatch(){ this._batch=true; },
-    // Answers whether the batch actually REACHED the server, so a caller can stop claiming it did.
-    async endBatch(){ this._batch=false; return await this._save(); },
+    /* Answers whether the batch actually REACHED the server, so a caller can stop claiming it did.
+     *
+     * The batch flag is dropped AFTER the save, not before: this awaits, the save can sit on a
+     * dialog for as long as the user takes to read it, and every push() during that window used to
+     * see `_batch === false` and schedule a save of its own. An upload adding a file a second turned
+     * that into a save a second. Held until the write lands, those pushes stay batched — which is
+     * what a batch is for. */
+    async endBatch(){
+      try{ return await this._save(); }
+      finally{ this._batch=false; }
+    },
     folders(){ return this._norm().folders; },
     isEncFolder(name){ return name==='Music' || this._norm().encFolders.includes(name); },   // Music is always encrypted
     addFolder(name, enc){ name=(name||'').trim().slice(0,40); if(!name||this._norm().folders.includes(name)) return false; this.data.folders.push(name); if(enc&&!this.data.encFolders.includes(name)) this.data.encFolders.push(name); this.push(); return true; },

@@ -62,6 +62,8 @@ def _harness():
         _fn(src, "_norm", "_norm(){ if(!this.data") + ",",
         _fn(src, "_tomb", "_tomb(sha){") + ",",
         _fn(src, "_dropDeleted", "_dropDeleted(files){") + ",",
+        _fn(src, "_mergeFiles", "_mergeFiles(srv, loc){") + ",",
+        "  _syncedAt: 0,",
         _fn(src, "_merge", "_merge(srv){") + ",",
         _fn(src, "forget", "forget(sha){") + ",",
         _fn(src, "setFile", "setFile(sha, m){") + ",",
@@ -96,7 +98,26 @@ idx.setFile('a', {name:'a.ogg', folder:'Music'});
 idx._merge(JSON.parse(JSON.stringify(server)));
 out.afterReupload = Object.keys(idx.data.files).sort();
 
-// 4. bounded — old tombstones age out rather than accumulating forever
+// 4. A DELETION MADE ON ANOTHER DEVICE. This device never saw it: no tombstones of its own, it
+//    simply holds the pre-deletion library. The server's copy is the one that is right.
+{
+  const phone = Object.create(idx);
+  phone.data = { folders:['Music'], encFolders:['Music'], deleted:{},
+                 files:{ old1:{name:'a',ts:100}, old2:{name:'b',ts:100}, mine:{name:'c',ts:500} } };
+  phone._syncedAt = 300;                      // last agreed with the server at t=300
+  // The server has since dropped old1/old2 (deleted on the laptop) and gained fresh1.
+  phone._merge({ folders:['Music'], encFolders:['Music'], files:{ fresh1:{name:'d',ts:400} } });
+  out.phoneKeeps = Object.keys(phone.data.files).sort();
+}
+// …and with no record of ever having synced, nothing is dropped: the old union, which never loses.
+{
+  const cold = Object.create(idx);
+  cold.data = { folders:['Music'], encFolders:[], deleted:{}, files:{ old1:{name:'a',ts:100} } };
+  cold._syncedAt = 0;
+  cold._merge({ folders:['Music'], encFolders:[], files:{} });
+  out.coldKeeps = Object.keys(cold.data.files).sort();
+}
+// 5. bounded — old tombstones age out rather than accumulating forever
 idx.data.deleted = {}; idx._tomb('z');
 idx.data.deleted['ancient'] = 1;                       // 1970
 for (let i = 0; i < 512; i++) idx._tomb('k' + i);      // crosses the trim checkpoint
@@ -143,6 +164,19 @@ class FilesIndexDeletesStick(unittest.TestCase):
     def test_re_uploading_deleted_content_brings_it_back(self):
         self.assertEqual(self.r["afterReupload"], ["a", "c", "d"],
                          "a tombstone must not outlive a deliberate re-upload")
+
+    def test_a_deletion_made_on_another_device_is_honoured(self):
+        """The reported failure: 2422 entries deleted on a desktop, resurrected by a phone that
+        still held the pre-deletion library — which then made the desktop's next save look like it
+        was collapsing the list. A file the server no longer has, that this device already knew
+        about at its last sync, was deleted by somebody. One added here since was not."""
+        self.assertEqual(self.r["phoneKeeps"], ["fresh1", "mine"],
+                         "old1/old2 were deleted elsewhere; `mine` was added here after the last sync")
+
+    def test_a_device_that_never_synced_drops_nothing(self):
+        """No recorded sync means no way to tell a deletion from an addition — so it falls back to
+        the union, which is the behaviour that never loses data."""
+        self.assertEqual(self.r["coldKeeps"], ["old1"])
 
     def test_tombstones_are_bounded(self):
         self.assertTrue(self.r["ancientDropped"], "old tombstones must age out")
