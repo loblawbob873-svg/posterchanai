@@ -5006,14 +5006,170 @@
       };
     });
   }
+  /* ---------- Discover → Torrents ----------
+   * Two tabs. DOWNLOADS is the manager for this node's own torrent client — the same client the
+   * `torrent` chat command drives, so a download started by typing at the AI turns up here and can
+   * be paused or removed with a button instead of another command. NOSTR is the NIP-35 feed of
+   * torrents other people have published, which is what this whole view used to be.
+   * Downloads is the default: the thing you came to manage is more useful than a stranger's list. */
+  let _torTab = 'dl';
+  let _torPollT = 0;
+
+  async function _torApi(path, opts){
+    try{ await ensureAiSession(); }catch(_){}   // the APK has no cookie; the bearer token is the auth
+    const r = await fetch('/api/torrent'+path, { credentials:'include', ...(opts||{}),
+      headers:{ 'Content-Type':'application/json', ...((opts&&opts.headers)||{}),
+                ...(_aiToken?{'Authorization':'Bearer '+_aiToken}:{}) } });
+    if(!r.ok){
+      const e=new Error('http '+r.status); e.status=r.status;
+      try{ e.detail=(await r.json()).detail; }catch(_){}
+      throw e;
+    }
+    return r.json();
+  }
+
+  const _TOR_STATE = { downloading:'downloading', seeding:'seeding', finished:'done',
+                       checking:'checking', 'checking files':'checking', 'downloading metadata':'metadata',
+                       queued:'queued', allocating:'allocating', paused:'paused', error:'error' };
+
+  function _torRow(t){
+    const pct = Math.max(0, Math.min(100, (Number(t.progress)||0) * (Number(t.progress)<=1 ? 100 : 1)));
+    const st = t.is_paused ? 'paused' : (_TOR_STATE[String(t.state||'').toLowerCase()] || String(t.state||''));
+    const done = !!t.is_finished;
+    return `<div class="tm-item${done?' done':''}${t.is_paused?' paused':''}" data-h="${enc(t.info_hash)}">
+      <div class="tm-head">
+        <span class="tm-name" title="${enc(t.name||'')}">${enc(t.name||'(metadata…)')}</span>
+        <span class="tm-state">${enc(st)}</span>
+      </div>
+      <div class="tm-bar"><i style="width:${pct.toFixed(1)}%"></i></div>
+      <div class="tm-meta">
+        <span>${pct.toFixed(pct<10?1:0)}%</span>
+        <span>${_fmtBytes(t.downloaded)} / ${_fmtBytes(t.size)}</span>
+        <span title="download">↓ ${_fmtBytes(t.download_rate)}/s</span>
+        <span title="upload">↑ ${_fmtBytes(t.upload_rate)}/s</span>
+        <span title="seeds / peers">${Number(t.seeders)||0}⇡ ${Number(t.peers)||0}⇢</span>
+      </div>
+      <div class="tm-acts">
+        <button class="btn btn-ghost small tm-toggle">${t.is_paused?'▶ Resume':'⏸ Pause'}</button>
+        <button class="btn btn-ghost small tm-del" style="color:var(--danger)">✕ Remove</button>
+      </div></div>`;
+  }
+
+  function _torBindRows(box){
+    $$('.tm-item',box).forEach(row=>{
+      const h=row.dataset.h;
+      const tg=row.querySelector('.tm-toggle');
+      if(tg) tg.onclick=async()=>{
+        const resume=/Resume/.test(tg.textContent);
+        tg.disabled=true;
+        try{ await _torApi(resume?'/resume':'/pause',{method:'POST',body:JSON.stringify({info_hash:h})}); }
+        catch(err){ toast('could not '+(resume?'resume':'pause')+' that: '+(err.detail||err.message)); }
+        finally{ tg.disabled=false; _torRefresh(true); }
+      };
+      const dl=row.querySelector('.tm-del');
+      if(dl) dl.onclick=async()=>{
+        const name=(row.querySelector('.tm-name')||{}).textContent||'this torrent';
+        // Two questions, because they are two different losses: one frees the slot, the other
+        // deletes what you already downloaded and cannot be undone.
+        if(!await uiConfirm(`Remove “${name}” from the list?`)) return;
+        const wipe=await uiConfirm('Delete the downloaded files too? Cancel keeps them on disk.');
+        try{ await _torApi('/remove',{method:'POST',body:JSON.stringify({info_hash:h, delete_files:!!wipe})});
+             toast('removed'); }
+        catch(err){ toast('could not remove that: '+(err.detail||err.message)); }
+        _torRefresh(true);
+      };
+    });
+  }
+
+  async function _torRefresh(force){
+    const box=$('#tm-list'); if(!box || VIEW!=='torrents' || _torTab!=='dl') return;
+    let j=null;
+    try{ j=await _torApi('/list'); }
+    catch(err){
+      if(VIEW!=='torrents') return;
+      // 503 is "no torrent client on this node", which is a SETTING, not a fault — say which.
+      box.innerHTML = err.status===503
+        ? `<div class="empty">This server has no torrent client enabled.<br><span class="muted small">An admin turns it on in Admin → Tools.</span></div>`
+        : (err.status===401 || err.status===403
+            ? '<div class="empty">You don\'t have access to the torrent client on this server.</div>'
+            : `<div class="empty">Couldn\'t reach the torrent client.<br><span class="muted small">${enc(err.detail||err.message)}</span></div>`);
+      return;
+    }
+    if(VIEW!=='torrents' || _torTab!=='dl') return;
+    const list=(j&&j.torrents)||[];
+    // Repaint in place while the list is unchanged in SHAPE, so a click target does not move under
+    // a finger every two seconds; rebuild only when torrents are added or removed.
+    const sig=list.map(t=>t.info_hash).join(',');
+    if(!force && box.dataset.sig===sig){
+      list.forEach(t=>{ const row=box.querySelector(`.tm-item[data-h="${CSS.escape(t.info_hash)}"]`);
+        if(row){ const tmp=document.createElement('div'); tmp.innerHTML=_torRow(t);
+                 row.replaceWith(tmp.firstElementChild); } });
+      _torBindRows(box);
+      return;
+    }
+    box.dataset.sig=sig;
+    box.innerHTML = list.length ? list.map(_torRow).join('')
+      : '<div class="empty">Nothing downloading.<br><span class="muted small">Add a magnet link above, or start one from AI Chat with <code>torrent &lt;magnet&gt;</code>.</span></div>';
+    _torBindRows(box);
+  }
+
+  function _torStopPoll(){ if(_torPollT){ clearInterval(_torPollT); _torPollT=0; } }
+  function _torStartPoll(){
+    _torStopPoll();
+    // Self-cancelling: leaving the view (or the tab) kills it, so a forgotten interval cannot keep
+    // polling a server every two seconds for the rest of the session.
+    _torPollT=setInterval(()=>{
+      if(VIEW!=='torrents' || _torTab!=='dl' || !document.getElementById('tm-list')){ _torStopPoll(); return; }
+      if(document.visibilityState==='hidden') return;
+      _torRefresh(false);
+    }, 2000);
+  }
+
+  async function _torAddPrompt(){
+    const v=await uiPrompt('Add a torrent', { placeholder:'magnet:?xt=… or a link to a .torrent' });
+    const q=String(v||'').trim(); if(!q) return;
+    toast('adding…');
+    try{
+      await _torApi('/add',{method:'POST',body:JSON.stringify(
+        q.startsWith('magnet:') ? { magnet:q } : { url:q })});
+      toast('added');
+      _torRefresh(true);
+    }catch(err){ toast('could not add that: '+(err.detail||err.message)); }
+  }
+
   async function renderTorrents(){
-    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    const feed=$('#feed');
+    const tabs=`<div class="notif-tabs tor-tabs">
+        <button class="ntab${_torTab==='dl'?' on':''}" data-tt="dl">⬇ Downloads</button>
+        <button class="ntab${_torTab==='nostr'?' on':''}" data-tt="nostr">🧲 Nostr</button></div>`;
+    const bind=()=>{ $$('.tor-tabs .ntab',feed).forEach(b=> b.onclick=()=>{
+      if(_torTab===b.dataset.tt) return; _torTab=b.dataset.tt; _torStopPoll(); renderTorrents(); }); };
+    if(_torTab==='dl'){
+      feed.innerHTML = tabs + `<div class="streams-top">
+          <button class="btn btn-neon small" id="tm-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Add torrent</button>
+          <button class="btn btn-ghost small" id="tm-refresh" title="Refresh now">↻</button>
+        </div><div class="tm-list" id="tm-list"><div class="spinner"></div></div>`;
+      bind();
+      { const a=$('#tm-add',feed); if(a) a.onclick=_torAddPrompt; }
+      { const r=$('#tm-refresh',feed); if(r) r.onclick=()=>_torRefresh(true); }
+      await _torRefresh(true);
+      _torStartPoll();
+      return;
+    }
+    _torStopPoll();
+    feed.innerHTML = tabs + '<div class="spinner"></div>';
+    bind();
+    await _renderTorrentsNostr(feed, tabs, bind);
+  }
+
+  async function _renderTorrentsNostr(feed, tabs, bind){
     let evs=[]; try{ evs=await Relay.query([{ kinds:[2003], limit:80 }]); }catch(_){}
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
-    if(VIEW!=='torrents') return;
+    if(VIEW!=='torrents' || _torTab!=='nostr') return;
     const tors=evs.sort((a,b)=>b.created_at-a.created_at);
-    const top=GUEST?'':`<div class="streams-top"><button class="btn btn-neon small" id="tor-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Add torrent</button></div>`;
-    feed.innerHTML = top + (tors.length ? tors.map(torrentCard).join('') : '<div class="empty">No torrents found on the relay yet (NIP-35 · kind 2003).</div>');
+    const top=GUEST?'':`<div class="streams-top"><button class="btn btn-neon small" id="tor-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Publish a torrent</button></div>`;
+    feed.innerHTML = tabs + top + (tors.length ? tors.map(torrentCard).join('') : '<div class="empty">No torrents found on the relay yet (NIP-35 · kind 2003).</div>');
+    bind();
     { const ab=$('#tor-add',feed); if(ab) ab.onclick=addTorrent; }
     decorateProfiles();
     $$('.tor-card .name[data-prof]',feed).forEach(n=> n.onclick=()=>renderProfileView(n.dataset.prof));

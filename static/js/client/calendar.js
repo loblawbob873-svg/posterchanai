@@ -339,11 +339,22 @@
         const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
         const key = ymd(d), evs = eventsFor(key);
         const other = d.getMonth() !== m.getMonth();
+        /* A dot says "something happens" and nothing else, which is no use when the question is
+         * "what". Each event gets a short chip — the start time and as much of the title as fits —
+         * the way every other calendar does it. BOTH forms are emitted and the stylesheet picks:
+         * a phone's month cell is ~46px wide, where a chip can show four characters and a dot is
+         * genuinely the better answer. Doing it in CSS rather than JS means rotating the device or
+         * resizing the window switches over with no repaint and nothing to keep in sync. */
+        const chips = evs.slice(0, 3).map(e =>
+          `<i class="cal-chip" style="--c:${enc(colorOf(e.cal))}" title="${enc(e.title)}">${
+            e.allDay ? '' : `<b>${enc(String(e.time||'').split('–')[0].split('-')[0].trim())}</b> `
+          }${enc(e.title)}</i>`).join('');
         const dots = evs.slice(0, 4).map(e =>
           `<i class="cal-dot" style="background:${enc(colorOf(e.cal))}"></i>`).join('');
         cells += `<button class="cal-day${other?' other':''}${key===today?' today':''}${key===S.sel?' sel':''}"
                           data-key="${key}">
             <span class="cal-num">${d.getDate()}</span>
+            <span class="cal-chips">${chips}${evs.length>3?`<i class="cal-more">+${evs.length-3} more</i>`:''}</span>
             <span class="cal-dots">${dots}${evs.length>4?`<i class="cal-more">+${evs.length-4}</i>`:''}</span>
           </button>`;
       }

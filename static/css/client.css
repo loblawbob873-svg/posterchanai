@@ -1429,6 +1429,27 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .cal-dots{display:flex;gap:3px;flex-wrap:wrap;justify-content:center;align-items:center}
 .cal-dot{width:6px;height:6px;border-radius:999px;display:inline-block;flex:0 0 auto}
 .cal-more{font-size:10px;color:var(--muted)}
+/* Text previews. Hidden by default and switched on once a cell is wide enough to hold words — see
+   the media query below; the dots are the narrow fallback and the two are never both shown. */
+.cal-chips{display:none}
+@media (min-width:560px){
+  .cal-day{aspect-ratio:auto;min-height:96px;align-items:stretch;justify-content:flex-start;
+    padding:5px 5px 6px;gap:3px}
+  .cal-num{text-align:left;font-size:12.5px;padding-left:2px}
+  .cal-day.today .cal-num{align-self:flex-start}
+  .cal-dots{display:none}
+  .cal-chips{display:flex;flex-direction:column;gap:2px;min-width:0;overflow:hidden}
+  .cal-chip{display:block;font-style:normal;font-size:11px;line-height:1.45;text-align:left;
+    padding:1px 5px;border-radius:4px;min-width:0;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;color:var(--text);
+    /* The calendar colour as a tint plus a solid edge: a fully saturated fill at this size makes the
+       title unreadable on half the palette. */
+    background:color-mix(in srgb, var(--c) 26%, transparent);
+    border-left:3px solid var(--c)}
+  .cal-chip b{font-weight:600;color:var(--muted)}
+  .cal-day .cal-more{text-align:left;padding-left:3px}
+}
+@media (min-width:900px){ .cal-day{min-height:112px} .cal-chip{font-size:11.5px} }
 .cal-day-panel{border-top:1px solid var(--line);padding-top:12px}
 .cal-day-hd{font-weight:800;font-size:15px;margin-bottom:10px;color:var(--text)}
 .cal-ev{display:flex;gap:10px;align-items:center;padding:10px;border:1px solid var(--line);
@@ -6309,6 +6330,32 @@ body.os-on #os-root{pointer-events:auto}
 .md-table thead th{background:var(--panel2);font-weight:600;white-space:nowrap}
 .md-table tbody tr:nth-child(even){background:rgba(255,255,255,.02)}
 .md-table code{white-space:nowrap}
+
+/* Torrent manager (Discover → Torrents → Downloads). Card-per-torrent rather than a table: a table
+   needs horizontal room this view does not have on a phone, and every column here is short enough to
+   wrap into a meta row. */
+.tm-list{display:flex;flex-direction:column;gap:9px;padding:2px 0 14px}
+.tm-item{padding:11px 12px;border-radius:12px;background:var(--panel2);border:1px solid var(--line)}
+.tm-item.done{border-color:color-mix(in srgb, var(--neon) 40%, var(--line))}
+.tm-item.paused{opacity:.72}
+.tm-head{display:flex;align-items:baseline;gap:10px}
+.tm-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.tm-state{flex:0 0 auto;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.tm-item.done .tm-state{color:var(--neon)}
+.tm-bar{height:6px;border-radius:4px;background:var(--panel);overflow:hidden;margin:9px 0 7px;
+  border:1px solid var(--line)}
+.tm-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan,#0bb6cf),var(--neon));
+  transition:width .4s ease}
+.tm-item.done .tm-bar i{background:var(--neon)}
+/* Wraps rather than scrolls: five short facts fit two lines at 360px and none of them is worth a
+   sideways scroll. */
+.tm-meta{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--muted)}
+.tm-acts{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}
+.tm-acts .btn{flex:0 1 auto}
+@media (max-width:420px){
+  .tm-meta{gap:3px 11px;font-size:11.5px}
+  .tm-acts .btn{flex:1 1 auto}          /* thumb-sized targets when there is room for exactly two */
+}
 
 /* The Music APP — a player, not the file manager's Music folder. */
 .music-app{display:flex;flex-direction:column;gap:14px;padding:14px 12px;min-height:0}

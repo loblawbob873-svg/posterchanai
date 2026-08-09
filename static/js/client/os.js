@@ -645,6 +645,28 @@
    * your profile through #me-card in the sidebar, which the desktop hides, so without this there is
    * no route to your own profile or to the account switcher at all. The picture and the name are
    * read from that card rather than re-fetched, so they can never disagree with it. */
+  /* Full screen — the desktop with nothing else around it, which is the whole point of a desktop
+   * inside a browser tab. The request MUST come from a user gesture (a click on the start-menu
+   * entry, or the key handler below), and browsers can still refuse it — iOS Safari has no element
+   * fullscreen at all — so the failure is reported rather than swallowed. Prefixed calls are kept
+   * for the older WebView the APK can ship on. */
+  const isFull = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+  async function toggleFull(){
+    try{
+      if(isFull()){
+        if(document.exitFullscreen) await document.exitFullscreen();
+        else if(document.webkitExitFullscreen) document.webkitExitFullscreen();
+        return;
+      }
+      const el = document.documentElement;
+      if(el.requestFullscreen) await el.requestFullscreen({ navigationUI: 'hide' });
+      else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      else throw new Error('unsupported');
+    }catch(err){
+      try{ PC().toast('this browser would not go full screen'); }catch(_){}
+    }
+  }
+
   function meChip(){
     if(!me()) return '';
     let src = '', name = '';
@@ -912,6 +934,7 @@
        <div class="os-applist" id="os-applist"></div>
        <div class="os-stats" id="os-stats"></div>
        <div class="os-foot">${meChip()}<span class="spacer"></span>
+         <button class="os-exit" id="os-full" title="Full screen (F11)">${isFull()?'⛶ Windowed':'⛶ Full screen'}</button>
          <button class="os-exit" id="os-exit" title="Leave the desktop">⤢ Classic</button></div>`;
     root.appendChild(menu);
     const searchNostr = (q) => {
@@ -971,6 +994,7 @@
         }catch(err){ PC().toast && PC().toast('could not open your accounts'); }
         toggleStart(false);
       }; }
+    { const fb = $('#os-full', menu); if(fb) fb.onclick = () => { toggleStart(false); toggleFull(); }; }
     { const xb = $('#os-exit', menu); if(xb) xb.onclick = () => { toggleStart(false); exit(); }; }
     const q = $('#os-q', menu);
     q.oninput = () => paint(q.value.trim());
@@ -1024,6 +1048,9 @@
     drawDesktop();
     drawBar();
     _clock = setInterval(() => { if(on && !startOpen && !notiOpen) drawBar(); }, 30000);
+    // Leaving full screen by pressing Escape never goes through our button, so the label has to
+    // follow the browser rather than our own last action.
+    document.addEventListener('fullscreenchange', onFullChange);
     watchMail();
     document.addEventListener('keydown', onKey, true);
     window.addEventListener('resize', onResize);
@@ -1037,6 +1064,10 @@
     clearInterval(mailT); mailT = 0; mailSeen = null;
     toastHost = null; notiOpen = false;
     document.removeEventListener('keydown', onKey, true);
+    document.removeEventListener('fullscreenchange', onFullChange);
+    // Leaving the desktop leaves full screen with it: a full-screen CLASSIC client with no way back
+    // to the desktop is a trap, and nothing else in the app asks for the whole screen.
+    if(isFull()){ try{ document.exitFullscreen && document.exitFullscreen(); }catch(_){} }
     window.removeEventListener('resize', onResize);
     // Hand the id back BEFORE the windows go, then repaint the classic view into it.
     releaseFeed();
@@ -1070,6 +1101,8 @@
    *
    * The remembered flag is deliberately NOT cleared here: this is the screen being too narrow, not
    * the user choosing to leave. */
+  function onFullChange(){ if(on && startOpen) toggleStart(true); }
+
   function onResize(){
     if(!on) return;
     if(!fits()){
@@ -1092,6 +1125,10 @@
 
   function onKey(e){
     if(!on) return;
+    /* F11, the way every desktop spells it. A normal browser tab takes F11 for its OWN fullscreen
+     * before this ever runs, which is fine — the result is the same. Where it does reach us (the
+     * desktop app, a kiosk WebView) it does the job. */
+    if(e.key === 'F11'){ e.preventDefault(); toggleFull(); return; }
     if(e.key === 'Escape' && notiOpen){ e.stopPropagation(); toggleNoti(false); return; }
     if(e.key === 'Escape' && startOpen){ e.stopPropagation(); toggleStart(false); return; }
     // Alt+W closes the focused window — Ctrl+W is the browser's tab and must not be taken.
