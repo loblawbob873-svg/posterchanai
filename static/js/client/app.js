@@ -547,8 +547,9 @@
 
   const Nip46 = {
     ws:null, relay:null, appSk:null, appPk:null, remotePk:null, userPk:null,
+    _enc:'nip04',            // outbound payload scheme; _decode moves it to whatever the signer replies in
     _pending:new Map(), _subId:null, _onEvent:null,
-    reset(){ this._wantOpen=false; try{ if(this.ws){ this.ws.onclose=null; this.ws.close(); } }catch(_){} this.ws=null;
+    reset(){ this._wantOpen=false; this._enc='nip04'; try{ if(this.ws){ this.ws.onclose=null; this.ws.close(); } }catch(_){} this.ws=null;
       this._pending.forEach(p=>{ try{ p.rej(new Error('signer disconnected')); }catch(_){} }); this._pending.clear();
       // Fail the queued work too — otherwise jobs waiting for a slot hang on a socket that's gone.
       const q=this._queue||[]; this._queue=[]; this._inflight=0;
@@ -557,8 +558,22 @@
     // NIP-46 transport is NIP-04 by default, but some signers reply with NIP-44 — try each scheme
     // through to a valid JSON payload (a wrong scheme may return garbage rather than throw).
     async _decode(peer, ct){
-      for(const op of ['nip04dec','nip44dec']){
-        try{ return JSON.parse((await Relay.worker.call(op,{ peer, ct })).pt); }catch(_){}
+      /* `?iv=` is NIP-04's own marker — its payload is `<base64>?iv=<base64>`, where NIP-44's is a
+       * single base64 blob whose first decoded byte is the version. So try the scheme the ciphertext
+       * announces FIRST, then the other one anyway: a signer that ignores what we sent must still be
+       * readable. (Reading a NIP-04 payload as NIP-44 is what produces "Unsupported NIP-44 version:
+       * 150" in a signer's log — 150 is just the first byte of AES ciphertext, different every time.)
+       *
+       * Whichever worked becomes the scheme we ENCRYPT with from here on. NIP-46 began as NIP-04 and
+       * moved to NIP-44, so both are in the wild and neither is safe to assume: we open in NIP-04,
+       * which every signer still reads, and then follow the signer. */
+      const ops = /\?iv=/.test(String(ct || '')) ? ['nip04dec','nip44dec'] : ['nip44dec','nip04dec'];
+      for(const op of ops){
+        try{
+          const pt = JSON.parse((await Relay.worker.call(op,{ peer, ct })).pt);
+          this._enc = (op === 'nip04dec') ? 'nip04' : 'nip44';
+          return pt;
+        }catch(_){}
       }
       return null;
     },
@@ -693,7 +708,7 @@
     async _rpc(method, params){
       if(!this.remotePk || !this.ws) throw new Error('signer not connected');
       const id='r'+Math.random().toString(36).slice(2,10);
-      const ct=(await Relay.worker.call('nip04enc',{peer:this.remotePk, text:JSON.stringify({ id, method, params })})).ct;
+      const ct=(await Relay.worker.call(this._enc+'enc',{peer:this.remotePk, text:JSON.stringify({ id, method, params })})).ct;
       const tpl={ kind:24133, content:ct, tags:[['p',this.remotePk]], created_at:Math.floor(Date.now()/1000), pubkey:this.appPk };
       const signed=await Relay.worker.call('sign',{ event:tpl });
       return new Promise((res,rej)=>{
@@ -710,7 +725,12 @@
       const remote=mm[1].toLowerCase(); const qs=new URLSearchParams(mm[2]||'');
       const relays=qs.getAll('relay'); const secret=qs.get('secret')||'';
       if(!relays.length) throw new Error('bunker link is missing its relay');
-      await this._ensureAppKey(); await this._openRelay(relays[0]); this.remotePk=remote;
+      /* RACE every relay the bunker link names, not just relays[0]. A bunker:// URL routinely
+       * carries four, the signer is listening on all of them, and opening only the first made a
+       * login fail whenever that one relay was down — with three healthy ones sitting unused in the
+       * same string we had just parsed. _openFirstOf commits the winner to this.relay, which is what
+       * the session below stores. */
+      await this._ensureAppKey(); await this._openFirstOf(relays); this.remotePk=remote;
       await this._send('connect',[remote, secret]);     // may bounce through an auth_url first
       const userPk=await this._send('get_public_key',[]);
       this.userPk=userPk;
@@ -20749,8 +20769,7 @@
   async function renderThread(id, hints){
     renderThread._tok = id;   // guards the async expansion below against a newer thread opening mid-flight
     VIEW='thread'; _hidePill(); _clearNav(); $('#view-title').textContent='Thread';
-    const feed=$('#feed');
-    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate','feed-meme');   // scrollable view — clear chat/AI overflow:hidden (opened from a chat → would be stuck)
+    const feed=_feedScrollable();   // scrollable view — clear the chat/AI overflow:hidden (see _feedScrollable)
     feed.innerHTML='<div class="spinner"></div>';
     // A REQ fired at a still-CONNECTING socket is silently DROPPED (relay.js `_send`), so a thread opened
     // COLD — a pasted nevent link, a notification tap, a fresh launch — queried into a dead socket and
@@ -20969,9 +20988,21 @@
     if(NO_IMAGES){ slot.innerHTML=''; return; }   // data saver: skip the per-profile /client/nip05 round trip (show cached only)
     verifyNip05(pubkey, nip05).then(ok => { if(ok && document.contains(slot)) slot.innerHTML = VCHECK; });
   }
+  /* Hand the feed back to a SCROLLABLE view. .feed-ai/.feed-chat/.feed-dm/.feed-translate/.feed-meme
+   * each set `overflow:hidden` (they own their own inner scrollers), and the class survives on #feed
+   * until something clears it — so a normal list rendered straight after one of those paints fine and
+   * cannot be scrolled. renderThread had cleared these by hand for exactly that reason; search did
+   * not, which is what made "search from the taskbar" unscrollable whenever the last thing in that
+   * window was AI, Chat or Messages. One helper so the next scrollable view cannot forget. */
+  const _FEED_FIXED = ['feed-ai','feed-chat','feed-dm','feed-translate','feed-meme'];
+  function _feedScrollable(feed){
+    const f = feed || $('#feed');
+    if(f) f.classList.remove(..._FEED_FIXED);
+    return f;
+  }
   async function runSearch(q){
     VIEW='search'; _clearNav(); $('#view-title').textContent='Search';
-    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    const feed=_feedScrollable(); feed.innerHTML='<div class="spinner"></div>';
     // People naturally type a handle as "@name@domain" — strip the leading @ so it matches the NIP-05
     // resolver below (else it falls through to full-text search for the literal string and finds nothing).
     q=q.replace(/^@+/, '').trim(); if(!q) return;

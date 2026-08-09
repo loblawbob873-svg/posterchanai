@@ -284,7 +284,42 @@
       layoutT = setTimeout(hideLayouts, 260);
     });
     $('.osw-grip', el).addEventListener('pointerdown', e => { focusWin(w, false); startResize(w, e); });
-    el.addEventListener('pointerdown', () => { if(!el.classList.contains('focused')) focusWin(w); }, true);
+    /* Clicking a BACKGROUND window has to do the thing you clicked on, not just wake the window.
+     *
+     * There is one live #feed and it lives inside whichever window has focus; every other window
+     * shows a SNAPSHOT (see claimFeed/snapshot) — static HTML with no event handlers on any of it.
+     * So the first click on a background window did nothing at all: the card under the cursor was
+     * inert, and the pointerdown then activated the window, which swapped the snapshot for the live
+     * feed and repainted it. Reported, accurately, as "click a post and it just loads the window
+     * again" — and it applied to every window, Messages included.
+     *
+     * So carry the INTENT across the swap: note which item was aimed at, activate, then click the
+     * same item once the live feed has painted it. Keyed on the id the card already carries, so this
+     * needs no per-view knowledge and works for a post, a DM, a notification alike. */
+    el.addEventListener('pointerdown', (e) => {
+      if(el.classList.contains('focused')) return;
+      let key = '';
+      try{
+        const item = e.target.closest && e.target.closest('[data-open],[data-id]');
+        if(item) key = item.dataset.open || item.dataset.id || '';
+      }catch(_){}
+      focusWin(w);
+      if(!key) return;
+      /* The repaint can await the relay, so the item may not exist for a few frames. Poll briefly
+       * rather than fire once into an empty feed — and stop the moment the user has moved on, so a
+       * slow view can never replay a click into a window they have since left. */
+      let tries = 0;
+      const replay = () => {
+        if(++tries > 40 || !w.el.isConnected || !w.el.classList.contains('focused')) return;
+        let live = null;
+        try{
+          const sel = '[data-open],[data-id]';
+          live = [...w.body.querySelectorAll(sel)].find(n => (n.dataset.open || n.dataset.id) === key);
+        }catch(_){}
+        if(live) live.click(); else setTimeout(replay, 25);
+      };
+      setTimeout(replay, 25);
+    }, true);
 
     focusWin(w);
     return w;
