@@ -16883,8 +16883,19 @@
       $$('[data-folder]',root).forEach(b=> b.onclick=()=>this.selectFolder(b.dataset.folder));
       { const s=$('#mail-search',root); if(s){ let t; s.oninput=()=>{ clearTimeout(t); t=setTimeout(()=>{ this.q=s.value.trim(); this.loadList(); },300); }; } }
       $('#mail-refresh',root).onclick=()=>this.sync(true);
+      /* Decide from the SELECTION, never from the box's own checked state.
+       *
+       * The box is not a source of truth: updateBulk() rewrites it on every redraw as
+       * `n === this.msgs.length`. So the moment the list changes underneath a full selection — a
+       * background sync, "Load older", switching folders — everything is still selected while the box
+       * has quietly gone UNCHECKED, and the next press reads that as "select all" and re-adds them.
+       * Select All then had no way to undo itself, which is the report.
+       *
+       * Anything selected → clear it. Nothing selected → select the list. That also gives the partial
+       * case (you ticked three by hand) the obvious meaning. */
       { const sa=$('#mail-selall',root); if(sa) sa.onchange=()=>{ this.sel=this.sel||new Set();
-        if(sa.checked) this.msgs.forEach(m=>this.sel.add(this._key(m))); else this.sel.clear(); this.drawList(); }; }
+        if(this.sel.size) this.sel.clear(); else this.msgs.forEach(m=>this.sel.add(this._key(m)));
+        this.drawList(); }; }
       this.loadList(); this.loadFolders();
     },
     _folderLabel(f){ if(this.folderLabels && this.folderLabels[f]) return this.folderLabels[f];
@@ -17008,7 +17019,10 @@
     },
     updateBulk(){
       const sa=$('#mail-selall',this.root), act=$('#mail-bulk-act',this.root); const n=this.sel?this.sel.size:0;
-      if(sa) sa.checked = n>0 && n===this.msgs.length;
+      // Ticked whenever anything is selected, dashed when it is only some of the list. The old
+      // `n===this.msgs.length` drew an EMPTY box over a full selection whenever the list had grown,
+      // which is both a lie and (before the handler stopped reading it) the bug above.
+      if(sa){ sa.checked = n>0; sa.indeterminate = n>0 && n!==this.msgs.length; }
       if(!act) return;
       act.innerHTML = n ? `<span class="mail-bulk-n">${n} selected</span><button class="btn small" data-bulk="read">● Read</button><button class="btn small" data-bulk="archive">🗄 Archive</button><button class="btn btn-red small" data-bulk="delete">🗑 Delete</button>` : '';
       act.querySelectorAll('[data-bulk]').forEach(b=> b.onclick=()=>this.bulk(b.dataset.bulk));

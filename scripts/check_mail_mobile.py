@@ -124,6 +124,7 @@ window.renderMessages = function(){
   feed.innerHTML='<div id="mail-root" class="mail-root"></div>';
   return Mail.render(feed.querySelector('#mail-root'));
 };
+window.__mail = Mail;   // the select-all toggle test needs the real object, not the DOM alone
 (async function(){
   const root=document.createElement('div'); root.id='mail-root'; root.className='mail-root';
   document.getElementById('feed').appendChild(root);
@@ -163,6 +164,34 @@ AUDIT = r"""(() => {
   if (list) out.listBottom = Math.round(list.getBoundingClientRect().bottom);
   if (nav) out.navTop = Math.round(nav.getBoundingClientRect().top);
   return out;
+})()"""
+
+# Select All has to be a TOGGLE. It selected fine and had no way to undo itself, because the handler
+# read the checkbox's own `checked` state — which updateBulk() rewrites on every redraw as
+# `n === msgs.length`. So the second half of this test is the one that matters: it grows the message
+# list under a full selection (a background sync, "Load older", a folder switch — all of which do
+# exactly this), which used to leave everything selected with the box UNCHECKED, so the next press
+# read it as "select all" and re-added them. Pressing twice must always end at zero.
+SELALL = r"""(async () => {
+  const M = window.__mail; if(!M) return {skip:'no Mail object'};
+  const sa = document.getElementById('mail-selall'); if(!sa) return {skip:'no select-all control'};
+  const tap = () => { sa.click(); };           // a real click, the way a finger arrives
+  const n = () => (M.sel ? M.sel.size : 0);
+  const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+  M.sel && M.sel.clear(); M.updateBulk();
+  tap(); await sleep(50); const afterFirst = n();
+  tap(); await sleep(50); const afterSecond = n();
+
+  // ...and again, with the list having grown underneath the selection.
+  M.sel.clear(); M.updateBulk();
+  tap(); await sleep(50); const grownFirst = n();
+  M.msgs.push({uid:'99', account:'me@example.com', folder:'INBOX', read:true,
+               from:'Late Arrival <late@b.co>', to:'me@example.com', subject:'Arrived after you selected',
+               preview:'', ts: Math.floor(Date.now()/1000), attachments:[]});
+  M.drawList(); await sleep(50);
+  tap(); await sleep(50); const grownSecond = n();
+  return {afterFirst, afterSecond, grownFirst, grownSecond, total:M.msgs.length};
 })()"""
 
 KEYS = r"""(async () => {
@@ -413,6 +442,24 @@ async def drive(url):
                         problems.append((label, "under-nav",
                                          f"the message list's bottom ({r['listBottom']}px) is under "
                                          f"the nav ({r['navTop']}px)"))
+
+                sel = await js(SELALL, awaited=True)
+                if not sel or sel.get("skip"):
+                    problems.append((label, "selall-missing",
+                                     (sel or {}).get("skip", "the select-all test did not run")))
+                else:
+                    if sel["afterFirst"] < 2:
+                        problems.append((label, "selall-broken",
+                                         f"Select All selected {sel['afterFirst']} of 2 messages"))
+                    if sel["afterSecond"] != 0:
+                        problems.append((label, "selall-broken",
+                                         f"pressing Select All twice left {sel['afterSecond']} "
+                                         f"selected — it must unselect them all"))
+                    if sel["grownSecond"] != 0:
+                        problems.append((label, "selall-broken",
+                                         f"with a message arriving after Select All ({sel['grownFirst']} "
+                                         f"selected, list grew to {sel['total']}), pressing it again left "
+                                         f"{sel['grownSecond']} selected instead of clearing"))
 
                 kb = await js(KEYS, awaited=True)
                 if not kb:
