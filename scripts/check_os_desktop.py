@@ -37,6 +37,9 @@ Assertions, each a way a window manager breaks:
   view-not-windowed    A feature opened from inside another feature (Meme Builder on a post, say)
                        repaints the window it was launched from instead of getting its own — which
                        destroys whatever that window was showing.
+  drag-stuck           A window goes on following the pointer after the button is released. The
+                       release can be LOST — a native drag of the title bar, a cancelled pointer, an
+                       alt-tab — and then nothing ends the gesture.
   snap-broken          Dragging a window to a screen edge does not snap it to that half (or does it
                        without previewing where it will land, or cannot be dragged back off).
   modal-buried         A modal is not clickable — .modal-bg was authored at z-index 100, below the
@@ -222,6 +225,32 @@ DRIVE = r"""(async () => {
     document.dispatchEvent(new PointerEvent('pointerup', {bubbles:true, clientX:700, clientY:340, pointerId:1}));
     await sleep(80);
     out.unsnapped = Math.abs(w0.getBoundingClientRect().width - b0.width) < 24;
+    // A drag must not be able to outlive the button. Reported as "click on it, sticks to the mouse,
+    // never persists": the release is lost — the browser starts its own drag of the title, the OS
+    // claims the gesture, the pointerup lands somewhere we never see — and the window then follows
+    // the cursor with nothing held down. Two ways in, both checked.
+    const stuck = async (endWith) => {
+      const w1 = document.querySelector('.osw.focused');
+      const bar1 = w1.querySelector('.osw-bar');
+      const r = w1.getBoundingClientRect();
+      bar1.dispatchEvent(new PointerEvent('pointerdown',
+        {bubbles:true, clientX:r.left+70, clientY:r.top+12, pointerId:7, buttons:1}));
+      document.dispatchEvent(new PointerEvent('pointermove',
+        {bubbles:true, clientX:600, clientY:400, pointerId:7, buttons:1}));
+      await sleep(40);
+      endWith(w1);
+      await sleep(40);
+      const before = w1.getBoundingClientRect().left;
+      // …now move the pointer with NOTHING held. A live drag would follow it.
+      document.dispatchEvent(new PointerEvent('pointermove',
+        {bubbles:true, clientX:900, clientY:500, pointerId:7, buttons:0}));
+      await sleep(60);
+      return Math.abs(w1.getBoundingClientRect().left - before) < 3;
+    };
+    out.stuckOnCancel = await stuck(() =>
+      document.dispatchEvent(new PointerEvent('pointercancel', {bubbles:true, pointerId:7})));
+    out.stuckOnLostUp = await stuck(() => {});   // the pointerup simply never arrives
+
     w0.querySelector('.osw-x').click();      // leave no window behind for the checks that follow
     await sleep(80);
   }
@@ -509,6 +538,11 @@ async def drive(url):
                                      f"first-survived={r.get('routeKept')} feed-inside={r.get('routeFeedIn')} "
                                      f"after-reopen={r.get('routeDedup')} "
                                      f"unknown-view-routed={r.get('routeUnknown')}"))
+                if not (r.get("stuckOnCancel") and r.get("stuckOnLostUp")):
+                    problems.append((label, "drag-stuck",
+                                     "a window keeps following the pointer after the button is gone "
+                                     f"— survives-pointercancel={r.get('stuckOnCancel')} "
+                                     f"survives-a-lost-pointerup={r.get('stuckOnLostUp')}"))
                 if not (r.get("ghostShown") and r.get("snappedHalf") and r.get("ghostHidden")
                         and r.get("unsnapped")):
                     problems.append((label, "snap-broken",

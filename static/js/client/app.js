@@ -12838,6 +12838,23 @@
   // so re-rendering after an upload/delete stays put.
   let _filesTab = 'public';
   let _filesAdminPk = null;   // when set, the Admin tab is drilled into this user's files
+  /* Is this a music file? NOT `type.startsWith('audio/')` on its own: a browser's MIME guess comes
+   * from the OS registry and is routinely EMPTY or generic — .opus, .m4a, .flac and anything dragged
+   * out of a file manager that registers no type all arrive as '' or application/octet-stream, and
+   * an .m4a is frequently reported as video/mp4. That check silently skipped real songs and left the
+   * library saying "no music yet", which reads as the feature being broken rather than the file
+   * being rejected. Fall back to the EXTENSION, which for exactly these formats is the more reliable
+   * signal. An actual .mp4 video still fails, because mp4 is deliberately not in the list. */
+  const _AUDIO_EXT = /\.(mp3|m4a|m4b|aac|flac|wav|wave|ogg|oga|opus|weba|mka|aif|aiff|alac|wma|mp2|amr|caf|dsf|ape)$/i;
+  function _looksAudio(f){
+    const t = String((f && f.type) || '').toLowerCase();
+    if(t.startsWith('audio/')) return true;
+    if(!t || t === 'application/octet-stream' || t === 'application/ogg'
+       || t === 'video/mp4' || t === 'video/webm' || t === 'video/x-matroska')
+      return _AUDIO_EXT.test((f && f.name) || '');
+    return false;
+  }
+
   function openMusicFolder(){ _filesTab='public'; _filesFolder='Music'; switchView('blossom'); }   // the file-manager Music folder
   function openMusic(){   // the Music nav button → shuffle-play your whole library right away
     FilesIdx.loadLocal();
@@ -13187,7 +13204,7 @@
         ${(_filesFolder && _filesFolder!=='Music') ? `<button class="folder-chip delfolder" id="bl-delfolder" title="Delete this folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete “${enc(_filesFolder)}”</button>` : ''}
       </div>`;
     const head = canUp
-      ? `${folderBar}<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple ${_filesFolder==='Music'?'accept="audio/*"':''} hidden><input type="file" id="bl-folder" webkitdirectory hidden>
+      ? `${folderBar}<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple ${_filesFolder==='Music'?'accept="audio/*,.mp3,.m4a,.m4b,.aac,.flac,.wav,.ogg,.oga,.opus,.wma,.aif,.aiff,.mka,.ape,.dsf"':''} hidden><input type="file" id="bl-folder" webkitdirectory hidden>
           <div class="dz-inner"><span class="dz-ic">⬆</span> Drop files/folders here, or <button class="btn btn-cyan small" id="bl-pick">choose files</button> <button class="btn btn-neon small" id="bl-pickfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>choose folder</button>
           <div class="muted small">→ ${_filesFolder?((FilesIdx.isEncFolder(_filesFolder)?'🔒 ':'📁 ')+enc(_filesFolder)):'All files'} · uploaded one at a time${_filesFolder==='Music'?' · non-audio skipped':(FilesIdx.isEncFolder(_filesFolder)?' · encrypted on this device':'')}</div></div>
           <div class="up-queue" id="bl-queue"></div></div>`
@@ -13606,7 +13623,10 @@
       const stat=big?null:$('#up-stat-'+i);
       try{
         if(music){
-          if(!(files[i].type||'').startsWith('audio/')){ skip++; if(stat) stat.textContent='skipped (not audio)'; }
+          if(!_looksAudio(files[i])){ skip++;
+            // Say WHY, and say what it saw. A bare "skipped (not audio)" on a file you know is a
+            // song is indistinguishable from the feature being broken.
+            if(stat) stat.textContent='skipped — not audio (' + ((files[i].type||'no file type')) + ')'; }
           else if(_musicHasSrc(files[i])){ skip++; if(stat){ stat.textContent='already imported ✓'; stat.className='up-stat ok'; } }   // resume
           else { await uploadMusicTrack(files[i], stat); ok++; if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
             if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); } }   // checkpoint so a crash keeps progress

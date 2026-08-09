@@ -440,9 +440,23 @@
     let ox = parseInt(w.el.style.left, 10), oy = parseInt(w.el.style.top, 10);
     let curX = ox, curY = oy, zone = '', raf = 0;
     hideLayouts();
+    /* A drag must not be able to outlive the button. Three ways it could, all of which end with the
+     * window glued to the cursor because `up` never ran:
+     *   - the browser starts its OWN drag of the title text/icon, which stops sending pointer events
+     *     (preventDefault below, plus user-select:none in the stylesheet);
+     *   - the pointer is cancelled rather than released — a gesture the OS claims, a lost capture
+     *     (pointercancel and lostpointercapture are treated as a release);
+     *   - the pointerup lands somewhere that never reaches us at all (a released MOUSE reports
+     *     buttons === 0 on its next move, which is checked below).
+     * Only armed for a real button press, so synthetic events — which carry buttons: 0 — still work. */
+    try{ ev.preventDefault(); }catch(_){}
+    const hadButtons = (ev.buttons || 0) > 0;
     w.el.classList.add('dragging');
     const paint = () => { raf = 0; w.el.style.transform = `translate(${curX - ox}px, ${curY - oy}px)`; };
     const move = (e) => {
+      // A released mouse reports buttons === 0 on its next move. Checked FIRST: doing it at the end
+      // of the handler still applied one more move, which is the whole symptom.
+      if(hadButtons && e.pointerType !== 'touch' && (e.buttons || 0) === 0){ up(); return; }
       // Win11: dragging a snapped or maximised window RESTORES its floating size and picks it up
       // under the cursor, keeping the grab point roughly where it was along the title bar. Dragging
       // a full-width pane around by its corner is the thing that feels broken.
@@ -464,9 +478,15 @@
       const z = zoneAt(e.clientX, e.clientY);
       if(z !== zone){ zone = z; showGhost(zone); }     // only when it CHANGES — not 120 times a second
     };
+    let ended = false;
     const up = () => {
+      if(ended) return;
+      ended = true;
       document.removeEventListener('pointermove', move);
       document.removeEventListener('pointerup', up);
+      document.removeEventListener('pointercancel', up);
+      window.removeEventListener('blur', up);
+      w.el.removeEventListener('lostpointercapture', up);
       if(raf) cancelAnimationFrame(raf);
       w.el.classList.remove('dragging');
       w.el.style.transform = '';
@@ -477,6 +497,9 @@
     };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', up);
+    window.addEventListener('blur', up);          // alt-tabbed away mid-drag
+    w.el.addEventListener('lostpointercapture', up);
   }
 
   function startResize(w, ev){
@@ -496,11 +519,17 @@
       nh = Math.max(260, oh + (e.clientY - sy) / k);
       if(!raf) raf = requestAnimationFrame(paint);
     };
-    const up = () => { document.removeEventListener('pointermove', move);
+    let ended = false;
+    const up = () => { if(ended) return; ended = true;
+                       document.removeEventListener('pointermove', move);
                        document.removeEventListener('pointerup', up);
+                       document.removeEventListener('pointercancel', up);
+                       window.removeEventListener('blur', up);
                        if(raf){ cancelAnimationFrame(raf); paint(); } };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', up);
+    window.addEventListener('blur', up);
   }
 
   // ---- desktop, taskbar, start menu -----------------------------------------------------------

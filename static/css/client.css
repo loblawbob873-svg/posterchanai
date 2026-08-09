@@ -6048,6 +6048,10 @@ body.os-on #os-root{pointer-events:auto}
    its own layer and stop hit-testing its contents — on a tablet the pointer-events work alone was
    showing up in the gesture. Both are removed on release. */
 .osw.dragging{will-change:transform}
+/* No text/icon selection on the title bar: a native drag of the title steals the gesture, the
+   browser stops sending pointer events, and the window ends up glued to the cursor. */
+.osw-bar{user-select:none;-webkit-user-select:none}
+.osw-bar *{-webkit-user-drag:none}
 .osw.dragging .osw-body{pointer-events:none}
 /* touch-action:none is what makes dragging work with a FINGER. Pointer events fire on touch either
    way, but without this the browser claims the gesture as a scroll and the window never moves —
