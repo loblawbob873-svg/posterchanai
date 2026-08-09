@@ -2440,6 +2440,13 @@
         el.src=src;
       }
       if(h.dataset.cls) el.className=h.dataset.cls;
+      // Carry the size hints the non-data-saver render emits (_dimAttrs). A placeholder that swaps in a
+      // hintless element hands the layout back to the media's intrinsic size — which is what makes a DM
+      // bubble (width:fit-content) resize itself the moment a video's first frame arrives.
+      { const d=MediaDims.get(src)||_DIM_GUESS;
+        el.setAttribute('width', d[0]); el.setAttribute('height', d[1]);
+        el.style.setProperty('--arn', (d[0]/d[1]).toFixed(6)); el.style.setProperty('--nw', String(d[0]));
+        if(!MediaDims.get(src)) el.dataset.dim='guess'; }
       h.replaceWith(el);
     }, true);
   }
@@ -9220,6 +9227,7 @@
         w=+w; h=+h;
         if(!sane(w) || !sane(h)) return;
         const k=keyOf(url); if(!k || map.get(k)) return;
+        if(/^blob:/i.test(k)) return;   // session-scoped object URL — a key that is dead before it is read back
         map.set(k, [w,h]); dirty=true;
         if(!flushT) flushT=setTimeout(flush, 2000);
       },
@@ -9268,7 +9276,12 @@
     if(!(w>0&&h>0)) return;
     if(!el.dataset || el.dataset.dim!=='guess') return;
     delete el.dataset.dim;
-    MediaDims.set(el.currentSrc||el.src, w, h);
+    // data-dimkey: what to REMEMBER this measurement under, when that isn't the src. An encrypted DM
+    // attachment is played from a blob: URL minted this session — remembering the size under that key
+    // teaches us nothing and fills the cache with dead entries — so those elements carry the stable
+    // encrypted-reference URL instead, and the next time that attachment is opened its box is right
+    // on the first paint.
+    MediaDims.set(el.dataset.dimkey || el.currentSrc || el.src, w, h);
     el.setAttribute('width', w); el.setAttribute('height', h);
     el.style.setProperty('--arn', (w/h).toFixed(6));
     el.style.setProperty('--nw', String(w));
@@ -14800,7 +14813,14 @@
     // one slow blob hold up every later one in the thread. The claim below happens synchronously in
     // every callback before the first await, so the map can't double-start any of them.
     await Promise.all(nodes.map(async n => {
-      const ref = encAttParse(n.dataset.encatt);
+      const _refUrl = n.dataset.encatt;
+      const ref = encAttParse(_refUrl);
+      // The size hints every other media path emits (see _dimAttrs / the layout-stable CSS block).
+      // Without them a decrypted <video> is sized from its INTRINSIC dimensions, which in a WebView do
+      // not exist until playback starts — so the bubble, being width:fit-content, resized itself around
+      // the clip on the first frame. Remembered under the ENCRYPTED REFERENCE, not the blob: URL that
+      // carries the bytes, so the box is right the next time the same attachment is opened.
+      const _dim = `${_dimAttrs(_refUrl)} data-dimkey="${enc(_refUrl)}"`;
       // Claim it before awaiting: a re-render during the fetch would otherwise start a second
       // decrypt of the same blob for the same node.
       n.removeAttribute('data-encatt');
@@ -14816,8 +14836,8 @@
           try{
             const obj = await encAttObjectUrl(ref);
             n.innerHTML = /^video\//.test(ref.mime)
-              ? `<video class="m" src="${enc(obj)}" controls preload="metadata" playsinline></video>`
-              : `<img class="m" src="${enc(obj)}" alt="${enc(label)}">`;
+              ? `<video class="m" src="${enc(obj)}"${_dim} controls preload="metadata" playsinline></video>`
+              : `<img class="m" src="${enc(obj)}"${_dim} alt="${enc(label)}">`;
             n.classList.add('done');
           }catch(e){ n.innerHTML = `🔒 <span class="muted small">${enc(label)} — ${enc((e&&e.message)||'failed')}</span>`; }
         };
@@ -14830,9 +14850,9 @@
         const obj = await encAttObjectUrl(ref);
         const t = ref.mime;
         if(/^image\//.test(t)){
-          n.innerHTML = `<img class="m" src="${enc(obj)}" alt="${enc(label)}" loading="lazy">`;
+          n.innerHTML = `<img class="m" src="${enc(obj)}"${_dim} alt="${enc(label)}" loading="lazy">`;
         } else if(/^video\//.test(t)){
-          n.innerHTML = `<video class="m" src="${enc(obj)}" controls preload="metadata" playsinline></video>`;
+          n.innerHTML = `<video class="m" src="${enc(obj)}"${_dim} controls preload="metadata" playsinline></video>`;
         } else if(/^audio\//.test(t)){
           n.innerHTML = `<audio src="${enc(obj)}" controls preload="none"></audio>`;
         } else {
@@ -17250,6 +17270,21 @@
   // MEMORY only, deliberately never ClientSettings/localStorage: an unsent DM must not outlive the tab.
   const _dmDrafts = new Map();
   function _threadSig(pk){ const arr=dmPeers.get(pk)||[]; return pk+'|'+(arr.length?(arr[arr.length-1].id||''):'')+'|'+(_dmShown.get(pk)||_DM_INIT); }
+  /* One message's body html. Shared by the first paint and by the patch that lands when a message
+   * finishes decrypting — which is EVERY message, since DMs decrypt lazily. The patch used to be a bare
+   * `linkify(text)`, so a lazily-decrypted message lost the two things this adds: the reply quote block
+   * (a reply showed its leading "> " as body text) and the rumor's own NIP-30 custom emoji (a
+   * :shortcode: stayed a literal shortcode). Its caller also has to run decorateEncAtts afterwards — the
+   * thread's single decorate pass happens BEFORE decryption, so an encrypted attachment on a message
+   * that had not decrypted yet sat at "🔒 decrypting…" for the life of the pane.
+   *
+   * A reply arrives as "> quoted\n\nmessage" (see _dmReply): render that leading quote as a block so it
+   * reads like a reply instead of a stray angle bracket. */
+  function _dmBodyHtml(m){
+    const mq = /^>\s?([^\n]*)\n\n([\s\S]*)$/.exec(m.text||'');
+    const _em = ev => applyEmojis(ev, { tags: m.em||[] });   // the RUMOR's own NIP-30 tags
+    return mq ? `<span class="b-quote">${enc(mq[1])}</span>${_em(linkify(mq[2]))}` : _em(linkify(m.text));
+  }
   function _scheduleDmRefresh(){
     if(_dmRefreshTimer || VIEW!=='messages') return;
     _dmRefreshTimer=setTimeout(()=>{ _dmRefreshTimer=null; if(VIEW!=='messages') return;
@@ -17358,13 +17393,7 @@
       const sep = newDay && m.t ? `<div class="dm-day"><span>${enc(_dmDayLabel(m.t))}</span></div>` : '';
       // A reply arrives as "> quoted\n\nmessage" (see _dmReply). Render that leading quote as a
       // block so it reads like a reply instead of a stray angle bracket.
-      let body;
-      if(m.text==null) body = '<span class="muted small">decrypting…</span>';
-      else {
-        const mq = /^>\s?([^\n]*)\n\n([\s\S]*)$/.exec(m.text||'');
-        const _em = ev => applyEmojis(ev, { tags: m.em||[] });   // the RUMOR's own NIP-30 tags
-        body = mq ? `<span class="b-quote">${enc(mq[1])}</span>${_em(linkify(mq[2]))}` : _em(linkify(m.text));
-      }
+      const body = m.text==null ? '<span class="muted small">decrypting…</span>' : _dmBodyHtml(m);
       return `${sep}<div class="bubble ${m.mine?'out':'in'}${startsGroup?' grp':' cont'}" data-mid="${m.id}">`
         + `<span class="b-txt">${body}</span>`
         + `<span class="b-meta">${enc(_dmClock(m.t))}${m.mine?'<span class="b-tick" title="sent">✓</span>':''}</span></div>`;
@@ -17492,7 +17521,9 @@
     { const m=$('#dm-msgs'); if(m)
       // Click a DM image to open it full-size (the feed lightbox handler is bound to #feed only, so DM
       // images otherwise had no way to enlarge — the reported "images too small, can't click" issue).
-      m.addEventListener('click', ce=>{ const im=ce.target.closest('img'); if(im){ ce.preventDefault(); openLightbox(im.currentSrc||im.src); } }); }
+      // `:not(.emoji-inline)` — a NIP-30 custom emoji is an <img> in the message text too, and a
+      // lightbox of a 20px smiley is nobody's intent.
+      m.addEventListener('click', ce=>{ const im=ce.target.closest('img:not(.emoji-inline)'); if(im){ ce.preventDefault(); openLightbox(im.currentSrc||im.src); } }); }
     }   // end of the fresh-render branch — its body is left at the original indentation on purpose, so
         // the diff that introduced the reuse path shows the two lines that changed and not the 60 that
         // moved sideways.
@@ -17515,8 +17546,9 @@
         // message, since DMs decrypt lazily — so timestamps vanished and patched bubbles laid out
         // differently from unpatched ones.
         const _t = el.querySelector('.b-txt');
-        if(_t) _t.innerHTML = linkify(mm.text||'');
-        else el.innerHTML = linkify(mm.text||'');
+        if(_t) _t.innerHTML = _dmBodyHtml(mm);
+        else el.innerHTML = _dmBodyHtml(mm);
+        decorateEncAtts(_t || el);   // 🔒 placeholders only exist once the text is in — the pane's own pass ran before this
         _patched=true;
       } } }
     // Bubbles grew from placeholders to full text — if we were pinned to the bottom, stay pinned.

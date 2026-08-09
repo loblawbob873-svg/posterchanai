@@ -60,6 +60,15 @@ CONTEXTS = [
     ("inline txt",       '<div class="note"><div class="body"><div class="txt">hello {c}</div></div></div>'),
     ("quoted txt",       '<div class="note"><div class="body"><div class="quoted"><div class="txt">{c}</div></div></div></div>'),
     ("thread-hl row",    '<div class="note thread-hl"><div class="body"><div class="media-row">{c}</div></div></div>'),
+    # A DM bubble. This one is NOT a feed card and behaves differently on purpose: `.bubble` is
+    # width:fit-content, so its media does not sit in a container of known width — the media's size
+    # decides the BUBBLE's. That makes every failure here louder than in the feed, because the whole
+    # message changes shape, and it is why a `min(100%, …)` width cannot be used in that rule (a
+    # percentage resolves circularly, back to the media's own pixels). Reported as "someone sent me a
+    # video, when I click play it shrinks to a tiny square": nothing preloads in the Android WebView, so
+    # the intrinsic size — and with it the layout — arrived on the first frame of playback.
+    ("dm bubble",        '<div class="dm-msgs"><div class="bubble in grp"><span class="b-txt">{c}</span>'
+                         '<span class="b-meta">12:01</span></div></div>'),
     # Notifications. A notification's context preview is quotedDiv(), so its media lands in
     # .notif-ctx > .quoted > .media-row (one attachment) or .mc-item (2+). These were missing from the
     # first version of this file, and that is how a real bug shipped: the .notif-ctx cap lost a
@@ -280,6 +289,10 @@ class TestMediaReservation(unittest.TestCase):
         """Stability was not bought with a resize: every shape renders the size it renders today."""
         for label, vw, vh in VIEWPORTS:
             for r in self.rows("props", vw, vh):
+                # DM bubbles are the one context that DID change size, deliberately — see
+                # test_a_dm_bubble_does_not_shrink_to_the_clips_own_pixels.
+                if r["ctx"] == "dm bubble":
+                    continue
                 dw = abs(r["fixed"][0] - r["today"][0])
                 dh = abs(r["fixed"][1] - r["today"][1])
                 self.assertLess(max(dw, dh), DRIFT_TOLERANCE,
@@ -307,6 +320,29 @@ class TestMediaReservation(unittest.TestCase):
                     msg=f"{label} {r['ctx']} {r['key']} {r['w']}x{r['h']}: reserved {r['reserved']} "
                         f"is {got:.3f}:1 but the image is {want:.3f}:1 — a cap clamped one axis alone, "
                         f"so that context is probably missing its --mh")
+
+    def test_a_dm_bubble_does_not_shrink_to_the_clips_own_pixels(self):
+        """A DM bubble may not collapse onto its media's natural size.
+
+        `width:auto` on a replaced element means "draw at natural size and never scale up", and a bubble
+        is width:fit-content, so a low-resolution clip sized the whole message to its own pixel count. In
+        the Android WebView nothing preloads, so that only happened when playback started: a normal-looking
+        grey box, then a ~120px square the instant the first frame supplied the dimensions. Reported as
+        "someone sent me a video, when I click play it shrinks to a tiny square".
+
+        `today` here is the hintless fallback, i.e. exactly the old rendering, so the two are compared
+        against EACH OTHER rather than against a pixel count: at 1400px the page carries the desktop
+        body{zoom:.72}, which scales every measurement here and would make any absolute floor a number
+        about the display scaling instead of about the bug.
+        """
+        for label, vw, vh in VIEWPORTS:
+            for r in self.rows("props", vw, vh):
+                if r["ctx"] != "dm bubble" or r["key"] != "tiny":
+                    continue
+                self.assertGreater(r["fixed"][0], r["today"][0] * 1.8,
+                                   f"{label} {r['kind']} {r['w']}x{r['h']}: a DM bubble drew it at "
+                                   f"{r['fixed']} against the hintless {r['today']} — it collapsed onto "
+                                   f"the clip's own pixels again")
 
     def test_notification_media_stays_a_row(self):
         """A notification's context preview must stay ROW-sized, on desktop and on mobile.
