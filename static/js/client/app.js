@@ -10222,6 +10222,41 @@
   // wallet app prefilled). Nothing touches this server at all now — the QR is drawn in the page, so a
   // tip works offline and on a build with no instance. On confirmation we post a public kind-1 tip
   // note (the chosen "always post" behaviour) crediting the recipient — no cryptographic receipt for XMR.
+  /* A Monero or BCH tip is INVISIBLE until the sender says so, and nothing here can find out.
+   *
+   * Lightning has a zap receipt: the recipient's own wallet publishes a kind-9735 and the
+   * notification writes itself. An on-chain address tip has no receipt at all — Monero is private by
+   * construction and nothing in this app watches a chain — so the only signal the recipient can ever
+   * get is the tip NOTE the sender posts with "I sent it". Close the dialog instead and the money
+   * arrives with nobody told: reported as "I received a Monero zap but no notification — the sender
+   * had to DM me". Checked against the relays afterwards; no tip note was ever published, which is
+   * exactly what that report looks like from this end.
+   *
+   * So a dismissal ASKS, once, rather than being the silent path. Only when the sender got far
+   * enough to plausibly have paid — they opened their wallet, copied the address, or sat with the QR
+   * on screen long enough to scan it (the desktop path, which leaves no other trace). Never
+   * automatic: posting on someone's behalf because they closed a dialog would be worse than the
+   * silence it replaces. */
+  const _TIP_DWELL_MS = 10000;
+  function _tipTellOnDismiss(root, opts){
+    const st = { engaged:false, posted:false, opened:Date.now() };
+    const host = document.getElementById('modal-root');
+    if(GUEST || !root || !host) return st;                 // a guest cannot post the note anyway
+    const obs = new MutationObserver(()=>{
+      if(root.isConnected) return;                          // still open
+      obs.disconnect();
+      if(st.posted) return;                                 // "I sent it" — already told them
+      if(!st.engaged && Date.now()-st.opened < _TIP_DWELL_MS) return;   // opened, thought better of it
+      // After the modal has gone, so this is not a dialog stacked on a dialog.
+      setTimeout(async ()=>{
+        try{
+          if(await uiConfirm(opts.ask, { ok:'Yes — tell them', cancel:'Not yet' })) opts.onYes();
+        }catch(_){}
+      }, 80);
+    });
+    obs.observe(host, { childList:true, subtree:true });
+    return st;
+  }
   async function doXmrTip(noteId, pk, cardXmr){
     const p=profOf(pk); const ev=noteId?Store.get(noteId):null;
     // Prefer the render-time address (passed from the card) so an evicted note doesn't lose its per-note tag.
@@ -10250,9 +10285,16 @@
         const renderQr=()=>{ qrBox.innerHTML=qrImg(uri(amtVal()), 'Monero tip QR') || qrFail; };
         const sync=()=>{ openBtn.href=uri(amtVal()); };
         sync(); renderQr();
+        // Closing this having (probably) paid must not be the silent path — see _tipTellOnDismiss.
+        const tell=_tipTellOnDismiss(root, {
+          ask: 'Did you send the Monero tip? They are only told if you post the tip note — Monero '
+             + 'payments are private, so nothing else can tell them.',
+          onYes: ()=> _postXmrTipNote(noteId, pk, amtVal(), addr, '', ''),
+        });
         amtEl.addEventListener('input',()=>{ sync(); renderQr(); });
         $$('.xmr-preset',root).forEach(b=> b.onclick=()=>{ amtEl.value=b.dataset.amt; sync(); renderQr(); });   // one-tap amount
-        $('#xmr-copy',root).onclick=()=>{ try{ navigator.clipboard.writeText(addr).then(()=>toast('address copied'),()=>_copyFallback('Copy the Monero address:',addr)); }catch(_){ _copyFallback('Copy the Monero address:',addr); } };
+        openBtn.addEventListener('click',()=>{ tell.engaged=true; });
+        $('#xmr-copy',root).onclick=()=>{ tell.engaged=true; try{ navigator.clipboard.writeText(addr).then(()=>toast('address copied'),()=>_copyFallback('Copy the Monero address:',addr)); }catch(_){ _copyFallback('Copy the Monero address:',addr); } };
         { const s=$('#xmr-sent',root); if(s) s.onclick=async()=>{ const a=amtVal();
           const txid=(($('#xmr-txid',root)||{}).value||'').trim().toLowerCase();
           const proof=(($('#xmr-prf',root)||{}).value||'').trim();
@@ -10260,6 +10302,7 @@
           if(proof && !txid){ toast('a proof also needs its transaction id'); return; }
           if((txid||proof) && !a && !await uiConfirm('Post without the amount? Enter it in the amount box so people see how much you tipped.')) return;
           if(a){ ClientSettings.set('xmrLastAmt', a); _prefTouched.add('xmrTip'); saveClientPrefsNostr({ xmrTip: a }); }   // remember + sync the amount to Nostr (follows across devices)
+          tell.posted=true;   // told them here — the dismissal must not ask again
           closeModal(); _postXmrTipNote(noteId, pk, a, addr, txid, proof); }; }
       });
   }
@@ -10361,13 +10404,21 @@
         const renderQr=()=>{ qrBox.innerHTML=qrImg(uri(amtVal()), 'BCH tip QR') || qrFail; };
         const sync=()=>{ openBtn.href=uri(amtVal()); };
         sync(); renderQr();
+        // Same silence as Monero's, for the same reason: an on-chain tip has no receipt (see
+        // _tipTellOnDismiss). A txid is verifiable AFTER the fact, but only if somebody posts it.
+        const tell=_tipTellOnDismiss(root, {
+          ask: 'Did you send the Bitcoin Cash tip? They are only told if you post the tip note.',
+          onYes: ()=> _postBchTipNote(pk, amtVal(), addr, ''),
+        });
         amtEl.addEventListener('input',()=>{ sync(); renderQr(); });
         $$('.bch-preset',root).forEach(b=> b.onclick=()=>{ amtEl.value=b.dataset.amt; sync(); renderQr(); });
-        $('#bch-copy',root).onclick=()=>{ try{ navigator.clipboard.writeText(addr).then(()=>toast('address copied'),()=>_copyFallback('Copy the BCH address:',addr)); }catch(_){ _copyFallback('Copy the BCH address:',addr); } };
+        openBtn.addEventListener('click',()=>{ tell.engaged=true; });
+        $('#bch-copy',root).onclick=()=>{ tell.engaged=true; try{ navigator.clipboard.writeText(addr).then(()=>toast('address copied'),()=>_copyFallback('Copy the BCH address:',addr)); }catch(_){ _copyFallback('Copy the BCH address:',addr); } };
         { const s=$('#bch-sent',root); if(s) s.onclick=async()=>{ const a=amtVal();
           const txid=(($('#bch-txid',root)||{}).value||'').trim().toLowerCase();
           if(txid && !/^[0-9a-f]{64}$/.test(txid)){ toast('txid should be 64 hex characters'); return; }
           if(a){ ClientSettings.set('bchLastAmt', a); _prefTouched.add('bchTip'); saveClientPrefsNostr({ bchTip: a }); }   // remember + sync across devices
+          tell.posted=true;   // told them here — the dismissal must not ask again
           closeModal(); _postBchTipNote(pk, a, addr, txid); }; }
       });
   }
