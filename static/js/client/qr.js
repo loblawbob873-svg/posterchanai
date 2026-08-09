@@ -314,7 +314,11 @@
    * 1400 modules across the diagonal and 31k elements is a page-freezing amount of DOM. */
   function svg(text, opts){
     opts = opts || {};
-    const scale = opts.scale || 6, border = opts.border == null ? 2 : opts.border;
+    /* A 4-module quiet zone, which is what the spec requires and what scanners are tuned for —
+       this was 2. Every decoder here is fed a clean bitmap and is unbothered, so no test could
+       have caught it; a phone camera pointed at a screen is the case that suffers, on the sign-in
+       QR where a failed scan looks like the login being broken. */
+    const scale = opts.scale || 6, border = opts.border == null ? 4 : opts.border;
     const dark = opts.dark || '#000', light = opts.light || '#fff';
     const q = modules(text);
     const dim = q.size + border * 2;

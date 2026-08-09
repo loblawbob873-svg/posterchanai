@@ -29,6 +29,16 @@ REAL = [
     # A nostrconnect:// URI of the shape beginNostrConnect builds: client pubkey, relay, secret, name.
     "nostrconnect://" + "a3" * 32 + "?relay=wss%3A%2F%2Frelay.nsec.app&secret=" + "9f" * 16
     + "&name=PosterChan&perms=sign_event%3A1%2Csign_event%3A4%2Cnip44_encrypt%2Cnip44_decrypt",
+    # ...and the one it ACTUALLY builds, with the full 19-entry `perms` list. Kept separate from the
+    # short form above because size is the whole point: the real list pushes this to ~547 bytes and QR
+    # version 18 (89x89 modules), where the short sample sits around version 9. A sample that is a
+    # third of production's size tests a symbol the app never shows — and it was the growth of `perms`
+    # that made the signer QR dense enough to be hard to scan off a screen in the first place.
+    "nostrconnect://" + "a3" * 32 + "?relay=wss%3A%2F%2Frelay.nsec.app&secret=k9x2m4p7qz&perms="
+    + "get_public_key%2Cnip04_encrypt%2Cnip04_decrypt%2Cnip44_encrypt%2Cnip44_decrypt"
+    + "".join("%2Csign_event%3A" + str(k) for k in
+              (0, 1, 3, 4, 5, 6, 7, 1059, 9734, 10000, 10002, 10003, 10050, 27235, 30078))
+    + "&name=PosterChan&url=https%3A%2F%2Fposter.place",
     # A Bitcoin Cash tip URI (the two tip QRs).
     "bitcoincash:qzm47qz5ue99y9yl4aca7jnz7dwgdenl85jkfx3znl?amount=0.005",
     # An npub, the shortest thing anyone points a camera at here.

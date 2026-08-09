@@ -688,7 +688,11 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line)}
 .auth-error{color:#ff6b8b;font-size:13px;min-height:18px;text-align:center;margin-top:6px}
 .keybox{background:rgba(8,5,18,.6);border:1px solid var(--line);border-radius:12px;padding:12px;margin:8px 0}
-.nc-qr{display:block;width:230px;max-width:72vw;height:auto;margin:10px auto;background:#fff;padding:10px;border-radius:12px;box-shadow:0 0 24px rgba(var(--accent-rgb),.25)}
+/* 300px, not 230px. The signer URI carries a 19-entry `perms` list, which puts it at QR version 18
+   — 89x89 modules — and 230px with 10px of padding drew those at 2.26 device px each, under the ~3px
+   a phone camera needs off a screen. The QR is the whole instruction on this screen, so it gets the
+   room. max-width keeps it inside a narrow phone. */
+.nc-qr{display:block;width:300px;max-width:72vw;height:auto;margin:10px auto;background:#fff;padding:10px;border-radius:12px;box-shadow:0 0 24px rgba(var(--accent-rgb),.25)}
 .qr-video{display:block;width:100%;max-width:360px;aspect-ratio:1/1;object-fit:cover;margin:10px auto;background:#000;border-radius:12px;border:1px solid var(--line)}
 .keybox label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;display:block;margin:8px 0 4px}
 .keyrow{display:flex;gap:8px;align-items:center}

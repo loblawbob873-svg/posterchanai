@@ -701,6 +701,16 @@
       this.userPk=userPk;
       return { userPk, session:{ mode:'nip46', sk:this.appSk, relay:this.relay, remotePk:remote, userPk } };
     },
+    /* The client URL a signer is shown, or '' when there is nothing a signer could make sense of.
+     * Web and PWA give an https origin; the desktop bundle gives `app://posterchan` and the APK gives
+     * `https://localhost`, neither of which identifies this client to anyone. See beginNostrConnect. */
+    _clientUrl(){
+      const cands=[(typeof location!=='undefined' && location.origin) || '', _instanceBase()];
+      for(const u of cands){
+        if(/^https?:\/\//i.test(u) && !/^https?:\/\/localhost(?::|\/|$)/i.test(u)) return u;
+      }
+      return '';
+    },
     // nostrconnect://<app-pubkey>?relay=…&secret=…  (WE present this; the signer connects to us)
     //
     // `relays` is a LIST and we take the first one that actually opens. It used to be a single hard-coded
@@ -719,7 +729,18 @@
       const kinds=[0,1,3,4,5,6,7,1059,9734,10000,10002,10003,10050,27235,30078];
       const perms=['get_public_key','nip04_encrypt','nip04_decrypt','nip44_encrypt','nip44_decrypt']
         .concat(kinds.map(k=>'sign_event:'+k)).join(',');
-      const origin=(location && location.origin) || '';
+      /* `url` goes in ONLY if it is an http(s) origin, and is omitted otherwise.
+       *
+       * The desktop app loads its bundle over the privileged `app://posterchan` scheme, so
+       * `location.origin` there is literally "app://posterchan" — a real tuple origin to Chromium
+       * (main.js registers the scheme `standard: true`) and not a URL any signer can parse. Amber
+       * answers the whole pairing with "invalid nostr connect URI", which names the URI rather than
+       * the one optional field in it that is wrong, so it reads as our QR being broken. It only ever
+       * happened on the desktop client, because that is the only build whose origin is not http(s).
+       *
+       * `url` is optional in NIP-46, so the fallback is the instance we actually talk to, and then
+       * nothing at all. An omitted optional field is always safer than one no signer can read. */
+      const origin=this._clientUrl();
       const uri=`nostrconnect://${this.appPk}?relay=${encodeURIComponent(relay)}&secret=${secret}`
         +`&perms=${encodeURIComponent(perms)}&name=${encodeURIComponent(name||'PosterChan')}`
         +(origin?`&url=${encodeURIComponent(origin)}`:'');
