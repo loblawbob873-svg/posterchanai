@@ -54,10 +54,17 @@ import java.util.List;
  * (syncrun.js `agree(path, {sha, size, mtime: st.mtime})`). The loop closes because the executor
  * believes the filesystem rather than its own intent.
  *
- * THERE IS NO WATCHER. SAF exposes no reliable change notification for a tree, and polling one is
- * precisely the battery bug the policy exists to avoid. watch() answers false and the app syncs when
- * it is opened and when the WorkManager job's constraints are met (charging / unmetered / not-low
- * battery), which is the OS holding the work until it is cheap rather than us asking repeatedly.
+ * THERE IS NO WATCHER, AND NO BACKGROUND SYNC YET. SAF exposes no reliable change notification for
+ * a tree, and polling one is precisely the battery bug the policy exists to avoid, so watch() answers
+ * false. Today that means the app syncs when it is OPEN — when you press the button, and when the
+ * app starts.
+ *
+ * A WorkManager job is the intended next step and its constraints map one-for-one onto the sync
+ * policy (setRequiresCharging / NetworkType.UNMETERED / setRequiresBatteryNotLow), which is the OS
+ * holding the work until it is cheap rather than the app asking repeatedly. What makes it more than
+ * a few lines is that the encryption key lives in the WebView: a native worker can walk the tree and
+ * hash it cheaply, but it cannot encrypt or upload without either a headless WebView or moving the
+ * crypto into Java. Until that is decided, claiming background sync here would be a lie.
  */
 @CapacitorPlugin(name = "FolderSync")
 public class FolderSyncPlugin extends Plugin {

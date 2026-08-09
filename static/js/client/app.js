@@ -2197,6 +2197,11 @@
       Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
         .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
       watchNotifications(); watchDeletions(); startCallSignaling(); loadPubChats();
+      // Folder sync: attach the watchers for any folder this device maps. Deliberately NOT a timer —
+      // the adapter notifies, and shouldSync decides whether that is worth a sweep right now. On a
+      // platform with no watcher (Android's SAF has none worth having) this is a no-op and sync
+      // happens when the app is opened or the button is pressed.
+      setTimeout(()=>{ try{ if(window.PCSync) window.PCSync.startAll(); }catch(_){} }, 5000);
       setTimeout(()=>ensureDMs(), 3000);   // subscribe to INCOMING DMs (read). Our kind-10050 DM-inbox list
       setTimeout(()=>{ try{ Mail.loginSync(); }catch(_){} }, 4500);   // fetch mail on login (background)
       Mail.startPolling();   // …and keep checking, so mail arriving later is noticed too
