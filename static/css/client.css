@@ -6260,6 +6260,11 @@ body.os-on #os-root{pointer-events:auto}
 .acct-x:hover{color:var(--bad,#f66);background:var(--panel)}
 .acct-row.on{border-color:var(--neon)}
 
+/* A folder window's contents: the same icon tiles the desktop uses, wrapped in the window. */
+.osw-slot.os-folder{display:grid;grid-template-columns:repeat(auto-fill,96px);gap:6px;
+  align-content:start;justify-content:start;padding:14px;overflow-y:auto;flex:1;min-height:0}
+.osw-slot.os-folder .os-icon{position:static}
+
 .os-me{width:32px;height:32px;border-radius:50%;overflow:hidden;padding:0;flex:0 0 auto;
   border:1px solid var(--line);background:var(--panel2);cursor:pointer;display:flex;
   align-items:center;justify-content:center}

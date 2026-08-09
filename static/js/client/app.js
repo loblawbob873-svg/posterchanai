@@ -1932,6 +1932,7 @@
       watchNotifications(); watchDeletions(); startCallSignaling(); loadPubChats();
       setTimeout(()=>ensureDMs(), 3000);   // subscribe to INCOMING DMs (read). Our kind-10050 DM-inbox list
       setTimeout(()=>{ try{ Mail.loginSync(); }catch(_){} }, 4500);   // fetch mail on login (background)
+      Mail.startPolling();   // …and keep checking, so mail arriving later is noticed too
       // is published lazily on first DM use (renderMessages / send), NOT here — see ensureDmInboxList.
     };
     Relay.onReady = ()=>{
@@ -15735,6 +15736,8 @@
     },
     async sync(manual){
       if(this._syncing) return; this._syncing=true; this._lastSync=Date.now();
+      // A background poll has no UI to drive: `this.root` is null unless Messages is open, and every
+      // element lookup below is already scoped to it.
       const rb=$('#mail-refresh',this.root); if(rb){ rb.textContent='⏳'; rb.disabled=true; }
       try{ const r=await this.api('/sync',{method:'POST'});
         const total=Object.values(r.new||{}).reduce((a,b)=>a+(+b||0),0);
@@ -15749,6 +15752,36 @@
     },
     // "log in → fetch your mail": pull IMAP → mailbox on login (background), notify on new mail, and
     // surface the count on the Email tab badge — even before the user opens Messages.
+    /* Keep checking for mail after login. Without this the client learned about new mail exactly
+     * twice — once at login, and whenever someone pressed refresh — so a message arriving while the
+     * app sat open produced no badge, no card and no chime until the next reload.
+     *
+     * Ten minutes: an IMAP sync costs a round trip per account on the server, and this runs in every
+     * open tab. Skipped while OFFLINE (the request would just fail) and while the tab is HIDDEN — a
+     * background tab that nobody is looking at does not need to know within ten minutes, and it fires
+     * on becoming visible again, which is the moment it actually matters. */
+    _pollT: 0,
+    _lastSync: 0,          // sync() assigns this; declared so the staleness test below is not NaN
+    POLL_MS: 10 * 60 * 1000,
+    startPolling(){
+      if(this._pollT) return;                       // one timer per tab, not one per call
+      const tick = () => {
+        if(GUEST) return;
+        if(navigator.onLine === false) return;
+        if(document.visibilityState === 'hidden') return;
+        if(this._syncing) return;
+        this.sync(false).catch(()=>{});             // non-manual → notifies rather than toasting
+      };
+      this._pollT = setInterval(tick, this.POLL_MS);
+      document.addEventListener('visibilitychange', () => {
+        // Catch up on becoming visible, but only if the last check is actually stale — switching tabs
+        // twice in a minute must not mean two IMAP syncs.
+        if(document.visibilityState === 'visible'
+           && Date.now() - (this._lastSync || 0) > this.POLL_MS) tick();
+      });
+    },
+    stopPolling(){ if(this._pollT){ clearInterval(this._pollT); this._pollT = 0; } },
+
     async loginSync(){
       try{
         const a=await this.api('/accounts'); if(!(a.accounts||[]).length) return;

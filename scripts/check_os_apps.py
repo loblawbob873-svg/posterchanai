@@ -27,6 +27,8 @@ Assertions, each a way a feature breaks specifically INSIDE a window and nowhere
                        Launcher entries and the tray avatar that only exist for a signed-in user.
                        Checked by stubbing PC.me(), because the audit runs as a guest and "skipped
                        for a guest" is how a gate that was broken for EVERYBODY stayed hidden.
+  folder-broken        The Nostr Games folder does not hold the games, does not open one when
+                       clicked, or steals the live #feed from the window that had it.
   noti-centre          The clock does not open a working notification centre (off screen, stacked
                        under something, no rows and no empty state, no reply/react, or Escape does
                        not close it).
@@ -57,6 +59,10 @@ ENTER = r"""(async () => {
   if (!PCOS.isOn()) { PCOS.enter(); await sleep(400); }
   const icons = [...document.querySelectorAll('.os-icon')].map(b => ({
     view: b.dataset.view || '', label: (b.textContent||'').trim() }));
+  // Every real view, folded or not. The desktop icons collapse the games into one folder, and
+  // probing only what is on the desktop would silently stop opening the six apps inside it.
+  const flat = [...document.querySelectorAll('.sidebar .nav .nav-item[data-view]')]
+                 .map(b => b.dataset.view).filter(Boolean);
 
   // The clock is the notification centre, the way Windows does it.
   const clock = document.getElementById('os-clock');
@@ -110,17 +116,40 @@ ENTER = r"""(async () => {
       PCOS.exit(); await sleep(200); PCOS.enter(); await sleep(400);
     }
   }
-  return { on: PCOS.isOn(), icons, noti, asUser };
+  /* The Nostr Games folder. Three things it must not get wrong: it holds the games, opening one
+   * from inside it gives that game a real window, and the folder itself must NOT take the live
+   * #feed — a folder owns its own contents, and stealing the feed blanks whatever window was
+   * actually showing something. */
+  let folder = null;
+  const fbtn = [...document.querySelectorAll('.os-icon')].find(b => (b.dataset.view||'').startsWith('folder:'));
+  if (fbtn) {
+    const feedHome = (document.getElementById('feed')||{}).parentElement;
+    fbtn.click(); await sleep(450);
+    const win = document.querySelector('.osw.focused');
+    const tiles = win ? [...win.querySelectorAll('.os-folder .os-icon')].map(b => b.dataset.view) : [];
+    folder = { label: (fbtn.textContent||'').trim(), tiles,
+               keptFeed: (document.getElementById('feed')||{}).parentElement === feedHome };
+    if (tiles.length) {
+      const before = document.querySelectorAll('.osw').length;
+      win.querySelector('.os-folder .os-icon').click(); await sleep(1200);
+      folder.opensGame = document.querySelectorAll('.osw').length > before;
+      folder.gameHasFeed = !!(document.getElementById('feed') || {}).closest('.osw.focused');
+    }
+    document.querySelectorAll('.osw .osw-x').forEach(b => b.click());
+    await sleep(200);
+  }
+  return { on: PCOS.isOn(), icons, flat, noti, asUser, folder };
 })()"""
 
 # Open one app, let it settle, then measure the window it landed in.
 PROBE = r"""(async (view) => {
   const sleep = ms => new Promise(r=>setTimeout(r,ms));
   const out = { view };
+  // A folded app (a game) has no desktop icon of its own — open it the way the launcher would.
   const btn = [...document.querySelectorAll('.os-icon')].find(b => b.dataset.view === view);
-  if (!btn) return { view, missing: true };
   window.__osErr = null;
-  try { btn.click(); } catch (e) { out.threw = String(e && e.message || e); }
+  try { if (btn) btn.click(); else PCOS.routeView(view) || window.__PC.switchView(view); }
+  catch (e) { out.threw = String(e && e.message || e); }
   await sleep(1400);
 
   const win = document.querySelector('.osw.focused');
@@ -313,7 +342,35 @@ async def main():
                                      f"add-entry={au.get('switcherAdd')}"))
 
             # __golive RUNS rather than opening a window, so it has no window to measure.
-            views = [i["view"] for i in g["icons"] if i["view"] and not i["view"].startswith("__")]
+            f = g.get("folder")
+            if not f:
+                skipped.append("Nostr Games folder (no folder icon on this deployment)")
+            else:
+                want = {"chess", "ttt", "hangman", "connect4", "blackjack", "holdem"}
+                got = set(f.get("tiles") or [])
+                if "Nostr Games" not in f.get("label", ""):
+                    problems.append(("shell", "folder-broken",
+                                     f"the folder icon reads {f.get('label')!r}"))
+                if not want.issubset(got):
+                    problems.append(("shell", "folder-broken",
+                                     "the games folder is missing: " + ", ".join(sorted(want - got))))
+                if not f.get("keptFeed"):
+                    problems.append(("shell", "folder-broken",
+                                     "opening the folder MOVED the live #feed into it — a folder owns "
+                                     "its own contents, and taking the feed blanks the window that "
+                                     "was showing something"))
+                if not f.get("opensGame") or not f.get("gameHasFeed"):
+                    problems.append(("shell", "folder-broken",
+                                     f"a game inside the folder did not open properly — "
+                                     f"window={f.get('opensGame')} feed-inside={f.get('gameHasFeed')}"))
+
+            # folder:* opens a folder window, and __* RUNS something; neither has an app view to probe.
+            views, seen = [], set()
+            for v in (g.get("flat") or [i["view"] for i in g["icons"]]):
+                if not v or v.startswith("__") or v.startswith("folder:") or v in seen:
+                    continue
+                seen.add(v)
+                views.append(v)
             print(f"  {len(views)} app(s) in the launcher at {VIEWPORT[0]}x{VIEWPORT[1]}")
 
             for v in views:

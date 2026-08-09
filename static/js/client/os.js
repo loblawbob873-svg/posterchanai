@@ -71,6 +71,33 @@
    * rightbar, neither of which the desktop shows, so the launcher — which reads .nav-item[data-view]
    * — could never have found it. `act` marks it as something to RUN rather than a view to open in a
    * window: it is a dialog that ends in a live stream, and the stream itself opens the Streams app. */
+  /* Desktop folders. The launcher reads the sidebar, which lists every game as its own entry — six
+   * icons for one thing, eating a whole row of the desktop. Grouped exactly as the classic UI groups
+   * them (More → Games), so the two surfaces cannot disagree about what is in the folder. A folder is
+   * only shown when it actually has members, so a deployment with the games off sees nothing rather
+   * than an empty folder. */
+  const FOLDERS = [
+    { key: 'games', label: 'Nostr Games', icon: '#i-gamepad',
+      views: ['chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem'] },
+  ];
+  const folderOf = (view) => FOLDERS.find(f => f.views.includes(view));
+
+  /* What the desktop and start menu SHOW: the flat list with each folder's members collapsed into one
+   * entry. apps() itself stays flat on purpose — routeView, openApp and the window bookkeeping all key
+   * on real view names, and a folder is a presentation detail, not a place things live. So
+   * switchView('chess') still opens a Chess window, from anywhere, folder or no folder. */
+  function launcherItems(){
+    const out = [], placed = new Set();
+    for(const a of apps()){
+      const f = folderOf(a.view);
+      if(!f){ out.push(a); continue; }
+      if(placed.has(f.key)) continue;
+      placed.add(f.key);
+      out.push({ view: 'folder:' + f.key, label: f.label, icon: f.icon });
+    }
+    return out;
+  }
+
   // Who is signed in. NOT window.ME — the client keeps ME inside its IIFE, so window.ME is undefined
   // for every module out here whoever is logged in. Gating on it hid all of this from everyone.
   const me = () => { try{ return (PC().me && PC().me()) || null; }catch(_){ return null; } };
@@ -155,7 +182,7 @@
     wins.forEach(x => x.el.classList.toggle('focused', x === w));
     w.el.style.zIndex = String(++zTop);
     if(w.min){ w.min = false; w.el.classList.remove('minimised'); }
-    claimFeed(w);
+    if(!w.noFeed) claimFeed(w);   // a folder owns its own contents and must never take the feed
     drawBar();
     // Re-render the feature into ITS window. Cheap for these modules — they hold their own state
     // and repaint from it, which is exactly what leaving and returning to a view already does.
@@ -188,7 +215,11 @@
     return { x: iconSpan + 16 + n * step, y: Math.round(vh * 0.05) + n * step, w, h };
   }
 
-  function openApp(view, label, icon, render){
+  function openApp(view, label, icon, render, noFeed){
+    if(view && view.indexOf('folder:') === 0 && !_inFolder){
+      const f = FOLDERS.find(x => 'folder:' + x.key === view);
+      return f ? openFolder(f) : null;
+    }
     if(view === 'messages'){
       try{ mailAck = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){}
     }
@@ -216,8 +247,11 @@
        <div class="osw-body"><div class="osw-slot"></div></div>
        <span class="osw-grip" aria-hidden="true"></span>`;
     desk.appendChild(el);
+    // noFeed is set BEFORE the focusWin at the end of this function, or that call claims the one live
+    // #feed into a window with no use for it — blanking whichever window was actually showing something.
     const w = { id: ++seq, view, title: label, icon, el, body: $('.osw-body', el),
-                slot: $('.osw-slot', el), min: false, max: false, rect: r, render: render || null };
+                slot: $('.osw-slot', el), min: false, max: false, rect: r,
+                render: render || null, noFeed: !!noFeed };
     wins.push(w);
 
     $('.osw-bar', el).addEventListener('pointerdown', e => {
@@ -281,6 +315,28 @@
     if(!w) return false;
     focusWin(w, false);            // claim the feed; the caller is about to paint into it
     return true;
+  }
+
+  /* A folder window: an icon grid of its members and nothing else. It never holds the feed, so the
+   * window you opened it from keeps showing live content behind it. */
+  let _inFolder = false;
+  function openFolder(f){
+    const view = 'folder:' + f.key;
+    const existing = wins.find(w => w.view === view);
+    if(existing){ focusWin(existing); return existing; }
+    let w;
+    _inFolder = true;                       // …or openApp would bounce straight back into here
+    try{ w = openApp(view, f.label, f.icon, () => {}, true); }
+    finally{ _inFolder = false; }
+    if(!w) return null;
+    const members = apps().filter(a => f.views.includes(a.view));
+    w.slot.classList.add('os-folder');
+    w.slot.innerHTML = members.length
+      ? members.map(a => `<button class="os-icon" data-view="${enc(a.view)}">
+           ${iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`).join('')
+      : '<div class="empty">Nothing in here.</div>';
+    $$('.os-icon', w.slot).forEach(b => b.onclick = () => openApp(b.dataset.view));
+    return w;
   }
 
   function closeWin(w){
@@ -554,10 +610,10 @@
     desk.querySelectorAll('.os-icons').forEach(n => n.remove());
     const grid = document.createElement('div');
     grid.className = 'os-icons';
-    grid.innerHTML = apps().map(a =>
+    grid.innerHTML = launcherItems().map(a =>
       `<button class="os-icon" data-view="${enc(a.view)}" title="${enc(a.label)}">
          ${iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`).join('');
-    const cols = iconCols(apps().length);
+    const cols = iconCols(launcherItems().length);
     grid.style.gridTemplateColumns = `repeat(${cols}, ${ICON_W}px)`;
     // Windows open clear of whatever the launcher actually takes, not a hardcoded guess.
     iconSpan = ICON_PAD * 2 + cols * ICON_W + (cols - 1) * ICON_GAP;
@@ -856,7 +912,10 @@
       });
     };
     const paint = (q) => {
-      const list = apps().filter(a => !q || a.label.toLowerCase().includes(q.toLowerCase()));
+      // Folded when idle; FLAT while searching, so typing "chess" finds Chess rather than requiring
+      // you to know it lives in a folder.
+      const list = q ? apps().filter(a => a.label.toLowerCase().includes(q.toLowerCase()))
+                     : launcherItems();
       /* Typing here searches NOSTR — that row is FIRST, so it is what Enter runs, and it opens in
        * its own window like every other result on this desktop. The app list stays underneath
        * because the start menu is also how you find an app, and Windows puts both in one box. */
