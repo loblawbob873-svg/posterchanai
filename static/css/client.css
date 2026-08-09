@@ -1891,6 +1891,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .act .n{font-variant-numeric:tabular-nums;font-size:13px;font-weight:600}
 
 /* compose / modal */
+.modal-bg.modal-sub{z-index:200}   /* a modal opened OVER another modal (the Blossom picker) */
 .modal-bg{position:fixed;inset:0;background:rgba(4,2,12,.72);backdrop-filter:blur(4px);z-index:100;display:grid;place-items:center;padding:24px 16px;overflow:auto}
 .modal{width:min(720px,96vw);max-height:92vh;overflow:auto;border-radius:18px;padding:22px}
 /* …and in DYNAMIC viewport units where they exist. On a phone `vh` is the viewport with the browser
@@ -6262,6 +6263,7 @@ body.os-on #os-root{pointer-events:auto}
 .os-stat.on .ic{color:var(--neon);filter:drop-shadow(0 0 4px rgba(var(--accent-rgb),.55))}
 
 body.os-on .modal-bg{z-index:340}
+body.os-on .modal-bg.modal-sub{z-index:342}   /* …and its sub-modals stay above it */
 body.os-on .offline-bar{z-index:330}
 body.os-on #music-player.mp,body.os-on #music-player.mp-mini{z-index:332}
 body.os-on #upload-badge.upbadge{z-index:333}

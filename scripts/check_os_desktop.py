@@ -136,9 +136,9 @@ DRIVE = r"""(async () => {
   // A REAL modal, in the real #modal-root, hit-tested against the real CSS. Everything the apps do
   // that isn't inline — reply, quote, confirm, settings, the AI splash actions — goes through here,
   // and .modal-bg sitting below .os-root means the click lands on the desktop instead.
-  {
+  for (const cls of ['modal-bg', 'modal-bg modal-sub']) {
     const bg = document.createElement('div');
-    bg.className = 'modal-bg';
+    bg.className = cls;
     bg.innerHTML = '<div class="modal glass neon-border"><button id="__probe">go</button></div>';
     let mr = document.getElementById('modal-root');
     if (!mr) { mr = document.createElement('div'); mr.id = 'modal-root'; document.body.appendChild(mr); }
@@ -148,10 +148,14 @@ DRIVE = r"""(async () => {
     const b = document.getElementById('__probe');
     const r = b.getBoundingClientRect();
     const hit = document.elementFromPoint(r.left + r.width/2, r.top + r.height/2);
-    out.modalW = Math.round(r.width);
-    out.modalReachable = !!(hit && (hit === b || b.contains(hit)));
-    out.modalCoveredBy = out.modalReachable ? '' :
-      (hit ? (hit.id || hit.className || hit.tagName).toString().slice(0,40) : 'nothing');
+    const ok = !!(hit && (hit === b || b.contains(hit)));
+    const by = ok ? '' : (hit ? (hit.id || hit.className || hit.tagName).toString().slice(0,40) : 'nothing');
+    if (cls === 'modal-bg'){ out.modalReachable = ok; out.modalCoveredBy = by; }
+    // A SUB-modal — the Blossom picker, opened over the post composer and over the email composer —
+    // is the one that regressed: it carried an INLINE z-index, and an inline value beats the rule
+    // that lifts modals over the desktop. Local (a native file input) worked, Blossom silently
+    // did nothing.
+    else { out.subReachable = ok; out.subCoveredBy = by; }
     bg.remove(); document.body.classList.remove('modal-open');
   }
 
@@ -521,6 +525,12 @@ async def drive(url):
                                      f"opened={r.get('docWins')} after-reopen={r.get('docDedup')} "
                                      f"feed-inside={r.get('docFeed')} taskbar={r.get('docTask')} "
                                      f"repaints={r.get('docPaint')} left-open={r.get('docClosed')}"))
+                if not r.get("subReachable"):
+                    problems.append((label, "modal-buried",
+                                     "a SUB-modal (the Blossom picker over a composer) is not "
+                                     f"clickable — its button hits {r.get('subCoveredBy')!r}. Use "
+                                     ".modal-sub; an inline z-index beats the rule that lifts "
+                                     "modals over the desktop."))
                 if not r.get("modalReachable"):
                     problems.append((label, "modal-buried",
                                      "a modal is not clickable on the desktop — the point at the "

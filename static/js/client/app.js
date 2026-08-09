@@ -12558,7 +12558,11 @@
   function copyUrl(u){ try{ u=new URL(u, location.href).href; }catch(_){}
     try{ navigator.clipboard.writeText(u); toast('URL copied'); }catch(_){ const t=document.createElement('textarea'); t.value=u; document.body.appendChild(t); t.select(); try{document.execCommand('copy'); toast('URL copied');}catch(e){toast('copy failed');} t.remove(); } }
   function gifPicker(ta){
-    const bg=document.createElement('div'); bg.className='modal-bg'; bg.style.zIndex='200';
+    /* A SUB-modal: it opens over the composer's own modal, so it needs to sit above it. Expressed as
+     * a class rather than an inline z-index, because an inline value beats every stylesheet rule —
+     * including the one that lifts modals above the PosterChan OS desktop, which is why attaching
+     * from Blossom silently did nothing there while Local (a native file input) worked. */
+    const bg=document.createElement('div'); bg.className='modal-bg modal-sub';
     bg.innerHTML=`<div class="modal glass neon-border"><h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-film"></use></svg>GIFs</h3><input class="input" id="gif-q" placeholder="search GIFs…" autocomplete="off"><div id="gif-grid" class="gif-grid"><div class="spinner"></div></div></div>`;
     bg.onclick=e=>{ if(e.target===bg) bg.remove(); };
     $('#modal-root').appendChild(bg);
@@ -12583,7 +12587,11 @@
   // a private copy silently ships a flat, folderless drive (which is exactly what the meme picker did).
   function blossomPicker(ta, onPick, opts={}){
     const server=mediaServer(); if(!server){ toast('no media server set'); return; }
-    const bg=document.createElement('div'); bg.className='modal-bg'; bg.style.zIndex='200';
+    /* A SUB-modal: it opens over the composer's own modal, so it needs to sit above it. Expressed as
+     * a class rather than an inline z-index, because an inline value beats every stylesheet rule —
+     * including the one that lifts modals above the PosterChan OS desktop, which is why attaching
+     * from Blossom silently did nothing there while Local (a native file input) worked. */
+    const bg=document.createElement('div'); bg.className='modal-bg modal-sub';
     bg.innerHTML=`<div class="modal glass neon-border bp-modal">
       <div class="bp-head"><h3>${enc(opts.title||'🌸 Blossom Files')}</h3>
         <div id="bp-folders" class="bp-folders"></div></div>
