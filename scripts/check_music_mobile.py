@@ -16,6 +16,9 @@ Assertions, each one a way "use it as your music player on a phone" fails:
   list-cannot-scroll  The panel scrolls instead of the list inside it, or the list drags the page
                     behind it (overscroll chaining) — on a phone that reads as the app fighting you.
   tap-targets       Controls or track rows too small to hit with a thumb.
+  car-controls      A media-session handler a car head unit needs is missing (its button is then
+                    dead — the platform will not synthesise one), or the position update throws
+                    before a track has loaded, which takes the title and artwork with it.
   offscreen         The panel is positioned off the edge — the desktop drag writes inline left/top,
                     and a window narrowed afterwards would keep them.
   mini-not-floating The MINI bar must stay a floating pill above the bottom nav: that one is meant
@@ -42,7 +45,7 @@ DRIVE = r"""(async () => {
   const P = window.__PC;
   if (!P || !P.MusicPlayer) return { skip: 'MusicPlayer is not exposed' };
   const MP = P.MusicPlayer;
-  const el = MP.ensure();
+  let el = MP.ensure();
   el.classList.remove('hidden');
   MP.setMin(false);
   MP._render();
@@ -67,6 +70,32 @@ DRIVE = r"""(async () => {
     trackH: (() => { const t = el.querySelector('.mp-track');
                      return t ? Math.round(t.getBoundingClientRect().height) : 0; })(),
   };
+  /* CAR / HEADSET CONTROLS. A head unit's buttons are dead unless a handler is registered for
+     them — the platform does not synthesise one — and its scrubber and elapsed time come from
+     setPositionState, not from the audio element, which the OS never sees. */
+  {
+    const got = [];
+    const pos = [];
+    const ms = navigator.mediaSession;
+    if (ms) {
+      const realSet = ms.setActionHandler && ms.setActionHandler.bind(ms);
+      ms.setActionHandler = (a, fn) => { got.push(a); try { realSet && realSet(a, fn); } catch(_){} };
+      if (ms.setPositionState) { const rp = ms.setPositionState.bind(ms);
+        ms.setPositionState = (st) => { pos.push(st); try { rp(st); } catch(_){} }; }
+    }
+    // ensure() registers them once, on the first build — so rebuild to observe it.
+    const old = document.getElementById('music-player'); if (old) old.remove();
+    MP.el = null; MP.ensure();
+    el = MP.el;                       // the old node was removed; measure the one that exists now
+    out.actions = got;
+    // _media() must not throw before a track has loaded (duration is NaN there, and
+    // setPositionState rejects that outright — an unguarded call takes the whole update with it).
+    let threw = false; try { MP._media(); } catch(_) { threw = true; }
+    out.mediaThrew = threw;
+    out.positionCalls = pos.length;
+    el.classList.remove('hidden'); MP.setMin(false); MP._render();
+    await sleep(60);
+  }
   // …and the mini bar, which must NOT become full screen.
   MP.setMin(true); MP._render(); await sleep(80);
   const m = el.getBoundingClientRect();
@@ -147,6 +176,18 @@ async def drive(url):
                 if r.get("skip"):
                     print("SKIP  " + r["skip"])
                     return 2
+                # Car controls are not a phone question — a Bluetooth head unit is driven from any
+                # build — so this is asserted at every width.
+                for want in ("play", "pause", "previoustrack", "nexttrack",
+                             "seekto", "seekbackward", "seekforward", "stop"):
+                    if want not in (r.get("actions") or []):
+                        problems.append((label, "car-controls",
+                                         f"no media-session handler for {want!r} — that button is "
+                                         f"dead on a car head unit (registered: {r.get('actions')})"))
+                if r.get("mediaThrew"):
+                    problems.append((label, "car-controls",
+                                     "the media update threw before a track loaded — setPositionState "
+                                     "rejects a NaN duration and takes the metadata with it"))
                 phone = w <= 820
                 if phone:
                     if r["w"] < r["vw"] - 2 or r["h"] < r["vh"] - 2:

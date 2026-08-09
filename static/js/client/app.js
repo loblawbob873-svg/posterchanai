@@ -14407,6 +14407,11 @@
     handle.onmousedown=down; handle.ontouchstart=down;
   }
   let _uploadCancel=false, _uploadBadgeT=0;
+  /* An upload is IN FLIGHT. Read by the service-worker updater, which silently reloads the page
+   * when a new build takes control within 20s of load — and a reload during a 3000-file import
+   * throws the rest of it away. Files already finished are safe on the server, but the run is
+   * over and it looked, from the outside, like the app crashed. */
+  let _uploading=0;
   function _uploadBadge(text, done){
     clearTimeout(_uploadBadgeT);   // a new update cancels a pending auto-remove (so it won't wipe a fresh upload)
     let b=document.getElementById('upload-badge');
@@ -14534,6 +14539,7 @@
     // world-readable blob on Blossom (the leaked-file bug). Refuse until we know the folder's status.
     if(!music && folder && !FilesIdx._pullDone){ toast('One sec — still loading your folders. Try that again in a moment.'); return; }
     _uploadCancel=false;
+    _uploading++;
     const encFolder=!music && FilesIdx.isEncFolder(folder);   // non-Music encrypted folder → encrypt every file
     const big=files.length>20;   // a folder import → compact summary, not 2000 DOM rows
     const q=$('#bl-queue');
@@ -14597,6 +14603,7 @@
     }
     await FilesIdx.endBatch();
     _uploadBatchAuth=null;   // the batch auth never outlives its batch (it commits only to THESE hashes)
+    _uploading=Math.max(0, _uploading-1);
     const summary=`${_uploadCancel?'Stopped':'Done'} — ✓ ${ok} added${dup?(' · ↺ '+dup+' already there'):''}${skip?(' · ⏭ '+skip+' skipped'):''}${fail?(' · ✗ '+fail+' failed'):''}`
       + ((skip||dup) && why ? ` — ${why}` : '');
     _uploadBadge(summary, true);   // self-removes after 12s (timer lives in _uploadBadge)
@@ -15213,6 +15220,17 @@
         ms.setActionHandler('nexttrack',     ()=>this.next());
         ms.setActionHandler('stop',          ()=>this.close());
         try{ ms.setActionHandler('seekto', e=>{ if(_audioEl && _audioEl.duration && e.seekTime!=null) _audioEl.currentTime=e.seekTime; }); }catch(_){}
+        /* A CAR is the reason these two exist. A head unit (and Android Auto, and most Bluetooth
+         * remotes) offers skip-within-track as well as skip-track, and with no handler registered
+         * the buttons are simply dead — the platform will not synthesise them. `seekOffset` is what
+         * the unit asked for; 10s is the convention when it does not say. */
+        try{ ms.setActionHandler('seekbackward', e=>{ if(!_audioEl) return;
+          _audioEl.currentTime=Math.max(0, _audioEl.currentTime-((e&&e.seekOffset)||10)); this._media(); }); }catch(_){}
+        try{ ms.setActionHandler('seekforward', e=>{ if(!_audioEl) return;
+          const d=_audioEl.duration||0;
+          _audioEl.currentTime=Math.min(d||_audioEl.currentTime+10, _audioEl.currentTime+((e&&e.seekOffset)||10)); this._media(); }); }catch(_){}
+      // Duration only exists once the track has loaded, and the OS wants it for the scrubber.
+      _audioEl.onloadedmetadata=()=>this._media();
       }catch(_){} }
       return d;
     },
@@ -15225,6 +15243,22 @@
           title:(m&&m.name)||'Track', artist:'PosterChan', album:'Library',
           artwork:[{src:LOGO, sizes:'512x512', type:'image/png'}] });
         navigator.mediaSession.playbackState=(_audioEl && !_audioEl.paused)?'playing':'paused';
+        /* WHERE WE ARE IN THE TRACK. Without this a car's display has a title and nothing else: no
+         * elapsed time, no remaining time, and a scrubber many head units disable outright because
+         * they have no duration to draw. It is also what keeps the position honest after a seek —
+         * the OS does not watch the audio element, it believes what it was last told.
+         *
+         * Guarded, because setPositionState THROWS on anything it considers impossible (a NaN or
+         * Infinite duration before metadata arrives, a position past the end) and that throw would
+         * otherwise take the whole media update with it. */
+        if(navigator.mediaSession.setPositionState && _audioEl){
+          const d=_audioEl.duration;
+          if(isFinite(d) && d>0){
+            navigator.mediaSession.setPositionState({
+              duration:d, playbackRate:_audioEl.playbackRate||1,
+              position:Math.min(Math.max(0,_audioEl.currentTime||0), d) });
+          }
+        }
       }catch(_){}
     },
     refreshQueue(){ this.queue=musicTracks(null).map(t=>t.sha); if(this.cur && !this.queue.includes(this.cur)) this.queue.unshift(this.cur); },
@@ -15279,7 +15313,11 @@
       }
       if(!this.el||this.el.classList.contains('hidden')||this.min) return;
       const f=this.el.querySelector('.mp-seek-fill'), c=this.el.querySelector('.mp-cur'), du=this.el.querySelector('.mp-dur');
-      if(_audioEl && _audioEl.duration){ if(f) f.style.width=((_audioEl.currentTime/_audioEl.duration*100)||0)+'%'; if(c) c.textContent=_fmtTime(_audioEl.currentTime); if(du) du.textContent=_fmtTime(_audioEl.duration); } },
+      if(_audioEl && _audioEl.duration){ if(f) f.style.width=((_audioEl.currentTime/_audioEl.duration*100)||0)+'%'; if(c) c.textContent=_fmtTime(_audioEl.currentTime); if(du) du.textContent=_fmtTime(_audioEl.duration); }
+      // …and tell the OS once a second, so a car's elapsed/remaining time tracks the audio. timeupdate
+      // fires ~4x a second; the media session does not need that and every call is a cross-process hop.
+      { const sec=Math.floor((_audioEl&&_audioEl.currentTime)||0);
+        if(sec!==this._msSec){ this._msSec=sec; this._media(); } } },
     onChange:null,   // the Music app mirrors this widget's state; see _musicAppNow
     _render(){
       try{ if(this.onChange) this.onChange(); }catch(_){}
@@ -15729,7 +15767,13 @@
     // Capped to once per ~40s per session so a worker that won't settle — or load-balanced nodes serving
     // different sw.js — can't turn this into a refresh loop. After that we fall through to the prompt.
     let last=0; try{ last=+(sessionStorage.getItem('swAutoApply')||0); }catch(_){}
-    if(Date.now()-_swBootAt<20000 && Date.now()-last>40000){
+    /* …but NEVER while an upload is running. This window exists for a page that has just opened on a
+     * stale build and is doing nothing; an import that started inside those 20 seconds is precisely
+     * the case where a silent reload destroys work — a 3000-file music folder went that way, and
+     * from the outside it looks like the app crashed. It falls through to the "Update available"
+     * row instead, exactly as it does mid-session. */
+    if(_uploading>0){ /* fall through to the prompt */ }
+    else if(Date.now()-_swBootAt<20000 && Date.now()-last>40000){
       try{ sessionStorage.setItem('swAutoApply', String(Date.now())); }catch(_){}
       location.reload(); return;
     }
