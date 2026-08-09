@@ -1264,6 +1264,11 @@
 
   // ---------- auth UI ----------
   function showAuth(which){
+    /* Leave the desktop first. The gate is a full-screen layer BELOW #os-root, so shown from inside
+     * PosterChan OS it painted a perfectly good login form underneath the desktop icons — visible,
+     * complete, and unclickable. Suspend, not exit: the preference survives, so signing in drops you
+     * back on the desktop you were using. */
+    try{ window.PCOS && PCOS.suspend && PCOS.suspend(); }catch(_){}
     $('#auth-gate').classList.remove('hidden'); $('#app').classList.add('hidden');
     // Open the pane the user actually asked for. "Sign up" that lands on a login form is the step
     // where someone without a key gives up.
@@ -1325,6 +1330,16 @@
 
   async function loginNip07(){
     authErr('');
+    /* WAIT for it, exactly as resume() does. An extension injects `window.nostr` asynchronously, so
+     * a synchronous check here declared "No NIP-07 extension found" to people who had one installed
+     * and enabled — the login telling them their extension is missing while it is sitting in the
+     * toolbar. resume() has carried this wait for a while; the button never got it. Two seconds,
+     * with a note on screen so the pause is not mistaken for a dead button. */
+    if (!window.nostr){
+      authErr('looking for your extension…');
+      for(let i=0; i<20 && !window.nostr; i++) await new Promise(r=>setTimeout(r, 100));
+      authErr('');
+    }
     if (!window.nostr){ authErr('No NIP-07 extension found (try Alby/nos2x).'); return; }
     try {
       const pk = await window.nostr.getPublicKey();

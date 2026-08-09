@@ -1461,7 +1461,28 @@
     drawBar();
   }
 
-  window.PCOS = { enter, exit, toggle, restore, refresh, isOn: () => on, openDoc, focusDoc, routeView, snapTo, osToast,
+  /* Step OUT of the desktop without FORGETTING it — the distinction exit() cannot make on its own,
+   * because leaving deliberately and being pushed out are the same call with opposite meanings for
+   * the remembered preference.
+   *
+   * The sign-in screen is why this exists. `.auth-gate` is z-index 50 and `#os-root` is 300, so the
+   * gate rendered UNDERNEATH the desktop: clicking "Log in" on the guest card put a full, correct
+   * login form on screen with the desktop icons drawn on top of it, and every button — including
+   * "Browser extension (NIP-07)" — belonged to whatever was above it. Measured, not guessed:
+   * elementFromPoint at the centre of #btn-nip07 returned a #os-root child. It reads as "the login
+   * doesn't detect my extension" because the click never reaches the button that would.
+   *
+   * Same shape on LOGOUT from inside the desktop. So the gate suspends the desktop, and signing in
+   * restores it (`restore()` reads the preference this deliberately leaves set). */
+  function suspend(){
+    if(!on) return false;
+    const remember = settings().get(KEY, false);
+    exit();
+    if(remember) settings().set(KEY, true);
+    return true;
+  }
+
+  window.PCOS = { enter, exit, suspend, toggle, restore, refresh, isOn: () => on, openDoc, focusDoc, routeView, snapTo, osToast,
                   isRepainting: () => repainting > 0,
                   windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min })) };
 })();

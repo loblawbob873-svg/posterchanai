@@ -6495,6 +6495,14 @@ body.os-on #os-root{pointer-events:auto}
 /* A non-zero counter lights its indicator; a zero one stays grey, so the row reads at a glance. */
 .os-stat.on .ic{color:var(--neon);filter:drop-shadow(0 0 4px rgba(var(--accent-rgb),.55))}
 
+/* The sign-in screen must never be BEHIND the desktop. showAuth() suspends PosterChan OS before
+   opening the gate, so in practice `.os-on` is already gone by the time this could apply — this is
+   the belt to that braces, because the failure it prevents is silent and total: the gate is
+   position:fixed at z-index 50 and #os-root is 300, so the login form renders complete and correct
+   underneath the desktop icons, and every button on it belongs to whatever is drawn above. Someone
+   who hits that concludes the login is broken and cannot detect their extension. Above the taskbar,
+   below the lightbox, matching the other os-on overrides here. */
+body.os-on .auth-gate{z-index:360}
 body.os-on .modal-bg{z-index:340}
 body.os-on .modal-bg.modal-sub{z-index:342}   /* …and its sub-modals stay above it */
 body.os-on .offline-bar{z-index:330}
