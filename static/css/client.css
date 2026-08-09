@@ -6269,6 +6269,12 @@ body.os-on #os-root{pointer-events:auto}
 .music-head{display:flex;align-items:center;gap:12px;padding:2px 2px 12px;flex-wrap:wrap}
 .music-head .btn[disabled]{opacity:.45;cursor:default}
 
+/* A track the index knows about whose bytes are no longer on the server. Shown, not hidden: a
+   library that quietly drops half its rows looks broken, and one that lies about them fails on play. */
+.track.gone{opacity:.55}
+.track.gone .track-name{text-decoration:line-through}
+.track.gone .track-play{color:var(--muted);display:flex;align-items:center;justify-content:center}
+
 /* The Music APP — a player, not the file manager's Music folder. */
 .music-app{display:flex;flex-direction:column;gap:14px;padding:14px 12px;min-height:0}
 .ma-now{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px;border-radius:14px;
@@ -6281,6 +6287,7 @@ body.os-on #os-root{pointer-events:auto}
 .ma-meta b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px}
 .ma-ctl{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .ma-ctl .btn.on{border-color:var(--neon);color:var(--neon)}
+.ma-q{width:100%}
 .music-app .music-list{flex:1;min-height:0;overflow-y:auto}
 
 /* The account chip at the foot of the start menu — where Windows 11 keeps it. */

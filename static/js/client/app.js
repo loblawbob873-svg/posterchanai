@@ -12894,6 +12894,8 @@
           <button class="btn btn-cyan small" id="ma-add" title="Add music"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add music</button>
         </div>
       </div>
+      <input class="input ma-q" id="ma-q" type="search" autocomplete="off"
+             placeholder="Search your library" aria-label="Search your library">
       <div class="music-list" id="ma-lib"><div class="spinner"></div></div></div>`;
     const lib=$('#ma-lib',feed);
     /* HYDRATE THE INDEX FIRST. The library lives in the files index, and this window can be the very
@@ -12907,8 +12909,11 @@
      * that the Files → Music screen was listing perfectly well — the two fetches do not always agree,
      * and an empty player is a far worse answer than a track that turns out not to play (which says
      * so, out loud, via play()'s toast). */
-    const paint=()=>{ _renderMusicList(lib, null); _musicAppNow(); };
+    const paint=()=>{ _renderMusicList(lib, null, _musicQ); _musicAppNow(); };
     paint();
+    // Safe to reconcile now: a track the server no longer has is MARKED, not hidden, so this can
+    // annotate the library but never empty it. A failed fetch leaves _blobHave null and marks nothing.
+    _refreshBlobHave().then(paint).catch(()=>{});
     if(!FilesIdx._pullDone){
       // …and once the index arrives from the relay, repaint. Never HIDES anything that was already
       // showing — paint() is a full re-render from a strictly better-informed index.
@@ -12925,10 +12930,15 @@
         if(q.length){ MusicPlayer.refreshQueue();
           MusicPlayer.play(MusicPlayer.queue[Math.floor(Math.random()*MusicPlayer.queue.length)]); } } });
     b('#ma-add',()=>openMusicFolder());
+    { const qi=$('#ma-q',feed);
+      if(qi){ qi.value=_musicQ;
+        // Re-render the LIST only. Repainting the whole app would take the caret out of this box.
+        qi.oninput=()=>{ _musicQ=qi.value; _renderMusicList(lib, null, _musicQ); _musicAppNow(); }; } }
     MusicPlayer.onChange=_musicAppNow;   // the floating player is the single source of truth
   }
   // Mirror the player's state into the app's header. Cheap, and it no-ops when the app isn't mounted
   // (the window may be closed while music keeps playing — that is the point of a floating player).
+  let _musicQ='';   // the Music app's library filter, kept across repaints (focus moves windows)
   function _musicAppNow(){
     const t=document.getElementById('ma-title'); if(!t) return;
     const m=MusicPlayer.cur?FilesIdx.meta(MusicPlayer.cur):null;
@@ -14070,31 +14080,51 @@
       if(r.ok){ const l=await r.json(); if(Array.isArray(l)) _blobHave=new Set(l.map(b=>b.sha256)); } }catch(_){}
     return _blobHave;
   }
-  function musicTracks(list){
+  /* Every track the index knows about, each flagged with whether the server still HAS its bytes.
+   * The index and the blobs can disagree — deleting files removes the bytes and leaves the entries —
+   * and both ways of resolving that silently are bad: hiding the entries makes a library look empty
+   * and unrestorable, listing them as normal makes half of it fail on play with no warning. So they
+   * are listed AND marked. `have` null means "not fetched yet", not "everything is gone". */
+  function musicEntries(list){
     const have=list?new Set(list.map(b=>b.sha256)):_blobHave;
     return Object.keys(FilesIdx._norm().files)
-      .filter(sha=> FilesIdx.folderOf(sha)==='Music' && FilesIdx.meta(sha).enc && (!have||have.has(sha)))
-      .map(sha=>({sha, m:FilesIdx.meta(sha)})).sort((a,b)=>(b.m.ts||0)-(a.m.ts||0));
+      .filter(sha=> FilesIdx.folderOf(sha)==='Music' && FilesIdx.meta(sha).enc)
+      .map(sha=>({sha, m:FilesIdx.meta(sha), missing: !!(have && !have.has(sha))}))
+      .sort((a,b)=>(b.m.ts||0)-(a.m.ts||0));
   }
-  function _renderMusicList(grid, list){
+  // Playable tracks only — the queue must never contain something that cannot be played.
+  function musicTracks(list){ return musicEntries(list).filter(t=>!t.missing); }
+  function _renderMusicList(grid, list, q){
     if(!grid) return;
-    const tracks=musicTracks(list);
+    const all=musicEntries(list);
+    const needle=String(q||'').trim().toLowerCase();
+    const tracks=needle ? all.filter(t=>String(t.m.name||'').toLowerCase().includes(needle)) : all;
+    const gone=tracks.filter(t=>t.missing).length;
+    const live=tracks.length-gone;
+    // Shuffle plays the whole LIBRARY, so it is gated on the library — not on whatever the current
+    // search happens to match, which would disable it while you typed.
+    const liveAll=all.filter(t=>!t.missing).length;
     grid.className='music-list';
     /* A header, so this reads as a music app rather than a folder that happens to hold songs. The
      * desktop opens this view as the Music WINDOW, and without one obvious action a full library
      * looked as inert as an empty one — "it loads the Music folder and nothing happens". */
     const head = `<div class="music-head">
-        <button class="btn btn-neon small" id="mus-shuffle"${tracks.length?'':' disabled'}>
+        <button class="btn btn-neon small" id="mus-shuffle"${liveAll?'':' disabled'}>
           <svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg>Shuffle all</button>
-        <span class="muted small">${tracks.length ? (tracks.length + ' track' + (tracks.length>1?'s':''))
-                                                  : 'nothing here yet'}</span></div>`;
-    grid.innerHTML = head + (tracks.length ? tracks.map(t=>`<div class="track" data-sha="${t.sha}">
-        <button class="track-play" data-sha="${t.sha}" aria-label="Play"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>
+        <span class="muted small">${needle ? `${tracks.length} of ${all.length} match`
+          : (live ? (live + ' track' + (live>1?'s':'')) : 'nothing playable yet')}${
+          gone ? ` · ${gone} missing from the server` : ''}</span></div>`;
+    grid.innerHTML = head + (tracks.length ? tracks.map(t=>`<div class="track${t.missing?' gone':''}" data-sha="${t.sha}">
+        ${t.missing ? '<span class="track-play" aria-hidden="true">✕</span>'
+                    : `<button class="track-play" data-sha="${t.sha}" aria-label="Play"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>`}
         <span class="track-name">${enc(t.m.name||'track')}</span>
-        <span class="track-meta">🔒 ${(((t.m.size||0)/1048576)).toFixed(1)}MB</span>
-        <button class="track-dl" data-sha="${t.sha}" data-name="${enc((t.m.name||'track')+'.ogg')}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>
+        <span class="track-meta">${t.missing ? 'not on the server — delete to tidy up'
+                                             : '🔒 ' + (((t.m.size||0)/1048576)).toFixed(1) + 'MB'}</span>
+        ${t.missing ? '' : `<button class="track-dl" data-sha="${t.sha}" data-name="${enc((t.m.name||'track')+'.ogg')}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`}
         <button class="track-del" data-sha="${t.sha}" title="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
-      </div>`).join('') : '<div class="empty">No music yet — drop audio files above. They\'re Opus-compressed + encrypted automatically, and only you can play them.</div>');
+      </div>`).join('')
+      : (needle ? `<div class="empty">Nothing in your library matches “${enc(needle)}”.</div>`
+                : '<div class="empty">No music yet — drop audio files above. They\'re Opus-compressed + encrypted automatically, and only you can play them.</div>'));
     { const sh=$('#mus-shuffle',grid);
       if(sh) sh.onclick=()=>{ const q=musicTracks(null); if(!q.length) return;
         MusicPlayer.shuffle=true; MusicPlayer.refreshQueue();
@@ -14180,7 +14210,12 @@
     onChange:null,   // the Music app mirrors this widget's state; see _musicAppNow
     _render(){
       try{ if(this.onChange) this.onChange(); }catch(_){}
-      this.ensure(); const d=this.el; const m=this.cur?FilesIdx.meta(this.cur):null; const name=(m&&m.name)||'—';
+      this.ensure(); const d=this.el;
+      /* The floating widget and the Music APP are the same transport. When the app is on screen the
+       * widget is a second copy of its own controls, which is what "it loads the new player and the
+       * old one at the same time" was. Keyed on the app actually being MOUNTED rather than on a flag,
+       * so the widget comes back by itself the moment the app's window loses the feed or closes. */
+      if(document.getElementById('ma-lib')){ d.classList.add('hidden'); return; } const m=this.cur?FilesIdx.meta(this.cur):null; const name=(m&&m.name)||'—';
       const playing=_audioEl && !_audioEl.paused; const pl=this._loading?'…':(playing?'⏸':'▶');
       if(this.min){
         d.className='mp mp-mini'+(playing?' playing':'');
