@@ -2246,6 +2246,11 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 #music-player.mp-mini button{color:var(--cyan,#0ff);font-size:15px}
 /* THE PHONE'S MUSIC APP — the same player, at the size of the screen.
  *
+ * EVERY rule here excludes .mp-mini, because the minimised player carries BOTH classes
+ * (`class="mp mp-mini"`). Written as bare `#music-player.mp` these rules matched the mini bar too —
+ * same specificity, later in the file, so they beat the .mp-mini rules above and blew the floating
+ * pill up to the whole screen. Minimising then looked like it opened the player again.
+ *
  * Expanded, this was a 290px card floating over the feed: a scaled-down desktop window on a device
  * where the app IS the screen. Nothing about it is different here except the size — same controls,
  * same list, same everything — because a second design is a second thing to keep in step.
@@ -2258,27 +2263,27 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
  *
  * The MINI bar stays a floating pill: that one is meant to sit over whatever you are doing. */
 @media(max-width:820px){
-  #music-player.mp{
+  #music-player.mp:not(.mp-mini){
     position:fixed;inset:0;left:0;right:0;top:0;bottom:0;
     width:auto;max-width:none;border-radius:0;border:0;z-index:200;
     display:flex;flex-direction:column;overflow:hidden;
     padding-bottom:env(safe-area-inset-bottom);
     overscroll-behavior:contain;
     animation:none}
-  #music-player.mp.playing{animation:none}          /* no bounce on a full screen */
-  #music-player.mp .mp-head{cursor:default;padding-top:calc(10px + env(safe-area-inset-top))}
-  #music-player.mp .mp-viz{height:84px}
-  #music-player.mp .mp-now{font-size:17px;padding:16px 16px 8px}
-  #music-player.mp .mp-controls{gap:26px;padding:14px 0 18px}
-  #music-player.mp .mp-controls .mp-big{width:64px;height:64px;font-size:22px}
-  #music-player.mp .mp-controls button{font-size:24px}
+  #music-player.mp:not(.mp-mini).playing{animation:none}          /* no bounce on a full screen */
+  #music-player.mp:not(.mp-mini) .mp-head{cursor:default;padding-top:calc(10px + env(safe-area-inset-top))}
+  #music-player.mp:not(.mp-mini) .mp-viz{height:84px}
+  #music-player.mp:not(.mp-mini) .mp-now{font-size:17px;padding:16px 16px 8px}
+  #music-player.mp:not(.mp-mini) .mp-controls{gap:26px;padding:14px 0 18px}
+  #music-player.mp:not(.mp-mini) .mp-controls .mp-big{width:64px;height:64px;font-size:22px}
+  #music-player.mp:not(.mp-mini) .mp-controls button{font-size:24px}
   /* The list takes whatever is left, and scrolls inside itself — the panel never scrolls. */
-  #music-player.mp .mp-list{flex:1 1 auto;max-height:none;overflow-y:auto;
+  #music-player.mp:not(.mp-mini) .mp-list{flex:1 1 auto;max-height:none;overflow-y:auto;
     overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:6px 6px 10px}
-  #music-player.mp .mp-track{font-size:15px;padding:12px 12px}   /* a finger, not a mouse */
-  #music-player.mp .mp-seek{height:12px;margin:10px 16px}        /* …and a scrubber it can hit */
-  #music-player.mp .mp-time{padding:1px 16px;font-size:12px}
-  #music-player.mp .mp-search{font-size:15px;padding:10px 14px}
+  #music-player.mp:not(.mp-mini) .mp-track{font-size:15px;padding:12px 12px}   /* a finger, not a mouse */
+  #music-player.mp:not(.mp-mini) .mp-seek{height:12px;margin:10px 16px}        /* …and a scrubber it can hit */
+  #music-player.mp:not(.mp-mini) .mp-time{padding:1px 16px;font-size:12px}
+  #music-player.mp:not(.mp-mini) .mp-search{font-size:15px;padding:10px 14px}
   #music-player.mp-mini{right:8px;bottom:76px}
 }
 /* Signup captcha (anti-spam) */

@@ -71,6 +71,8 @@ DRIVE = r"""(async () => {
   MP.setMin(true); MP._render(); await sleep(80);
   const m = el.getBoundingClientRect();
   out.miniW = Math.round(m.width); out.miniH = Math.round(m.height);
+  out.miniTop = Math.round(m.top);
+  out.miniCls = el.className;
   out.miniBottomGap = Math.round(window.innerHeight - m.bottom);
   MP.setMin(false);
   return out;
@@ -171,6 +173,17 @@ async def drive(url):
                     if r["left"] < -1 or r["right"] > r["vw"] + 1:
                         problems.append((label, "offscreen",
                                          f"the panel sits at left={r['left']} right={r['right']}"))
+                    # The minimised player carries BOTH classes (`class="mp mp-mini"`), so a
+                    # full-screen rule written as bare `#music-player.mp` swallows the pill as well.
+                    # When that happened the bar measured 382x768 on a 390x844 screen — WIDTH alone
+                    # let it through (382 < 388), which is why this now asks the questions that
+                    # actually separate a pill from a panel: how TALL it is, and whether it starts
+                    # at the top of the screen.
+                    if r["miniH"] > 120 or r["miniTop"] < r["vh"] / 2:
+                        problems.append((label, "mini-not-floating",
+                                         f"the MINI bar is {r['miniW']}x{r['miniH']} at "
+                                         f"top={r['miniTop']} (classes {r['miniCls']!r}) — "
+                                         "that is a panel, not a pill"))
                     if r["miniW"] >= r["vw"] - 2:
                         problems.append((label, "mini-not-floating",
                                          "the MINI bar went full-width; it is meant to float"))

@@ -13982,7 +13982,19 @@
     // Re-uploading something that was deleted must bring it back — so it stops being a tombstone.
     setFile(sha, m){ this._norm(); if(this.data.deleted) delete this.data.deleted[sha]; this.data.files[sha]=Object.assign(this.data.files[sha]||{}, m); this.push(); },
     move(sha, folder){ this._norm(); this.data.files[sha]=Object.assign(this.data.files[sha]||{}, {folder}); this.push(); },
-    forget(sha){ this._norm(); delete this.data.files[sha]; this._tomb(sha); this.push(); },
+    /* Gone from the library means gone from the DEVICE too.
+     *
+     * This is the one choke point for "this file is no longer mine" — the ✕ on a file (which sends a
+     * Blossom DELETE to the server first), the Music tidy, everything. Without dropping the offline
+     * copy here, a downloaded track deleted from the server left its bytes in IndexedDB with no
+     * index entry pointing at them: invisible in every list, and therefore impossible to reclaim
+     * from the UI. Storage that only grows and nothing can name is a leak, not a cache.
+     *
+     * Fire-and-forget because forget() is synchronous and its callers are mid-render; a miss (every
+     * non-music file) is a no-op in IDB. */
+    forget(sha){ this._norm(); delete this.data.files[sha]; this._tomb(sha);
+      try{ MusicOffline.drop(sha); }catch(_){}
+      this.push(); },
   };
   function _shaFromUrl(url){ const m=String(url||'').match(/([0-9a-f]{64})/i); return m?m[1].toLowerCase():''; }
   let _filesFolder = '';   // current folder ('' = All)
