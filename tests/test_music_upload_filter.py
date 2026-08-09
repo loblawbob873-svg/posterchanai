@@ -132,3 +132,34 @@ def test_a_deleted_track_is_not_treated_as_already_imported():
         "_blobHave null means 'not fetched yet', not 'everything is gone' — treating it as missing "
         "would re-upload the entire library")
     assert got["wrongFolderIgnored"] is False
+
+
+def test_transport_actions_never_land_on_pause():
+    """⏮ ⏭ and Shuffle all must not silently PAUSE.
+
+    play(sha) treats "the track you asked for is the one already playing" as pause/resume, which is
+    right for tapping a row in the list and wrong for every transport button — with a short queue
+    they all resolve to the current track (next wraps (i+1)%1 back to itself, prev likewise, and a
+    random pick can choose it), so all three paused instead of playing. `force` distinguishes them.
+
+    A structural check: the behaviour lives inside an async method wired to a real <audio>, so this
+    asserts the flag is still threaded through every transport path rather than re-simulating one.
+    """
+    src = APP.read_text()
+    guard = re.search(r"if\(!\(opts&&opts\.force\) && sha===this\.cur", src)
+    assert guard, "play() no longer distinguishes a transport action from tapping the playing track"
+    # …to the end of each method, not the end of its first line — both span several lines now.
+    nxt = re.search(r"    next\(\)\{.*?\},\n", src, re.S)
+    prv = re.search(r"    prev\(\)\{.*?\},\n", src, re.S)
+    assert nxt and "force:true" in nxt.group(0), "next() must force — it can resolve to the current track"
+    assert prv and "force:true" in prv.group(0), "prev() must force — it can resolve to the current track"
+    # EVERY shuffle entry point, not just the first — the classic Music button and the app's
+    # "Shuffle all" are two of them, and only one had been fixed.
+    picks = re.findall(r"MusicPlayer\.play\(MusicPlayer\.queue\[Math\.floor[^\n]*", src)
+    assert picks, "no shuffle pick found — did the shuffle move?"
+    assert all("force:true" in p for p in picks), (
+        "a shuffle pick can be the track already playing; without force that pauses: "
+        + "; ".join(p[:90] for p in picks if "force:true" not in p))
+    assert src.count("id=\"ma-shuf\"") == 0, (
+        "the app header's shuffle was removed in favour of the list header's Shuffle all — two "
+        "shuffles that set the same flag is one too many")

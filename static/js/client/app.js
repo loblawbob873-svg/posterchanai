@@ -12927,7 +12927,6 @@
           <button class="btn btn-ghost small" id="ma-prev" title="Previous"><svg class="ic b-ic" aria-hidden="true"><use href="#i-prev"></use></svg></button>
           <button class="btn btn-neon" id="ma-play" title="Play / pause"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>
           <button class="btn btn-ghost small" id="ma-next" title="Next"><svg class="ic b-ic" aria-hidden="true"><use href="#i-next"></use></svg></button>
-          <button class="btn btn-ghost small" id="ma-shuf" title="Shuffle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg></button>
           <button class="btn btn-cyan small" id="ma-add" title="Add music"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add music</button>
         </div>
       </div>
@@ -12962,10 +12961,6 @@
     b('#ma-play',()=>{ if(MusicPlayer.cur) return MusicPlayer.toggle();
       const q=musicTracks(null); if(!q.length){ toast('no music yet — add some'); return; }
       MusicPlayer.refreshQueue(); MusicPlayer.play(q[0].sha); });
-    b('#ma-shuf',()=>{ MusicPlayer.shuffle=!MusicPlayer.shuffle; MusicPlayer._render(); _musicAppNow();
-      if(MusicPlayer.shuffle){ const q=musicTracks(null);
-        if(q.length){ MusicPlayer.refreshQueue();
-          MusicPlayer.play(MusicPlayer.queue[Math.floor(Math.random()*MusicPlayer.queue.length)]); } } });
     b('#ma-add',()=>openMusicFolder());
     { const qi=$('#ma-q',feed);
       if(qi){ qi.value=_musicQ;
@@ -12983,7 +12978,7 @@
     const sub=document.getElementById('ma-sub');
     const playing=_audioEl && !_audioEl.paused;
     if(sub) sub.textContent=MusicPlayer.cur ? (playing?'playing':'paused')+(MusicPlayer.shuffle?' · shuffle':'') : '';
-    const sh=document.getElementById('ma-shuf'); if(sh) sh.classList.toggle('on', !!MusicPlayer.shuffle);
+    const sh=document.getElementById('mus-shuffle'); if(sh) sh.classList.toggle('on', !!MusicPlayer.shuffle);
     try{ _updateMusicListBtns(); }catch(_){}
   }
   function openMusic(){   // the Music nav button → shuffle-play your whole library right away
@@ -13004,7 +12999,8 @@
         return;
       }
       MusicPlayer.shuffle=true; MusicPlayer.refreshQueue();
-      MusicPlayer.play(MusicPlayer.queue[Math.floor(Math.random()*MusicPlayer.queue.length)]); };
+      // force: the random pick can be the track already playing, and play() reads that as pause.
+      MusicPlayer.play(MusicPlayer.queue[Math.floor(Math.random()*MusicPlayer.queue.length)], {force:true}); };
     // Reconcile against the server before playing, so deleted songs can't be queued (and an emptied
     // library correctly shows the "add some music" guide instead of failing track by track).
     const ready = FilesIdx._pulled ? Promise.resolve() : (FilesIdx._pulled=true, FilesIdx.pull());
@@ -14165,7 +14161,9 @@
     { const sh=$('#mus-shuffle',grid);
       if(sh) sh.onclick=()=>{ const q=musicTracks(null); if(!q.length) return;
         MusicPlayer.shuffle=true; MusicPlayer.refreshQueue();
-        MusicPlayer.play(MusicPlayer.queue[Math.floor(Math.random()*MusicPlayer.queue.length)]); }; }
+        // force: the random pick can be the track already playing, and without it that PAUSES.
+        MusicPlayer.play(MusicPlayer.queue[Math.floor(Math.random()*MusicPlayer.queue.length)], {force:true});
+        sh.classList.add('on'); }; }
     $$('.track-play',grid).forEach(b=> b.onclick=()=>MusicPlayer.play(b.dataset.sha));
     // A track is stored as Opus ciphertext, so "download" means decrypt-then-save — same path the
     // file grid's lock cards use. Without this the only way out of the Music folder was the player.
@@ -14215,7 +14213,16 @@
     refreshQueue(){ this.queue=musicTracks(null).map(t=>t.sha); if(this.cur && !this.queue.includes(this.cur)) this.queue.unshift(this.cur); },
     async play(sha, opts){
       this.ensure();
-      if(sha===this.cur && _audioEl.src){ this.toggle(); return; }   // tapping the playing track = pause/resume
+      /* Tapping the PLAYING track in the list means pause/resume. Transport buttons must not get that
+       * treatment: with a short queue every one of them resolves to the current track — next() wraps
+       * (i+1)%1 back to itself, prev() likewise, and the shuffle pick can land on it — so ⏮ ⏭ and
+       * shuffle all silently PAUSED instead of playing. `force` says "this is a transport action,
+       * start it from the top". */
+      if(!(opts&&opts.force) && sha===this.cur && _audioEl.src){ this.toggle(); return; }
+      if(opts&&opts.force && sha===this.cur && _audioEl.src){       // same track, deliberately restarted
+        try{ _audioEl.currentTime=0; await _audioEl.play(); }catch(_){}
+        this._render(); return;
+      }
       // keep a STABLE play order — only (re)build the queue when it's empty or doesn't contain this track,
       // NOT on every track, so auto-advance plays in order instead of jumping around ("shuffling everything").
       if(!this.queue.length || !this.queue.includes(sha)) this.refreshQueue();
@@ -14232,12 +14239,14 @@
       if(this.cur===sha) this._render();
     },
     toggle(){ if(_audioEl){ if(_audioEl.paused) _audioEl.play(); else _audioEl.pause(); } },
-    next(){ if(!this.queue.length) return; let i=this.queue.indexOf(this.cur);
-      i=this.shuffle ? this._randIdx(i) : (i+1)%this.queue.length; this.play(this.queue[i]); },
+    next(){ if(!this.queue.length) this.refreshQueue();
+      if(!this.queue.length) return; let i=this.queue.indexOf(this.cur);
+      i=this.shuffle ? this._randIdx(i) : (i+1)%this.queue.length; this.play(this.queue[i], {force:true}); },
     _randIdx(cur){ if(this.queue.length<2) return 0; let r; do{ r=Math.floor(Math.random()*this.queue.length); }while(r===cur); return r; },   // don't replay the same track
     prev(){ if(_audioEl && _audioEl.currentTime>3){ _audioEl.currentTime=0; return; }   // >3s in = restart current
-      if(this._history.length){ this.play(this._history.pop(), {back:true}); return; }   // back to the track actually played before
-      if(!this.queue.length) return; let i=this.queue.indexOf(this.cur); this.play(this.queue[(i-1+this.queue.length)%this.queue.length], {back:true}); },
+      if(this._history.length){ this.play(this._history.pop(), {back:true, force:true}); return; }   // back to the track actually played before
+      if(!this.queue.length) this.refreshQueue();
+      if(!this.queue.length) return; let i=this.queue.indexOf(this.cur); this.play(this.queue[(i-1+this.queue.length)%this.queue.length], {back:true, force:true}); },
     seekTo(f){ if(_audioEl && _audioEl.duration) _audioEl.currentTime=Math.max(0,Math.min(1,f))*_audioEl.duration; },
     setMin(m){ this.min=m; this._render(); },
     close(){ if(_audioEl) _audioEl.pause(); if(this.el) this.el.classList.add('hidden'); },
