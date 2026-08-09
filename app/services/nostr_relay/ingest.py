@@ -225,7 +225,8 @@ _PRIVATE_LIB_KINDS = [30024, 30078, 30403]
 
 async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool = False,
                           kinds=None, pace: float = 1.0, max_total: int = 20000,
-                          max_pages: int = 200, private_relays=None) -> int:
+                          max_pages: int = 200, private_relays=None,
+                          storage_pubkey: str | None = None) -> int:
     """Backfill a user's FULL Nostr history into the store: everything they AUTHORED (notes,
     articles, reposts, reactions, comments, profile, contacts, relay list), the private
     DMs ADDRESSED to them (NIP-17 gift wraps + legacy kind-4), and — from the operator's private
@@ -262,6 +263,21 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
         stored += await _backfill_filter(store, server, private_relays,
                                          {"authors": [pubkey], "kinds": _PRIVATE_LIB_KINDS},
                                          require_author=pubkey, **common)
+        # THE STORAGE KEY IS A SECOND AUTHOR, and forgetting it silently voids half of this.
+        #
+        # A user has TWO keypairs here. Their identity key signs whatever the CLIENT writes — Notes,
+        # the password vault, Budget, drafts. Everything the SERVER writes on their behalf is signed
+        # with the per-user storage key it holds (`nostr_store.user_storage_seckey`), and that is the
+        # calendar, the addressbook, mail and the upload keys. Two different pubkeys, one owner.
+        #
+        # So a restore that asked only for the identity key came back with the notes and the vault
+        # and NOTHING ELSE — while the button that started it said the calendar and contacts were
+        # coming. That is worse than not restoring them: an empty calendar after a successful sync
+        # reads as "the data is gone", and the person stops looking for it.
+        if storage_pubkey and storage_pubkey != pubkey:
+            stored += await _backfill_filter(store, server, private_relays,
+                                             {"authors": [storage_pubkey], "kinds": _PRIVATE_LIB_KINDS},
+                                             require_author=storage_pubkey, **common)
     logger.info("[nostr-relay] backfilled %d events for %s…", stored, pubkey[:12])
     return stored
 

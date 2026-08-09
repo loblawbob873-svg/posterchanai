@@ -2529,6 +2529,12 @@
     }catch(_){ return ''; }
   }
   let _lastOnline=0, _lastRelay=0;   // cached for the mobile More sheet (which is built synchronously)
+  /* Did /client/stats ever ANSWER? Surfaces that read the cached numbers need to tell "the network is
+   * quiet" apart from "there is no server to ask" — a standalone/instance-less build has no stats
+   * endpoint at all, and rendering the zeroed defaults there states 0 WoT and 0 online as measured
+   * facts. Set only on a successful parse, never cleared: one good answer means the surface is real,
+   * and a later blip should not blank a panel that was legitimately showing counts. */
+  let _statsFetched=false;
   async function updateUserCount(onlineOnly){
     const uc=$('#user-count');
     let online=0, users=Number(CFG.users)||0, relay=0, streams=0, calls=0;
@@ -2538,6 +2544,7 @@
       relay=Number(s.relay)||0;
       streams=Number(s.streams)||0;
       calls=Number(s.calls)||0;
+      _statsFetched=true;
       if(online>0) _lastOnline=online;
       // WoT size refreshes ONLY on boot/login (it barely changes — daily rebuild). The 15s poll passes
       // onlineOnly=true so the users count stays frozen and only the live "online" number updates.
@@ -5234,7 +5241,7 @@
     { const ab=$('#tor-add',feed); if(ab) ab.onclick=addTorrent; }
     decorateProfiles();
     $$('.tor-card .name[data-prof]',feed).forEach(n=> n.onclick=()=>renderProfileView(n.dataset.prof));
-    $$('.tor-copy',feed).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.magnet); toast('magnet copied'); }catch(_){ window.prompt('Magnet link:', b.dataset.magnet); } });
+    $$('.tor-copy',feed).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.magnet); toast('magnet copied'); }catch(_){ _copyFallback('Magnet link:', b.dataset.magnet); } });
     /* "Download here" hands the magnet to THIS node's torrent client and shows you the manager. The
      * magnet link beside it still exists for handing the torrent to your own app; before, that was
      * the only thing on offer, which on a phone means an app that may not be installed. */
@@ -9702,7 +9709,7 @@
         const tx=xv.dataset.xtxid||'', ad=xv.dataset.xaddr||'', pf=xv.dataset.xproof||'';
         if(!_isTxid(tx) || !isXmrAddr(ad) || !_isProofSig(pf)){ toast('this proof looks malformed — not copying'); return; }   // re-validate: never build a wallet command from untrusted tag data
         const cmd=`check_tx_proof ${tx} ${ad} "" ${pf}`;
-        try{ navigator.clipboard.writeText(cmd).then(()=>toast('verify command copied — paste it into your Monero wallet'),()=>prompt('Paste this into your Monero wallet:',cmd)); }catch(_){ prompt('Paste this into your Monero wallet:',cmd); } return; }
+        try{ navigator.clipboard.writeText(cmd).then(()=>toast('verify command copied — paste it into your Monero wallet'),()=>_copyFallback('Paste this into your Monero wallet:',cmd)); }catch(_){ _copyFallback('Paste this into your Monero wallet:',cmd); } return; }
       const av=e.target.closest('.av'); if(av){ const n=e.target.closest('.note'); if(n){ renderProfileView(n.dataset.pk); return; } }
       const prof=e.target.closest('[data-prof]'); if(prof){ renderProfileView(prof.dataset.prof); return; }
       const q=e.target.closest('[data-open]'); if(q){ openThread(q.dataset.open); return; }
@@ -9973,7 +9980,7 @@
         sync(); renderQr();
         amtEl.addEventListener('input',()=>{ sync(); renderQr(); });
         $$('.xmr-preset',root).forEach(b=> b.onclick=()=>{ amtEl.value=b.dataset.amt; sync(); renderQr(); });   // one-tap amount
-        $('#xmr-copy',root).onclick=()=>{ try{ navigator.clipboard.writeText(addr).then(()=>toast('address copied'),()=>prompt('Copy the Monero address:',addr)); }catch(_){ prompt('Copy the Monero address:',addr); } };
+        $('#xmr-copy',root).onclick=()=>{ try{ navigator.clipboard.writeText(addr).then(()=>toast('address copied'),()=>_copyFallback('Copy the Monero address:',addr)); }catch(_){ _copyFallback('Copy the Monero address:',addr); } };
         { const s=$('#xmr-sent',root); if(s) s.onclick=async()=>{ const a=amtVal();
           const txid=(($('#xmr-txid',root)||{}).value||'').trim().toLowerCase();
           const proof=(($('#xmr-prf',root)||{}).value||'').trim();
@@ -10084,7 +10091,7 @@
         sync(); renderQr();
         amtEl.addEventListener('input',()=>{ sync(); renderQr(); });
         $$('.bch-preset',root).forEach(b=> b.onclick=()=>{ amtEl.value=b.dataset.amt; sync(); renderQr(); });
-        $('#bch-copy',root).onclick=()=>{ try{ navigator.clipboard.writeText(addr).then(()=>toast('address copied'),()=>prompt('Copy the BCH address:',addr)); }catch(_){ prompt('Copy the BCH address:',addr); } };
+        $('#bch-copy',root).onclick=()=>{ try{ navigator.clipboard.writeText(addr).then(()=>toast('address copied'),()=>_copyFallback('Copy the BCH address:',addr)); }catch(_){ _copyFallback('Copy the BCH address:',addr); } };
         { const s=$('#bch-sent',root); if(s) s.onclick=async()=>{ const a=amtVal();
           const txid=(($('#bch-txid',root)||{}).value||'').trim().toLowerCase();
           if(txid && !/^[0-9a-f]{64}$/.test(txid)){ toast('txid should be 64 hex characters'); return; }
@@ -16061,7 +16068,8 @@
     },
     async bulk(action){
       if(!this.sel || !this.sel.size) return;
-      if(action==='delete' && !confirm('Delete '+this.sel.size+' message(s)?')) return;
+      if(action==='delete' && !await uiConfirm('Delete '+this.sel.size+' message(s)?',
+                                                { ok:'Delete', danger:true })) return;
       const keys=[...this.sel]; this.sel.clear(); this.updateBulk();
       const path = action==='read' ? '/mark-read' : '/'+action;
       for(const k of keys){ const i=k.indexOf('|'), j=k.indexOf('|', i+1);
@@ -16126,7 +16134,7 @@
       if(act==='reply'||act==='replyall'||act==='forward') return this.compose({mode:act, msg, folder, acct});
       if(act==='unread'){ try{ await this.api('/mark-read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:acct,folder,uid,read:false})}); }catch(_){}; toast('marked unread'); this.loadList(); return; }
       if(act==='archive'||act==='delete'){
-        if(act==='delete' && !confirm('Delete this message?')) return;
+        if(act==='delete' && !await uiConfirm('Delete this message?', { ok:'Delete', danger:true })) return;
         try{ await this.api('/'+act,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:acct,folder,uid})}); }catch(_){ toast(act+' failed'); return; }
         toast(act==='delete'?'deleted':'archived');
         const pane=$('#mail-read',this.root); if(pane){ pane.classList.remove('has-open'); pane.innerHTML='<div class="empty">Select a message to read</div>'; }
@@ -19747,7 +19755,7 @@
         }catch(_){ toast('delete failed'); }
       }; }
     { const dn=$('#set-del-notes'); if(dn) dn.onclick=()=>_deleteAllMyNotes(); }
-    { const cn=$('#set-copy-npub'); if(cn) cn.onclick=async()=>{ try{ await navigator.clipboard.writeText(ME.npub); toast('npub copied'); }catch(_){ window.prompt('Your npub:', ME.npub); } }; }
+    { const cn=$('#set-copy-npub'); if(cn) cn.onclick=async()=>{ try{ await navigator.clipboard.writeText(ME.npub); toast('npub copied'); }catch(_){ _copyFallback('Your npub:', ME.npub); } }; }
     { const sn=$('#set-show-nsec'); if(sn) sn.onclick=async()=>{
         let r; try{ r=await Relay.worker.call('exportNsec', {}); }catch(_){ r=null; }
         const nsec=r&&r.nsec; if(!nsec){ toast('secret key not available on this login'); return; }
@@ -19756,7 +19764,7 @@
           <div class="keyrow"><code id="nsec-val">${enc(nsec)}</code></div>
           <div class="set-actions"><button class="btn btn-neon small" id="nsec-copy"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy nsec</button><button class="btn btn-ghost small" id="nsec-close">Close</button></div>`,
           root=>{
-            $('#nsec-copy',root).onclick=async()=>{ try{ await navigator.clipboard.writeText(nsec); toast('nsec copied — keep it secret!'); }catch(_){ window.prompt('Your nsec (copy it):', nsec); } };
+            $('#nsec-copy',root).onclick=async()=>{ try{ await navigator.clipboard.writeText(nsec); toast('nsec copied — keep it secret!'); }catch(_){ _copyFallback('Your nsec (copy it):', nsec); } };
             $('#nsec-close',root).onclick=closeModal;
           });
       }; }
@@ -19791,8 +19799,14 @@
            * operator configured — and on a server with none there is no second copy to restore. That
            * has to be said out loud: "sync started" over a vault that was never backed up reads as a
            * promise, and the person only finds out it wasn't one when they need it. */
+          /* Name only what this server can actually deliver. `private` means there is a mirror to
+           * read from; `server_libs` additionally means the storage key those libraries were signed
+           * with resolved. Claiming the calendar back without both is the expensive kind of wrong —
+           * an empty calendar after a "successful" sync reads as "my data is gone" and the person
+           * stops looking for it. */
           if(st) st.textContent = !r.ok ? ('failed: '+(r.error||''))
-            : r.private ? '✓ Sync started — your posts, notes, passwords, calendar and contacts will appear shortly.'
+            : r.server_libs ? '✓ Sync started — your posts, notes, passwords, calendar and contacts will appear shortly.'
+            : r.private ? '✓ Sync started — your posts, notes and passwords will appear shortly.'
                         : '✓ Sync started — your posts will appear shortly. This server keeps no private backup, so your notes, passwords and calendar can only be restored from a device that still has them.';
         }catch(_){ if(st) st.textContent='sync failed'; }
       }; }
@@ -20937,7 +20951,7 @@
     // Discover result cards → open the right view (community vs stream share .stream-card → split by kind).
     $$('.article-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const a=Store.get(c.dataset.id); if(a) openArticle(a); });
     $$('.stream-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const x=Store.get(c.dataset.id); if(x) (x.kind===34550?openCommunity:openStream)(x); });
-    $$('.tor-copy',feed).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.magnet); toast('magnet copied'); }catch(_){ window.prompt('Magnet:', b.dataset.magnet); } });
+    $$('.tor-copy',feed).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.magnet); toast('magnet copied'); }catch(_){ _copyFallback('Magnet:', b.dataset.magnet); } });
     $$('.repo-clone',feed).forEach(b=> b.onclick=async ev=>{ ev.stopPropagation(); try{ await navigator.clipboard.writeText(b.dataset.clone); toast('clone URL copied'); }catch(_){ await uiPrompt('Clone URL', {value:b.dataset.clone}); } });
     $$('.repo-card a[href]',feed).forEach(a=> a.onclick=ev=>ev.stopPropagation());
     $$('.repo-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const e=Store.get(c.dataset.id); if(e) openRepo(e); });
@@ -21258,6 +21272,29 @@
       document.addEventListener('keydown',onKey,true);
       document.body.appendChild(ov);
       const y=ov.querySelector('[data-uc="1"]'); if(y) setTimeout(()=>{ try{ y.focus(); }catch(_){} },20);
+    });
+  }
+  /* What to do when navigator.clipboard is refused and the user still has to get a string out.
+   *
+   * The old answer was window.prompt(value) — the classic "select this and press Ctrl-C" trick. It
+   * works in a browser and it is the SAME native dialog that wedges the Electron renderer's focus,
+   * after which the next text box in the app takes no cursor until an alt-tab. A wallet address is
+   * about the worst place to spend that: the next thing you do is paste it somewhere and type an
+   * amount. uiPrompt is the same shape (a pre-filled, selectable input) with no native dialog, and
+   * it re-tries the copy on OK, which is usually all the second attempt needs. */
+  function _copyFallback(message, value){
+    return uiPrompt(message, { value, ok: 'Copy', cancel: 'Close' }).then(v => {
+      if(v == null) return;
+      /* The retry FAILING has to be said out loud. This helper only ever runs because the clipboard
+       * was refused once already, so the second attempt failing is the likely case, not the odd one
+       * — and a button labelled "Copy" that closes silently having copied nothing is how somebody
+       * pastes a stale clipboard into a wallet. The native prompt this replaced at least left the
+       * string selected on screen; the toast has to carry that job instead. */
+      const failed = () => toast('could not copy — select the text and press Ctrl-C');
+      try{
+        const p = navigator.clipboard && navigator.clipboard.writeText(v);
+        if(p && p.then) p.then(()=>toast('copied'), failed); else failed();
+      }catch(_){ failed(); }
     });
   }
   // In-app prompt — themed replacement for native window.prompt() (which wedges Electron focus, see
@@ -23626,7 +23663,7 @@
     // reads them from here rather than polling /client/stats a second time — that endpoint counts
     // the caller as a viewer, and a second caller with its own id would inflate "online now".
     communityStats: () => ({ users: Number(CFG.users) || 0, online: _lastOnline, relay: _lastRelay,
-                             streams: _lastStreams, calls: _lastCalls }),
+                             streams: _lastStreams, calls: _lastCalls, fetched: _statsFetched }),
     // fetch that carries auth on BOTH web (session cookie) and the APK (bearer token) — for authed server
     // endpoints like /api/news/summarize called from sub-modules (news.js).
     authFetch: (url, opts={}) => fetch(url, { credentials:'include', ...opts, headers:{ ...(opts.headers||{}), ...(_aiToken?{'Authorization':'Bearer '+_aiToken}:{}) } }),

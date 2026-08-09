@@ -241,6 +241,37 @@ class MirrorWiring(unittest.TestCase):
         for k in (30078, 30024, 30403):
             self.assertNotIn(str(k), public.split("kinds = kinds or")[1].split("\n")[0])
 
+    def test_the_restore_asks_for_the_storage_key_as_well_as_the_identity_key(self):
+        """A user has TWO author keys, and asking for one silently loses half the libraries.
+
+        The identity key signs what the CLIENT writes (Notes, vault, Budget, drafts). The per-user
+        STORAGE key the server holds signs what the SERVER writes — the calendar, the addressbook,
+        mail, upload keys (caldav_store passes `user_storage_seckey` to every write). A restore given
+        only the identity pubkey returns the notes and the vault and none of the rest, which is the
+        failure that looks most like success: an empty calendar after a sync that reported OK.
+        """
+        import inspect
+
+        from app.services.nostr_relay import ingest
+        sig = inspect.signature(ingest.backfill_author)
+        self.assertIn("storage_pubkey", sig.parameters)
+        src = inspect.getsource(ingest.backfill_author)
+        self.assertIn('{"authors": [storage_pubkey], "kinds": _PRIVATE_LIB_KINDS}', src)
+        self.assertIn("require_author=storage_pubkey", src)
+        # ...and it must be a SECOND pass, not a replacement for the identity-key one.
+        self.assertIn('{"authors": [pubkey], "kinds": _PRIVATE_LIB_KINDS}', src)
+
+        # The caller has to resolve it (the relay process has no DB) and the thread has to forward it.
+        from app.routers import client as client_router
+        rsrc = inspect.getsource(client_router.sync_posts)
+        self.assertIn("user_storage_seckey", rsrc)
+        self.assertIn("trigger_backfill(pk, storage_pk)", rsrc)
+        from app.services.nostr_relay import thread
+        self.assertIn("storage_pubkey", inspect.signature(thread.trigger_backfill).parameters)
+        self.assertIn("storage_pubkey=_spk", inspect.getsource(thread))
+        # The storage key must join the preserve set too, or the next prune deletes what we restored.
+        self.assertIn("store.extend_preserve_pubkeys({_spk})", inspect.getsource(thread))
+
     def test_the_relay_thread_hands_the_private_relays_to_the_backfill(self):
         """The wiring, not just the capability: an unpassed argument defaults to None and the
         restore silently does nothing while every log line still says the sync ran."""

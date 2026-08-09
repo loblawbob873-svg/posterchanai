@@ -15,7 +15,8 @@
     function _hideGame(gid){ const s=_hiddenGames(); s.add(gid); try{ localStorage.setItem('pc_chess_hidden', JSON.stringify([...s])); }catch(_){} }
     async function quitGame(g){
       const active = g.status==='active';
-      if(!confirm(active ? 'Resign and remove this game?' : 'Remove this game from your list?')) return;
+      if(!await PC.uiConfirm(active ? 'Resign and remove this game?' : 'Remove this game from your list?',
+                             { ok: active ? 'Resign' : 'Remove', danger: true })) return;
       if(active){ try{ await chessMove(g, 'resign'); }catch(_){} }   // tell the bot you resigned
       _hideGame(g._gid||g.root);
       _loadMyChessGames();

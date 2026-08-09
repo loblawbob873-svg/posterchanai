@@ -688,6 +688,7 @@
     const t = new Date();
     const clock = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const date = t.toLocaleDateString([], { day: 'numeric', month: 'short' });
+    const netNow = netState();
     bar.innerHTML =
       `<button class="os-start${startOpen ? ' on' : ''}" id="os-start" title="Start">
          <img src="${enc(brandLogo())}" alt="Start"></button>
@@ -700,6 +701,10 @@
                   data-id="${w.id}" title="${enc(w.title)}">
             ${iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')}</div>
        <div class="os-tray">
+         <button class="os-net net-${netNow.level}${netOpen ? ' on' : ''}" id="os-net"
+                 title="${enc(NET_LABEL[netNow.level] + ' — ' + netSummary(netNow))}"
+                 aria-label="${enc('Nostr connection: ' + netSummary(netNow))}">
+           <svg class="ic" aria-hidden="true"><use href="#i-relay"></use></svg></button>
          <button class="os-clock${notiOpen ? ' on' : ''}" id="os-clock" title="Notifications">
            <b>${enc(clock)}</b><span>${enc(date)}</span>${notiDot()}</button>
        </div>`;
@@ -733,6 +738,7 @@
         });
       } }
     { const cb = $('#os-clock', bar); if(cb) cb.onclick = (e) => { e.stopPropagation(); toggleNoti(); }; }
+    { const nb = $('#os-net', bar); if(nb) nb.onclick = (e) => { e.stopPropagation(); toggleNet(); }; }
     $$('.os-task', bar).forEach(b => b.onclick = () => {
       const w = wins.find(x => String(x.id) === b.dataset.id);
       if(!w) return;
@@ -776,7 +782,7 @@
     const old = $('#os-noti', root);
     if(old) old.remove();
     if(!notiOpen){ drawBar(); return; }
-    toggleStart(false);
+    toggleStart(false); toggleNet(false);
     const panel = document.createElement('div');
     panel.id = 'os-noti';
     panel.className = 'os-noti';
@@ -868,6 +874,244 @@
     drawBar();
   }
 
+  // ---- network status --------------------------------------------------------------------------
+  /* The taskbar's networking widget, in the shape Windows put it: state of the connection in the
+   * tray, and a flyout naming what you are connected to with a way to fix it.
+   *
+   * The desktop had NO connection indicator at all. The classic client's is `#conn-status` in the
+   * topbar — and the topbar is one of the things entering the desktop replaces, so the single most
+   * useful piece of ambient state in a Nostr client disappeared exactly when the app started looking
+   * like an OS. A dead relay then presents as a timeline that has simply stopped, which is
+   * indistinguishable from a quiet one.
+   *
+   * Per-RELAY, not one word for the pool, because that is the question a Nostr user actually has: a
+   * pool reads 'ok' while three of its five relays are down, and "online" over a half-dead pool is
+   * how you spend ten minutes wondering why your posts are not showing up on someone else's client.
+   */
+  let netOpen = false, _netOff = null, _netT = null;
+
+  /* Past this, a socket is not talking. The heartbeat answers its own ping every 25s and a trusted
+   * socket that reaches 40s idle tears itself down and reconnects, so 45s means the reconnect is
+   * already due. Deliberately NOT treated as "down": it is shown as its own quieter state, because
+   * the heartbeat is skipped while the tab is in the background, so a desktop returning to the
+   * foreground legitimately has stale sockets for a moment. */
+  const NET_STALE_MS = 45000;
+  const NET_LABEL = { ok: 'Connected', partial: 'Partly connected',
+                      connecting: 'Connecting…', off: 'No connection' };
+
+  function netConns(){
+    try{ return (window.Relay && Relay.conns && Relay.conns()) || []; }catch(_){ return []; }
+  }
+
+  function netState(){
+    const conns = netConns();
+    const up = conns.filter(netLive).length;
+    const total = conns.length;
+    let level;
+    if(!total) level = 'off';
+    else if(up === 0) level = conns.some(c => c.status === 'connecting') ? 'connecting' : 'off';
+    else if(up < total) level = 'partial';
+    else level = 'ok';
+    /* The radio being off outranks whatever the pool believes: a WebSocket can read OPEN for a while
+     * after the network goes, so a widget that trusted the pool alone would sit on "Connected" while
+     * the machine was plainly offline — the one moment its answer has to be right. */
+    let online = true;
+    try{ online = navigator.onLine !== false; }catch(_){}
+    if(!online) level = 'off';
+    return { level, up, total, online, conns };
+  }
+
+  // "3 of 5 relays" — the summary the tray icon is standing in for.
+  function netSummary(s){
+    if(!s.online) return 'This device is offline';
+    if(!s.total) return 'No relays configured';
+    if(s.level === 'ok') return s.total === 1 ? 'Connected to 1 relay'
+                                             : `Connected to all ${s.total} relays`;
+    if(s.level === 'connecting') return 'Connecting…';
+    if(s.level === 'off') return s.total === 1 ? 'Relay unreachable'
+                                              : `None of ${s.total} relays reachable`;
+    return `${s.up} of ${s.total} relays connected`;
+  }
+
+  // wss://relay.example.com/ → relay.example.com. The scheme is noise in a list of relays, and the
+  // full URL wraps; the row's title carries the whole thing for anyone who needs it.
+  function netHost(url){
+    try{ return new URL(url).host || url; }catch(_){ return String(url || '').replace(/^wss?:\/\//, ''); }
+  }
+
+  // A bare DURATION, no "ago" — the only caller prefixes "No data for ", and appending it here read
+  // as "No data for 46s ago".
+  function netDur(ms){
+    if(ms == null) return '';
+    const s = Math.round(ms / 1000);
+    if(s < 60) return s + 's';
+    if(s < 5400) return Math.round(s / 60) + 'm';
+    return Math.round(s / 3600) + 'h';
+  }
+  /* Is this socket actually carrying traffic? OPEN is not the same as alive: a proxy idle-closes a
+   * WebSocket and the browser still reports readyState 1 (the zombie relay.js's heartbeat exists to
+   * catch). Counting one of those as up let the summary say "Connected to all 3 relays" directly
+   * above a row reading "No data for 5m" — the header contradicting the list it heads, on the one
+   * screen whose whole job is answering whether the connection is healthy. */
+  function netLive(c){
+    return c.status === 'ok' && c.open && !(c.idle != null && c.idle > NET_STALE_MS);
+  }
+
+  function netRow(c){
+    const open = c.status === 'ok' && c.open;
+    const cls = open ? (netLive(c) ? 'ok' : 'quiet')
+              : c.status === 'connecting' ? 'connecting' : 'off';
+    const what = cls === 'ok' ? 'Connected'
+               : cls === 'quiet' ? 'No data for ' + netDur(c.idle)
+               : cls === 'connecting' ? 'Connecting…' : 'Unreachable';
+    // "This server's relay" earns its label: it is the one the instance runs, the only TRUSTED
+    // socket, and the only one whose events skip signature verification — so which one it is is
+    // worth being able to see when the others are misbehaving.
+    const tag = c.trusted ? '<i class="os-net-tag">this server</i>' : '';
+    return `<div class="os-net-row" title="${enc(c.url)}">
+              <span class="os-net-led ${cls}" aria-hidden="true"></span>
+              <span class="os-net-n">${enc(netHost(c.url))}${tag}</span>
+              <span class="os-net-s">${enc(what)}</span>
+            </div>`;
+  }
+
+  /* The community counters, under the relays they are counted on. Read from the client's OWN cache
+   * (PC.communityStats) rather than polling /client/stats from here: that endpoint counts its caller
+   * as a viewer, so a second poll would inflate "online" by one — and this panel repaints every five
+   * seconds while it is open, which would have made the number climb as you watched it.
+   *
+   * All five, always, INCLUDING the zeroes. "0 live" is an answer; a row that disappears when it is
+   * zero just looks like the feature is missing, which is exactly what happened the last time these
+   * were made conditional. A standalone build has no instance to ask, and there the whole strip is
+   * dropped — a row of five zeroes there would be a lie rather than an answer. */
+  function netStatsHtml(){
+    let st = null;
+    try{ st = (PC().communityStats && PC().communityStats()) || null; }catch(_){ st = null; }
+    /* An instance-less build has no counters to show, and the test for that is whether the numbers
+     * were ever FETCHED — not whether communityStats() returned something. It is defined
+     * unconditionally in app.js and answers with a zeroed object, so `if(!st)` never fired and a
+     * standalone desktop rendered five authoritative-looking zeroes: "0 WoT, 0 online" reads as a
+     * dead network rather than as no server to ask. */
+    if(!st || !st.fetched) return '';
+    const cell = (icon, n, label) =>
+      `<span class="os-stat${(n > 0) ? ' on' : ''}" title="${enc(label)}">${iconSvg(icon)}<b>${enc(String(n || 0))}</b><i>${enc(label)}</i></span>`;
+    return `<div class="os-stats os-net-stats">
+              ${cell('i-wot', st.users, 'WoT')}${cell('i-livedot', st.online, 'online')}
+              ${cell('i-relay-dot', st.relay, 'on relay')}${cell('i-stream', st.streams, 'live')}
+              ${cell('i-call', st.calls, 'in call')}</div>`;
+  }
+
+  function hideNet(){
+    netOpen = false;
+    clearInterval(_netT); _netT = null;
+    const p = $('#os-net-panel', root);
+    if(p) p.remove();
+  }
+
+  function paintNet(){
+    const panel = $('#os-net-panel', root);
+    if(!panel) return;
+    const s = netState();
+    panel.innerHTML =
+      `<div class="os-noti-head"><b>Nostr</b>
+         <span class="os-noti-hb">
+           <button class="os-noti-x" id="os-net-relays">Relays…</button>
+           <button class="os-noti-x" id="os-net-again">Reconnect</button>
+         </span></div>
+       <div class="os-net-sum net-${s.level}">
+         <svg class="ic" aria-hidden="true"><use href="#i-relay"></use></svg>
+         <span><b>${enc(NET_LABEL[s.level] || '')}</b><i>${enc(netSummary(s))}</i></span></div>
+       <div class="os-net-list">${
+         s.conns.length ? s.conns.map(netRow).join('')
+                        : '<div class="os-net-empty muted small">This client has no relays to talk to. Add one in Settings → Relays.</div>'}</div>
+       ${netStatsHtml()}`;
+    { const b = $('#os-net-again', panel); if(b) b.onclick = (e) => {
+        e.stopPropagation();
+        /* wake(), not reviveStale(): this is someone telling the machine the connection is wrong,
+         * and reviveStale deliberately spares sockets that merely LOOK fine — which is every socket
+         * in the case that makes a person reach for this button (a zombie reads OPEN). */
+        try{ window.Relay && Relay.wake && Relay.wake(); }catch(_){}
+        paintNet();
+      }; }
+    { const b = $('#os-net-relays', panel); if(b) b.onclick = (e) => {
+        e.stopPropagation(); hideNet(); openApp('settings', 'Settings', '#i-gear');
+      }; }
+  }
+
+  /* ONE click-away handler for BOTH tray panels, and that is the fix rather than a tidy-up.
+   *
+   * Two independent handlers raced. Each closes its own panel by calling drawBar(), which rebuilds
+   * bar.innerHTML — so whichever fired first DETACHED the very button the pointerdown was aimed at,
+   * and that button's click listener then never ran. Clicking the network icon while the
+   * notification centre happened to be open did nothing at all: the notifications closed, the
+   * network flyout never opened, and the icon read as dead.
+   *
+   * So every tray TRIGGER is excluded here, not just this panel's own — a click on a sibling button
+   * must reach that button, which cross-closes on its open path. */
+  const _TRAY_KEEP = '#os-noti,#os-net-panel,#os-clock,#os-net,.modal-bg';
+  function _trayAway(e){
+    if(!notiOpen && !netOpen) return;
+    if(e.target.closest(_TRAY_KEEP)) return;
+    if(notiOpen) toggleNoti(false);
+    if(netOpen) toggleNet(false);
+  }
+
+  /* Repaint the BUTTON IN PLACE, never the whole taskbar. drawBar() destroys and recreates the
+   * Search Nostr input, and relay churn is not something the user did — a reconnect landing while
+   * they were mid-word rebuilt the box under the caret, which barQuery/barFocused restore only to
+   * the END of the text, dropping any selection. The tray icon is the one thing that has to change
+   * here, so change only that. */
+  function paintNetButton(){
+    const b = bar && $('#os-net', bar);
+    if(!b){ drawBar(); return; }        // no bar/button yet — a full paint is the only option
+    const s = netState();
+    b.className = 'os-net net-' + s.level + (netOpen ? ' on' : '');
+    b.title = NET_LABEL[s.level] + ' — ' + netSummary(s);
+    b.setAttribute('aria-label', 'Nostr connection: ' + netSummary(s));
+  }
+
+  /* DEBOUNCED, because this fires per socket: reconnecting a five-relay pool walks every one of them
+   * through connecting→ok, and repainting on each is work nobody can see. One repaint after the
+   * burst settles says the same thing. */
+  let _netPaintT = null;
+  function onNetChange(){
+    if(!on) return;
+    clearTimeout(_netPaintT);
+    _netPaintT = setTimeout(() => {
+      _netPaintT = null;
+      if(!on) return;
+      paintNetButton();
+      if(netOpen) paintNet();
+    }, 250);
+  }
+
+  function toggleNet(force){
+    netOpen = (force === undefined) ? !netOpen : !!force;
+    const old = $('#os-net-panel', root);
+    if(old) old.remove();
+    clearInterval(_netT); _netT = null;
+    if(!netOpen){ drawBar(); return; }
+    toggleStart(false); toggleNoti(false);
+    const panel = document.createElement('div');
+    panel.id = 'os-net-panel';
+    panel.className = 'os-noti os-net-panel';
+    root.appendChild(panel);
+    paintNet();
+    /* A relay change repaints this through the pool watcher below, but "no data for 38s" is a clock,
+     * and nothing fires an event when a quiet socket crosses into stale. Only while the panel is
+     * open, and cleared the moment it closes. */
+    _netT = setInterval(() => {
+      /* Never repaint out from under the keyboard. paintNet replaces the panel's innerHTML, so a
+       * user who has tabbed to Reconnect loses the focused element every five seconds and lands back
+       * on <body> — Enter does nothing and the tab order restarts. On the one panel whose job is
+       * recovering a broken connection, that makes it mouse-only. The ages are cosmetic; whoever is
+       * mid-keystroke wins, and the next tick repaints. */
+      if(panel.contains(document.activeElement) && document.activeElement !== panel) return;
+      paintNet();
+    }, 5000);
+    drawBar();
+  }
+
   // Arrival toasts, bottom-right. app.js's notifToast routes here while the desktop is up, so this
   // fires for exactly the things the classic UI toasts and nothing else.
   let toastHost = null, mailSeen = null, mailT = 0;
@@ -953,7 +1197,6 @@
     menu.innerHTML =
       `<input class="input os-search" id="os-q" placeholder="Search apps" autocomplete="off">
        <div class="os-applist" id="os-applist"></div>
-       <div class="os-stats" id="os-stats"></div>
        <div class="os-foot">${meChip()}<span class="spacer"></span>
          <button class="os-exit" id="os-full" title="Full screen (F11)">${isFull()?'⛶ Windowed':'⛶ Full screen'}</button>
          <button class="os-exit" id="os-exit" title="Leave the desktop">⤢ Classic</button></div>`;
@@ -986,20 +1229,12 @@
       });
     };
     paint('');
-    // The community counters live in the sidebar, which the desktop hides — so the start menu is
-    // where they go. Read from the client's own cache (PC.communityStats): /client/stats counts the
-    // caller as a viewer, and polling it again from here would inflate "online now" by one.
-    try{
-      const st = (PC().communityStats && PC().communityStats()) || {};
-      /* All five, always — including the zeroes. "0 in call" is information; a row that vanishes
-       * when it is zero just looks like the feature is missing, which is what happened here. */
-      const row = (icon, n, label) =>
-        `<span class="os-stat${(n > 0) ? ' on' : ''}" title="${enc(label)}">${iconSvg(icon)}<b>${enc(String(n || 0))}</b><i>${enc(label)}</i></span>`;
-      $('#os-stats', menu).innerHTML =
-        row('i-wot', st.users, 'WoT') + row('i-livedot', st.online, 'online') +
-        row('i-relay-dot', st.relay, 'on relay') + row('i-stream', st.streams, 'live') +
-        row('i-call', st.calls, 'in call');
-    }catch(_){ /* no instance (standalone build) → no community counters, which is correct */ }
+    /* The community counters USED to hang off the bottom of this menu — they live in the sidebar,
+     * which the desktop hides, and the start menu was the only surface that existed at the time.
+     * They have moved to the network flyout (netStatsHtml), where they belong: every one of them is
+     * a fact about the network — who is in the web of trust, who is online, how many of them this
+     * relay is holding, what is live — so they read as detail under "Connected to N relays" instead
+     * of as a footer under a list of apps. */
     /* The account chip opens the switcher, anchored to itself. Its first row is the identity you are
      * signed in as and opens your profile, so nothing that used to be reachable has moved further
      * away. */
@@ -1054,20 +1289,40 @@
     // can never match one, which is why the player kept its z-index:120 and played on, invisible,
     // underneath the z-index:300 desktop.
     document.documentElement.classList.add('os-on');
+    /* Getting here ANSWERS the "Click me for Desktop Mode" bubble, however you arrived. The logo's
+     * own click dismisses it, but the keyboard shortcut, the remembered preference and a plain
+     * PCOS.toggle() do not go through that — and the bubble is fixed-position on <html>, so it
+     * survives into the desktop and floats over it pointing at a sidebar that is no longer on
+     * screen, offering something you are already looking at. */
+    try{
+      settings().set('osHintSeen', true);
+      const h = document.getElementById('os-hint');
+      if(h){ try{ h._osUnplace(); }catch(_){} h.remove(); }
+    }catch(_){}
     desk = $('#os-desk', root);
     bar = $('#os-bar', root);
     desk.addEventListener('pointerdown', (e) => {
-      if(e.target === desk || e.target.closest('.os-icons') === e.target){ toggleStart(false); toggleNoti(false); }
+      if(e.target === desk || e.target.closest('.os-icons') === e.target){
+        toggleStart(false); toggleNoti(false); toggleNet(false);
+      }
     });
     // …and so does clicking anywhere that is not the panel or the clock itself. Without this the
     // only way to close it is the clock, which is not where anyone's hand is by then.
-    document.addEventListener('pointerdown', (e) => {
-      if(!notiOpen) return;
-      if(e.target.closest('#os-noti') || e.target.closest('#os-clock') || e.target.closest('.modal-bg')) return;
-      toggleNoti(false);
-    }, true);
+    document.addEventListener('pointerdown', _trayAway, true);
+    /* Repaint on every connection change — the tray icon is the point of the widget, so it cannot
+     * wait for the 30s clock tick to notice the relay went. Kept OFF Relay.onStatus: that is a
+     * single slot app.js owns for the offline banner and the outbox flush, and assigning it here
+     * would silently take all of it over (see Relay.watch). */
+    try{ _netOff = window.Relay && Relay.watch ? Relay.watch(onNetChange) : null; }catch(_){ _netOff = null; }
+    // navigator.onLine outranks the pool in netState(), and nothing in the pool fires when the radio
+    // goes — so without these the icon stays green on a machine that is plainly offline.
+    window.addEventListener('online', onNetChange);
+    window.addEventListener('offline', onNetChange);
     drawDesktop();
     drawBar();
+    /* No `!netOpen` here. The flyout lives on `root`, NOT inside `#os-bar`, so drawBar() cannot
+     * disturb it — adding it to this guard protected nothing and only stopped the taskbar CLOCK
+     * while the panel was open, which is the one thing on the bar that has to keep moving. */
     _clock = setInterval(() => { if(on && !startOpen && !notiOpen) drawBar(); }, 30000);
     // Leaving full screen by pressing Escape never goes through our button, so the label has to
     // follow the browser rather than our own last action.
@@ -1083,7 +1338,15 @@
     on = false;
     clearInterval(_clock); _clock = null;
     clearInterval(mailT); mailT = 0; mailSeen = null;
-    toastHost = null; notiOpen = false;
+    // The pool outlives the desktop — leaving this subscribed keeps a watcher calling drawBar()
+    // against a torn-down taskbar for the rest of the session, and re-entering would add a second.
+    clearInterval(_netT); _netT = null;
+    clearTimeout(_netPaintT); _netPaintT = null;
+    try{ _netOff && _netOff(); }catch(_){} _netOff = null;
+    document.removeEventListener('pointerdown', _trayAway, true);
+    window.removeEventListener('online', onNetChange);
+    window.removeEventListener('offline', onNetChange);
+    toastHost = null; notiOpen = false; netOpen = false;
     document.removeEventListener('keydown', onKey, true);
     document.removeEventListener('fullscreenchange', onFullChange);
     // Leaving the desktop leaves full screen with it: a full-screen CLASSIC client with no way back
@@ -1150,6 +1413,7 @@
      * before this ever runs, which is fine — the result is the same. Where it does reach us (the
      * desktop app, a kiosk WebView) it does the job. */
     if(e.key === 'F11'){ e.preventDefault(); toggleFull(); return; }
+    if(e.key === 'Escape' && netOpen){ e.stopPropagation(); toggleNet(false); return; }
     if(e.key === 'Escape' && notiOpen){ e.stopPropagation(); toggleNoti(false); return; }
     if(e.key === 'Escape' && startOpen){ e.stopPropagation(); toggleStart(false); return; }
     // Alt+W closes the focused window — Ctrl+W is the browser's tab and must not be taken.

@@ -1293,9 +1293,16 @@ async def _main(cfg: dict) -> None:
                             logger.debug("[nostr-relay] pin persist failed: %s", e)
                         store.extend_preserve_pubkeys({pk})
                         from . import ingest as _ingest
+                        # Pin the storage key too — it authors the calendar/contacts/mail we are
+                        # about to restore, so leaving it out of the preserve set means the next
+                        # prune may delete exactly what this sync just brought back.
+                        _spk = cmd.get("storage_pubkey")
+                        if _spk:
+                            store.extend_preserve_pubkeys({_spk})
                         asyncio.create_task(_safe(_ingest.backfill_author(
                             store, server, cfg["upstream"], pk,
                             direct=cfg["direct"], pace=cfg["request_pace_sec"],
+                            storage_pubkey=_spk,
                             # Read live from cfg (the control poller updates it on a settings
                             # reload) so a sync run right after the operator fills the field in
                             # uses the new mirrors rather than the set captured at startup.
@@ -1712,11 +1719,19 @@ def trigger_delete_author(pubkeys: list) -> dict:
     return _drop_control({"cmd": "delete-author", "pubkeys": pks})
 
 
-def trigger_backfill(pubkey_hex: str) -> dict:
-    """Admin button: ask the relay subprocess to backfill an author's history into the store."""
+def trigger_backfill(pubkey_hex: str, storage_pubkey: str | None = None) -> dict:
+    """Ask the relay subprocess to backfill an author's history into the store.
+
+    `storage_pubkey` is the SECOND author to restore: the server signs a user's calendar, contacts,
+    mail and upload keys with their per-user storage keypair, not with the identity key they log in
+    with, so a restore given only the latter brings back the notes and the vault and none of those.
+    The caller resolves it, because it needs a DB session and this runs in the relay process."""
     if not pubkey_hex:
         return {"ok": False, "error": "no nostr key on your account"}
-    return _drop_control({"cmd": "backfill", "pubkey": pubkey_hex})
+    cmd = {"cmd": "backfill", "pubkey": pubkey_hex}
+    if storage_pubkey and storage_pubkey != pubkey_hex:
+        cmd["storage_pubkey"] = storage_pubkey
+    return _drop_control(cmd)
 
 
 async def _mark_blocked_relays(store, gate, domains) -> list:

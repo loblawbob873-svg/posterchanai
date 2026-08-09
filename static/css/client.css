@@ -6268,6 +6268,61 @@ body.os-on #os-root{pointer-events:auto}
 .os-na:hover{border-color:var(--neon);color:var(--neon)}
 .os-na .ic{width:14px;height:14px}
 
+/* Networking widget — the tray icon and its flyout. Colour is the whole signal here, so the four
+   states are deliberately far apart rather than four shades of the accent: a half-connected pool has
+   to be distinguishable from a healthy one at a glance and at tray size. --neon is the theme's own
+   accent (it means "working" everywhere else in this client), and the amber/red are hardcoded
+   because they must not become unreadable under a light theme's palette swap. */
+.os-net{position:relative;display:flex;align-items:center;justify-content:center;width:34px;height:34px;
+  border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer;padding:0}
+.os-net:hover,.os-net.on{background:var(--panel2)}
+.os-net .ic{width:18px;height:18px}
+.os-net.net-ok{color:var(--neon)}
+.os-net.net-partial{color:#ffcf2b}
+.os-net.net-connecting{color:var(--muted)}
+.os-net.net-off{color:#ff6b6b}
+/* The connecting state pulses. A static grey icon is indistinguishable from a disabled one, and
+   "connecting" is precisely the state where somebody is waiting to see whether anything is happening. */
+.os-net.net-connecting .ic{animation:os-net-pulse 1.4s ease-in-out infinite}
+@keyframes os-net-pulse{0%,100%{opacity:.35}50%{opacity:1}}
+@media (prefers-reduced-motion:reduce){ .os-net.net-connecting .ic{animation:none;opacity:.7} }
+
+/* Narrower than the notification centre: this is a list of hostnames, not of posts. */
+.os-net-panel{width:min(340px,calc(100vw - 16px))}
+.os-net-sum{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.os-net-sum .ic{width:20px;height:20px;flex:0 0 auto;margin-top:1px;color:var(--muted)}
+.os-net-sum.net-ok .ic{color:var(--neon)}
+.os-net-sum.net-partial .ic{color:#ffcf2b}
+.os-net-sum.net-off .ic{color:#ff6b6b}
+.os-net-sum span{min-width:0}
+.os-net-sum b{display:block;font-size:13px}
+.os-net-sum i{display:block;font-style:normal;font-size:11.5px;color:var(--muted);margin-top:2px}
+.os-net-list{overflow-y:auto;overscroll-behavior:contain;padding:4px 0;max-height:46vh}
+.os-net-row{display:flex;align-items:center;gap:9px;padding:8px 14px;font-size:12.5px}
+/* min-width:0 on the NAME, so a long hostname ellipsises instead of squeezing the state text — which
+   is the half of the row that answers the question the panel was opened to answer. */
+.os-net-n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.os-net-s{flex:0 0 auto;color:var(--muted);font-size:11.5px}
+.os-net-tag{font-style:normal;font-size:10px;color:var(--muted);border:1px solid var(--line);
+  border-radius:5px;padding:1px 4px;margin-left:6px}
+.os-net-led{flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.os-net-led.ok{background:var(--neon)}
+.os-net-led.quiet{background:#ffcf2b}
+.os-net-led.connecting{background:var(--muted)}
+.os-net-led.off{background:#ff6b6b}
+.os-net-empty{padding:14px}
+/* The community counters, moved here from the start menu. A grid rather than the start menu's wrap:
+   this panel is 340px, and five free-flowing cells there left an orphan on its own line depending on
+   the digit count — the numbers change, so a layout that only looks right at 3 digits is a layout
+   that comes apart on its own. Three columns, so it is always two tidy rows. */
+/* Scoped to the PANEL, not bare `.os-net-stats`: `.os-stats` (the start menu's flex row) is defined
+   further DOWN this file, so at equal specificity it won and the grid never applied — five cells laid
+   out 4+1 instead of 3+2. Measured, not assumed; see the same trap in the icon/label button rules. */
+.os-net-panel .os-net-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:9px 6px;
+  padding:11px 14px 12px;margin-top:0;border-top:1px solid var(--line)}
+.os-net-panel .os-net-stats .os-stat{min-width:0;font-size:11.5px;gap:4px}
+.os-net-panel .os-net-stats .os-stat i{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
 /* Arrival toasts, bottom-right, the way Windows does them. Above the notification centre so one
    landing while the panel is open is still readable. */
 .os-toasts{position:fixed;right:10px;bottom:58px;z-index:345;display:flex;flex-direction:column-reverse;

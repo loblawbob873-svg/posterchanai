@@ -127,6 +127,37 @@
     // single relay being down is not a single point of failure for it.
     urls(){ return [...this._conns.keys()]; },
 
+    _watchers: [],
+    /* Subscribe to connection changes; returns an unsubscribe.
+     *
+     * A LIST, not a second `onStatus`: that is a single slot app.js owns, and it drives the offline
+     * banner, the outbox flush and the relay-change carry — so a second consumer assigning it takes
+     * all three over and nothing says so.
+     *
+     * Fired from _recomputeStatus, which runs on every PER-RELAY change rather than only when the
+     * aggregate flips. That distinction is the whole value for a per-relay display: a pool of five
+     * losing four of them never changes `status` (some socket is still 'ok' throughout), so a widget
+     * listening for the aggregate would show all five as fine right up until the last one died. */
+    watch(fn){
+      if (typeof fn !== 'function') return () => {};
+      this._watchers.push(fn);
+      return () => { const i = this._watchers.indexOf(fn); if (i >= 0) this._watchers.splice(i, 1); };
+    },
+    /* A SNAPSHOT of every socket, for display. Deliberately not the Conn objects: those own a live
+     * socket and two timers, and a caller that got hold of one could close the pool's connection by
+     * accident. `idle` is ms since anything last arrived — the heartbeat answers its own ping every
+     * 25s, so on a healthy link it stays low, and a trusted socket that reaches 40s reconnects
+     * itself. null means nothing has ever arrived (still connecting, or never did). */
+    conns(){
+      return [...this._conns.values()].map(c => ({
+        url: c.url,
+        status: c.status,
+        trusted: !!c.trusted,
+        open: !!(c.ws && c.ws.readyState === 1),
+        idle: c._lastRx ? Date.now() - c._lastRx : null,
+      }));
+    },
+
     // Resolve once a socket is actually OPEN (or `ms` elapses). Call BEFORE a burst of one-shot reads on a
     // cold start: on first launch (esp. the APK, radio waking) the socket is still CONNECTING, and firing
     // REQs into it just drops them (Conn._send needs readyState OPEN) and eats the full query timeout —
@@ -175,6 +206,12 @@
     _recomputeStatus(){
       const sts = [...this._conns.values()].map(c=>c.status);
       this._setStatus(sts.some(x=>x==='ok') ? 'ok' : sts.some(x=>x==='connecting') ? 'connecting' : 'off');
+      // A COPY: this fires from Conn._setStatus, which runs inside configure()'s loop over _conns —
+      // a watcher that reconfigures the pool would otherwise mutate the list being iterated. One
+      // throwing watcher must not cost the others their notification either.
+      for (const fn of this._watchers.slice()){
+        try { fn(this.status); } catch(e){ console.warn(e); }
+      }
     },
     _connReady(){
       if (!this._ready){ this._ready = true; if (this.onReady) try { this.onReady(); } catch(e){ console.warn(e); } }

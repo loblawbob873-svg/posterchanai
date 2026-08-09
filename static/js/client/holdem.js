@@ -238,7 +238,7 @@
       }
     }
     async function leaveTable(g){
-      if(!confirm('Leave this table? The hand continues with the others.')) return;
+      if(!await PC.uiConfirm('Leave this table? The hand continues with the others.', { ok: 'Leave' })) return;
       try{ await move(g,'leave'); }catch(_){}
       _hide(g._gid||g.root); _load();
     }

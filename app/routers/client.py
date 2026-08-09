@@ -4272,14 +4272,30 @@ async def sync_posts(data: SyncPostsReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    # The user's OTHER author key. The server signs their calendar, contacts, mail and upload keys
+    # with the per-user storage keypair it holds, so the restore needs both pubkeys or it brings back
+    # the client-written libraries (Notes, vault, Budget) and silently none of the server-written
+    # ones. Resolved HERE because it needs a DB session; the relay process has none.
+    storage_pk = None
+    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    if u:
+        try:
+            from app.services.nostr import bip340
+            from app.services.nostr_store import user_storage_seckey
+            storage_pk = bip340.pubkey_from_seckey(user_storage_seckey(db, u)).hex()
+        except Exception as e:
+            logger.warning("[client] could not resolve storage pubkey for %s: %s", pk[:12], e)
     try:
         from app.services.nostr_relay.thread import trigger_backfill
-        trigger_backfill(pk)
+        trigger_backfill(pk, storage_pk)
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
     private = bool(nostr_service.relay.normalize_relays(
         settings_store.get("nostr_relay_private_relays", "") or ""))
-    return JSONResponse({"ok": True, "private": private})
+    # Only claim the server-written libraries when BOTH halves can actually deliver them: a mirror to
+    # read from, and the key they were signed with. Otherwise the message names posts only — see the
+    # docstring on why an over-promise here is the expensive kind of wrong.
+    return JSONResponse({"ok": True, "private": private, "server_libs": bool(private and storage_pk)})
 
 
 # ----- auto NIP-05 name on signup -----

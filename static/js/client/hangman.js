@@ -89,7 +89,8 @@
     }
     async function quitGame(g){
       const active=g.status==='active';
-      if(!confirm(active?'Give up and remove this game?':'Remove this game?')) return;
+      if(!await PC.uiConfirm(active?'Give up and remove this game?':'Remove this game?',
+                             { ok: active?'Give up':'Remove', danger: true })) return;
       if(active && g.guesser===PC.ME.pubkey){ try{ await guess(g,'resign'); }catch(_){} }
       _hide(g._gid||g.root); _load();
     }

@@ -217,7 +217,7 @@
       [2000, 4500, 7000].forEach(d=>setTimeout(()=>{ if(PC.VIEW==='blackjack') _load(); }, d));
     }
     async function leaveTable(g){
-      if(!confirm('Leave this table? You keep your chips.')) return;
+      if(!await PC.uiConfirm('Leave this table? You keep your chips.', { ok: 'Leave' })) return;
       // Hide it locally FIRST so it disappears from your list immediately — even if the bot is slow or the
       // leave command doesn't land. (The command channel is a single replaceable event per user, so a rapid
       // second leave can clobber the first server-side; the local hide is what reliably clears the UI.)
@@ -228,7 +228,8 @@
       _load();
     }
     async function clearAll(games){
-      if(!confirm(`Clear all ${games.length} tables from your list? You keep your chips.`)) return;
+      if(!await PC.uiConfirm(`Clear all ${games.length} tables from your list? You keep your chips.`,
+                             { ok: 'Clear all', danger: true })) return;
       // The command channel is ONE replaceable event per user, so leaves fired back-to-back overwrite
       // each other before the bot (10s poll) reads them — only the last would register, and the rest
       // would resurface next time you start a game. Space them out so every LEAVE actually lands.

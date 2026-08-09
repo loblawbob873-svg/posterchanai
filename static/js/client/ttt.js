@@ -92,7 +92,8 @@
     }
     async function quitGame(g){
       const active=g.status==='active';
-      if(!confirm(active?'Resign and remove this game?':'Remove this game?')) return;
+      if(!await PC.uiConfirm(active?'Resign and remove this game?':'Remove this game?',
+                             { ok: active?'Resign':'Remove', danger: true })) return;
       if(active){ try{ await move(g,'resign'); }catch(_){} }
       _hide(g._gid||g.root); _load();
     }
