@@ -6331,6 +6331,14 @@ body.os-on #os-root{pointer-events:auto}
 .md-table tbody tr:nth-child(even){background:rgba(255,255,255,.02)}
 .md-table code{white-space:nowrap}
 
+/* An icon-only button in a row of labelled ones: square, so it does not inherit the label padding
+   and end up a lopsided rectangle. (The refresh control was a ↻ TEXT glyph, which this app's font
+   does not carry — it rendered as a tofu box.) */
+/* Keep the button's OWN padding — that is what gives it height. Zeroing it to force a square
+   collapsed the control to 11px tall, which is worse than the glyph it replaced. */
+.btn.icon-only{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+.btn.icon-only .ic{margin:0}
+
 /* Torrent manager (Discover → Torrents → Downloads). Card-per-torrent rather than a table: a table
    needs horizontal room this view does not have on a phone, and every column here is short enough to
    wrap into a meta row. */

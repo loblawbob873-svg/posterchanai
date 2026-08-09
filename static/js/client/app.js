@@ -5147,7 +5147,7 @@
     if(_torTab==='dl'){
       feed.innerHTML = tabs + `<div class="streams-top">
           <button class="btn btn-neon small" id="tm-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Add torrent</button>
-          <button class="btn btn-ghost small" id="tm-refresh" title="Refresh now">↻</button>
+          <button class="btn btn-ghost small icon-only" id="tm-refresh" title="Refresh now" aria-label="Refresh now"><svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg></button>
         </div><div class="tm-list" id="tm-list"><div class="spinner"></div></div>`;
       bind();
       { const a=$('#tm-add',feed); if(a) a.onclick=_torAddPrompt; }
@@ -5174,6 +5174,21 @@
     decorateProfiles();
     $$('.tor-card .name[data-prof]',feed).forEach(n=> n.onclick=()=>renderProfileView(n.dataset.prof));
     $$('.tor-copy',feed).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.magnet); toast('magnet copied'); }catch(_){ window.prompt('Magnet link:', b.dataset.magnet); } });
+    /* "Download here" hands the magnet to THIS node's torrent client and shows you the manager. The
+     * magnet link beside it still exists for handing the torrent to your own app; before, that was
+     * the only thing on offer, which on a phone means an app that may not be installed. */
+    $$('.tor-get',feed).forEach(b=> b.onclick=async()=>{
+      b.disabled=true;
+      try{
+        await _torApi('/add',{method:'POST',body:JSON.stringify({magnet:b.dataset.magnet})});
+        toast('added — opening Downloads');
+        _torTab='dl'; renderTorrents();
+      }catch(err){
+        b.disabled=false;
+        toast(err.status===503 ? 'this server has no torrent client enabled'
+                               : 'could not add that: '+(err.detail||err.message));
+      }
+    });
   }
   function _fmtBytes(n){ n=Number(n)||0; const u=['B','KB','MB','GB','TB']; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return n.toFixed(n<10&&i>0?1:0)+' '+u[i]; }
   function _magnet(e){
@@ -5195,7 +5210,7 @@
       <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span>${total?`<span class="muted small">· ${_fmtBytes(total)} · ${files.length} file${files.length===1?'':'s'}</span>`:''}</div>
       ${e.content?`<div class="tor-desc">${enc(e.content.slice(0,400))}</div>`:''}
       ${cats?`<div class="tor-tags">${cats}</div>`:''}
-      <div class="row tor-actions">${mag?`<a class="btn btn-cyan small" href="${enc(mag)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Open magnet</a><button class="btn btn-ghost small tor-copy" data-magnet="${enc(mag)}">⧉ Copy</button>`:'<span class="muted small">no infohash</span>'}</div>
+      <div class="row tor-actions">${mag?`<button class="btn btn-neon small tor-get" data-magnet="${enc(mag)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download here</button><a class="btn btn-cyan small" href="${enc(mag)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Open magnet</a><button class="btn btn-ghost small tor-copy" data-magnet="${enc(mag)}">⧉ Copy</button>`:'<span class="muted small">no infohash</span>'}</div>
     </div></article>`;
   }
   // ---------- git repos (NIP-34, kind 30617 repository announcements) ----------
