@@ -13981,7 +13981,37 @@
         if(sr && sr.status===409){
           let why=''; try{ why=((await sr.json())||{}).error||''; }catch(_){}
           console.warn('files-index: server refused a collapsing save —', why);
-          const intended = await uiConfirm('This removes most of your file list ('+(why.replace(/^refused: /,'')||'large drop')+
+          /* DON'T ASK A QUESTION WE ALREADY KNOW THE ANSWER TO.
+           *
+           * The server refuses a shrink it cannot explain — it holds a count and nothing else, so a
+           * deliberate mass-delete and a broken client about to wipe the list look identical from
+           * there. THIS side is not guessing: `deleted` is the list of entries the user removed on
+           * this device. If it accounts for the shrink, the write is exactly what they asked for and
+           * there is nothing to ask about.
+           *
+           * Without this, someone who deleted 2422 dead tracks in the morning got "This removes most
+           * of your file list" every time the index saved for the rest of the day — including once
+           * per checkpoint while uploading a music folder, which is the least appropriate moment
+           * imaginable to ask whether they meant to delete something. And the dialog's own advice
+           * ("if you did NOT expect this, cancel") is exactly wrong there: they did not expect it,
+           * they were uploading, so cancelling was the sensible-looking answer and the loop never
+           * ended.
+           *
+           * The guard still does its job. A stale bundle, a fresh device or a third-party client
+           * carrying an empty index has no tombstones to show, cannot explain the shrink, and is
+           * asked — which is the case that once cost a drive 417 filenames. */
+          // Tolerant of the wording, not just of the numbers: the server says "N entries -> M"
+          // today, and a message that reads slightly differently must not quietly turn this
+          // back into a dialog nobody can answer.
+          const m = /(\d+)\D+?(\d+)\s*$/.exec(String(why||'').trim());
+          const shrink = m ? (+m[1] - +m[2]) : 0;
+          const tombs = Object.keys((this.data && this.data.deleted) || {}).length;
+          if(shrink > 0 && tombs >= shrink){
+            console.warn('files-index: shrink of ' + shrink + ' is covered by ' + tombs
+                         + ' deletions made here — forcing without asking');
+            this._forceOk = true;
+          }
+          const intended = this._forceOk || await uiConfirm('This removes most of your file list ('+(why.replace(/^refused: /,'')||'large drop')+
             ').\n\nIf you just deleted a folder, that\'s expected — continue?\n\nIf you did NOT expect this, cancel: '+
             'your file list is still safe on the server.');
           if(!intended){

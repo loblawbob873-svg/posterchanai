@@ -71,7 +71,7 @@ const fetch = async (u, o) => {
   // The real server refuses a collapsing write UNLESS the request carries force.
   if (fetchStatus === 409)
     return last.force ? { ok:true, status:200, json: async () => ({}) }
-                      : { ok:false, status:409, json: async () => ({error:'refused: 3990 -> 1568'}) };
+                      : { ok:false, status:409, json: async () => ({error:'refused: 3990 entries -> 1568'}) };
   return { ok: fetchStatus < 400, status: fetchStatus, json: async () => ({}) };
 };
 const uploadBlob = async () => 'https://x/' + 'cd'.repeat(32);
@@ -106,6 +106,26 @@ function makeIdx(){
     asked = 0; signs = 0; bodies.length = 0;
     await Promise.all(Array.from({length: 10}, () => idx._save()));
     out.stormAsked = asked;
+  }
+  // 0b. A SHRINK THE CLIENT CAN EXPLAIN is not a question. The user deleted these entries here;
+  //     the server only has a count and cannot tell that from a wipe. Asking anyway is what put
+  //     "This removes most of your file list" in front of someone uploading a music folder.
+  {
+    const idx = makeIdx(); signOk = true; fetchStatus = 409; confirmAnswer = false;
+    idx.data.deleted = {}; for (let i = 0; i < 2422; i++) idx.data.deleted['t'+i] = 1;
+    asked = 0; bodies.length = 0;
+    out.explainedSaved = await idx._save();
+    out.explainedAsked = asked;
+    out.explainedForced = bodies.some(b => b.force === true);
+  }
+  // 0c. …and a shrink it CANNOT explain still asks. This is the case the guard exists for: a stale
+  //     or empty client with no deletions to show for it.
+  {
+    const idx = makeIdx(); signOk = true; fetchStatus = 409; confirmAnswer = false;
+    idx.data.deleted = {};
+    asked = 0;
+    out.unexplainedSaved = await idx._save();
+    out.unexplainedAsked = asked;
   }
   // 1. the signer will not answer — the exact shape of the reported failure
   {
@@ -229,6 +249,21 @@ class FilesIndexSaveReports(unittest.TestCase):
         adding songs to."""
         self.assertEqual(self.r["stormAsked"], 1,
                          f"{self.r['stormAsked']} dialogs for one pending edit")
+
+    def test_a_shrink_the_client_can_explain_is_not_a_question(self):
+        """The server holds a count and nothing else, so a deliberate mass-delete and a client about
+        to wipe the list look the same from there. This side knows: the tombstones ARE the
+        explanation. Someone who deleted 2422 dead tracks was asked to confirm it again every time
+        the index saved — including once per checkpoint while uploading a folder."""
+        self.assertIs(self.r["explainedSaved"], True)
+        self.assertEqual(self.r["explainedAsked"], 0, "it asked about a deletion it already knew about")
+        self.assertTrue(self.r["explainedForced"], "…and it must actually send the write")
+
+    def test_a_shrink_it_cannot_explain_still_asks(self):
+        """The case the guard exists for — a stale bundle or a fresh device carrying an empty index.
+        No tombstones, no explanation, so it asks (and here the answer is no)."""
+        self.assertEqual(self.r["unexplainedAsked"], 1)
+        self.assertIs(self.r["unexplainedSaved"], False)
 
     def test_answering_no_never_forces(self):
         self.assertIs(self.r["refusedSaved"], False)
