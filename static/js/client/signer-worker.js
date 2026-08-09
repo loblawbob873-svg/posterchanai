@@ -117,7 +117,22 @@ self.onmessage = async (e) => {
       }
       default: return reply(id, false, null, 'unknown op ' + op);
     }
-  } catch (err) { reply(id, false, null, String(err && err.message || err)); }
+  } catch (err) {
+    /* Say WHICH op failed, and how big it was.
+     *
+     * Every crypto op answers through one channel, so a thrown message arrives on the main thread
+     * with no frames above WorkerRPC.onmessage — the promise that rejects is not the one that
+     * called. "invalid plaintext size: must be between 1 and 65535 bytes" is the case that made
+     * this worth fixing: NIP-44 has a hard 64KB ceiling and NIP-04 has none, so the same sentence
+     * can mean a document that outgrew its envelope OR a remote-signer request that did, and there
+     * was nothing in it to say which. The op name and the payload size separate them. */
+    let size = '';
+    try{
+      const s = (args && (args.text || args.ct)) || '';
+      if (typeof s === 'string') size = ' (' + new TextEncoder().encode(s).length + ' bytes)';
+    }catch(_){ }
+    reply(id, false, null, op + ': ' + String(err && err.message || err) + size);
+  }
 };
 
 function safeVerify(ev){ try { return NT.verifyEvent(ev); } catch(_) { return false; } }

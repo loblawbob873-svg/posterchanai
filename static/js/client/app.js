@@ -789,8 +789,26 @@
     async _rpc(method, params, opts){
       if(!this.remotePk || !this._live().length) throw new Error('signer not connected');
       const id='r'+Math.random().toString(36).slice(2,10);
-      const enc=(opts && opts.enc) || this._enc || 'nip04';
-      const ct=(await Relay.worker.call(enc+'enc',{peer:this.remotePk, text:JSON.stringify({ id, method, params })})).ct;
+      let enc=(opts && opts.enc) || this._enc || 'nip04';
+      const body=JSON.stringify({ id, method, params });
+      /* NIP-44 refuses a plaintext over 65535 bytes; NIP-04 has no ceiling at all.
+       *
+       * That is a property of the ENVELOPE, not of this request, and it bites here because the
+       * envelope wraps whole documents: a `nip44_encrypt` of a Notes library or a budget, or a
+       * `sign_event` of a large event, is routinely past 64KB. Sent as NIP-44 it does not fail at
+       * the signer or on the relay — it throws in our own worker before anything is published
+       * ("invalid plaintext size: must be between 1 and 65535 bytes"), so the action simply dies.
+       * Every session used to be NIP-04, which is why this only appeared once the scheme was
+       * negotiated.
+       *
+       * So oversize falls back to NIP-04 for that one request. A signer that reads only NIP-44
+       * cannot be sent a request this size by ANY route, so there is nothing to lose; Amber and
+       * every dual-scheme signer read it. The session's own scheme is left alone. */
+      if(enc === 'nip44' && new TextEncoder().encode(body).length > 65535){
+        enc = 'nip04';
+        try{ console.warn('[nip46] ' + method + ' is over NIP-44\'s 64KB ceiling — sent as NIP-04'); }catch(_){}
+      }
+      const ct=(await Relay.worker.call(enc+'enc',{peer:this.remotePk, text:body})).ct;
       const tpl={ kind:24133, content:ct, tags:[['p',this.remotePk]], created_at:Math.floor(Date.now()/1000), pubkey:this.appPk };
       const signed=await Relay.worker.call('sign',{ event:tpl });
       return new Promise((res,rej)=>{

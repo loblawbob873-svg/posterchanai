@@ -24,6 +24,14 @@ Each scenario is a way remote signing has actually broken:
   nip04-only       The long tail, which reads only NIP-04. The scheme has to be settled by trying,
                    and the fallback attempt has to actually happen.
 
+  oversize-request A request bigger than its ENVELOPE allows. NIP-44 refuses a plaintext over 65535
+                   bytes; NIP-04 has no ceiling. The envelope wraps whole documents — an encrypt of
+                   a Notes library or a budget, a sign_event of a large event — so once the scheme
+                   was negotiated, a session that settled on NIP-44 could no longer carry them. It
+                   throws in the client's own worker before anything is published, so the action
+                   dies with "invalid plaintext size" and no signer or relay is ever involved. Run
+                   against every signer that reads both schemes.
+
   slow-approval    The signer takes longer to answer the connect than the probe waits — which is not
                    an edge case, it is a human being asked to approve on a phone. The first attempt
                    must stay outstanding: a probe that retires its own request throws away the
@@ -183,6 +191,8 @@ class Bunker:
                     result = "ack"
                 elif req.get("method") == "get_public_key":
                     result = self.user_pk
+                elif req.get("method") in ("nip44_encrypt", "nip04_encrypt"):
+                    result = "ct:" + str(len(req["params"][1]))
                 elif req.get("method") == "sign_event":
                     tpl = json.loads(req["params"][0])
                     result = json.dumps(nevent.build_event(
@@ -238,6 +248,20 @@ LOGIN = r"""(async (uri) => {
   }
   return { ok: false, err: 'still waiting after 60s', pk: who() };
 })"""
+
+
+# A request too big for its ENVELOPE. NIP-44 refuses a plaintext over 65535 bytes and NIP-04 has no
+# ceiling, so once the scheme was negotiated a session that settled on NIP-44 could no longer carry a
+# whole document — an encrypt of a Notes library or a budget, or a sign_event of a large event. It
+# does not fail at the signer or on the relay: it throws in the client's own worker before anything is
+# published, and the action just dies.
+BIG = r"""(async () => {
+  try{
+    const me = window.__PC.me();
+    const r = await window.__PC.nip44enc(me.pubkey, 'x'.repeat(100000));
+    return { ok: true, got: String(r).slice(0, 40) };
+  }catch(e){ return { ok: false, err: String((e && e.message) || e) }; }
+})()"""
 
 
 async def scenario(js, bunker, uri_relays):
@@ -340,7 +364,15 @@ async def drive(url):
                     problems.append((name, "signed in as the wrong key",
                                      f"got {str(r.get('pk'))[:12]}…, this bunker holds "
                                      f"{bunker.user_pk[:12]}…"))
-                elif os.environ.get("PC_DEBUG"):
+                elif kw.get("reads") == "both":
+                    b = await js(BIG, awaited=True) or {}
+                    if not b.get("ok"):
+                        problems.append(("oversize-request",
+                                         b.get("err") or "a 100KB request did not go out",
+                                         f"signer saw {bunker.seen[-1:] or 'nothing more'}"))
+                    elif os.environ.get("PC_DEBUG"):
+                        print(f"  DEBUG oversize: {b} / {bunker.seen[-1:]}", flush=True)
+                if os.environ.get("PC_DEBUG"):
                     print(f"  DEBUG {name}: ok in {took:.0f}s, signer saw {bunker.seen}", flush=True)
                 bunker.stop()
     finally:
