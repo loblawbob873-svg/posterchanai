@@ -196,3 +196,81 @@ class TestFolderSync(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(not NODE, "no node on this node")
+class TestSyncPolicy(unittest.TestCase):
+    """WHEN to sync — which on a phone matters more than how.
+
+    The expensive things are the radio (an upload holds it awake far longer than the bytes suggest),
+    hashing a large tree, and waking up at all. Each case here is one of those bills.
+    """
+
+    def ask(self, state, prefs=None):
+        js = ("const S=require(%s);"
+              "process.stdout.write(JSON.stringify(S.shouldSync(%s, %s)));"
+              ) % (json.dumps(MOD), json.dumps(state), json.dumps(prefs or {}))
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            raise AssertionError("node failed:\n" + r.stderr[-2000:])
+        return json.loads(r.stdout)
+
+    def test_only_when_plugged_in_waits(self):
+        r = self.ask({"charging": False, "online": True}, {"onlyWhenCharging": True})
+        self.assertEqual(r["mode"], "none")
+        self.assertIn("plug in", r["why"])
+
+    def test_only_when_plugged_in_runs_on_the_charger(self):
+        r = self.ask({"charging": True, "online": True, "now": 10 ** 9},
+                     {"onlyWhenCharging": True})
+        self.assertTrue(r["run"])
+
+    def test_metered_data_is_refused_by_default(self):
+        """wifiOnly defaults on: mobile data is both a bill and the radio's worst case."""
+        r = self.ask({"charging": True, "online": True, "metered": True})
+        self.assertEqual(r["mode"], "none")
+        self.assertIn("Wi-Fi", r["why"])
+
+    def test_a_low_battery_still_notices_changes(self):
+        """Degrade, don't stop. Learning what changed is one small request; it is the UPLOAD and the
+        rehash that cost, and those can wait for the charger."""
+        r = self.ask({"charging": False, "online": True, "battery": 9})
+        self.assertEqual(r["mode"], "metadata")
+
+    def test_a_low_battery_on_the_charger_is_not_low(self):
+        r = self.ask({"charging": True, "online": True, "battery": 9, "now": 10 ** 9})
+        self.assertNotEqual(r["mode"], "metadata")
+
+    def test_a_full_rehash_is_a_charging_time_job(self):
+        r = self.ask({"charging": True, "online": True, "now": 10 ** 9, "lastFullScanAt": 0,
+                      "lastSyncAt": 1})
+        self.assertEqual(r["mode"], "full")
+
+    def test_on_battery_it_never_rehashes_the_whole_tree(self):
+        r = self.ask({"charging": False, "online": True, "battery": 90, "now": 10 ** 9,
+                      "lastFullScanAt": 0, "lastSyncAt": 1})
+        self.assertEqual(r["mode"], "incremental")
+
+    def test_it_does_not_wake_for_nothing(self):
+        now = 10 ** 9
+        r = self.ask({"charging": True, "online": True, "now": now, "lastSyncAt": now - 60_000})
+        self.assertEqual(r["mode"], "none")
+
+    def test_a_known_change_beats_the_interval(self):
+        now = 10 ** 9
+        r = self.ask({"charging": True, "online": True, "now": now, "lastSyncAt": now - 60_000,
+                      "dirty": True})
+        self.assertTrue(r["run"])
+
+    def test_pressing_the_button_always_works(self):
+        """Refusing someone who just pressed Sync because the battery is at 19% is how a feature
+        earns a reputation."""
+        r = self.ask({"manual": True, "charging": False, "battery": 5, "metered": True},
+                     {"onlyWhenCharging": True, "wifiOnly": True})
+        self.assertEqual(r["mode"], "full")
+
+    def test_offline_does_nothing(self):
+        self.assertEqual(self.ask({"online": False, "charging": True})["mode"], "none")
+
+    def test_disabled_does_nothing(self):
+        self.assertEqual(self.ask({"charging": True}, {"enabled": False})["mode"], "none")

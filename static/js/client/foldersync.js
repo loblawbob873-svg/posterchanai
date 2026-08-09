@@ -167,7 +167,69 @@
     return out;
   }
 
-  const API = { diff, advance, same, conflictPath, trashPath, pruneTombstones, MTIME_SLOP };
+  /* ---- WHEN to sync, which on a phone matters more than how ---------------------------------
+   *
+   * The expensive things here are, in order: the RADIO (an upload holds it awake far longer than
+   * the bytes suggest), HASHING a large tree, and waking up at all. So this answers one question —
+   * may we run right now, and how much — from device state the adapter reads and preferences the
+   * user set. Pure, for the reason the merge is: it is the same answer on every platform and it is
+   * cheaper to test than to observe.
+   *
+   * THE ANDROID SHAPE THIS IS BUILT FOR. Do not poll from a timer in the WebView; that is the
+   * battery bug, not the fix. Every field below maps onto a WorkManager constraint
+   * (setRequiresCharging / setRequiredNetworkType(UNMETERED) / setRequiresBatteryNotLow /
+   * setRequiresDeviceIdle), so the OS holds the job until the conditions are met and the app is not
+   * running at all in between. This function then re-checks on wake, because constraints can lapse
+   * between the OS scheduling a job and the job running.
+   *
+   * `mode` is the real output, not a boolean: a device on battery can still afford to notice a
+   * change and upload a 40KB document, while REHASHING a Pictures folder is something to do while
+   * charging. Collapsing that to yes/no is what makes a sync either useless or a space heater.
+   *   'full'        scan + rehash everything, upload, download
+   *   'incremental' trust size+mtime to spot changes, upload/download what they show
+   *   'metadata'    manifest only — learn what changed, act later. Costs one small request.
+   *   'none'
+   */
+  const DEFAULT_PREFS = {
+    enabled: true,
+    onlyWhenCharging: false,   // the "only sync when plugged in" switch
+    wifiOnly: true,            // metered data is both a bill and the radio's worst case
+    minBattery: 20,            // below this, nothing but metadata unless plugged in
+    minIntervalMs: 15 * 60 * 1000,
+    fullScanIntervalMs: 24 * 60 * 60 * 1000,   // a rehash is a charging-time job
+  };
+
+  function shouldSync(state, prefs){
+    const p = Object.assign({}, DEFAULT_PREFS, prefs || {});
+    const s = state || {};
+    const say = (mode, why) => ({ mode, why, run: mode !== 'none' });
+
+    if(!p.enabled) return say('none', 'sync is off for this folder');
+    // Explicit beats every constraint below — this is the user standing there having just pressed a
+    // button, and refusing them because the battery is at 19% is how a feature earns a reputation.
+    if(s.manual) return say('full', 'you asked for it');
+
+    if(s.charging === false && p.onlyWhenCharging) return say('none', 'waiting until you plug in');
+    if(s.metered && p.wifiOnly) return say('none', 'waiting for Wi-Fi');
+    if(s.online === false) return say('none', 'offline');
+
+    const battery = typeof s.battery === 'number' ? s.battery : 100;
+    if(!s.charging && battery < p.minBattery)
+      return say('metadata', 'battery at ' + battery + '% — noting changes, uploading later');
+
+    const since = (s.now || 0) - (s.lastSyncAt || 0);
+    if(s.lastSyncAt && since < p.minIntervalMs && !s.dirty)
+      return say('none', 'nothing changed since the last sweep');
+
+    const sinceFull = (s.now || 0) - (s.lastFullScanAt || 0);
+    if(s.charging && sinceFull >= p.fullScanIntervalMs)
+      return say('full', 'plugged in, and it has been a while since a full check');
+
+    return say('incremental', s.charging ? 'plugged in' : 'on battery — changed files only');
+  }
+
+  const API = { diff, advance, same, conflictPath, trashPath, pruneTombstones, MTIME_SLOP,
+                shouldSync, DEFAULT_PREFS };
   root.PCFolderSync = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
