@@ -104,23 +104,25 @@
     // time, so dropping it from the queue alone would leave it sitting in the timeline looking posted with
     // nothing left that will ever send it — the silent divergence this whole feature exists to avoid.
     async flush(){
-      if (_flushing || !items.length) return { sent: 0, dropped: [] };
-      if (!window.Relay || Relay.status !== 'ok') return { sent: 0, dropped: [] };
+      if (_flushing || !items.length) return { sent: 0, dropped: [], sentIds: [] };
+      if (!window.Relay || Relay.status !== 'ok') return { sent: 0, dropped: [], sentIds: [] };
       _flushing = true;
-      let sent = 0; const dropped = [];
+      // sentIds, not just a COUNT: the caller has to know WHICH events went out to reconcile
+      // anything that was waiting on them — a draft kept as the recovery copy, above all.
+      let sent = 0; const dropped = [], sentIds = [];
       try{
         for (const it of items.slice()){
           if (!window.Relay || Relay.status !== 'ok') break;   // went away mid-drain → stop, keep the rest
           let r = null;
           try{ r = await Relay.publish(it.ev); }catch(_){ r = null; }
-          if (r && r.ok){ this.remove(it.ev.id); sent++; continue; }
+          if (r && r.ok){ this.remove(it.ev.id); sent++; sentIds.push(it.ev.id); continue; }
           it.tries = (it.tries||0) + 1;
           if (it.tries >= MAX_TRIES){ this.remove(it.ev.id); dropped.push(it.ev.id); }
           else _save(items);
           break;
         }
       } finally { _flushing = false; }
-      return { sent, dropped };
+      return { sent, dropped, sentIds };
     },
   };
 

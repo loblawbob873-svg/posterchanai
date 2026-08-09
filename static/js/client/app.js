@@ -547,9 +547,8 @@
 
   const Nip46 = {
     ws:null, relay:null, appSk:null, appPk:null, remotePk:null, userPk:null,
-    _enc:'nip04',            // outbound payload scheme; _decode moves it to whatever the signer replies in
     _pending:new Map(), _subId:null, _onEvent:null,
-    reset(){ this._wantOpen=false; this._enc='nip04'; try{ if(this.ws){ this.ws.onclose=null; this.ws.close(); } }catch(_){} this.ws=null;
+    reset(){ this._wantOpen=false; try{ if(this.ws){ this.ws.onclose=null; this.ws.close(); } }catch(_){} this.ws=null;
       this._pending.forEach(p=>{ try{ p.rej(new Error('signer disconnected')); }catch(_){} }); this._pending.clear();
       // Fail the queued work too — otherwise jobs waiting for a slot hang on a socket that's gone.
       const q=this._queue||[]; this._queue=[]; this._inflight=0;
@@ -564,15 +563,16 @@
        * readable. (Reading a NIP-04 payload as NIP-44 is what produces "Unsupported NIP-44 version:
        * 150" in a signer's log — 150 is just the first byte of AES ciphertext, different every time.)
        *
-       * Whichever worked becomes the scheme we ENCRYPT with from here on. NIP-46 began as NIP-04 and
-       * moved to NIP-44, so both are in the wild and neither is safe to assume: we open in NIP-04,
-       * which every signer still reads, and then follow the signer. */
+       * READING is tolerant; WRITING is not. We always send NIP-04, which every signer in the wild
+       * reads. Mirroring the signer's scheme on the outbound side was tried and REVERTED: it makes
+       * every future signature depend on correctly inferring a scheme from one earlier message, and
+       * when that inference is wrong nothing reports it — the request is simply never decrypted, so
+       * replying and posting stop working with no error anywhere. That is a bad trade against a
+       * problem the signer end can fix by detecting `?iv=`, which is what NIP-04 marks itself with. */
       const ops = /\?iv=/.test(String(ct || '')) ? ['nip04dec','nip44dec'] : ['nip44dec','nip04dec'];
       for(const op of ops){
         try{
-          const pt = JSON.parse((await Relay.worker.call(op,{ peer, ct })).pt);
-          this._enc = (op === 'nip04dec') ? 'nip04' : 'nip44';
-          return pt;
+          return JSON.parse((await Relay.worker.call(op,{ peer, ct })).pt);
         }catch(_){}
       }
       return null;
@@ -708,7 +708,7 @@
     async _rpc(method, params){
       if(!this.remotePk || !this.ws) throw new Error('signer not connected');
       const id='r'+Math.random().toString(36).slice(2,10);
-      const ct=(await Relay.worker.call(this._enc+'enc',{peer:this.remotePk, text:JSON.stringify({ id, method, params })})).ct;
+      const ct=(await Relay.worker.call('nip04enc',{peer:this.remotePk, text:JSON.stringify({ id, method, params })})).ct;
       const tpl={ kind:24133, content:ct, tags:[['p',this.remotePk]], created_at:Math.floor(Date.now()/1000), pubkey:this.appPk };
       const signed=await Relay.worker.call('sign',{ event:tpl });
       return new Promise((res,rej)=>{
@@ -2573,10 +2573,42 @@
     if(r.moved === r.total){ try{ localStorage.removeItem(_CARRY_KEY); }catch(_){ } }
   }
 
+  /* Drafts whose post is sitting in the Outbox: eventId -> draftId.
+   *
+   * sendDraft must NOT delete a draft when publish() only QUEUED the post — publish deliberately
+   * reports ok:false for a queued write, and the draft is the recovery copy if the relay ends up
+   * refusing it. But nothing removed the draft when the queue later SENT it either: the post went
+   * out and the draft sat there looking unsent, so "2 posts stuck in drafts, never getting sent"
+   * described a post that had in fact been published. Worse, pressing Send again signs a SECOND
+   * event — a duplicate post, not a retry.
+   *
+   * Persisted, because the send normally happens in a LATER session; that is what an outbox is for,
+   * and the report that found this came after an app restart. */
+  const _QD_KEY = 'pc_draft_queued';
+  function _qDrafts(){ try{ return JSON.parse(localStorage.getItem(_QD_KEY) || '{}') || {}; }catch(_){ return {}; } }
+  function _qDraftSet(evId, draftId){
+    try{ const m=_qDrafts(); m[evId]=draftId; localStorage.setItem(_QD_KEY, JSON.stringify(m)); }catch(_){}
+  }
+  function _qDraftTake(evId){
+    try{
+      const m=_qDrafts(); if(!(evId in m)) return undefined;
+      const d=m[evId]; delete m[evId]; localStorage.setItem(_QD_KEY, JSON.stringify(m)); return d;
+    }catch(_){ return undefined; }
+  }
   function _flushOutbox(){
     if(!window.Outbox || !Outbox.count()) return;
     setTimeout(()=>{ Outbox.flush().then(res=>{
       const sent = (res && res.sent) || 0, dropped = (res && res.dropped) || [];
+      // A queued post that has now gone out takes its draft with it.
+      let clearedDrafts = 0;
+      ((res && res.sentIds) || []).forEach(evId=>{
+        const d = _qDraftTake(evId);
+        try{ if(d !== undefined && Drafts.get(d)){ Drafts.remove(d); clearedDrafts++; } }catch(_){}
+      });
+      // A DROPPED one keeps its draft — that copy is the only place the text still exists — but the
+      // mapping goes, so a later event id can never collide with a stale entry.
+      dropped.forEach(evId=>{ _qDraftTake(evId); });
+      if(clearedDrafts && VIEW==='drafts'){ try{ renderDrafts(); }catch(_){} }
       if(!sent && !dropped.length) return;
       // An item the relay kept refusing is now gone from the queue, so it must go from the local store too
       // — left there it would sit in the timeline looking posted with nothing that will ever send it. And
@@ -11524,6 +11556,9 @@
     try{
       const r=await publish(replyKindFor(d.reply?Store.get(d.reply):null), content, tags);
       if(r && r.ok){ Drafts.remove(id); toast('posted'); }   // failure toast + kept draft handled by publish()
+      // Queued, not sent: keep the draft as the recovery copy, but remember which event it became so
+      // the flush can retire it once the relay actually takes it (see _qDrafts).
+      else if(r && r.queued && r.ev) _qDraftSet(r.ev.id, id);
       if(VIEW==='drafts') renderDrafts();
     }
     catch(e){ toast('post failed: '+((e&&e.message)||e)); }   // signing failed → nothing was created; keep the draft
