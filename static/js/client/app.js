@@ -714,7 +714,11 @@
       return new Promise((res,rej)=>{
         this._pending.set(id,{res,rej});
         try{ this.ws.send(JSON.stringify(['EVENT', signed])); }catch(e){ this._pending.delete(id); return rej(e); }
-        // generous timeout — the user may need to physically approve on their phone
+        /* Say something LONG before the ceiling. The 120s is deliberate — approving on a phone is a
+         * physical act — but two minutes of a button that does nothing is indistinguishable from a
+         * broken one, and that is exactly how it was reported ("click send, nothing happens").
+         * A single nudge at 4s, only while the request is still outstanding. */
+        setTimeout(()=>{ if(this._pending.has(id)) try{ toast('waiting for your signer…'); }catch(_){} }, 4000);
         setTimeout(()=>{ if(this._pending.has(id)){ this._pending.delete(id); rej(new Error('signer request timed out')); } }, 120000);
       });
     },
@@ -792,7 +796,16 @@
       return { uri, done };
     },
     async resume(s){
-      await this._ensureAppKey(s.sk); await this._openRelay(s.relay);
+      /* The session stores the ONE relay that carried the pairing, and a relay can die between
+       * sessions — relay.poster.place sat on an expired certificate for months, and relay.nsec.app
+       * answers 502. Pinned to a dead relay, every later signature is sent into a socket nobody is
+       * listening on and the only feedback is a 120s timeout, so the app looks like it has simply
+       * stopped signing. Try the stored relay FIRST (the signer is definitely there if it is up),
+       * then this node's current signer relays. */
+      await this._ensureAppKey(s.sk);
+      const relays = [s.relay].concat(_ncRelays()).filter(Boolean);
+      try{ await this._openFirstOf(relays); }
+      catch(e){ await this._openRelay(s.relay); }   // keep the original error shape if none open
       this.remotePk=s.remotePk; this.userPk=s.userPk||null;
       if(!this.userPk) this.userPk=await this._send('get_public_key',[]);
       return this.userPk;
@@ -11499,7 +11512,7 @@
       const id=card.dataset.draft;
       card.querySelector('[data-act="edit"]').onclick=()=>{ const d=Drafts.get(id); if(d) compose({reply:d.reply,replyPk:d.replyPk,quote:d.quote,draftId:id,text:d.text,cw:d.cw,cwReason:d.cwReason}); };
       card.querySelector('[data-act="del"]').onclick=async()=>{ if(await uiConfirm('Delete this draft?',{ok:'Delete',danger:true})){ Drafts.remove(id); renderDrafts(); } };   // in-app confirm, NOT native — a native dialog wedges the Electron renderer's focus and breaks the next composer
-      card.querySelector('[data-act="send"]').onclick=()=>sendDraft(id);
+      { const sb=card.querySelector('[data-act="send"]'); if(sb) sb.onclick=()=>sendDraft(id, sb); }
     });
     hydrate(feed);
     _renderScheduled();   // async: fill the ⏰ Scheduled section above the drafts
@@ -11541,7 +11554,16 @@
       return (content && content.trim() ? content.trim()+'\n\n' : '')+nev;
     }catch(_){ return content; }
   }
-  async function sendDraft(id){
+  async function sendDraft(id, btn){
+    /* Acknowledge the CLICK before anything that can block. Publishing goes through the signer, and
+     * a remote signer can legitimately take a while (or never answer), so without this the button
+     * sat inert with no toast and no spinner — reported as "click send, nothing happens". */
+    if(btn){ btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = 'sending…'; }
+    const _done = () => { if(btn && btn.isConnected){ btn.disabled = false; btn.textContent = btn.dataset.label || 'Send ▶'; } };
+    try{ return await _sendDraft(id); }
+    finally{ _done(); }
+  }
+  async function _sendDraft(id){
     const d=Drafts.get(id);
     // Never fail silently: a Send that does nothing, with no message, is indistinguishable from a broken app.
     if(!d){ toast('couldn’t find that draft — reload and try again'); return; }
