@@ -748,8 +748,11 @@ class SearchService:
                             if total >= max_bytes:
                                 break
                         enc = r.encoding or "utf-8"
+                        # Carry the STATUS. A 403 bot-challenge page is perfectly valid HTML, so
+                        # without it the caller cannot tell "the site refused us" from "the site is
+                        # built by JavaScript" — and it told users the latter for both.
                         return {"url": current, "html": b"".join(chunks)[:max_bytes].decode(enc, errors="replace"),
-                                "content_type": ctype, "error": None}
+                                "content_type": ctype, "status": r.status_code, "error": None}
         except Exception as e:
             logger.info("page fetch failed for %s: %s", url, e)
             return {"url": url, "html": "", "content_type": "", "error": str(e)[:200]}

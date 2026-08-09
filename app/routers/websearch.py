@@ -483,6 +483,46 @@ def _looks_empty(html: str) -> bool:
         return False
 
 
+# The signatures of an interstitial that is asking a BROWSER to prove itself. Matched against the
+# raw upstream body, not the sanitised one — the sanitiser strips exactly the scripts that carry the
+# giveaway. Cloudflare, DDoS-Guard and the "enable JS and cookies" wall are what actually turn up.
+_CHALLENGE_RE = re.compile(
+    r"just a moment\.\.\.|checking your browser|cf-browser-verification|cf_chl_|__cf_chl|"
+    r"attention required!\s*\|\s*cloudflare|ddos-guard|enable javascript and cookies to continue|"
+    r"please turn javascript on and reload", re.I)
+
+
+def _refused_page(url: str, status, raw: str) -> str:
+    """The site REFUSED us, rather than the page being script-built.
+
+    A bot challenge is a real HTML document that happens to be empty once its scripts are stripped,
+    so it landed on "This page is built by JavaScript — nothing is wrong with the link". Something is
+    wrong with the link: the site turned us away, and no amount of Reader will change that. Says which
+    of the two happened, because the remedies differ.
+    """
+    from html import escape as _esc
+    challenged = bool(raw and _CHALLENGE_RE.search(raw[:20000]))
+    blocked = isinstance(status, int) and status >= 400
+    if not (challenged or blocked):
+        return ""
+    href = _esc(url, quote=True) if url.lower().startswith(("http://", "https://")) else ""
+    if challenged:
+        head = "The site is asking for a browser check"
+        why = ("It answered with a bot-protection page (Cloudflare or similar) instead of the "
+               "article. Those checks need scripts and cookies, which this view does not run, so it "
+               "cannot be passed here.")
+    else:
+        head = f"The site refused this request ({status})"
+        why = ("It answered with an error rather than the page. That is the site's decision, not a "
+               "problem with the link you clicked.")
+    return ("<!doctype html><meta charset=utf-8><style>body{font:16px/1.7 system-ui;padding:28px;"
+            "color:#e8e8f0;background:#111}a{color:#3ce8ff}.h{font-size:19px;font-weight:700;"
+            "margin-bottom:10px}.m{color:#9fa1c6}</style>"
+            f"<div class=h>{_esc(head)}</div><p class=m>{_esc(why)}</p>"
+            "<p class=m>Opening it in a real tab will usually work:</p>"
+            + (f'<p><a href="{href}" target="_blank" rel="noopener noreferrer">{href}</a></p>' if href else ""))
+
+
 def _needs_js_page(url: str) -> str:
     from html import escape as _esc
     href = _esc(url, quote=True) if url.lower().startswith(("http://", "https://")) else ""
@@ -557,7 +597,10 @@ async def render_page(
         # scripts by design. A blank frame reads as "your app is broken"; say what happened instead,
         # and offer the two things that do work.
         if _looks_empty(html):
-            html = _needs_js_page(url)
+            # Which kind of empty? A refusal and a script-built page look identical after stripping,
+            # and telling someone "nothing is wrong with the link" when the site just 403'd them is
+            # the wrong advice as well as the wrong diagnosis.
+            html = _refused_page(url, out.get("status"), out.get("html") or "") or _needs_js_page(url)
     except Exception as e:
         logger.warning("page render failed for %s: %s", url, e)
         raise HTTPException(status_code=502, detail="Could not render that page.")

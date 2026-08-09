@@ -671,3 +671,39 @@ class BotEnvTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---- a refusal is not "this page is built by JavaScript" -------------------------------------
+
+_CF_CHALLENGE = (
+    '<!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title>'
+    '<meta http-equiv="X-UA-Compatible" content="IE=Edge"></head>'
+    '<body class="no-js"><div id="cf-wrapper"><div class="cf-browser-verification">'
+    '<noscript>Enable JavaScript and cookies to continue</noscript></div></div></body></html>')
+
+
+def test_bot_challenge_is_reported_as_a_refusal_not_as_a_js_page():
+    """A Cloudflare interstitial is real HTML that strips to nothing, exactly like a script-built
+    page — so the framed view told users "Nothing is wrong with the link" when the site had in fact
+    turned them away. Measured on a live URL that answers 403 with this body.
+    """
+    from app.routers.websearch import _refused_page
+    out = _refused_page("https://example.com/x", 403, _CF_CHALLENGE)
+    assert out, "a 403 challenge must not fall through to the JavaScript message"
+    assert "browser check" in out
+    assert "Nothing is wrong with the link" not in out
+
+
+def test_plain_error_status_says_the_site_refused():
+    from app.routers.websearch import _refused_page
+    out = _refused_page("https://example.com/x", 403, "<html><body>no</body></html>")
+    assert "refused this request (403)" in out
+
+
+def test_a_genuinely_script_built_page_still_gets_the_js_message():
+    """The 200-with-an-empty-shell case must be left alone: that message is correct there, and
+    turning every empty page into "the site refused you" would be the same bug mirrored."""
+    from app.routers.websearch import _refused_page
+    assert _refused_page("https://example.com/x", 200,
+                         "<html><body><div id='app'></div></body></html>") == ""
+    assert _refused_page("https://example.com/x", None, "<html><body></body></html>") == ""
