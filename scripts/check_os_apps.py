@@ -31,6 +31,9 @@ Assertions, each a way a feature breaks specifically INSIDE a window and nowhere
                        clicked, or steals the live #feed from the window that had it.
   no-launcher-refresh  The desktop cannot rebuild its launcher when the identity arrives. Icons are
                        built once at enter(), and a remembered desktop opens before login resolves.
+  view-not-claimed     A window rendered something other than a timeline but left VIEW at 'home' or
+                       'global'. #feed is shared, and the live timeline appends to it on those two
+                       views — so incoming posts overwrite whatever that window was showing.
   music-not-an-app     Music does not open as a window. It is a library you browse; the floating
                        player bar is the transport, not the app.
   noti-centre          The clock does not open a working notification centre (off screen, stacked
@@ -116,6 +119,8 @@ ENTER = r"""(async () => {
         const w = document.querySelector('.osw.focused');
         asUser.musicWin  = !!(w && /Music/.test(w.querySelector('.osw-title').textContent));
         asUser.musicFeed = !!(document.getElementById('feed') || {}).closest('.osw.focused');
+        asUser.musicView = window.__PC.VIEW;
+        asUser.musicPlayer = !!(w && w.querySelector('.music-app .ma-ctl'));
         document.querySelectorAll('.osw .osw-x').forEach(b => b.click());
         await sleep(150);
       }
@@ -213,6 +218,11 @@ PROBE = r"""(async (view) => {
     }
   }
   out.escape = worst;
+  /* Which screen the client thinks it is on. #feed is ONE element shared by everything, and the live
+   * timeline appends to it whenever VIEW is 'home' or 'global' — so a window rendering anything else
+   * must claim VIEW, or incoming social posts write straight over it. That shipped: the Music player
+   * kept VIEW='global' and new posts took the window over. */
+  out.view = window.__PC.VIEW;
   out.err = window.__osErr;
   return out;
 })"""
@@ -356,6 +366,15 @@ async def main():
                 if missing:
                     problems.append(("shell", "signed-in-app-missing",
                                      "signed in, the launcher is missing: " + ", ".join(missing)))
+                if au.get("musicView") in ("home", "global"):
+                    problems.append(("shell", "view-not-claimed",
+                                     f"the Music window left VIEW={au.get('musicView')!r} — live "
+                                     "social posts append to the shared #feed on that view and will "
+                                     "take the player over"))
+                if au.get("musicPlayer") is False:
+                    problems.append(("shell", "music-not-an-app",
+                                     "the Music window has no transport controls — it is showing the "
+                                     "file manager's Music folder, not a player"))
                 if au.get("musicWin") is False or au.get("musicFeed") is False:
                     problems.append(("shell", "music-not-an-app",
                                      "Music does not open as a window holding the feed — "
@@ -421,6 +440,11 @@ async def main():
                         skipped.append(f"{v} (still loading — guest may not have access)")
                     else:
                         problems.append((v, "view-blank", "the window painted nothing"))
+                if v not in ("home", "global") and r.get("view") in ("home", "global"):
+                    problems.append((v, "view-not-claimed",
+                                     f"the {v} window left VIEW={r.get('view')!r} — the live timeline "
+                                     "appends to the shared #feed on those two views, so incoming "
+                                     "posts will write over this window's contents"))
                 if r.get("hoverflow", 0) > 2:
                     problems.append((v, "window-hoverflow",
                                      f"content scrolls {r['hoverflow']}px sideways inside the window"))

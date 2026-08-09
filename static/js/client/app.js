@@ -12875,6 +12875,12 @@
    * one library, one queue, and one set of controls that cannot drift out of step. */
   function renderMusicApp(){
     const feed=$('#feed'); if(!feed) return;
+    /* CLAIM THE VIEW. #feed is one element shared by every screen, and the live timeline appends to
+     * it whenever VIEW is 'home' or 'global' — so rendering a player into it without changing VIEW
+     * meant incoming social posts wrote straight over the library. ("new social posts take over
+     * Music".) Every other non-timeline screen does exactly this; leaving VIEW alone was the bug. */
+    VIEW='music'; _hidePill(); _clearNav();
+    { const t=$('#view-title'); if(t) t.textContent='Music'; }
     feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate','feed-meme');
     feed.innerHTML=`<div class="music-app">
       <div class="ma-now">
@@ -12890,12 +12896,13 @@
       </div>
       <div class="music-list" id="ma-lib"><div class="spinner"></div></div></div>`;
     const lib=$('#ma-lib',feed);
+    /* Paint from what we already know and DO NOT re-reconcile here. musicTracks() hides any track
+     * the server's blob list does not mention, and forcing a fresh /list on entry emptied a library
+     * that the Files → Music screen was listing perfectly well — the two fetches do not always agree,
+     * and an empty player is a far worse answer than a track that turns out not to play (which says
+     * so, out loud, via play()'s toast). */
     const paint=()=>{ _renderMusicList(lib, null); _musicAppNow(); };
-    // Reconcile against the server first: a track whose blob is gone must not be offered, and the
-    // same check is what stops a deleted library from looking full. Paint immediately from the local
-    // index so the window is never a spinner, then repaint once the truth arrives.
     paint();
-    _refreshBlobHave().then(paint).catch(()=>{});
     const b=(sel,fn)=>{ const el=$(sel,feed); if(el) el.onclick=fn; };
     b('#ma-prev',()=>MusicPlayer.prev());
     b('#ma-next',()=>MusicPlayer.next());
