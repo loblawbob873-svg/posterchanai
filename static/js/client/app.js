@@ -12896,6 +12896,12 @@
       </div>
       <div class="music-list" id="ma-lib"><div class="spinner"></div></div></div>`;
     const lib=$('#ma-lib',feed);
+    /* HYDRATE THE INDEX FIRST. The library lives in the files index, and this window can be the very
+     * first thing opened in a session — openMusic() called loadLocal() before doing anything for
+     * exactly that reason, and dropping it made a full library render as "No music yet". loadLocal
+     * is synchronous (localStorage) so the first paint is already right on a returning device; pull()
+     * is the network copy, and the repaint below is for a fresh one. */
+    try{ FilesIdx.loadLocal(); }catch(_){}
     /* Paint from what we already know and DO NOT re-reconcile here. musicTracks() hides any track
      * the server's blob list does not mention, and forcing a fresh /list on entry emptied a library
      * that the Files → Music screen was listing perfectly well — the two fetches do not always agree,
@@ -12903,6 +12909,11 @@
      * so, out loud, via play()'s toast). */
     const paint=()=>{ _renderMusicList(lib, null); _musicAppNow(); };
     paint();
+    if(!FilesIdx._pullDone){
+      // …and once the index arrives from the relay, repaint. Never HIDES anything that was already
+      // showing — paint() is a full re-render from a strictly better-informed index.
+      FilesIdx.pull().then(paint).catch(()=>{});
+    }
     const b=(sel,fn)=>{ const el=$(sel,feed); if(el) el.onclick=fn; };
     b('#ma-prev',()=>MusicPlayer.prev());
     b('#ma-next',()=>MusicPlayer.next());
