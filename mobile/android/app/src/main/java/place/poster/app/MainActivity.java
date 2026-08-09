@@ -40,6 +40,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(OrbotPlugin.class);
         registerPlugin(VaultAutofillPlugin.class);
         registerPlugin(place.poster.app.push.PushPlugin.class);
+        registerPlugin(place.poster.app.music.MusicPlugin.class);
         if (isSend(getIntent())) shareNonce++;   // cold-started BY a share
         super.onCreate(savedInstanceState);
         surviveRenderProcessDeath();

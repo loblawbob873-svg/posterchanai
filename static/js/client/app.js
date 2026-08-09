@@ -2239,6 +2239,11 @@
       try{ _reconcileNativeScreen(); }catch(_){}
       const _reShare=()=>{ try{ _consumeSendIntent(); }catch(_){} };
       _reShare();   // cold-start share (app launched by the share intent) — runs each startApp (cheap; deduped)
+      // Same shape for the music widget: it can launch the app cold OR foreground it via onNewIntent,
+      // and either way the press arrives as an Intent extra rather than a JS event. Consumed natively,
+      // so re-checking on every resume can't replay it.
+      const _reMusic=()=>{ try{ MusicPlayer.consumeLaunch(); }catch(_){} };
+      _reMusic();
       // Register the foreground/resume listeners ONCE per page-load — startApp can re-run (guest→login without
       // reload), and without this guard each run leaks another set of listeners → duplicate share re-checks.
       // Warm share: the app is already running and gets foregrounded via onNewIntent — the send-intent plugin
@@ -2246,9 +2251,10 @@
       // getIntent() so the plugin sees the new file). Dedupe in _consumeSendIntent stops reprocessing.
       if(!window.__pcNativeBound){ window.__pcNativeBound=true;
         window.addEventListener('sendIntentReceived', _reShare);
-        document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') _reShare(); });
+        document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ _reShare(); _reMusic(); } });
         const _App=_capPlugin('App');
-        if(_App && _App.addListener){ try{ _App.addListener('resume', _reShare); _App.addListener('appStateChange', st=>{ if(st && st.isActive) _reShare(); }); }catch(_){} }
+        if(_App && _App.addListener){ try{ _App.addListener('resume', ()=>{ _reShare(); _reMusic(); });
+          _App.addListener('appStateChange', st=>{ if(st && st.isActive){ _reShare(); _reMusic(); } }); }catch(_){} }
         // Android hardware BACK button → behave like a native app (close the topmost thing, walk the view
         // stack, and only exit from the home screen after a confirming double-tap). Without this, Back exits
         // the app outright — the biggest "this is just a webview" tell. No-op in the PWA (no App plugin).
@@ -15232,10 +15238,73 @@
       // Duration only exists once the track has loaded, and the OS wants it for the scrubber.
       _audioEl.onloadedmetadata=()=>this._media();
       }catch(_){} }
+      this._nativeInit();
       return d;
+    },
+    /* THE APK NEEDS ALL OF THAT AGAIN, NATIVELY. Everything above is navigator.mediaSession, which in
+     * a BROWSER is the entire job — Chrome is what turns those calls into the lock-screen and shade
+     * notification. A WebView accepts every one of them and shows NOTHING, because that surface lives
+     * in Chrome and not in the WebView. So in the app the music played with no controls anywhere
+     * outside it: no lock screen, no shade, no headset button, no widget. The MusicControls plugin is
+     * the missing half — it publishes a real Android media session (and the home-screen widget) from
+     * the state pushed here, and sends every press back as `musicTransport`, which we perform on the
+     * audio element. The audio itself stays here: a track is an encrypted blob only this client can
+     * decrypt, so there is nothing for a native player to open.
+     * No-op everywhere else — _capPlugin returns null in the PWA and the desktop app. */
+    _nativeInit(){
+      if(this._nativeWired) return;
+      const P=_capPlugin('MusicControls','addListener'); if(!P) return;
+      this._nativeWired=true;
+      try{ P.addListener('musicTransport', e=>{
+        const a=(e&&e.action)||'', v=Number((e&&e.value)||0);
+        if(a==='play'){ if(_audioEl) _audioEl.play(); }
+        else if(a==='pause'){ if(_audioEl) _audioEl.pause(); }
+        else if(a==='next') this.next();
+        else if(a==='prev') this.prev();
+        else if(a==='stop') this.close();
+        else if(a==='seekTo'){ if(_audioEl && _audioEl.duration) _audioEl.currentTime=Math.max(0,Math.min(v,_audioEl.duration)); }
+        else if(a==='seekBy'){ if(_audioEl){ const d=_audioEl.duration||0;
+          _audioEl.currentTime=Math.max(0, d ? Math.min(d,(_audioEl.currentTime||0)+v) : (_audioEl.currentTime||0)+v); } }
+        this._media();   // the OS believes what it was last told — tell it what the press actually did
+      }); }catch(_){ this._nativeWired=false; }
+    },
+    _nativePush(){
+      /* Only once something is playing, and never after the player was closed. update() starts a
+       * foreground service, so pushing with no current track is a notification about nothing — and
+       * pushing after a close RAISES ONE AGAIN: close() pauses the audio, the 'pause' event lands a
+       * moment later, and its state update would rebuild the very notification the close just took
+       * down. `_nativeOff` is cleared by play(), which is the only thing that should bring it back. */
+      if(!this.cur || this._nativeOff) return;
+      const P=_capPlugin('MusicControls','update'); if(!P) return;
+      const m=FilesIdx.meta(this.cur), d=_audioEl?_audioEl.duration:0;
+      try{
+        const r=P.update({ title:(m&&m.name)||'Track', artist:'PosterChan',
+          playing:!!(_audioEl && !_audioEl.paused),
+          position:(_audioEl&&_audioEl.currentTime)||0,
+          duration:(isFinite(d)&&d>0)?d:0 });
+        // A refused service start rejects, and an unhandled rejection is a console error every second.
+        if(r&&r.catch) r.catch(()=>{});
+      }catch(_){}
+    },
+    /* Launched by the widget. Consumed (never re-read) on the native side, so a later resume can't
+     * replay the press and restart music the user has since paused. */
+    consumeLaunch(){
+      const P=_capPlugin('MusicControls','consumeLaunchAction'); if(!P) return;
+      Promise.resolve(P.consumeLaunchAction()).then(r=>{
+        const a=r&&r.action; if(!a) return;
+        if(a==='play'){
+          if(_audioEl && _audioEl.src && _audioEl.paused){ _audioEl.play(); this._render(); return; }
+          if(!this.cur){ const q=musicTracks(null); if(q.length){ this.play(q[0].sha, {force:true}); return; } }
+        }
+        renderMusicApp();
+      }).catch(()=>{});
     },
     _media(){
       // Push the current track + play state to the OS media UI so the media keys show the right song.
+      // The native push is FIRST and unconditional: in the APK it is the only one of the two that
+      // produces a lock screen, and gating it behind the browser API would tie the app's controls to
+      // a WebView feature that does not do the job (see _nativeInit).
+      this._nativePush();
       if(!('mediaSession' in navigator)) return;
       try{
         const m=this.cur?FilesIdx.meta(this.cur):null;
@@ -15264,6 +15333,7 @@
     refreshQueue(){ this.queue=musicTracks(null).map(t=>t.sha); if(this.cur && !this.queue.includes(this.cur)) this.queue.unshift(this.cur); },
     async play(sha, opts){
       this.ensure();
+      this._nativeOff=false;   // playing again is what brings the OS controls back after a close
       /* Tapping the PLAYING track in the list means pause/resume. Transport buttons must not get that
        * treatment: with a short queue every one of them resolves to the current track — next() wraps
        * (i+1)%1 back to itself, prev() likewise, and the shuffle pick can land on it — so ⏮ ⏭ and
@@ -15300,7 +15370,13 @@
       if(!this.queue.length) return; let i=this.queue.indexOf(this.cur); this.play(this.queue[(i-1+this.queue.length)%this.queue.length], {back:true, force:true}); },
     seekTo(f){ if(_audioEl && _audioEl.duration) _audioEl.currentTime=Math.max(0,Math.min(1,f))*_audioEl.duration; },
     setMin(m){ this.min=m; this._render(); },
-    close(){ if(_audioEl) _audioEl.pause(); if(this.el) this.el.classList.add('hidden'); },
+    close(){ this._nativeOff=true; if(_audioEl) _audioEl.pause(); if(this.el) this.el.classList.add('hidden');
+      /* Take the native controls down WITH the player. A media notification (and a widget) still
+       * offering to pause a track whose player has been closed is worse than none — its buttons work
+       * on nothing, and on Android a lingering foreground service is what users go looking for in
+       * battery settings. */
+      const P=_capPlugin('MusicControls','stop');
+      if(P){ try{ const r=P.stop(); if(r&&r.catch) r.catch(()=>{}); }catch(_){} } },
     _tick(){
       /* The app can vanish without telling us — its window is closed, or the shared #feed moved to
        * another window. The widget was hidden BECAUSE the app was mounted, so if the app has gone and

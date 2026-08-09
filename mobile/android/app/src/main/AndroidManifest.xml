@@ -96,6 +96,48 @@
             android:exported="false"
             android:foregroundServiceType="mediaProjection|microphone" />
 
+        <!-- Music: the lock-screen / shade / car transport, and the home-screen widget.
+             A WebView implements navigator.mediaSession but publishes nothing to the OS (that half
+             lives in Chrome, not in the WebView), so without this service music in the APK had no
+             controls anywhere outside the app. mediaPlayback is also what keeps the WebView's render
+             process off the low-memory killer's list while the screen is off.
+             exported=false throughout: the only things that talk to it are our own plugin, our own
+             notification, our own widget, and the platform's media-button router — none of which is
+             another app. -->
+        <service
+            android:name=".music.MusicService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </service>
+
+        <!-- Headset / steering-wheel buttons on Android versions that deliver them as a broadcast.
+             MediaSessionCompat looks this receiver up BY NAME at construction and warns (then routes
+             nothing) when it is absent — it is what forwards the button to the service above. -->
+        <receiver
+            android:name="androidx.media.session.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- The home-screen widget. exported=false is correct even though the launcher draws it: the
+             APPWIDGET_UPDATE broadcast comes from the system, which is exempt, and our own buttons
+             are explicit intents from inside the app. -->
+        <receiver
+            android:name=".music.MusicWidget"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/music_widget_info" />
+        </receiver>
+
         <!-- Password autofill. exported + the BIND_AUTOFILL_SERVICE permission is what lets the
              SYSTEM bind it and nothing else; the permission is held by the platform alone, so this
              is not an entry point any other app can reach. AutofillService is API 26 and minSdk is
@@ -166,6 +208,10 @@
     <!-- Screen sharing (live streaming): the WebView has no getDisplayMedia, so the screen is captured
          natively via MediaProjection, which Android only allows from a mediaProjection foreground service. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- Music playing with the screen off: the media-session foreground service (lock screen, shade,
+         car, widget). Android 14+ refuses to START a service whose declared type it has no permission
+         for, so this is not optional decoration — without it the controls never appear. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />

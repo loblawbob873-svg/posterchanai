@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The home-screen widget. Deliberately plain RemoteViews: a widget is drawn by the LAUNCHER's
+     process, which supports a fixed handful of view types and no custom drawing at all.
+     Colours are baked rather than themed for the same reason — the launcher does not carry this
+     app's theme, so an attribute reference here resolves to whatever the launcher happens to use. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/mw_body"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:background="@drawable/widget_bg"
+    android:padding="10dp">
+
+    <ImageView
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:layout_marginEnd="10dp"
+        android:src="@drawable/ic_music_note"
+        android:contentDescription="@string/app_name" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/mw_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="#E8FBFF"
+            android:text="@string/app_name" />
+
+        <TextView
+            android:id="@+id/mw_artist"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textSize="12sp"
+            android:textColor="#7FD8E8" />
+    </LinearLayout>
+
+    <!-- 48dp touch targets: a widget sits on the home screen among icons, and anything smaller is
+         hit by accident on the wrong control. -->
+    <ImageView
+        android:id="@+id/mw_prev"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:padding="12dp"
+        android:src="@drawable/ic_media_prev"
+        android:contentDescription="Previous" />
+
+    <ImageView
+        android:id="@+id/mw_play"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:padding="10dp"
+        android:src="@drawable/ic_media_play"
+        android:contentDescription="Play" />
+
+    <ImageView
+        android:id="@+id/mw_next"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:padding="12dp"
+        android:src="@drawable/ic_media_next"
+        android:contentDescription="Next" />
+</LinearLayout>

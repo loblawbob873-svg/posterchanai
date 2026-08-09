@@ -306,6 +306,34 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   **JSON-encoded string** whose items carry `file: "/v1/audio?path=..."`. Deployed: BOTH nas.lan
   (RTX 3060, CUDA) and the Arc (server1, A770 XPU) generate music in-process (measured on the Arc:
   load 6.9s, a 12s song in 14.3s, unload reclaims 100% of the 6.5GB).
+- **Music player: the APK's media controls + home-screen widget**
+  (`mobile/android/.../music/` = `MusicService` + `MusicPlugin` + `MusicWidget`; JS in `app.js`'s
+  `MusicPlayer._nativeInit/_nativePush`): lock screen, notification shade, headset/car buttons and a
+  4x1 widget, for the encrypted Music library the client plays.
+  **Why a native half exists at all:** the player already speaks `navigator.mediaSession`, and in a
+  BROWSER that IS the whole job — Chrome turns those calls into the media notification. **A WebView
+  accepts every one of them and shows nothing**: that surface lives in Chrome, not in the WebView. So
+  in the APK the music played with no controls anywhere outside the app. The audio STAYS in the
+  WebView (a track is an encrypted blob only the client can decrypt — there is no file for a native
+  player to open), so the service owns the *session*, not the sound: JS pushes state, the service
+  publishes it, and every press comes back as a `musicTransport` event JS performs on the audio
+  element. The foreground service is also what keeps the WebView's render process off the low-memory
+  killer while the screen is off.
+  **Gotchas, each one silent:** (1) per-second updates go **direct to `MusicService.INSTANCE`**, never
+  through `startForegroundService` — Android 12+ refuses a background FGS start, which is precisely
+  the screen-off case the lock screen exists for, so the Intent path is only the FIRST start (made
+  while the app is on screen). (2) A plugin `stop` must NOT be echoed back to JS while a notification
+  **dismissal** must (`ACTION_STOP` vs `ACTION_DISMISS`), or the two chase each other. (3) `close()`
+  sets `_nativeOff` because the `pause` event lands AFTER it and its state push would rebuild the
+  notification the close just removed. (4) Artwork is drawn from the launcher **Drawable** —
+  `BitmapFactory.decodeResource` returns null for the adaptive (XML) icon every phone since API 26
+  uses, i.e. it would look fine only on the oldest emulator. (5) Every `PendingIntent` needs
+  `FLAG_IMMUTABLE` (Android 12 throws when the notification is built). (6) **Audio focus is
+  deliberately NOT requested** — the WebView's own media stack may hold it, and a second request from
+  the same app can steal it from the first, at which point Chromium pauses the element the fix exists
+  to keep playing. That needs one measurement on a device; `ACTION_AUDIO_BECOMING_NOISY` (pause on
+  unplug) is handled, since it cannot break playback either way.
+  `tests/test_android_music_controls.py` guards the wiring (the Gradle build only runs in CI).
 - **Video generation** (`videogeni` command; `app/services/video_service.py` + `video_factory.py` +
   `app/routers/video_api.py`): text-to-video, **NATIVE in-process diffusers** (unlike music — LTX/Wan/
   CogVideoX are stock diffusers pipelines on the SAME torch stack as image gen, so no separate

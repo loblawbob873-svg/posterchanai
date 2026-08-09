@@ -53,6 +53,15 @@ dependencies {
     // Google, or JitPack) and the build failed to resolve it. 3.x is also a different API — a
     // PushService rather than a MessagingReceiver — so PushEventService follows that shape.
     implementation 'org.unifiedpush.android:connector:3.3.3'
+    // MediaSessionCompat + MediaStyle + the media-button receiver — the lock-screen/car transport for
+    // the music player (see music/MusicService). androidx.media, NOT media3: media3's session is built
+    // around holding a Player, and ours holds nothing — the audio is in the WebView, which is the whole
+    // shape of the problem. This is the compat layer for exactly that case, and it is ~200KB.
+    implementation "androidx.media:media:1.7.0"
+    // Explicit, not transitive: MusicService needs ContextCompat.registerReceiver(…, RECEIVER_*),
+    // which is core 1.9+. It arrives anyway via appcompat today — and would vanish the day a
+    // dependency bump resolved core lower, as a compile error in a file nothing else touches.
+    implementation "androidx.core:core:$androidxCoreVersion"
     implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"

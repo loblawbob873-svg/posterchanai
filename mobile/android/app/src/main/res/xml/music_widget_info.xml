@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- updatePeriodMillis="0": the widget is PUSHED by MusicService whenever the track or play state
+     changes, so a polling wake-up would only ever redraw what is already on screen (and the platform
+     clamps it to 30 minutes anyway, which is useless for a transport). -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="250dp"
+    android:minHeight="40dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="1"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/widget_music"
+    android:previewLayout="@layout/widget_music"
+    android:description="@string/music_widget_description"
+    android:resizeMode="horizontal"
+    android:widgetCategory="home_screen" />
