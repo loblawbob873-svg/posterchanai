@@ -116,6 +116,9 @@ ENTER = r"""(async () => {
       const chip = document.getElementById('os-acct');
       asUser.tray = !!chip;
       if (chip) {
+        // Measure the chip BEFORE clicking: the bug being guarded REMOVES it, so reading its rect
+        // afterwards returns 0,0 and the guard would quietly agree with the bug.
+        const cr = chip.getBoundingClientRect();
         chip.click(); await sleep(350);
         const pop = document.querySelector('.acct-pop');
         asUser.switcher = !!pop;
@@ -124,6 +127,11 @@ ENTER = r"""(async () => {
           const hit = document.elementFromPoint(pr.left + pr.width/2, pr.top + 10);
           asUser.switcherReachable = !!(hit && pop.contains(hit));
           asUser.switcherAdd = !!pop.querySelector('[data-act="add"]');
+          /* …and it must appear NEAR the chip it hangs off. Closing the start menu before measuring
+           * the anchor leaves a 0x0 rect at 0,0, so the flyout lands in the top-left corner of the
+           * screen — which looks like a rendering fault, not a menu. */
+          asUser.switcherStranded = (pr.top < 60 && pr.left < 60 && cr.top > 200);
+          asUser.switcherAt = [Math.round(pr.left), Math.round(pr.top)];
           pop.remove();
         }
       }
@@ -140,7 +148,9 @@ ENTER = r"""(async () => {
         // Closing the Music window must close the PLAYER, not replace it with the floating widget.
         if (w) { w.querySelector('.osw-x').click(); await sleep(400); }
         const mp = document.getElementById('music-player');
-        asUser.miniAfterClose = !!(mp && !mp.classList.contains('hidden'));
+        // Not just the hidden class: on the desktop the widget must not be RENDERED at all.
+        asUser.miniAfterClose = !!(mp && !mp.classList.contains('hidden')
+                                      && getComputedStyle(mp).display !== 'none');
         document.querySelectorAll('.osw .osw-x').forEach(b => b.click());
         await sleep(150);
       }
@@ -396,6 +406,11 @@ async def main():
                     problems.append(("shell", "no-account-switcher",
                                      "signed in, the start menu has no account chip — which is the "
                                      "only way to the account switcher on the desktop"))
+                elif au.get("switcherStranded"):
+                    problems.append(("shell", "no-account-switcher",
+                                     f"the account flyout opened at {au.get('switcherAt')} — in the "
+                                     "corner of the screen, not beside the chip. Its anchor was "
+                                     "measured after the start menu had already removed it."))
                 elif not au.get("switcher") or not au.get("switcherReachable") \
                         or not au.get("switcherAdd"):
                     problems.append(("shell", "no-account-switcher",

@@ -6013,6 +6013,24 @@ body.os-on #os-root{pointer-events:auto}
   background:radial-gradient(1200px 800px at 20% 0%, rgba(var(--accent-rgb),.16), transparent 60%),
              linear-gradient(160deg, var(--bg), var(--bg2, var(--bg)));}
 .os-desk{position:relative;flex:1;min-height:0;overflow:hidden}
+/* Desktop wallpaper — a centred emblem, not a full-bleed photo. Full-bleed fights every window and
+   every icon label for contrast; an emblem behind a vignette reads as a desktop and stays out of the
+   way. Sized in vmin so it is the same relative size in both orientations, capped so it does not
+   dominate a big monitor, and floored so it does not vanish on a small tablet. z-index:0 keeps it
+   under the icons and windows (both later in the DOM), and pointer-events:none keeps the desktop's
+   own click-to-dismiss working through it. */
+.os-desk::before{content:'';position:absolute;inset:0;z-index:0;pointer-events:none;
+  background-image:radial-gradient(ellipse at center, rgba(var(--accent-rgb),.13) 0%, transparent 62%),
+                   url('/static/os-wallpaper.webp');
+  background-repeat:no-repeat,no-repeat;
+  background-position:center 46%,center 46%;
+  background-size:min(130vmin,1300px) min(130vmin,1300px), clamp(300px, 58vmin, 680px) auto;
+  opacity:.34;filter:saturate(1.15) contrast(1.02) drop-shadow(0 0 70px rgba(var(--accent-rgb),.20))}
+/* Light themes: the same opacity over a pale ground turns it into grey mush, and the icon labels
+   are dark text that needs the contrast back. */
+@media (prefers-color-scheme: light){ :root:not([data-theme="dark"]) .os-desk::before{opacity:.12} }
+:root[data-theme="light"] .os-desk::before{opacity:.12}
+@media (max-width:1100px){ .os-desk::before{opacity:.16} }   /* less room, more windows over it */
 
 /* Desktop icons — a GRID in the top-left, filling across in rows and wrapping.
    One tall column needed 1428px for seventeen features and ran off the bottom; making it scroll
@@ -6153,9 +6171,15 @@ body.os-on #os-root{pointer-events:auto}
   background:var(--panel2);border:1px solid var(--line);min-width:150px;max-width:290px;flex:0 1 260px}
 .os-qbox .ic{width:15px;height:15px;color:var(--muted);flex:0 0 auto}
 .os-qin{flex:1;min-width:0;background:none;border:0;outline:none;color:var(--text);font-size:13px;
-  font-family:inherit}
+  font-family:inherit;-webkit-appearance:none;appearance:none;box-shadow:none}
+.os-qin:focus,.os-qin:focus-visible{outline:none;box-shadow:none;border:0}
+/* type=search draws its own furniture in WebKit — a clear button and, in some builds, an inner
+   border that shows through the pill as a second rectangle. */
+.os-qin::-webkit-search-decoration,.os-qin::-webkit-search-cancel-button,
+.os-qin::-webkit-search-results-button,.os-qin::-webkit-search-results-decoration{-webkit-appearance:none;display:none}
 .os-qin::placeholder{color:var(--muted)}
-.os-qbox:focus-within{border-color:var(--neon);box-shadow:0 0 0 2px rgba(var(--accent-rgb),.16)}
+/* Focus tints the pill's own border and nothing else — no ring, no second rectangle inside it. */
+.os-qbox:focus-within{border-color:color-mix(in srgb, var(--neon) 55%, var(--line));box-shadow:none}
 /* AFTER the base rule, or same-specificity cascade means these never apply. On a narrow desktop the
    task buttons matter more than the search box, so it shrinks and then goes. */
 @media (max-width:1200px){ .os-qbox{flex:0 1 170px;min-width:120px} }
@@ -6178,7 +6202,9 @@ body.os-on #os-root{pointer-events:auto}
    collides with the taskbar or runs off the top. */
 .os-noti{position:fixed;right:8px;bottom:56px;z-index:330;width:min(430px,calc(100vw - 16px));
   max-height:calc(100vh - 84px);display:flex;flex-direction:column;border-radius:14px;
-  background:var(--panel2);border:1px solid var(--line);box-shadow:0 18px 50px rgba(0,0,0,.55);
+  background:linear-gradient(var(--panel2),var(--panel2)), var(--bg);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border:1px solid var(--line);box-shadow:0 18px 50px rgba(0,0,0,.55);
   overflow:hidden}
 .os-noti-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
   padding:12px 14px;border-bottom:1px solid var(--line)}
@@ -6300,7 +6326,10 @@ body.os-on #os-root{pointer-events:auto}
 .music-app .music-list{flex:1;min-height:0;overflow-y:auto}
 
 /* The account chip at the foot of the start menu — where Windows 11 keeps it. */
-.os-foot{display:flex;align-items:center;padding:9px 4px 2px;margin-top:8px;border-top:1px solid var(--line)}
+.os-foot{display:flex;align-items:center;gap:8px;padding:9px 4px 2px;margin-top:8px;
+  border-top:1px solid var(--line)}
+.os-foot .spacer{flex:1}
+.os-foot .os-exit{flex:0 0 auto}
 .os-acct{display:flex;align-items:center;gap:9px;padding:6px 9px;border-radius:9px;border:0;
   background:none;color:var(--text);cursor:pointer;font-family:inherit;font-size:13px;
   max-width:100%;min-width:0}
@@ -6328,12 +6357,24 @@ body.os-on .offline-bar{z-index:330}
 /* These two are appended to documentElement, so they are SIBLINGS of <body> and a `body.os-on …`
    rule cannot reach them — the music player kept z-index:120 and played on, invisible, under the
    desktop. os.js puts the class on <html> as well; keep both selectors so either spelling works. */
+/* NO floating music player on the desktop. The Music WINDOW is the player, and a second smaller one
+   appearing beside it — or in its place when you close it — is clutter with two sets of controls for
+   one thing. Safe because there is no way to be left with unreachable playback: closing the Music
+   window stops it, and merely switching windows leaves that window sitting in the taskbar. The
+   z-index rule stays for the case where it IS shown (it is not, here) so it never renders under the
+   desktop again. */
+html.os-on #music-player{display:none}
 html.os-on #music-player.mp,html.os-on #music-player.mp-mini{z-index:332}
 html.os-on #upload-badge.upbadge{z-index:333}
 
 .os-startmenu{position:absolute;left:50%;transform:translateX(-50%);bottom:56px;width:min(520px,70vw);max-height:60vh;
   display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:14px;
-  background:var(--panel);border:1px solid var(--line);box-shadow:0 20px 60px rgba(0,0,0,.6);z-index:320}
+  /* --panel is translucent by design (rgba .72), which over a wallpaper leaves the app list reading
+     through it. Paint the panel tint over an OPAQUE base so the menu keeps its colour and stops
+     being see-through, with a blur behind for the frosted edge. */
+  background:linear-gradient(var(--panel),var(--panel)), var(--bg);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border:1px solid var(--line);box-shadow:0 20px 60px rgba(0,0,0,.6);z-index:320}
 .os-search{font-size:14px}
 .os-applist{flex:1;min-height:0;overflow-y:auto;display:grid;
   grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px}

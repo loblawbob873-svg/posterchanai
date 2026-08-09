@@ -678,7 +678,6 @@
                   data-id="${w.id}" title="${enc(w.title)}">
             ${iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')}</div>
        <div class="os-tray">
-         <button class="os-exit" id="os-exit" title="Leave the desktop">⤢ Classic</button>
          <button class="os-clock${notiOpen ? ' on' : ''}" id="os-clock" title="Notifications">
            <b>${enc(clock)}</b><span>${enc(date)}</span>${notiDot()}</button>
        </div>`;
@@ -712,7 +711,6 @@
         });
       } }
     { const cb = $('#os-clock', bar); if(cb) cb.onclick = (e) => { e.stopPropagation(); toggleNoti(); }; }
-    $('#os-exit', bar).onclick = () => exit();
     $$('.os-task', bar).forEach(b => b.onclick = () => {
       const w = wins.find(x => String(x.id) === b.dataset.id);
       if(!w) return;
@@ -913,7 +911,8 @@
       `<input class="input os-search" id="os-q" placeholder="Search apps" autocomplete="off">
        <div class="os-applist" id="os-applist"></div>
        <div class="os-stats" id="os-stats"></div>
-       <div class="os-foot">${meChip()}</div>`;
+       <div class="os-foot">${meChip()}<span class="spacer"></span>
+         <button class="os-exit" id="os-exit" title="Leave the desktop">⤢ Classic</button></div>`;
     root.appendChild(menu);
     const searchNostr = (q) => {
       toggleStart(false);
@@ -963,12 +962,16 @@
     { const ab = $('#os-acct', menu);
       if(ab) ab.onclick = (e) => {
         e.stopPropagation();
-        toggleStart(false);
+        /* Open the flyout BEFORE closing the start menu. The other order looks harmless and is not:
+         * closing the menu removes this button from the document, so the anchor it is positioned
+         * against measures 0x0 at 0,0 and the flyout lands in the TOP-LEFT corner of the screen. */
         try{
           if(PC().accountMenu) PC().accountMenu(ab);
           else if(PC().openProfile) PC().openProfile();
         }catch(err){ PC().toast && PC().toast('could not open your accounts'); }
+        toggleStart(false);
       }; }
+    { const xb = $('#os-exit', menu); if(xb) xb.onclick = () => { toggleStart(false); exit(); }; }
     const q = $('#os-q', menu);
     q.oninput = () => paint(q.value.trim());
     q.onkeydown = (e) => {

@@ -42,9 +42,9 @@ Assertions, each a way a window manager breaks:
                        alt-tab — and then nothing ends the gesture.
   snap-broken          Dragging a window to a screen edge does not snap it to that half (or does it
                        without previewing where it will land, or cannot be dragged back off).
-  overlay-buried       An overlay appended to documentElement (the music player, the upload badge)
-                       renders under the desktop. It is a SIBLING of <body>, so `body.os-on …` never
-                       matches it — the rule looks right and does nothing.
+  stray-mini-player    The floating music player renders on the desktop. The Music WINDOW is the
+                       player; a second, smaller one beside it (or in its place when you close it)
+                       is two sets of controls for one thing.
   modal-buried         A modal is not clickable — .modal-bg was authored at z-index 100, below the
                        z-index:300 desktop, so reply / quote / confirm / settings opened INVISIBLY
                        behind it. Hit-tested with elementFromPoint, not by reading the stylesheet.
@@ -179,9 +179,12 @@ DRIVE = r"""(async () => {
     const b = document.getElementById('__mpb');
     const r = b.getBoundingClientRect();
     const hit = document.elementFromPoint(r.left + r.width/2, r.top + r.height/2);
-    out.playerReachable = !!(hit && (hit === b || b.contains(hit)));
-    out.playerCoveredBy = out.playerReachable ? '' :
-      (hit ? (hit.id || hit.className || hit.tagName).toString().slice(0,40) : 'nothing');
+    // The desktop deliberately does NOT show the floating player — the Music WINDOW is the player,
+    // and a second smaller one beside it is two sets of controls for one thing. So the requirement
+    // flipped: it must not be rendered at all. (It stays z-indexed above the desktop for any build
+    // that does show it, which is what the original assertion was guarding.)
+    out.playerHidden = getComputedStyle(mp).display === 'none';
+    out.playerCoveredBy = (hit ? (hit.id || hit.className || hit.tagName).toString().slice(0,40) : 'nothing');
     mp.remove();
   }
 
@@ -582,11 +585,11 @@ async def drive(url):
                                      f"opened={r.get('docWins')} after-reopen={r.get('docDedup')} "
                                      f"feed-inside={r.get('docFeed')} taskbar={r.get('docTask')} "
                                      f"repaints={r.get('docPaint')} left-open={r.get('docClosed')}"))
-                if not r.get("playerReachable"):
-                    problems.append((label, "overlay-buried",
-                                     "the music player is not clickable on the desktop — its centre "
-                                     f"hits {r.get('playerCoveredBy')!r}. It is appended to <html>, "
-                                     "so a body.os-on rule cannot reach it."))
+                if not r.get("playerHidden"):
+                    problems.append((label, "stray-mini-player",
+                                     "the floating music player renders on the desktop — the Music "
+                                     "window is the player, and a second smaller one is two sets of "
+                                     "controls for one thing"))
                 if not r.get("subReachable"):
                     problems.append((label, "modal-buried",
                                      "a SUB-modal (the Blossom picker over a composer) is not "
