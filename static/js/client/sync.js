@@ -16,6 +16,16 @@
  *
  * `base` — what THIS device last agreed with — is local and never shared. Two devices have different
  * bases by definition; that is the whole point of it.
+ *
+ * WHAT THE SERVER CAN AND CANNOT SEE. File CONTENTS are AES-256-GCM under the drive's master key
+ * before they are uploaded, so a blob is ciphertext to everyone including this node. The manifest —
+ * every path and size — is NIP-44 self-encrypted on top of that, so the node stores a blob it cannot
+ * read either. What it does see, unavoidably: how many live entries there are (the plaintext `n`,
+ * which is what the collapse guard checks), how many blobs there are and how big each is, and when
+ * they arrived. And because the IV is derived from the content so identical bytes dedup, a party
+ * holding a candidate file can confirm whether that exact file is stored. That is the same trade
+ * every deduplicating encrypted store makes, and it is worth saying out loud rather than implying
+ * the metadata is private too.
  */
 (function(){
   'use strict';
@@ -50,10 +60,20 @@
       if(!r.ok || !j.ok) throw new Error(j.error || ('manifest ' + r.status));
       return j;
     },
+    /* The paths are NIP-44 self-encrypted before they leave, so the node stores a blob it cannot
+     * read. The plaintext `n` beside it is the ONLY thing the server sees, and it is there because
+     * the collapse guard needs a count — it does not need the names. Without this the manifest went
+     * up under the user's SERVER-HELD storage key, which is the trade the calendar makes on purpose
+     * (a CalDAV client sends plaintext, so the node must be able to answer it) and which a folder
+     * sync has no reason to make: nothing on the server ever needs to know a filename. */
     async manifest(id){
       const j = await this._post({ folder: id });
       const doc = j.manifest || {};
-      return doc.paths || {};          // {n, paths} on the wire; the engine only wants the paths
+      if(doc.sealed){
+        try{ return JSON.parse(await PC.nip44dec(PC.me().pubkey, doc.sealed)) || {}; }
+        catch(e){ throw new Error('could not decrypt the manifest — wrong key or damaged'); }
+      }
+      return doc.paths || {};          // pre-seal manifests, still readable
     },
     // The per-device agreement. Local by definition, and a corrupt one is recoverable by resyncing —
     // it costs a full compare, never data.
@@ -63,7 +83,8 @@
     async save(id, s){
       const paths = s.manifest || {};
       const live = Object.keys(paths).filter(p => paths[p] && !paths[p].deletedAt).length;
-      await this._post({ folder: id, manifest: { n: live, paths } });
+      const sealed = await PC.nip44enc(PC.me().pubkey, JSON.stringify(paths));
+      await this._post({ folder: id, manifest: { n: live, sealed } });
       // Only after the shared manifest is safely stored — a base that runs ahead of it would make
       // this device believe in an agreement the others never saw.
       try{ localStorage.setItem(BASE_KEY(id), JSON.stringify(s.base || {})); }catch(_){}
@@ -128,6 +149,14 @@
           id: f.id, device: deviceName(), now: Date.now(),
           excludes: f.excludes || [], maxBytes: await maxBytes(),
           hash: decision.mode === 'full', dryRun: !!o.dryRun,
+          // The first sweep of a Pictures folder is minutes of silence, and silence is
+          // indistinguishable from a hang, a failed login or a 404 on the manifest — which is
+          // exactly how this looked the first time it was tried for real.
+          onProgress: (ev) => {
+            const where = ev.path ? ' ' + ev.path.split('/').pop() : '';
+            const of = ev.n > 1 ? ' ' + ev.i + '/' + ev.n : '';
+            setStatus(f.id, ev.phase + of + where, null, true);
+          },
         });
         if(!o.dryRun){
           f.lastSyncAt = Date.now();
@@ -163,9 +192,47 @@
     if(!bits.length) return 'in step' + (decision ? ' · ' + decision.why : '');
     return bits.join(' · ');
   }
-  function setStatus(id, text, report){
-    status.set(id, { when: Date.now(), text, report });
-    if(PC.VIEW === 'sync') paint();
+  function setStatus(id, text, report, liveOnly){
+    const prev = status.get(id) || {};
+    status.set(id, { when: Date.now(), text, report: report || (liveOnly ? prev.report : null),
+                     busy: !!liveOnly });
+    if(PC.VIEW !== 'sync') return;
+    // A running sweep repaints its one line rather than the whole screen: rebuilding the cards would
+    // throw away a half-typed exclusion list and the focus with it, several times a second.
+    const el = document.querySelector('.sync-card[data-id="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"] .sync-status');
+    if(liveOnly && el){ el.textContent = text; return; }
+    paint();
+  }
+
+  /* What actually happened, in files. "3 up · 1 conflict" is the headline; this is the part that
+   * lets someone believe it — and the part that makes a failure actionable instead of a word. */
+  function details(rep){
+    if(!rep) return '';
+    const cap = 12;
+    const grp = (label, items, fmt) => {
+      if(!items || !items.length) return '';
+      const shown = items.slice(0, cap).map(fmt).map(t => '<li>' + PC.enc(t) + '</li>').join('');
+      const more = items.length > cap ? '<li class="muted">…and ' + (items.length - cap) + ' more</li>' : '';
+      return '<div class="sync-grp"><b>' + PC.enc(label) + '</b><ul>' + shown + more + '</ul></div>';
+    };
+    const p = rep.plan || {};
+    if(rep.dryRun){
+      return '<div class="sync-details">'
+        + grp('Would upload', p.upload, a => a.path + ' — ' + a.why)
+        + grp('Would download', p.download, a => a.path + ' — ' + a.why)
+        + grp('Would move to trash', p.deleteLocal, a => a.path + ' — ' + a.why)
+        + grp('Would remove from the cloud', p.deleteRemote, a => a.path + ' — ' + a.why)
+        + grp('Conflicts', p.conflicts, a => a.path + ' → ' + a.keepAs)
+        + '</div>';
+    }
+    return '<div class="sync-details">'
+      + grp('Failed', rep.failed, a => a.path + ' — ' + a.what + ': ' + a.error)
+      + grp('Skipped', rep.skipped, a => a.path + ' — ' + a.why)
+      + grp('Conflicts kept', rep.conflicted, a => a.path + ' → ' + a.keptAs)
+      + grp('Uploaded', rep.uploaded, a => a)
+      + grp('Downloaded', rep.downloaded, a => a)
+      + grp('Moved to trash', rep.trashed, a => a.path + ' → ' + a.to)
+      + '</div>';
   }
 
   // The ceiling is the SERVER's, and an admin can change it — so it is asked for, not assumed.
@@ -194,6 +261,7 @@
         <div class="sync-head"><b>${PC.enc(f.name || f.dir || 'folder')}</b>
           <span class="muted small">${PC.enc(f.dir || '')}</span></div>
         <div class="sync-status muted small">${PC.enc(st.text || 'not synced yet')}</div>
+        ${details(st.report)}
         <label class="sync-ex"><span class="muted small">Don't sync these (one per line — a folder name covers everything inside it)</span>
           <textarea class="input sync-ex-ta" rows="2" placeholder="Old&#10;*.tmp">${PC.enc((f.excludes||[]).join('\n'))}</textarea></label>
         <div class="sync-opts">

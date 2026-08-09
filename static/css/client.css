@@ -6707,3 +6707,10 @@ html.os-on #upload-badge.upbadge{z-index:333}
   .sync-actions .btn{flex:1 1 auto;min-height:38px}
   .sync-ex .input{font-size:16px}   /* 16px minimum or iOS zooms on focus and never zooms back */
 }
+/* What a sweep actually did, per file — the part that lets someone believe the headline, and the
+   part that makes a failure actionable instead of one word. */
+.sync-details{display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto;
+  padding:8px 10px;border-radius:10px;background:var(--panel2);border:1px solid var(--line)}
+.sync-grp b{font-size:13px;color:var(--cyan)}
+.sync-grp ul{margin:4px 0 0;padding-left:18px}
+.sync-grp li{font-size:13px;overflow-wrap:anywhere;word-break:break-word;line-height:1.5}

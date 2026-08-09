@@ -43,11 +43,19 @@
     const id = o.id, device = o.device || 'this device', now = o.now || 0;
     const report = { uploaded:[], downloaded:[], trashed:[], conflicted:[], removedRemote:[],
                      failed:[], skipped:[], excluded:0, unchanged:0, dryRun:!!o.dryRun };
+    /* Progress, per file. A folder sync is the one operation where "it is doing something" is not
+     * good enough feedback: the first sweep of a Pictures folder is minutes of silence, and silence
+     * is indistinguishable from a hang, a refused login or a 404 on the manifest. The caller renders
+     * whatever it likes; nothing here depends on it. */
+    const tick = (typeof o.onProgress === 'function') ? o.onProgress : function(){};
+    const step = (phase, path, i, n) => { try{ tick({ phase, path, i, n }); }catch(_){} };
 
+    step('scanning');
     const scanned = await fs.scan(id, { hash:!!o.hash, excludes:o.excludes||[], maxBytes:o.maxBytes||0 });
     report.skipped = scanned.skipped || [];
     const local = scanned.files || {};
 
+    step('reading the manifest');
     const remote = await store.manifest(id);            // {} when the folder has never synced
     const base = (await store.base(id)) || {};
 
@@ -68,7 +76,9 @@
 
     /* 1 & 2 — conflicts first: they are the only step that both writes AND renames, and the rename
      * has to happen before anything else can clobber the local copy. */
+    let ci=0;
     for(const c of plan.conflicts){
+      step('conflict', c.path, ++ci, plan.conflicts.length);
       try{
         await fs.move(id, c.path, c.keepAs);            // the local edit is safe from here on
         const bytes = await store.getBlob(c.sha);
@@ -80,7 +90,9 @@
       }catch(e){ fail(c.path, e, 'conflict'); }
     }
 
+    let di=0;
     for(const d of plan.download){
+      step('downloading', d.path, ++di, plan.download.length);
       try{
         const bytes = await store.getBlob(d.sha);
         const st = await fs.write(id, d.path, bytes, (remote[d.path] || {}).mtime || 0);
@@ -89,7 +101,9 @@
       }catch(e){ fail(d.path, e, 'download'); }
     }
 
+    let ui=0;
     for(const u of plan.upload){
+      step('uploading', u.path, ++ui, plan.upload.length);
       const meta = local[u.path];
       try{
         if(o.maxBytes && meta && meta.size > o.maxBytes){
@@ -105,7 +119,9 @@
       }catch(e){ fail(u.path, e, 'upload'); }
     }
 
+    let ti=0;
     for(const t of plan.deleteLocal){
+      step('to trash', t.path, ++ti, plan.deleteLocal.length);
       try{
         const to = await fs.trash(id, t.path, now);
         agree(t.path, { deletedAt: (remote[t.path]||{}).deletedAt || now });
@@ -127,7 +143,7 @@
       agree(n.path, l ? { sha:l.sha, size:l.size, mtime:l.mtime } : { deletedAt:(rm&&rm.deletedAt)||now });
     }
 
-    if(dirty) await store.save(id, { manifest: nextRemote, base: nextBase });
+    if(dirty){ step('saving'); await store.save(id, { manifest: nextRemote, base: nextBase }); }
     report.ok = report.failed.length === 0;
     return report;
   }
