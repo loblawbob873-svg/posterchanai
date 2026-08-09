@@ -14812,7 +14812,8 @@
       : ev.kind===1617?'🩹 sent a patch to your repo'
       : isReply(ev)?'replied to you' : 'mentioned you';
     notifToast(`🔔 <b>${emojiName(fromPk, who)}</b> ${what}`, p.picture);   // render the sender's custom :emoji: in the toast
-    try{ if(window.Notification && Notification.permission==='granted') new Notification('PosterChan', { body:`${who} ${what}`.replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim(), icon:p.picture||LOGO }); }catch(_){}   // OS notif is plain text → drop shortcodes
+    osNotify('PosterChan', `${who} ${what}`, { icon:p.picture||LOGO,
+                                               onClick:()=>switchView('notifications') });
   }
   // `html` is trusted markup (callers build names via emojiName + enc their content) — do NOT re-escape it.
   function notifToast(html, pic, onClick){
@@ -15410,12 +15411,13 @@
     // alerts) — "you sent you a message" would be both confusing and wrong. Say what it is.
     if(selfNote){
       notifToast('🔔 <b>New notification</b> — saved to your notes to self', LOGO);
-      try{ if(window.Notification && Notification.permission==='granted') new Notification('🔔 New notification', {body:'Saved to your notes to self', tag:'pc-dm', icon:LOGO}); }catch(_){}
+      osNotify('🔔 New notification', 'Saved to your notes to self', { tag:'pc-dm' });
       return;
     }
     const p=fromPk?profOf(fromPk):{}; const who=p.name||p.display_name||'someone';
     notifToast(`✉ <b>${fromPk?emojiName(fromPk,who):enc(who)}</b> sent you a message`, p.picture);   // in-app toast (no OS permission needed)
-    try{ if(window.Notification && Notification.permission==='granted') new Notification('✉ New message', {body:`${who} sent you a DM`.replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim(), tag:'pc-dm', icon:p.picture||LOGO}); }catch(_){}
+    osNotify('✉ New message', `${who} sent you a DM`, { tag:'pc-dm', icon:p.picture||LOGO,
+                                                        onClick:()=>switchView('messages') });
   }
   // Index DMs WITHOUT decrypting (decryption is CPU-heavy ECDH+AES in the worker; decrypting all
   // 200 on load jams the worker and stalls timeline verification). Decrypt lazily on view.
@@ -18865,6 +18867,22 @@
     t.onclick=()=>{ try{ t.remove(); }catch(_){} switchView('ai'); if(conv) aiOpenConversation(conv); };
     const root=$('#toast-root'); if(root){ root.appendChild(t); setTimeout(()=>{ try{ t.remove(); }catch(_){} }, 12000); }
   }
+  /* One place that raises an OS-level notification. Everything that wants one goes through here so
+   * the permission check, the click-to-focus and the icon cannot drift between callers — clicking a
+   * system notification that does nothing is worse than not having sent it. */
+  function osNotify(title, body, opts){
+    try{
+      if(!window.Notification || Notification.permission!=='granted') return null;
+      const n=new Notification(title, { body:String(body||'').replace(/<[^>]+>/g,'')
+                                          .replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim(),
+                                        icon:(opts&&opts.icon)||LOGO, tag:(opts&&opts.tag)||undefined });
+      n.onclick=()=>{ try{ window.focus(); }catch(_){}
+                      try{ if(opts&&opts.onClick) opts.onClick(); }catch(_){}
+                      try{ n.close(); }catch(_){} };
+      return n;
+    }catch(_){ return null; }
+  }
+
   // A reminder fired (pushed over the chat WS) — full-screen pulsing card + a beep, like the old UI.
   function reminderAlert(text){
     try{
@@ -18873,7 +18891,13 @@
         o.type='sine'; o.frequency.value=880; g.gain.setValueAtTime(0.001,ac.currentTime+t); g.gain.exponentialRampToValueAtTime(0.25,ac.currentTime+t+0.02);
         g.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+t+0.15); o.start(ac.currentTime+t); o.stop(ac.currentTime+t+0.16); });
     }catch(_){}
-    try{ if(window.Notification && Notification.permission==='granted') new Notification('⏰ Reminder', {body:String(text).replace(/<[^>]+>/g,''), tag:'pc-reminder'}); }catch(_){}
+    osNotify('⏰ Reminder', text, { tag:'pc-reminder' });
+    /* …and through the desktop's own notification path, so a reminder behaves like every other
+     * arrival there: a card in the corner, the chime, and a row in the centre. The full-screen
+     * overlay below still appears — a reminder is the one thing that SHOULD interrupt — but it is
+     * dismissed in a second and the card is what is left to find afterwards. */
+    try{ if(window.PCOS && PCOS.isOn() && PCOS.osToast)
+           PCOS.osToast('⏰ <b>Reminder</b> — ' + enc(String(text||'').replace(/<[^>]+>/g,'').slice(0,120)), LOGO); }catch(_){}
     const ex=document.getElementById('reminderOverlay'); if(ex) ex.remove();
     const ov=document.createElement('div'); ov.id='reminderOverlay';
     ov.style.cssText='position:fixed;inset:0;z-index:600;display:grid;place-items:center;padding:24px;background:rgba(4,2,12,.8);backdrop-filter:blur(4px)';
@@ -23529,6 +23553,21 @@
      * view, not closed. */
     stopMusic: () => { try{ MusicPlayer.close(); MusicPlayer.cur=null; MusicPlayer.queue=[]; }catch(_){} },
     accountMenu,                                              // → the desktop's tray avatar
+    /* OS-level notification permission, asked from a real click. Deliberately separate from Web
+     * Push: push needs a configured VAPID key and a server, and this needs neither — it is what
+     * makes a reminder raise a system notification while the app is open behind another window,
+     * which is the whole point of running it as a desktop. */
+    osNotifyState: () => { try{ return window.Notification ? Notification.permission : 'unsupported'; }
+                           catch(_){ return 'unsupported'; } },
+    askOsNotify: async () => {
+      try{
+        if(!window.Notification) return 'unsupported';
+        if(Notification.permission==='granted') return 'granted';
+        const r=await Notification.requestPermission();
+        if(r==='granted') osNotify('PosterChan', 'Notifications are on.', { tag:'pc-test' });
+        return r;
+      }catch(_){ return 'denied'; }
+    },
     accountCount: () => { try{ return Session.accounts().length; }catch(_){ return 0; } },
     openThread,                                               // → a post window from the notification centre
     goLive: _goLive,                                          // → the desktop's Go Live launcher entry

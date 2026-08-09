@@ -42,6 +42,9 @@ Assertions, each a way a window manager breaks:
                        alt-tab — and then nothing ends the gesture.
   snap-broken          Dragging a window to a screen edge does not snap it to that half (or does it
                        without previewing where it will land, or cannot be dragged back off).
+  reminder-buried      A fired reminder's overlay renders under the desktop. It is the one surface
+                       that is meant to interrupt, and it cannot be dismissed if it is behind
+                       something.
   stray-mini-player    The floating music player renders on the desktop. The Music WINDOW is the
                        player; a second, smaller one beside it (or in its place when you close it)
                        is two sets of controls for one thing.
@@ -186,6 +189,26 @@ DRIVE = r"""(async () => {
     out.playerHidden = getComputedStyle(mp).display === 'none';
     out.playerCoveredBy = (hit ? (hit.id || hit.className || hit.tagName).toString().slice(0,40) : 'nothing');
     mp.remove();
+  }
+
+  /* A fired reminder must be reachable ON TOP of the desktop. It is the one thing in the app that
+   * deliberately interrupts, and it mounts on <body> at z-index 600 — above the z-index:300 desktop,
+   * but that is exactly the kind of arithmetic that was wrong for modals, the Blossom picker and the
+   * music player in turn. Hit-tested, not read off the stylesheet. */
+  {
+    const ov = document.createElement('div');
+    ov.id = 'reminderOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:600;display:grid;place-items:center';
+    ov.innerHTML = '<button id="__rd">Dismiss</button>';
+    document.body.appendChild(ov);
+    await sleep(60);
+    const b = document.getElementById('__rd');
+    const r = b.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width/2, r.top + r.height/2);
+    out.reminderReachable = !!(hit && (hit === b || b.contains(hit)));
+    out.reminderCoveredBy = out.reminderReachable ? '' :
+      (hit ? (hit.id || hit.className || hit.tagName).toString().slice(0,40) : 'nothing');
+    ov.remove();
   }
 
   // A post opens in its OWN window (openDoc), the timeline window stays put, and clicking the same
@@ -585,6 +608,11 @@ async def drive(url):
                                      f"opened={r.get('docWins')} after-reopen={r.get('docDedup')} "
                                      f"feed-inside={r.get('docFeed')} taskbar={r.get('docTask')} "
                                      f"repaints={r.get('docPaint')} left-open={r.get('docClosed')}"))
+                if not r.get("reminderReachable"):
+                    problems.append((label, "reminder-buried",
+                                     "a fired reminder is not clickable on the desktop — its Dismiss "
+                                     f"hits {r.get('reminderCoveredBy')!r}. It is the one thing that "
+                                     "is supposed to interrupt."))
                 if not r.get("playerHidden"):
                     problems.append((label, "stray-mini-player",
                                      "the floating music player renders on the desktop — the Music "

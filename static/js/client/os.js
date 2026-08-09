@@ -784,6 +784,21 @@
     try{ items = (PC().notifItems && PC().notifItems(60)) || []; }catch(_){}
     let mail = 0;
     try{ mail = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){}
+    /* System alerts. A desktop's notifications are only useful when the window is behind something
+     * else, and that needs OS permission — which can only be asked from a click, so it has to be
+     * offered somewhere rather than requested at boot (asking on load pops the browser's chrome and
+     * gets refused by reflex). Shown only while it is not granted; 'denied' cannot be re-asked, so
+     * it says where to change it instead of offering a button that does nothing. */
+    let perm = 'unsupported';
+    try{ perm = (PC().osNotifyState && PC().osNotifyState()) || 'unsupported'; }catch(_){}
+    const permRow = perm === 'granted' || perm === 'unsupported' ? ''
+      : (perm === 'denied'
+          ? `<div class="os-noti-perm muted small">System alerts are blocked for this site — turn them
+               back on in your browser's site settings.</div>`
+          : `<button class="os-noti-perm as-btn" id="os-noti-perm">
+               <svg class="ic" aria-hidden="true"><use href="#i-bell"></use></svg>
+               <span><b>Turn on system alerts</b><i>Reminders and messages reach you while this window
+                 is behind another one.</i></span></button>`);
     const mailRow = mail > 0
       ? `<button class="os-noti-mail" id="os-noti-mail">
            <svg class="ic" aria-hidden="true"><use href="#i-mail"></use></svg>
@@ -798,10 +813,16 @@
                    aria-label="Notification sound">${settings().get('osDing', true) ? '🔔' : '🔕'}</button>
            <button class="os-noti-x" id="os-noti-all" title="Open the Notifications app">Open all</button>
          </span></div>
-       ${mailRow}
+       ${permRow}${mailRow}
        <div class="os-noti-list">${rows || '<div class="empty">Nothing new.</div>'}</div>`;
     root.appendChild(panel);
 
+    { const pb = $('#os-noti-perm', panel);
+      if(pb && pb.tagName === 'BUTTON') pb.onclick = async (e) => {
+        e.stopPropagation();
+        try{ await PC().askOsNotify(); }catch(_){}
+        toggleNoti(true);                 // repaint: the row goes away once it is granted
+      }; }
     if(mail > 0) $('#os-noti-mail', panel).onclick = () => { hideNoti(); openApp('messages'); };
     mailAck = mail;                              // looking at the centre counts as looking
     $('#os-noti-all', panel).onclick = () => { hideNoti(); openApp('notifications'); };

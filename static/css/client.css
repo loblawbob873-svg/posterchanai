@@ -6251,6 +6251,14 @@ body.os-on #os-root{pointer-events:auto}
 .os-noti-mail:hover{background:rgba(var(--accent-rgb),.09)}
 .os-noti-mail .ic{width:17px;height:17px;color:var(--neon);flex:0 0 auto}
 .os-noti-mail span{color:var(--muted)}
+.os-noti-perm{display:flex;align-items:flex-start;gap:9px;width:100%;padding:11px 14px;
+  border-bottom:1px solid var(--line);text-align:left;font-size:12.5px;color:var(--text)}
+.os-noti-perm.as-btn{background:none;border:0;border-bottom:1px solid var(--line);cursor:pointer;
+  font-family:inherit}
+.os-noti-perm.as-btn:hover{background:rgba(var(--accent-rgb),.09)}
+.os-noti-perm .ic{width:17px;height:17px;color:var(--neon);flex:0 0 auto;margin-top:1px}
+.os-noti-perm span{min-width:0}
+.os-noti-perm i{display:block;font-style:normal;color:var(--muted);font-size:11.5px;margin-top:2px}
 .os-noti-list{overflow-y:auto;overscroll-behavior:contain;padding:4px 0}
 /* The rows are the client's own .notif markup, so only the extra action strip is styled here. */
 .os-noti-row .notif{position:relative;padding-right:74px}
