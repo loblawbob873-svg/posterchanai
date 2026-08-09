@@ -6265,6 +6265,24 @@ body.os-on #os-root{pointer-events:auto}
   align-content:start;justify-content:start;padding:14px;overflow-y:auto;flex:1;min-height:0}
 .osw-slot.os-folder .os-icon{position:static}
 
+/* The Music view's header — one obvious action, so a library reads as a player and not a folder. */
+.music-head{display:flex;align-items:center;gap:12px;padding:2px 2px 12px;flex-wrap:wrap}
+.music-head .btn[disabled]{opacity:.45;cursor:default}
+
+/* The Music APP — a player, not the file manager's Music folder. */
+.music-app{display:flex;flex-direction:column;gap:14px;padding:14px 12px;min-height:0}
+.ma-now{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px;border-radius:14px;
+  background:var(--panel2);border:1px solid var(--line)}
+.ma-art{width:58px;height:58px;border-radius:12px;flex:0 0 auto;display:flex;align-items:center;
+  justify-content:center;background:linear-gradient(135deg,rgba(var(--accent-rgb),.28),transparent);
+  border:1px solid var(--line)}
+.ma-art .ic{width:26px;height:26px;color:var(--neon)}
+.ma-meta{flex:1 1 170px;min-width:0}
+.ma-meta b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px}
+.ma-ctl{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.ma-ctl .btn.on{border-color:var(--neon);color:var(--neon)}
+.music-app .music-list{flex:1;min-height:0;overflow-y:auto}
+
 .os-me{width:32px;height:32px;border-radius:50%;overflow:hidden;padding:0;flex:0 0 auto;
   border:1px solid var(--line);background:var(--panel2);cursor:pointer;display:flex;
   align-items:center;justify-content:center}

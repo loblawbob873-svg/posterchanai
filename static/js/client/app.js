@@ -12866,6 +12866,61 @@
   }
 
   function openMusicFolder(){ _filesTab='public'; _filesFolder='Music'; switchView('blossom'); }   // the file-manager Music folder
+
+  /* The Music APP: a player, not a folder. Opening Music used to land you in Files → 🎵 Music — the
+   * same screen you use to UPLOAD, complete with folder chips and a drop zone — which is a file
+   * manager that happens to contain songs. This is the library as a playlist with transport on top;
+   * uploading is one button away rather than the thing you arrive at.
+   * It reuses _renderMusicList for the rows and the floating MusicPlayer for playback, so there is
+   * one library, one queue, and one set of controls that cannot drift out of step. */
+  function renderMusicApp(){
+    const feed=$('#feed'); if(!feed) return;
+    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate','feed-meme');
+    feed.innerHTML=`<div class="music-app">
+      <div class="ma-now">
+        <div class="ma-art"><svg class="ic" aria-hidden="true"><use href="#i-music"></use></svg></div>
+        <div class="ma-meta"><b id="ma-title">Nothing playing</b><span class="muted small" id="ma-sub"></span></div>
+        <div class="ma-ctl">
+          <button class="btn btn-ghost small" id="ma-prev" title="Previous"><svg class="ic b-ic" aria-hidden="true"><use href="#i-prev"></use></svg></button>
+          <button class="btn btn-neon" id="ma-play" title="Play / pause"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>
+          <button class="btn btn-ghost small" id="ma-next" title="Next"><svg class="ic b-ic" aria-hidden="true"><use href="#i-next"></use></svg></button>
+          <button class="btn btn-ghost small" id="ma-shuf" title="Shuffle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg></button>
+          <button class="btn btn-cyan small" id="ma-add" title="Add music"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add music</button>
+        </div>
+      </div>
+      <div class="music-list" id="ma-lib"><div class="spinner"></div></div></div>`;
+    const lib=$('#ma-lib',feed);
+    const paint=()=>{ _renderMusicList(lib, null); _musicAppNow(); };
+    // Reconcile against the server first: a track whose blob is gone must not be offered, and the
+    // same check is what stops a deleted library from looking full. Paint immediately from the local
+    // index so the window is never a spinner, then repaint once the truth arrives.
+    paint();
+    _refreshBlobHave().then(paint).catch(()=>{});
+    const b=(sel,fn)=>{ const el=$(sel,feed); if(el) el.onclick=fn; };
+    b('#ma-prev',()=>MusicPlayer.prev());
+    b('#ma-next',()=>MusicPlayer.next());
+    b('#ma-play',()=>{ if(MusicPlayer.cur) return MusicPlayer.toggle();
+      const q=musicTracks(null); if(!q.length){ toast('no music yet — add some'); return; }
+      MusicPlayer.refreshQueue(); MusicPlayer.play(q[0].sha); });
+    b('#ma-shuf',()=>{ MusicPlayer.shuffle=!MusicPlayer.shuffle; MusicPlayer._render(); _musicAppNow();
+      if(MusicPlayer.shuffle){ const q=musicTracks(null);
+        if(q.length){ MusicPlayer.refreshQueue();
+          MusicPlayer.play(MusicPlayer.queue[Math.floor(Math.random()*MusicPlayer.queue.length)]); } } });
+    b('#ma-add',()=>openMusicFolder());
+    MusicPlayer.onChange=_musicAppNow;   // the floating player is the single source of truth
+  }
+  // Mirror the player's state into the app's header. Cheap, and it no-ops when the app isn't mounted
+  // (the window may be closed while music keeps playing — that is the point of a floating player).
+  function _musicAppNow(){
+    const t=document.getElementById('ma-title'); if(!t) return;
+    const m=MusicPlayer.cur?FilesIdx.meta(MusicPlayer.cur):null;
+    t.textContent=(m&&m.name)||'Nothing playing';
+    const sub=document.getElementById('ma-sub');
+    const playing=_audioEl && !_audioEl.paused;
+    if(sub) sub.textContent=MusicPlayer.cur ? (playing?'playing':'paused')+(MusicPlayer.shuffle?' · shuffle':'') : '';
+    const sh=document.getElementById('ma-shuf'); if(sh) sh.classList.toggle('on', !!MusicPlayer.shuffle);
+    try{ _updateMusicListBtns(); }catch(_){}
+  }
   function openMusic(){   // the Music nav button → shuffle-play your whole library right away
     FilesIdx.loadLocal();
     const go=()=>{ const tracks=musicTracks(null);
@@ -14007,13 +14062,25 @@
     if(!grid) return;
     const tracks=musicTracks(list);
     grid.className='music-list';
-    grid.innerHTML = tracks.length ? tracks.map(t=>`<div class="track" data-sha="${t.sha}">
+    /* A header, so this reads as a music app rather than a folder that happens to hold songs. The
+     * desktop opens this view as the Music WINDOW, and without one obvious action a full library
+     * looked as inert as an empty one — "it loads the Music folder and nothing happens". */
+    const head = `<div class="music-head">
+        <button class="btn btn-neon small" id="mus-shuffle"${tracks.length?'':' disabled'}>
+          <svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg>Shuffle all</button>
+        <span class="muted small">${tracks.length ? (tracks.length + ' track' + (tracks.length>1?'s':''))
+                                                  : 'nothing here yet'}</span></div>`;
+    grid.innerHTML = head + (tracks.length ? tracks.map(t=>`<div class="track" data-sha="${t.sha}">
         <button class="track-play" data-sha="${t.sha}" aria-label="Play"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>
         <span class="track-name">${enc(t.m.name||'track')}</span>
         <span class="track-meta">🔒 ${(((t.m.size||0)/1048576)).toFixed(1)}MB</span>
         <button class="track-dl" data-sha="${t.sha}" data-name="${enc((t.m.name||'track')+'.ogg')}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>
         <button class="track-del" data-sha="${t.sha}" title="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
-      </div>`).join('') : '<div class="empty">No music yet — drop audio files here. They\'re Opus-compressed + encrypted automatically.</div>';
+      </div>`).join('') : '<div class="empty">No music yet — drop audio files above. They\'re Opus-compressed + encrypted automatically, and only you can play them.</div>');
+    { const sh=$('#mus-shuffle',grid);
+      if(sh) sh.onclick=()=>{ const q=musicTracks(null); if(!q.length) return;
+        MusicPlayer.shuffle=true; MusicPlayer.refreshQueue();
+        MusicPlayer.play(MusicPlayer.queue[Math.floor(Math.random()*MusicPlayer.queue.length)]); }; }
     $$('.track-play',grid).forEach(b=> b.onclick=()=>MusicPlayer.play(b.dataset.sha));
     // A track is stored as Opus ciphertext, so "download" means decrypt-then-save — same path the
     // file grid's lock cards use. Without this the only way out of the Music folder was the player.
@@ -14092,7 +14159,9 @@
     _tick(){ if(!this.el||this.el.classList.contains('hidden')||this.min) return;
       const f=this.el.querySelector('.mp-seek-fill'), c=this.el.querySelector('.mp-cur'), du=this.el.querySelector('.mp-dur');
       if(_audioEl && _audioEl.duration){ if(f) f.style.width=((_audioEl.currentTime/_audioEl.duration*100)||0)+'%'; if(c) c.textContent=_fmtTime(_audioEl.currentTime); if(du) du.textContent=_fmtTime(_audioEl.duration); } },
+    onChange:null,   // the Music app mirrors this widget's state; see _musicAppNow
     _render(){
+      try{ if(this.onChange) this.onChange(); }catch(_){}
       this.ensure(); const d=this.el; const m=this.cur?FilesIdx.meta(this.cur):null; const name=(m&&m.name)||'—';
       const playing=_audioEl && !_audioEl.paused; const pl=this._loading?'…':(playing?'⏸':'▶');
       if(this.min){
@@ -15111,9 +15180,17 @@
   }
   function _bindMsgTabs(root){ $$('.mtab',root).forEach(b=> b.onclick=()=>{ if(_msgTab===b.dataset.mt) return;
     _msgTab=b.dataset.mt; dmActive=null;
+    // The Email badge counts mail you have not LOOKED at, so opening the tab clears it. It is a
+    // running total that only ever went up (sync adds to it; nothing subtracted), so it sat on the
+    // tab after you had read everything — and, because the desktop's tray count reads the same
+    // number, it sat on the clock too.
+    if(_msgTab==='email') Mail.unread=0;
     if(_msgTab!=='email' && _mailKeysOff) _mailKeysOff();   // don't hold j/k on the DM tab
     renderMessages(); }); }
   function renderMessages(){
+    // …and clear it however Messages was ENTERED on the Email tab — the desktop's notification card
+    // and the sidebar both land here directly, without going through a tab click.
+    if(_msgTab==='email') Mail.unread=0;
     if(_msgTab==='email'){
       const feed=$('#feed');
       // ALREADY MOUNTED → leave it alone. renderMessages() is reached from twelve places (an
@@ -23110,7 +23187,8 @@
      * (and with it the whole account switcher) and both launcher entries gated on it. */
     me: () => (GUEST ? null : ME),
     openMusic,                                                // → shuffle-play the library
-    openMusicFolder,                                          // → the desktop's Music WINDOW
+    openMusicFolder,                                          // → Files → Music (uploading)
+    renderMusicApp,                                           // → the desktop's Music WINDOW
     accountMenu,                                              // → the desktop's tray avatar
     accountCount: () => { try{ return Session.accounts().length; }catch(_){ return 0; } },
     openThread,                                               // → a post window from the notification centre

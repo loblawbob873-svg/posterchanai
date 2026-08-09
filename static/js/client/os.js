@@ -110,8 +110,8 @@
      * 🎵 Music view the classic UI uses, so there is one music library and not two. */
     { view: '__music', label: 'Music', icon: '#i-music',
       act: () => openDoc('music', 'Music', 'i-music',
-                         () => { try{ PC().openMusicFolder && PC().openMusicFolder(); }catch(_){} }),
-      when: () => !!(me() && PC().openMusicFolder) },
+                         () => { try{ PC().renderMusicApp && PC().renderMusicApp(); }catch(_){} }),
+      when: () => !!(me() && PC().renderMusicApp) },
     { view: '__golive', label: 'Go Live', icon: '#i-live', act: () => PC().goLive && PC().goLive(),
       when: () => !!(me() && PC().goLive) },
   ];
