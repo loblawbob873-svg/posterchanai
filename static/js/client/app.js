@@ -5022,7 +5022,15 @@
                 ...(_aiToken?{'Authorization':'Bearer '+_aiToken}:{}) } });
     if(!r.ok){
       const e=new Error('http '+r.status); e.status=r.status;
-      try{ e.detail=(await r.json()).detail; }catch(_){}
+      // FastAPI returns `detail` as a STRING for an HTTPException and as a LIST OF OBJECTS for a
+      // 422 — pasting the latter into a toast reads "could not pause that: [object Object]", which
+      // told the user nothing and me nothing either. Flatten it to the messages.
+      try{
+        const d=(await r.json()).detail;
+        e.detail = Array.isArray(d)
+          ? d.map(x=>[(x.loc||[]).slice(-1)[0], x.msg].filter(Boolean).join(': ')).join('; ')
+          : (typeof d==='string' ? d : (d ? JSON.stringify(d) : ''));
+      }catch(_){}
       throw e;
     }
     return r.json();
@@ -5055,6 +5063,17 @@
       </div></div>`;
   }
 
+  /* The action endpoints address a torrent by its POSITION in the list, not by hash. A position is
+   * only true until something is added or removed, and this list refreshes every two seconds — so
+   * resolve the hash to a current number at the moment of the click. Reusing a number captured at
+   * render time would, for Remove-with-files, eventually delete the wrong torrent's downloads. */
+  async function _torNum(hash){
+    const j = await _torApi('/list');
+    const hit = ((j&&j.torrents)||[]).find(t=>t.info_hash===hash);
+    if(!hit) { const e=new Error('that torrent is no longer in the list'); e.detail=e.message; throw e; }
+    return hit.num;
+  }
+
   function _torBindRows(box){
     $$('.tm-item',box).forEach(row=>{
       const h=row.dataset.h;
@@ -5062,7 +5081,7 @@
       if(tg) tg.onclick=async()=>{
         const resume=/Resume/.test(tg.textContent);
         tg.disabled=true;
-        try{ await _torApi(resume?'/resume':'/pause',{method:'POST',body:JSON.stringify({info_hash:h})}); }
+        try{ await _torApi(resume?'/resume':'/pause',{method:'POST',body:JSON.stringify({num:await _torNum(h)})}); }
         catch(err){ toast('could not '+(resume?'resume':'pause')+' that: '+(err.detail||err.message)); }
         finally{ tg.disabled=false; _torRefresh(true); }
       };
@@ -5073,7 +5092,8 @@
         // deletes what you already downloaded and cannot be undone.
         if(!await uiConfirm(`Remove “${name}” from the list?`)) return;
         const wipe=await uiConfirm('Delete the downloaded files too? Cancel keeps them on disk.');
-        try{ await _torApi('/remove',{method:'POST',body:JSON.stringify({info_hash:h, delete_files:!!wipe})});
+        try{ await _torApi('/remove',{method:'POST',
+               body:JSON.stringify({num:await _torNum(h), delete_files:!!wipe})});
              toast('removed'); }
         catch(err){ toast('could not remove that: '+(err.detail||err.message)); }
         _torRefresh(true);
@@ -5130,8 +5150,10 @@
     const q=String(v||'').trim(); if(!q) return;
     toast('adding…');
     try{
+      // The field is `torrent_url`, not `url` — a .torrent link sent as `url` is simply ignored and
+      // the request adds nothing.
       await _torApi('/add',{method:'POST',body:JSON.stringify(
-        q.startsWith('magnet:') ? { magnet:q } : { url:q })});
+        q.startsWith('magnet:') ? { magnet:q } : { torrent_url:q })});
       toast('added');
       _torRefresh(true);
     }catch(err){ toast('could not add that: '+(err.detail||err.message)); }
@@ -5139,16 +5161,21 @@
 
   async function renderTorrents(){
     const feed=$('#feed');
+    /* The tab strip carries the tab's own action, right-aligned. It used to sit on a row of its own
+     * below the tabs — a lone pill floating over the list, which read as something left behind
+     * rather than a control belonging to the view. One header row, and the strip is already sticky. */
+    const act = _torTab==='dl'
+      ? `<button class="btn btn-neon small tor-act" id="tm-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Add torrent</button>
+         <button class="btn btn-ghost small icon-only tor-act" id="tm-refresh" title="Refresh now" aria-label="Refresh now"><svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg></button>`
+      : (GUEST ? '' : `<button class="btn btn-neon small tor-act" id="tor-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Publish</button>`);
     const tabs=`<div class="notif-tabs tor-tabs">
         <button class="ntab${_torTab==='dl'?' on':''}" data-tt="dl">⬇ Downloads</button>
-        <button class="ntab${_torTab==='nostr'?' on':''}" data-tt="nostr">🧲 Nostr</button></div>`;
+        <button class="ntab${_torTab==='nostr'?' on':''}" data-tt="nostr">🧲 Nostr</button>
+        <span class="tor-sp"></span>${act}</div>`;
     const bind=()=>{ $$('.tor-tabs .ntab',feed).forEach(b=> b.onclick=()=>{
       if(_torTab===b.dataset.tt) return; _torTab=b.dataset.tt; _torStopPoll(); renderTorrents(); }); };
     if(_torTab==='dl'){
-      feed.innerHTML = tabs + `<div class="streams-top">
-          <button class="btn btn-neon small" id="tm-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Add torrent</button>
-          <button class="btn btn-ghost small icon-only" id="tm-refresh" title="Refresh now" aria-label="Refresh now"><svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg></button>
-        </div><div class="tm-list" id="tm-list"><div class="spinner"></div></div>`;
+      feed.innerHTML = tabs + '<div class="tm-list" id="tm-list"><div class="spinner"></div></div>';
       bind();
       { const a=$('#tm-add',feed); if(a) a.onclick=_torAddPrompt; }
       { const r=$('#tm-refresh',feed); if(r) r.onclick=()=>_torRefresh(true); }
@@ -5167,8 +5194,7 @@
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     if(VIEW!=='torrents' || _torTab!=='nostr') return;
     const tors=evs.sort((a,b)=>b.created_at-a.created_at);
-    const top=GUEST?'':`<div class="streams-top"><button class="btn btn-neon small" id="tor-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Publish a torrent</button></div>`;
-    feed.innerHTML = tabs + top + (tors.length ? tors.map(torrentCard).join('') : '<div class="empty">No torrents found on the relay yet (NIP-35 · kind 2003).</div>');
+    feed.innerHTML = tabs + (tors.length ? tors.map(torrentCard).join('') : '<div class="empty">No torrents found on the relay yet (NIP-35 · kind 2003).</div>');
     bind();
     { const ab=$('#tor-add',feed); if(ab) ab.onclick=addTorrent; }
     decorateProfiles();

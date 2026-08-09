@@ -6350,6 +6350,17 @@ body.os-on #os-root{pointer-events:auto}
 .btn.icon-only{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
 .btn.icon-only .ic{margin:0}
 
+/* Torrents: the tab strip carries the tab's action on the right. The strip is a sticky flex row, so
+   the button rides in it rather than needing a row of its own underneath. */
+.tor-tabs{align-items:center}
+.tor-tabs .tor-sp{flex:1;min-width:8px}
+.tor-tabs .tor-act{flex:0 0 auto;align-self:center;margin:0 0 8px}
+.tor-tabs .tor-act:last-child{margin-right:2px}
+/* Below 560px the strip would have to scroll to reach the buttons, which defeats the point of
+   putting them there. The list already refreshes every two seconds, so manual refresh is the one to
+   drop; Add torrent is not. */
+@media (max-width:560px){ .tor-tabs #tm-refresh{display:none} .tor-tabs{padding-right:8px} }
+
 /* Torrent manager (Discover → Torrents → Downloads). Card-per-torrent rather than a table: a table
    needs horizontal room this view does not have on a phone, and every column here is short enough to
    wrap into a meta row. */
