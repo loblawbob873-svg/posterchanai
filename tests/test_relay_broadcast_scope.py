@@ -194,12 +194,61 @@ class MirrorWiring(unittest.TestCase):
         from app.services.nostr_relay.server import _PRIVATE_DOCS, _PRIVATE_NS
         self.assertEqual(_PRIVATE_NS,
                          ("pcai:note:", "pcai:notefolder:", "pcai:pw:", "pcai:pwfolder:",
+                          "pcai:cal:", "pcai:calmeta:",
                           "pcai:files-index-bak:", "pcai:conv:", "pcai:msg:", "pcai:upload:"))
         self.assertEqual(_PRIVATE_DOCS,
                          ("pcai:pwkey", "pcai:budget", "pcai:files-index", "pcai:drafts",
                           "pcai:voices", "pcai:news-feeds", "pcai:news-read", "pcai:client-prefs"))
         for d in ("pcai:notes-export:1", "pcai:pwpolicy", "pcai:budgeting"):
             self.assertFalse(_private_mirrorable(ev(30078, d)), d)
+
+    def test_the_calendar_and_addressbook_are_mirrored_like_every_other_library(self):
+        """They were the one private library with NO second copy anywhere.
+
+        A calendar item and a contact card are the same shape and the same risk as a note: one
+        encrypted event, one Postgres, no other copy. They were simply missing from _PRIVATE_NS, so
+        "sync my data" handed back the notes and the vault and left the calendar and the phone's
+        addressbook empty — a restore that looks like it worked.
+
+        `pcai:calmeta:` is asserted alongside the items on purpose: it IS the collection (name,
+        colour, and the `kind` that tells a VADDRESSBOOK from a calendar). Mirroring the events
+        without it restores items into a calendar that does not exist, which no client shows.
+        """
+        for d in ("pcai:cal:default:8f21-4c.ics", "pcai:cal:contacts:ab12.vcf",
+                  "pcai:calmeta:default", "pcai:calmeta:contacts"):
+            self.assertTrue(_private_mirrorable(ev(30078, d)), d)
+
+    def test_the_libraries_are_restored_from_the_private_relays_not_the_public_ones(self):
+        """A backfill that asks `upstream` for kind 30078 finds nothing, by design.
+
+        _broadcastable withholds every `pcai:` document from the public relays, so the ONLY copies
+        are on the operator's private mirrors. Asking the public set restored a user's posts and none
+        of their notes, passwords or calendar — and adding 30078 to the PUBLIC pass instead would be
+        worse than useless: with `backup_datastore` on, that kind carries a node's own
+        pcai:setting:/user:/bot: docs upstream, so a per-user button could pull another node's
+        settings into this store.
+        """
+        import inspect
+
+        from app.services.nostr_relay import ingest
+        self.assertEqual(ingest._PRIVATE_LIB_KINDS, [30024, 30078, 30403])
+        src = inspect.getsource(ingest.backfill_author)
+        self.assertIn("private_relays", src)
+        # The private kinds go to the private relay set, and the public pass must not name them.
+        self.assertIn("_backfill_filter(store, server, private_relays,", src)
+        public = src.split("if private_relays:")[0]
+        self.assertNotIn("_PRIVATE_LIB_KINDS", public)
+        for k in (30078, 30024, 30403):
+            self.assertNotIn(str(k), public.split("kinds = kinds or")[1].split("\n")[0])
+
+    def test_the_relay_thread_hands_the_private_relays_to_the_backfill(self):
+        """The wiring, not just the capability: an unpassed argument defaults to None and the
+        restore silently does nothing while every log line still says the sync ran."""
+        import inspect
+
+        from app.services.nostr_relay import thread
+        src = inspect.getsource(thread)
+        self.assertIn('private_relays=cfg.get("private_relays")', src)
 
 
 if __name__ == "__main__":

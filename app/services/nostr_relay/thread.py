@@ -1295,7 +1295,11 @@ async def _main(cfg: dict) -> None:
                         from . import ingest as _ingest
                         asyncio.create_task(_safe(_ingest.backfill_author(
                             store, server, cfg["upstream"], pk,
-                            direct=cfg["direct"], pace=cfg["request_pace_sec"])))
+                            direct=cfg["direct"], pace=cfg["request_pace_sec"],
+                            # Read live from cfg (the control poller updates it on a settings
+                            # reload) so a sync run right after the operator fills the field in
+                            # uses the new mirrors rather than the set captured at startup.
+                            private_relays=cfg.get("private_relays"))))
             except Exception as e:
                 logger.debug("[nostr-relay] control poll error: %s", e)
             try:

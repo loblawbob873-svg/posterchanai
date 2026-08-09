@@ -6286,15 +6286,19 @@ body.os-on #os-root{pointer-events:auto}
 
 /* "Click me for Desktop Mode" — a speech bubble off the instance logo, desktop widths only (the
    script gates on that too; this is belt and braces because the sidebar is hidden on mobile anyway). */
+/* Everything below the font-size is in em, so --osh scales the whole bubble — arrow, padding and all.
+   It hangs off <html> (see _showOsHint) and so never sees the desktop body{zoom:.67-.77} the logo it
+   points at is drawn under; JS sets --osh to that zoom. Unset = 1, which is right at >=1921px and on
+   the phone widths this is hidden at anyway. */
 .os-hint{position:fixed;transform:translateY(-50%);z-index:360;
-  display:flex;align-items:center;gap:6px;white-space:nowrap;padding:7px 9px 7px 11px;border-radius:10px;
-  background:var(--panel2);border:1px solid var(--neon);color:var(--text);font-size:12px;
+  display:flex;align-items:center;gap:.5em;white-space:nowrap;padding:.58em .75em .58em .92em;border-radius:.83em;
+  background:var(--panel2);border:1px solid var(--neon);color:var(--text);font-size:calc(12px * var(--osh,1));
   box-shadow:0 6px 22px rgba(0,0,0,.45);animation:os-hint-in .25s ease-out}
 .os-hint span{cursor:pointer}
 .os-hint::before{content:'';position:absolute;right:100%;top:50%;transform:translateY(-50%);
-  border:6px solid transparent;border-right-color:var(--neon)}
-.os-hint-x{background:none;border:0;color:var(--muted);cursor:pointer;font-size:11px;line-height:1;
-  padding:2px 3px;border-radius:5px;font-family:inherit}
+  border:.5em solid transparent;border-right-color:var(--neon)}
+.os-hint-x{background:none;border:0;color:var(--muted);cursor:pointer;font-size:.92em;line-height:1;
+  padding:.17em .25em;border-radius:.42em;font-family:inherit}
 .os-hint-x:hover{color:var(--text);background:var(--panel)}
 @keyframes os-hint-in{from{opacity:0;transform:translateY(-50%) translateX(-6px)}to{opacity:1;transform:translateY(-50%)}}
 @media (max-width:1023px){ .os-hint{display:none} }

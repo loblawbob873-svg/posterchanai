@@ -35,6 +35,14 @@ _BACKUP_NS = ("pcai:setting:", "pcai:user:", "pcai:usercfg:", "pcai:bot:")
 # adding one a decision.
 # Per-item namespaces (one event per note / entry / folder / message) are prefixes...
 _PRIVATE_NS = ("pcai:note:", "pcai:notefolder:", "pcai:pw:", "pcai:pwfolder:",
+               # Calendars and addressbooks are the same shape and the same risk as notes — one
+               # encrypted event per item, with this Postgres as the only copy — and they were the
+               # one private library with NO mirror at all, so a restore handed back the notes and
+               # the vault and left the calendar and the phone's contacts empty. `pcai:calmeta:`
+               # travels with them and is not optional: it is the collection itself (display name,
+               # colour, and the `kind` that tells a VADDRESSBOOK from a calendar), and restored
+               # items with no collection to live in are items a client never shows.
+               "pcai:cal:", "pcai:calmeta:",
                # `pcai:upload:` is the key that makes a chat attachment readable. Mirroring the
                # messages without it copies the conversation and leaves every file in it unopenable
                # — a restore that looks complete and is not.

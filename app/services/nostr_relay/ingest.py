@@ -217,13 +217,20 @@ async def _backfill_filter(store, server, upstream, base_filter: dict, *, direct
     return stored
 
 
+# The user's own encrypted libraries: kind 30078 carries Notes, the password vault, the calendar,
+# the addressbook, Budget and the files index, and 30024/30403 are unpublished article/listing
+# drafts. They are restored from the PRIVATE mirror relays only — see backfill_author.
+_PRIVATE_LIB_KINDS = [30024, 30078, 30403]
+
+
 async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool = False,
                           kinds=None, pace: float = 1.0, max_total: int = 20000,
-                          max_pages: int = 200) -> int:
+                          max_pages: int = 200, private_relays=None) -> int:
     """Backfill a user's FULL Nostr history into the store: everything they AUTHORED (notes,
-    articles, reposts, reactions, comments, profile, contacts, relay list) AND the private
-    DMs ADDRESSED to them (NIP-17 gift wraps + legacy kind-4). Writes straight to the store
-    (origin='wot'), so it does NOT go through the WS write path and is NOT re-broadcast."""
+    articles, reposts, reactions, comments, profile, contacts, relay list), the private
+    DMs ADDRESSED to them (NIP-17 gift wraps + legacy kind-4), and — from the operator's private
+    mirror relays — their own encrypted libraries. Writes straight to the store (origin='wot'), so
+    it does NOT go through the WS write path and is NOT re-broadcast."""
     # profile, notes, contacts, reposts, reactions, comments, relay list, long-form articles,
     # NIP-53 live events (30311, Streams), NIP-35 torrents (2003/2004), NIP-34 repos (30617) — so a
     # follow / WoT refresh pulls a torrent-poster's FULL back-catalog, not just recent firehose hits.
@@ -237,6 +244,24 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
     stored += await _backfill_filter(store, server, upstream,
                                      {"#p": [pubkey], "kinds": [1059, 4]},
                                      require_author=None, **common)
+    # The encrypted libraries — Notes, the vault, the calendar, contacts, Budget, drafts.
+    #
+    # A SECOND pass against a DIFFERENT relay set, and both halves of that are the point. These
+    # events are deliberately withheld from the public upstreams (_broadcastable in server.py), so
+    # asking `upstream` for them returns nothing however many kinds the filter names — which is why
+    # "sync my data" restored a user's posts and none of their notes, passwords or calendar. The only
+    # other copies are on the relays the operator named in `private_relays`, so that is where this
+    # asks. Blank (the default) → normalize_relays gives [], query returns [], and this costs one
+    # no-op call: there is genuinely no second copy to restore from, and inventing one by reaching
+    # for the public set would publish the very metadata trail the private list exists to contain.
+    #
+    # Deliberately NOT added to the public pass above: with `backup_datastore` on, kind 30078 also
+    # carries this node's OWN config upstream (pcai:setting:/user:/bot:), and a per-user "sync my
+    # data" button must not be able to pull another node's settings into this one's store.
+    if private_relays:
+        stored += await _backfill_filter(store, server, private_relays,
+                                         {"authors": [pubkey], "kinds": _PRIVATE_LIB_KINDS},
+                                         require_author=pubkey, **common)
     logger.info("[nostr-relay] backfilled %d events for %s…", stored, pubkey[:12])
     return stored
 

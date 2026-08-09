@@ -4258,7 +4258,15 @@ class SyncPostsReq(BaseModel):
 @router.post("/sync-posts")
 async def sync_posts(data: SyncPostsReq, db: Session = Depends(get_db)):
     """Pull the user's OWN Nostr history (from the upstream relays) into this relay's store, so their
-    posts from other clients show up here. (Merged from the old 'sync my posts to the relay' setting.)"""
+    posts from other clients show up here. (Merged from the old 'sync my posts to the relay' setting.)
+
+    Also restores their encrypted libraries — Notes, the password vault, the calendar, contacts,
+    Budget, drafts — but ONLY from the operator's private mirror relays, which is the only place a
+    copy can be (those events are withheld from the public upstreams by design). `private` tells the
+    client whether that half can do anything, so the UI can promise the calendar back when there IS a
+    mirror and say plainly that there is no second copy when there isn't. Reporting "syncing your
+    notes and passwords" on a node with no mirror is how someone concludes their vault is lost when
+    nothing has been restored because nothing was ever backed up."""
     pk = nostr_service.to_pubkey_hex(data.pubkey)
     if not pk:
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
@@ -4269,7 +4277,9 @@ async def sync_posts(data: SyncPostsReq, db: Session = Depends(get_db)):
         trigger_backfill(pk)
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-    return JSONResponse({"ok": True})
+    private = bool(nostr_service.relay.normalize_relays(
+        settings_store.get("nostr_relay_private_relays", "") or ""))
+    return JSONResponse({"ok": True, "private": private})
 
 
 # ----- auto NIP-05 name on signup -----

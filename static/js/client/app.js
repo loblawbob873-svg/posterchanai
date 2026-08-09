@@ -3193,15 +3193,40 @@
   function _dismissOsHint(){
     try{ ClientSettings.set('osHintSeen', true); }catch(_){}
     const b = document.getElementById('os-hint');
-    if(b) b.remove();
+    if(b){ try{ b._osUnplace(); }catch(_){} b.remove(); }
   }
   function _osHint(){
     try{
-      if(ClientSettings.get('osHintSeen', false)) return;
-      if(ClientSettings.get('osMode', false)) return;          // already a desktop user
-      if(Math.min(window.innerWidth, window.innerHeight) < 700 || window.innerWidth < 1024) return;
+      if(!_osHintWanted()) return;
       const logo = $('.brand-logo');
       if(!logo || document.getElementById('os-hint')) return;
+      /* WAIT for the logo to have a real box before showing. _wireOsLogo runs inside boot(), while
+       * #app is still .hidden — and a display:none ancestor makes getBoundingClientRect() all zeros,
+       * so the bubble pinned itself to left:12px/top:0, i.e. the top-left corner of the screen with
+       * half of it off the top, nowhere near the logo it points at. Its 20s life also ran down before
+       * the app was ever on screen. A ResizeObserver fires the moment the sidebar is displayed and the
+       * logo gets a size; where there is none, show immediately (the old behaviour). */
+      const show = () => { if(_osHintWanted() && !document.getElementById('os-hint')) _showOsHint(logo); };
+      if(logo.getBoundingClientRect().width){ show(); return; }
+      if(typeof ResizeObserver !== 'function'){ show(); return; }
+      const ro = new ResizeObserver(() => {
+        if(!logo.getBoundingClientRect().width) return;
+        ro.disconnect();
+        show();
+      });
+      ro.observe(logo);
+    }catch(_){}
+  }
+  /* The conditions for offering the desktop at all, re-checked at show time: the wait above means the
+   * bubble can appear minutes after the logo was wired, and the window can be resized — or the desktop
+   * opened another way — in between. */
+  function _osHintWanted(){
+    if(ClientSettings.get('osHintSeen', false)) return false;
+    if(ClientSettings.get('osMode', false)) return false;      // already a desktop user
+    return Math.min(window.innerWidth, window.innerHeight) >= 700 && window.innerWidth >= 1024;
+  }
+  function _showOsHint(logo){
+    try{
       const b = document.createElement('div');
       b.id = 'os-hint';
       b.className = 'os-hint';
@@ -3214,15 +3239,25 @@
        * the menu popovers use it: body carries zoom on desktop, which throws off fixed-position
        * arithmetic for its children. */
       document.documentElement.appendChild(b);
+      /* ...which is also why it needs _scalePop's treatment. Hanging off <html> puts it OUTSIDE the
+       * desktop body{zoom:.67-.77}, so a 12px bubble sat next to a 58px logo drawn at 39px and read
+       * as half again too big for the thing it points at. --osh scales the lot (see .os-hint). */
+      let z = 1;
+      try{ z = parseFloat(getComputedStyle(document.body).zoom) || 1; }catch(_){}
+      if(z !== 1) b.style.setProperty('--osh', String(z));
+      const gap = Math.max(8, Math.round(12 * z));
       const place = () => {
         const r = logo.getBoundingClientRect();
-        b.style.left = Math.round(r.right + 12) + 'px';
+        if(!r.width) return;                    // hidden again (signed out) — don't re-pin it to 0,0
+        b.style.left = Math.round(r.right + gap) + 'px';
         b.style.top = Math.round(r.top + r.height / 2) + 'px';
       };
       place();
       window.addEventListener('resize', place);
-      // It has said its piece after a while; leaving it up forever is the advert case again.
-      setTimeout(() => { const n = document.getElementById('os-hint'); if(n) n.remove(); }, 20000);
+      b._osUnplace = () => window.removeEventListener('resize', place);
+      // It has said its piece after a while; leaving it up forever is the advert case again. Timed
+      // from when it actually appeared, not from boot.
+      setTimeout(() => { const n = document.getElementById('os-hint'); if(n){ try{ n._osUnplace(); }catch(_){} n.remove(); } }, 20000);
     }catch(_){}
   }
 
@@ -19667,12 +19702,12 @@
             ${IS_ADMIN?`<button class="btn btn-ghost small" id="set-admin" style="color:var(--neon,#0ff)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-gear"></use></svg>Admin panel</button>`:''}
             ${ME.mode==='local'?`<button class="btn btn-ghost small" id="set-show-nsec" style="color:#ffcf2b"><svg class="ic b-ic" aria-hidden="true"><use href="#i-key"></use></svg>Show private key (nsec)</button>`:''}
             <button class="btn btn-ghost small hidden" id="set-google-link"><svg class="ic b-ic" aria-hidden="true"><use href="#i-key"></use></svg>Sign in with Google on other devices</button>
-            <button class="btn btn-ghost small" id="set-sync-posts">⤓ Sync my posts to this relay</button>
+            <button class="btn btn-ghost small" id="set-sync-posts">⤓ Sync my data to this relay</button>
             <button class="btn btn-ghost small" id="set-logout"><svg class="ic b-ic" aria-hidden="true"><use href="#i-logout"></use></svg>Logout</button>
             <button class="btn btn-ghost small" id="set-del-notes" style="color:var(--danger)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete all my notes</button>
             <button class="btn btn-ghost small" id="set-del-account" style="color:var(--danger)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete my account</button>
           </div>
-          <div class="muted small" id="set-sync-status">Pulls your posts from other relays into this one.</div>
+          <div class="muted small" id="set-sync-status">Pulls your posts back from other relays — and your notes, passwords, calendar and contacts from this server's private backup, if it has one.</div>
           <div class="muted small" id="set-del-notes-status"></div>
         </div>
       </section>
@@ -19747,11 +19782,18 @@
       } }
     { const lo=$('#set-logout'); if(lo) lo.onclick=async()=>{ if(await uiConfirm('Log out of this device?')) logout(); }; }
     { const sp=$('#set-sync-posts'); if(sp) sp.onclick=async()=>{
-        const st=$('#set-sync-status'); if(st) st.textContent='syncing… pulling your posts from other relays.';
+        const st=$('#set-sync-status'); if(st) st.textContent='syncing… pulling your data back from other relays.';
         try{ const auth=await sign(27235,'sync-posts',[['p',ME.pubkey]]);
           const r=await fetch('/client/sync-posts',{method:'POST',headers:{'Content-Type':'application/json'},
             body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
-          if(st) st.textContent = r.ok ? '✓ Sync started — your posts will appear shortly.' : ('failed: '+(r.error||''));
+          /* Say which half ran. Notes, the vault, the calendar and contacts are deliberately never
+           * sent to the public relays, so they can only come back from a private mirror this server's
+           * operator configured — and on a server with none there is no second copy to restore. That
+           * has to be said out loud: "sync started" over a vault that was never backed up reads as a
+           * promise, and the person only finds out it wasn't one when they need it. */
+          if(st) st.textContent = !r.ok ? ('failed: '+(r.error||''))
+            : r.private ? '✓ Sync started — your posts, notes, passwords, calendar and contacts will appear shortly.'
+                        : '✓ Sync started — your posts will appear shortly. This server keeps no private backup, so your notes, passwords and calendar can only be restored from a device that still has them.';
         }catch(_){ if(st) st.textContent='sync failed'; }
       }; }
     renderUserSettings();   // tabbed User Settings — incl. the moved Relays / Media / Zaps / Muted tabs
