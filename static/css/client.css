@@ -1096,9 +1096,16 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 @media(max-width:820px){ .cmp-ctx .quoted{max-height:190px} .cmp-ctx-media img,.cmp-ctx-media video{max-height:96px} }
 /* AI composer: 📎 and 🎤 were .mini (a 28px chrome button) next to a full-size ▶ send, so they read as
    an afterthought. Match them to the send button's height. */
-.ai-compose .mini{width:42px;height:42px;padding:0;font-size:20px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
-.ai-compose #ai-send{min-width:52px;height:42px;padding:0 16px;font-size:20px}
-@media(max-width:820px){ .ai-compose .mini{width:38px;height:38px;font-size:20px} .ai-compose #ai-send{min-width:46px;height:38px} }
+.ai-compose .mini{width:44px;height:44px;padding:0;font-size:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+/* Send is a circle, not a pill: at 52x42 with a triangle in it, it read as a stray oval next to two
+   round buttons. Square it up and it becomes the fourth item in an evenly spaced row. */
+.ai-compose #ai-send{flex:0 0 auto;width:44px;height:44px;min-width:0;padding:0;font-size:20px;border-radius:50%;
+  display:inline-flex;align-items:center;justify-content:center}
+@media(max-width:820px){
+  .ai-compose{gap:6px}
+  .ai-compose .mini,.ai-compose #ai-send{width:40px;height:40px;font-size:19px}
+  .ai-compose .input{min-height:40px;padding:9px 13px;border-radius:20px}
+}
 /* Go-live cover preview — confirms the thumbnail Discover will show before you announce. */
 .gl-img-prev{display:block;width:100%;max-height:150px;object-fit:cover;border-radius:12px;margin:6px 0 2px;border:1px solid var(--line)}
 .tl-cmp-status{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -3294,9 +3301,19 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .ai-search{display:flex;flex-direction:column;gap:8px;margin-top:6px}
 .ai-files{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
 .ai-file{border:1px solid var(--line);border-radius:9px;padding:6px 12px;font-size:15px}
+/* attach · mic · box · send, all sitting on the same line.
+   The row is align-items:flex-end so the controls stay level with the LAST line of the box as it
+   grows — but `.mini{align-self:center}` opted the attach and mic buttons out of exactly that, so
+   they floated to the middle while Send stayed at the bottom, and the gap widened with every line
+   typed. Same round shapes and sizes as the DM composer, which is the same row in a different view. */
 .ai-compose{display:flex;gap:8px;align-items:flex-end;padding:12px 16px;border-top:1px solid var(--line)}
-.ai-compose .input{margin:0;flex:1;resize:none;font-size:17px;max-height:200px}
-.ai-compose .mini{align-self:center}
+.ai-compose .input{margin:0;flex:1 1 auto;min-width:0;min-height:44px;max-height:200px;resize:none;
+  font-size:17px;padding:11px 14px;border-radius:22px;line-height:1.35}
+.ai-compose .mini{align-self:flex-end}
+/* One line, clipped — never wrapped. A textarea placeholder wraps like any other text, and at phone
+   width the box is ~174px: the hint broke across two lines and the second was sliced in half by the
+   40px min-height, which is most of what "ugly" was. */
+.ai-compose .input::placeholder{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ai-attachbar{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 10px}
 .ai-attachbar:empty{display:none}
 .ai-chip{font-size:12px;color:var(--cyan);border:1px solid var(--line);border-radius:8px;padding:4px 8px}

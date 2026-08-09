@@ -18540,25 +18540,24 @@
   async function aiMount(feed){
     _aiBadge(false);   // entering the view IS the acknowledgement
     feed.innerHTML=`<div class="ai-chat">
-      <div class="ai-bar"><button class="btn btn-ghost small" id="ai-home" title="Home — the starter cards"><svg class="ic b-ic" aria-hidden="true"><use href="#i-home"></use></svg>Home</button><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New</button><button class="btn btn-ghost small" id="ai-nodes" title="Agents — run tasks on your servers" style="display:none"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration"><svg class="ic b-ic" aria-hidden="true"><use href="#i-volume"></use></svg></button><button class="btn btn-ghost small" id="ai-del" title="delete this chat"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button></div>
+      <div class="ai-bar"><button class="btn btn-ghost small" id="ai-make" title="Make something — image, song, video, a cloned voice…"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Make</button><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New</button><button class="btn btn-ghost small" id="ai-nodes" title="Agents — run tasks on your servers" style="display:none"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration"><svg class="ic b-ic" aria-hidden="true"><use href="#i-volume"></use></svg></button><button class="btn btn-ghost small" id="ai-del" title="delete this chat"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button></div>
       <div class="ai-msgs" id="ai-msgs"></div>
       <div class="ai-attachbar" id="ai-attachbar"></div>
       <div class="ai-compose">
         <button class="mini" id="ai-attach" title="attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg></button><input type="file" id="ai-file" multiple hidden>
-        <button class="mini" id="ai-make" title="Make something (image, song, video, a cloned voice…)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button>
         <button class="mini" id="ai-mic" title="Voice input (speech-to-text)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg></button>
-        <textarea id="ai-input" class="input" rows="1" placeholder="Message PosterChan AI…  (try: geni a neon city, or /help)"></textarea>
+        <textarea id="ai-input" class="input" rows="1" placeholder="Message PosterChan AI…"></textarea>
         <button class="btn btn-neon" id="ai-send" aria-label="Send"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>
       </div>
     </div>`;
     _ai.attach=[];
     $('#ai-new').onclick=()=>aiNewConversation();
-    $('#ai-home').onclick=()=>aiShowWelcome();
     // Node Control button — revealed only for users on the node_exec allowlist (access checked once/session).
     { const nb=$('#ai-nodes'); if(nb){ nb.onclick=openNodePanel;
         if(_ai.nodeAccess===true) nb.style.display='';
         else if(_ai.nodeAccess===undefined) _nodeFetchState().then(()=>{ if(_ai.nodeAccess){ const b=$('#ai-nodes'); if(b) b.style.display=''; } }); } }
-    // The splash only exists on an empty chat, but people want to make things mid-conversation too.
+    // The starter cards paint themselves on a fresh chat; this is how you reach the same tools
+    // mid-conversation, and it is why the composer no longer carries a second copy of the button.
     $('#ai-make').onclick=()=>openGenPicker();
     $('#ai-del').onclick=()=>aiDeleteConversation();
     $('#ai-conv').onchange=e=>aiOpenConversation(parseInt(e.target.value,10));
@@ -19438,16 +19437,8 @@
   // 🏠 Home — put the starter splash back mid-conversation, WITHOUT starting a new chat or touching
   // what's there (that's what ＋ New is for). It lands at the bottom, where you're already looking,
   // and the next message drops it again (aiAddMessage removes .ai-welcome).
-  function aiShowWelcome(){
-    const box=$('#ai-msgs'); if(!box) return;
-    const cur=box.querySelector('.ai-welcome');
-    if(cur) cur.remove();                       // already up → move it to the bottom rather than stacking
-    box.insertAdjacentHTML('beforeend', _aiWelcomeHtml());
-    aiScroll();
-    _aiRevealNodeCard();
-  }
   // Reveal the "Manage a server" splash card only for node-allowlisted users (access cached per session).
-  // Shared by BOTH splash render paths (aiShowWelcome + the empty-conversation load), or the card stays hidden.
+  // Shared by the empty-conversation splash and anything else that paints those cards, or it stays hidden.
   function _aiRevealNodeCard(){
     const box=$('#ai-msgs'); if(!box) return;
     const rev=()=>{ const c=box.querySelector('#aw-nodes'); if(c && _ai.nodeAccess) c.style.display=''; };
