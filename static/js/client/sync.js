@@ -337,6 +337,34 @@
    * dirty, and the policy decides whether that is worth a sweep right now. On a phone that is the
    * difference between "sync when it matters" and a radio that never sleeps. */
   function watch(id){ const fs = FS(); if(fs && fs.watch) fs.watch(id, 4000).catch(()=>{}); }
+
+  /* NOTICING A CHANGE, on platforms that will and will not tell you about one.
+   *
+   * Desktop gets a real recursive watcher, so a saved file is picked up seconds later. Android's SAF
+   * has no tree notification worth having, and polling one is the battery bug the policy exists to
+   * avoid — so there, and anywhere else the watcher is absent, changes are noticed at the moments the
+   * platform DOES hand us for free:
+   *
+   *   resume / visible   coming back to the app. On a phone this is the big one: it is when you have
+   *                      just finished taking the photos, and it costs nothing to check.
+   *   online             a laptop that was offline in a cafe and is now not.
+   *   heartbeat          a long, visible-only interval, so "we are now on Wi-Fi" or "we are now
+   *                      charging" is eventually noticed rather than waiting for a file to move.
+   *                      Gated on document visibility, so a backgrounded tab does nothing at all.
+   *
+   * Every one of these only ASKS. shouldSync still decides, so on battery, on cellular, or ten
+   * seconds after the last sweep the answer is no and nothing spins up. */
+  const HEARTBEAT_MS = 15 * 60 * 1000;
+  let _nudgeT = null;
+  function nudge(why){
+    clearTimeout(_nudgeT);
+    // Coalesced: resume, visible and online all fire together when a laptop lid opens.
+    _nudgeT = setTimeout(() => {
+      if(document.hidden) return;
+      folders().forEach(f => { sweep(f, {}).catch(()=>{}); });
+    }, 1500);
+  }
+
   function startAll(){
     const fs = FS(); if(!fs) return;
     folders().forEach(f => watch(f.id));
@@ -345,6 +373,17 @@
       f._dirty = true;
       sweep(f, {}).catch(()=>{});      // the policy may well decline; that is the point of asking
     });
+    document.addEventListener('visibilitychange', () => { if(!document.hidden) nudge('visible'); });
+    window.addEventListener('online', () => nudge('online'));
+    window.addEventListener('focus', () => nudge('focus'));
+    // Capacitor's own resume is more reliable than visibilitychange in a WebView that the OS froze.
+    try{
+      if(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App){
+        window.Capacitor.Plugins.App.addListener('appStateChange', (st) => { if(st && st.isActive) nudge('resume'); });
+      }
+    }catch(_){}
+    setInterval(() => { if(!document.hidden) nudge('heartbeat'); }, HEARTBEAT_MS);
+    nudge('startup');
   }
 
   window.PCSync = { paint, folders, sweep, startAll, store, status };

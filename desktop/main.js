@@ -614,10 +614,6 @@ ipcMain.handle('pc:tor:restart', async (e) => {
  * resolved path against those roots on every call; this layer's only job is to refuse anything that
  * did not come from our own page.
  */
-fsbridge.init({
-  roots: Array.isArray(cfg.syncRoots) ? cfg.syncRoots : [],
-  save: (roots) => { cfg.syncRoots = roots; saveCfg(); },
-});
 const fsGuard = (e) => { if (!fromOurPage(e)) throw new Error('denied'); };
 ipcMain.handle('pc:fs:list', (e) => { fsGuard(e); return fsbridge.list(); });
 ipcMain.handle('pc:fs:pick', async (e) => {
@@ -674,6 +670,16 @@ ipcMain.handle('pc:screen:list', () => pendingSources.map((s) => ({
 if (!app.requestSingleInstanceLock()) { app.quit(); } else {
   // Config first: the switches below depend on it, and Chromium only reads them before ready.
   loadCfg();
+  /* AFTER loadCfg, not at module load. This ran at import time, when `cfg` was still {} — so the
+   * roots persisted from the previous session were read as an empty list and then loadCfg replaced
+   * the whole cfg object underneath it. The picker worked, the sweep in the same session worked, and
+   * every folder was silently forgotten on restart: "unknown sync folder" from pc:fs:scan, against a
+   * folder still listed in the UI, because the renderer's own list lives in localStorage and survived
+   * what the main process had dropped. */
+  fsbridge.init({
+    roots: Array.isArray(cfg.syncRoots) ? cfg.syncRoots : [],
+    save: (roots) => { cfg.syncRoots = roots; saveCfg(); },
+  });
   wireInsecureContent();
   wireWaylandCapture();
   wirePlainUserAgent();
