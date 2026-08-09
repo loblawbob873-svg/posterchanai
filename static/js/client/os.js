@@ -171,6 +171,7 @@
     const holder = wins.find(x => realFeed.parentElement === x.body);
     if(holder) snapshot(holder);
     realHome.appendChild(realFeed);
+    try{ PC().syncPlayer && PC().syncPlayer(); }catch(_){}   // the music app may have just been unmounted
     // The admin panel's iframe host is a sibling of the feed and follows it (see _adminFrame). Send
     // it home too, or leaving the desktop strands it in a window that is about to be destroyed —
     // which throws away a loaded panel and forces a reload on the next open.
@@ -352,6 +353,8 @@
     // resolves to nothing and whatever renders next paints into a detached node.
     if(realFeed && realFeed.parentElement === w.body) releaseFeed();
     w.el.remove();
+    // A closed window may have BEEN the music app; the floating transport has to come back.
+    try{ PC().syncPlayer && PC().syncPlayer(); }catch(_){}
     const next = wins.filter(x => !x.min).pop();
     if(next) focusWin(next); else drawBar();
   }

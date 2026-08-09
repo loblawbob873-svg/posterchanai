@@ -14241,7 +14241,17 @@
     seekTo(f){ if(_audioEl && _audioEl.duration) _audioEl.currentTime=Math.max(0,Math.min(1,f))*_audioEl.duration; },
     setMin(m){ this.min=m; this._render(); },
     close(){ if(_audioEl) _audioEl.pause(); if(this.el) this.el.classList.add('hidden'); },
-    _tick(){ if(!this.el||this.el.classList.contains('hidden')||this.min) return;
+    _tick(){
+      /* The app can vanish without telling us — its window is closed, or the shared #feed moved to
+       * another window. The widget was hidden BECAUSE the app was mounted, so if the app has gone and
+       * something is still playing, hand the transport back. Without this, closing the Music window
+       * left the music playing with no controls anywhere on screen. This runs several times a second
+       * while playing, and the re-check costs one getElementById. */
+      if(this.el && this.cur && this.el.classList.contains('hidden') && !document.getElementById('ma-lib')){
+        this.el.classList.remove('hidden');
+        this._render();
+      }
+      if(!this.el||this.el.classList.contains('hidden')||this.min) return;
       const f=this.el.querySelector('.mp-seek-fill'), c=this.el.querySelector('.mp-cur'), du=this.el.querySelector('.mp-dur');
       if(_audioEl && _audioEl.duration){ if(f) f.style.width=((_audioEl.currentTime/_audioEl.duration*100)||0)+'%'; if(c) c.textContent=_fmtTime(_audioEl.currentTime); if(du) du.textContent=_fmtTime(_audioEl.duration); } },
     onChange:null,   // the Music app mirrors this widget's state; see _musicAppNow
@@ -23279,6 +23289,10 @@
     openMusic,                                                // → shuffle-play the library
     openMusicFolder,                                          // → Files → Music (uploading)
     renderMusicApp,                                           // → the desktop's Music WINDOW
+    // Re-evaluate the floating player's chrome. The desktop calls this when a window closes or the
+    // feed moves, so the transport reappears the instant the Music app is gone rather than on the
+    // next audio tick (and at all, when the music is paused and there are no ticks).
+    syncPlayer: () => { try{ if(MusicPlayer.cur) MusicPlayer._render(); }catch(_){} },
     accountMenu,                                              // → the desktop's tray avatar
     accountCount: () => { try{ return Session.accounts().length; }catch(_){ return 0; } },
     openThread,                                               // → a post window from the notification centre
