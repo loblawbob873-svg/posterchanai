@@ -1047,7 +1047,19 @@
     document.body.classList.remove('os-on');
     document.documentElement.classList.remove('os-on');
     settings().set(KEY, false);
-    try{ PC().switchView && PC().switchView(PC().VIEW || 'global'); }catch(_){}
+    /* Land the classic UI on a view it actually HAS. Windows can leave VIEW on something only the
+     * desktop knows — 'music' is the Music window's own screen, reachable from the launcher and from
+     * nowhere in the sidebar — and switching back to it drops the classic client on a dead view
+     * showing the leftover player markup, with no nav entry to leave by. Anything the sidebar does
+     * not list falls back to the timeline. Playback is untouched: classic DOES show the floating
+     * widget, so the music carries on with controls, which is the one thing the desktop suppresses. */
+    let back = 'global';
+    try{
+      const v = PC().VIEW;
+      const known = !!document.querySelector(`.sidebar .nav .nav-item[data-view="${v}"]`);
+      if(v && known) back = v;
+    }catch(_){}
+    try{ PC().switchView && PC().switchView(back); }catch(_){}
   }
 
   let _clock = null;

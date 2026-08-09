@@ -34,6 +34,8 @@ Assertions, each a way a feature breaks specifically INSIDE a window and nowhere
   view-not-claimed     A window rendered something other than a timeline but left VIEW at 'home' or
                        'global'. #feed is shared, and the live timeline appends to it on those two
                        views — so incoming posts overwrite whatever that window was showing.
+  exit-dead-view       Leaving the desktop lands the classic UI on a view only the desktop knows
+                       (the Music window's own screen), which has no sidebar entry to leave by.
   music-not-an-app     Music does not open as a window. It is a library you browse; the floating
                        player bar is the transport, not the app.
   noti-centre          The clock does not open a working notification centre (off screen, stacked
@@ -145,8 +147,20 @@ ENTER = r"""(async () => {
         asUser.musicFeed = !!(document.getElementById('feed') || {}).closest('.osw.focused');
         asUser.musicView = window.__PC.VIEW;
         asUser.musicPlayer = !!(w && w.querySelector('.music-app .ma-ctl'));
+        /* Leaving the desktop with the Music window open must land the classic UI on a view it
+         * actually HAS. 'music' is the Music window's own screen and the sidebar has no entry for
+         * it, so exiting on to it strands the classic client on a dead view showing the leftover
+         * player, with no nav item to leave by. */
+        PCOS.exit(); await sleep(600);
+        asUser.exitView = window.__PC.VIEW;
+        asUser.exitKnown = !!document.querySelector('.nav-item[data-view="' + window.__PC.VIEW + '"]');
+        asUser.exitLeftPlayer = !!document.querySelector('#feed .music-app');
+        PCOS.enter(); await sleep(500);
+        if (PCOS.refresh) PCOS.refresh();
+        await sleep(200);
         // Closing the Music window must close the PLAYER, not replace it with the floating widget.
-        if (w) { w.querySelector('.osw-x').click(); await sleep(400); }
+        const w2 = document.querySelector('.osw.focused');
+        if (w2) { w2.querySelector('.osw-x').click(); await sleep(400); }
         const mp = document.getElementById('music-player');
         // Not just the hidden class: on the desktop the widget must not be RENDERED at all.
         asUser.miniAfterClose = !!(mp && !mp.classList.contains('hidden')
@@ -389,6 +403,12 @@ async def main():
                                      f"the Music window left VIEW={au.get('musicView')!r} — live "
                                      "social posts append to the shared #feed on that view and will "
                                      "take the player over"))
+                if au.get("exitKnown") is False or au.get("exitLeftPlayer"):
+                    problems.append(("shell", "exit-dead-view",
+                                     f"leaving the desktop landed the classic UI on VIEW="
+                                     f"{au.get('exitView')!r}, which the sidebar has no entry for"
+                                     + (" — and the music player markup is still in the feed"
+                                        if au.get("exitLeftPlayer") else "")))
                 if au.get("miniAfterClose"):
                     problems.append(("shell", "music-not-an-app",
                                      "closing the Music window left the floating mini player on "
