@@ -14762,11 +14762,116 @@
   // hid the same throw in its per-file try/catch (counting it as a failure) and redrew anyway,
   // which is exactly why bulk "worked" and single didn't.
   const _trackUrls={}, _trackUrlOrder=[];
+  /* OFFLINE MUSIC — the library, kept, on this device.
+   *
+   * A track already lands in the service worker's drive cache, but only by accident: only if you
+   * played it, only if it was under the 8MB per-blob cap, and only until that cache's count trim
+   * makes room for note attachments. "My library on my phone" cannot be luck, which is the same
+   * problem Notes had and solved by PINNING (_isPinned in store.js).
+   *
+   * IndexedDB rather than a Cache-API store in the service worker, because the service worker is not
+   * everywhere this app is: the desktop builds load their bundle over the privileged app:// scheme
+   * and the APK's worker is deliberately media-only at root scope. IDB is the one store that behaves
+   * the same in a browser tab, a PWA, the Android WebView and Electron — so "download for offline"
+   * means the same thing on Windows, macOS, Linux and a phone, which is the point.
+   *
+   * The bytes are stored EXACTLY as Blossom served them: still encrypted with the user's master key,
+   * never the decoded audio. An offline copy must not be a weaker copy — anything reading this
+   * device's storage learns no more than anything reading the media server.
+   *
+   * Nothing here evicts. A download was asked for by name; it leaves when the user removes it. */
+  const MusicOffline = {
+    DB:'pcmusic', VER:1, STORE:'blobs', _db:null, _have:null,
+    _open(){
+      if(this._db) return Promise.resolve(this._db);
+      return new Promise((res,rej)=>{
+        let rq; try{ rq=indexedDB.open(this.DB, this.VER); }catch(e){ return rej(e); }
+        rq.onupgradeneeded=()=>{ const db=rq.result;
+          if(!db.objectStoreNames.contains(this.STORE)) db.createObjectStore(this.STORE); };
+        rq.onsuccess=()=>{ this._db=rq.result; res(this._db); };
+        rq.onerror=()=>rej(rq.error||new Error('indexeddb unavailable'));
+      });
+    },
+    async _tx(mode, fn){
+      const db=await this._open();
+      return new Promise((res,rej)=>{
+        const tx=db.transaction(this.STORE, mode), st=tx.objectStore(this.STORE);
+        let out; try{ out=fn(st); }catch(e){ return rej(e); }
+        tx.oncomplete=()=>res(out && out.result !== undefined ? out.result : out);
+        tx.onerror=()=>rej(tx.error); tx.onabort=()=>rej(tx.error);
+      });
+    },
+    // Which shas are on this device. Cached in memory: the list re-renders on every keystroke of the
+    // search box and a keyed IDB scan per repaint is exactly the kind of cost that reads as "slow app".
+    async have(force){
+      if(this._have && !force) return this._have;
+      try{
+        const keys=await this._tx('readonly', st=>st.getAllKeys());
+        this._have=new Set(keys||[]);
+      }catch(_){ this._have=new Set(); }
+      return this._have;
+    },
+    async get(sha){
+      try{ const v=await this._tx('readonly', st=>st.get(sha));
+        return v && v.b ? new Uint8Array(await v.b.arrayBuffer()) : null;
+      }catch(_){ return null; }
+    },
+    async put(sha, bytes){
+      try{
+        await this._tx('readwrite', st=>st.put({ b:new Blob([bytes]), size:bytes.length, ts:Math.floor(Date.now()/1000) }, sha));
+        (await this.have()).add(sha); return true;
+      }catch(e){ console.warn('music offline: could not store', sha, e); return false; }
+    },
+    async drop(sha){
+      try{ await this._tx('readwrite', st=>st.delete(sha)); (await this.have()).delete(sha); return true; }
+      catch(_){ return false; }
+    },
+    async stats(){
+      try{ const all=await this._tx('readonly', st=>st.getAll());
+        return { count:(all||[]).length, bytes:(all||[]).reduce((n,v)=>n+(v.size||0),0) };
+      }catch(_){ return { count:0, bytes:0 }; }
+    },
+    /* Download a set of tracks, a couple at a time, reporting after each one.
+     *
+     * Two at a time on purpose: a library is hundreds of files and a phone on a slow radio should not
+     * open hundreds of connections — the same lesson the link-card fan-out taught this node the hard
+     * way. `onStep` fires per track so the list can show real progress rather than a spinner. */
+    async keep(shas, onStep){
+      const todo=[...new Set(shas||[])]; const have=await this.have();
+      const queue=todo.filter(s=>!have.has(s));
+      let done=0, ok=0, running=0, i=0;
+      const total=queue.length;
+      if(!total){ if(onStep) onStep({done:0,total:0,ok:0}); return {done:0,total:0,ok:0}; }
+      return new Promise(res=>{
+        const step=()=>{
+          if(done>=total){ res({done,total,ok}); return; }
+          while(running<2 && i<total){
+            const sha=queue[i++]; running++;
+            (async()=>{
+              try{
+                const r=await fetch(mediaServer()+'/'+sha);
+                if(r.ok && await this.put(sha, new Uint8Array(await r.arrayBuffer()))) ok++;
+              }catch(_){ }
+              running--; done++;
+              if(onStep) try{ onStep({done,total,ok}); }catch(_){}
+              step();
+            })();
+          }
+        };
+        step();
+      });
+    },
+  };
   async function trackUrl(sha){
     if(_trackUrls[sha]) return _trackUrls[sha];
     const m=FilesIdx.meta(sha); if(!m||!m.enc) throw new Error('not an encrypted track');
-    const r=await fetch(mediaServer()+'/'+sha); if(!r.ok) throw new Error('blob HTTP '+r.status);
-    const blob=new Uint8Array(await r.arrayBuffer());
+    // The kept copy first — this is what makes a downloaded library play with the radio off, and it
+    // is checked before the network on EVERY platform, not only where a service worker runs.
+    let blob=await MusicOffline.get(sha);
+    if(!blob){
+      const r=await fetch(mediaServer()+'/'+sha); if(!r.ok) throw new Error('blob HTTP '+r.status);
+      blob=new Uint8Array(await r.arrayBuffer());
+    }
     let plain;
     if(m.mk){ plain=await _masterDecrypt(await FilesIdx._ensureMK(), blob); }            // v2 master-key (IV prepended)
     else if(m.keyenc){ const {k,iv}=JSON.parse(await signer.nip44dec(ME.pubkey,m.keyenc)); plain=await _aesDecrypt(blob,_b64u8(k),_b64u8(iv)); }  // v1 per-track key
@@ -14794,15 +14899,28 @@
    * are listed AND marked. `have` null means "not fetched yet", not "everything is gone". */
   function musicEntries(list){
     const have=list?new Set(list.map(b=>b.sha256)):_blobHave;
+    // A track kept on THIS device is playable whatever the server says — including when the server
+    // said nothing because there is no network. Marking a downloaded song "missing" would be the
+    // offline library calling itself broken at exactly the moment it is doing its job.
+    const kept=MusicOffline._have || null;
     return Object.keys(FilesIdx._norm().files)
       .filter(sha=> FilesIdx.folderOf(sha)==='Music' && FilesIdx.meta(sha).enc)
-      .map(sha=>({sha, m:FilesIdx.meta(sha), missing: !!(have && !have.has(sha))}))
+      .map(sha=>({sha, m:FilesIdx.meta(sha), offline: !!(kept && kept.has(sha)),
+                  missing: !!(have && !have.has(sha)) && !(kept && kept.has(sha))}))
       .sort((a,b)=>(b.m.ts||0)-(a.m.ts||0));
   }
   // Playable tracks only — the queue must never contain something that cannot be played.
   function musicTracks(list){ return musicEntries(list).filter(t=>!t.missing); }
   function _renderMusicList(grid, list, q){
     if(!grid) return;
+    /* Which tracks are already on this device — read ONCE, then from memory.
+     *
+     * The list repaints on every keystroke of the search box, so this cannot be an IDB scan per
+     * paint. The first paint of a session may not know yet; it draws without the marks and repaints
+     * itself when the answer arrives, which is a flicker of a badge rather than a blocked render. */
+    if(!MusicOffline._have){
+      MusicOffline.have().then(()=>{ if(grid.isConnected) _renderMusicList(grid, list, q); }).catch(()=>{});
+    }
     const all=musicEntries(list);
     const needle=String(q||'').trim().toLowerCase();
     const tracks=needle ? all.filter(t=>String(t.m.name||'').toLowerCase().includes(needle)) : all;
@@ -14815,20 +14933,29 @@
     /* A header, so this reads as a music app rather than a folder that happens to hold songs. The
      * desktop opens this view as the Music WINDOW, and without one obvious action a full library
      * looked as inert as an empty one — "it loads the Music folder and nothing happens". */
+    // How much of the library is on THIS device. Primed asynchronously the first time and then read
+    // from memory, because this list re-renders on every keystroke of the search box.
+    const offAll=all.filter(t=>t.offline).length;
+    const wantable=all.filter(t=>!t.missing && !t.offline).map(t=>t.sha);
     const head = `<div class="music-head">
         <button class="btn btn-neon small" id="mus-shuffle"${liveAll?'':' disabled'}>
           <svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg>Shuffle all</button>
         <span class="muted small">${needle ? `${tracks.length} of ${all.length} match`
           : (live ? (live + ' track' + (live>1?'s':'')) : 'nothing playable yet')}${
-          gone ? ` · ${gone} missing from the server` : ''}</span>
+          gone ? ` · ${gone} missing from the server` : ''}${
+          offAll ? ` · ${offAll} offline` : ''}</span>
+        ${wantable.length ? `<button class="btn btn-ghost small" id="mus-getall" title="Keep every track on this device — they play with no network">
+          <svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download ${wantable.length}</button>` : ''}
         ${gone ? `<button class="btn btn-ghost small" id="mus-tidy">Remove ${gone} missing</button>` : ''}</div>`;
     grid.innerHTML = head + (tracks.length ? tracks.map(t=>`<div class="track${t.missing?' gone':''}" data-sha="${t.sha}">
         ${t.missing ? '<span class="track-play" aria-hidden="true">✕</span>'
                     : `<button class="track-play" data-sha="${t.sha}" aria-label="Play"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>`}
         <span class="track-name">${enc(t.m.name||'track')}</span>
         <span class="track-meta">${t.missing ? 'not on the server — delete to tidy up'
-                                             : '🔒 ' + (((t.m.size||0)/1048576)).toFixed(1) + 'MB'}</span>
-        ${t.missing ? '' : `<button class="track-dl" data-sha="${t.sha}" data-name="${enc((t.m.name||'track')+'.ogg')}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`}
+                                             : '🔒 ' + (((t.m.size||0)/1048576)).toFixed(1) + 'MB'
+                                               + (t.offline ? ' · offline' : '')}</span>
+        ${t.missing ? '' : `<button class="track-keep${t.offline?' on':''}" data-sha="${t.sha}" title="${t.offline?'Kept on this device — tap to remove the offline copy':'Keep on this device (plays with no network)'}" aria-label="${t.offline?'Remove offline copy':'Keep offline'}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-${t.offline?'check':'download'}"></use></svg></button>`}
+        ${t.missing ? '' : `<button class="track-dl" data-sha="${t.sha}" data-name="${enc((t.m.name||'track')+'.ogg')}" title="Save a copy to your files (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg></button>`}
         <button class="track-del" data-sha="${t.sha}" title="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>`).join('')
       : (needle ? `<div class="empty">Nothing in your library matches “${enc(needle)}”.</div>`
@@ -14863,6 +14990,35 @@
         MusicPlayer.play(MusicPlayer.queue[Math.floor(Math.random()*MusicPlayer.queue.length)], {force:true});
         sh.classList.add('on'); }; }
     $$('.track-play',grid).forEach(b=> b.onclick=()=>MusicPlayer.play(b.dataset.sha));
+    /* KEEP ON THIS DEVICE. Toggling one track, and the whole library at once.
+     *
+     * The button reports per track as it lands rather than after the lot: downloading a few hundred
+     * songs is minutes of work, and a control that says nothing for minutes is one nobody trusts —
+     * they press it again, or decide it is broken. Removing is instant and never touches the server,
+     * so it is safe to undo. */
+    $$('.track-keep',grid).forEach(b=> b.onclick=async ()=>{
+      const sha=b.dataset.sha, kept=(await MusicOffline.have()).has(sha);
+      b.disabled=true;
+      if(kept){ await MusicOffline.drop(sha); toast('offline copy removed'); }
+      else {
+        b.classList.add('working');
+        const r=await MusicOffline.keep([sha]);
+        toast(r.ok ? 'kept on this device' : 'could not download that track');
+      }
+      b.disabled=false;
+      _renderMusicList(grid, list, q);
+    });
+    { const ga=$('#mus-getall',grid);
+      if(ga) ga.onclick=async ()=>{
+        const want=musicEntries(list).filter(t=>!t.missing && !t.offline).map(t=>t.sha);
+        if(!want.length) return;
+        ga.disabled=true; const label=ga.innerHTML;
+        const r=await MusicOffline.keep(want, s=>{ ga.textContent=`${s.done} / ${s.total}…`; });
+        ga.disabled=false; ga.innerHTML=label;
+        toast(r.ok===r.total ? `${r.ok} track${r.ok===1?'':'s'} kept on this device`
+                             : `kept ${r.ok} of ${r.total} — the rest failed to download`);
+        _renderMusicList(grid, list, q);
+      }; }
     // A track is stored as Opus ciphertext, so "download" means decrypt-then-save — same path the
     // file grid's lock cards use. Without this the only way out of the Music folder was the player.
     $$('.track-dl',grid).forEach(b=> b.onclick=()=>saveEncrypted(b.dataset.sha, b.dataset.name));
@@ -14988,6 +15144,8 @@
       this._wire(); this._tick(); _updateMusicListBtns();
       if(!this.min && _audioEl && !_audioEl.paused) this._startViz();
     },
+    // Phone/tablet width: the expanded player is the whole screen (see the media query in client.css).
+    _full(){ try{ return matchMedia('(max-width:820px)').matches; }catch(_){ return false; } },
     _wire(){
       const d=this.el, qq=s=>d.querySelector(s), b=(s,fn)=>{ const e=qq(s); if(e) e.onclick=fn; };
       b('.mp-play',()=>this.toggle()); b('.mp-min',()=>this.setMin(true)); b('.mp-exp',()=>this.setMin(false));
@@ -14998,7 +15156,16 @@
       if(srch){ srch.oninput=()=>{ this._search=srch.value; const lst=qq('.mp-list'); if(lst){ lst.innerHTML=this._listHtml(); this._wireList(); } };
         srch.onkeydown=e=>{ if(e.key==='Enter'){ const s=this._shownShas(); if(s.length) this.play(s[0]); } }; }   // Enter = play first match
       this._wireList();
-      this._drag(this.min ? d : (qq('.mp-head')||d));   // minimized: the whole mini-bar is the drag handle
+      /* Dragging is a DESKTOP idea. Expanded on a phone this player fills the screen, so there is
+       * nowhere to drag it to — and _drag writes inline left/top/right/bottom, which would fight the
+       * full-screen rule and strand the panel half off the edge. The mini pill still drags: that one
+       * floats over whatever you are doing and gets in the way. */
+      if(!(this._full() && !this.min)){
+        this._drag(this.min ? d : (qq('.mp-head')||d));   // minimized: the whole mini-bar is the drag handle
+      }else{
+        // A window narrowed after a desktop drag still carries those inline offsets.
+        ['left','top','right','bottom','width'].forEach(k=>{ try{ d.style[k]=''; }catch(_){} });
+      }
     },
     // Search the WHOLE Music library by name (not just the current queue); empty search = the queue.
     _libTracks(){ return musicTracks(null).map(t=>({sha:t.sha, name:(t.m&&t.m.name)||'track'})); },
@@ -24138,6 +24305,11 @@
     openMusic,                                                // → shuffle-play the library
     openMusicFolder,                                          // → Files → Music (uploading)
     renderMusicApp,                                           // → the desktop's Music WINDOW
+    /* The player itself and the offline store. Exposed because the player is a fixed-position panel
+     * the client mounts on <html> — no view opens it, so scripts/check_music_mobile.py has no other
+     * way to lay hands on it, and "is the phone player actually full-screen" is a question only the
+     * real element and the real stylesheet can answer. */
+    MusicPlayer, MusicOffline,
     // Re-evaluate the floating player's chrome. The desktop calls this when a window closes or the
     // feed moves, so the transport reappears the instant the Music app is gone rather than on the
     // next audio tick (and at all, when the music is paused and there are no ticks).
