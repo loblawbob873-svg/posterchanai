@@ -1847,7 +1847,11 @@
         if(_deferredInstall) b.classList.remove('hidden');   // prompt already captured before mount
         b.onclick=async()=>{ if(!_deferredInstall) return; _deferredInstall.prompt();
           try{ await _deferredInstall.userChoice; }catch(_){} _deferredInstall=null; b.classList.add('hidden'); }; } }
-    $('#me-card').onclick = ()=>renderProfileView(ME.pubkey);
+    /* Your own card opens the ACCOUNT menu, not the profile directly. On desktop the More sheet —
+     * which is where "Switch account" otherwise lives — is mobile-only, so this card was the only
+     * corner of the UI with your face in it and no way to change who that face was. The menu's own
+     * first entry is My profile, so nothing that used to be one click is now more than two. */
+    $('#me-card').onclick = ()=>accountMenu($('#me-card'));
     { const nm=$('#nav-music'); if(nm) nm.onclick=openMusic; }
     // Go Live: a top-level sidebar action, because inside Discover → Streams nobody ever found it. Shown
     // only where the node actually runs the media server — but an OLDER backend doesn't send the flag at
@@ -2514,7 +2518,7 @@
   // id persisted in localStorage (so multiple tabs collapse to one viewer).
   function _viewerId(){
     try{
-      if(window.ME && ME.pubkey) return 'k'+ME.pubkey.slice(0,16);
+      if(ME && ME.pubkey) return 'k'+ME.pubkey.slice(0,16);   // NOT window.ME — ME is module-scoped
       let a=localStorage.getItem('pc_vid');
       if(!a){ a='a'+Math.random().toString(36).slice(2,10)+Date.now().toString(36); localStorage.setItem('pc_vid',a); }
       return a;
@@ -2573,7 +2577,67 @@
    * A nip07/nip46 entry is listed but cannot be forced — the extension or the remote signer decides
    * which key it hands back, so choosing one only tells the app which to EXPECT; it is labelled so
    * that is not a surprise. */
-  function accountMenu(){
+  /* Anchored to your avatar, switching is ONE click: the popover IS the list. The modal form is
+   * kept for callers with nothing to anchor to (the mobile More sheet), because a flyout hanging off
+   * nothing in the middle of a phone screen is just a worse modal. */
+  function accountMenu(anchor){
+    if(!anchor) return _accountModal();
+    document.querySelectorAll('.menu-pop,.emoji-pop,.pop-backdrop,.acct-pop').forEach(p => p.remove());
+    const list = (function(){ try{ return Session.accounts(); }catch(_){ return []; } })();
+    const me = (!GUEST && ME && ME.pubkey) || '';
+    const pop = document.createElement('div');
+    pop.className = 'menu-pop acct-pop';
+    const label = a => enc(a.name || (a.npub ? a.npub.slice(0, 14) + '…' : a.pubkey.slice(0, 12) + '…'));
+    pop.innerHTML =
+      list.map(a => `<button class="acct-p${a.pubkey === me ? ' on' : ''}" data-pk="${enc(a.pubkey)}">
+          <img src="${enc(a.picture || LOGO)}" onerror="this.src='${LOGO}'" alt="">
+          <span>${label(a)}${a.sess && a.sess.mode !== 'local' ? `<i class="acct-m">${enc(a.sess.mode)}</i>` : ''}</span>
+          ${a.pubkey === me ? '<b class="acct-cur">●</b>' : ''}</button>`).join('')
+      + '<div class="acct-sep"></div>'
+      + (me ? '<button class="acct-p acct-plain" data-act="profile">My profile</button>' : '')
+      + '<button class="acct-p acct-plain" data-act="add">＋ Add an account</button>'
+      + (list.length > 1 ? '<button class="acct-p acct-plain" data-act="manage">Manage accounts…</button>' : '');
+    _scalePop(pop);
+    document.documentElement.appendChild(pop);   // <html>, not <body>: body carries zoom on desktop
+    _placePop(pop, anchor);
+    const close = () => { pop.remove();
+                          document.querySelectorAll('.pop-backdrop').forEach(b => b.remove());
+                          document.removeEventListener('click', onDoc, true); };
+    const onDoc = (e) => { if(!pop.contains(e.target) && e.target !== anchor && !anchor.contains(e.target)) close(); };
+    setTimeout(() => document.addEventListener('click', onDoc, true), 0);
+    $$('.acct-p', pop).forEach(b => b.onclick = (e) => {
+      e.stopPropagation();
+      const act = b.dataset.act;
+      close();
+      if(act === 'profile') return renderProfileView(me);
+      if(act === 'add')     return _accountAdd();
+      if(act === 'manage')  return _accountModal();
+      const pk = b.dataset.pk;
+      if(pk === me) return renderProfileView(pk);
+      _accountSwitch(list.find(z => z.pubkey === pk));
+    });
+    return pop;
+  }
+
+  // Leaving an account = clearing the LIVE session only. The remembered list lives under its own
+  // key, so the account you are stepping away from is still there to come back to.
+  function _accountAdd(){
+    try{ Session.clear(); }catch(_){}
+    try{ fetch('/api/auth/logout', { method:'POST' }); }catch(_){}
+    try{ Relay.worker.call('clearKey', {}); }catch(_){}
+    location.reload();
+  }
+  function _accountSwitch(a){
+    if(!a || !a.sess) return;
+    try{ Session.save(a.sess); }catch(_){}
+    try{ localStorage.removeItem('pc_settings_cache'); }catch(_){}   // per-user — never cross identities
+    try{ if(window.PCVault && PCVault.forget) PCVault.forget(); }catch(_){}
+    try{ Relay.worker.call('clearKey', {}); }catch(_){}
+    try{ fetch('/api/auth/logout', { method:'POST' }); }catch(_){}
+    location.reload();
+  }
+
+  function _accountModal(){
     const list = (function(){ try{ return Session.accounts(); }catch(_){ return []; } })();
     const me = (!GUEST && ME && ME.pubkey) || '';
     const row = (a) => {
@@ -2592,27 +2656,13 @@
       <div class="row" style="margin-top:14px;gap:8px;flex-wrap:wrap">
         <button class="btn btn-neon" id="acct-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add an account</button>
       </div>`, root => {
-      $('#acct-add', root).onclick = () => {
-        // Sign out of the live session ONLY. The remembered list is a different key, so the account
-        // you are leaving is still there to come back to — that is the whole point.
-        try{ Session.clear(); }catch(_){}
-        try{ fetch('/api/auth/logout', { method:'POST' }); }catch(_){}
-        try{ Relay.worker.call('clearKey', {}); }catch(_){}
-        location.reload();
-      };
+      $('#acct-add', root).onclick = _accountAdd;
       $$('.acct-row', root).forEach(b => b.onclick = (ev) => {
         const x = ev.target.closest('[data-forget]');
         if(x){ ev.stopPropagation(); try{ Session.forget(x.dataset.forget); }catch(_){} closeModal(); accountMenu(); return; }
         const pk = b.dataset.pk;
         if(pk === me){ closeModal(); renderProfileView(pk); return; }
-        const a = list.find(z => z.pubkey === pk);
-        if(!a || !a.sess) return;
-        try{ Session.save(a.sess); }catch(_){}
-        try{ localStorage.removeItem('pc_settings_cache'); }catch(_){}   // per-user — never carry it across identities
-        try{ if(window.PCVault && PCVault.forget) PCVault.forget(); }catch(_){}
-        try{ Relay.worker.call('clearKey', {}); }catch(_){}
-        try{ fetch('/api/auth/logout', { method:'POST' }); }catch(_){}
-        location.reload();
+        _accountSwitch(list.find(z => z.pubkey === pk));
       });
     });
   }
@@ -3144,15 +3194,27 @@
       if(ClientSettings.get('osHintSeen', false)) return;
       if(ClientSettings.get('osMode', false)) return;          // already a desktop user
       if(Math.min(window.innerWidth, window.innerHeight) < 700 || window.innerWidth < 1024) return;
-      const logo = $('.brand-logo'), brand = logo && logo.closest('.brand');
-      if(!brand || document.getElementById('os-hint')) return;
+      const logo = $('.brand-logo');
+      if(!logo || document.getElementById('os-hint')) return;
       const b = document.createElement('div');
       b.id = 'os-hint';
       b.className = 'os-hint';
       b.innerHTML = '<span>Click me for Desktop Mode</span><button class="os-hint-x" aria-label="Dismiss">✕</button>';
       b.querySelector('.os-hint-x').onclick = (e) => { e.stopPropagation(); _dismissOsHint(); };
       b.querySelector('span').onclick = () => { _dismissOsHint(); try{ PCOS.toggle(); }catch(_){} };
-      brand.appendChild(b);
+      /* Appended to <html> and positioned from the logo's rect, NOT parented to .brand: the sidebar
+       * clips its overflow, so a bubble pointing out of it was drawn and then cut away — present in
+       * the DOM, correct on paper, and invisible on screen. <html> rather than <body> for the reason
+       * the menu popovers use it: body carries zoom on desktop, which throws off fixed-position
+       * arithmetic for its children. */
+      document.documentElement.appendChild(b);
+      const place = () => {
+        const r = logo.getBoundingClientRect();
+        b.style.left = Math.round(r.right + 12) + 'px';
+        b.style.top = Math.round(r.top + r.height / 2) + 'px';
+      };
+      place();
+      window.addEventListener('resize', place);
       // It has said its piece after a while; leaving it up forever is the advert case again.
       setTimeout(() => { const n = document.getElementById('os-hint'); if(n) n.remove(); }, 20000);
     }catch(_){}
@@ -16064,7 +16126,7 @@
       }else{
         renderProfileView._osIn = 1;
         try{
-          const mine = !!(window.ME && ME.pubkey === pk);
+          const mine = !!(ME && ME.pubkey === pk);
           if(PCOS.openDoc('prof:' + pk, mine ? 'My profile' : 'Profile', 'i-user',
                           () => renderProfileView(pk))) return;
         }finally{ renderProfileView._osIn = 0; }
@@ -22939,7 +23001,12 @@
     ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
     runSearch,                                                // → the desktop's taskbar search box
     // The desktop hides the sidebar, and #me-card was the only way to reach your own profile.
-    openProfile: (pk) => renderProfileView(pk || (window.ME && ME.pubkey)),
+    openProfile: (pk) => renderProfileView(pk || (ME && ME.pubkey)),
+    /* Who is signed in. os.js and the other modules live OUTSIDE this IIFE, so `window.ME` is
+     * undefined for them no matter who is logged in — which silently hid the desktop's tray avatar
+     * (and with it the whole account switcher) and both launcher entries gated on it. */
+    me: () => (GUEST ? null : ME),
+    openMusic,                                                // → the desktop's Music entry
     accountMenu,                                              // → the desktop's tray avatar
     accountCount: () => { try{ return Session.accounts().length; }catch(_){ return 0; } },
     openThread,                                               // → a post window from the notification centre

@@ -6216,8 +6216,7 @@ body.os-on #os-root{pointer-events:auto}
 
 /* "Click me for Desktop Mode" — a speech bubble off the instance logo, desktop widths only (the
    script gates on that too; this is belt and braces because the sidebar is hidden on mobile anyway). */
-.brand{position:relative}
-.os-hint{position:absolute;left:calc(100% + 12px);top:50%;transform:translateY(-50%);z-index:30;
+.os-hint{position:fixed;transform:translateY(-50%);z-index:360;
   display:flex;align-items:center;gap:6px;white-space:nowrap;padding:7px 9px 7px 11px;border-radius:10px;
   background:var(--panel2);border:1px solid var(--neon);color:var(--text);font-size:12px;
   box-shadow:0 6px 22px rgba(0,0,0,.45);animation:os-hint-in .25s ease-out}
@@ -6227,9 +6226,23 @@ body.os-on #os-root{pointer-events:auto}
 .os-hint-x{background:none;border:0;color:var(--muted);cursor:pointer;font-size:11px;line-height:1;
   padding:2px 3px;border-radius:5px;font-family:inherit}
 .os-hint-x:hover{color:var(--text);background:var(--panel)}
-@keyframes os-hint-in{from{opacity:0;transform:translateY(-50%) translateX(-6px)}to{opacity:1}}
+@keyframes os-hint-in{from{opacity:0;transform:translateY(-50%) translateX(-6px)}to{opacity:1;transform:translateY(-50%)}}
 @media (max-width:1023px){ .os-hint{display:none} }
 @media (prefers-reduced-motion:reduce){ .os-hint{animation:none} }
+
+/* Account switcher — the anchored flyout (one click to switch) and the manage modal's rows. */
+.acct-pop{min-width:min(268px,86vw)}
+.acct-p{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:7px 9px;
+  border-radius:8px;border:0;background:none;color:var(--text);cursor:pointer;font-family:inherit;
+  font-size:13px}
+.acct-p:hover{background:rgba(var(--accent-rgb),.12)}
+.acct-p img{width:26px;height:26px;border-radius:50%;object-fit:cover;flex:0 0 auto}
+.acct-p > span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acct-p.on{color:var(--neon)}
+.acct-p .acct-cur{color:var(--neon);font-size:10px;flex:0 0 auto}
+.acct-plain{padding-left:11px;color:var(--muted)}
+.acct-plain:hover{color:var(--text)}
+.acct-sep{height:1px;background:var(--line);margin:5px 4px}
 
 /* Account switcher rows */
 .acct-list{display:flex;flex-direction:column;gap:6px;max-height:52vh;overflow-y:auto}

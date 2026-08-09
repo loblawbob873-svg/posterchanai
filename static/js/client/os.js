@@ -71,11 +71,17 @@
    * rightbar, neither of which the desktop shows, so the launcher — which reads .nav-item[data-view]
    * — could never have found it. `act` marks it as something to RUN rather than a view to open in a
    * window: it is a dialog that ends in a live stream, and the stream itself opens the Streams app. */
+  // Who is signed in. NOT window.ME — the client keeps ME inside its IIFE, so window.ME is undefined
+  // for every module out here whoever is logged in. Gating on it hid all of this from everyone.
+  const me = () => { try{ return (PC().me && PC().me()) || null; }catch(_){ return null; } };
+
   const EXTRAS = [
     { view: '__profile', label: 'My Profile', icon: '#i-user', act: () => PC().openProfile && PC().openProfile(),
-      when: () => { try{ return !!(PC().openProfile && window.ME && ME.pubkey); }catch(_){ return false; } } },
+      when: () => !!(me() && PC().openProfile) },
+    { view: '__music', label: 'Music', icon: '#i-music', act: () => PC().openMusic && PC().openMusic(),
+      when: () => !!(me() && PC().openMusic) },
     { view: '__golive', label: 'Go Live', icon: '#i-live', act: () => PC().goLive && PC().goLive(),
-      when: () => { try{ return !!(PC().goLive && window.ME && ME.pubkey); }catch(_){ return false; } } },
+      when: () => !!(me() && PC().goLive) },
   ];
 
   /* The start button wears the instance's own logo — the same image the sidebar brand shows, read
@@ -539,7 +545,7 @@
   // sidebar, which the desktop hides — so without this there is no way to open your own profile at
   // all. The picture is read from that card rather than re-fetched, so it can never disagree with it.
   function meAvatar(){
-    if(!(window.ME && ME.pubkey)) return '';
+    if(!me()) return '';
     let src = '';
     try{ const img = document.querySelector('#me-card img'); if(img) src = img.getAttribute('src') || ''; }catch(_){}
     const inner = src ? `<img src="${enc(src)}" alt="">`
@@ -606,7 +612,7 @@
     { const mb = $('#os-me', bar);
       if(mb) mb.onclick = () => {
         try{
-          if(PC().accountMenu) PC().accountMenu();
+          if(PC().accountMenu) PC().accountMenu(mb);   // anchored to the avatar → one click to switch
           else if(PC().openProfile) PC().openProfile();
         }catch(err){ PC().toast && PC().toast('could not open your accounts'); }
       }; }

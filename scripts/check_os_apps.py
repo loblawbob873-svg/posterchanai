@@ -23,6 +23,10 @@ Assertions, each a way a feature breaks specifically INSIDE a window and nowhere
   reply-broken         Reply on a post inside a window does not open a usable dialog. Reply is a
                        MODAL, and modals rendering behind the desktop was the bug that made half
                        the apps look dead — this asserts the path, not the stylesheet.
+  signed-in-app-missing / no-account-switcher
+                       Launcher entries and the tray avatar that only exist for a signed-in user.
+                       Checked by stubbing PC.me(), because the audit runs as a guest and "skipped
+                       for a guest" is how a gate that was broken for EVERYBODY stayed hidden.
   noti-centre          The clock does not open a working notification centre (off screen, stacked
                        under something, no rows and no empty state, no reply/react, or Escape does
                        not close it).
@@ -75,7 +79,38 @@ ENTER = r"""(async () => {
     await sleep(250);
     noti.closes = !document.getElementById('os-noti');
   }
-  return { on: PCOS.isOn(), icons, noti };
+  /* Signed-in surfaces. The audit runs as a GUEST, so everything gated on "who is signed in" was
+   * reported as skipped — which is exactly how a bug that hid them from EVERYONE went unnoticed:
+   * the client keeps ME inside its IIFE, so the old window.ME gate was undefined for all users, not
+   * just guests. The gate is PC.me(), so stubbing that is a faithful test of the launcher's wiring
+   * without signing a throwaway key into a production instance. */
+  let asUser = { stubbed: false };
+  if (!(window.__PC.me && window.__PC.me())) {
+    const real = window.__PC.me;
+    window.__PC.me = () => ({ pubkey: 'f'.repeat(64), npub: 'npub1testtesttest' });
+    try {
+      PCOS.exit(); await sleep(200); PCOS.enter(); await sleep(500);
+      asUser.stubbed = true;
+      asUser.icons = [...document.querySelectorAll('.os-icon')].map(b => b.dataset.view || '');
+      asUser.tray  = !!document.getElementById('os-me');
+      if (asUser.tray) {
+        document.getElementById('os-me').click(); await sleep(300);
+        const pop = document.querySelector('.acct-pop');
+        asUser.switcher = !!pop;
+        if (pop) {
+          const pr = pop.getBoundingClientRect();
+          const hit = document.elementFromPoint(pr.left + pr.width/2, pr.top + 10);
+          asUser.switcherReachable = !!(hit && pop.contains(hit));
+          asUser.switcherAdd = !!pop.querySelector('[data-act="add"]');
+          pop.remove();
+        }
+      }
+    } finally {
+      window.__PC.me = real;
+      PCOS.exit(); await sleep(200); PCOS.enter(); await sleep(400);
+    }
+  }
+  return { on: PCOS.isOn(), icons, noti, asUser };
 })()"""
 
 # Open one app, let it settle, then measure the window it landed in.
@@ -258,8 +293,24 @@ async def main():
                                      "notification rows have no reply/react buttons"))
                 if not nc.get("closes"):
                     problems.append(("shell", "noti-centre", "Escape does not close the notification centre"))
-            if not any(i["view"] == "__golive" for i in g["icons"]):
-                skipped.append("Go Live (guest — the launcher hides it without a key)")
+            au = g.get("asUser") or {}
+            if au.get("stubbed"):
+                want = {"__profile": "My Profile", "__music": "Music", "__golive": "Go Live"}
+                have = set(au.get("icons") or [])
+                missing = [lbl for v, lbl in want.items() if v not in have]
+                if missing:
+                    problems.append(("shell", "signed-in-app-missing",
+                                     "signed in, the launcher is missing: " + ", ".join(missing)))
+                if not au.get("tray"):
+                    problems.append(("shell", "no-account-switcher",
+                                     "signed in, the taskbar has no account avatar — which is the "
+                                     "only way to the account switcher on the desktop"))
+                elif not au.get("switcher") or not au.get("switcherReachable") \
+                        or not au.get("switcherAdd"):
+                    problems.append(("shell", "no-account-switcher",
+                                     f"the account flyout did not open usably — opened="
+                                     f"{au.get('switcher')} clickable={au.get('switcherReachable')} "
+                                     f"add-entry={au.get('switcherAdd')}"))
 
             # __golive RUNS rather than opening a window, so it has no window to measure.
             views = [i["view"] for i in g["icons"] if i["view"] and not i["view"].startswith("__")]
