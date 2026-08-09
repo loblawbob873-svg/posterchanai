@@ -137,6 +137,10 @@ ENTER = r"""(async () => {
         asUser.musicFeed = !!(document.getElementById('feed') || {}).closest('.osw.focused');
         asUser.musicView = window.__PC.VIEW;
         asUser.musicPlayer = !!(w && w.querySelector('.music-app .ma-ctl'));
+        // Closing the Music window must close the PLAYER, not replace it with the floating widget.
+        if (w) { w.querySelector('.osw-x').click(); await sleep(400); }
+        const mp = document.getElementById('music-player');
+        asUser.miniAfterClose = !!(mp && !mp.classList.contains('hidden'));
         document.querySelectorAll('.osw .osw-x').forEach(b => b.click());
         await sleep(150);
       }
@@ -375,6 +379,11 @@ async def main():
                                      f"the Music window left VIEW={au.get('musicView')!r} — live "
                                      "social posts append to the shared #feed on that view and will "
                                      "take the player over"))
+                if au.get("miniAfterClose"):
+                    problems.append(("shell", "music-not-an-app",
+                                     "closing the Music window left the floating mini player on "
+                                     "screen — closing the app must close the player, not swap it "
+                                     "for a smaller one"))
                 if au.get("musicPlayer") is False:
                     problems.append(("shell", "music-not-an-app",
                                      "the Music window has no transport controls — it is showing the "

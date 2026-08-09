@@ -14146,7 +14146,8 @@
           <svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg>Shuffle all</button>
         <span class="muted small">${needle ? `${tracks.length} of ${all.length} match`
           : (live ? (live + ' track' + (live>1?'s':'')) : 'nothing playable yet')}${
-          gone ? ` · ${gone} missing from the server` : ''}</span></div>`;
+          gone ? ` · ${gone} missing from the server` : ''}</span>
+        ${gone ? `<button class="btn btn-ghost small" id="mus-tidy">Remove ${gone} missing</button>` : ''}</div>`;
     grid.innerHTML = head + (tracks.length ? tracks.map(t=>`<div class="track${t.missing?' gone':''}" data-sha="${t.sha}">
         ${t.missing ? '<span class="track-play" aria-hidden="true">✕</span>'
                     : `<button class="track-play" data-sha="${t.sha}" aria-label="Play"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>`}
@@ -14158,6 +14159,24 @@
       </div>`).join('')
       : (needle ? `<div class="empty">Nothing in your library matches “${enc(needle)}”.</div>`
                 : '<div class="empty">No music yet — drop audio files above. They\'re Opus-compressed + encrypted automatically, and only you can play them.</div>'));
+    /* Clear out entries whose bytes the SERVER says it does not have. Only offered once the blob
+     * list has actually been read (_blobHave non-null) — "we have not looked yet" must never be
+     * mistaken for "it is gone", or this would delete a working library on a failed fetch. It only
+     * drops INDEX entries; there is nothing on the server left to delete. */
+    { const td=$('#mus-tidy',grid);
+      if(td) td.onclick=async ()=>{
+        const dead=musicEntries(list).filter(t=>t.missing).map(t=>t.sha);
+        if(!dead.length || !_blobHave) return;
+        if(!await uiConfirm(`Remove ${dead.length} track${dead.length>1?'s':''} from your library? `
+                          + `The files are already gone from the server — this only clears the leftover `
+                          + `entries. Anything still playable is untouched.`)) return;
+        FilesIdx.beginBatch();
+        dead.forEach(sha=>{ try{ FilesIdx.forget(sha); }catch(_){} });
+        await FilesIdx.endBatch();
+        toast(`removed ${dead.length} missing track${dead.length>1?'s':''}`);
+        _renderMusicList(grid, list, q);
+        try{ _musicAppNow(); }catch(_){}
+      }; }
     { const sh=$('#mus-shuffle',grid);
       if(sh) sh.onclick=()=>{ const q=musicTracks(null); if(!q.length) return;
         MusicPlayer.shuffle=true; MusicPlayer.refreshQueue();
@@ -23302,6 +23321,12 @@
     // feed moves, so the transport reappears the instant the Music app is gone rather than on the
     // next audio tick (and at all, when the music is paused and there are no ticks).
     syncPlayer: () => { try{ if(MusicPlayer.cur) MusicPlayer._render(); }catch(_){} },
+    /* Closing the Music WINDOW closes the player: it stops and the floating widget stays down.
+     * Handing the transport back at that moment is worse than useless — you shut the app and a
+     * second, smaller player appears in its place, still playing. Switching AWAY from the window is
+     * different and deliberately still leaves it playing with the widget: the window is gone from
+     * view, not closed. */
+    stopMusic: () => { try{ MusicPlayer.close(); MusicPlayer.cur=null; MusicPlayer.queue=[]; }catch(_){} },
     accountMenu,                                              // → the desktop's tray avatar
     accountCount: () => { try{ return Session.accounts().length; }catch(_){ return 0; } },
     openThread,                                               // → a post window from the notification centre

@@ -351,10 +351,17 @@
     wins.splice(i, 1);
     // If this window held the id, hand it back BEFORE removing the element, or `$('#feed')` briefly
     // resolves to nothing and whatever renders next paints into a detached node.
+    const wasMusic = (w.view === 'doc:music');
     if(realFeed && realFeed.parentElement === w.body) releaseFeed();
     w.el.remove();
-    // A closed window may have BEEN the music app; the floating transport has to come back.
-    try{ PC().syncPlayer && PC().syncPlayer(); }catch(_){}
+    if(wasMusic){
+      // Closing the Music window closes the PLAYER. Anything else and shutting the app just replaces
+      // it with the smaller floating one, still playing — which is not what "close" means.
+      try{ PC().stopMusic && PC().stopMusic(); }catch(_){}
+    }else{
+      // Some other window closed; if the music app happened to be inside it the transport comes back.
+      try{ PC().syncPlayer && PC().syncPlayer(); }catch(_){}
+    }
     const next = wins.filter(x => !x.min).pop();
     if(next) focusWin(next); else drawBar();
   }
