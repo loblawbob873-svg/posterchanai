@@ -530,6 +530,21 @@
   // The user's secret key lives in the remote signer. We hold an EPHEMERAL "app key" (in the
   // worker) purely to encrypt/sign the NIP-46 transport (kind-24133 events over the signer's relay);
   // every user-facing sign/encrypt is forwarded to the signer, which prompts the user to approve.
+  /* How far back the response subscription looks, in seconds.
+   *
+   * This was 5, and 5 is a CLOCK-SKEW BUDGET, not a freshness window. The signer stamps its reply
+   * with the PHONE's clock, and the relay applies `since` server-side — so a phone running half a
+   * minute behind the desktop had its connect ack dropped before it ever reached us. Amber says it
+   * paired, the browser sits on "waiting for the signer to approve…" forever, and nothing anywhere
+   * reports an error, because from our side no event arrived. Phones drift; a signer is by
+   * definition a different machine with a different clock, so the window has to be big enough for
+   * one that was never NTP-synced.
+   *
+   * Generous but still bounded. Nothing old can be replayed into a pairing: beginNostrConnect
+   * generates a FRESH app key, so no 24133 addressed to it can predate this attempt — and on resume
+   * every reply is matched by request id, where a stale one matches nothing. */
+  const NIP46_SINCE_SKEW = 900;
+
   const Nip46 = {
     ws:null, relay:null, appSk:null, appPk:null, remotePk:null, userPk:null,
     _pending:new Map(), _subId:null, _onEvent:null,
@@ -559,7 +574,7 @@
       return new Promise((res,rej)=>{
         let done=false; const ws=new WebSocket(relay); this.ws=ws; this.relay=relay;
         ws.onopen=()=>{ this._subId='n46'+Math.random().toString(36).slice(2,8);
-          ws.send(JSON.stringify(['REQ', this._subId, { kinds:[24133], '#p':[this.appPk], since: Math.floor(Date.now()/1000)-5 }]));
+          ws.send(JSON.stringify(['REQ', this._subId, { kinds:[24133], '#p':[this.appPk], since: Math.floor(Date.now()/1000)-NIP46_SINCE_SKEW }]));
           if(!done){ done=true; res(); } };
         ws.onmessage=(e)=>this._recv(e.data);
         ws.onerror=()=>{ if(!done){ done=true; rej(new Error('cannot reach signer relay')); } };
@@ -606,7 +621,7 @@
             this.ws=ws; this.relay=url;
             this._subId='n46'+Math.random().toString(36).slice(2,8);
             try{ ws.send(JSON.stringify(['REQ', this._subId,
-              { kinds:[24133], '#p':[this.appPk], since: Math.floor(Date.now()/1000)-5 }])); }
+              { kinds:[24133], '#p':[this.appPk], since: Math.floor(Date.now()/1000)-NIP46_SINCE_SKEW }])); }
             catch(e){ return rej(e); }
             ws.onerror=null;
             ws.onmessage=(e)=>this._recv(e.data);
@@ -1418,11 +1433,33 @@
    * told to meet on one it cannot reach fails as a 180-second silence with nothing to read. They are
    * added only when there is no instance relay, which is exactly the case this exists to fix — before,
    * that left three hardcoded public relays and nothing of the user's at all. */
+  /* OUR relay, and ONLY ours, whenever this instance has one.
+   *
+   * The public signer relays used to be appended as a fallback, and they were a liability rather
+   * than a safety net. Measured, from a user's console: relay.nsec.app answers 502, and damus and
+   * primal both log "connection interrupted" — three sockets opened on every login attempt, to
+   * strangers' infrastructure, that we then rate-limit against for nothing.
+   *
+   * Worse than noise, they made the pairing lossy. _openFirstOf keeps only the socket that opens
+   * FIRST and the URI advertises that one relay, so which relay carried a login was a race between
+   * four boxes on the public internet. A signer that answered anywhere else was never heard, and the
+   * browser sat on "waiting for the signer to approve…" while Amber reported success.
+   *
+   * Ours is the right answer and not merely the convenient one: it is reachable by the phone, it is
+   * not rate-limited against us, and it deliberately carries this traffic — the relay accepts kind
+   * 24133 between two parties who are BOTH outside the web of trust, which is exactly the shape of a
+   * signer handshake (an ephemeral app key on one side, Amber's per-app key on the other). Verified
+   * end to end against the running relay, not assumed from the code.
+   *
+   * The fallback survives only for a build with NO instance relay to use — a relays-only or
+   * standalone client, where something has to carry the handshake or there is no remote-signer login
+   * at all. */
   function _ncRelays(){
     const own=(CFG && CFG.relay_url) || '';
-    const mine=(!own && ClientSettings.get('relaysEnabled')) ? userRelays() : [];
-    return [...new Set([own, 'wss://relay.nsec.app', 'wss://relay.damus.io',
-                        'wss://relay.primal.net', ...mine].filter(Boolean))];
+    if(own) return [own];
+    const mine=ClientSettings.get('relaysEnabled') ? userRelays() : [];
+    return [...new Set([...mine, 'wss://relay.nsec.app', 'wss://relay.damus.io',
+                        'wss://relay.primal.net'].filter(Boolean))];
   }
   async function loginAmberNostrConnect(){
     amberErr(''); const btn=$('#btn-amber-nc'); btn.disabled=true; btn.textContent='preparing…';
