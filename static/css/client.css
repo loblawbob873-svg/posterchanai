@@ -3895,7 +3895,18 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
      desktop scales the page with body{zoom:.67-.77} and viewport units are not rescaled by it. */
   height:calc((88dvh / var(--zf, 1)));max-height:none;min-height:340px;
   display:flex;flex-direction:column;gap:0}
+/* Title and Send share the header row; the body below it is the only thing that grows. */
+.mail-compose-modal .cm-head{flex:0 0 auto;display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.mail-compose-modal .cm-head h3{margin:0;flex:0 1 auto;min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.mail-compose-modal .cm-head .spacer{flex:1}
+.mail-compose-modal .cm-head .btn{flex:0 0 auto}
 .mail-compose-modal h3{flex:0 0 auto;margin-bottom:10px}
+/* One footer row, wrapping. Two rows of buttons with a spacer between them never lined up. */
+.mail-compose-modal .cm-actions{flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;
+  gap:8px;margin-top:10px}
+.mail-compose-modal .cm-actions .btn{flex:0 0 auto}
+.cm-atts{flex:1 1 100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mail-compose-modal .input,.mail-compose-modal .mail-from{flex:0 0 auto}
 .mail-compose-modal #cm-body{flex:1 1 auto;min-height:160px;resize:none;margin-top:8px}
 .mail-compose-modal .cmp-tools,.mail-compose-modal .cm-actions{flex:0 0 auto}

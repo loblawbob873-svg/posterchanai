@@ -16083,14 +16083,18 @@
       const fromSel=this.accounts.length>1
         ? `<label class="muted small mail-from">From <select class="input" id="cm-from">${this.accounts.map(a=>`<option value="${enc(a.email)}"${a.email===fromAcct?' selected':''}>${enc(a.email)}</option>`).join('')}</select></label>`
         : `<div class="muted small" style="margin:-4px 0 8px">From: ${enc(fromAcct)}</div>`;
-      modal(`<h3>✉️ ${titles[opts.mode]||'New message'}</h3>
+      /* Send lives in the HEADER. It is the one action this window exists for, and at the bottom of
+       * a full-height composer it sits below a body that grows — so on a long message, or a short
+       * window, the primary button is the thing you have to go looking for. The footer keeps the
+       * secondary actions, on one wrapping row so they line up instead of straddling two. */
+      modal(`<div class="cm-head"><h3>✉️ ${titles[opts.mode]||'New message'}</h3><span class="spacer"></span>
+          <button class="btn btn-neon small" id="cm-send"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Send</button></div>
         ${fromSel}
         <input class="input" id="cm-to" placeholder="To (comma-separated)" value="${enc(to)}" autocomplete="off">
         <input class="input" id="cm-cc" placeholder="Cc (optional)" value="${enc(cc)}" autocomplete="off">
         <input class="input" id="cm-subj" placeholder="Subject" value="${enc(subj)}">
         <textarea class="input" id="cm-body" placeholder="Write your message…">${enc(body)}</textarea>
-        <div class="row cmp-tools"><button class="btn btn-ghost small" id="cm-contacts">👤 Contacts</button><button class="btn btn-ghost small" id="cm-attach">📎 Attach</button><button class="btn btn-ghost small" id="cm-blossom">🌸 Blossom</button><input type="file" id="cm-file" multiple hidden><span id="cm-atts" class="muted small"></span></div>
-        <div class="row cm-actions"><button class="btn btn-ghost small" id="cm-draft">💾 Save draft</button><span class="spacer"></span><button class="btn btn-neon" id="cm-send">Send ▶</button></div>`,
+        <div class="row cm-actions"><button class="btn btn-ghost small" id="cm-contacts">👤 Contacts</button><button class="btn btn-ghost small" id="cm-attach">📎 Attach</button><button class="btn btn-ghost small" id="cm-blossom">🌸 Blossom</button><button class="btn btn-ghost small" id="cm-draft">💾 Save draft</button><input type="file" id="cm-file" multiple hidden><span id="cm-atts" class="muted small cm-atts"></span></div>`,
         box => box.classList.add('mail-compose-modal'));
       const drawAtts=()=>{ const e=$('#cm-atts'); if(e) e.innerHTML=atts.map(a=>'📎 '+enc(a.name)).join('  '); };
       drawAtts();
