@@ -547,8 +547,16 @@
 
   const Nip46 = {
     ws:null, relay:null, appSk:null, appPk:null, remotePk:null, userPk:null,
+    /* The encryption this SESSION writes with, settled once at pairing and then never changed.
+     * NIP-46 began on NIP-04 and the current spec is NIP-44, so both are in the wild — Amber reads
+     * either, a modern bunker may read only NIP-44, an old one only NIP-04. Defaults to nip04
+     * because that is what every signer still reads, and because a session paired before this
+     * existed has no recorded value. */
+    _enc:'nip04',
+    _lastDec:null,        // scheme the last decodable message ARRIVED in (diagnostic + connect ack)
+    _encOk:false,         // the peer decrypted something we sent → our scheme is right
     _pending:new Map(), _subId:null, _onEvent:null,
-    reset(){ this._wantOpen=false; try{ if(this.ws){ this.ws.onclose=null; this.ws.close(); } }catch(_){} this.ws=null;
+    reset(){ this._wantOpen=false; this._enc='nip04'; this._lastDec=null; this._encOk=false; try{ if(this.ws){ this.ws.onclose=null; this.ws.close(); } }catch(_){} this.ws=null;
       this._pending.forEach(p=>{ try{ p.rej(new Error('signer disconnected')); }catch(_){} }); this._pending.clear();
       // Fail the queued work too — otherwise jobs waiting for a slot hang on a socket that's gone.
       const q=this._queue||[]; this._queue=[]; this._inflight=0;
@@ -572,7 +580,9 @@
       const ops = /\?iv=/.test(String(ct || '')) ? ['nip04dec','nip44dec'] : ['nip44dec','nip04dec'];
       for(const op of ops){
         try{
-          return JSON.parse((await Relay.worker.call(op,{ peer, ct })).pt);
+          const pt = JSON.parse((await Relay.worker.call(op,{ peer, ct })).pt);
+          this._lastDec = (op === 'nip04dec') ? 'nip04' : 'nip44';
+          return pt;
         }catch(_){}
       }
       return null;
@@ -654,6 +664,10 @@
       if(m[0]!=='EVENT' || m[1]!==this._subId) return;
       const ev=m[2]; if(!ev || ev.kind!==24133) return;
       const payload=await this._decode(ev.pubkey, ev.content); if(!payload) return;
+      // A payload carrying one of OUR request ids means the peer read what we sent, whatever it
+      // replied with. That — not the reply's own encoding — is what confirms our outbound scheme,
+      // and it counts even for an auth_url, which never settles the pending promise.
+      if(payload && payload.id && this._pending.has(payload.id)) this._encOk = true;
       if(this._onEvent) try{ this._onEvent(ev, payload); }catch(_){}   // nostrconnect handshake hook
       // the signer needs the user to approve in-app → open the deep link / approval URL
       if(payload.result==='auth_url' || (payload.error && /^https?:\/\//i.test(payload.error||''))){
@@ -683,10 +697,10 @@
     // in here; a sign_event appended behind them would block the composer for MINUTES — you hit Post and
     // nothing happens. Interactive work (signing, and the connect handshake) goes to the FRONT.
     _PRIORITY: new Set(['sign_event', 'connect', 'get_public_key']),
-    _send(method, params){
+    _send(method, params, opts){
       return new Promise((res, rej)=>{
         const run=async()=>{
-          try{ return await this._rpc(method, params); }
+          try{ return await this._rpc(method, params, opts); }
           catch(e){
             // A user REFUSAL is final — retrying just re-prompts them. Match only clear user-denial phrasing;
             // NOT bare 'unauthorized'/'not authorized', which also appear in transient relay errors
@@ -697,7 +711,7 @@
             if(m.includes('rejected by user') || m.includes('user rejected') || m.includes('user declined')
                || m.includes('denied by user') || m.includes('request denied')) throw e;
             await new Promise(r=>setTimeout(r, 600));
-            return await this._rpc(method, params);
+            return await this._rpc(method, params, opts);
           }
         };
         const job={ run, res, rej };
@@ -705,10 +719,46 @@
         this._pump();
       });
     },
-    async _rpc(method, params){
+    /* Settle the encryption ONCE, at pairing, by trying it — because NIP-46 has no capability
+     * negotiation to ask with.
+     *
+     * NIP-44 first: it is what the current spec says, and continuing to open in NIP-04 forever makes
+     * every modern signer somebody else's problem to fix. NIP-04 second, because that is what the
+     * long tail actually reads. Whichever the signer answers is recorded on the SESSION and used for
+     * every later request, so the scheme never changes mid-session.
+     *
+     * This is deliberately NOT the inference that was reverted (see _decode). That version re-derived
+     * the outbound scheme from whatever arrived last, so one odd message silently broke every
+     * subsequent signature — for good, and with no error. Here the probe happens at the one moment
+     * the user is watching a pairing screen, a wrong guess costs 12 seconds rather than a session,
+     * and `_encOk` confirms on the peer having READ us rather than on what it chose to write back.
+     *
+     * A short ceiling, and quiet: "waiting for your signer…" during a probe we intend to abandon
+     * would be a lie. An auth_url counts as success — it proves the request was decrypted. */
+    async _negotiateConnect(remote, secret){
+      let lastErr = null;
+      for(const enc of ['nip44', 'nip04']){
+        this._encOk = false;
+        try{
+          const r = await this._send('connect', [remote, secret], { enc, timeout: 12000, quiet: true });
+          this._enc = enc;
+          return r;
+        }catch(e){
+          lastErr = e;
+          // The peer READ us but is waiting on a human (auth_url) — the scheme is right, so keep it
+          // and let the caller's own get_public_key wait on the approval at full length.
+          if(this._encOk){ this._enc = enc; return null; }
+          const m = String((e && e.message) || e).toLowerCase();
+          if(!m.includes('timed out')) throw e;   // a real refusal is not a reason to try again louder
+        }
+      }
+      throw lastErr || new Error('the signer did not answer in either encryption scheme');
+    },
+    async _rpc(method, params, opts){
       if(!this.remotePk || !this.ws) throw new Error('signer not connected');
       const id='r'+Math.random().toString(36).slice(2,10);
-      const ct=(await Relay.worker.call('nip04enc',{peer:this.remotePk, text:JSON.stringify({ id, method, params })})).ct;
+      const enc=(opts && opts.enc) || this._enc || 'nip04';
+      const ct=(await Relay.worker.call(enc+'enc',{peer:this.remotePk, text:JSON.stringify({ id, method, params })})).ct;
       const tpl={ kind:24133, content:ct, tags:[['p',this.remotePk]], created_at:Math.floor(Date.now()/1000), pubkey:this.appPk };
       const signed=await Relay.worker.call('sign',{ event:tpl });
       return new Promise((res,rej)=>{
@@ -718,8 +768,10 @@
          * physical act — but two minutes of a button that does nothing is indistinguishable from a
          * broken one, and that is exactly how it was reported ("click send, nothing happens").
          * A single nudge at 4s, only while the request is still outstanding. */
-        setTimeout(()=>{ if(this._pending.has(id)) try{ toast('waiting for your signer…'); }catch(_){} }, 4000);
-        setTimeout(()=>{ if(this._pending.has(id)){ this._pending.delete(id); rej(new Error('signer request timed out')); } }, 120000);
+        const ceiling=(opts && opts.timeout) || 120000;
+        if(!(opts && opts.quiet))
+          setTimeout(()=>{ if(this._pending.has(id)) try{ toast('waiting for your signer…'); }catch(_){} }, 4000);
+        setTimeout(()=>{ if(this._pending.has(id)){ this._pending.delete(id); rej(new Error('signer request timed out')); } }, ceiling);
       });
     },
     // bunker://<remote-signer-pubkey>?relay=wss://…&secret=…  (Amber gives you this string)
@@ -735,10 +787,10 @@
        * same string we had just parsed. _openFirstOf commits the winner to this.relay, which is what
        * the session below stores. */
       await this._ensureAppKey(); await this._openFirstOf(relays); this.remotePk=remote;
-      await this._send('connect',[remote, secret]);     // may bounce through an auth_url first
+      await this._negotiateConnect(remote, secret);
       const userPk=await this._send('get_public_key',[]);
       this.userPk=userPk;
-      return { userPk, session:{ mode:'nip46', sk:this.appSk, relay:this.relay, remotePk:remote, userPk } };
+      return { userPk, session:{ mode:'nip46', sk:this.appSk, relay:this.relay, remotePk:remote, userPk, enc:this._enc } };
     },
     /* The client URL a signer is shown, or '' when there is nothing a signer could make sense of.
      * Web and PWA give an https origin; the desktop bundle gives `app://posterchan` and the APK gives
@@ -788,8 +840,12 @@
         this._onEvent=async (ev, payload)=>{
           if(!payload.result || payload.result==='auth_url') return;   // wait for the connect ack
           this.remotePk=ev.pubkey; this._onEvent=null; clearTimeout(to);
+          /* The signer opened the conversation here, so there is nothing to probe: it has told us
+           * what it speaks by what it just sent. Recorded ONCE, from the connect ack specifically —
+           * not from whatever happens to arrive later. */
+          this._enc = this._lastDec || 'nip04';
           try{ const pk=await this._send('get_public_key',[]); this.userPk=pk;
-            res({ userPk:pk, session:{ mode:'nip46', sk:this.appSk, relay, remotePk:this.remotePk, userPk:pk } }); }
+            res({ userPk:pk, session:{ mode:'nip46', sk:this.appSk, relay, remotePk:this.remotePk, userPk:pk, enc:this._enc } }); }
           catch(e){ rej(e); }
         };
       });
@@ -803,6 +859,9 @@
        * stopped signing. Try the stored relay FIRST (the signer is definitely there if it is up),
        * then this node's current signer relays. */
       await this._ensureAppKey(s.sk);
+      // A session paired before this existed has no `enc` — nip04 is what it was using, so that is
+      // the only safe default. Never re-negotiate on resume: the signer already knows this session.
+      this._enc = (s.enc === 'nip44') ? 'nip44' : 'nip04';
       const relays = [s.relay].concat(_ncRelays()).filter(Boolean);
       try{ await this._openFirstOf(relays); }
       catch(e){ await this._openRelay(s.relay); }   // keep the original error shape if none open
