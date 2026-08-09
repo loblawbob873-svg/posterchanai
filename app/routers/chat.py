@@ -570,7 +570,13 @@ async def _proxy_fetch(url_raw: str):
         resp.raise_for_status()
         content = resp.content
         ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
-        if ctype and (ctype.startswith("text/") or "json" in ctype or "xml" in ctype):
+        # SVG IS AN IMAGE, and it is XML — `"xml" in ctype` refused image/svg+xml, so an SVG result
+        # from image search could never be proxied, saved or used in an effect. It came back as a
+        # 502 "Upstream did not return an image" about a file that plainly was one. The guard is
+        # meant to stop an HTML error page or a JSON body being served as a picture, so it now names
+        # those rather than matching a substring that a real image type contains.
+        if ctype and not ctype.startswith("image/") and (
+                ctype.startswith("text/") or "json" in ctype or "xml" in ctype):
             raise HTTPException(status_code=502, detail="Upstream did not return an image")
         media_type = ctype if (ctype and ctype.startswith("image/")) else "image/png"
         return content, media_type
