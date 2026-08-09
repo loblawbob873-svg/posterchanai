@@ -16,8 +16,9 @@
  * routing off-site links to the real browser, the permission grants the client needs, and auto-update.
  */
 const { app, BrowserWindow, shell, session, Menu, clipboard, dialog, ipcMain, desktopCapturer,
-        systemPreferences, protocol } = require('electron');
+        systemPreferences, protocol, powerMonitor } = require('electron');
 const path = require('path');
+const fsbridge = require('./fsbridge');
 const fs = require('fs');
 const tor = require('./tor');
 
@@ -605,6 +606,55 @@ ipcMain.handle('pc:tor:restart', async (e) => {
 // (navigator.clipboard is removed outside a secure context and execCommand('copy') is refused), so the
 // Go Live stream key simply could not be copied. Write-only by design: nothing here can READ what the
 // user has copied.
+/* ---- folder sync: the filesystem bridge ------------------------------------------------------
+ *
+ * Every handler is gated on fromOurPage AND on a root the user picked in a native dialog. The page
+ * cannot create a root — only `pc:fs:pick` can, and that opens a real folder chooser, so the set of
+ * reachable directories is exactly the set a human has agreed to. desktop/fsbridge.js re-checks the
+ * resolved path against those roots on every call; this layer's only job is to refuse anything that
+ * did not come from our own page.
+ */
+fsbridge.init({
+  roots: Array.isArray(cfg.syncRoots) ? cfg.syncRoots : [],
+  save: (roots) => { cfg.syncRoots = roots; saveCfg(); },
+});
+const fsGuard = (e) => { if (!fromOurPage(e)) throw new Error('denied'); };
+ipcMain.handle('pc:fs:list', (e) => { fsGuard(e); return fsbridge.list(); });
+ipcMain.handle('pc:fs:pick', async (e) => {
+  fsGuard(e);
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Choose a folder to sync',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (r.canceled || !r.filePaths || !r.filePaths[0]) return null;
+  return fsbridge.addRoot(r.filePaths[0]);
+});
+ipcMain.handle('pc:fs:forget', (e, id) => { fsGuard(e); return fsbridge.removeRoot(String(id || '')); });
+ipcMain.handle('pc:fs:scan', (e, id, opts) => { fsGuard(e); return fsbridge.scan(String(id || ''), opts || {}); });
+ipcMain.handle('pc:fs:read', (e, id, rel) => { fsGuard(e); return fsbridge.read(String(id || ''), String(rel || '')); });
+ipcMain.handle('pc:fs:write', (e, id, rel, bytes, mtime) => {
+  fsGuard(e); return fsbridge.write(String(id || ''), String(rel || ''), bytes, mtime);
+});
+ipcMain.handle('pc:fs:move', (e, id, from, to) => { fsGuard(e); return fsbridge.move(String(id || ''), String(from || ''), String(to || '')); });
+ipcMain.handle('pc:fs:trash', (e, id, rel, when) => { fsGuard(e); return fsbridge.trash(String(id || ''), String(rel || ''), when); });
+ipcMain.handle('pc:fs:empty-trash', (e, id, days) => { fsGuard(e); return fsbridge.emptyTrash(String(id || ''), days); });
+ipcMain.handle('pc:fs:watch', (e, id, debounceMs) => {
+  fsGuard(e);
+  return fsbridge.watch(String(id || ''), (which) => {
+    try { if (win && !win.isDestroyed()) win.webContents.send('pc:fs:changed', which); } catch (_) {}
+  }, debounceMs);
+});
+ipcMain.handle('pc:fs:unwatch', (e, id) => { fsGuard(e); return fsbridge.unwatch(String(id || '')); });
+/* Device state for the battery policy (foldersync.js shouldSync). `charging` is what the "only sync
+ * when plugged in" switch reads; powerMonitor is the only source that is right on a desktop with no
+ * battery at all, where onBattery is false and the answer is "always plugged in". */
+ipcMain.handle('pc:fs:power', (e) => {
+  fsGuard(e);
+  let onBattery = false;
+  try { onBattery = powerMonitor.isOnBatteryPower(); } catch (_) {}
+  return { charging: !onBattery, metered: false, online: true };
+});
+
 ipcMain.handle('pc:clip:write', (e, text) => {
   if (!fromOurPage(e)) { console.warn('[clip] denied'); return false; }
   const s = String(text == null ? '' : text);

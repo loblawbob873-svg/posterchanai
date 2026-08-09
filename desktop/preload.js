@@ -52,6 +52,40 @@ if (isOurPage) {
       },
     },
   });
+  /* Folder sync. Present only in the desktop app, which is also how the client feature-detects it:
+   * the web PWA has no filesystem at all (and Firefox has no File System Access API), so the Sync
+   * screen keys off `window.pcFs` rather than off a user agent.
+   *
+   * Nothing here takes an absolute path. Every call names a ROOT ID the user created in a native
+   * folder picker plus a path RELATIVE to it, so the page cannot express a location outside a
+   * directory a human chose — the check is enforced again in the main process (fsbridge.resolveIn),
+   * because a preload is not a security boundary against the page it serves.
+   *
+   * read() hands back a Uint8Array rather than the Buffer that crosses IPC: Buffer is a Node type,
+   * and leaking one into the page gives it a prototype full of things the page should not have. */
+  contextBridge.exposeInMainWorld('pcFs', {
+    list: () => ipcRenderer.invoke('pc:fs:list'),
+    pick: () => ipcRenderer.invoke('pc:fs:pick'),
+    forget: (id) => ipcRenderer.invoke('pc:fs:forget', String(id || '')),
+    scan: (id, opts) => ipcRenderer.invoke('pc:fs:scan', String(id || ''), opts || {}),
+    read: (id, rel) => ipcRenderer.invoke('pc:fs:read', String(id || ''), String(rel || ''))
+      .then((b) => new Uint8Array(b)),
+    write: (id, rel, bytes, mtime) =>
+      ipcRenderer.invoke('pc:fs:write', String(id || ''), String(rel || ''),
+                         bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []), mtime || 0),
+    move: (id, from, to) => ipcRenderer.invoke('pc:fs:move', String(id || ''), String(from || ''), String(to || '')),
+    trash: (id, rel, when) => ipcRenderer.invoke('pc:fs:trash', String(id || ''), String(rel || ''), when || 0),
+    emptyTrash: (id, days) => ipcRenderer.invoke('pc:fs:empty-trash', String(id || ''), days || 30),
+    power: () => ipcRenderer.invoke('pc:fs:power'),
+    watch: (id, debounceMs) => ipcRenderer.invoke('pc:fs:watch', String(id || ''), debounceMs || 0),
+    unwatch: (id) => ipcRenderer.invoke('pc:fs:unwatch', String(id || '')),
+    // Push, not poll — a watcher that the page has to ask about is a timer, which is the thing the
+    // battery policy exists to avoid. Wrapped so the page never receives the IpcRendererEvent.
+    onChanged: (fn) => {
+      if (typeof fn !== 'function') return;
+      ipcRenderer.on('pc:fs:changed', (_e, id) => { try { fn(id); } catch (_) {} });
+    },
+  });
   // Screen-share source picker (picker.html). Kept separate so the capability stays scoped to the page
   // that draws the picker; the instance must never be able to enumerate the user's windows.
   contextBridge.exposeInMainWorld('pcScreen', {

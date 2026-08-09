@@ -274,3 +274,74 @@ class TestSyncPolicy(unittest.TestCase):
 
     def test_disabled_does_nothing(self):
         self.assertEqual(self.ask({"charging": True}, {"enabled": False})["mode"], "none")
+
+
+@unittest.skipIf(not NODE, "no node on this node")
+class TestExclusions(unittest.TestCase):
+    """"All of Pictures except Old."
+
+    The matching is the easy half. The half that matters is WHERE it is applied: an exclusion that
+    only filtered the local scan would make every already-synced file under Pictures/Old look
+    "deleted here", and this engine would faithfully delete them from every other device. Excluding
+    a folder means "stop looking at it", never "delete it".
+    """
+
+    def plan(self, local, remote, base, excludes):
+        js = ("const S=require(%s);"
+              "process.stdout.write(JSON.stringify(S.diff({local:%s, remote:%s, base:%s,"
+              " excludes:%s, device:'laptop', now:%d})));"
+              ) % (json.dumps(MOD), json.dumps(local), json.dumps(remote), json.dumps(base),
+                   json.dumps(excludes), 5 * DAY)
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            raise AssertionError("node failed:\n" + r.stderr[-2000:])
+        return json.loads(r.stdout)
+
+    def match(self, patterns, paths):
+        js = ("const S=require(%s); const ex=S.excluder(%s);"
+              "process.stdout.write(JSON.stringify(%s.map(p=>ex(p))));"
+              ) % (json.dumps(MOD), json.dumps(patterns), json.dumps(paths))
+        return json.loads(subprocess.run([NODE, "-e", js], capture_output=True, text=True,
+                                         timeout=60).stdout)
+
+    def test_a_folder_name_excludes_everything_under_it(self):
+        got = self.match(["Old"], ["Old", "Old/2019/img.jpg", "Trips/Old/b.jpg", "Older/a.jpg",
+                                   "keep/a.jpg"])
+        self.assertEqual(got, [True, True, True, False, False],
+                         "a folder name must catch its contents, and must not match a PREFIX of "
+                         "another name (Older is not Old)")
+
+    def test_anchoring_and_wildcards(self):
+        self.assertEqual(self.match(["/Trips/Raw"], ["Trips/Raw/x", "x/Trips/Raw/y"]), [True, False],
+                         "a leading slash anchors to the top of the sync folder")
+        self.assertEqual(self.match(["*.tmp"], ["a.tmp", "sub/b.tmp", "a.tmpx"]), [True, True, False])
+        self.assertEqual(self.match(["**/cache"], ["deep/x/cache/f", "cache/f"]), [True, True])
+
+    def test_excluding_a_folder_does_not_delete_it_elsewhere(self):
+        """THE one that matters. Pictures/Old is already synced; this device now excludes it. The
+        remote copy must be left completely alone."""
+        p = self.plan(local={"a.jpg": f("A")},
+                      remote={"a.jpg": f("A"), "Old/x.jpg": f("X")},
+                      base={"a.jpg": f("A"), "Old/x.jpg": f("X")},
+                      excludes=["Old"])
+        self.assertEqual(p["deleteRemote"], [],
+                         "adding an exclusion deleted the other devices' copies")
+        self.assertEqual(p["deleteLocal"], [])
+        self.assertEqual(p["download"], [])
+        self.assertEqual(p["excluded"], 1)
+
+    def test_an_excluded_path_is_never_downloaded(self):
+        """Another device syncs Pictures/Old; this one excluded it. It must not arrive here."""
+        p = self.plan(local={}, remote={"Old/x.jpg": f("X")}, base={}, excludes=["Old"])
+        self.assertEqual(p["download"], [])
+        self.assertEqual(p["excluded"], 1)
+
+    def test_an_excluded_local_file_is_never_uploaded(self):
+        p = self.plan(local={"Old/x.jpg": f("X"), "a.jpg": f("A")}, remote={}, base={},
+                      excludes=["Old"])
+        self.assertEqual(sorted(a["path"] for a in p["upload"]), ["a.jpg"])
+
+    def test_no_patterns_excludes_nothing(self):
+        p = self.plan(local={"a.jpg": f("A")}, remote={}, base={}, excludes=[])
+        self.assertEqual(len(p["upload"]), 1)
+        self.assertEqual(p["excluded"], 0)
