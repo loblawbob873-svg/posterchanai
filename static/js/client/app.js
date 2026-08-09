@@ -4591,7 +4591,20 @@
     const SWIPE_VIEWS = ['home','global','trending','notifications','messages'];
     const REFRESHABLE = new Set(['home','global','trending','notifications','messages','bookmarks','drafts','articles','market','markets','streams','communities']);
     const PTR_TRIGGER = 70, PTR_MAX = 110, SWIPE_MIN = 60;
-    let sx=0, sy=0, axis='', pulling=false, swiping=false, active=false, startTop=0, ind=null;
+    let sx=0, sy=0, axis='', pulling=false, swiping=false, active=false, startTop=0, canPull=true, ind=null;
+    // The feed is not always the thing that scrolls. In Messages (and community/stream chat) the feed is
+    // `overflow:hidden` and an INNER pane scrolls instead, so `feed.scrollTop` is pinned at 0 forever —
+    // which made every downward drag look like a pull-to-refresh. Claiming that gesture cancels it, and a
+    // cancelled touchmove is a scroll the browser never performs: that is why a DM thread could not be
+    // scrolled up through its history at all. Measure the pane under the FINGER instead of the feed.
+    const scrollerAt = el => { for(let n=el; n && n!==feed; n=n.parentElement){
+        if(n.scrollHeight - n.clientHeight < 4) continue;              // nothing to scroll — keep walking up
+        const oy=getComputedStyle(n).overflowY;
+        if(oy==='auto'||oy==='scroll') return n; }
+      return feed; };
+    // An OPEN conversation offers "Load older", not a refresh, so a pull there only re-renders the thread
+    // out from under you. The list behind it still pulls (it's the inbox).
+    const noPull = el => !!(el && el.closest && el.closest('.dm-thread'));
     // Don't hijack horizontal drags that belong to scrollable/interactive children.
     // `.dm-thread` (an OPEN conversation), not `.dm-wrap` (the whole Messages pane) — so the
     // conversation LIST stays swipeable (swipe back to Notifications) while an open chat isn't yanked out from under you.
@@ -4620,7 +4633,8 @@
     feed.addEventListener('touchstart', e=>{
       if(VIEW==='home'||VIEW==='global') _reviveOnInteract();   // any touch on a timeline recovers a frozen socket (throttle-proof)
       if(e.touches.length!==1){ active=false; return; }
-      const t=e.touches[0]; sx=t.clientX; sy=t.clientY; axis=''; pulling=false; swiping=false; active=true; startTop=feed.scrollTop;
+      const t=e.touches[0]; sx=t.clientX; sy=t.clientY; axis=''; pulling=false; swiping=false; active=true;
+      startTop=scrollerAt(e.target).scrollTop; canPull=!noPull(e.target);
     }, {passive:true});
     feed.addEventListener('touchmove', e=>{
       if(!active || e.touches.length!==1) return;
@@ -4629,7 +4643,7 @@
         if(Math.abs(dx)<8 && Math.abs(dy)<8) return;
         if(Math.abs(dx) > Math.abs(dy)*1.3){                     // horizontal → swipe-nav candidate
           if(window.innerWidth<=820 && !noSwipe(e.target)){ axis='x'; swiping=true; e.preventDefault(); } else { active=false; }
-        } else if(dy>0 && startTop<=0 && REFRESHABLE.has(VIEW)){  // pull-down at the top → refresh
+        } else if(dy>0 && startTop<=0 && canPull && REFRESHABLE.has(VIEW)){  // pull-down at the top → refresh
           axis='y'; pulling=true;
         } else { active=false; }                                 // ordinary vertical scroll — hands off
         return;
