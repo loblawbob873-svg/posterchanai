@@ -14964,6 +14964,8 @@
           offAll ? ` · ${offAll} offline` : ''}</span>
         ${wantable.length ? `<button class="btn btn-ghost small" id="mus-getall" title="Keep every track on this device — they play with no network">
           <svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download ${wantable.length}</button>` : ''}
+        <button class="btn btn-ghost small" id="mus-refresh" title="Fetch the library again — songs added on another device appear here">
+          <svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg>Refresh</button>
         ${gone ? `<button class="btn btn-ghost small" id="mus-tidy">Remove ${gone} missing</button>` : ''}</div>`;
     grid.innerHTML = head + (tracks.length ? tracks.map(t=>`<div class="track${t.missing?' gone':''}" data-sha="${t.sha}">
         ${t.missing ? '<span class="track-play" aria-hidden="true">✕</span>'
@@ -15026,6 +15028,31 @@
       b.disabled=false;
       _renderMusicList(grid, list, q);
     });
+    /* GO AND LOOK AGAIN.
+     *
+     * The library is pulled from the relay ONCE per session (`if(!FilesIdx._pullDone)` in
+     * renderMusicApp), which is right for a device working alone and wrong the moment two are in
+     * play: upload a folder on a laptop and the phone shows the library it read when it started,
+     * with no way to reach the new songs — not to play them and not to download them. Reported
+     * exactly that way, mid-upload.
+     *
+     * Manual, not automatic on entry: re-reconciling on every visit is what once emptied a library
+     * that was listing perfectly well (see paint() above), and a button that goes and looks when you
+     * ask is both cheaper and easier to trust than a poll. It clears _pullDone deliberately — a
+     * refresh that returns the copy it already has is not a refresh. */
+    { const rf=$('#mus-refresh',grid);
+      if(rf) rf.onclick=async ()=>{
+        const label=rf.innerHTML; rf.disabled=true; rf.textContent='refreshing…';
+        try{
+          FilesIdx._pullDone=false;
+          await FilesIdx.pull();
+          await _refreshBlobHave();
+          await MusicOffline.have(true);   // …and re-read what is downloaded, on THIS device
+        }catch(_){ }
+        rf.disabled=false; rf.innerHTML=label;
+        _renderMusicList(grid, null, q);   // null → use the blob list we just re-read
+        try{ _musicAppNow(); }catch(_){}
+      }; }
     { const ga=$('#mus-getall',grid);
       if(ga) ga.onclick=async ()=>{
         const want=musicEntries(list).filter(t=>!t.missing && !t.offline).map(t=>t.sha);
