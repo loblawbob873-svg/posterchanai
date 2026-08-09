@@ -13710,17 +13710,57 @@
       this._mkWrapped=await signer.nip44enc(ME.pubkey, JSON.stringify({k:_u8b64(this.mk)})); this.saveLocal();
       return this.mk;
     },
+    /* TOMBSTONES — a deletion the merge cannot otherwise express.
+     *
+     * `Object.assign({}, srv.files, loc.files)` folds the server's copy under the local one, and a
+     * file the user just DELETED is not in either side's "local wins" — it is simply absent locally
+     * and present on the server, so the merge puts it straight back. That is not a corner case: it
+     * is what happens on the ordinary path, because _save() pulls first whenever it has not yet
+     * confirmed what the server holds, and a pull with edits pending merges.
+     *
+     * Measured: "Remove 2422 missing tracks" removed them, the save pulled, the merge re-added all
+     * 2422, and the write went out with the SAME 3990 entries — no collapse, so the server's guard
+     * saw nothing wrong, the save honestly reported success, and the tracks were still there. Twice
+     * over two days, and once more after the toast was made truthful.
+     *
+     * So a forget() is recorded, and an incoming index cannot resurrect what it names. Kept after a
+     * successful save on purpose: another device holding a stale copy would otherwise merge them
+     * back the next time it wrote. Bounded by age and count, since this is only ever a shield
+     * against copies still in flight. Deliberately NOT published in the doc — it is ~64 bytes per
+     * entry against a 133KB index, and the server-side copy is already correct once a save lands. */
+    _DEL_MAX: 20000, _DEL_TTL: 90*86400,
+    _tomb(sha){
+      this._norm();
+      if(!this.data.deleted || typeof this.data.deleted!=='object') this.data.deleted={};
+      this.data.deleted[sha]=Math.floor(Date.now()/1000);
+      const keys=Object.keys(this.data.deleted);
+      if(keys.length>this._DEL_MAX || keys.length%512===0){
+        const cut=Math.floor(Date.now()/1000)-this._DEL_TTL;
+        const live=keys.filter(k=>(this.data.deleted[k]||0)>cut)
+                       .sort((a,b)=>this.data.deleted[b]-this.data.deleted[a]).slice(0,this._DEL_MAX);
+        const kept={}; for(const k of live) kept[k]=this.data.deleted[k];
+        this.data.deleted=kept;
+      }
+    },
+    // Drop everything this device has deleted from a files map that came off the server.
+    _dropDeleted(files){
+      const del=this.data && this.data.deleted;
+      if(del) for(const sha in del) delete files[sha];
+      return files;
+    },
     /* Fold a server index UNDER the local one: folders/encFolders union, per-file local wins (a local
        entry is the newer edit). Used only when a pull lands while edits are pending — the alternative
        there is dropping one side, and dropping the server's side loses the whole drive's foldering.
        The known cost is that a folder deleted locally in that window can come back; resurrecting a
-       folder is recoverable, replacing 400 files' metadata with nothing is not. */
+       folder is recoverable, replacing 400 files' metadata with nothing is not. (A deleted FILE is
+       covered — see the tombstones above.) */
     _merge(srv){
       this._norm();
       const loc=this.data;
       this.data={ folders:[...new Set([...(srv.folders||[]), ...loc.folders])],
                   encFolders:[...new Set([...(srv.encFolders||[]), ...loc.encFolders])],
-                  files:Object.assign({}, srv.files||{}, loc.files||{}) };
+                  deleted: loc.deleted,
+                  files:this._dropDeleted(Object.assign({}, srv.files||{}, loc.files||{})) };
       this.saveLocal();
     },
     async pull(){
@@ -13773,7 +13813,14 @@
                 try{ toast(`📁 Restored ${Object.keys(this.data.files).length} files and ${this.data.folders.length} folders from this device.`); }catch(_){}
                 console.warn('files-index: server copy was truncated ('+srvN+' vs '+locN+' here) — restoring from this device');
                 setTimeout(()=>this._save(), 50);   // _pullOk is set a few lines below, in this same tick
-              } else { this.data=idx; this.saveLocal(); }
+              } else {
+                // Adopting the server's copy wholesale must not undo a deletion either — and it must
+                // carry the tombstones forward, since `idx` has none of its own.
+                const del=(this.data&&this.data.deleted)||null;
+                this.data=idx; if(del) this.data.deleted=del;
+                this._norm(); this._dropDeleted(this.data.files);
+                this.saveLocal();
+              }
             }
             // Edits in flight: the old code SKIPPED the server index entirely, so a first upload on a
             // fresh device saved {Music, that one file} straight over a full drive. Fold the server's
@@ -13890,9 +13937,10 @@
     removeFolder(name){ this._norm(); if(name==='Music'||!name) return false; this.data.folders=this.data.folders.filter(f=>f!==name); this.data.encFolders=this.data.encFolders.filter(f=>f!==name); for(const sha in this.data.files){ if(this.data.files[sha].folder===name) this.data.files[sha].folder=''; } this.push(); return true; },
     meta(sha){ return this._norm().files[sha]||null; },
     folderOf(sha){ const m=this._norm().files[sha]; return (m&&m.folder)||''; },
-    setFile(sha, m){ this._norm(); this.data.files[sha]=Object.assign(this.data.files[sha]||{}, m); this.push(); },
+    // Re-uploading something that was deleted must bring it back — so it stops being a tombstone.
+    setFile(sha, m){ this._norm(); if(this.data.deleted) delete this.data.deleted[sha]; this.data.files[sha]=Object.assign(this.data.files[sha]||{}, m); this.push(); },
     move(sha, folder){ this._norm(); this.data.files[sha]=Object.assign(this.data.files[sha]||{}, {folder}); this.push(); },
-    forget(sha){ this._norm(); delete this.data.files[sha]; this.push(); },
+    forget(sha){ this._norm(); delete this.data.files[sha]; this._tomb(sha); this.push(); },
   };
   function _shaFromUrl(url){ const m=String(url||'').match(/([0-9a-f]{64})/i); return m?m[1].toLowerCase():''; }
   let _filesFolder = '';   // current folder ('' = All)
@@ -21441,7 +21489,37 @@
   }
   // Fill directly on render (the empty placeholder is display:none via CSS until filled; an
   // IntersectionObserver never fires on a zero-height hidden element, which broke lazy loading).
-  function hydrateLinkCards(scope){ $$('.link-card[data-url]:not([data-done])', scope||document).forEach(el=>{ el.setAttribute('data-done','1'); fillLinkCard(el); }); }
+  /* Link cards fill a FEW AT A TIME, never all at once.
+   *
+   * This was `forEach(fillLinkCard)`, which fires one request per card in the same tick — and a
+   * timeline is hundreds of cards. Every one of them is an outbound fetch the INSTANCE performs on
+   * the user's behalf: `/client/preview` opens an HTTPS connection to a third-party site, reads up
+   * to 512KB and regex-parses it for OpenGraph tags, on a single uvicorn worker.
+   *
+   * Measured on the live node: 813 preview requests completed inside ONE ten-second window, 45
+   * APScheduler jobs were "missed by" up to 18 seconds in half an hour, and `GET /client` — the page
+   * itself — timed out at 20s three times running while every other route answered in milliseconds.
+   * From outside that is the site being down, and it fired the uptime alert. One reader's feed did
+   * it, with no bug anywhere: the fan-out IS the load.
+   *
+   * Four at a time turns a burst into a trickle. Cards still all fill, just visibly rather than in
+   * one thundering herd — and the node stays answerable while they do. (The endpoint should cap its
+   * own concurrency too; a client is not the only thing that can call it.) */
+  const _LC_MAX = 4;
+  const _lcQ = []; let _lcRun = 0;
+  function _lcPump(){
+    while(_lcRun < _LC_MAX && _lcQ.length){
+      const el = _lcQ.shift(); _lcRun++;
+      const fin = ()=>{ _lcRun--; _lcPump(); };
+      try{ fillLinkCard(el).then(fin, fin); }catch(_){ fin(); }
+    }
+  }
+  function hydrateLinkCards(scope){
+    $$('.link-card[data-url]:not([data-done])', scope||document).forEach(el=>{
+      el.setAttribute('data-done','1'); _lcQ.push(el);
+    });
+    _lcPump();
+  }
   async function fetchPreview(url){ if(_pv.has(url)) return _pv.get(url); let d=null; try{ d=await fetch('/client/preview?url='+encodeURIComponent(url)).then(r=>r.json()); }catch(_){} _pv.set(url,d); return d; }
   async function fillLinkCard(el){
     const url=el.dataset.url; const d=await fetchPreview(url);
