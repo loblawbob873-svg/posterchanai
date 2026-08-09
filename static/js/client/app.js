@@ -229,7 +229,11 @@
    * standalone install is not a degraded PosterChan, it is a Nostr client, and it should read like
    * one. Anyone who wants the rest can name an instance in Settings and they all come back. */
   const INSTANCE_VIEWS = new Set(['ai', 'translate', 'markets', 'news', 'torrents', '4chan',
-                                  'stats', 'meme', 'admin', 'websearch', 'calendar', 'contacts']);
+                                  'stats', 'meme', 'admin', 'websearch', 'calendar', 'contacts',
+                                  // folder sync stores its manifest through /client/sync-manifest,
+                                  // whose collapse guard is the thing that stops an empty read
+                                  // wiping a folder. No instance, no guard, no sync.
+                                  'sync']);
   // Settings panes with nothing behind them without a server: server-side mail, the Telegram bridge,
   // the fediverse links, and API keys for the instance's AI API.
   const INSTANCE_SETTINGS_TABS = new Set(['mail', 'telegram', 'social', 'keys']);
@@ -3677,6 +3681,7 @@
     if (VIEW==='stats'){ if(window.PCStats) return window.PCStats.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='budget'){ if(window.PCBudget) return window.PCBudget.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='notes'){ if(window.PCNotes) return window.PCNotes.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
+    if (VIEW==='sync'){ if(window.PCSync) return window.PCSync.paint(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='vault'){ if(window.PCVault) return window.PCVault.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (window.PCGames && window.PCGames[VIEW]) return window.PCGames[VIEW]();   // game modules (chess.js/ttt.js/hangman.js)
     if (VIEW==='blossom') return renderBlossom();
@@ -24789,6 +24794,32 @@
     // reimplementing either (meme.js: add-media-from-Blossom, save/load project). blossomPicker is THE
     // file picker — folders, encrypted-blob hygiene and thumbnails included; sub-modules must use it
     // rather than listing /list/<pubkey> into a grid of their own.
+    /* Folder sync: raw BYTES in and out of the encrypted drive.
+     *
+     * Deliberately NOT uploadEncFile, which takes a File and registers it in the drive index. A
+     * synced Documents folder must not land in your Files grid, and 40k index entries in the one
+     * document that already sits at ~133KB would take the drive down with it. Same master key, same
+     * deterministic IV (so identical bytes dedup on Blossom and an unchanged file costs nothing),
+     * and keep:true so the TTL sweep never reclaims something a folder still references.
+     */
+    syncBlobs: {
+      async put(bytes){
+        const mk = await FilesIdx._ensureMK();
+        const blob = await _masterEncrypt(mk, bytes, await _contentIV(bytes));
+        const url = await uploadBlob(new File([blob], 'sync.enc', {type:'application/octet-stream'}),
+                                     { noMirror:true, keep:true });
+        const sha = _shaFromUrl(url);
+        if(!sha) throw new Error('upload returned no hash');
+        return sha;
+      },
+      async get(sha){
+        const r = await fetch(mediaServer() + '/' + sha);
+        if(!r.ok) throw new Error('blob ' + String(sha).slice(0,8) + ' unavailable (' + r.status + ')');
+        return await _masterDecrypt(await FilesIdx._ensureMK(), new Uint8Array(await r.arrayBuffer()));
+      },
+    },
+    // NIP-98-style self-auth for the client endpoints (the same proof /files-index takes).
+    signAuth: (tag) => sign(27235, String(tag||'sync'), [['p', ME.pubkey]]),
     mediaServer, modal, closeModal, blossomPicker,
     // The app's own lightbox (pager, zoom, swipe, keyboard) — so Web Search's Images tab opens a
     // picture the way every other picture in this app opens, instead of throwing you out to a

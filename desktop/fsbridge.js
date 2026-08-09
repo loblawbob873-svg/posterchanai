@@ -35,6 +35,13 @@ const crypto = require('crypto');
 
 const IGNORE = new Set(['.pc-trash', '.git', 'node_modules', '.DS_Store', 'Thumbs.db',
                         '.Trash', '$RECYCLE.BIN', 'System Volume Information']);
+/* Half-written files, by the names the tools that make them use.
+ *
+ * This is the substitute for file locking, and it has to be, because there is nothing to lock
+ * AGAINST: flock on Linux and macOS is advisory and no ordinary application takes it, so locking
+ * would exclude us and nobody else. Word, LibreOffice, browsers and rsync all announce a file in
+ * flight by its NAME instead, and that is a signal we can actually read. */
+const TEMP_RX = /^(~\$|\.~lock\.)|\.(crdownload|part|partial|tmp|temp|swp|swx|download)$/i;
 const PART = '.pcpart';
 
 let roots = [];          // [{id, dir}] — absolute, real, user-chosen
@@ -70,7 +77,7 @@ async function resolveIn(id, rel){
   return want;
 }
 
-const ignored = name => IGNORE.has(name) || name.endsWith(PART) || name.startsWith('.~');
+const ignored = name => IGNORE.has(name) || name.endsWith(PART) || TEMP_RX.test(name);
 
 /* Walk a tree into the shape the engine wants: {relPath: {size, mtime}}.
  *
@@ -113,7 +120,20 @@ async function scan(id, opts){
       if(isExcluded(rel)) continue;
       if(maxBytes && st.size > maxBytes){ skipped.push({ path: rel, why: 'too big', size: st.size }); continue; }
       const e = { size: st.size, mtime: Math.floor(st.mtimeMs) };
-      if(withHash) e.sha = await sha256(abs);
+      if(withHash){
+        /* HASH, THEN LOOK AGAIN. A file being written while we read it hashes to bytes that were
+         * never a whole file, and uploading that is worse than skipping it — the other devices get a
+         * corrupt copy with a perfectly good checksum. Re-stat afterwards: if size or mtime moved,
+         * something else owns this file right now, so leave it and take it on the next sweep. A
+         * delay is recoverable; a torn upload is not. */
+        e.sha = await sha256(abs);
+        let after;
+        try{ after = await fsp.stat(abs); }catch(_){ skipped.push({ path: rel, why: 'vanished' }); continue; }
+        if(after.size !== st.size || Math.floor(after.mtimeMs) !== Math.floor(st.mtimeMs)){
+          skipped.push({ path: rel, why: 'in use — will try again' });
+          continue;
+        }
+      }
       out[rel] = e;
     }
   }

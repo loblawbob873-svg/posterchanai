@@ -195,6 +195,10 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         "default_relays": _default_relays[:8],
         "blossom_url": _blossom_url(request, db),
         "blossom_enabled": _setting(db, "blossom_enabled", "false").lower() == "true",
+        # Folder sync needs the per-blob ceiling to skip-and-report an oversized file rather than
+        # push it and take a 413 after spending the upload. It is an admin setting, so it is
+        # published rather than assumed client-side.
+        "blossom_max_upload_mb": int(_setting(db, "blossom_max_upload_mb", "100") or 100),
         # Whether this node runs the built-in media server. The client uses it only to decide whether
         # to SHOW the "Go Live" entry points — /api/streams/* still gates the real thing.
         "stream_enabled": _setting(db, "stream_enabled", "false").lower() == "true",
@@ -4028,6 +4032,82 @@ async def scheduled_cancel(data: ScheduledCancelReq, db: Session = Depends(get_d
 # ----- Files folder index: folder tree + per-file metadata (name/folder), one encrypted doc -----
 _FILES_INDEX_BAKS = 5      # how many replaced index versions to keep (see _files_index_backup)
 _FILES_INDEX_BAK_DAYS = 30  # how long a superseded index BLOB stays recoverable before the sweep takes it
+
+
+class SyncManifestReq(BaseModel):
+    pubkey: str
+    auth: str
+    folder: str                        # the sync folder's id — one manifest per synced folder
+    # {n: <live entry count>, paths: {path: {sha,size,mtime,deletedAt}}}. `n` is PLAINTEXT and is
+    # what makes the collapse guard below possible at all — the server cannot read the paths, so
+    # without a count it has no way to notice a save turning 4000 files into 3.
+    manifest: dict | None = None       # present -> save; absent -> load
+    force: bool = False                # a deliberate mass-delete
+
+
+def _sync_folder_key(folder: str) -> str | None:
+    """`pcai:sync:<id>` — and the id has to be sanitised, because it becomes a d-tag on a replaceable
+    event. An id carrying a colon or a wildcard could address (and therefore overwrite) a DIFFERENT
+    document of the same user's — their files index, their notes, their calendar — all of which live
+    in this same namespace under the same key."""
+    f = "".join(c for c in str(folder or "") if c.isalnum() or c in "-_")
+    return f"pcai:sync:{f}" if 4 <= len(f) <= 64 else None
+
+
+@router.post("/sync-manifest")
+async def sync_manifest(data: SyncManifestReq, db: Session = Depends(get_db)):
+    """Save/load ONE synced folder's manifest — {path: {sha, size, mtime, deletedAt}} — as an
+    encrypted doc under the user's storage key, exactly like /files-index.
+
+    IT GOES THROUGH THE SERVER FOR ONE REASON: the collapse guard. This document is the only record
+    of what every device agreed a folder contains, so an empty read written back over a full manifest
+    does not lose a setting, it loses the folder — every device then reads the missing paths as
+    'deleted elsewhere' and moves its local copies to the trash. That is the same wipe that took out a
+    drive's files index, and the fix that worked there was refusing the write HERE, where no client
+    build (a stale bundle, an old APK, a third-party) can route around it."""
+    from app.services import nostr_store as store
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    if not _verify_self_auth(data.auth, pk):
+        return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    key = _sync_folder_key(data.folder)
+    if not key:
+        return JSONResponse({"ok": False, "error": "invalid folder id"}, status_code=400)
+    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    if not user:
+        return JSONResponse({"ok": True, "manifest": {}})
+    sk = store.user_storage_seckey(db, user)
+    port = int(_setting(db, "nostr_relay_port", "3052"))
+
+    if data.manifest is None:
+        try:
+            doc = await store.get_doc(port, key, seckey=sk, strict=True)
+        except Exception as e:
+            # A failed READ must be distinguishable from an empty folder, or the client syncs against
+            # {} and proposes deleting everything. 503, never {}.
+            logger.warning("[client] sync-manifest: unreadable %s: %s", key, e)
+            return JSONResponse({"ok": False, "error": "manifest unavailable"}, status_code=503)
+        return JSONResponse({"ok": True, "manifest": doc or {}})
+
+    try:
+        prev = await store.get_doc(port, key, seckey=sk, strict=True)
+    except Exception as e:
+        logger.warning("[client] sync-manifest: cannot read %s, refusing to write: %s", key, e)
+        return JSONResponse({"ok": False, "error": "manifest unavailable, not saved"}, status_code=503)
+
+    drop = _files_index_collapse(prev, data.manifest)
+    if drop and not data.force:
+        logger.warning("[client] sync-manifest: REFUSED a collapsing write for %s %s (%s)",
+                       pk[:12], key, drop)
+        return JSONResponse({"ok": False, "error": "refused: " + drop, "collapse": True},
+                            status_code=409)
+
+    if not await store.put_doc(port, sk, key, data.manifest):
+        logger.warning("[client] sync-manifest: relay REJECTED the write for %s %s", pk[:12], key)
+        return JSONResponse({"ok": False, "error": "relay rejected the write, not saved"},
+                            status_code=503)
+    return JSONResponse({"ok": True})
 
 
 class FilesIndexReq(BaseModel):

@@ -6682,3 +6682,28 @@ html.os-on #upload-badge.upbadge{z-index:333}
   .os-app{min-height:calc(46px / var(--zf, 1))}
   .os-exit{height:calc(40px / var(--zf, 1))}
 }
+
+/* ---- Folder sync -------------------------------------------------------------------------------
+   A folder is a CARD, not a row: it carries a path, a status sentence, an exclusion box and four
+   actions, and squeezing that into a list line is how the music library ended up with 18px of room
+   for a song title. */
+.sync-view{padding:16px;max-width:760px}
+.sync-view h2{display:flex;align-items:center;gap:8px}
+.sync-card{margin:12px 0;padding:14px;border-radius:14px;border:1px solid var(--line);
+  background:linear-gradient(180deg,var(--panel2),var(--panel));display:flex;flex-direction:column;gap:10px}
+.sync-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;min-width:0}
+.sync-head b{font-size:17px}
+.sync-head .muted{overflow-wrap:anywhere;word-break:break-all}   /* a path is an unbounded string */
+.sync-status{color:var(--cyan)}
+.sync-ex{display:flex;flex-direction:column;gap:4px}
+.sync-ex .input{margin:0;font-size:15px;resize:vertical;min-height:52px;font-family:ui-monospace,monospace}
+.sync-opts{display:flex;flex-wrap:wrap;gap:14px}
+.sync-opts label{display:flex;align-items:center;gap:6px;font-size:15px}
+.sync-actions{display:flex;flex-wrap:wrap;gap:8px}
+.sync-actions .danger{color:var(--danger);border-color:rgba(255,107,139,.5)}
+@media(max-width:820px){
+  .sync-view{padding:12px}
+  /* Four actions do not fit on a phone row; let them wrap and give each a thumb-sized target. */
+  .sync-actions .btn{flex:1 1 auto;min-height:38px}
+  .sync-ex .input{font-size:16px}   /* 16px minimum or iOS zooms on focus and never zooms back */
+}
