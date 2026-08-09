@@ -896,6 +896,47 @@ class LibtorrentService:
         with self._remove_lock:   # dedicated lock — NOT the class singleton-construction lock (self._lock)
             return self._remove_locked(info_hash, delete_files)
 
+    @staticmethod
+    def _removed_forms(handle, info_hash: str) -> set[str]:
+        """Every hash string this torrent can be known by — the dict key plus its v1 and v2 hashes."""
+        forms = {info_hash}
+        try:
+            ihs = handle.info_hashes()
+            for _h in (getattr(ihs, "v1", None), getattr(ihs, "v2", None)):
+                if _h is not None and not _h.is_all_zeros():
+                    forms.add(str(_h))
+        except Exception:
+            pass
+        return forms
+
+    def _purge_resume_files(self, forms: set[str]):
+        """Delete every .resume file belonging to a torrent, whatever it happens to be named.
+
+        Matched by NAME first, then by CONTENT — an all-zeros (or otherwise drifted) filename says
+        nothing about which torrent is inside, and that file is the one that resurrects a removal.
+        Reading it is cheap: there is at most one per torrent, and this runs once per removal.
+        """
+        for f in self.resume_dir.glob("*.resume"):
+            try:
+                mine = f.stem in forms
+                if not mine:
+                    try:
+                        p = lt.read_resume_data(f.read_bytes())
+                        ihs = p.info_hashes
+                        for _h in (getattr(ihs, "v1", None), getattr(ihs, "v2", None)):
+                            if _h is not None and not _h.is_all_zeros() and str(_h) in forms:
+                                mine = True
+                                break
+                    except Exception:
+                        # Unreadable: leave it. A file we cannot identify may belong to a torrent the
+                        # user still has, and deleting THAT is the worse mistake of the two.
+                        continue
+                if mine:
+                    f.unlink()
+                    logger.info(f"[BT] Deleted resume file: {f.name}")
+            except Exception as e:
+                logger.error(f"[BT] Failed to delete resume file {f.name}: {e}")
+
     def _remove_locked(self, info_hash: str, delete_files: bool) -> bool:
         # Re-fetch under the lock (see remove() docstring): the mapping is validated here, at the
         # last instant before the irreversible session.remove_torrent call, not at resolve time.
@@ -903,14 +944,8 @@ class LibtorrentService:
         if handle:
             # Tombstone every hash form BEFORE removal so a late resume-save alert (whichever
             # hash _stable_ih resolves it to) can't rewrite the .resume file and resurrect it.
-            self._removed.add(info_hash)
-            try:
-                ihs = handle.info_hashes()
-                for _h in (getattr(ihs, "v1", None), getattr(ihs, "v2", None)):
-                    if _h is not None and not _h.is_all_zeros():
-                        self._removed.add(str(_h))
-            except Exception:
-                pass
+            forms = self._removed_forms(handle, info_hash)
+            self._removed |= forms
             if delete_files:
                 self.session.remove_torrent(handle, lt.options_t.delete_files)
             else:
@@ -918,14 +953,15 @@ class LibtorrentService:
             del self.torrents[info_hash]
             self._update_numbering()
 
-            # Delete resume file so torrent doesn't come back on restart
-            resume_file = self.resume_dir / f"{info_hash}.resume"
-            try:
-                if resume_file.exists():
-                    resume_file.unlink()
-                    logger.debug(f"[BT] Deleted resume file: {info_hash}")
-            except Exception as e:
-                logger.error(f"[BT] Failed to delete resume file: {e}")
+            # Delete EVERY resume file this torrent owns, not just the one named by its dict key.
+            # A file written by an older build can sit under a different name (see _stable_ih:
+            # 0000…0000.resume for a v2/hybrid), and unlinking one name leaves the other on disk —
+            # where the next start globs it, re-adds the torrent, and only THEN renames it to the
+            # stable hash. The tombstone above is in-memory, so it does not survive that restart.
+            # Measured in production: REMOVED at 20:30, service restarted at 22:02, "Renamed stale
+            # resume 0000…0000.resume -> 6543d5d0….resume" + "Restored 1 torrents" — and the torrent
+            # was back, having been removed twice.
+            self._purge_resume_files(forms)
 
             # Forget the completion alert so re-adding the same torrent notifies again.
             if info_hash in self._notified:
