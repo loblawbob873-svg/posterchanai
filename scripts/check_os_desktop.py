@@ -42,6 +42,9 @@ Assertions, each a way a window manager breaks:
                        alt-tab — and then nothing ends the gesture.
   snap-broken          Dragging a window to a screen edge does not snap it to that half (or does it
                        without previewing where it will land, or cannot be dragged back off).
+  overlay-buried       An overlay appended to documentElement (the music player, the upload badge)
+                       renders under the desktop. It is a SIBLING of <body>, so `body.os-on …` never
+                       matches it — the rule looks right and does nothing.
   modal-buried         A modal is not clickable — .modal-bg was authored at z-index 100, below the
                        z-index:300 desktop, so reply / quote / confirm / settings opened INVISIBLY
                        behind it. Hit-tested with elementFromPoint, not by reading the stylesheet.
@@ -160,6 +163,26 @@ DRIVE = r"""(async () => {
     // did nothing.
     else { out.subReachable = ok; out.subCoveredBy = by; }
     bg.remove(); document.body.classList.remove('modal-open');
+  }
+
+  /* Overlays appended to documentElement are SIBLINGS of <body>, so no `body.os-on …` rule can ever
+   * reach them. The music player is one: it kept z-index:120 and went on playing, invisible, under
+   * the z-index:300 desktop. Hit-tested rather than read off the stylesheet, because the rule that
+   * was wrong looked perfectly correct. */
+  {
+    const mp = document.createElement('div');
+    mp.id = 'music-player'; mp.className = 'mp';
+    mp.style.cssText = 'left:40px;bottom:70px;width:260px;height:56px';
+    mp.innerHTML = '<button id="__mpb">play</button>';
+    document.documentElement.appendChild(mp);
+    await sleep(60);
+    const b = document.getElementById('__mpb');
+    const r = b.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width/2, r.top + r.height/2);
+    out.playerReachable = !!(hit && (hit === b || b.contains(hit)));
+    out.playerCoveredBy = out.playerReachable ? '' :
+      (hit ? (hit.id || hit.className || hit.tagName).toString().slice(0,40) : 'nothing');
+    mp.remove();
   }
 
   // A post opens in its OWN window (openDoc), the timeline window stays put, and clicking the same
@@ -559,6 +582,11 @@ async def drive(url):
                                      f"opened={r.get('docWins')} after-reopen={r.get('docDedup')} "
                                      f"feed-inside={r.get('docFeed')} taskbar={r.get('docTask')} "
                                      f"repaints={r.get('docPaint')} left-open={r.get('docClosed')}"))
+                if not r.get("playerReachable"):
+                    problems.append((label, "overlay-buried",
+                                     "the music player is not clickable on the desktop — its centre "
+                                     f"hits {r.get('playerCoveredBy')!r}. It is appended to <html>, "
+                                     "so a body.os-on rule cannot reach it."))
                 if not r.get("subReachable"):
                     problems.append((label, "modal-buried",
                                      "a SUB-modal (the Blossom picker over a composer) is not "

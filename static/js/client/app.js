@@ -3234,7 +3234,11 @@
      * actually render. _routing is the back/forward button (see openThread), and _osIn stops the
      * recursion when the new window repaints itself through this same function.
      * This does NOT touch reply/quote/compose — those are modals and never come through here. */
-    if(window.PCOS && PCOS.isOn() && !switchView._osIn){
+    /* …but NOT while a window is repainting itself. A repaint must paint where it is: the Music
+     * window renders through openMusicFolder, which calls switchView('blossom'), and routing that
+     * would hand the feed to the Blossom window and leave the Music window empty. */
+    if(window.PCOS && PCOS.isOn() && !switchView._osIn
+       && !(PCOS.isRepainting && PCOS.isRepainting())){
       switchView._osIn = 1;
       // While ROUTING (back/forward) it may only bring an existing window forward — so going back to
       // the timeline focuses the Social window that already has it, rather than repainting whatever
@@ -23100,7 +23104,8 @@
      * undefined for them no matter who is logged in — which silently hid the desktop's tray avatar
      * (and with it the whole account switcher) and both launcher entries gated on it. */
     me: () => (GUEST ? null : ME),
-    openMusic,                                                // → the desktop's Music entry
+    openMusic,                                                // → shuffle-play the library
+    openMusicFolder,                                          // → the desktop's Music WINDOW
     accountMenu,                                              // → the desktop's tray avatar
     accountCount: () => { try{ return Session.accounts().length; }catch(_){ return 0; } },
     openThread,                                               // → a post window from the notification centre

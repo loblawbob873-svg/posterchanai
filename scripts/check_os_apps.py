@@ -29,6 +29,8 @@ Assertions, each a way a feature breaks specifically INSIDE a window and nowhere
                        for a guest" is how a gate that was broken for EVERYBODY stayed hidden.
   folder-broken        The Nostr Games folder does not hold the games, does not open one when
                        clicked, or steals the live #feed from the window that had it.
+  music-not-an-app     Music does not open as a window. It is a library you browse; the floating
+                       player bar is the transport, not the app.
   noti-centre          The clock does not open a working notification centre (off screen, stacked
                        under something, no rows and no empty state, no reply/react, or Escape does
                        not close it).
@@ -99,6 +101,16 @@ ENTER = r"""(async () => {
       asUser.stubbed = true;
       asUser.icons = [...document.querySelectorAll('.os-icon')].map(b => b.dataset.view || '');
       asUser.tray  = !!document.getElementById('os-me');
+      // Music must open as a WINDOW holding the live feed, not merely start playing.
+      const mb = [...document.querySelectorAll('.os-icon')].find(b => b.dataset.view === '__music');
+      if (mb) {
+        mb.click(); await sleep(1500);
+        const w = document.querySelector('.osw.focused');
+        asUser.musicWin  = !!(w && /Music/.test(w.querySelector('.osw-title').textContent));
+        asUser.musicFeed = !!(document.getElementById('feed') || {}).closest('.osw.focused');
+        document.querySelectorAll('.osw .osw-x').forEach(b => b.click());
+        await sleep(150);
+      }
       if (asUser.tray) {
         document.getElementById('os-me').click(); await sleep(300);
         const pop = document.querySelector('.acct-pop');
@@ -330,6 +342,10 @@ async def main():
                 if missing:
                     problems.append(("shell", "signed-in-app-missing",
                                      "signed in, the launcher is missing: " + ", ".join(missing)))
+                if au.get("musicWin") is False or au.get("musicFeed") is False:
+                    problems.append(("shell", "music-not-an-app",
+                                     "Music does not open as a window holding the feed — "
+                                     f"window={au.get('musicWin')} feed-inside={au.get('musicFeed')}"))
                 if not au.get("tray"):
                     problems.append(("shell", "no-account-switcher",
                                      "signed in, the taskbar has no account avatar — which is the "

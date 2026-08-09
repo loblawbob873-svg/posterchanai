@@ -6287,8 +6287,11 @@ body.os-on #os-root{pointer-events:auto}
 body.os-on .modal-bg{z-index:340}
 body.os-on .modal-bg.modal-sub{z-index:342}   /* …and its sub-modals stay above it */
 body.os-on .offline-bar{z-index:330}
-body.os-on #music-player.mp,body.os-on #music-player.mp-mini{z-index:332}
-body.os-on #upload-badge.upbadge{z-index:333}
+/* These two are appended to documentElement, so they are SIBLINGS of <body> and a `body.os-on …`
+   rule cannot reach them — the music player kept z-index:120 and played on, invisible, under the
+   desktop. os.js puts the class on <html> as well; keep both selectors so either spelling works. */
+html.os-on #music-player.mp,html.os-on #music-player.mp-mini{z-index:332}
+html.os-on #upload-badge.upbadge{z-index:333}
 
 .os-startmenu{position:absolute;left:50%;transform:translateX(-50%);bottom:56px;width:min(520px,70vw);max-height:60vh;
   display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:14px;

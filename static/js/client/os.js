@@ -105,8 +105,13 @@
   const EXTRAS = [
     { view: '__profile', label: 'My Profile', icon: '#i-user', act: () => PC().openProfile && PC().openProfile(),
       when: () => !!(me() && PC().openProfile) },
-    { view: '__music', label: 'Music', icon: '#i-music', act: () => PC().openMusic && PC().openMusic(),
-      when: () => !!(me() && PC().openMusic) },
+    /* Music opens as a WINDOW, not as a bare "start playing" action — it is a library you browse,
+     * and the floating player bar is the transport, not the app. The window renders the same Files →
+     * 🎵 Music view the classic UI uses, so there is one music library and not two. */
+    { view: '__music', label: 'Music', icon: '#i-music',
+      act: () => openDoc('music', 'Music', 'i-music',
+                         () => { try{ PC().openMusicFolder && PC().openMusicFolder(); }catch(_){} }),
+      when: () => !!(me() && PC().openMusicFolder) },
     { view: '__golive', label: 'Go Live', icon: '#i-live', act: () => PC().goLive && PC().goLive(),
       when: () => !!(me() && PC().goLive) },
   ];
@@ -978,6 +983,11 @@
     root.innerHTML = '<div class="os-desk" id="os-desk"></div><div class="os-bar" id="os-bar"></div>';
     document.body.appendChild(root);
     document.body.classList.add('os-on');
+    // …and on <html>, because the overlays that matter here — the music player, the upload badge —
+    // are appended to documentElement, i.e. SIBLINGS of <body>. A `body.os-on #music-player` rule
+    // can never match one, which is why the player kept its z-index:120 and played on, invisible,
+    // underneath the z-index:300 desktop.
+    document.documentElement.classList.add('os-on');
     desk = $('#os-desk', root);
     bar = $('#os-bar', root);
     desk.addEventListener('pointerdown', (e) => {
@@ -1014,6 +1024,7 @@
     root = bar = desk = null;
     startOpen = false;
     document.body.classList.remove('os-on');
+    document.documentElement.classList.remove('os-on');
     settings().set(KEY, false);
     try{ PC().switchView && PC().switchView(PC().VIEW || 'global'); }catch(_){}
   }
