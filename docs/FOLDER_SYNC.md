@@ -93,12 +93,13 @@ separate ceilings, all of them silent, all now handled:
   not a slow resume, it is a folder that can never finish on a machine anyone ever closes. Progress
   is checkpointed during the sweep now, at most 20 times per sweep however large the folder is —
   each checkpoint rewrites the whole manifest, so they are bounded on purpose.
-
 - **Superseded manifest blobs.** Each save past that threshold uploads a whole new encrypted blob, so
-  a long first sync leaves one per checkpoint. They are `keep` blobs and the cleanup sweep skips
-  those unconditionally — the exemption that stops an admin turning on a TTL from eating an encrypted
-  drive — so nothing else would ever collect them. The document carries a one-deep chain and the
-  server releases the generation behind it, ownership-checked, once the replacement is safely stored.
+  a long first sync leaves one per checkpoint. The document carries a one-deep chain and the server
+  lets go of the generation behind it once the replacement is safely stored — ownership-checked, so
+  bytes another account also references are never touched, and then on a week's TTL rather than
+  deleted outright, so letting go of the wrong thing stays recoverable. (`keep` blobs are exempt from
+  the admin's blanket age TTL, which is what stops turning that setting on from eating an encrypted
+  drive; an expiry stamped on one proven-unreferenced blob is honoured.)
 - **A deliberate mass delete.** Deleting most of a folder trips the server's collapse guard, and a
   refused save meant the agreement was never written and every later sweep proposed the same delete
   and was refused again — the delete could never land. The sweep knows how many paths it removed, so

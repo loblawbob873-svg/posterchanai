@@ -4032,6 +4032,7 @@ async def scheduled_cancel(data: ScheduledCancelReq, db: Session = Depends(get_d
 # ----- Files folder index: folder tree + per-file metadata (name/folder), one encrypted doc -----
 _FILES_INDEX_BAKS = 5      # how many replaced index versions to keep (see _files_index_backup)
 _FILES_INDEX_BAK_DAYS = 30  # how long a superseded index BLOB stays recoverable before the sweep takes it
+_SUPERSEDED_BLOB_DAYS = 7   # ...and how long a folder-sync manifest two generations stale stays readable
 
 
 class SyncManifestReq(BaseModel):
@@ -4155,25 +4156,21 @@ async def _release_sync_blob(db, sha: str | None, pubkey_hex: str) -> None:
     bytes. Blossom is content-addressed and shared, so this releases THIS user's reference and the
     bytes go only when the last owner lets go — the same path the BUD-02 delete route takes.
 
-    A TTL would not work here. `expires_at` is honoured by the cleanup sweep, and that sweep skips
-    every `keep` blob unconditionally — which is what stops an admin turning a TTL on from eating an
-    encrypted drive. Manifest blobs are `keep` blobs, so nothing but this would ever collect them.
+    RELEASED, THEN EXPIRED — not deleted on the spot. Letting go of the reference is what makes this
+    correct when several accounts hold the same bytes; the week of TTL afterwards is what makes it
+    recoverable if this ever lets go of the wrong thing. The cleanup sweep honours an explicit expiry
+    on a `keep` blob for exactly this case (its blanket age rule still does not, which is what stops
+    an admin turning a TTL on from eating an encrypted drive).
     """
     if not sha:
         return
     try:
-        from app.models import BlossomBlob
         from app.services import blossom_service
         if not blossom_service.is_owner(db, sha, pubkey_hex):
             return
         if blossom_service.release_owner(db, sha, pubkey_hex):
             return                       # somebody else still references these bytes
-        blob = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha).first()
-        if blob is None:
-            return
-        await blossom_service.delete_blob_bytes(db, blob)
-        db.delete(blob)
-        db.commit()
+        blossom_service.expire_blob_in(db, sha, _SUPERSEDED_BLOB_DAYS)
     except Exception as e:
         try:
             db.rollback()

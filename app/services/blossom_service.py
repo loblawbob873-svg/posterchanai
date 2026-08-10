@@ -1278,12 +1278,18 @@ def _cleanup_once() -> int:
     in the admin UI takes effect on the next sweep for ALL blobs (including migrated ones), not
     just future uploads. An explicit per-blob `expires_at` (if ever set) is also honoured.
 
-    EXCEPT `keep` blobs, which no rule here may ever delete. They are the client-side encrypted
+    EXCEPT `keep` blobs, which THE AGE RULE may never delete. They are the client-side encrypted
     drive — Notes attachments, music tracks, the files index — ciphertext this node holds the only
     copy of, and which no user could tell had been deleted until they opened the note. Everything
-    else swept here is recoverable or visibly broken; this isn't. Note this makes the setting a
-    one-way promise: turning the TTL on later must not retroactively eat a drive that was uploaded
-    while it was off, which is exactly the shape of the accident this guards.
+    else swept here is recoverable or visibly broken; this isn't. That makes the setting a one-way
+    promise: turning the TTL on later must not retroactively eat a drive that was uploaded while it
+    was off, which is exactly the shape of the accident this guards.
+
+    An EXPLICIT `expires_at` is a different thing and is honoured on every blob. It is never a
+    blanket policy — it is stamped one blob at a time by code that has proven those exact bytes are
+    referenced by nothing (a files-index blob that fell out of backup retention, a folder-sync
+    manifest two generations stale). Sweeping `keep` out of that path did not protect anything; it
+    only meant those callers reclaimed NOTHING, for ever, while looking like they did.
     """
     from sqlalchemy import or_, and_
     db = SessionLocal()
@@ -1291,14 +1297,21 @@ def _cleanup_once() -> int:
     try:
         cfg = _cfg(db)
         now = int(time.time())
-        conds = [and_(BlossomBlob.expires_at.isnot(None),
-                      BlossomBlob.expires_at > 0,
-                      BlossomBlob.expires_at <= now)]
+        # An EXPLICIT per-blob expiry applies to every blob, `keep` included. The exemption below is
+        # about the ADMIN'S AGE SETTING, which is a blanket rule nobody set per blob — turning it on
+        # must not retroactively eat an encrypted drive. An `expires_at` is the opposite: it is only
+        # ever stamped by code that has PROVEN these particular bytes are referenced by nothing (a
+        # files-index blob that fell out of backup retention, a superseded folder-sync manifest), and
+        # while `keep` also swallowed those, that code was reclaiming nothing at all — a TTL that
+        # could never fire, quietly leaking every superseded index and manifest for ever.
+        explicit = and_(BlossomBlob.expires_at.isnot(None),
+                        BlossomBlob.expires_at > 0,
+                        BlossomBlob.expires_at <= now)
+        conds = [explicit]
         if cfg["ttl_days"] > 0:
-            conds.append(BlossomBlob.created_at <= now - cfg["ttl_days"] * 86400)
-        expired = (db.query(BlossomBlob)
-                   .filter(BlossomBlob.keep.is_(False))
-                   .filter(or_(*conds)).limit(500).all())
+            conds.append(and_(BlossomBlob.keep.is_(False),
+                              BlossomBlob.created_at <= now - cfg["ttl_days"] * 86400))
+        expired = db.query(BlossomBlob).filter(or_(*conds)).limit(500).all()
         gone = []
         for blob in expired:
             try:

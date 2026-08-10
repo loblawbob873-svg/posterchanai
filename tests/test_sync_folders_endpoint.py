@@ -138,18 +138,21 @@ class TestSupersededManifestBlobs(unittest.TestCase):
     somebody else's bytes.
     """
 
-    def test_a_ttl_would_not_have_worked(self):
-        """The reason this is a release and not an expiry. If the cleanup sweep ever stops skipping
-        `keep` blobs this test should fail and the simpler approach becomes available — but silently
-        setting a TTL that can never fire is the failure mode to avoid."""
+    def test_an_explicit_expiry_is_honoured_on_a_keep_blob(self):
+        """The whole mechanism rests on this. `keep` blobs are exempt from the admin's blanket age
+        TTL — that exemption is what stops turning the setting on from eating an encrypted drive —
+        but an expiry stamped one blob at a time, by code that proved those bytes are referenced by
+        nothing, has to actually fire. While it did not, every superseded index and manifest leaked
+        for ever while the code looked like it was reclaiming them."""
         import inspect
 
         from app.services import blossom_service
 
-        src = inspect.getsource(blossom_service._cleanup_once)
-        self.assertIn("keep.is_(False)", src.replace(" ", ""),
-                      "the cleanup sweep no longer skips keep blobs — re-check how superseded "
-                      "manifest blobs are collected")
+        src = " ".join(inspect.getsource(blossom_service._cleanup_once).split())
+        self.assertIn("conds = [explicit]", src,
+                      "an explicit per-blob expiry must apply to every blob")
+        self.assertIn("and_(BlossomBlob.keep.is_(False), BlossomBlob.created_at", src,
+                      "the ADMIN's age rule must still never touch a keep blob")
 
     def test_release_is_gated_on_ownership(self):
         """A crafted manifest naming somebody else's sha must not delete their bytes."""
@@ -173,28 +176,26 @@ class TestSupersededManifestBlobs(unittest.TestCase):
         """Blossom dedups, so one set of bytes can be referenced by several accounts."""
         from app.services import blossom_service as bs
 
-        db = mock.MagicMock()
-        deleter = mock.AsyncMock()
+        expired = mock.MagicMock()
         with mock.patch.object(bs, "is_owner", lambda *a: True), \
                 mock.patch.object(bs, "release_owner", lambda *a: 1), \
-                mock.patch.object(bs, "delete_blob_bytes", deleter):
-            asyncio.run(C._release_sync_blob(db, "a" * 64, "b" * 64))
-        deleter.assert_not_called()
-        db.delete.assert_not_called()
+                mock.patch.object(bs, "expire_blob_in", expired):
+            asyncio.run(C._release_sync_blob(mock.MagicMock(), "a" * 64, "b" * 64))
+        expired.assert_not_called()
 
-    def test_the_last_owner_takes_the_bytes_with_them(self):
-        """...and when nobody else references them, the bytes and the row both go."""
+    def test_the_last_owner_leaves_a_week_of_grace(self):
+        """When nobody else references them the bytes go — but on a TTL, not on the spot, so letting
+        go of the wrong thing is recoverable for a week rather than instantly final."""
         from app.services import blossom_service as bs
 
-        db = mock.MagicMock()
-        deleter = mock.AsyncMock()
+        got = {}
         with mock.patch.object(bs, "is_owner", lambda *a: True), \
                 mock.patch.object(bs, "release_owner", lambda *a: 0), \
-                mock.patch.object(bs, "delete_blob_bytes", deleter):
-            asyncio.run(C._release_sync_blob(db, "a" * 64, "b" * 64))
-        deleter.assert_awaited()
-        db.delete.assert_called()
-        db.commit.assert_called()
+                mock.patch.object(bs, "expire_blob_in",
+                                  lambda db, sha, days: got.update(sha=sha, days=days)):
+            asyncio.run(C._release_sync_blob(mock.MagicMock(), "a" * 64, "b" * 64))
+        self.assertEqual(got.get("sha"), "a" * 64)
+        self.assertGreaterEqual(got.get("days", 0), 1, "no recovery window at all")
 
     def test_a_failure_never_raises_into_the_save(self):
         """Collecting a superseded blob is housekeeping — it must never turn a stored manifest into

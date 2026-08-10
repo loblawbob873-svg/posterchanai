@@ -549,9 +549,16 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   stored expiration hides the event from every read (`expiration > now` in the query builder) —
   intact on disk and invisible is worse than deleted. (2) Blossom's **age sweep** is driven live by
   `blossom_blob_ttl_days`, so turning it on later retroactively deletes attachments/music/the
-  files-index — encrypted-drive uploads now send `X-Keep` → `BlossomBlob.keep`, excluded from
-  `_cleanup_once` forever, and `keep` only ever goes False→True (dedup means one blob can be both a
-  throwaway and drive content). (3) the CLIENT cache evicts newest-N by `created_at` in **three**
+  files-index — encrypted-drive uploads now send `X-Keep` → `BlossomBlob.keep`, exempt from that
+  **age rule** forever, and `keep` only ever goes False→True (dedup means one blob can be both a
+  throwaway and drive content). An **explicit `expires_at` still applies to a keep blob**, and that
+  is not a hole: the age rule is a blanket policy nobody set per blob, while a stamp is written one
+  blob at a time by code that PROVED those bytes are referenced by nothing (a files-index blob out of
+  backup retention, a folder-sync manifest two generations stale). `keep` used to swallow those too,
+  which protected nothing and leaked every superseded index and manifest for ever while the code
+  looked like it was reclaiming them — measured, 88 blobs carrying a TTL that could never fire. What
+  makes it safe is the UPLOAD path: a fresh keep reference clears any expiry it finds, so a stamp can
+  only ever mean "still unreferenced" (`tests/test_blossom_keep.py`). (3) the CLIENT cache evicts newest-N by `created_at` in **three**
   places (`_evictMem`, the IDB hydrate, `_pruneIDB`) — right for the firehose, fatal for a document
   only its author can decrypt, since minutes of global-feed reading pushes a library out of a
   3000-event window; `_isPinned` in `store.js` exempts `pcai:note*`. Tests:
