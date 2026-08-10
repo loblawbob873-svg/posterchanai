@@ -2060,6 +2060,10 @@
   // ---------- app start ----------
   function startApp(){
     GUEST = !signer;   // a real login always has a signer; the guest sentinel does not
+    /* Opened by "🗔 Open in a window": the same client, drawn without the sidebar, nav and rightbar
+     * it has no room for. A class rather than a separate page, because the whole point is that this
+     * IS the ordinary stream view — nothing here is a second implementation to fall behind. */
+    try{ if(new URLSearchParams(location.search).get('popout')==='1') document.body.classList.add('popout'); }catch(_){}
     // Remember this identity so it can be switched back to later. Done HERE rather than at each of
     // the six login paths, because this is the one place they all arrive with both a session and a
     // pubkey; the name and picture are filled in by renderMe once the profile loads.
@@ -6937,7 +6941,7 @@
         <div class="stream-main">
           ${(url||st==='ended')?`<video class="stream-player" id="st-video" controls playsinline></video>
             <div class="muted small" id="st-note"></div>
-            <div class="row">${isDesktop()&&url?`<button class="btn btn-ghost small" id="st-pop">⧉ Pop out player</button>`:''}${url?`<a class="btn btn-ghost small" href="${enc(url)}" target="_blank" rel="noopener"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg>Open stream URL</a>`:''}</div>`:'<div class="empty">No stream URL provided.</div>'}
+            <div class="row">${isDesktop()&&url?`<button class="btn btn-ghost small" id="st-pop">⧉ Pop out player</button><button class="btn btn-ghost small" id="st-window" title="Open this stream and its chat in a separate window you can move to another monitor">🗔 Open in a window</button>`:''}${url?`<a class="btn btn-ghost small" href="${enc(url)}" target="_blank" rel="noopener"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg>Open stream URL</a>`:''}</div>`:'<div class="empty">No stream URL provided.</div>'}
           ${summary?`<div class="about">${linkify(summary)}</div>`:''}
         </div>
         <div class="stream-chat" id="st-chat">
@@ -6995,6 +6999,7 @@
       })();
     } else if(url){ attachStream(url); }
     { const pb=$('#st-pop'); if(pb) pb.onclick=()=>popOutStream(e); }
+    { const wb=$('#st-window'); if(wb) wb.onclick=()=>openStreamWindow(e); }
     if(!ClientSettings.get('streamChatHidden',false)) _streamChat(saddr, haddr, sRelays);   // don't start the sub if chat is hidden
   }
 
@@ -9101,6 +9106,46 @@
     tick();   // don't make the first refresh wait a whole interval — that's why the count only appeared after a reload
     _streamViewerPoll=setInterval(tick, 15000);
   }
+  /* A SECOND WINDOW for a stream and its chat.
+   *
+   * The mini-player above is a floating div, so it can be dragged around the page and no further —
+   * a browser window is the edge of the world for it. Watching on one monitor while working on
+   * another needs a real OS window, which means window.open: a separate window in a browser, a
+   * separate BrowserWindow in the desktop app, movable to any screen either way.
+   *
+   * It opens the stream's OWN deep link rather than a document assembled here, so the popup gets the
+   * real player, the real live chat and the real signer, with no second implementation of any of
+   * them to drift. Same origin, so it shares localStorage and is already signed in; `popout=1` is
+   * what tells it to draw without the sidebar and nav it has no room for.
+   *
+   * The window NAME is per stream: clicking twice focuses the window you already have instead of
+   * opening a second copy of the same broadcast, which would also be a second HLS pull. */
+  function openStreamWindow(ev){
+    let naddr='';
+    try{
+      naddr = NT().nip19.naddrEncode({ identifier:(ev.tags.find(t=>t[0]==='d')||[])[1]||'',
+                                       pubkey:ev.pubkey, kind:30311 });
+    }catch(_){ toast('could not build a link to this stream'); return; }
+    const base = location.pathname.replace(/\/client(?:\/.*)?$/,'/client').replace(/\/+$/,'');
+    const url = location.origin + (base || '') + '/' + naddr + '?popout=1';
+    const name = 'pcstream_' + naddr.slice(-24);
+    const w = Math.min(1180, Math.max(720, Math.round(screen.availWidth * 0.6)));
+    const h = Math.min(800, Math.max(520, Math.round(screen.availHeight * 0.7)));
+    let win=null;
+    try{ win = window.open(url, name, 'width='+w+',height='+h+',menubar=no,toolbar=no'); }catch(_){}
+    if(!win){ toast('your browser blocked the window — allow pop-ups for this site'); return; }
+    try{ win.focus(); }catch(_){}
+    /* Stop THIS page pulling the same stream. Two windows decoding one broadcast is double the
+     * bandwidth and double the CPU for a picture nobody is looking at, and on a laptop that is the
+     * difference between quiet and loud. The chat sub goes with it; the popup has its own. */
+    try{ _closeStreamChat(); }catch(_){}
+    const v=$('#st-video');
+    if(v){ try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(_){} }
+    try{ if(_streamHls){ _streamHls.destroy(); _streamHls=null; } }catch(_){}
+    const n=$('#st-note'); if(n) n.textContent='▶ Playing in its own window.';
+    toast('opened in a window — drag it to another monitor');
+  }
+
   function popOutStream(ev){
     const v=$('#st-video'); if(!v) return;
     closeMini();   // only one mini at a time
