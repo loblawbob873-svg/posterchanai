@@ -264,9 +264,23 @@ async def upload(request: Request, db: Session = Depends(get_db)):
         headers=_CORS)
 
 
-@router.head("/upload")
+@router.api_route("/upload", methods=["HEAD", "GET"])
 async def upload_requirements(request: Request, db: Session = Depends(get_db)):
-    """BUD-06: pre-flight an upload without sending the body. Validates auth + size."""
+    """BUD-06: pre-flight an upload without sending the body. Validates auth + size.
+
+    GET IS ACCEPTED BECAUSE A CACHING PROXY REWRITES THE METHOD. BUD-06 says HEAD, and the client
+    sends HEAD — but nginx turns a HEAD into a GET upstream when proxy caching is on, so behind
+    media.poster.place this arrived as `GET /blossom/upload` and matched no route at all. That is a
+    FastAPI 404, not this router's, so it carries none of the CORS headers every response here sets,
+    and the browser reports the only thing it can see:
+
+        Access to fetch at 'https://media.poster.place/upload' from origin 'app://posterchan'
+        blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present
+
+    which is a CORS error about a route that does not exist, for a request nobody sent. It cost this
+    session an hour of checking CORS configuration that was correct throughout. The probe itself is
+    harmless — both callers catch and fall through — so the damage was entirely in the diagnosis.
+    """
     if not blossom_service.is_enabled(db):
         return Response(status_code=404, headers={**_CORS, "X-Reason": "Blossom server disabled"})
     cfg = blossom_service._cfg(db)
