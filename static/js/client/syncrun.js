@@ -69,7 +69,13 @@
     const step = (phase, path, i, n) => { try{ tick({ phase, path, i, n }); }catch(_){} };
 
     step('scanning');
-    const scanned = await fs.scan(id, { hash:!!o.hash, excludes:o.excludes||[], maxBytes:o.maxBytes||0 });
+    /* THE SCAN MUST NOT CAP WHAT THE UPLOADER CAN CHUNK. The adapter drops anything over `maxBytes`
+     * during the walk — right when a big file cannot be sent at all, and wrong the moment it can,
+     * because then the engine never even sees the file it is now able to handle. Shipping chunked
+     * uploads without this left every file over the ceiling skipped exactly as before. */
+    const chunky = typeof fs.readPart === 'function' && !!store.putParts;
+    const scanned = await fs.scan(id, { hash:!!o.hash, excludes:o.excludes||[],
+                                        maxBytes: chunky ? 0 : (o.maxBytes || 0) });
     report.skipped = scanned.skipped || [];
     const local = scanned.files || {};
 
@@ -175,7 +181,7 @@
          * path a file takes. Where slicing is unavailable (a platform whose adapter has no readPart)
          * an oversized file is reported and skipped exactly as before: never silently dropped. */
         const big = meta && o.chunkAbove && meta.size > o.chunkAbove;
-        const canChunk = big && typeof fs.readPart === 'function' && store.putParts;
+        const canChunk = big && chunky;
         if(big && !canChunk){
           report.skipped.push({ path:u.path, why:'too big for this device', size:meta.size });
           continue;

@@ -183,6 +183,7 @@ function makeDevice(world, opts){
     sweep(o){
       return RUN.sweep(fs, store, Object.assign({
         id, key, device: name, now: ++clock, hash: true, excludes: [], chunkAbove: 8192,
+        maxBytes: 16384,   // deliberately BELOW the chunk test's file: a scan that caps drops it
       }, o || {}));
     },
   };
