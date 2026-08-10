@@ -33,11 +33,59 @@ let cfg = {};
 
 // ---- tiny JSON config in userData (instance + window geometry + tor) ---------------------------
 function cfgPath() { return path.join(app.getPath('userData'), 'config.json'); }
-function loadCfg() { try { cfg = JSON.parse(fs.readFileSync(cfgPath(), 'utf8')) || {}; } catch (_) { cfg = {}; } }
+
+/* THIS FILE HOLDS THE FOLDER GRANTS, and losing it is not a cosmetic reset.
+ *
+ * `syncRoots` is the only record that the user ever pointed a native picker at ~/Pictures. Nothing
+ * else can recreate it — not the renderer, which keeps only the mapping, and not the relay. When it
+ * goes, every synced folder reports "access to this folder was withdrawn" and has to be picked again.
+ *
+ * It went. Two faults, and they compound:
+ *
+ *   1. the write was not atomic. writeFileSync truncates and then fills, so a process killed in
+ *      between leaves a short, invalid JSON file — and this app has been killed repeatedly by the
+ *      renderer running out of memory on a large sync.
+ *   2. an unreadable file became `{}` in memory, and the next save wrote that `{}` over the top.
+ *      The corruption was survivable; overwriting it was not.
+ *
+ * So: write to a temp file, fsync, rename (atomic on every filesystem this ships to), and never
+ * silently discard a file that exists but does not parse — keep it as .bad and refuse to overwrite
+ * until a real save happens. Same rule as the sync manifest's collapse guard: an empty read must
+ * never be written back over a full one.
+ */
+let cfgLoadFailed = false;
+function loadCfg() {
+  let raw = null;
+  try { raw = fs.readFileSync(cfgPath(), 'utf8'); }
+  catch (_) { cfg = {}; cfgLoadFailed = false; return; }   // no file yet: a genuine fresh install
+  try {
+    cfg = JSON.parse(raw) || {};
+    cfgLoadFailed = false;
+  } catch (e) {
+    cfg = {};
+    cfgLoadFailed = true;
+    try {
+      const bad = cfgPath() + '.bad';
+      fs.writeFileSync(bad, raw);
+      console.warn('[cfg] unreadable config kept at', bad, '-', e.message);
+    } catch (_) {}
+  }
+}
 function saveCfg() {
+  // A save AFTER a failed load would replace a recoverable file with {}. The first deliberate write
+  // (a picked folder, a chosen instance) clears the flag, because by then there is something real to
+  // store; until then the broken original is worth more than an empty one.
+  if (cfgLoadFailed && !Object.keys(cfg).length) return;
+  cfgLoadFailed = false;
   try {
     fs.mkdirSync(app.getPath('userData'), { recursive: true });
-    fs.writeFileSync(cfgPath(), JSON.stringify(cfg, null, 2));
+    const tmp = cfgPath() + '.tmp';
+    const fd = fs.openSync(tmp, 'w');
+    try {
+      fs.writeSync(fd, JSON.stringify(cfg, null, 2));
+      fs.fsyncSync(fd);                       // the rename is only atomic if the BYTES landed first
+    } finally { fs.closeSync(fd); }
+    fs.renameSync(tmp, cfgPath());
   } catch (_) {}
 }
 /* The configured instance, or '' for "relays only".

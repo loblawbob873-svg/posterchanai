@@ -536,8 +536,9 @@
         <div class="sync-head"><b>${PC.enc(keyOf(f))}</b>
           <span class="muted small">${PC.enc(f.dir || '')}</span>
           <span class="sync-pair muted small">pairs with “${PC.enc(keyOf(f))}” on your other devices</span></div>
-        <div class="sync-status muted small">${lost ? 'access to this folder was withdrawn — remove it and add it again'
+        <div class="sync-status muted small">${lost ? 'this device can’t reach that folder any more — nothing has been lost, point it at the folder again'
           : PC.enc(st.text || 'not synced yet')}</div>
+        ${lost ? '<div class="sync-actions"><button class="btn btn-neon small sync-relink">Point at the folder again…</button></div>' : ''}
         ${details(st.report)}
         <label class="sync-ex"><span class="muted small">Don't sync these (one per line — a folder name covers everything inside it)</span>
           <textarea class="input sync-ex-ta" rows="2" placeholder="Old&#10;*.tmp">${PC.enc((f.excludes||[]).join('\n'))}</textarea></label>
@@ -695,6 +696,32 @@
           sweep(get(), { manual:true }).catch(()=>{});
         }; }
       card.querySelector('.sync-deep').onclick = () => sweep(get(), { manual:true, deep:true }).catch(()=>{});
+      /* RECONNECT, rather than "remove it and add it again".
+       *
+       * A grant can go without the folder going: a desktop config file truncated by a crash, an
+       * Android persisted-URI permission dropped, a drive that was not mounted at launch. The advice
+       * used to be to delete the folder and re-add it, which throws away the exclusions and invites
+       * someone to retype the pair name — and a different name is a second folder that never meets
+       * the first. Re-picking keeps every one of those and swaps only the platform's handle for the
+       * directory, which is the only thing that actually changed. */
+      { const rl = card.querySelector('.sync-relink');
+        if(rl) rl.onclick = async () => {
+          try{
+            const picked = await FS().pick();
+            if(!picked) return;
+            const l = folders();
+            if(l.some(x => x.id === picked.id && x.id !== id)){ PC.toast('that folder is already syncing'); return; }
+            const i = l.findIndex(x => x.id === id);
+            if(i < 0) return;
+            const key = keyOf(l[i]);
+            l[i] = Object.assign({}, l[i], { id: picked.id, dir: picked.dir });
+            saveFolders(l);
+            rememberPair(picked.id, picked.dir, key);
+            granted = null;                       // re-ask the platform, so the banner clears
+            watch(picked.id); paint();
+            PC.toast('“' + key + '” is connected again — its exclusions and name are unchanged');
+          }catch(e){ PC.toast('could not reconnect: ' + ((e && e.message) || e)); }
+        }; }
       card.querySelector('.sync-trash').onclick = async () => {
         if(!await PC.uiConfirm('Empty this folder’s .pc-trash of anything older than 30 days?')) return;
         try{ const r = await FS().emptyTrash(id, 30); PC.toast('emptied ' + (r.removed||0) + ' day(s)'); }
