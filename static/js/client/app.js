@@ -19504,7 +19504,7 @@
       const cpf=e.target.closest('.ai-copyfile'); if(cpf){ e.preventDefault(); copyFileUrl(cpf.dataset.url, cpf); return; }   // inline /api/files/ media → re-upload + copy public URL
       const rpf=e.target.closest('.ai-replyfile'); if(rpf){ e.preventDefault(); replyFileUrl(rpf.dataset.url, rpf); return; }
       const ppf=e.target.closest('.ai-postfile'); if(ppf){ e.preventDefault(); postFileUrl(ppf.dataset.url, ppf); return; }     // share generated media → new Nostr post
-      const svf=e.target.closest('.ai-savefile'); if(svf){ e.preventDefault(); saveFileToBlossom(svf.dataset.url, svf); return; }   // artifact → Blossom drive
+      const svf=e.target.closest('.ai-savefile'); if(svf){ e.preventDefault(); saveFileToBlossom(svf.dataset.url, svf, svf.dataset.kind); return; }   // artifact → drive, or the music library
       const ntf=e.target.closest('.ai-notefile'); if(ntf){ e.preventDefault(); notesFromFileUrl(ntf.dataset.url, ntf); return; }     // artifact → the private notebook
       const dlf=e.target.closest('.ai-dlfile'); if(dlf){ e.preventDefault(); downloadFileUrl(dlf.dataset.url, dlf); return; }       // artifact → device
       const m3f=e.target.closest('.ai-mp3file'); if(m3f){ e.preventDefault(); mp3FromFileUrl(m3f.dataset.url, m3f); return; }       // branded MP4 → MP3
@@ -20793,7 +20793,9 @@
     if(!/^\//.test(u)) return '';
     const copy=`<button class="btn btn-cyan small ai-copyfile" data-url="${enc(u)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy link</button>`;
     const post=`<button class="btn btn-neon small ai-postfile" data-url="${enc(u)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Post</button>`;
-    const save=`<button class="btn btn-cyan small ai-savefile" data-url="${enc(u)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save to Blossom</button>`;
+    // data-kind: the save handler routes AUDIO to the music library, and this row is rendered from
+    // persisted markdown that carries nothing else to tell a song from a screenshot.
+    const save=`<button class="btn btn-cyan small ai-savefile" data-url="${enc(u)}" data-kind="${enc(kind||'')}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save to Blossom</button>`;
     const dl=`<button class="btn btn-cyan small ai-dlfile" data-url="${enc(u)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</button>`;
     const nt=`<button class="btn btn-cyan small ai-notefile" data-url="${enc(u)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-note"></use></svg>Save to Notes</button>`;
     // 🎵 only where there IS an audio track. This row renders from the PERSISTED markdown, which
@@ -20819,10 +20821,17 @@
     if(t) t.nodeValue=text; else btn.appendChild(document.createTextNode(text));
   }
   // Save an /api/files/ artifact to Blossom (the same re-upload Copy link does, minus the clipboard).
-  async function saveFileToBlossom(u, btn){
+  async function saveFileToBlossom(u, btn, kind){
     if(btn){ btn.disabled=true; _btnText(btn,'saving…'); }
-    try{ await _fileToPublicUrl(u, 'Posts'); toast('saved to Blossom — find it in Files');
-      if(btn){ _btnText(btn,'✓ saved'); btn.disabled=false; } }
+    try{
+      /* An `ytdl` MP3 arrives here, not through the effect row — which is exactly why this goes
+       * through the same _keepBytes as a generated song. Otherwise where a track ends up depends on
+       * which command produced it, and half your music is in a folder you cannot play from. */
+      const r = await _keepBytes(await _artifactFile(u), kind);
+      if(r.url) _ai.pubUrl = Object.assign(_ai.pubUrl || {}, { [u]: r.url });   // a later share reuses this upload
+      _keptToast(r);
+      if(btn){ _btnText(btn, r.library ? '✓ in Music' : '✓ saved'); btn.disabled=false; }
+    }
     catch(e){ toast('save failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn,'Save to Blossom'); } }
   }
   // Download an artifact to the device. The URL is AUTHED, so an <a download> pointing at it would
@@ -20927,6 +20936,48 @@
       if(btn){ btn.disabled=false; _btnText(btn,label||'Meme Builder'); }
     }
   }
+  /* Fetch an artifact's bytes as a named File.
+   *
+   * The NAME is the point for anything going to the music library: a `ytdl` download arrives as
+   * "Artist - Title.mp3" and that IS the track title. The old path renamed everything to `media.<ext>`,
+   * which is harmless for a picture in a folder and would have made a library of files called media. */
+  async function _artifactFile(u){
+    const blob = await fetch(u, { credentials:'include' }).then(r=>{ if(!r.ok) throw new Error('fetch '+r.status); return r.blob(); });
+    let name = '';
+    try{ name = decodeURIComponent((u.split(/[?#]/)[0].split('/').pop()) || ''); }catch(_){}
+    const ext = ((u.split(/[?#]/)[0].split('.').pop()) || 'bin').toLowerCase();
+    return new File([blob], name || ('media.' + ext), { type: blob.type || 'application/octet-stream' });
+  }
+  /* KEEP these bytes — the single answer to "where does a saved file go", shared by both action rows.
+   *
+   * There are two rows because a result arrives either as an /api/files/ artifact or as a base64
+   * payload, and every button here has had to be added to both. Every time one row got something the
+   * other did not, it was a bug (no Meme Builder after geni; and this one — `ytdl`'s MP3 went to a
+   * folder while a generated song went to the library, so where a song ended up depended on which
+   * command produced it).
+   *
+   * Audio goes to the music LIBRARY: compressed to opus and encrypted to the drive key, so it is a
+   * track you can play on every device rather than a file you can only download again. That needs the
+   * node, so a standalone client falls back to the drive and the caller SAYS which happened. */
+  function _wantsLibrary(file, kind){
+    return kind === 'audio' || /^audio\//i.test((file && file.type) || '');
+  }
+  async function _keepBytes(file, kind){
+    if(_wantsLibrary(file, kind)){
+      try{ await uploadMusicTrack(file); return { library:true }; }
+      catch(err){
+        console.warn('[music] library save failed, falling back to the drive:', err);
+        return { url: await uploadBlob(file, {folder:'Posts'}), fellBack:true };
+      }
+    }
+    return { url: await uploadBlob(file, {folder:'Posts'}) };
+  }
+  function _keptToast(r){
+    toast(r.library ? 'added to your Music library'
+                    : r.fellBack ? 'saved to Files (couldn’t reach the music library)'
+                                 : 'saved to Blossom — find it in Files');
+  }
+
   /* `folder` is only passed by "Save to Blossom" — the one action whose PURPOSE is keeping the file.
    * Copy link and Post upload as a side effect of sharing, and filing those would put a copy of every
    * link you ever pasted into the drive. The cache means a share after a save costs nothing either
@@ -20934,10 +20985,7 @@
   async function _fileToPublicUrl(u, folder){
     _ai.pubUrl=_ai.pubUrl||{};
     if(_ai.pubUrl[u]) return _ai.pubUrl[u];
-    const blob=await fetch(u, { credentials:'include' }).then(r=>{ if(!r.ok) throw new Error('fetch '+r.status); return r.blob(); });
-    const ext=((u.split(/[?#]/)[0].split('.').pop())||'bin').toLowerCase();
-    const pub=await uploadBlob(new File([blob], 'media.'+ext, { type:blob.type||'application/octet-stream' }),
-                               folder ? {folder} : undefined);
+    const pub=await uploadBlob(await _artifactFile(u), folder ? {folder} : undefined);
     _ai.pubUrl[u]=pub; return pub;
   }
   async function copyFileUrl(u, btn){
@@ -21075,34 +21123,15 @@
     if(btn){ btn.disabled=true; _btnText(btn,'saving…'); }
     try{
       const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0));
-      /* Music goes through the LIBRARY path, which compresses to opus and encrypts to the drive's
-       * master key. Not merely a nicer folder: `Music` is an encrypted folder by definition
-       * (FilesIdx.isEncFolder hardcodes it), so a plain blob filed there is listed as a track the
-       * player cannot decrypt — worse than leaving it unfiled. This way a generated song is a real
-       * track you can play, on every device.
-       *
-       * It needs the node (music-compress is a server call), so a standalone client falls back to a
-       * plain upload and SAYS which one happened — "saved" meaning two different places without
-       * telling you is how someone goes looking in the wrong one. */
-      if(_isMusicMedia(m)){
-        const stamp=new Date().toISOString().slice(0,16).replace('T',' ');
-        try{
-          await uploadMusicTrack(new File([bin], 'Generated '+stamp+'.'+m.ext, { type:m.mime }));
-          m.inLibrary=true;
-          toast('added to your Music library');
-          if(btn){ _btnText(btn,'✓ in Music'); btn.disabled=false; }
-          return;
-        }catch(err){
-          console.warn('[music] library save failed, falling back to the drive:', err);
-          m.url=await uploadBlob(new File([bin], 'generated.'+m.ext, { type:m.mime }), {folder:'Posts'});
-          toast('saved to Files (couldn’t reach the music library)');
-          if(btn){ _btnText(btn,'✓ saved'); btn.disabled=false; }
-          return;
-        }
-      }
-      m.url=await uploadBlob(new File([bin], 'generated.'+m.ext, { type:m.mime }), {folder:'Posts'});
-      toast('saved to Blossom — find it in Files');
-      if(btn){ _btnText(btn,'✓ saved'); btn.disabled=false; }
+      // Where it goes is _keepBytes's decision, shared with the artifact row. All this path knows is
+      // whether the result is music, which for a branded MP4 only the server's has_audio can say.
+      const music=_isMusicMedia(m);
+      const stamp=new Date().toISOString().slice(0,16).replace('T',' ');
+      const name=music ? ('Generated '+stamp+'.'+m.ext) : ('generated.'+m.ext);
+      const r=await _keepBytes(new File([bin], name, { type:m.mime }), music ? 'audio' : '');
+      if(r.library) m.inLibrary=true; else m.url=r.url;
+      _keptToast(r);
+      if(btn){ _btnText(btn, r.library ? '✓ in Music' : '✓ saved'); btn.disabled=false; }
     }catch(e){
       toast('save failed: '+((e&&e.message)||e));
       if(btn){ btn.disabled=false; _btnText(btn,'Save to Blossom'); }

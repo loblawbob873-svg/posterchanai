@@ -157,6 +157,32 @@ class TestUploadsAreFiledSafely(unittest.TestCase):
         planted = "const u = await uploadBlob(f, {folder:'Music'});"
         self.assertTrue(re.search(r"uploadBlob\([^;]{0,200}?folder:\s*'Music'", planted))
 
+    def test_both_action_rows_keep_files_the_same_way(self):
+        """A result arrives either as an /api/files/ artifact or as a base64 payload, so there are two
+        button rows for one set of actions — and every time one row got something the other did not,
+        it was a bug. This one: `ytdl`'s MP3 is an artifact and a generated song is a payload, so a
+        track ended up in the music library or in a folder depending on which command made it.
+
+        Both save paths must go through _keepBytes, which is the single answer to where a kept file
+        goes."""
+        src = open(APP, encoding="utf-8").read()
+        for fn in ("async function saveFileToBlossom", "async function saveEffectToBlossom"):
+            i = src.index(fn)
+            body = src[i:i + 2000]
+            with self.subTest(fn=fn):
+                self.assertIn("_keepBytes(", body,
+                              "%s must route through _keepBytes, or the two rows disagree about "
+                              "where a saved file belongs" % fn)
+
+    def test_audio_reaches_the_library_not_a_folder(self):
+        src = open(APP, encoding="utf-8").read()
+        self.assertIn("uploadMusicTrack(file)", src,
+                      "_keepBytes must hand audio to the library path; a folder called Music is "
+                      "encrypted by definition and would list it as an unplayable track")
+        self.assertIn('data-kind="${enc(kind||\'\')}"', src,
+                      "the artifact row's Save button must carry the kind — that row is rendered from "
+                      "persisted markdown and has nothing else to tell a song from a screenshot")
+
     def test_uploads_can_be_filed_at_all(self):
         """The composer used to upload straight past the index, so every picture posted from it was
         in the drive as an unnamed sha256."""
