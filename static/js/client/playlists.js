@@ -261,6 +261,36 @@
     return fresh.length;
   }
 
+  /* Swap one sha for another, IN PLACE, across every playlist that holds it.
+   *
+   * Needed because a playlist stores content hashes and Blossom is content-addressed: replacing a
+   * track with a different file gives it a different sha, so without this every playlist that held
+   * it would silently point at a blob that is about to be deleted — the track would vanish from the
+   * playlist while still being in the library, which is the worst of both.
+   *
+   * In place, not remove-then-add: a playlist's ORDER is its content, and appending the replacement
+   * to the end is a different playlist. Returns how many were changed so the caller can say so.
+   */
+  async function replaceTrack(oldSha, newSha){
+    const from = String(oldSha||'').toLowerCase(), to = String(newSha||'').toLowerCase();
+    if(!/^[0-9a-f]{64}$/.test(from) || !/^[0-9a-f]{64}$/.test(to) || from === to) return 0;
+    let n = 0;
+    for(const pl of all()){
+      const i = pl.tracks.indexOf(from);
+      if(i < 0) continue;
+      const before = pl.tracks.slice();
+      // Already holds the replacement (the same original picked twice): drop the old entry rather
+      // than creating a duplicate, which _clean would strip on the next read anyway.
+      pl.tracks = before.includes(to)
+        ? before.filter(t => t !== from)
+        : before.map(t => t === from ? to : t);
+      const r = await _save(pl);
+      if(_stuck(r)) pl.tracks = before; else n++;
+    }
+    if(n) _changed();
+    return n;
+  }
+
   async function removeTrack(id, sha){
     const pl = get(id); if(!pl) return false;
     const k = String(sha||'').toLowerCase();
@@ -356,7 +386,7 @@
 
   window.PCPlaylists = {
     load, all, get, count, playlistsWith,
-    create, rename, add, removeTrack, move, remove,
+    create, rename, add, removeTrack, replaceTrack, move, remove,
     flush, unwatch, reorder,          // reorder is pure — exported for tests
     onChange(fn){ _watchers.add(fn); return () => _watchers.delete(fn); },
     _BODY_MAX: BODY_MAX, _D: D_PL, _L: L_TAG,

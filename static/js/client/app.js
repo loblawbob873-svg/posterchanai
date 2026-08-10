@@ -14107,6 +14107,8 @@
           <button class="btn btn-neon" id="ma-play" title="Play / pause"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>
           <button class="btn btn-ghost small" id="ma-next" title="Next"><svg class="ic b-ic" aria-hidden="true"><use href="#i-next"></use></svg></button>
           <button class="btn btn-cyan small" id="ma-add" title="Add music"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add music</button>
+          <button class="btn btn-ghost small" id="ma-orig" title="Replace the old compressed copies with your original files">⤒ Originals</button>
+          <input type="file" id="ma-origf" accept="audio/*" multiple hidden>
         </div>
         <!-- The scrubber gets its OWN row rather than sharing the control line, so it can be the
              full width of the panel at every size. On a phone .ma-now wraps to two or three lines,
@@ -14170,6 +14172,33 @@
       const q=musicTracks(null); if(!q.length){ toast('no music yet — add some'); return; }
       MusicPlayer.refreshQueue(); MusicPlayer.play(q[0].sha); });
     b('#ma-add',()=>openMusicFolder());
+    /* "Originals" — the one-pass repair for a library uploaded while the transcode existed. Deliberately
+     * NOT automatic: it deletes blobs, and something that deletes has to be asked for. */
+    { const ob=$('#ma-orig',feed), of=$('#ma-origf',feed);
+      if(ob && of){
+        ob.onclick=()=>of.click();
+        of.onchange=async()=>{
+          const fs=[...of.files]; of.value='';
+          if(!fs.length) return;
+          const ok = await uiConfirm(`Replace the stored copies of ${fs.length} track${fs.length===1?'':'s'} `
+            + `with these files?\n\nEach one that matches a track in your library replaces it — the old `
+            + `compressed copy is deleted and any playlist it was on is updated. Files that match nothing `
+            + `are added as new tracks.`);
+          if(!ok) return;
+          ob.disabled=true;
+          const sub=$('#ma-sub',feed);
+          const r=await _musicReplaceOriginals(fs, sub);
+          ob.disabled=false;
+          const bits=[];
+          if(r.replaced) bits.push(`${r.replaced} replaced`);
+          if(r.added) bits.push(`${r.added} added`);
+          if(r.plFixed) bits.push(`${r.plFixed} playlist entr${r.plFixed===1?'y':'ies'} updated`);
+          if(r.failed) bits.push(`${r.failed} failed`);
+          toast(bits.length ? bits.join(' · ') : 'nothing to do');
+          try{ await _refreshBlobHave(); }catch(_){}
+          paint();
+        };
+      } }
     // The same scrubber the floating widget uses — one implementation, so the two cannot drift.
     MusicPlayer.bindSeek($('#ma-seek',feed));
     MusicPlayer._tickApp();   // paint the position immediately: entering mid-track must not read 0:00
@@ -16406,6 +16435,76 @@
     if(/^[A-Za-z0-9]{1,5}$/.test(e)) return e.toLowerCase();
     return _MUSIC_EXT[String((m && m.mime) || '').toLowerCase()] || 'ogg';
   }
+  /* REPLACE THE OPUS TRANSCODES WITH YOUR ORIGINAL FILES.
+   *
+   * Every track uploaded before the transcode was removed is a 96 kbps Opus re-encode; the original
+   * bytes were never sent anywhere, so there is nothing on the server to recover them from. This is
+   * the one-pass repair: point it at the files you still have and each one REPLACES its transcode
+   * rather than landing beside it.
+   *
+   * THE ORDER IS THE SAFETY PROPERTY. Blossom is content-addressed, so an original has a different
+   * hash from its transcode — replacing is really "add the new one, then retire the old one", and
+   * doing that in the wrong order loses a track for the window in between. So per file:
+   *
+   *   1. upload the original, and get its sha back;
+   *   2. only if that succeeded, point every playlist holding the old sha at the new one, IN PLACE
+   *      (a playlist stores hashes — without this the track silently disappears from every playlist
+   *      it was on, while still being in the library);
+   *   3. only then delete the old blob and forget its index entry.
+   *
+   * Nothing is deleted on a failure at any step. A file that matches nothing in the library is
+   * ADDED rather than skipped — somebody pointing this at their music folder means "make the library
+   * match these files", and silently ignoring the ones it did not recognise is the answer nobody
+   * wants — and it is reported separately so the counts are honest.
+   */
+  function _musicBySrcName(){
+    // Matched on the name the file was UPLOADED under (srcName), falling back to the display name,
+    // because that is the only thing the library kept about the original. Basename, case-folded: a
+    // re-pick from a different folder is the same track.
+    const by = new Map();
+    for(const t of musicEntries(null)){
+      const m = t.m || {};
+      for(const cand of [m.srcName, m.name]){
+        const k = String(cand||'').split(/[/\\]/).pop().replace(/\.[^.]+$/,'').trim().toLowerCase();
+        if(k && !by.has(k)) by.set(k, t.sha);
+      }
+    }
+    return by;
+  }
+  async function _musicReplaceOriginals(files, statEl){
+    const setS = t => { if(statEl) statEl.textContent = t; };
+    const by = _musicBySrcName();
+    let replaced = 0, added = 0, failed = 0, plFixed = 0;
+    for(let i = 0; i < files.length; i++){
+      const f = files[i];
+      setS(`${i+1} / ${files.length} — ${f.name}`);
+      const key = String(f.name||'').split(/[/\\]/).pop().replace(/\.[^.]+$/,'').trim().toLowerCase();
+      const oldSha = by.get(key) || '';
+      try{
+        // 1. the new bytes go up FIRST — nothing is retired until there is a replacement.
+        const newSha = await uploadMusicTrack(f);
+        if(!newSha) throw new Error('upload returned no hash');
+        if(!oldSha){ added++; continue; }
+        // Identical bytes dedup to the same blob: there is nothing to replace and deleting it would
+        // delete the track we just "uploaded".
+        if(newSha === oldSha){ replaced++; continue; }
+        // 2. playlists BEFORE the delete, so a failure here leaves both blobs and a working library
+        //    rather than playlists pointing at something that is gone.
+        try{ if(window.PCPlaylists) plFixed += await PCPlaylists.replaceTrack(oldSha, newSha); }catch(_){}
+        // …and anything playing the old blob moves over, rather than stopping mid-track.
+        try{ if(MusicPlayer.cur === oldSha) MusicPlayer.cur = newSha;
+             MusicPlayer.queue = (MusicPlayer.queue||[]).map(x => x === oldSha ? newSha : x); }catch(_){}
+        // 3. now the old one can go.
+        await deleteBlobQuiet(oldSha);
+        try{ FilesIdx.forget(oldSha); }catch(_){}
+        try{ _filesDeleted.add(oldSha); delete _trackUrls[oldSha]; }catch(_){}
+        try{ if(MusicOffline && MusicOffline.drop) await MusicOffline.drop(oldSha); }catch(_){}
+        replaced++;
+      }catch(e){ failed++; console.warn('[music] replace failed for', f.name, e); }
+    }
+    setS('');
+    return { replaced, added, failed, plFixed };
+  }
   async function uploadMusicTrack(file, statEl){
     if(!signer.nip44enc) throw new Error('signer can\'t encrypt (needs NIP-44)');
     const setS=t=>{ if(statEl) statEl.textContent=t; };
@@ -16435,6 +16534,7 @@
     // The stored mime has to be the TRUTH — a passed-through mp3 labelled audio/ogg decodes by luck
     // rather than by contract, and the download would save it under the wrong extension.
     FilesIdx.setFile(sha,{name:(file.name||'track').replace(/\.[^.]+$/,''),folder:'Music',mime:mime,enc:true,mk:true,size:bytes.length,srcName:file.name,srcSize:file.size,srcExt:srcExt,ts:Math.floor(Date.now()/1000)});
+    return sha;   // the replace-originals tool needs it to swap playlists and drop the old blob
   }
   // One-time-per-session cleanup of leaked Files-index blobs (the old cross-session GC bug left stale
   // encrypted index blobs on Blossom — the "OCTET-STE" files filling the drive). A blob qualifies only
