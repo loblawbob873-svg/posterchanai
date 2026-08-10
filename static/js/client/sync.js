@@ -300,7 +300,6 @@
     }).join('');
 
     feed.innerHTML = `<div class="sync-view">
-      <h2><svg class="ic h-ic" aria-hidden="true"><use href="#i-refresh"></use></svg>Folder sync</h2>
       ${fs ? '' : `<div class="empty">This device can't reach a folder. Folder sync needs the desktop app —
         a browser has no filesystem, and Firefox has no File System Access API at all. Your files are
         still readable here under Files.</div>`}
