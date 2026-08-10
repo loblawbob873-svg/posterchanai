@@ -965,11 +965,19 @@ async def latest_apk():
     downloads far more reliably on slow/throttled mobile links than bouncing to GitHub's distant CDN.
     Falls back to the GitHub redirect if the local mirror isn't present yet."""
     if os.path.exists(_APK_LOCAL_PATH):
+        # THE CACHE KEY MUST MOVE WHEN THE BUILD DOES. One URL serving different bytes over time is
+        # the shape Cloudflare is built to hold on to, and a five-minute max-age is only the floor —
+        # an edge that has the old APK keeps answering with it while /apk/version already advertises
+        # the new one. The user updates, installs what they already had, and reports the feature still
+        # missing. An ETag that carries the build makes a new build a new object, and revalidation
+        # cheap when it has not changed.
+        build = _apk_build()
         return FileResponse(
             _APK_LOCAL_PATH,
             media_type="application/vnd.android.package-archive",
             filename="posterchan.apk",
-            headers={"Cache-Control": "public, max-age=300"},
+            headers={"Cache-Control": "public, max-age=60, must-revalidate",
+                     "ETag": f'"apk-{build}"'},
         )
     return RedirectResponse(
         url="https://github.com/loblawbob873-svg/posterchanai/releases/download/apk-latest/posterchan.apk",
@@ -986,13 +994,46 @@ async def apk_version():
     from a sidecar the refresh job writes. The bundled Android app compares it to its baked-in
     window.__PC_APP_BUILD__ and, when this is higher, surfaces an in-app 'Update available' that downloads
     /apk. build:0 means unknown (no sidecar yet) — the app then simply won't prompt."""
-    build = 0
+    build = _apk_build()
+    return {"build": build, "versionName": (f"1.0.{build}" if build else "")}
+
+
+_apk_build_cache = {}
+
+
+def _apk_build() -> int:
+    """The build number OF THE FILE /apk WILL SERVE, read out of the APK itself.
+
+    It used to come from a sidecar the mirror job writes, and the two could disagree: the sidecar
+    lands first and the endpoint advertises a build whose bytes are not there yet, so the in-app
+    updater offers an update that downloads the version already installed. Reading the number from
+    the artifact makes that impossible by construction — there is only one source.
+
+    Cached on (mtime, size) so this is a zip read per BUILD, not per request. Falls back to the
+    sidecar if the APK cannot be read, so a malformed artifact degrades to the old behaviour rather
+    than reporting 0 and silencing the updater entirely."""
+    try:
+        st = os.stat(_APK_LOCAL_PATH)
+        key = (st.st_mtime_ns, st.st_size)
+        if _apk_build_cache.get("key") == key:
+            return _apk_build_cache.get("build", 0)
+        import re as _re
+        import zipfile
+        with zipfile.ZipFile(_APK_LOCAL_PATH) as z:
+            html = z.read("assets/public/index.html").decode("utf-8", "replace")
+        m = _re.search(r"__PC_APP_BUILD__\s*=\s*(\d+)", html)
+        build = int(m.group(1)) if m else 0
+        if build:
+            _apk_build_cache.clear()
+            _apk_build_cache.update({"key": key, "build": build})
+            return build
+    except Exception:
+        pass
     try:
         with open(_APK_VERSION_PATH) as f:
-            build = int((f.read() or "0").strip() or "0")
+            return int((f.read() or "0").strip() or "0")
     except Exception:
-        build = 0
-    return {"build": build, "versionName": (f"1.0.{build}" if build else "")}
+        return 0
 
 
 # ---- desktop app (Electron: Windows / Linux / macOS) -------------------------------------------
