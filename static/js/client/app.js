@@ -15075,16 +15075,13 @@
     const pairs = Array.isArray(_syncPairs) ? _syncPairs : [];
     const synced = pairs.map(f =>
       tile('🔄', f.key, f.n + ' file' + (f.n === 1 ? '' : 's'), 'data-synckey="' + enc(f.key) + '"')).join('');
-    pane.innerHTML = '<div class="fx-explorer">'
-      + '<div class="fx-side">' + _fxSideHTML() + '</div>'
-      + '<div class="fx-main">' + _fxBarHTML(_fxCrumbs())
-      + '<div class="fx-home">'
+    const grid = $('#bl-grid', pane); if(!grid) return;
+    grid.innerHTML = '<div class="fx-home">'
       + folders
       + (synced ? '<div class="fx-home-sec">Synced folders</div>' + synced : '')
       + '<div class="fx-home-sec">Everything</div>'
       + tile('🗂', 'All files', known ? ('at least ' + known + ' known') : 'browse the whole drive', 'data-folder=""')
-      + '</div></div></div>';
-    _fxBindSide(pane); _fxBindBar(pane);
+      + '</div>';
     $$('.fx-home-tile[data-folder]', pane).forEach(b => b.onclick = () => {
       _syncRoot=''; _syncPath=''; _filesFolder=b.dataset.folder; renderBlossom(); });
     $$('.fx-home-tile[data-synckey]', pane).forEach(b => b.onclick = () => {
@@ -15106,7 +15103,6 @@
      * the sync manifest, not from Blossom's /list. Branch BEFORE the upload probe and the listing —
      * neither is anything to do with it, and both are a round trip. */
     if(_syncRoot) return _renderSyncedRoot(pane);
-    if(_filesFolder === null) return _renderDriveHome(pane);
     pane.innerHTML='<div class="spinner"></div>';
     // Anything that throws below leaves this spinner on screen forever unless it is caught, and
     // "a spinner that never stops" tells the user nothing and tells us less. Surface it instead.
@@ -15150,6 +15146,11 @@
         else { const fs=[...((dt&&dt.files)||[])]; if(fs.length) uploadFilesSeq(fs); }
       };
     } else { const rb=$('#bl-request',pane); if(rb) rb.onclick=()=>requestBlossomAccess(rb); }
+    /* HOME: folder tiles in the grid, and NOTHING fetched. It used to return before this whole
+     * function ran, which took the drop zone with it — so on the one screen that says "your folders"
+     * there was no way to put anything in one. The uploader is built above, so it is here now;
+     * only the /list and the file grid are skipped, which is what made the landing instant. */
+    if(_filesFolder === null){ _renderDriveHome(pane); return; }
     let list=null;
     try{ const r=await fetch(server+'/list/'+ME.pubkey, { cache:'no-store' }); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
     catch(e){ const g=$('#bl-grid',pane); if(g) g.innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; }
