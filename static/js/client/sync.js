@@ -433,10 +433,14 @@
       now: Date.now(), manual: !!o.manual, deep: !!o.deep, dirty: !!f._dirty,
       lastSyncAt: f.lastSyncAt || 0, lastFullScanAt: f.lastFullScanAt || 0,
     }), prefs(f));
-    if(!decision.run && !o.dryRun){ setStatus(f.id, decision.why); return { skipped:true, why:decision.why }; }
+    // liveOnly: a decline is ONE LINE of text, and it is the commonest outcome there is — the watcher
+    // fires for every file a sweep itself writes, so a folder downloading a thousand files asks a
+    // thousand times and is told no a thousand times. Rebuilding the screen for each of those is what
+    // "the UI keeps refreshing during sync" was.
+    if(!decision.run && !o.dryRun){ setStatus(f.id, decision.why, null, true); return { skipped:true, why:decision.why }; }
 
     const job = (async () => {
-      setStatus(f.id, o.dryRun ? 'checking…' : 'syncing…');
+      setStatus(f.id, o.dryRun ? 'checking…' : 'syncing…', null, true);
       try{
         const rep = await RUN.sweep(fs, store, {
           id: f.id, key: keyOf(f), device: deviceName(), now: Date.now(),
@@ -640,7 +644,30 @@
   }
 
   // ---- the screen ------------------------------------------------------------------------------
+  /* Repainting is a full rebuild of every card, so it is COALESCED and it never happens under a
+   * cursor. Leading-edge: the first call draws immediately (entering the screen, pressing a button
+   * must feel instant), and anything asked for during the settling window collapses into one repaint
+   * at the end of it.
+   *
+   * The typing guard is the one that costs data rather than comfort: the exclusions box is a
+   * textarea inside these cards, so a rebuild mid-edit throws away what has been typed and the focus
+   * with it. A pending repaint waits for the cursor to leave instead of being dropped. */
+  const _PAINT_SETTLE = 400;
+  let _paintT = null, _paintQ = false;
+  function _editing(){
+    const a = document.activeElement;
+    return !!(a && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT') && a.closest && a.closest('.sync-card'));
+  }
   function paint(){
+    if(_paintT || _editing()){ _paintQ = true; if(!_paintT) _arm(); return; }
+    _paintNow();
+    _arm();
+  }
+  function _arm(){
+    clearTimeout(_paintT);
+    _paintT = setTimeout(() => { _paintT = null; if(_paintQ){ _paintQ = false; paint(); } }, _PAINT_SETTLE);
+  }
+  function _paintNow(){
     const feed = document.getElementById('feed'); if(!feed) return;
     const list = folders();
     const fs = FS();
@@ -950,12 +977,18 @@
    * Every one of these only ASKS. shouldSync still decides, so on battery, on cellular, or ten
    * seconds after the last sweep the answer is no and nothing spins up. */
   const HEARTBEAT_MS = 15 * 60 * 1000;
+  /* "Nobody is looking, so do not spend the radio" — true for a phone in a pocket, false for the
+   * desktop app, which can now be CLOSED TO THE TRAY and started at login precisely so it will sync
+   * while out of sight. Chromium also reports `hidden` for a desktop window that is merely covered by
+   * another one, so without this a second app in front of it was enough to stop sync for as long as
+   * it stayed there. `pcShell` is the Electron preload bridge — present only in the desktop app. */
+  const _idle = () => document.hidden && !window.pcShell;
   let _nudgeT = null;
   function nudge(why){
     clearTimeout(_nudgeT);
     // Coalesced: resume, visible and online all fire together when a laptop lid opens.
     _nudgeT = setTimeout(() => {
-      if(document.hidden) return;
+      if(_idle()) return;
       folders().forEach(f => { sweep(f, {}).catch(()=>{}); });
     }, 1500);
   }
@@ -970,10 +1003,21 @@
     if(_started) return;
     _started = true;
     folders().forEach(f => watch(f.id));
+    /* COALESCED, per folder. A sweep's own downloads are filesystem changes, so a folder receiving a
+     * thousand files generates a thousand notifications — each of which would otherwise run the
+     * battery/network policy check and ask for a sweep it is certain to be refused. The flag is set
+     * immediately (it must not be lost) and only the ASKING is delayed. */
+    const _chT = new Map();
     if(fs.onChanged) fs.onChanged((id) => {
       const l = folders(); const f = l.find(x => x.id === id); if(!f) return;
       f._dirty = true;
-      sweep(f, {}).catch(()=>{});      // the policy may well decline; that is the point of asking
+      clearTimeout(_chT.get(id));
+      _chT.set(id, setTimeout(() => {
+        _chT.delete(id);
+        const cur = folders().find(x => x.id === id); if(!cur) return;
+        cur._dirty = true;
+        sweep(cur, {}).catch(()=>{});  // the policy may well decline; that is the point of asking
+      }, 1500));
     });
     document.addEventListener('visibilitychange', () => { if(!document.hidden) nudge('visible'); });
     window.addEventListener('online', () => nudge('online'));
@@ -984,11 +1028,20 @@
         window.Capacitor.Plugins.App.addListener('appStateChange', (st) => { if(st && st.isActive) nudge('resume'); });
       }
     }catch(_){}
-    setInterval(() => { if(!document.hidden) nudge('heartbeat'); }, HEARTBEAT_MS);
+    setInterval(() => { if(!_idle()) nudge('heartbeat'); }, HEARTBEAT_MS);
     // Re-assert the stored preference on every start. Scheduling is idempotent on the Android side
     // (ExistingPeriodicWorkPolicy.KEEP), so this cannot reset the period and starve a job that has
     // been waiting for a charger.
     try{ if(fs.backgroundCheck) fs.backgroundCheck(!!ClientSettings.get('syncBgCheck', false), 180); }catch(_){}
+    /* Tray → "Sync folders now". Deliberately NOT nudge(): nudge asks the policy, which says no on
+     * battery, on a metered link, or within ten seconds of the last sweep — right for an automatic
+     * trigger and wrong for someone who has just chosen the menu item. This is a manual sweep, the
+     * same one the button on the folder card runs. */
+    try{
+      if(window.pcShell && window.pcShell.onSyncNow){
+        window.pcShell.onSyncNow(() => { folders().forEach(f => { sweep(f, { manual:true }).catch(()=>{}); }); });
+      }
+    }catch(_){}
     nudge('startup');
   }
 

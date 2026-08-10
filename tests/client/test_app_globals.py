@@ -131,5 +131,39 @@ class TestSyncedPrefsRoundTrip(unittest.TestCase):
                 self.assertIn("pr.%s" % key, src)
 
 
+class TestUploadsAreFiledSafely(unittest.TestCase):
+    """Where an upload is filed in the drive index.
+
+    `Music` is not an ordinary folder: FilesIdx.isEncFolder hardcodes it as ENCRYPTED, and the music
+    library reads everything in it with the drive master key. So a plain, unencrypted blob filed
+    under Music is listed as a track that cannot be decrypted — a broken row in the library, which is
+    worse than leaving the file unfiled. Anything that really belongs in the library has to go
+    through uploadMusicTrack (compress to opus, encrypt, then index), never through a folder label.
+    """
+
+    def test_no_plain_upload_is_filed_under_music(self):
+        src = _strip_comments_and_strings(open(APP, encoding="utf-8").read())
+        # strings are blanked by the stripper, so match the surviving structure of the call
+        raw = open(APP, encoding="utf-8").read()
+        bad = [m.start() for m in re.finditer(r"uploadBlob\([^;]{0,200}?folder:\s*'Music'", raw)]
+        if bad:
+            lines = sorted({raw[:b].count("\n") + 1 for b in bad})
+            self.fail("uploadBlob is filing a plain blob under Music at line(s) %s — that folder is "
+                      "encrypted by definition, so the result is a track the player cannot read. Use "
+                      "uploadMusicTrack." % lines)
+        self.assertIn("uploadMusicTrack(", src, "the library path has gone — check this guard still applies")
+
+    def test_the_check_can_see_one(self):
+        planted = "const u = await uploadBlob(f, {folder:'Music'});"
+        self.assertTrue(re.search(r"uploadBlob\([^;]{0,200}?folder:\s*'Music'", planted))
+
+    def test_uploads_can_be_filed_at_all(self):
+        """The composer used to upload straight past the index, so every picture posted from it was
+        in the drive as an unnamed sha256."""
+        src = open(APP, encoding="utf-8").read()
+        self.assertIn("if(opts && opts.folder) _fileUnder(", src)
+        self.assertIn("folder:'Posts'", src)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,6 +37,13 @@ if (isOurPage) {
     getInstance: () => ipcRenderer.invoke('pc:instance:get'),
     setInstance: (url) => ipcRenderer.invoke('pc:instance:set', url == null ? '' : url),
     retry: () => ipcRenderer.send('pc:retry'),
+    /* Tray → "Sync folders now". The tray lives in the main process and folder sync lives in the
+     * renderer (every step is signed by the user's key, which only the page can reach), so the menu
+     * item can only ask. Wrapped so the page never sees the IpcRendererEvent. */
+    onSyncNow: (fn) => {
+      if (typeof fn !== 'function') return;
+      ipcRenderer.on('pc:sync:now', () => { try { fn(); } catch (_) {} });
+    },
     // `tor` doubles as the capability test the client uses (_hasNativeTor), so it must be absent rather
     // than present-and-broken on a build without it.
     tor: {

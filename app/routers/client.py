@@ -36,6 +36,7 @@ from app.database import get_db
 from app.models import User
 from app.services import emoji_service, settings_store, tor_service
 from app.services.nostr import nostr_service, event as nostr_event
+from app.services.text_utils import strip_preamble
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/client", tags=["client"])
@@ -927,7 +928,7 @@ async def client_summarize(request: Request, db: Session = Depends(get_db)):
               "invites him to come visit. The exchange is short, light, and friendly."},
              {"role": "user", "content": text}],
             max_tokens=900, temperature=0.3)
-        out = (res.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        out = strip_preamble((res.get("choices") or [{}])[0].get("message", {}).get("content", "").strip())
         if not out:
             return JSONResponse({"error": "summary unavailable"}, status_code=503)
         return JSONResponse({"text": out})
@@ -976,6 +977,9 @@ async def compose_from_url(request: Request, db: Session = Depends(get_db)):
              {"role": "user", "content": src}],
             max_tokens=700, temperature=0.5)
         out = (res.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        # The prompt above forbids a preamble; this is what makes that true. Reported from use as
+        # "Here's one that hits the key points naturally:---" pasted straight into the composer.
+        out = strip_preamble(out)
         if not out:
             return JSONResponse({"error": "summary unavailable"}, status_code=503)
         return JSONResponse({"text": out.rstrip() + "\n\n" + url})

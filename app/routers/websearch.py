@@ -35,7 +35,7 @@ from app.database import get_db
 from app.models import User
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
 from app.services.search_service import get_search_service
-from app.services.text_utils import strip_thinking_tags
+from app.services.text_utils import strip_preamble, strip_thinking_tags
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,9 @@ async def _complete(db: Session, messages: list, max_tokens: int = 900) -> str:
             msg = result["error"].get("message") if isinstance(result.get("error"), dict) else str(result["error"])
             raise HTTPException(status_code=502, detail=msg or "Summarization failed.")
         content = (result.get("choices") or [{}])[0].get("message", {}).get("content") or ""
-        text = strip_thinking_tags(content).strip()
+        # Both callers' prompts say "no preamble"; strip_preamble is what enforces it. One place,
+        # because the overview and the page summary are the same promise to the reader.
+        text = strip_preamble(strip_thinking_tags(content).strip())
         if not text:
             raise HTTPException(status_code=502, detail="The model returned nothing.")
         return text

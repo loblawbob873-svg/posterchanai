@@ -21,12 +21,21 @@ const path = require('path');
 const fsbridge = require('./fsbridge');
 const fs = require('fs');
 const tor = require('./tor');
+const background = require('./background');
 
 const DEFAULT_INSTANCE = 'https://poster.place';
 const APP_ORIGIN = 'app://posterchan';                  // the bundle's own origin
 const APP_URL = APP_ORIGIN + '/index.html';
 const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;             // re-check every 6h for long-running windows
 const WWW = path.join(__dirname, 'www');
+
+/* Tray / background state.
+ *   quitting    — a REAL quit is under way, so window.close must not be turned into a hide.
+ *   startHidden — this process was started by the login item; the first window loads out of sight.
+ *   closeToTray — the user preference, default ON, and only meaningful when a tray actually exists. */
+let quitting = false;
+let startHidden = false;
+const closeToTray = () => cfg.closeToTray !== false;
 
 let win = null;
 let cfg = {};
@@ -283,6 +292,27 @@ function initUpdater() {
   setInterval(check, UPDATE_EVERY_MS);
 }
 
+/* Bring the window back from every state it can be in: hidden by close-to-tray, minimised, behind
+ * other windows, or gone entirely (macOS, where closing can destroy it while the app lives on). */
+function showWindow() {
+  if (!win || win.isDestroyed()) { createWindow(); return; }
+  try {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  } catch (_) {}
+}
+
+/* The one real quit path. Everything else (window close, tray Quit, the menu's role:quit) has to
+ * come through here or `quitting` is never set and the close handler hides the window instead. */
+function quitApp() {
+  quitting = true;
+  // The tray is destroyed on will-quit, not here: app.quit() can still be cancelled (an unload
+  // handler, a download in progress), and tearing the icon down first would leave a running app with
+  // no way back to it.
+  app.quit();
+}
+
 // ---- window ------------------------------------------------------------------------------------
 function createWindow() {
   const b = cfg.bounds || {};
@@ -297,6 +327,9 @@ function createWindow() {
     // would ever find them.
     autoHideMenuBar: false,
     icon: path.join(__dirname, 'icon.png'),
+    // Started by the login item: come up HIDDEN rather than showing and then hiding, which is a
+    // window flashing on screen at every boot — the thing that makes people turn autostart off.
+    show: !startHidden,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -315,6 +348,10 @@ function createWindow() {
     },
   });
   if (cfg.maximized) win.maximize();
+  /* The window still exists and the renderer still runs while hidden, which is the whole mechanism:
+   * folder sync is renderer code, so "running in the background" is a hidden window, not a headless
+   * process. Consumed here so a LATER createWindow (macOS activate) opens normally. */
+  startHidden = false;
 
   const remember = () => {
     if (!win || win.isDestroyed()) return;
@@ -323,6 +360,25 @@ function createWindow() {
     saveCfg();
   };
   win.on('close', remember);
+  /* Close means HIDE while the tray is holding the app open — otherwise closing the window ends the
+   * process and, with it, the folder sync the tray exists to keep running. Guarded on the tray
+   * actually being there: on a desktop with no tray this would make the app impossible to close.
+   * `quitting` is the escape hatch every real quit path sets. */
+  win.on('close', (e) => {
+    if (quitting || !closeToTray() || !background.available()) return;
+    e.preventDefault();
+    if (win && !win.isDestroyed()) win.hide();
+    /* Say so, ONCE. Closing a window and having the app keep running is not what closing a window
+     * normally means, and an app that appears not to have quit — with no window and no message — is
+     * indistinguishable from one that hung. Every app that does this shows this notice; skipping it
+     * is how you get "I closed it and it's still in my task manager". */
+    if (!cfg.trayNoticeShown) {
+      cfg.trayNoticeShown = true;
+      saveCfg();
+      background.notify('PosterChan is still running',
+        'Folder sync keeps working in the background. Use the tray icon to open it again, or to quit.');
+    }
+  });
 
   // Give the PAGE keyboard focus on launch. The window itself is focused, but its webContents is not
   // necessarily — with a visible menu bar the first keystroke can go to the chrome instead, which is why
@@ -600,6 +656,19 @@ function buildMenu() {
           click: () => setTor({ enabled: !tor.status().enabled }),
         },
         { type: 'separator' },
+        /* The same two switches as the tray menu, because the tray is not discoverable — someone who
+         * has never closed the window has no reason to have found it. Both read their state live, so
+         * whichever surface you change it from, the other is right the next time it opens. */
+        {
+          label: 'Start at login', type: 'checkbox', checked: background.getAutostart(),
+          click: (item) => { item.checked = background.setAutostart(item.checked); background.refresh(); },
+        },
+        {
+          label: 'Keep running when the window is closed', type: 'checkbox',
+          checked: closeToTray(), enabled: background.available(),
+          click: (item) => { cfg.closeToTray = !!item.checked; saveCfg(); background.refresh(); },
+        },
+        { type: 'separator' },
         { role: 'quit' },
       ],
     },
@@ -770,7 +839,9 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
   wireInsecureContent();
   wireWaylandCapture();
   wirePlainUserAgent();
-  app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
+  // A second launch now happens routinely — autostart puts one copy up at login and the user then
+  // clicks the icon — and that copy may be HIDDEN in the tray, so this has to un-hide, not just focus.
+  app.on('second-instance', () => showWindow());
   app.whenReady().then(async () => {
     serveBundle();
     tor.setOnChange(pushTorStatus);
@@ -781,10 +852,28 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
     wireDownloads();
     wirePermissions();
     buildMenu();
+    startHidden = background.launchedHidden();
     createWindow();
+    background.init({
+      show: showWindow,
+      syncNow: () => { try { win && !win.isDestroyed() && win.webContents.send('pc:sync:now'); } catch (_) {} },
+      isCloseToTray: closeToTray,
+      // Rebuild the app menu too: the same two switches live in both places, and a checkbox that
+      // disagrees with the behaviour is worse than not offering it.
+      setCloseToTray: (on) => { cfg.closeToTray = !!on; saveCfg(); buildMenu(); },
+      onAutostartChanged: buildMenu,
+      quit: quitApp,
+    });
+    /* Started hidden but there is no tray to get the window back from — a desktop session with no
+     * status area, or a tray that failed to create. Show it rather than run invisibly with no way in. */
+    if (!background.available() && !win.isVisible()) showWindow();
     initUpdater();
-    app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+    app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); else showWindow(); });
   });
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-  app.on('before-quit', () => { try { tor.stop(); } catch (_) {} });
+  /* `quitting` is set HERE, not only in quitApp: the menu's role:quit, Cmd+Q and any app.quit()
+   * elsewhere all reach before-quit, and none of them would otherwise set it — the close handler
+   * would turn the resulting window close into a hide and the app would refuse to exit. */
+  app.on('before-quit', () => { quitting = true; try { tor.stop(); } catch (_) {} });
+  app.on('will-quit', () => { try { background.destroy(); } catch (_) {} });
 }

@@ -218,6 +218,11 @@
    * Electron preload bridge; `tor` on it is the capability test, so an older shell simply shows nothing
    * rather than a panel whose buttons do nothing. */
   function _hasNativeTor(){ return !!(window.pcShell && window.pcShell.tor); }
+  /* The Electron desktop app, by the same capability test. It matters because several behaviours in
+   * here are POWER decisions written for a phone, and a desktop is not one: it is on mains, its
+   * network costs nothing to keep open, and — now that it can live in the tray — being out of sight
+   * is its normal working state rather than a signal that nobody is looking. */
+  function _isDesktopApp(){ return !!window.pcShell; }
 
   /* Views that CANNOT work without an instance, because the server does the work: AI, media
    * rendering, RSS/scraping proxies, the torrent client, the node's own stats. Everything absent from
@@ -1253,7 +1258,7 @@
     const file = await _cameraPhoto(); if(!file) return;
     const st = root && $('#cmp-status', root);
     if(st) st.textContent='uploading photo…';
-    try{ const url=await uploadBlob(file); ta.value+=(ta.value?'\n':'')+url; if(st) st.textContent=''; try{ ta.dispatchEvent(new Event('input')); }catch(_){} }
+    try{ const url=await uploadBlob(file, {folder:'Posts'}); ta.value+=(ta.value?'\n':'')+url; if(st) st.textContent=''; try{ ta.dispatchEvent(new Event('input')); }catch(_){} }
     catch(err){ if(_blossomDenied&&_blossomDenied(err)){ requestBlossomAccess(); if(st) st.textContent='🔒 No upload access — requested it from the admin.'; }
       else if(st) st.textContent='upload failed: '+((err&&err.message)||err); }
   }
@@ -2370,8 +2375,16 @@
     document.addEventListener('visibilitychange', ()=>{ document.body.classList.toggle('anim-off', document.hidden);
       if(document.hidden){
         _hiddenAt = Date.now();
-        // Drop the timeline after a grace period — a glance at the notification shade should not churn
-        // the subscription, but a phone in a pocket should not be receiving the firehose.
+        /* Drop the timeline after a grace period — a glance at the notification shade should not churn
+         * the subscription, but a phone in a pocket should not be receiving the firehose.
+         *
+         * NOT on the desktop app. Chromium reports `hidden` for a window that is merely COVERED by
+         * another one (native occlusion), so putting any other app in front of this one silently tore
+         * the timeline down 20 seconds later and no new post arrived until it was raised again —
+         * reported as "not showing new posts when other window is focused". A covered window is still
+         * an app someone is running, and once it can also sit in the tray the whole point is that it
+         * keeps up while out of sight. There is no radio to spare and no battery argument here. */
+        if(_isDesktopApp()) return;
         clearTimeout(_tlHideTimer);
         _tlHideTimer = setTimeout(()=>{ try{ _tlPause && _tlPause(); }catch(_){} }, _TL_HIDE_AFTER);
         return;
@@ -4319,7 +4332,7 @@
     ta.addEventListener('keydown', e=>{ if((e.ctrlKey||e.metaKey) && e.key==='Enter'){ e.preventDefault(); post.click(); } });
     const upload=async files=>{ files=(files||[]).filter(Boolean); if(!files.length) return;
       for(let i=0;i<files.length;i++){ st.textContent=`uploading ${i+1}/${files.length}…`;
-        try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; _tlCmpText=ta.value; grow(); _tlAutosave(); }
+        try{ const url=await uploadBlob(files[i], {folder:'Posts'}); ta.value+=(ta.value?'\n':'')+url; _tlCmpText=ta.value; grow(); _tlAutosave(); }
         catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); st.textContent='🔒 No upload access — requested it from the admin.'; }
           else st.textContent='upload failed: '+((err&&err.message)||err); return; } }
       st.textContent=''; };
@@ -6410,7 +6423,7 @@
     for(let i=0;i<files.length;i++){
       st.textContent=`uploading ${i+1}/${files.length}…`;
       try{
-        const f=files[i], url=await uploadBlob(f);
+        const f=files[i], url=await uploadBlob(f, {folder:'Posts'});
         // Media renders itself; anything else degrades to a plain link (__blobFallback), and a bare
         // /<sha256> tells the reader nothing about what they'd be opening — so it keeps its filename.
         const label=/^(image|video)\//.test(f.type||'') ? '' : ((f.name||'').replace(/\s+/g,' ').trim()+' ');
@@ -8742,7 +8755,7 @@
           const files=[...ev.target.files]; ev.target.value=''; if(!files.length) return;
           ab.disabled=true; const lbl=ab.textContent; ab.textContent='⏳';
           for(let i=0;i<files.length;i++){
-            try{ const url=await uploadBlob(files[i]);
+            try{ const url=await uploadBlob(files[i], {folder:'Posts'});
               ta.value += (ta.value && !ta.value.endsWith('\n') ? '\n' : '') + url;
               ta.dispatchEvent(new Event('input')); }
             catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); toast('🔒 No upload access — requested it from the admin.'); }
@@ -12235,7 +12248,7 @@
     const words=_BG_WORDS(text);
     const card=_cardHook(words);
     const blob=await renderBgPost(card||' ', bg, framed);
-    const url=await uploadBlob(new File([blob],'post.jpg',{type:'image/jpeg'}));
+    const url=await uploadBlob(new File([blob],'post.jpg',{type:'image/jpeg'}), {folder:'Posts'});
     // `trimmed` = the card could not hold every word. Callers surface it, so a long draft losing its tail
     // is never silent — for a link summary that is fine (the article link is right there), but it must
     // still be said out loud rather than discovered after posting.
@@ -13207,7 +13220,30 @@
     if(ext && !/\.[a-z0-9]{1,8}$/i.test(url.split('?')[0])) url+='.'+ext;
     // Record NIP-92 source metadata so a note carrying this URL gets an `imeta` tag (see imetaTagsFor).
     try{ const t=file.type||''; if(/^(image|video)\//.test(t)){ _MEDIA_META.set(url, { m:t, x:hash, dim:await _mediaDim(file) }); } }catch(_){}
+    if(opts && opts.folder) _fileUnder(url, file, opts.folder, hash);
     return url;
+  }
+  /* Put an upload somewhere in the drive.
+   *
+   * Uploads used to land in Files as a wall of undated sha256s: a blob is addressed by its hash and
+   * carries no name, and only the Files screen's own uploader was writing anything to the index. So
+   * every picture posted from the composer was in the drive and unidentifiable in it.
+   *
+   * OPT-IN by design, not applied to every uploadBlob call: the Meme Builder alone uploads working
+   * files (`erase.png`, `talk-src.png`, a baked layer) that are steps in a render, not documents, and
+   * filing those would bury the real content they exist to produce.
+   *
+   * A folder is created on demand — the folder list is part of the same index, so this is one write,
+   * and a `Posts` folder that only appears once something is in it is better than one shipped empty
+   * on every account. Never `Music`: see _generatedIsMusic, that folder means encrypted-library. */
+  function _fileUnder(url, file, folder, hash){
+    try{
+      const sha = hash || _shaFromUrl(url); if(!sha) return;
+      if(folder && !FilesIdx.folders().includes(folder)) FilesIdx.addFolder(folder);
+      FilesIdx.setFile(sha, { name:(file && file.name) || 'upload', folder,
+                              mime:(file && file.type) || '', size:(file && file.size) || 0,
+                              ts:Math.floor(Date.now()/1000) });
+    }catch(_){}
   }
   // NIP-92: one `imeta` tag per uploaded media URL that appears in the note content, so other clients
   // render our images/video inline (right aspect ratio via dim) and can verify them (x = sha256).
@@ -20785,7 +20821,7 @@
   // Save an /api/files/ artifact to Blossom (the same re-upload Copy link does, minus the clipboard).
   async function saveFileToBlossom(u, btn){
     if(btn){ btn.disabled=true; _btnText(btn,'saving…'); }
-    try{ await _fileToPublicUrl(u); toast('saved to Blossom — find it in Files');
+    try{ await _fileToPublicUrl(u, 'Posts'); toast('saved to Blossom — find it in Files');
       if(btn){ _btnText(btn,'✓ saved'); btn.disabled=false; } }
     catch(e){ toast('save failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn,'Save to Blossom'); } }
   }
@@ -20891,12 +20927,17 @@
       if(btn){ btn.disabled=false; _btnText(btn,label||'Meme Builder'); }
     }
   }
-  async function _fileToPublicUrl(u){
+  /* `folder` is only passed by "Save to Blossom" — the one action whose PURPOSE is keeping the file.
+   * Copy link and Post upload as a side effect of sharing, and filing those would put a copy of every
+   * link you ever pasted into the drive. The cache means a share after a save costs nothing either
+   * way, and the file keeps the folder the save gave it. */
+  async function _fileToPublicUrl(u, folder){
     _ai.pubUrl=_ai.pubUrl||{};
     if(_ai.pubUrl[u]) return _ai.pubUrl[u];
     const blob=await fetch(u, { credentials:'include' }).then(r=>{ if(!r.ok) throw new Error('fetch '+r.status); return r.blob(); });
     const ext=((u.split(/[?#]/)[0].split('.').pop())||'bin').toLowerCase();
-    const pub=await uploadBlob(new File([blob], 'media.'+ext, { type:blob.type||'application/octet-stream' }));
+    const pub=await uploadBlob(new File([blob], 'media.'+ext, { type:blob.type||'application/octet-stream' }),
+                               folder ? {folder} : undefined);
     _ai.pubUrl[u]=pub; return pub;
   }
   async function copyFileUrl(u, btn){
@@ -20957,7 +20998,7 @@
     if(!b64) return '';
     const o=opts||{};
     const mid='fx'+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36);
-    _ai.fxMedia[mid]={ b64, mime, ext };
+    _ai.fxMedia[mid]={ b64, mime, ext, hasAudio: !!o.hasAudio };
     // 🎵 Only where there IS an audio track to pull: a song / narration wrapped in the branded MP4.
     // videogeni output is silent, so offering it there would just fail — the server marks the ones
     // that carry audio (has_audio) rather than the client guessing from the mp4 container.
@@ -21012,14 +21053,54 @@
   // that conversation and is gone if you clear it, so this puts the bytes on your Blossom drive
   // where Files can see them. Same uploadBlob every other upload uses, so it honours the user's own
   // media server, the built-in-vs-nostr.build routing and the BUD-01 batch auth.
+  /* Does this result belong in the MUSIC LIBRARY rather than the drive?
+   *
+   * A song from musicgeni normally arrives as the branded MP4, not as audio/* — `has_audio` is the
+   * flag the server already sets to distinguish it from a silent videogeni clip, and it is the only
+   * honest signal available here. Narration lands in the library too; that is a fair place for it.
+   */
+  function _isMusicMedia(m){
+    return !!m && (/^audio\//i.test(m.mime||'') || (m.hasAudio && /^video\//i.test(m.mime||'')));
+  }
   async function saveEffectToBlossom(mid, btn){
     const m=_ai.fxMedia[mid]; if(!m){ toast('nothing to save'); return; }
     // Already uploaded (Copy link / Post got there first) → don't spend a second upload or signature.
-    if(m.url){ toast('already saved to Blossom'); if(btn) _btnText(btn,'✓ saved'); return; }
+    if(m.url || m.inLibrary){
+      // Uploaded already by Copy link or Post — those share, they do not file, so this still has to
+      // put it in a folder. Otherwise "Post, then Save" leaves the file in the drive unfiled while
+      // "Save, then Post" files it, for no reason the user could ever work out.
+      if(m.url) _fileUnder(m.url, { name:'generated.'+m.ext, type:m.mime }, 'Posts');
+      toast(m.inLibrary?'already in your Music library':'already saved to Blossom');
+      if(btn) _btnText(btn,'✓ saved'); return; }
     if(btn){ btn.disabled=true; _btnText(btn,'saving…'); }
     try{
       const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0));
-      m.url=await uploadBlob(new File([bin], 'generated.'+m.ext, { type:m.mime }));
+      /* Music goes through the LIBRARY path, which compresses to opus and encrypts to the drive's
+       * master key. Not merely a nicer folder: `Music` is an encrypted folder by definition
+       * (FilesIdx.isEncFolder hardcodes it), so a plain blob filed there is listed as a track the
+       * player cannot decrypt — worse than leaving it unfiled. This way a generated song is a real
+       * track you can play, on every device.
+       *
+       * It needs the node (music-compress is a server call), so a standalone client falls back to a
+       * plain upload and SAYS which one happened — "saved" meaning two different places without
+       * telling you is how someone goes looking in the wrong one. */
+      if(_isMusicMedia(m)){
+        const stamp=new Date().toISOString().slice(0,16).replace('T',' ');
+        try{
+          await uploadMusicTrack(new File([bin], 'Generated '+stamp+'.'+m.ext, { type:m.mime }));
+          m.inLibrary=true;
+          toast('added to your Music library');
+          if(btn){ _btnText(btn,'✓ in Music'); btn.disabled=false; }
+          return;
+        }catch(err){
+          console.warn('[music] library save failed, falling back to the drive:', err);
+          m.url=await uploadBlob(new File([bin], 'generated.'+m.ext, { type:m.mime }), {folder:'Posts'});
+          toast('saved to Files (couldn’t reach the music library)');
+          if(btn){ _btnText(btn,'✓ saved'); btn.disabled=false; }
+          return;
+        }
+      }
+      m.url=await uploadBlob(new File([bin], 'generated.'+m.ext, { type:m.mime }), {folder:'Posts'});
       toast('saved to Blossom — find it in Files');
       if(btn){ _btnText(btn,'✓ saved'); btn.disabled=false; }
     }catch(e){

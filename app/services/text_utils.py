@@ -172,3 +172,118 @@ def strip_thinking_tags(response: str) -> str:
         return "I apologize, I wasn't able to generate a proper response. Please try again."
 
     return result
+
+
+# ---------------------------------------------------------------------------------------------
+# Preamble stripping — enforcing "output ONLY the text" instead of merely asking for it.
+#
+# Six prompts in this codebase end with some form of "no preamble". None of them enforced it, and
+# an instruction is not a guarantee: a small local model complies most of the time and then returns
+#
+#     Here's one that hits the key points naturally:
+#     ---
+#     <the actual post>
+#
+# which is what landed in the composer, verbatim, when someone pressed the composer's AI Enhancer.
+# That endpoint's prompt already said *do NOT add a preamble like 'Here is a post'*. Writing it a
+# seventh time, more firmly, is not a fix; the contract can only be enforced on the way out.
+#
+# The whole risk of a cleaner like this is over-reach — a leading line that LOOKS like scaffolding
+# but is the user's actual content — so the rules are deliberately narrow:
+#
+#   * a lead-in must both READ like one (a small vocabulary of meta openers) and be SHORT and END in
+#     a colon. Prose merely starting "Here's why the bill matters." is none of those and is untouched;
+#   * nothing is ever stripped down to nothing — if the rules would empty the text the original is
+#     returned, because a preamble that ate the answer is much worse than a preamble;
+#   * a horizontal rule goes only where it was separating removed scaffolding, never from the body.
+# ---------------------------------------------------------------------------------------------
+
+# The meta-opener vocabulary. Matched at the START of a candidate lead-in line, case-insensitively.
+# Each is something a model says ABOUT the answer it is giving, never something a post opens with —
+# and each still has to pass the length and colon tests below before anything is removed.
+_LEAD_IN = re.compile(
+    r"^\s*(?:"
+    r"sure|certainly|absolutely|of course|got it|okay|ok"
+    r"|here(?:'|’)?s|here is|here are"
+    r"|below is|below are|this is"
+    r"|i(?:'|’)?ve|i have|i(?:'|’)?ll|i will|i(?:'|’)?d|let me"
+    r"|hope this|happy to"
+    r")\b",
+    re.I,
+)
+
+# A line that is nothing but a horizontal rule.
+_RULE = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,}|={3,})\s*$")
+
+# Trailing "want me to change anything?" offers — the same scaffolding at the other end. Narrower,
+# because a real post can end with a question: this must be first-person AND about the text itself.
+_TRAILING_OFFER = re.compile(
+    r"^\s*(?:let me know|want me to|would you like|feel free to|i can (?:also )?(?:tweak|adjust|shorten|expand|rewrite))\b",
+    re.I,
+)
+
+_MAX_LEAD_IN_CHARS = 120   # a lead-in is one short sentence; anything longer is somebody's paragraph
+
+
+def _strip_code_fence(text: str) -> str:
+    """Unwrap ```…``` when it wraps the WHOLE answer.
+
+    A model asked for plain prose sometimes returns it fenced. Only a fence that opens the text and
+    closes it is removed — a fence around one block INSIDE a post is part of the post.
+    """
+    lines = text.strip().split("\n")
+    if len(lines) < 2 or not lines[0].lstrip().startswith("```"):
+        return text
+    # The opening fence may carry a language tag; the closing one must be a bare fence.
+    if lines[-1].strip() != "```":
+        return text
+    return "\n".join(lines[1:-1])
+
+
+def strip_preamble(text: str) -> str:
+    """Remove model scaffolding from around an answer that should be prose and nothing else.
+
+    Returns the text unchanged when the rules find nothing, and — importantly — when applying them
+    would leave nothing at all.
+    """
+    if not text:
+        return text
+    original = text
+    out = _strip_code_fence(text).strip()
+
+    # Leading scaffolding, at most a couple of rounds: "Sure!" then "Here's the post:" happens, an
+    # endless chain does not, and a loop with no bound would be a way to delete a whole document.
+    for _ in range(3):
+        lines = out.split("\n")
+        if len(lines) < 2:
+            break                                   # never strip the only line — that IS the answer
+        first = lines[0].strip()
+        if not first:
+            out = "\n".join(lines[1:]).lstrip("\n")
+            continue
+        if _RULE.match(first):
+            # A rule at the very top is scaffolding on its own: nothing above it to separate.
+            out = "\n".join(lines[1:]).lstrip("\n")
+            continue
+        if (_LEAD_IN.match(first) and first.endswith(":") and len(first) <= _MAX_LEAD_IN_CHARS):
+            out = "\n".join(lines[1:]).lstrip("\n")
+            continue
+        break
+
+    # A trailing offer to revise, plus any rule that was separating it.
+    lines = out.split("\n")
+    while len(lines) > 1:
+        last = lines[-1].strip()
+        if not last or _RULE.match(last) or _TRAILING_OFFER.match(last):
+            lines.pop()
+            continue
+        break
+    out = "\n".join(lines)
+
+    # Straight quotes wrapped round the entire answer.
+    stripped = out.strip()
+    if len(stripped) > 1 and stripped[0] == '"' and stripped[-1] == '"' and stripped.count('"') == 2:
+        out = stripped[1:-1]
+
+    out = out.strip()
+    return out or original.strip()
