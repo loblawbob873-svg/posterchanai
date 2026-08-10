@@ -65,5 +65,32 @@ class TestAppJsHasNoPCBinding(unittest.TestCase):
             self.assertIsNone(re.search(r"(?<![\w.$_])PC\.", _strip_comments_and_strings(ok)), ok)
 
 
+class TestNoDuplicateFunctionDeclarations(unittest.TestCase):
+    """Two `function foo(){}` in one scope is not an error — the second silently replaces the first.
+
+    app.js is a 25k-line IIFE with no linter over it, so the whole file is one scope and a name
+    reused anywhere in it wins from wherever it was declared last. `_fmtBytes` was declared twice:
+    the survivor stopped at MB, so anything genuinely large rendered as "4096.0 MB" and a GB-sized
+    budget could not be displayed at all. Nothing failed; it just quietly produced worse output than
+    the function someone thought they were calling.
+    """
+
+    def test_no_top_level_function_is_declared_twice(self):
+        src = _strip_comments_and_strings(open(APP, encoding="utf-8").read())
+        # Module-level declarations in this file are indented exactly two spaces.
+        names = re.findall(r"(?m)^  (?:async )?function ([A-Za-z_$][\w$]*)\s*\(", src)
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        self.assertFalse(
+            dupes,
+            "declared more than once at the top level of app.js: %s. The later declaration wins "
+            "silently, so every caller gets whichever one happens to be last in the file." % dupes)
+
+    def test_the_check_can_see_a_duplicate(self):
+        planted = _strip_comments_and_strings(
+            "  function dup(a){ return 1; }\n  function other(){}\n  function dup(a){ return 2; }\n")
+        names = re.findall(r"(?m)^  (?:async )?function ([A-Za-z_$][\w$]*)\s*\(", planted)
+        self.assertEqual(sorted({n for n in names if names.count(n) > 1}), ["dup"])
+
+
 if __name__ == "__main__":
     unittest.main()

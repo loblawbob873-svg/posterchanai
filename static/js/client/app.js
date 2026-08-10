@@ -3841,6 +3841,19 @@
   // the OS/WebView grants for this origin — on a bundled Android app that's a fraction of FREE disk and
   // persist() isn't reliably granted, so a near-full tablet caps far below the chosen budget. Surfacing
   // usage/quota lets the user see the real limit instead of guessing why caching "stops early".
+  /* What the offline library is actually using. Counted from the store rather than estimated, and
+   * shown next to the limit, because "4 GB" means nothing without "you are using 1.2 of it". */
+  async function _fillMusicOfflineStat(){
+    const el=$('#music-offline-stat'); if(!el) return;
+    try{
+      const u=await MusicOffline.usage();
+      const budget=MusicOffline.budgetBytes();
+      el.textContent = u.count
+        ? (u.count + ' track' + (u.count===1?'':'s') + ' kept · ' + _fmtBytes(u.bytes) + ' of ' + _fmtBytes(budget))
+        : 'No tracks kept offline on this device yet.';
+    }catch(_){ el.textContent='Couldn’t read this device’s offline music.'; }
+  }
+
   async function _fillMediaCacheStat(){
     const el=$('#media-cache-stat'); if(!el) return;
     try{
@@ -5694,6 +5707,10 @@
       }
     });
   }
+  /* ONE of these, now. There were two `function _fmtBytes` in this scope and the second silently
+   * replaced the first — the survivor stopped at MB, so anything genuinely large rendered as
+   * "4096.0 MB" and a GB-sized budget could not be shown at all. Same output as the other for small
+   * values, correct for big ones. */
   function _fmtBytes(n){ n=Number(n)||0; const u=['B','KB','MB','GB','TB']; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return n.toFixed(n<10&&i>0?1:0)+' '+u[i]; }
   function _magnet(e){
     const ih=((e.tags.find(t=>t[0]==='x')||[])[1]||'').trim();
@@ -6597,7 +6614,6 @@
     };
   }
   // ---------- Files browser (self-hosted GRASP repos) ----------
-  function _fmtBytes(n){ n=+n||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(1)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
   async function _loadRepoFiles(feed, path){
     const box=$('#rv-files',feed); if(!box || !_rv) return;
     _rv.path=path||'';
@@ -15698,10 +15714,59 @@
         return v && v.b ? new Uint8Array(await v.b.arrayBuffer()) : null;
       }catch(_){ return null; }
     },
+    /* WHAT THIS IS USING, and how to come back under a budget.
+     *
+     * Kept tracks had no ceiling at all: the store grew until the BROWSER decided, and a browser
+     * evicting an origin takes everything with it — the drive cache, Notes attachments, the files
+     * index — not just the music. An unbounded store is not "keep everything", it is "lose
+     * everything, eventually, without being asked".
+     *
+     * So there is a budget, and it is a SETTING rather than a constant, because how much of a phone
+     * a music library should occupy is not a decision this code can make. Eviction is oldest-first
+     * by the time the track was stored, and it only ever runs when a new track pushes the total over
+     * — so a library that fits is never touched, which is the promise the feature makes. */
+    async usage(){
+      try{
+        const rows = await this._tx('readonly', st => st.getAll());
+        let bytes = 0;
+        for(const r of (rows || [])) bytes += (r && r.size) || 0;
+        return { bytes, count: (rows || []).length };
+      }catch(_){ return { bytes: 0, count: 0 }; }
+    },
+    budgetBytes(){
+      const gb = +ClientSettings.get('musicOfflineGB', 4);
+      return (gb > 0 ? gb : 4) * 1024 * 1024 * 1024;
+    },
+    async trim(){
+      const budget = this.budgetBytes();
+      let rows;
+      try{
+        rows = await this._tx('readonly', st => st.getAll());
+      }catch(_){ return 0; }
+      let total = 0;
+      for(const r of (rows || [])) total += (r && r.size) || 0;
+      if(total <= budget) return 0;
+      // getAll() gives values without their keys, so pair them up in the same order getAllKeys does.
+      let keys = [];
+      try{ keys = await this._tx('readonly', st => st.getAllKeys()) || []; }catch(_){ return 0; }
+      const items = keys.map((k, i) => ({ sha: k, ts: (rows[i] && rows[i].ts) || 0, size: (rows[i] && rows[i].size) || 0 }))
+                        .sort((a, b) => a.ts - b.ts);          // oldest stored, first to go
+      let freed = 0;
+      for(const it of items){
+        if(total - freed <= budget) break;
+        try{ await this.drop(it.sha); freed += it.size; }catch(_){}
+      }
+      if(freed) console.warn('music offline: freed', Math.round(freed / 1048576), 'MB to stay under the budget');
+      return freed;
+    },
     async put(sha, bytes){
       try{
         await this._tx('readwrite', st=>st.put({ b:new Blob([bytes]), size:bytes.length, ts:Math.floor(Date.now()/1000) }, sha));
-        (await this.have()).add(sha); return true;
+        (await this.have()).add(sha);
+        // After the write, not before: the track just asked for is the one thing that must survive
+        // this, and trimming first could evict something to make room and then fail to store.
+        try{ await this.trim(); }catch(_){}
+        return true;
       }catch(e){ console.warn('music offline: could not store', sha, e); return false; }
     },
     async drop(sha){
@@ -21622,6 +21687,11 @@
           </label>
           <div class="muted small">How much offline media (avatars, images, played videos) to keep cached on THIS device. Larger = fewer re-downloads on a slow/throttled link, but more storage used. Per-device.</div>
           <div class="muted small" id="media-cache-stat" style="margin-top:4px">Checking device storage…</div>
+          <label class="fld">🎵 Offline music limit
+            <select class="input" id="set-music-offline">${[1,2,4,8,16,32,64].map(g=>`<option value="${g}"${(+ClientSettings.get('musicOfflineGB',4)===g)?' selected':''}>${g} GB${g===4?' (default)':''}</option>`).join('')}</select>
+          </label>
+          <div class="muted small">How much of your music library to keep playable offline on THIS device. Tracks are kept until the limit is reached, then the ones stored longest ago make room. Per-device — a phone and a desktop can hold different amounts of the same library.</div>
+          <div class="muted small" id="music-offline-stat" style="margin-top:4px">Checking…</div>
           ${BUNDLED ? `<label class="fld">🌐 Instance
             <div class="instance-pick" id="us-instance-pick"></div>
             <span class="input-row" style="display:flex;gap:6px;margin-top:6px"><input class="input" id="us-instance-inp" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="https://your-instance" value="${enc(_instanceBase())}"><button class="btn btn-ghost small" id="us-instance-go">Connect</button></span>
@@ -21923,6 +21993,15 @@
         const gb=+mc.value||4; ClientSettings.set('mediaCacheGB', gb); _applyMediaCacheBudget(gb);
         toast('media cache set to '+gb+' GB'); _fillMediaCacheStat(); }; }
     _fillMediaCacheStat();
+    /* Offline music limit (per-device). Lowering it TRIMS IMMEDIATELY rather than at the next
+     * download: someone reaching for this setting is usually reaching for space, and a limit that
+     * takes effect the next time you happen to save a track has not given them any. */
+    { const mo=$('#set-music-offline'); if(mo) mo.onchange=async ()=>{
+        const gb=+mo.value||4; ClientSettings.set('musicOfflineGB', gb);
+        let freed=0; try{ freed=await MusicOffline.trim(); }catch(_){}
+        toast('offline music limit set to '+gb+' GB' + (freed ? ' · freed '+_fmtBytes(freed) : ''));
+        _fillMusicOfflineStat(); }; }
+    _fillMusicOfflineStat();
     // Instance quick-pick (native app only). Chips for the default + recently-used instances; tapping one (or
     // Connect) switches the server the app talks to. The Nostr key is portable, so only the session re-establishes.
     { const pick=$('#us-instance-pick'), inp=$('#us-instance-inp'), go=$('#us-instance-go'), non=$('#us-instance-none');
