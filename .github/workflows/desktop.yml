@@ -130,9 +130,23 @@ jobs:
       # and FAILS if package.json and the lock disagree instead of quietly picking something newer.
       # The lock is committed for exactly this reason — see desktop/.gitignore.
       # (`npm version` above rewrites the version in both files, so they stay in sync for this step.)
+      # RETRIED, because the failure this hits is not ours and not deterministic. Electron's
+      # postinstall DOWNLOADS its binary, so `npm ci` reaches the network long after the registry
+      # step is done — and a runner behind a TLS-intercepting proxy answers that with
+      # "RequestError: self-signed certificate", failing the mac build in ~25s while the same commit
+      # builds cleanly on the next push. Three attempts turns a random red into a self-healing one;
+      # a real breakage still fails all three and still fails the job.
       - name: Install deps
         working-directory: desktop
-        run: npm ci
+        run: |
+          for i in 1 2 3; do
+            npm ci && exit 0
+            echo "::warning::npm ci failed (attempt $i/3) — retrying in $((i*15))s"
+            rm -rf node_modules
+            sleep $((i*15))
+          done
+          echo "::error::npm ci failed three times"
+          exit 1
 
       - name: Build
         working-directory: desktop

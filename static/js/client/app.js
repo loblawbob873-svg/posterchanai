@@ -14160,6 +14160,14 @@
     // Safe to reconcile now: a track the server no longer has is MARKED, not hidden, so this can
     // annotate the library but never empty it. A failed fetch leaves _blobHave null and marks nothing.
     _refreshBlobHave().then(paint).catch(()=>{});
+    /* …and once the index is trustworthy, clear out anything cached for a track that no longer
+     * exists. Once per session, after a pull, never on the first paint from a cold cache. */
+    if(!_musicSwept){
+      _musicSwept = true;
+      Promise.resolve(FilesIdx._pullDone ? null : FilesIdx.pull())
+        .then(()=>MusicOffline.sweep()).then(n=>{ if(n && document.getElementById('ma-lib')) paint(); })
+        .catch(()=>{});
+    }
     if(!FilesIdx._pullDone){
       // …and once the index arrives from the relay, repaint. Never HIDES anything that was already
       // showing — paint() is a full re-render from a strictly better-informed index.
@@ -14193,6 +14201,7 @@
           if(r.replaced) bits.push(`${r.replaced} replaced`);
           if(r.added) bits.push(`${r.added} added`);
           if(r.plFixed) bits.push(`${r.plFixed} playlist entr${r.plFixed===1?'y':'ies'} updated`);
+          if(r.ambiguous) bits.push(`${r.ambiguous} ambiguous (added, not replaced)`);
           if(r.failed) bits.push(`${r.failed} failed`);
           toast(bits.length ? bits.join(' · ') : 'nothing to do');
           try{ await _refreshBlobHave(); }catch(_){}
@@ -14213,6 +14222,7 @@
   // Mirror the player's state into the app's header. Cheap, and it no-ops when the app isn't mounted
   // (the window may be closed while music keeps playing — that is the point of a floating player).
   let _musicQ='';   // the Music app's library filter, kept across repaints (focus moves windows)
+  let _musicSwept=false;   // orphaned-offline-blob sweep: once per session, and only after a real pull
   /* PLAYLISTS. The library is everything you have; a playlist is an ORDER over some of it, and the
    * two are different questions — "what do I own" and "what am I listening to". PCPlaylists owns the
    * storage (one encrypted event each, see playlists.js); this is only the surface.
@@ -16461,25 +16471,38 @@
     // Matched on the name the file was UPLOADED under (srcName), falling back to the display name,
     // because that is the only thing the library kept about the original. Basename, case-folded: a
     // re-pick from a different folder is the same track.
-    const by = new Map();
+    const seen = new Map();      // key -> [sha, …]
     for(const t of musicEntries(null)){
       const m = t.m || {};
       for(const cand of [m.srcName, m.name]){
         const k = String(cand||'').split(/[/\\]/).pop().replace(/\.[^.]+$/,'').trim().toLowerCase();
-        if(k && !by.has(k)) by.set(k, t.sha);
+        if(!k) continue;
+        const l = seen.get(k) || [];
+        if(!l.includes(t.sha)) l.push(t.sha);
+        seen.set(k, l);
+        break;                     // srcName wins; don't also index the display name for this track
       }
     }
+    /* AN AMBIGUOUS NAME IS NOT A MATCH. "01 - Intro.mp3" exists on half the albums ever made, and
+     * first-one-wins would delete one album's track and replace it with another album's audio —
+     * silently, and with the playlists dutifully updated to point at the wrong song. A name that
+     * identifies more than one track in the library identifies none of them; those files are added
+     * as new instead, and counted separately so the report says what happened. */
+    const by = new Map();
+    for(const [k, l] of seen) if(l.length === 1) by.set(k, l[0]); else by.set(k, null);
     return by;
   }
   async function _musicReplaceOriginals(files, statEl){
     const setS = t => { if(statEl) statEl.textContent = t; };
     const by = _musicBySrcName();
-    let replaced = 0, added = 0, failed = 0, plFixed = 0;
+    let replaced = 0, added = 0, failed = 0, plFixed = 0, ambiguous = 0;
     for(let i = 0; i < files.length; i++){
       const f = files[i];
       setS(`${i+1} / ${files.length} — ${f.name}`);
       const key = String(f.name||'').split(/[/\\]/).pop().replace(/\.[^.]+$/,'').trim().toLowerCase();
-      const oldSha = by.get(key) || '';
+      const hit = by.has(key) ? by.get(key) : '';
+      if(hit === null){ ambiguous++; }          // the name matches several tracks — do not guess
+      const oldSha = hit || '';
       try{
         // 1. the new bytes go up FIRST — nothing is retired until there is a replacement.
         const newSha = await uploadMusicTrack(f);
@@ -16503,7 +16526,7 @@
       }catch(e){ failed++; console.warn('[music] replace failed for', f.name, e); }
     }
     setS('');
-    return { replaced, added, failed, plFixed };
+    return { replaced, added, failed, plFixed, ambiguous };
   }
   async function uploadMusicTrack(file, statEl){
     if(!signer.nip44enc) throw new Error('signer can\'t encrypt (needs NIP-44)');
@@ -16624,6 +16647,34 @@
      * a music library should occupy is not a decision this code can make. Eviction is oldest-first
      * by the time the track was stored, and it only ever runs when a new track pushes the total over
      * — so a library that fits is never touched, which is the promise the feature makes. */
+    /* DROP CACHED BYTES FOR TRACKS THAT NO LONGER EXIST.
+     *
+     * The library is shared across every device through the relay, but the offline cache is not — it
+     * is this device's IndexedDB. So when a track is replaced or deleted ANYWHERE (the ⤒ Originals
+     * pass is the obvious one: it retires a blob on one device and every other device's index
+     * follows), the other devices keep the old bytes for a sha nothing references. They are invisible
+     * — the track lists and plays correctly from the new blob — and they sit there taking space until
+     * the cache is cleared by hand.
+     *
+     * The index is the authority: anything cached whose sha the index no longer knows is orphaned.
+     * Deliberately gated on a LOADED index — an empty or half-hydrated one would look like "the
+     * library is gone" and this would helpfully delete the entire offline collection. That is the
+     * replaceable-doc wipe in another costume, and the guard is the whole reason this is safe.
+     */
+    async sweep(){
+      try{
+        const idx = FilesIdx._norm().files || {};
+        const known = Object.keys(idx);
+        if(!known.length) return 0;              // nothing loaded yet → nothing is orphaned
+        const live = new Set(known);
+        const have = await this.have(true);
+        const dead = [...have].filter(sha => !live.has(sha));
+        if(!dead.length) return 0;
+        for(const sha of dead) await this.drop(sha);
+        console.info('[music] dropped', dead.length, 'orphaned offline track(s)');
+        return dead.length;
+      }catch(_){ return 0; }
+    },
     async usage(){
       try{
         const rows = await this._tx('readonly', st => st.getAll());
@@ -18866,12 +18917,30 @@
           this._renderThread(pane, t.messages, folder, acct, uid); })
         .catch(()=>{});
     },
+    /* Plain-text mail had no links at all — the body was escaped and printed, so a URL was a string
+     * you had to select and copy. Run over the ALREADY-ESCAPED text, so nothing here can introduce
+     * markup: the only thing it adds is an anchor around a run that is already inert. */
+    _linkify(t){ return String(t||'').replace(/(^|[\s(])((?:https?:\/\/|www\.)[^\s<>"']+[^\s<>"'.,;:!?)])/g,
+      (m0, pre, url) => pre + '<a href="' + (/^www\./i.test(url) ? 'https://' + url : url)
+        + '" target="_blank" rel="noopener noreferrer">' + url + '</a>'); },
     _msgBlock(m, folder, acct, expanded){
       const atts=(m.attachments||[]).map((at,i)=>`<a class="mail-att" href="/api/mail/dl/${encodeURIComponent(m.account||acct)}/${encodeURIComponent(m.folder||folder)}/${encodeURIComponent(m.uid)}/${i}" target="_blank" rel="noopener">📎 ${enc(at.name||'attachment')} <span class="muted small">${_fmtBytes(at.size||0)}</span></a>`).join('');
-      // Untrusted email HTML → fully sandboxed iframe (no scripts/forms/same-origin); else plain text.
+      /* Untrusted email HTML → sandboxed iframe (no scripts, no forms, no same-origin); else text.
+       *
+       * A LINK IN AN EMAIL OPENS IN THE BROWSER. With a bare `sandbox` a click did nothing at all:
+       * the frame may not navigate itself (no allow-top-navigation, correctly) and may not open a
+       * window (no allow-popups), so every link in every HTML mail was silently inert. `allow-popups`
+       * plus `allow-popups-to-escape-sandbox` is the narrow grant that fixes it — the opened page is
+       * a normal browser tab rather than another sandboxed frame — and `<base target="_blank">` is
+       * what makes an ordinary <a href> take that route instead of trying to navigate in place.
+       * Scripts and same-origin stay OFF, which is what actually keeps this safe.
+       *
+       * Same rule as a web-search result, and for the same reason: it is somebody else's page. */
       const body = m.body_html
-        ? `<iframe class="mail-html" sandbox srcdoc="${enc(m.body_html)}"></iframe>`
-        : `<div class="mail-text">${enc(m.body_text||'').replace(/\n/g,'<br>')}</div>`;
+        ? `<iframe class="mail-html" referrerpolicy="no-referrer"
+                   sandbox="allow-popups allow-popups-to-escape-sandbox"
+                   srcdoc="${enc('<base target="_blank"><meta name="referrer" content="no-referrer">' + m.body_html)}"></iframe>`
+        : `<div class="mail-text">${this._linkify(enc(m.body_text||'')).replace(/\n/g,'<br>')}</div>`;
       return `<div class="mail-msg${expanded?' open':''}">
         <div class="mail-msg-hd"><div class="mm-who"><b>${enc(m.from||'')}</b><div class="muted small">To: ${enc((m.to||'').slice(0,90))}</div></div><span class="muted small mm-date">${enc(_mailDate(m.ts))}</span></div>
         <div class="mail-msg-body">${atts?`<div class="mail-atts">${atts}</div>`:''}<div class="mail-body">${body}</div></div>

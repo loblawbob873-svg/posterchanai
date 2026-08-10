@@ -90,6 +90,22 @@ def test_matching_is_on_the_uploaded_name_case_folded():
         "the extension must be stripped — the replacement is a different format by definition"
 
 
+def test_an_ambiguous_name_is_never_guessed_at():
+    """THE TOOL CANNOT KNOW WHAT THE ORIGINAL IS — the user supplies it, and the only link back to a
+    library entry is the filename it was uploaded under. That makes collisions the real hazard:
+    "01 - Intro.mp3" exists on half the albums ever made, and first-one-wins would delete one album's
+    track, replace it with another album's audio, and update every playlist to point at the wrong
+    song. A name that identifies more than one track identifies none of them."""
+    i = APP.index("  function _musicBySrcName(){")
+    fn = APP[i:APP.index("\n  }", i)]
+    assert "l.length === 1" in fn, "a name matching several tracks must not resolve to one of them"
+    assert "by.set(k, null)" in fn, "an ambiguous name must be marked, not dropped (which would look unique)"
+    b = _fn()
+    assert "if(hit === null){ ambiguous++; }" in b, "an ambiguous file must be counted, not silently replaced"
+    assert "ambiguous" in APP[APP.index("if(r.replaced)"):APP.index("if(r.replaced)") + 600], \
+        "the report must say how many were ambiguous — otherwise 'added' hides them"
+
+
 def test_it_is_asked_for_rather_than_automatic():
     """It deletes blobs. Anything that deletes has to be asked for."""
     assert "id=\"ma-orig\"" in APP, "no Originals control in the Music app"
