@@ -100,6 +100,9 @@ PAGE_TMPL = r"""<!doctype html><html><head><meta charset="utf-8">
 <script src="/static/js/client/sprite.js"></script>
 <script>
 const enc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// The drive's search box is part of the lifted toolbar, and its query is module state in app.js.
+// Empty here: this harness measures LAYOUT, and every assertion is about an unfiltered drive.
+let _filesQ = '';
 window.ClientSettings = { _v:{filesView:'details', filesSort:{by:'name', dir:1}},
                           get(k,d){ return this._v[k]===undefined?d:this._v[k]; },
                           set(k,v){ this._v[k]=v; } };

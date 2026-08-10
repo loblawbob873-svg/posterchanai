@@ -76,6 +76,20 @@
    * they should have had all along. Their old per-device manifests are simply left behind; nothing is
    * deleted, and the first sweep after this rebuilds from what is actually on disk. */
   function keyOf(f){ return f.key || pairKey(f.name || (f.dir || '').split(/[/\\]/).pop()) || 'folder'; }
+  /* HOW MANY FILES ARE IN THIS FOLDER. "Documents · 15,790 files" is the difference between a card
+   * that says a folder is being synced and one that says what is in it — and it is the first thing
+   * anybody checks when they suspect a sync is incomplete.
+   *
+   * Read from the account's own manifest list (`_acct`, /client/sync-folders), because that is the
+   * count the RELAY holds — the agreed contents of the pair — rather than whatever this device has
+   * managed to scan so far. While it is loading there is deliberately no number at all: a confident
+   * "0 files" on a folder with fifteen thousand in it is worse than a blank. */
+  function _countOf(f){
+    const k = keyOf(f);
+    const rec = Array.isArray(_acct) ? _acct.find(x => x && x.key === k) : null;
+    if(!rec || typeof rec.n !== 'number') return '';
+    return '· ' + rec.n.toLocaleString() + ' file' + (rec.n === 1 ? '' : 's');
+  }
 
   /* WHAT THIS DIRECTORY WAS PAIRED AS, remembered across "Stop syncing".
    *
@@ -721,6 +735,7 @@
       const lost = Array.isArray(granted) && !granted.some(g => g.id === f.id);
       return `<div class="sync-card" data-id="${PC.enc(f.id)}">
         <div class="sync-head"><b>${PC.enc(keyOf(f))}</b>
+          <span class="sync-n muted small">${_countOf(f)}</span>
           <span class="muted small">${PC.enc(f.dir || '')}</span>
           <span class="sync-pair muted small">pairs with “${PC.enc(keyOf(f))}” on your other devices</span></div>
         <div class="sync-status muted small">${lost ? 'this device can’t reach that folder any more — nothing has been lost, point it at the folder again'

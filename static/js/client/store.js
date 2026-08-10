@@ -50,9 +50,13 @@
     // `pcai:budget` joined them for the same reason and a sharper one: budget.js absorbs relay
     // results into its own state and never calls saveEvent, so the doc is only ever in memory when
     // this device published it — evict that and the relay-change carry has nothing to copy.
+    // `pcai:playlist:` joined them for exactly the same reason: a playlist is a kind-30078 document
+    // only its author can decrypt, so evicting one by the newest-N rule that is right for the
+    // firehose means it is simply GONE from this device until a relay hands it back — and a phone
+    // that reads the global feed for a few minutes would do that to a whole library.
     for (const t of ev.tags || []) if (t && t[0] === 'd' && typeof t[1] === 'string' &&
         (t[1].startsWith('pcai:note') || t[1].startsWith('pcai:pw') ||
-         t[1] === 'pcai:budget')) return true;
+         t[1].startsWith('pcai:playlist') || t[1] === 'pcai:budget')) return true;
     return false;
   }
   /* ONE event with no `tags` used to take down every timeline in the app, permanently.

@@ -2778,8 +2778,12 @@
    * subscription list and reading history to a relay the user may have just added on someone else's
    * recommendation. Everything below is NIP-44 ciphertext to everyone but its author, which is what
    * makes moving it unremarkable. */
+  // `pcai:playlist:` belongs here for the same reason the rest do: these are self-encrypted 30078
+  // documents that live ONLY on the relays, so a relay change that does not carry them leaves them
+  // behind on a pool the client no longer queries — and on a second device, which never held them
+  // locally, that is permanent.
   const _CARRY_D = [/^pcai:note:/, /^pcai:notefolder:/, /^pcai:pw:/, /^pcai:pwfolder:/,
-                    /^pcai:pwkey$/, /^pcai:budget$/];
+                    /^pcai:pwkey$/, /^pcai:budget$/, /^pcai:playlist:/];
   let _carrying = false;
 
   function _isCarryDoc(ev){
@@ -14104,6 +14108,7 @@
           <span class="ma-t" id="ma-dur">0:00</span>
         </div>
       </div>
+      <div id="ma-plbar"></div>
       <input class="input ma-q" id="ma-q" type="search" autocomplete="off"
              placeholder="Search your library" aria-label="Search your library">
       <div class="music-list" id="ma-lib"><div class="spinner"></div></div></div>`;
@@ -14119,8 +14124,26 @@
      * that the Files → Music screen was listing perfectly well — the two fetches do not always agree,
      * and an empty player is a far worse answer than a track that turns out not to play (which says
      * so, out loud, via play()'s toast). */
-    const paint=()=>{ _renderMusicList(lib, null, _musicQ); _musicAppNow(); };
+    /* One repaint for both halves: the playlist bar decides WHICH tracks the list is drawing, so a
+     * change to either has to redraw both or the chips and the rows disagree about what you picked. */
+    const paint=()=>{
+      const bar=$('#ma-plbar',feed);
+      if(bar){ bar.innerHTML=_plBarHTML(); _bindPlBar(bar, paint); }
+      // A playlist that has been deleted (or has not loaded yet) falls back to the whole library
+      // rather than drawing an empty screen with no way to explain itself.
+      const sel = _musicPl && window.PCPlaylists && PCPlaylists.get(_musicPl);
+      if(_musicPl && !sel) _musicPl = null;
+      _renderMusicList(lib, null, _musicQ, sel ? _plTracks(_musicPl) : null);
+      _musicAppNow();
+    };
+    _musicPlRepaint = () => { if(document.getElementById('ma-lib')) paint(); };
     paint();
+    // The library is encrypted per-user, so it can only be read once there is a signer. Repaint when
+    // it lands; onChange covers an edit made on another device arriving over the live subscription.
+    if(window.PCPlaylists){
+      PCPlaylists.load().then(()=>{ if(document.getElementById('ma-lib')) paint(); }).catch(()=>{});
+      PCPlaylists.onChange(()=>{ if(document.getElementById('ma-lib')) paint(); });
+    }
     // Safe to reconcile now: a track the server no longer has is MARKED, not hidden, so this can
     // annotate the library but never empty it. A failed fetch leaves _blobHave null and marks nothing.
     _refreshBlobHave().then(paint).catch(()=>{});
@@ -14142,12 +14165,108 @@
     { const qi=$('#ma-q',feed);
       if(qi){ qi.value=_musicQ;
         // Re-render the LIST only. Repainting the whole app would take the caret out of this box.
-        qi.oninput=()=>{ _musicQ=qi.value; _renderMusicList(lib, null, _musicQ); _musicAppNow(); }; } }
+        qi.oninput=()=>{ _musicQ=qi.value;
+          const sel = _musicPl && window.PCPlaylists && PCPlaylists.get(_musicPl);
+          _renderMusicList(lib, null, _musicQ, sel ? _plTracks(_musicPl) : null); _musicAppNow(); }; } }
     MusicPlayer.onChange=_musicAppNow;   // the floating player is the single source of truth
   }
   // Mirror the player's state into the app's header. Cheap, and it no-ops when the app isn't mounted
   // (the window may be closed while music keeps playing — that is the point of a floating player).
   let _musicQ='';   // the Music app's library filter, kept across repaints (focus moves windows)
+  /* PLAYLISTS. The library is everything you have; a playlist is an ORDER over some of it, and the
+   * two are different questions — "what do I own" and "what am I listening to". PCPlaylists owns the
+   * storage (one encrypted event each, see playlists.js); this is only the surface.
+   *
+   * `_musicPl` is the playlist being VIEWED, and it is deliberately not the same thing as what is
+   * playing: opening one to look at it must not stop the music, and the queue only changes when
+   * something is actually pressed. */
+  let _musicPl = null;                    // id of the playlist on screen, '' / null = the library
+  const PL = () => window.PCPlaylists;
+  function _plTracks(id){
+    // The playlist stores shas; the LIBRARY decides what is playable. A track missing from this
+    // device stays in the document (another device may still have it) and is simply not listed here.
+    const pl = PL() && PL().get(id); if(!pl) return [];
+    const live = new Map(musicTracks(null).map(t=>[t.sha,t]));
+    return pl.tracks.map(sha=>live.get(sha)).filter(Boolean);
+  }
+  function _plBarHTML(){
+    if(!PL()) return '';
+    const ls = PL().all();
+    const chip = (id,label,n)=>`<button class="ma-pl${_musicPl===id?' on':''}" data-pl="${enc(id)}">${enc(label)}${n!=null?` <span class="ma-pln">${n}</span>`:''}</button>`;
+    return `<div class="ma-pls">
+        ${chip('', '🎵 All music', null)}
+        ${ls.map(p=>chip(p.id, p.name, p.tracks.length)).join('')}
+        <button class="ma-pl ma-plnew" id="ma-plnew" title="New playlist">＋ New</button>
+        ${_musicPl ? `<span class="ma-plsp"></span>
+          <button class="ma-pl" id="ma-plren" title="Rename this playlist">✎</button>
+          <button class="ma-pl" id="ma-pldel" title="Delete this playlist">🗑</button>` : ''}
+      </div>`;
+  }
+  function _bindPlBar(root, repaint){
+    $$('.ma-pl[data-pl]', root).forEach(b=> b.onclick=()=>{
+      const to = b.dataset.pl || null;
+      /* Leaving a playlist hands the queue BACK. Playing inside one replaces MusicPlayer.queue with
+       * that playlist; without this the queue stayed pinned to it, so ⏭ walked the playlist while
+       * the whole library was on screen. Only when nothing is playing from the old view — pressing
+       * a chip is navigation, and navigation must never interrupt the music. */
+      if(!to && _musicPl && !(_audioEl && !_audioEl.paused)) MusicPlayer.refreshQueue();
+      _musicPl = to; repaint(); });
+    { const nb=$('#ma-plnew', root); if(nb) nb.onclick=async()=>{
+        const name = await uiPrompt('Name this playlist', '', 'New playlist'); if(!name) return;
+        const pl = await PL().create(name.trim());
+        // create() returns null when the save did not happen — never navigate into one that is not
+        // there, which is the whole reason it reports that rather than handing the object back.
+        if(!pl){ toast('couldn’t save that playlist'); return; }
+        _musicPl = pl.id; repaint(); }; }
+    { const rb=$('#ma-plren', root); if(rb) rb.onclick=async()=>{
+        const cur = PL().get(_musicPl); if(!cur) return;
+        const name = await uiPrompt('Rename playlist', cur.name, cur.name); if(!name) return;
+        if(!await PL().rename(_musicPl, name.trim())) toast('couldn’t rename that playlist');
+        repaint(); }; }
+    { const db=$('#ma-pldel', root); if(db) db.onclick=async()=>{
+        const cur = PL().get(_musicPl); if(!cur) return;
+        // The TRACKS are not touched — a playlist is an order over the library, and deleting one has
+        // never meant deleting music. Said out loud, because "delete" next to a list of songs reads
+        // like it might.
+        if(!await uiConfirm(`Delete “${cur.name}”? The songs stay in your library.`)) return;
+        await PL().remove(_musicPl); _musicPl = null; repaint(); }; }
+  }
+  /* Add a track to a playlist — or to a new one. One prompt, because a chooser that cannot also
+   * create is a dead end the first time anybody uses it. */
+  async function _addToPlaylist(sha){
+    if(!PL()){ toast('playlists are still loading'); return; }
+    await PL().load();
+    const ls = PL().all();
+    const on = new Set(PL().playlistsWith(sha).map(p=>p.id));
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-music"></use></svg>Add to a playlist</h3>
+      <div class="ma-plpick">${ls.length ? ls.map(p=>
+        `<button class="btn ${on.has(p.id)?'btn-ghost':'btn-cyan'} full ma-plpickb" data-id="${enc(p.id)}" ${on.has(p.id)?'disabled':''}>
+           ${enc(p.name)} <span class="muted small">${on.has(p.id)?'· already in it':`· ${p.tracks.length} track${p.tracks.length===1?'':'s'}`}</span>
+         </button>`).join('') : '<div class="muted small">No playlists yet.</div>'}</div>
+      <div class="row" style="justify-content:space-between;margin-top:12px">
+        <button class="btn btn-neon small" id="ma-pladdnew">＋ New playlist</button>
+        <button class="btn btn-ghost small" id="ma-pladdclose">Close</button>
+      </div>`, root => {
+      $('#ma-pladdclose', root).onclick = closeModal;
+      $$('.ma-plpickb', root).forEach(b=> b.onclick=async()=>{
+        b.disabled = true;
+        const n = await PL().add(b.dataset.id, sha);
+        closeModal();
+        toast(n ? 'added to the playlist' : 'couldn’t add that track');
+        _musicPlRepaint();
+      });
+      $('#ma-pladdnew', root).onclick = async()=>{
+        const name = await uiPrompt('Name this playlist', '', 'New playlist'); if(!name) return;
+        const pl = await PL().create(name.trim(), [sha]);
+        closeModal();
+        toast(pl ? 'playlist created' : 'couldn’t save that playlist');
+        _musicPlRepaint();
+      };
+    });
+  }
+  // Repaint the Music app if it happens to be on screen — the modal above can be opened from the
+  // library list, and nothing else knows the counts just changed.
+  let _musicPlRepaint = ()=>{};
   function _musicAppNow(){
     const t=document.getElementById('ma-title'); if(!t) return;
     const m=MusicPlayer.cur?FilesIdx.meta(MusicPlayer.cur):null;
@@ -14892,12 +15011,55 @@
     return `<div class="fx-bar"><nav class="fx-crumbs">${crumbs.map((c, i) => (i ? '<span class="fx-sep">›</span>' : '')
         + `<button class="fx-crumb${i === crumbs.length-1 ? ' on' : ''}" data-crumb="${enc(c.to)}"`
         + `${i === crumbs.length-1 ? ' disabled' : ''}>${enc(c.label)}</button>`).join('')}</nav>
+      <input class="input fx-find" id="fx-find" type="search" autocomplete="off"
+             placeholder="🔍 Search files" aria-label="Search files" value="${enc(_filesQ)}">
       <div class="fx-views">
         <button class="fx-vw${v==='tiles'?' on':''}" data-view="tiles" title="Tiles" aria-label="Tiles">▦</button>
         <button class="fx-vw${v==='details'?' on':''}" data-view="details" title="Details" aria-label="Details">☰</button>
       </div></div>`;
   }
   function _fxBindBar(pane){
+    /* SEARCH. The drive outgrew browsing the moment Folder Sync started filing thousands of files
+     * into it, and a folder is only findable if you remember which one you put it in.
+     *
+     * It matches on the NAME, which is the one thing both kinds of file have: a plain blob's name
+     * comes from the files index, and an ENCRYPTED one's is in that index too — the ciphertext on
+     * the server has no name at all, so a server-side search could never see them. That is why this
+     * filters the already-decrypted index in the client rather than asking Blossom to do it.
+     *
+     * The value is re-read from the input on every keystroke and the LIST alone is redrawn: a full
+     * renderBlossom() would rebuild the toolbar and take the caret with it. */
+    { const f = $('#fx-find', pane);
+      if(f){
+        /* Repaint through renderBlossom(), not _renderFilesGrid directly.
+         *
+         * Two reasons, both of which made the first version simply not work. _renderFilesGrid
+         * dereferences its `list` immediately, so passing null threw a TypeError out of the input
+         * handler on EVERY keystroke and the box was dead. And this same toolbar is mounted inside a
+         * SYNCED folder, whose listing comes from a manifest and a different renderer — calling the
+         * blob grid there would have replaced the folder's contents with Blossom drive blobs while
+         * the breadcrumbs still named the folder.
+         *
+         * renderBlossom() picks the right renderer and already has the list. It rebuilds the
+         * toolbar, so the caret is restored explicitly rather than by avoiding the redraw. */
+        let _findT = null;
+        f.oninput = () => {
+          _filesQ = f.value;
+          _filesSelClear();          // never leave a selection pointing at rows the query hid
+          clearTimeout(_findT);
+          // Coalesced: a keystroke on a big drive re-filters thousands of entries, and doing that
+          // per character is what makes a search box feel heavy.
+          _findT = setTimeout(async () => {
+            const at = f.selectionStart;
+            await renderBlossom();
+            const nf = document.getElementById('fx-find');
+            if(nf){ nf.focus(); try{ nf.setSelectionRange(at, at); }catch(_){} }
+          }, 140);
+        };
+        // Escape clears rather than closing anything — there is nothing to close, and a search box
+        // you cannot empty without selecting the text is a small daily annoyance.
+        f.onkeydown = e => { if(e.key === 'Escape'){ e.stopPropagation(); f.value=''; f.oninput(); } };
+      } }
     $$('.fx-vw', pane).forEach(b => b.onclick = () => { ClientSettings.set('filesView', b.dataset.view); renderBlossom(); });
     $$('.fx-crumb[data-crumb]', pane).forEach(b => b.onclick = () => {
       const to = b.dataset.crumb || '';
@@ -14918,6 +15080,9 @@
   let _filesFolder = null;
   // Pagination for the FILES GRID only (NOT the Music list — the player needs the whole queue). Render
   // a page at a time so a big folder doesn't fire hundreds of thumbnail requests (CPU) at once.
+  let _filesQ = '';            // the drive's search box — matched against the file NAME
+  const _fxMatch = (nm) => { const q=_filesQ.trim().toLowerCase();
+    return !q || String(nm||'').toLowerCase().includes(q); };
   const _FILES_PAGE = 60;
   let _filesShown = _FILES_PAGE, _filesShownFolder = null;
 
@@ -15235,7 +15400,12 @@
     // you clicked, and every one of them does it. Within each group the chosen sort applies.
     const cmp = _fxCompare(_syncSortKey);
     dirs.sort(cmp); files.sort(cmp);
-    const items = dirs.concat(files);
+    /* The same search box, over a SYNCED folder. Folder Sync is most of why the drive needed one —
+     * it files thousands of paths in — and a synced folder's names live in its manifest, so this is
+     * the same client-side name match the Blossom grid does. Sub-folders drop out of a query for the
+     * same reason files leave their folder: you are looking for a file, not a place. */
+    const _q = _filesQ.trim();
+    const items = _q ? files.filter(f => _fxMatch(f.name)) : dirs.concat(files);
     if(!items.length){
       grid.innerHTML = '<div class="empty">'+(_syncPath?('“'+enc(_syncPath)+'” is empty.'):('Nothing in “'+enc(_syncRoot)+'” yet — sync a device and it appears here.'))+'</div>';
       return;
@@ -15331,7 +15501,21 @@
     const synced = pairs.map(f =>
       tile('🔄', f.key, f.n + ' file' + (f.n === 1 ? '' : 's'), 'data-synckey="' + enc(f.key) + '"')).join('');
     const grid = $('#bl-grid', pane); if(!grid) return;
+    /* HOW MUCH OF THE DRIVE YOU ARE USING, said plainly and at the top. The number was reachable
+     * only by opening All files and adding up tiles, which for a drive that Folder Sync files
+     * thousands of files into is not reachable at all. Summed from the SERVER's blob list, not the
+     * index: the index knows what you named things, the server knows what is actually stored — and
+     * that difference is the whole point of a storage figure. Reads "—" until /list has answered,
+     * rather than a confident 0 B. */
+    // Gated on the SIZES, not on _blobHave: the two are filled by different paths (renderPublicFiles
+    // sets _blobHave alone), so keying the figure on the wrong one printed a confident "0 B stored"
+    // on a drive with gigabytes in it — the exact thing an em dash is here to avoid.
+    const haveSizes = _blobSizes.size > 0;
+    const used = haveSizes ? _fxBytes([..._blobSizes.values()].reduce((a,b)=>a+b, 0)) : '—';
+    const usedLine = `<div class="fx-used"><b>${enc(used)}</b> stored`
+      + (_blobHave ? ` · ${_blobHave.size} file${_blobHave.size===1?'':'s'}` : ' · counting…') + `</div>`;
     grid.innerHTML = '<div class="fx-home">'
+      + usedLine
       + folders
       + (synced ? '<div class="fx-home-sec">Synced folders</div>' + synced : '')
       + '<div class="fx-home-sec">Everything</div>'
@@ -15410,6 +15594,10 @@
     try{ const r=await fetch(server+'/list/'+ME.pubkey, { cache:'no-store' }); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
     catch(e){ const g=$('#bl-grid',pane); if(g) g.innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; }
     if(list!==null){ _blobHave=new Set(list.map(b=>b.sha256));   // reuse this fetch for the music player's existence check
+      // …and the SIZES, which the drive home totals. Filled here as well as in _refreshBlobHave
+      // because this is the fetch the Files screen actually makes; keying the figure on the other
+      // one is what printed "0 B stored" on a full drive.
+      _blobSizes=new Map(list.map(b=>[b.sha256, Number(b.size)||0]));
       // Guarded: a throw in the grid renderer used to escape renderPublicFiles and leave the grid
       // spinner spinning with no error anywhere the user could see.
       try{
@@ -15567,7 +15755,14 @@
       const m=FilesIdx.meta(b.sha256);
       if(!m && /octet-stream/.test(b.type||'')) return false;                  // stale index blobs / unnamed binaries (the "OCTET-STE" noise)
       if(m && m.enc && FilesIdx.folderOf(b.sha256)==='Music') return false;    // music ciphertext → Music list only
-      return _filesFolder==='' ? true : FilesIdx.folderOf(b.sha256)===_filesFolder;
+      /* The folder still applies while searching. Ignoring it made every folder chip draw the same
+       * whole-drive results, so navigation went inert until the box was cleared — and "All files" is
+       * already the way to search everything, one click away and always visible. */
+      if(_filesFolder!=='' && FilesIdx.folderOf(b.sha256)!==_filesFolder) return false;
+      /* Searching looks at the WHOLE drive, not just the folder you happen to be standing in — "find
+       * my tax return" is the question, and needing to guess the folder first is the problem it is
+       * there to solve. The crumb still says where you are; the results say where they came from. */
+      return _fxMatch((m && m.name) || '');
     }).sort(_fxCompare(_fxBlobKey));   // default is NEWEST first — else a fresh upload/VOD is buried at the END of a
                                        // big (3000+) oldest-first Blossom /list, past the 60-per-page window (the
                                        // "my recording isn't in the drive" bug). See _fxSort().
@@ -15609,7 +15804,10 @@
         ${box}
         <button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>${del}
         <div class="meta"><span class="fname" title="${enc(nm||dlName)}">${enc(fileLabel(nm,ext,b.size))}</span><span class="fc-acts">${dl}${move}</span></div></div>`;
-    }).join('') + (_more>0 ? `<button class="btn btn-ghost bl-more" data-id="bl-more" style="grid-column:1/-1;justify-self:center;margin:10px 0"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-down"></use></svg>Load ${Math.min(_more,_FILES_PAGE)} more · ${_more} left</button>` : '')) : '<div class="empty">No files'+(_filesFolder?(' in '+enc(_filesFolder)):'')+' yet — drop some above.</div>';
+    }).join('') + (_more>0 ? `<button class="btn btn-ghost bl-more" data-id="bl-more" style="grid-column:1/-1;justify-self:center;margin:10px 0"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-down"></use></svg>Load ${Math.min(_more,_FILES_PAGE)} more · ${_more} left</button>` : '')) : (_filesQ.trim()
+        ? '<div class="empty">Nothing'+(_filesFolder?(' in '+enc(_filesFolder)):' on your drive')
+          +' matches “'+enc(_filesQ.trim())+'”.</div>'
+        : '<div class="empty">No files'+(_filesFolder?(' in '+enc(_filesFolder)):'')+' yet — drop some above.</div>');
     if(details) _fxBindCols(grid);
     { const mb=$('.bl-more',grid); if(mb) mb.onclick=()=>{ _filesShown+=_FILES_PAGE; _renderFilesGrid(grid, list); }; }
     $$('.enc-open',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); try{ toast('decrypting…'); const u=await trackUrl(a.dataset.sha); window.open(u,'_blank'); }catch(err){ toast('decrypt failed: '+(err.message||'')); } });
@@ -16392,10 +16590,15 @@
   // and the player's library list all passed null, which is why Files → Music looked right while the
   // player kept trying deleted tracks. null = never fetched → behave as before rather than hide everything.
   let _blobHave=null;
+  let _blobSizes = new Map();   // sha → bytes, from the same /list that fills _blobHave
   async function _refreshBlobHave(){
     if(!ME) return _blobHave;
     try{ const r=await fetch(mediaServer()+'/list/'+ME.pubkey);
-      if(r.ok){ const l=await r.json(); if(Array.isArray(l)) _blobHave=new Set(l.map(b=>b.sha256)); } }catch(_){}
+      if(r.ok){ const l=await r.json(); if(Array.isArray(l)){
+        _blobHave=new Set(l.map(b=>b.sha256));
+        // Sizes come from the same answer — a second pass to total them would be a second /list.
+        _blobSizes=new Map(l.map(b=>[b.sha256, Number(b.size)||0]));
+      } } }catch(_){}
     return _blobHave;
   }
   /* Every track the index knows about, each flagged with whether the server still HAS its bytes.
@@ -16417,7 +16620,10 @@
   }
   // Playable tracks only — the queue must never contain something that cannot be played.
   function musicTracks(list){ return musicEntries(list).filter(t=>!t.missing); }
-  function _renderMusicList(grid, list, q){
+  /* `only` — a restricted, ORDERED set of entries (a playlist). Passed rather than filtered inside,
+   * because a playlist's order is its content: sorting it by date the way the library is sorted
+   * would silently throw away the one thing the user arranged. */
+  function _renderMusicList(grid, list, q, only){
     if(!grid) return;
     /* Which tracks are already on this device — read ONCE, then from memory.
      *
@@ -16425,9 +16631,9 @@
      * paint. The first paint of a session may not know yet; it draws without the marks and repaints
      * itself when the answer arrives, which is a flicker of a badge rather than a blocked render. */
     if(!MusicOffline._have){
-      MusicOffline.have().then(()=>{ if(grid.isConnected) _renderMusicList(grid, list, q); }).catch(()=>{});
+      MusicOffline.have().then(()=>{ if(grid.isConnected) _renderMusicList(grid, list, q, only); }).catch(()=>{});
     }
-    const all=musicEntries(list);
+    const all = only || musicEntries(list);
     const needle=String(q||'').trim().toLowerCase();
     const tracks=needle ? all.filter(t=>String(t.m.name||'').toLowerCase().includes(needle)) : all;
     const gone=tracks.filter(t=>t.missing).length;
@@ -16463,6 +16669,7 @@
                                              : '🔒 ' + (((t.m.size||0)/1048576)).toFixed(1) + 'MB'
                                                + (t.offline ? ' · offline' : '')}</span>
         ${t.missing ? '' : `<button class="track-keep${t.offline?' on':''}" data-sha="${t.sha}" title="${t.offline?'Kept on this device — tap to remove the offline copy':'Keep on this device (plays with no network)'}" aria-label="${t.offline?'Remove offline copy':'Keep offline'}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-${t.offline?'check':'download'}"></use></svg></button>`}
+        ${t.missing ? '' : `<button class="track-add" data-sha="${t.sha}" title="Add to a playlist" aria-label="Add to a playlist"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg></button>`}
         ${t.missing ? '' : `<button class="track-dl" data-sha="${t.sha}" data-name="${enc((t.m.name||'track')+'.ogg')}" title="Save a copy to your files (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg></button>`}
         <button class="track-del" data-sha="${t.sha}" title="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>`).join('')
@@ -16488,7 +16695,7 @@
         const saved = await FilesIdx.endBatch();
         toast(saved ? `removed ${dead.length} missing track${dead.length>1?'s':''}`
                     : `not saved — your library on the server is unchanged`);
-        _renderMusicList(grid, list, q);
+        _renderMusicList(grid, list, q, only);
         try{ _musicAppNow(); }catch(_){}
       }; }
     { const sh=$('#mus-shuffle',grid);
@@ -16497,7 +16704,13 @@
         // force: the random pick can be the track already playing, and without it that PAUSES.
         MusicPlayer.play(MusicPlayer.queue[Math.floor(Math.random()*MusicPlayer.queue.length)], {force:true});
         sh.classList.add('on'); }; }
-    $$('.track-play',grid).forEach(b=> b.onclick=()=>MusicPlayer.play(b.dataset.sha));
+    /* Pressing play inside a playlist makes the PLAYLIST the queue, in its order — otherwise
+     * ⏭ walks the whole library from wherever that track happens to sit in it, which is not what
+     * "play this playlist" means anywhere else. */
+    $$('.track-play',grid).forEach(b=> b.onclick=()=>{
+      if(only && only.length){ MusicPlayer.queue = only.map(t=>t.sha); MusicPlayer.shuffle = false; }
+      MusicPlayer.play(b.dataset.sha);
+    });
     /* KEEP ON THIS DEVICE. Toggling one track, and the whole library at once.
      *
      * The button reports per track as it lands rather than after the lot: downloading a few hundred
@@ -16514,7 +16727,7 @@
         toast(r.ok ? 'kept on this device' : 'could not download that track');
       }
       b.disabled=false;
-      _renderMusicList(grid, list, q);
+      _renderMusicList(grid, list, q, only);
     });
     /* GO AND LOOK AGAIN.
      *
@@ -16543,18 +16756,21 @@
       }; }
     { const ga=$('#mus-getall',grid);
       if(ga) ga.onclick=async ()=>{
-        const want=musicEntries(list).filter(t=>!t.missing && !t.offline).map(t=>t.sha);
+        // `all`, not the library: inside a playlist the button is labelled from the playlist, and a
+      // button that caches something other than the number printed on it is a trap.
+      const want=all.filter(t=>!t.missing && !t.offline).map(t=>t.sha);
         if(!want.length) return;
         ga.disabled=true; const label=ga.innerHTML;
         const r=await MusicOffline.keep(want, s=>{ ga.textContent=`${s.done} / ${s.total}…`; });
         ga.disabled=false; ga.innerHTML=label;
         toast(r.ok===r.total ? `${r.ok} track${r.ok===1?'':'s'} kept on this device`
                              : `kept ${r.ok} of ${r.total} — the rest failed to download`);
-        _renderMusicList(grid, list, q);
+        _renderMusicList(grid, list, q, only);
       }; }
     // A track is stored as Opus ciphertext, so "download" means decrypt-then-save — same path the
     // file grid's lock cards use. Without this the only way out of the Music folder was the player.
     $$('.track-dl',grid).forEach(b=> b.onclick=()=>saveEncrypted(b.dataset.sha, b.dataset.name));
+    $$('.track-add',grid).forEach(b=> b.onclick=()=>_addToPlaylist(b.dataset.sha));
     $$('.track-del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
     _updateMusicListBtns();
   }
@@ -17883,8 +18099,24 @@
     return `<div class="msg-tabs"><button class="mtab${_msgTab==='dm'?' on':''}" data-mt="dm">💬 DMs</button>`
       + `<button class="mtab${_msgTab==='email'?' on':''}" data-mt="email">📧 Email${Mail.unread?` <span class="mtab-badge">${Mail.unread}</span>`:''}</button></div>`;
   }
-  function _bindMsgTabs(root){ $$('.mtab',root).forEach(b=> b.onclick=()=>{ if(_msgTab===b.dataset.mt) return;
-    _msgTab=b.dataset.mt; dmActive=null;
+  /* WHAT IS ON SCREEN, not what the variable says.
+   *
+   * `if(_msgTab===want) return;` assumed the two can never disagree, and in desktop mode they do.
+   * Park the Messages window on the Email tab, focus another window, come back: os.js MOVES the
+   * window's nodes back and deliberately SKIPS the repaint (w.restored), so the mail client is still
+   * on screen — but re-entering the view ran `_msgTab='dm'` (switchView defaults Messages to DMs).
+   * Now the variable says 'dm' and the screen says email, so pressing 💬 DMs matched the guard and
+   * did NOTHING. Pressing Email then DMs worked, which is exactly the reported "I have to click DMs
+   * many times".
+   *
+   * The DOM is the one source that cannot be stale: #mail-root means email is mounted, #dm-list
+   * means DMs are. Compare against that and a disagreement repairs itself on the first press. */
+  function _msgShowing(){ return document.getElementById('mail-root') ? 'email'
+                               : (document.getElementById('dm-list') ? 'dm' : ''); }
+  function _bindMsgTabs(root){ $$('.mtab',root).forEach(b=> b.onclick=()=>{
+    const want=b.dataset.mt;
+    if(_msgTab===want && _msgShowing()===want) return;
+    _msgTab=want; dmActive=null;
     // The Email badge counts mail you have not LOOKED at, so opening the tab clears it. It is a
     // running total that only ever went up (sync adds to it; nothing subtracted), so it sat on the
     // tab after you had read everything — and, because the desktop's tray count reads the same
