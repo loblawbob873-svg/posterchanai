@@ -459,9 +459,16 @@ public class FolderSyncPlugin extends Plugin {
       String next = childId(cr, tree, cur, part);
       if (next == null) {
         if (!create) return null;
-        Uri made = DocumentsContract.createDocument(cr,
-            DocumentsContract.buildDocumentUriUsingTree(tree, cur),
-            DocumentsContract.Document.MIME_TYPE_DIR, part);
+        // createDocument throws a CHECKED FileNotFoundException — the provider can be gone, the
+        // volume unmounted, or the grant revoked between one segment and the next. Answering null is
+        // right: every caller already treats "could not resolve" as a refusal, and a folder sync must
+        // not take the app down because an SD card left the building mid-sweep.
+        Uri made;
+        try {
+          made = DocumentsContract.createDocument(cr,
+              DocumentsContract.buildDocumentUriUsingTree(tree, cur),
+              DocumentsContract.Document.MIME_TYPE_DIR, part);
+        } catch (Exception e) { return null; }
         if (made == null) return null;
         next = DocumentsContract.getDocumentId(made);
       }
