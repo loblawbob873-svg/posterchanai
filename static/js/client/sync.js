@@ -586,17 +586,32 @@
     if(opts && opts.dryRun) return { list, bytes: list.reduce((n, x) => n + (x.size || 0), 0) };
 
     let moved = 0, absent = 0;
-    const failed = [];
+    const failed = [], tombstone = [];
     for(const item of list){
       try{ await fs.trash(f.id, item.path, Date.now()); moved++; }
       catch(e){
-        // Not on THIS device — normal, and not an error: another device holds it and will trash its
-        // own copy when this deletion reaches it.
         const msg = String((e && e.message) || e);
-        if(/ENOENT|not found|no such/i.test(msg)) absent++; else failed.push({ path:item.path, error:msg });
+        if(/ENOENT|not found|no such/i.test(msg)){ absent++; tombstone.push(item.path); }
+        else failed.push({ path:item.path, error:msg });
       }
     }
-    return { list, moved, absent, failed };
+    /* COPIES THIS DEVICE DOES NOT HOLD are marked deleted directly, rather than downloaded first.
+     *
+     * The alternative is genuinely worse: to remove a thousand copies made on a phone, every other
+     * device would have to fetch all thousand purely so that one of them could delete them again.
+     *
+     * A tombstone here is the same record a local deletion would have produced — the devices that DO
+     * hold the file move their copy into `.pc-trash` on their next sweep, exactly as they would for
+     * any other deletion, and nothing is erased anywhere. It goes through the ordinary save, so the
+     * merge and the server's collapse guard both still apply. */
+    if(tombstone.length){
+      const now = Date.now();
+      const next = Object.assign({}, man);
+      for(const path of tombstone) next[path] = { deletedAt: now };
+      await store.save(key, { manifest: next, base: await store.base(key),
+                              touched: tombstone, removed: tombstone.length });
+    }
+    return { list, moved, absent, failed, tombstoned: tombstone.length };
   }
 
   // ---- the screen ------------------------------------------------------------------------------
@@ -837,7 +852,7 @@
         try{
           const r = await conflictCleanup(f, {});
           PC.toast('moved ' + r.moved + ' to trash'
-                   + (r.absent ? ' · ' + r.absent + ' are on another device' : '')
+                   + (r.tombstoned ? ' · ' + r.tombstoned + ' marked for your other devices' : '')
                    + (r.failed.length ? ' · ' + r.failed.length + ' failed' : ''));
           await sweep(get(), { manual:true });            // tell the other devices, the ordinary way
         }catch(e){ PC.toast('tidy failed: ' + ((e && e.message) || e)); }
