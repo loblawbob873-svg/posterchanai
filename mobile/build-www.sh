@@ -28,7 +28,13 @@ cp "$SRC"/static/js/client/sw.js      www/sw.js
 # Flashcards) were silently missing from the APK for as long as it has existed: both load ON DEMAND, so
 # nothing breaks until someone opens that one screen. Copying the directory can't forget the next one.
 cp -r "$SRC"/static/vendor            www/static/
-cp "$SRC"/static/*.png                www/static/ 2>/dev/null || true
+# Every image the client can reference by URL, not just PNGs. `client.css` asks for
+# /static/os-wallpaper.webp, which no glob here matched, so the bundled apps lost the desktop-mode
+# wallpaper while the website kept it — the same shape as the missing fonts above, and invisible for
+# the same reason: a 404 inside a stylesheet says nothing on screen except that something is gone.
+# tests/test_bundle_assets.py fails if the client starts asking for a type this does not carry.
+cp "$SRC"/static/*.png "$SRC"/static/*.webp "$SRC"/static/*.svg \
+   "$SRC"/static/*.jpg "$SRC"/static/*.ico  www/static/ 2>/dev/null || true
 
 # The rendered shell (auth gate + app scaffold) — take the LIVE one so the app matches the site exactly.
 curl -fsSL https://poster.place/client -o www/index.html
