@@ -550,6 +550,41 @@
     return _maxBytes;
   }
 
+  /* ---- tidying up conflict copies --------------------------------------------------------------
+   *
+   * Several rounds of getting content identity wrong produced conflict copies of files that were
+   * never different. They are ordinary files now and nothing removes them on its own.
+   *
+   * The engine decides WHICH are redundant, on a real content identity and never on size+mtime (see
+   * redundantConflicts). This only carries the answer out: trash the copies on THIS device, and let
+   * the ordinary sweep tell the others. That is deliberate — nothing here writes a manifest, invents
+   * a tombstone or touches another device. It removes local files the way the sweep does, into
+   * `.pc-trash`, and the next sweep reads that as "deleted here" and propagates it through the same
+   * path every other deletion takes.
+   *
+   * So the worst case is the worst case of a normal delete, and everything is still on disk. */
+  async function conflictCleanup(f, opts){
+    const fs = FS();
+    if(!fs) throw new Error('this device has no filesystem access');
+    const key = keyOf(f);
+    const man = await store.manifest(key);
+    const list = S.redundantConflicts(man);
+    if(opts && opts.dryRun) return { list, bytes: list.reduce((n, x) => n + (x.size || 0), 0) };
+
+    let moved = 0, absent = 0;
+    const failed = [];
+    for(const item of list){
+      try{ await fs.trash(f.id, item.path, Date.now()); moved++; }
+      catch(e){
+        // Not on THIS device — normal, and not an error: another device holds it and will trash its
+        // own copy when this deletion reaches it.
+        const msg = String((e && e.message) || e);
+        if(/ENOENT|not found|no such/i.test(msg)) absent++; else failed.push({ path:item.path, error:msg });
+      }
+    }
+    return { list, moved, absent, failed };
+  }
+
   // ---- the screen ------------------------------------------------------------------------------
   function paint(){
     const feed = document.getElementById('feed'); if(!feed) return;
@@ -602,6 +637,7 @@
           ${pr.paused ? '<button class="btn btn-neon small sync-start">Start syncing ▶</button>'
                       : '<button class="btn btn-neon small sync-now">Sync now</button>'}
           <button class="btn btn-ghost small sync-deep" title="Re-read and re-hash every file. Slow on a big folder — for a file edited in place without changing its size or timestamp.">Deep check</button>
+          <button class="btn btn-ghost small sync-tidy">Tidy up conflict copies</button>
           <button class="btn btn-ghost small sync-trash">Empty trash</button>
           <button class="btn btn-ghost small danger sync-forget">Stop syncing</button>
         </div></div>`;
@@ -770,6 +806,29 @@
             PC.toast('“' + key + '” is connected again — its exclusions and name are unchanged');
           }catch(e){ PC.toast('could not reconnect: ' + ((e && e.message) || e)); }
         }; }
+      card.querySelector('.sync-tidy').onclick = async () => {
+        const f = get(); if(!f) return;
+        setStatus(f.id, 'looking for redundant copies…');
+        let found;
+        try{ found = await conflictCleanup(f, { dryRun:true }); }
+        catch(e){ PC.toast('couldn’t check: ' + ((e && e.message) || e)); paint(); return; }
+        if(!found.list.length){ PC.toast('no conflict copies that are provably identical'); paint(); return; }
+        const mb = (found.bytes / 1048576).toFixed(1);
+        const ok = await PC.uiConfirm(found.list.length + ' conflict copies are byte-for-byte identical to the '
+          + 'file they were made from (' + mb + ' MB).\n\nMove them to .pc-trash? They are removed on your other '
+          + 'devices the same way any deletion is, and nothing is erased — everything stays in .pc-trash until you '
+          + 'empty it.\n\nCopies that DIFFER from the original are left alone.');
+        if(!ok){ paint(); return; }
+        setStatus(f.id, 'tidying…');
+        try{
+          const r = await conflictCleanup(f, {});
+          PC.toast('moved ' + r.moved + ' to trash'
+                   + (r.absent ? ' · ' + r.absent + ' are on another device' : '')
+                   + (r.failed.length ? ' · ' + r.failed.length + ' failed' : ''));
+          await sweep(get(), { manual:true });            // tell the other devices, the ordinary way
+        }catch(e){ PC.toast('tidy failed: ' + ((e && e.message) || e)); }
+        paint();
+      };
       card.querySelector('.sync-trash').onclick = async () => {
         if(!await PC.uiConfirm('Empty this folder’s .pc-trash of anything older than 30 days?')) return;
         try{ const r = await FS().emptyTrash(id, 30); PC.toast('emptied ' + (r.removed||0) + ' day(s)'); }

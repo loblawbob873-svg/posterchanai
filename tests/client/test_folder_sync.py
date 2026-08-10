@@ -23,6 +23,7 @@ import json
 import os
 import shutil
 import subprocess
+import textwrap
 import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -199,6 +200,76 @@ class TestFolderSync(unittest.TestCase):
                                        "offline device has not seen it yet")
         self.assertNotIn("old.txt", out)
         self.assertIn("live.txt", out)
+
+
+class TestRedundantConflicts(unittest.TestCase):
+    """Which conflict copies can be PROVEN redundant.
+
+    Rounds of getting content identity wrong produced copies of files that were never different, and
+    they are ordinary files now. This picks the ones that are demonstrably the same file — and the
+    proof has to be real, because the alternative is deleting someone's work.
+    """
+
+    def run_js(self, body):
+        js = "const S = require(%s);\n%s" % (json.dumps(MOD), textwrap.dedent(body))
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            raise AssertionError("node failed:\n" + r.stderr[-2000:])
+        return json.loads(r.stdout)
+
+    def found(self, manifest):
+        return self.run_js("""
+          const man = %s;
+          process.stdout.write(JSON.stringify(S.redundantConflicts(man).map(x => x.path)));
+        """ % json.dumps(manifest))
+
+    def test_identical_by_checksum_is_redundant(self):
+        got = self.found({
+            "photo.jpg": {"csum": "A", "size": 10, "mtime": 1},
+            "photo (conflict from tablet, 2026-08-10).jpg": {"csum": "A", "size": 10, "mtime": 2},
+        })
+        self.assertEqual(got, ["photo (conflict from tablet, 2026-08-10).jpg"])
+
+    def test_identical_by_chunk_list_is_redundant(self):
+        got = self.found({
+            "clip.mp4": {"chunks": ["x", "y"], "size": 99, "mtime": 1},
+            "clip (conflict from laptop, 2026-08-09).mp4": {"chunks": ["x", "y"], "size": 99, "mtime": 9},
+        })
+        self.assertEqual(len(got), 1)
+
+    def test_a_copy_that_differs_is_left_alone(self):
+        """The whole point of a conflict copy. Two people edited the same file; both survive."""
+        got = self.found({
+            "notes.txt": {"csum": "B", "size": 5, "mtime": 1},
+            "notes (conflict from phone, 2026-08-10).txt": {"csum": "C", "size": 5, "mtime": 1},
+        })
+        self.assertEqual(got, [])
+
+    def test_size_and_mtime_alone_are_not_proof(self):
+        """STRICTER THAN same() on purpose. A copy taken FROM a file has the same size and timestamp
+        whether or not the bytes match, so that is not evidence of anything — and this deletes."""
+        got = self.found({
+            "sized.bin": {"size": 7, "mtime": 1},
+            "sized (conflict from x, 2026-08-10).bin": {"size": 7, "mtime": 1},
+        })
+        self.assertEqual(got, [])
+
+    def test_a_copy_whose_original_is_gone_is_left_alone(self):
+        """Then it is the only remaining copy of that content, whatever its name says."""
+        got = self.found({"lonely (conflict from x, 2026-08-10).txt": {"csum": "Z", "size": 1, "mtime": 1}})
+        self.assertEqual(got, [])
+
+    def test_a_tombstoned_original_does_not_make_the_copy_redundant(self):
+        got = self.found({
+            "gone.txt": {"deletedAt": 123},
+            "gone (conflict from x, 2026-08-10).txt": {"csum": "Q", "size": 1, "mtime": 1},
+        })
+        self.assertEqual(got, [])
+
+    def test_an_ordinary_file_is_never_touched(self):
+        got = self.found({"my (conflict) notes.txt": {"csum": "A", "size": 1, "mtime": 1},
+                          "holiday photos/beach.jpg": {"csum": "A", "size": 1, "mtime": 1}})
+        self.assertEqual(got, [])
 
 
 if __name__ == "__main__":
