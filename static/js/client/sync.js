@@ -33,6 +33,13 @@
   const S = window.PCFolderSync, RUN = window.PCSyncRun;
   const FS = () => window.pcFs || null;            // desktop only, for now — Android SAF lands next
 
+  /* The mapping is keyed by IDENTITY, deliberately: switching account must never silently start
+   * uploading this machine's documents into a different one's manifest. The cost is that a folder
+   * added under another identity — or before login resolved, when me() is still null and the key
+   * falls back to _anon — is not in this list. The GRANT is still there either way (the desktop keeps
+   * roots in its own config, Android in the system's persisted URI permissions), so `granted` below
+   * is what makes those visible instead of leaving someone staring at an empty screen wondering where
+   * their folders went. */
   const CFG_KEY = () => 'pc_sync_folders_' + ((PC.me && PC.me() && PC.me().pubkey) || 'anon');
   const BASE_KEY = (id) => 'pc_sync_base_' + id;
 
@@ -97,6 +104,7 @@
   /* ONE SWEEP PER FOLDER AT A TIME. The watcher fires while a sweep is running as a matter of course
    * — the sweep's own downloads are filesystem changes — and a second sweep would diff against a
    * half-applied state, which is the one input the engine is not designed for. */
+  let granted = null;                 // what the PLATFORM says this device can reach
   const running = new Map();          // id -> promise
   const status = new Map();           // id -> {when, text, report}
 
@@ -257,13 +265,25 @@
     const feed = document.getElementById('feed'); if(!feed) return;
     const list = folders();
     const fs = FS();
+    // Ask the platform once per visit, then repaint. Cheap (a config read on desktop, a permissions
+    // query on Android) and it is the only way to notice a grant that this identity has not mapped.
+    if(fs && granted === null){
+      granted = [];
+      fs.list().then(r => { granted = r || []; if(PC.VIEW === 'sync') paint(); }).catch(() => {});
+    }
+    const mapped = new Set(list.map(f => f.id));
+    const orphans = (granted || []).filter(g => !mapped.has(g.id));
     const rows = list.map(f => {
       const st = status.get(f.id) || {};
       const pr = prefs(f);
+      // A grant can be revoked in system settings, or the drive can be gone. Saying so beats
+      // "unknown sync folder" on every sweep forever.
+      const lost = granted && granted.length >= 0 && !(granted || []).some(g => g.id === f.id);
       return `<div class="sync-card" data-id="${PC.enc(f.id)}">
         <div class="sync-head"><b>${PC.enc(f.name || f.dir || 'folder')}</b>
           <span class="muted small">${PC.enc(f.dir || '')}</span></div>
-        <div class="sync-status muted small">${PC.enc(st.text || 'not synced yet')}</div>
+        <div class="sync-status muted small">${lost ? 'access to this folder was withdrawn — remove it and add it again'
+          : PC.enc(st.text || 'not synced yet')}</div>
         ${details(st.report)}
         <label class="sync-ex"><span class="muted small">Don't sync these (one per line — a folder name covers everything inside it)</span>
           <textarea class="input sync-ex-ta" rows="2" placeholder="Old&#10;*.tmp">${PC.enc((f.excludes||[]).join('\n'))}</textarea></label>
@@ -287,7 +307,16 @@
       <p class="muted small">Folders are kept in step across your devices, encrypted with your own key
         before they leave. Deletions go to <code>.pc-trash</code> inside the folder, never straight out.
         Where a folder lives is set per device.</p>
-      ${rows || (fs ? '<div class="empty">No folders yet.</div>' : '')}
+      ${(!PC.me || !PC.me()) ? '<div class="empty">Sign in to sync — folder mappings belong to an '
+        + 'account, so that switching identity never uploads this machine\'s files into someone '
+        + 'else\'s.</div>' : ''}
+      ${rows || (fs ? '<div class="empty">No folders syncing under this account yet.</div>' : '')}
+      ${orphans.length ? `<div class="sync-orphans"><b>Already allowed on this device</b>
+        <p class="muted small">You granted access to these, but they are not syncing under the account
+        you are signed in with now. Nothing has been lost — pick one up to start syncing it here.</p>
+        ${orphans.map(g => `<div class="sync-orphan"><span>${PC.enc(g.dir || g.id)}</span>
+          <button class="btn btn-ghost small sync-adopt" data-oid="${PC.enc(g.id)}"
+                  data-odir="${PC.enc(g.dir || '')}">Sync here</button></div>`).join('')}</div>` : ''}
       ${fs ? '<button class="btn btn-neon" id="sync-add">Add a folder…</button>' : ''}
       ${(fs && fs.backgroundCheck) ? `<label class="sync-bg"><input type="checkbox" id="sync-bg"${
           ClientSettings.get('syncBgCheck', false) ? ' checked' : ''}>
@@ -303,6 +332,15 @@
         try{ await FS().backgroundCheck(bg.checked, 180); }
         catch(e){ PC.toast('could not change that: ' + ((e && e.message) || e)); }
       }; }
+
+    feed.querySelectorAll('.sync-adopt').forEach(b => { b.onclick = () => {
+      const l = folders();
+      if(l.some(x => x.id === b.dataset.oid)) return;
+      l.push({ id: b.dataset.oid, dir: b.dataset.odir,
+               name: (b.dataset.odir || b.dataset.oid).split(/[/\\]/).pop(),
+               excludes: [], prefs: {}, lastSyncAt: 0, lastFullScanAt: 0 });
+      saveFolders(l); watch(b.dataset.oid); paint();
+    }; });
 
     const add = document.getElementById('sync-add');
     if(add) add.onclick = async () => {

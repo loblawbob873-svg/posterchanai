@@ -6717,3 +6717,6 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .sync-bg{display:flex;gap:10px;align-items:flex-start;margin-top:14px;padding:12px;border-radius:12px;
   border:1px solid var(--line);background:var(--panel2)}
 .sync-bg input{margin-top:3px;flex:0 0 auto}
+.sync-orphans{margin-top:16px;padding:12px;border-radius:12px;border:1px dashed var(--line);background:var(--panel2)}
+.sync-orphan{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0}
+.sync-orphan span{overflow-wrap:anywhere;word-break:break-all;min-width:0}
