@@ -191,9 +191,23 @@
       // v2 first: the paths are an encrypted Blossom blob. See save() for why they had to leave the
       // document, and for the marker `sealed` carries so an older build cannot misread this.
       if(doc.pathsSha){
+        /* FETCH AND DECRYPT FAIL FOR OPPOSITE REASONS, so they must not share a message. "Stored but
+         * unreadable" told someone nothing and sent an evening into checking the server, which had
+         * the blob the whole time: present, kept, no expiry. One of these is a media-server or
+         * network problem and the other is a key problem, and the fix for each is the other's
+         * mistake. */
         let bytes;
         try{ bytes = await PC.syncBlobs.get(doc.pathsSha); }
-        catch(e){ throw new Error('the folder list is stored but unreadable: ' + ((e && e.message) || e)); }
+        catch(e){
+          const m = String((e && e.message) || e);
+          if(/OperationError|decrypt|importKey|drive key/i.test(m)){
+            throw new Error('this device cannot decrypt your folder list — it is stored and intact, '
+                            + 'but the drive key here cannot open it (' + m + ')');
+          }
+          throw new Error('could not fetch your folder list from ' + (PC.mediaServer ? PC.mediaServer() : 'the media server')
+                          + ' (' + m + '). The list itself is fine — check this device is pointed at the '
+                          + 'same media server as your others.');
+        }
         try{ return JSON.parse(new TextDecoder().decode(bytes)) || {}; }
         catch(e){ throw new Error('the stored folder list is damaged'); }
       }
