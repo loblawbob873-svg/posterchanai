@@ -3848,8 +3848,17 @@
     try{
       const u=await MusicOffline.usage();
       const budget=MusicOffline.budgetBytes();
+      let tail = budget ? ' of ' + _fmtBytes(budget) : ' · no limit';
+      if(!budget){
+        try{
+          if(navigator.storage && navigator.storage.estimate){
+            const est = await navigator.storage.estimate();
+            if(est && est.quota) tail += ' (this device allows ~' + _fmtBytes(est.quota) + ' in total)';
+          }
+        }catch(_){}
+      }
       el.textContent = u.count
-        ? (u.count + ' track' + (u.count===1?'':'s') + ' kept · ' + _fmtBytes(u.bytes) + ' of ' + _fmtBytes(budget))
+        ? (u.count + ' track' + (u.count===1?'':'s') + ' kept · ' + _fmtBytes(u.bytes) + tail)
         : 'No tracks kept offline on this device yet.';
     }catch(_){ el.textContent='Couldn’t read this device’s offline music.'; }
   }
@@ -15733,12 +15742,20 @@
         return { bytes, count: (rows || []).length };
       }catch(_){ return { bytes: 0, count: 0 }; }
     },
+    /* 0 means NO LIMIT, and that is the default, because it is what this always did and because a
+     * music library is not a cache — someone who downloaded their albums for a flight did not ask
+     * for the oldest ones to disappear. The danger an unbounded store carries is real (a browser
+     * evicting an origin takes the drive cache and Notes attachments with it, not just music), so
+     * the answer is to ASK not to be evicted rather than to silently delete — boot calls
+     * navigator.storage.persist() for exactly that, and the stat line below reports the OS ceiling,
+     * because "no limit" is a promise this app cannot make on its own. */
     budgetBytes(){
-      const gb = +ClientSettings.get('musicOfflineGB', 4);
-      return (gb > 0 ? gb : 4) * 1024 * 1024 * 1024;
+      const gb = +ClientSettings.get('musicOfflineGB', 0);
+      return gb > 0 ? gb * 1024 * 1024 * 1024 : 0;
     },
     async trim(){
       const budget = this.budgetBytes();
+      if(!budget) return 0;                       // no limit: nothing is ever evicted
       let rows;
       try{
         rows = await this._tx('readonly', st => st.getAll());
@@ -21688,9 +21705,9 @@
           <div class="muted small">How much offline media (avatars, images, played videos) to keep cached on THIS device. Larger = fewer re-downloads on a slow/throttled link, but more storage used. Per-device.</div>
           <div class="muted small" id="media-cache-stat" style="margin-top:4px">Checking device storage…</div>
           <label class="fld">🎵 Offline music limit
-            <select class="input" id="set-music-offline">${[1,2,4,8,16,32,64].map(g=>`<option value="${g}"${(+ClientSettings.get('musicOfflineGB',4)===g)?' selected':''}>${g} GB${g===4?' (default)':''}</option>`).join('')}</select>
+            <select class="input" id="set-music-offline">${(()=>{const cur=+ClientSettings.get('musicOfflineGB',0)||0;const opts=[0,5,10,20,50,100,250,500];if(!opts.includes(cur))opts.push(cur);return opts.sort((a,b)=>a-b).map(g=>`<option value="${g}"${cur===g?' selected':''}>${g?g+' GB':'No limit (default)'}</option>`).join('');})()}</select>
           </label>
-          <div class="muted small">How much of your music library to keep playable offline on THIS device. Tracks are kept until the limit is reached, then the ones stored longest ago make room. Per-device — a phone and a desktop can hold different amounts of the same library.</div>
+          <div class="muted small">How much of your music library to keep playable offline on THIS device. <b>No limit</b> keeps everything you download — a library is not a cache, and nothing is ever evicted. Set a size and the tracks stored longest ago make room once it is reached. Per-device: a phone and a desktop can hold different amounts of the same library.</div>
           <div class="muted small" id="music-offline-stat" style="margin-top:4px">Checking…</div>
           ${BUNDLED ? `<label class="fld">🌐 Instance
             <div class="instance-pick" id="us-instance-pick"></div>
@@ -21997,9 +22014,10 @@
      * download: someone reaching for this setting is usually reaching for space, and a limit that
      * takes effect the next time you happen to save a track has not given them any. */
     { const mo=$('#set-music-offline'); if(mo) mo.onchange=async ()=>{
-        const gb=+mo.value||4; ClientSettings.set('musicOfflineGB', gb);
+        const gb=Math.max(0, +mo.value||0); ClientSettings.set('musicOfflineGB', gb);
         let freed=0; try{ freed=await MusicOffline.trim(); }catch(_){}
-        toast('offline music limit set to '+gb+' GB' + (freed ? ' · freed '+_fmtBytes(freed) : ''));
+        toast(gb ? ('offline music limit set to '+gb+' GB' + (freed ? ' · freed '+_fmtBytes(freed) : ''))
+                 : 'offline music: no limit');
         _fillMusicOfflineStat(); }; }
     _fillMusicOfflineStat();
     // Instance quick-pick (native app only). Chips for the default + recently-used instances; tapping one (or
