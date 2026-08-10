@@ -342,6 +342,31 @@ function createWindow() {
       'The app files could not be read (' + (desc || code) + ').\n\nReinstalling should fix it.');
   });
 
+  /* A DEAD RENDERER MUST NOT BE A BLACK WINDOW.
+   *
+   * When Chromium kills the render process — and the way to earn that here is memory, a folder sync
+   * holding a multi-gigabyte file's plaintext, ciphertext and Blob at once — Electron leaves the
+   * BrowserWindow open and empty. Reported as "after sync, i get black screen in windows app": no
+   * error, no dialog, nothing in the window, and the app apparently still running.
+   *
+   * `reason` is 'oom'/'crashed'/'killed'; 'clean-exit' is an ordinary teardown and is left alone.
+   * Reload rather than quit — everything this app holds is either on the relay or on disk, so a
+   * reload is cheap and returns a usable window instead of a black one. Say what happened first, or
+   * the reload just looks like the app blinked. */
+  win.webContents.on('render-process-gone', (e, details) => {
+    const reason = (details && details.reason) || 'unknown';
+    console.warn('[renderer] gone:', reason, details && details.exitCode);
+    if (reason === 'clean-exit') return;
+    dialog.showErrorBox('PosterChan ran out of memory',
+      reason === 'oom'
+        ? 'The window was closed by the system because it ran out of memory. This usually means a '
+          + 'very large file was being synced.\n\nThe app will reload. Files already synced are '
+          + 'safe, and the next check resumes where it stopped.'
+        : 'The window stopped unexpectedly (' + reason + ').\n\nThe app will reload.');
+    try { win.webContents.reloadIgnoringCache(); }
+    catch (_) { try { loadApp(); } catch (_e) {} }
+  });
+
   loadApp();
 }
 

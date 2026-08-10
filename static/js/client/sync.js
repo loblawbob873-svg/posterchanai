@@ -464,17 +464,32 @@
       + '</div>';
   }
 
-  // The ceiling is the SERVER's, and an admin can change it — so it is asked for, not assumed.
+  /* THE CEILING IS THE BROWSER'S, NOT THE SERVER'S, AND THAT WAS THE BUG.
+   *
+   * The admin setting is what the server will ACCEPT — 5 GB on this deployment. What the client can
+   * carry is a different number entirely: sending one file holds the plaintext, the AES-GCM
+   * ciphertext and the Blob at the same time, and hashes the result, so a single file costs three to
+   * four times its size in renderer memory. A 1.9 GB document therefore asks for ~7 GB, and what
+   * happens is not an error — the render process is killed. In the desktop app that is a BLACK
+   * WINDOW, and on the way down its in-flight fetches fail in a way the console reports as CORS,
+   * which is what sent this in the wrong direction for an hour.
+   *
+   * So the sweep takes the LOWER of the two. Over it, the file is REPORTED as skipped (syncrun does
+   * that already, and "reported, never silent" is the rule) rather than taking the app down with it.
+   * Streaming the encrypt and upload would raise this a lot, and until something does, a ceiling the
+   * process survives beats a ceiling the server would allow. */
+  const SYNC_MAX_BYTES = 256 * 1024 * 1024;
   let _maxBytes = null;
   async function maxBytes(){
     if(_maxBytes !== null) return _maxBytes;
-    _maxBytes = 0;
+    let server = 0;
     try{
       const r = await fetch('/client/config');
       const j = await r.json();
       const mb = +(j && (j.blossom_max_upload_mb || j.max_upload_mb)) || 0;
-      _maxBytes = mb > 0 ? mb * 1024 * 1024 : 0;
+      server = mb > 0 ? mb * 1024 * 1024 : 0;
     }catch(_){}
+    _maxBytes = server > 0 ? Math.min(server, SYNC_MAX_BYTES) : SYNC_MAX_BYTES;
     return _maxBytes;
   }
 
