@@ -290,17 +290,24 @@
     // Ask the platform once per visit, then repaint. Cheap (a config read on desktop, a permissions
     // query on Android) and it is the only way to notice a grant that this identity has not mapped.
     if(fs && granted === null){
-      granted = [];
-      fs.list().then(r => { granted = r || []; if(PC.VIEW === 'sync') paint(); }).catch(() => {});
+      // `asked` is separate from the ANSWER on purpose. Setting granted=[] as a "in flight" marker
+      // made the very first paint treat every mapped folder as one whose grant had been withdrawn —
+      // an empty list is a real answer meaning "this device can reach nothing", and it must not be
+      // borrowed to mean "we have not looked yet". A repaint corrected it a moment later, which is
+      // exactly the kind of flicker that reads as "my folder disappeared".
+      granted = undefined;
+      fs.list().then(r => { granted = r || []; if(PC.VIEW === 'sync') paint(); })
+               .catch(() => { granted = null; });
     }
     const mapped = new Set(list.map(f => f.id));
-    const orphans = (granted || []).filter(g => !mapped.has(g.id));
+    const orphans = (Array.isArray(granted) ? granted : []).filter(g => !mapped.has(g.id));
     const rows = list.map(f => {
       const st = status.get(f.id) || {};
       const pr = prefs(f);
       // A grant can be revoked in system settings, or the drive can be gone. Saying so beats
       // "unknown sync folder" on every sweep forever.
-      const lost = granted && granted.length >= 0 && !(granted || []).some(g => g.id === f.id);
+      // Only when the platform has actually answered — never while the question is in flight.
+      const lost = Array.isArray(granted) && !granted.some(g => g.id === f.id);
       return `<div class="sync-card" data-id="${PC.enc(f.id)}">
         <div class="sync-head"><b>${PC.enc(keyOf(f))}</b>
           <span class="muted small">${PC.enc(f.dir || '')}</span>

@@ -222,6 +222,60 @@ class TestSyncRun(unittest.TestCase):
         self.assertEqual([c[1] for c in out["calls"]], ["a.jpg"])
         self.assertEqual(out["rep"]["excluded"], 1)
 
+    def test_excluding_a_folder_leaves_it_intact_in_the_manifest(self):
+        """Exclude a folder on the phone; the laptop must still have it.
+
+        The engine already refuses to PLAN a deletion for an excluded path. This is the last link:
+        the manifest written back must still CONTAIN those paths. If the executor rebuilt the manifest
+        from what it just saw locally instead of from what was already there, excluding a folder on
+        one device would erase it from every other one — the same outcome, one step later.
+
+        There is a NEW local file in this scenario on purpose. Without one nothing is dirty, no
+        manifest is written at all, and the assertions below pass vacuously — which is exactly what
+        the first version of this test did, and it survived a mutation that emptied the manifest.
+        """
+        out = self.run_js("""
+          (async () => {
+            const fs = makeFs({'keep.jpg': {sha:'K', size:3, mtime:1},
+                               'new.jpg':  {sha:'N', size:3, mtime:1}});   // forces a save
+            const store = makeStore({'keep.jpg': {sha:'K', size:3, mtime:1},
+                                     'Old/a.jpg': {sha:'A', size:9, mtime:1},
+                                     'Old/deep/b.jpg': {sha:'B', size:9, mtime:1}},
+                                    {'keep.jpg': {sha:'K', size:3, mtime:1},
+                                     'Old/a.jpg': {sha:'A', size:9, mtime:1},
+                                     'Old/deep/b.jpg': {sha:'B', size:9, mtime:1}});
+            const rep = await R.sweep(fs, store, {id:'r1', device:'phone', now:5000, excludes:['Old']});
+            process.stdout.write(JSON.stringify({rep, saved: store.saved, calls: fs.calls}));
+          })();
+        """)
+        rep, saved = out["rep"], out["saved"]
+        self.assertEqual(rep["removedRemote"], [],
+                         "excluding a folder proposed removing it from the other devices")
+        self.assertEqual(rep["trashed"], [])
+        self.assertEqual([c[1] for c in out["calls"]], ["new.jpg"],
+                         "an excluded folder must not be touched on disk either")
+        self.assertTrue(saved, "the harness must produce a manifest write, or this test proves nothing")
+        m = saved[-1]["manifest"]
+        self.assertIn("Old/a.jpg", m, "the excluded folder was dropped from the shared manifest — every "
+                                      "other device would read that as 'deleted elsewhere'")
+        self.assertIn("Old/deep/b.jpg", m)
+        self.assertFalse(m["Old/a.jpg"].get("deletedAt"), "it was tombstoned, which is a delete")
+
+    def test_deleting_an_excluded_folder_locally_is_safe(self):
+        """The reason someone excludes a folder on a phone is to get the space back. Deleting the
+        local copy afterwards must still not touch anyone else's."""
+        out = self.run_js("""
+          (async () => {
+            const fs = makeFs({});                                  // the phone has nothing left
+            const store = makeStore({'Old/a.jpg': {sha:'A', size:9, mtime:1}},
+                                    {'Old/a.jpg': {sha:'A', size:9, mtime:1}});
+            const rep = await R.sweep(fs, store, {id:'r1', device:'phone', now:5000, excludes:['Old']});
+            process.stdout.write(JSON.stringify({rep, saved: store.saved}));
+          })();
+        """)
+        self.assertEqual(out["rep"]["removedRemote"], [])
+        self.assertEqual(out["saved"], [], "nothing changed, so the manifest should not be rewritten")
+
 
 if __name__ == "__main__":
     unittest.main()
