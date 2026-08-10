@@ -147,6 +147,9 @@ function makeDevice(world, opts){
       bases.set(k, JSON.parse(JSON.stringify(s.base || {})));
     },
     async hashBytes(bytes){ return sha256(bytes); },
+    // The address these bytes WOULD have. Deterministic here for the same reason it is in life:
+    // content in, one address out.
+    async blobSha(bytes){ return sha256(bytes); },
     async putBlob(bytes){ const sha = sha256(bytes); world.blobs.set(sha, new Uint8Array(bytes)); return sha; },
     /* The chunked pair, with the SAME contract the client's syncBlobs has: one chunk in memory at a
      * time, each content-addressed and skipped when the store already holds it, and an identity for
@@ -667,6 +670,39 @@ scenario('a-hashing-device-recognises-what-an-unhashed-sweep-uploaded', async ()
     ok: rep.conflicted.length === 0 && rep.uploaded.length === 0 && rep.downloaded.length === 0,
     detail: { conflicted: rep.conflicted.length, uploaded: rep.uploaded.length,
               downloaded: rep.downloaded.length },
+  };
+});
+
+/* A FOLDER FILLED BEFORE `csum` EXISTED must not duplicate itself on a device that joins it now.
+ *
+ * Those entries carry no content identity — only `sha`, the address of the encrypted blob — so a
+ * joining device has nothing to compare and falls back to size+mtime, which Android can never match
+ * because SAF assigns its own last-modified. Every file it already had came back as a conflict copy.
+ * The address IS an identity for this user, though: encryption is deterministic, so the same bytes
+ * under the same key always produce the same blob hash. Verify, then decide. */
+scenario('a-legacy-manifest-does-not-duplicate-on-a-joining-device', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Pictures' });
+  for(let i = 0; i < 8; i++) laptop.put('img' + i + '.jpg', 'PHOTO ' + i);
+  await laptop.sweep({ hash: false });
+
+  // Age the manifest into the old shape: an address, and no content identity at all.
+  const man = w.manifestOf('Pictures');
+  for(const p in man){ delete man[p].csum; }
+  w.docs.set(dtag('Pictures'), man);
+
+  const tablet = makeDevice(w, { name:'tablet', id:'bbb2', key:'Pictures' });
+  for(let i = 0; i < 8; i++){
+    tablet.files.set('img' + i + '.jpg', { bytes: bytesOf('PHOTO ' + i), mtime: Date.UTC(2015, 5, 5) });
+  }
+  const rep = await tablet.sweep({ hash: true });
+
+  const after = w.manifestOf('Pictures');
+  const upgraded = Object.keys(after).filter(p => after[p] && after[p].csum).length;
+  return {
+    ok: rep.conflicted.length === 0 && tablet.live().length === 8 && upgraded === 8,
+    detail: { conflicted: rep.conflicted.length, onDisk: tablet.live().length,
+              entriesGivenAnIdentity: upgraded },
   };
 });
 

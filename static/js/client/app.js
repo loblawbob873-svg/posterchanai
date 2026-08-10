@@ -13903,7 +13903,7 @@
       // A wrapped key that won't unwrap (signer not ready / wrong account / NIP-44 denied) must FAIL,
       // never silently mint a replacement: the new key can't read the existing encrypted index or Music
       // blobs, and re-wrapping it over the old one in localStorage destroys the only way back to them.
-      if(this._mkWrapped){ this.mk=_b64u8(JSON.parse(await signer.nip44dec(ME.pubkey,this._mkWrapped)).k); return this.mk; }
+      if(this._mkWrapped){ this.mk=await _unwrapMK(this._mkWrapped); return this.mk; }
       /* ABSENT IS NOT "NONE". The guard above covers a key that won't unwrap and misses the case
        * that actually happened: no local key at all — a fresh device, cleared storage, a private
        * window, or a saveLocal() that failed under quota pressure. Minting there produced a key that
@@ -13916,7 +13916,7 @@
       if(!this._pullDone && !this._pulling){
         try{ await this.pull(); }catch(_){ }
         if(this.mk) return this.mk;
-        if(this._mkWrapped){ this.mk=_b64u8(JSON.parse(await signer.nip44dec(ME.pubkey,this._mkWrapped)).k); return this.mk; }
+        if(this._mkWrapped){ this.mk=await _unwrapMK(this._mkWrapped); return this.mk; }
         if(!this._pullDone) throw new Error('couldn’t reach your drive to load its key — nothing was changed');
       }
       this.mk=crypto.getRandomValues(new Uint8Array(32));
@@ -15492,6 +15492,36 @@
   }
 
   async function _contentIV(plain){ return new Uint8Array(await crypto.subtle.digest('SHA-256', plain)).slice(0,12); }
+  /* UNWRAP THE DRIVE KEY, OR SAY WHAT WENT WRONG.
+   *
+   * This used to be one expression: decrypt, JSON.parse, take `.k`, base64-decode. Every step can
+   * come back empty without throwing — a signer that answers with the wrong thing, a wrapped key
+   * from another account, a truncated value — and the result is a Uint8Array of the wrong length
+   * that is then handed to crypto.subtle.importKey, which rejects with
+   *
+   *     Failed to execute 'importKey' on 'SubtleCrypto'
+   *
+   * from wherever the key was next used. That message names nothing: not the drive key, not this
+   * device, not the fact that nothing is damaged. Checked here, at the one place the key is made, so
+   * the failure says what it is and every caller inherits it.
+   *
+   * It NEVER falls back to minting one. A new key decrypts nothing that already exists, and writing
+   * it over the old one destroys the only way back — see the guard above this. */
+  async function _unwrapMK(wrapped){
+    let raw;
+    try{ raw = await signer.nip44dec(ME.pubkey, wrapped); }
+    catch(e){ throw new Error('this device could not unwrap your drive key (' + ((e && e.message) || e)
+                              + '). Your files are unchanged — check you are signed in as the same account.'); }
+    let k = null;
+    try{ k = JSON.parse(raw).k; }catch(_){ }
+    const mk = k ? _b64u8(k) : new Uint8Array(0);
+    if(mk.length !== 32){
+      throw new Error('your drive key came back the wrong size (' + mk.length + ' bytes, expected 32), '
+                      + 'so this device cannot read your encrypted files. Nothing has been changed or lost — '
+                      + 'the key on the server is untouched.');
+    }
+    return mk;
+  }
   async function _masterEncrypt(mk, plain, iv){ iv = iv || crypto.getRandomValues(new Uint8Array(12));
     const ck=await crypto.subtle.importKey('raw',mk,'AES-GCM',false,['encrypt']);
     const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},ck,plain));
@@ -25435,6 +25465,13 @@
        *     content exactly as before and nothing in foldersync.js has to know chunking exists.
        */
       CHUNK: _SYNC_CHUNK,
+      /* The address these bytes WOULD have, without uploading them. Encryption here is deterministic
+       * — the IV comes from the content and the key is this drive's — so the ciphertext hash is a
+       * content identity, and it is the only one an entry written before `csum` existed carries. */
+      async blobSha(bytes){
+        const mk = await FilesIdx._ensureMK();
+        return await sha256hex(await _masterEncrypt(mk, bytes, await _contentIV(bytes)));
+      },
       async putParts(readPart, size, onProgress){
         const mk = await FilesIdx._ensureMK();
         const CH = _SYNC_CHUNK;

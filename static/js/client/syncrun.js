@@ -167,6 +167,37 @@
     let ci=0;
     for(const c of plan.conflicts){
       step('conflict', c.path, ++ci, plan.conflicts.length);
+      /* VERIFY BEFORE DUPLICATING.
+       *
+       * Every entry written before `csum` existed carries no content identity at all — only `sha`,
+       * the address of its encrypted blob. A device joining such a folder therefore has nothing to
+       * compare and falls back to size+mtime, which on Android can never match, because SAF assigns
+       * its own last-modified. The result is a conflict copy of every file it already had.
+       *
+       * But that address IS a content identity, for this user: encryption is deterministic, so the
+       * same bytes under the same drive key always produce the same blob hash. So before duplicating
+       * a file, ask what its bytes WOULD be addressed as. If that is what the manifest already holds,
+       * the two sides are identical and there was never a conflict — and the entry is upgraded with a
+       * `csum` on the way past, so no other device has to do this again.
+       *
+       * Bounded by the whole-file ceiling: this reads the file, and reading a 2 GB one to avoid a
+       * conflict would trade a duplicate for a dead renderer. */
+      const R0 = remote[c.path] || {}, L0 = local[c.path] || {};
+      if(!R0.csum && R0.sha && store.blobSha && L0.size && (!o.maxBytes || L0.size <= o.maxBytes)){
+        let settled = false;
+        try{
+          const bytes = await fs.read(id, c.path);
+          if(await store.blobSha(bytes) === R0.sha){
+            const entry = Object.assign({}, R0, { csum: L0.csum, size: L0.size, mtime: L0.mtime });
+            if(!entry.csum) delete entry.csum;
+            remember(c.path, entry);
+            agree(c.path, entry);
+            report.unchanged++;
+            settled = true;
+          }
+        }catch(_){ }
+        if(settled){ await checkpoint(); continue; }
+      }
       try{
         await fs.move(id, c.path, c.keepAs);            // the local edit is safe from here on
         const bytes = await store.getBlob(c.sha);
