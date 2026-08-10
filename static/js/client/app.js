@@ -255,6 +255,39 @@
    * PC_NOSTR_ONLY is folded in here rather than left to the template. The web page bakes it in at
    * render time, but a bundled app ships ONE HTML for every instance, so the only place it can be
    * known is at runtime — from CFG.nostr_only, or unconditionally when there is no instance at all. */
+  /* A NAV THAT CANNOT BE OLDER THAN THE CODE BEHIND IT.
+   *
+   * The bundled apps do not ship this repo's shell: `mobile/build-www.sh` CURLS /client at build time
+   * and packages the HTML it gets back, while the JavaScript beside it is copied from the checkout.
+   * The two therefore have different ages, and a bundle can hold every line of a feature with no
+   * button anywhere that reaches it. That is not hypothetical — Folder Sync was missing from an APK
+   * whose bundle contained sync.js, syncrun.js and foldersync.js, because the shell it fetched was
+   * older than the entry.
+   *
+   * A missing row is also the worst shape this can take: routing works, the view renders, the code is
+   * all there, and the only symptom is a button nobody can find — which looks like a broken feature
+   * and is actually a stale index.html.
+   *
+   * So the rows a view NEEDS are asserted here rather than assumed from the markup. Idempotent: an
+   * up-to-date shell already has them and nothing happens. */
+  const _NAV_REQUIRED = [
+    { view:'sync', into:'#files-sub', icon:'#i-refresh', label:'Folder Sync' },
+  ];
+  function ensureNavItems(){
+    for(const it of _NAV_REQUIRED){
+      try{
+        if(document.querySelector('.nav-item[data-view="' + it.view + '"]')) continue;
+        const host = document.querySelector(it.into);
+        if(!host) continue;
+        const b = document.createElement('button');
+        b.className = 'nav-item sub';
+        b.dataset.view = it.view;
+        b.innerHTML = '<svg class="ic"><use href="' + it.icon + '"></use></svg><span>' + enc(it.label) + '</span>';
+        host.appendChild(b);
+      }catch(_){}
+    }
+  }
+
   function applyInstanceGating(){
     const solo = _standalone();
     if(solo || (CFG && CFG.nostr_only)) window.PC_NOSTR_ONLY = true;
@@ -2134,6 +2167,7 @@
         const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; };
         apply(ClientSettings.get('filesOpen', false));
         ft.onclick=()=>{ const o=!ClientSettings.get('filesOpen', false); ClientSettings.set('filesOpen', o); apply(o); }; } }
+    ensureNavItems();          // MUST precede the click binding below — an injected row needs a handler
     $$('.nav-item[data-view]').forEach(b=> b.onclick = ()=>switchView(b.dataset.view));
     // Collapsible "Discover" group (Articles / Streams / Communities) in the sidebar.
     { const dt=$('#disc-toggle'); if(dt){ const sub=$('#disc-sub'), chev=$('#disc-chev');
