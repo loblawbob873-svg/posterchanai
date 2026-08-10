@@ -14619,10 +14619,37 @@
   }
   // Fetch + decrypt one synced blob. The same two steps PC.syncBlobs.get does — shared rather than
   // written twice, because "which key decrypts a sync blob" must have exactly one answer.
+  /* One re-check of the drive key per session, at the moment something fails to decrypt.
+   *
+   * pull() already adopts the account's key when the local one differs — but only when a pull
+   * happens, which is once at startup. A device that was fine at startup and then meets bytes it
+   * cannot open never asks again, so it stays locked out for the whole session: "this device cannot
+   * decrypt your folder list", every sweep, while the key that opens it is in the drive index.
+   *
+   * Once, because a key that is still wrong after re-reading the authority is not going to be fixed
+   * by reading it again, and a retry per file would turn one bad key into thousands of requests. */
+  let _mkRefreshed = false;
+  async function _refreshDriveKey(){
+    if(_mkRefreshed) return false;
+    _mkRefreshed = true;
+    try{
+      FilesIdx.mk = null; FilesIdx._pulled = false;
+      await FilesIdx.pull();
+      return true;
+    }catch(_){ return false; }
+  }
   async function _syncBlobBytes(sha){
     const r = await fetch(mediaServer() + '/' + sha);
     if(!r.ok) throw new Error('blob ' + String(sha).slice(0,8) + ' unavailable (' + r.status + ')');
-    return await _masterDecrypt(await FilesIdx._ensureMK(), new Uint8Array(await r.arrayBuffer()));
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    try{
+      return await _masterDecrypt(await FilesIdx._ensureMK(), bytes);
+    }catch(e){
+      // AES-GCM rejects the WHOLE message when the key is wrong, so this is not a damaged file —
+      // it is the wrong key. Ask the drive index what the account's key actually is, and try once more.
+      if(!await _refreshDriveKey()) throw e;
+      return await _masterDecrypt(await FilesIdx._ensureMK(), bytes);
+    }
   }
   async function _syncDownload(btn, sha, name){
     if(!sha){ toast('this file has no stored copy yet'); return; }
