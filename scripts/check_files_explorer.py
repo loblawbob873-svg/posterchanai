@@ -146,6 +146,29 @@ function side(){
     + '<button class="folder-chip syncroot active" data-synckey="Pictures">🔄 Pictures<span class="fx-n">8213</span></button></div>';
 }
 function paint(which){
+  if(which === 'home'){
+    /* The landing view: folder TILES, no columns. Sampled rather than rendered from the real
+     * function because the risk here is entirely CSS — a tile grid that overflows a phone, or a long
+     * folder name that stretches its track and misaligns the row. Both names below are deliberately
+     * awkward for that reason. */
+    const tile = (ic, name, sub) =>
+      '<button class="fx-home-tile"><span class="fx-home-ic">' + ic + '</span>'
+      + '<span class="fx-home-name">' + name + '</span>'
+      + '<span class="fx-home-sub muted small">' + sub + '</span></button>';
+    document.getElementById('feed').innerHTML =
+      '<div class="fx-explorer"><div class="fx-side">' + side() + '</div>'
+      + '<div class="fx-main">' + _fxBarHTML(CRUMBS.slice(0,1))
+      + '<div class="fx-home">'
+      + tile('📁','Posts','128 files') + tile('🎵','Music','2410 files')
+      + tile('🔒','Voices','3 files')
+      + tile('📁','Screenshots from a very long trip 2024','1 file')
+      + '<div class="fx-home-sec">Synced folders</div>'
+      + tile('🔄','Documents','15819 files') + tile('🔄','Pictures','6793 files')
+      + '<div class="fx-home-sec">Everything</div>'
+      + tile('🗂','All files','browse the whole drive')
+      + '</div></div></div>';
+    return;
+  }
   const nosel = which === 'synced';
   document.getElementById('feed').innerHTML =
     '<div class="fx-explorer"><div class="fx-side">' + side() + '</div>'
@@ -163,7 +186,8 @@ AUDIT = r"""(() => {
   const vw = window.innerWidth;
   const box = el => { const r = el.getBoundingClientRect(); return {x:r.x, y:r.y, w:r.width, h:r.height, right:r.right}; };
   const vis = el => !!(el && el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden');
-  const out = { vw, overflow: document.documentElement.scrollWidth > vw + 1 };
+  const out = { vw, overflow: document.documentElement.scrollWidth > vw + 1,
+                homeTiles: document.querySelectorAll('.fx-home-tile').length };
 
   // Headings over their own columns. The header and each row are SEPARATE grid containers that share
   // a template, so this compares the real laid-out x of each header cell with the row cell that
@@ -297,7 +321,7 @@ async def drive_browser(url):
             await call("Runtime.enable")
             await call("Page.enable")
             for w, h, phone in WIDTHS:
-                for which in ("drive", "synced"):
+                for which in ("home", "drive", "synced"):
                     label = f"{w}px/{which}"
                     await call("Emulation.setDeviceMetricsOverride",
                                {"width": w, "height": h, "deviceScaleFactor": 2 if phone else 1,
@@ -326,7 +350,7 @@ async def drive_browser(url):
                 print("  " + p)
             return 1
         print("Files Explorer: clean at " + ", ".join(f"{w}px" for w, _, _ in WIDTHS)
-              + " · drive and synced views")
+              + " · home, drive and synced views")
         return 0
     finally:
         proc.terminate()
@@ -336,6 +360,14 @@ def judge(label, r, phone, which):
     bad = []
     if r["overflow"]:
         bad.append(f"[horizontal-overflow] {label}: the page scrolls sideways")
+    if which == "home":
+        # No columns here by design — the drive's landing view is folder tiles. What can go wrong is
+        # the grid overflowing (checked above), a name stretching its track, or nothing rendering.
+        if not r.get("homeTiles"):
+            bad.append(f"[home-empty] {label}: the drive home drew no folder tiles at all")
+        for c in r["clipped"]:
+            bad.append(f"[text-clipped] {label}: “{c['text']}” needs {c['needs']}px, has {c['shown']} ({c['cls']})")
+        return bad
     if not r["hasCols"] or not r["hasRow"]:
         bad.append(f"[headings-misaligned] {label}: no column header or no rows rendered at all")
     else:

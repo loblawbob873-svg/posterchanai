@@ -14571,7 +14571,14 @@
     });
   }
 
-  let _filesFolder = '';   // current folder ('' = All)
+  /* null = the drive's HOME: the list of folders, nothing else. '' = All files. 'X' = that folder.
+   *
+   * null and '' were one value, and the drive opened on All — every blob the account has ever stored,
+   * in one grid, before you had said what you were looking for. That is a slow first paint (a full
+   * /list plus a card per blob) and the wrong question: a file manager opens on folders and you pick.
+   * The distinction has to be null-vs-'' rather than a separate flag because every existing test in
+   * here is `_filesFolder === ''` for All or truthy for a named folder, and both still hold. */
+  let _filesFolder = null;
   // Pagination for the FILES GRID only (NOT the Music list — the player needs the whole queue). Render
   // a page at a time so a big folder doesn't fire hundreds of thumbnail requests (CPU) at once.
   const _FILES_PAGE = 60;
@@ -14866,6 +14873,59 @@
   }
 
   // Public tab — your Blossom blobs, organised into client-side folders. Drag-drop + folders + grid.
+  /* The drive's home: folders, and how many files are in each.
+   *
+   * Deliberately does NOT fetch /list. The counts come from the index that is already in memory, so
+   * opening Files is now instant instead of a round trip plus a card for every blob on the account —
+   * which on a drive of any size was seconds of work to draw something nobody had asked for yet.
+   * "All files" is still one click away; it is just no longer what you land on.
+   */
+  function _fxFolderCounts(){
+    const out = {};
+    const files = (FilesIdx._norm().files) || {};
+    for(const sha in files){ const f = files[sha].folder || ''; out[f] = (out[f] || 0) + 1; }
+    return out;
+  }
+  function _renderDriveHome(pane){
+    const counts = _fxFolderCounts();
+    const known = Object.keys(counts).reduce((n, k) => n + counts[k], 0);
+    const tile = (icon, label, sub, attr) =>
+      `<button class="fx-home-tile" ${attr}>
+         <span class="fx-home-ic">${icon}</span>
+         <span class="fx-home-name">${enc(label)}</span>
+         <span class="fx-home-sub muted small">${enc(sub)}</span>
+       </button>`;
+    const n = (k) => { const c = counts[k] || 0; return c ? (c + ' file' + (c === 1 ? '' : 's')) : 'empty'; };
+    const folders = FilesIdx.folders().map(f =>
+      tile(f === 'Music' ? '🎵' : (FilesIdx.isEncFolder(f) ? '🔒' : '📁'), f, n(f), 'data-folder="' + enc(f) + '"')).join('');
+    /* Synced folders are listed here too, because from the user's side they are simply more folders —
+     * the fact that one is a Blossom folder and the other a sync manifest is our problem, not theirs.
+     * `_syncPairs` may still be loading; the sidebar says so and this shelf just fills in on repaint. */
+    const pairs = Array.isArray(_syncPairs) ? _syncPairs : [];
+    const synced = pairs.map(f =>
+      tile('🔄', f.key, f.n + ' file' + (f.n === 1 ? '' : 's'), 'data-synckey="' + enc(f.key) + '"')).join('');
+    pane.innerHTML = '<div class="fx-explorer">'
+      + '<div class="fx-side">' + _fxSideHTML() + '</div>'
+      + '<div class="fx-main">' + _fxBarHTML(_fxCrumbs())
+      + '<div class="fx-home">'
+      + folders
+      + (synced ? '<div class="fx-home-sec">Synced folders</div>' + synced : '')
+      + '<div class="fx-home-sec">Everything</div>'
+      + tile('🗂', 'All files', known ? ('at least ' + known + ' known') : 'browse the whole drive', 'data-folder=""')
+      + '</div></div></div>';
+    _fxBindSide(pane); _fxBindBar(pane);
+    $$('.fx-home-tile[data-folder]', pane).forEach(b => b.onclick = () => {
+      _syncRoot=''; _syncPath=''; _filesFolder=b.dataset.folder; renderBlossom(); });
+    $$('.fx-home-tile[data-synckey]', pane).forEach(b => b.onclick = () => {
+      _syncRoot=b.dataset.synckey; _syncPath=''; renderBlossom(); });
+    // The synced list arrives after first paint on a cold visit; repaint when it does, or the shelf
+    // stays missing until the user navigates away and back.
+    if(!Array.isArray(_syncPairs)){
+      _ensureSyncPairs().then(()=>{ if(VIEW==='blossom' && _filesTab==='public' && _filesFolder===null && !_syncRoot) renderBlossom(); })
+                        .catch(()=>{});
+    }
+  }
+
   async function renderPublicFiles(pane){
     const server=mediaServer();
     if(!server){ pane.innerHTML='<div class="empty">Blossom server not configured.</div>'; return; }
@@ -14875,6 +14935,7 @@
      * the sync manifest, not from Blossom's /list. Branch BEFORE the upload probe and the listing —
      * neither is anything to do with it, and both are a round trip. */
     if(_syncRoot) return _renderSyncedRoot(pane);
+    if(_filesFolder === null) return _renderDriveHome(pane);
     pane.innerHTML='<div class="spinner"></div>';
     // Anything that throws below leaves this spinner on screen forever unless it is caught, and
     // "a spinner that never stops" tells the user nothing and tells us less. Surface it instead.
