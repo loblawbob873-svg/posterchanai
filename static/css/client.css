@@ -6667,6 +6667,14 @@ body.os-on #os-root{pointer-events:auto}
 /* No zoom applies on a phone, so the number here is the number the thumb gets. */
 @media (max-width:820px){ .ma-seek{height:16px} .ma-seek-row{gap:8px} }
 .mp-seek{touch-action:none}
+/* The mini player's playlist picker. Shares the search row, so it takes only what it needs and the
+ * search box keeps the rest — a full-width select would push the search onto a second line in a
+ * panel that is already short. */
+.mp-search-row{display:flex;gap:6px;align-items:center}
+.mp-pl{flex:0 1 42%;min-width:96px;max-width:150px;background:var(--panel2);color:var(--text);
+  border:1px solid var(--line);border-radius:9px;padding:6px 8px;font-size:12px;font-family:inherit;
+  min-height:32px}
+.mp-pl:focus-visible{outline:2px solid var(--neon);outline-offset:2px}
 .ma-ctl .btn.on{border-color:var(--neon);color:var(--neon)}
 .ma-q{width:100%}
 .music-app .music-list{flex:1;min-height:0;overflow-y:auto}

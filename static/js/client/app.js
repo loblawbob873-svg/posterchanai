@@ -14192,6 +14192,9 @@
    * playing: opening one to look at it must not stop the music, and the queue only changes when
    * something is actually pressed. */
   let _musicPl = null;                    // id of the playlist on screen, '' / null = the library
+  // Set from the floating widget's picker, so the two controls can never disagree about which
+  // playlist you are in. Repaints the app only when it is actually mounted.
+  function PC_setMusicPl(id){ _musicPl = id || null; try{ _musicPlRepaint(); }catch(_){} }
   const PL = () => window.PCPlaylists;
   function _plTracks(id){
     // The playlist stores shas; the LIBRARY decides what is playable. A track missing from this
@@ -14221,7 +14224,9 @@
        * the whole library was on screen. Only when nothing is playing from the old view — pressing
        * a chip is navigation, and navigation must never interrupt the music. */
       if(!to && _musicPl && !(_audioEl && !_audioEl.paused)) MusicPlayer.refreshQueue();
-      _musicPl = to; repaint(); });
+      _musicPl = to;
+      MusicPlayer._pl = to;   // the widget lists the same set — two pickers, one selection
+      repaint(); });
     { const nb=$('#ma-plnew', root); if(nb) nb.onclick=async()=>{
         const name = await uiPrompt('Name this playlist', '', 'New playlist'); if(!name) return;
         const pl = await PL().create(name.trim());
@@ -15061,11 +15066,20 @@
           // Coalesced: a keystroke on a big drive re-filters thousands of entries, and doing that
           // per character is what makes a search box feel heavy.
           _findT = setTimeout(async () => {
+            /* Re-filter the list we ALREADY have. renderBlossom() re-fetches the whole Blossom
+             * /list — thousands of entries over the network — so debouncing it still meant a fetch
+             * per word typed, which is what "it searches every time I write a word" is. The blob
+             * list does not change because somebody typed; only which of it is shown does.
+             *
+             * A SYNCED folder still goes the long way: its listing comes from a manifest and a
+             * different renderer, and there is no cached array here to re-filter. */
+            const g = document.getElementById('bl-grid');
+            if(!_syncRoot && g && _filesGridList){ _renderFilesGrid(g, _filesGridList); return; }
             const at = f.selectionStart;
             await renderBlossom();
             const nf = document.getElementById('fx-find');
             if(nf){ nf.focus(); try{ nf.setSelectionRange(at, at); }catch(_){} }
-          }, 140);
+          }, 220);
         };
         // Escape clears rather than closing anything — there is nothing to close, and a search box
         // you cannot empty without selecting the text is a small daily annoyance.
@@ -16380,22 +16394,47 @@
     }
     return false;
   }
+  /* What a saved track should be NAMED. Everything in the library used to be Opus, so `.ogg` was a
+   * fact; now that an already-compressed file passes through untouched it is a guess, and a wrong
+   * extension is a file the OS opens with the wrong thing. The stored mime is the answer, with the
+   * uploader's own extension ahead of it since that is what they called it. */
+  const _MUSIC_EXT = { 'audio/mpeg':'mp3', 'audio/mp3':'mp3', 'audio/aac':'aac', 'audio/mp4':'m4a',
+    'audio/x-m4a':'m4a', 'audio/ogg':'ogg', 'audio/opus':'opus', 'audio/webm':'webm',
+    'audio/wav':'wav', 'audio/flac':'flac' };
+  function _musicExt(m){
+    const e = (m && m.srcExt) || '';
+    if(/^[A-Za-z0-9]{1,5}$/.test(e)) return e.toLowerCase();
+    return _MUSIC_EXT[String((m && m.mime) || '').toLowerCase()] || 'ogg';
+  }
   async function uploadMusicTrack(file, statEl){
     if(!signer.nip44enc) throw new Error('signer can\'t encrypt (needs NIP-44)');
     const setS=t=>{ if(statEl) statEl.textContent=t; };
     const mk=await FilesIdx._ensureMK();
-    setS('compressing…');
-    const auth=await sign(27235,'music',[['p',ME.pubkey]]);
-    const cr=await fetch('/client/music-compress',{method:'POST',headers:{'X-Pubkey':ME.pubkey,'X-Auth':btoa(JSON.stringify(auth))},body:file});
-    if(!cr.ok){ let m='compress failed'; try{ m=(await cr.json()).error||m; }catch(_){} throw new Error(m); }
-    const opus=new Uint8Array(await cr.arrayBuffer());
+    /* THE FILE YOU UPLOADED IS THE FILE THAT IS STORED. No transcode, ever.
+     *
+     * Every track used to be re-encoded to 96 kbps Opus by /client/music-compress on the way in.
+     * That was written for a 50 MB WAV becoming 4 MB, and it ran on everything — so an mp3 someone
+     * already owned came back as a lossy re-encode of a lossy source, under a different format, and
+     * the original was gone. Measured on a real 1-hour narration: 54.9 MB in, 48.7 MB out. An 11%
+     * saving, for a generation of quality loss, a 55 MB round trip to a transcoder, and the file no
+     * longer being the file they gave us.
+     *
+     * It is their music. Storage is cheap and their master is not replaceable — so the bytes go up
+     * exactly as they arrived, and the stored mime is the real one so it comes back out the same.
+     * (The server endpoint stays for older cached clients that still call it.) */
+    setS('reading…');
+    const bytes=new Uint8Array(await file.arrayBuffer());
+    const mime=(file.type||'audio/mpeg').split(';')[0];
+    const srcExt=((file.name||'').match(/\.([A-Za-z0-9]{1,5})$/)||[])[1]||'';
     setS('encrypting…');
-    const blob=await _masterEncrypt(mk, opus, await _contentIV(opus));   // deterministic IV → identical hash → dedup
+    const blob=await _masterEncrypt(mk, bytes, await _contentIV(bytes));   // deterministic IV → identical hash → dedup
     setS('uploading…');
     // noMirror: never DR-mirror encrypted music to the public backup servers (bandwidth/abuse).
     const url=await uploadBlob(new File([blob],(file.name||'track')+'.enc',{type:'application/octet-stream'}), {noMirror:true, keep:true});
     const sha=_shaFromUrl(url); if(!sha) throw new Error('upload returned no hash');
-    FilesIdx.setFile(sha,{name:(file.name||'track').replace(/\.[^.]+$/,''),folder:'Music',mime:'audio/ogg',enc:true,mk:true,size:opus.length,srcName:file.name,srcSize:file.size,ts:Math.floor(Date.now()/1000)});
+    // The stored mime has to be the TRUTH — a passed-through mp3 labelled audio/ogg decodes by luck
+    // rather than by contract, and the download would save it under the wrong extension.
+    FilesIdx.setFile(sha,{name:(file.name||'track').replace(/\.[^.]+$/,''),folder:'Music',mime:mime,enc:true,mk:true,size:bytes.length,srcName:file.name,srcSize:file.size,srcExt:srcExt,ts:Math.floor(Date.now()/1000)});
   }
   // One-time-per-session cleanup of leaked Files-index blobs (the old cross-session GC bug left stale
   // encrypted index blobs on Blossom — the "OCTET-STE" files filling the drive). A blob qualifies only
@@ -16662,7 +16701,7 @@
     const wantable=all.filter(t=>!t.missing && !t.offline).map(t=>t.sha);
     const head = `<div class="music-head">
         <button class="btn btn-neon small" id="mus-shuffle"${liveAll?'':' disabled'}>
-          <svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg>Shuffle all</button>
+          <svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg>${only ? 'Shuffle playlist' : 'Shuffle all'}</button>
         <span class="muted small">${needle ? `${tracks.length} of ${all.length} match`
           : (live ? (live + ' track' + (live>1?'s':'')) : 'nothing playable yet')}${
           gone ? ` · ${gone} missing from the server` : ''}${
@@ -16681,7 +16720,7 @@
                                                + (t.offline ? ' · offline' : '')}</span>
         ${t.missing ? '' : `<button class="track-keep${t.offline?' on':''}" data-sha="${t.sha}" title="${t.offline?'Kept on this device — tap to remove the offline copy':'Keep on this device (plays with no network)'}" aria-label="${t.offline?'Remove offline copy':'Keep offline'}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-${t.offline?'check':'download'}"></use></svg></button>`}
         ${t.missing ? '' : `<button class="track-add" data-sha="${t.sha}" title="Add to a playlist" aria-label="Add to a playlist"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg></button>`}
-        ${t.missing ? '' : `<button class="track-dl" data-sha="${t.sha}" data-name="${enc((t.m.name||'track')+'.ogg')}" title="Save a copy to your files (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg></button>`}
+        ${t.missing ? '' : `<button class="track-dl" data-sha="${t.sha}" data-name="${enc((t.m.name||'track')+'.'+_musicExt(t.m))}" title="Save a copy to your files (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg></button>`}
         <button class="track-del" data-sha="${t.sha}" title="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>`).join('')
       : (needle ? `<div class="empty">Nothing in your library matches “${enc(needle)}”.</div>`
@@ -16710,8 +16749,16 @@
         try{ _musicAppNow(); }catch(_){}
       }; }
     { const sh=$('#mus-shuffle',grid);
-      if(sh) sh.onclick=()=>{ const q=musicTracks(null); if(!q.length) return;
-        MusicPlayer.shuffle=true; MusicPlayer.refreshQueue();
+      /* Shuffle what is ON SCREEN. With a playlist selected this used to reach past it to the whole
+       * library — `musicTracks(null)` + refreshQueue(), both of which ignore the current view — so
+       * picking a playlist and pressing shuffle played something that was not in it. Whatever `only`
+       * is, that is the set the user is looking at and the set they meant. */
+      if(sh) sh.onclick=()=>{
+        const q = (only && only.length) ? only.filter(t=>!t.missing) : musicTracks(null);
+        if(!q.length) return;
+        MusicPlayer.shuffle=true;
+        if(only && only.length) MusicPlayer.queue = q.map(t=>t.sha);
+        else MusicPlayer.refreshQueue();
         // force: the random pick can be the track already playing, and without it that PAUSES.
         MusicPlayer.play(MusicPlayer.queue[Math.floor(Math.random()*MusicPlayer.queue.length)], {force:true});
         sh.classList.add('on'); }; }
@@ -17088,7 +17135,7 @@
           <div class="mp-seek"><div class="mp-seek-fill"></div></div>
           <div class="mp-time"><span class="mp-cur">0:00</span><span class="mp-dur">0:00</span></div>
           <div class="mp-controls"><button class="mp-prev" title="Previous"><svg class="ic x-ic" aria-hidden="true"><use href="#i-prev"></use></svg></button><button class="mp-play mp-big">${pl}</button><button class="mp-next" title="Next"><svg class="ic x-ic" aria-hidden="true"><use href="#i-next"></use></svg></button><button class="mp-shuffle${this.shuffle?' on':''}" title="Shuffle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg></button></div>
-          <div class="mp-search-row"><input class="mp-search" type="search" placeholder="🔍 Search tracks…" value="${enc(this._search||'')}"></div>
+          <div class="mp-search-row">${this._plPickHtml()}<input class="mp-search" type="search" placeholder="🔍 Search tracks…" value="${enc(this._search||'')}"></div>
           <div class="mp-list">${this._listHtml()}</div>`;
       }
       this._wire(); this._tick(); _updateMusicListBtns();
@@ -17102,6 +17149,14 @@
       b('.mp-close',()=>this.close()); b('.mp-prev',()=>this.prev()); b('.mp-next',()=>this.next());
       b('.mp-shuffle',()=>{ this.shuffle=!this.shuffle; this._render(); });
       this.bindSeek(qq('.mp-seek'));
+      { const ps=qq('.mp-pl'); if(ps) ps.onchange=()=>{
+          this._pl = ps.value || null;
+          // Playing follows the list you just chose — a picker that only changes what is listed is
+          // half a control, and ⏭ would still walk the set you left.
+          const t = this._plTracks();
+          if(t && t.length) this.queue = t.map(x=>x.sha); else this.refreshQueue();
+          try{ PC_setMusicPl(this._pl); }catch(_){}   // …and the Music app follows, if it is open
+          this._render(); }; }
       const srch=qq('.mp-search');
       if(srch){ srch.oninput=()=>{ this._search=srch.value; const lst=qq('.mp-list'); if(lst){ lst.innerHTML=this._listHtml(); this._wireList(); } };
         srch.onkeydown=e=>{ if(e.key==='Enter'){ const s=this._shownShas(); if(s.length) this.play(s[0]); } }; }   // Enter = play first match
@@ -17118,7 +17173,28 @@
       }
     },
     // Search the WHOLE Music library by name (not just the current queue); empty search = the queue.
-    _libTracks(){ return musicTracks(null).map(t=>({sha:t.sha, name:(t.m&&t.m.name)||'track'})); },
+    /* THE WIDGET SEES PLAYLISTS TOO. It carries its own list and its own search, so without this it
+     * was the one surface where a playlist did not exist — pick "Runs" in the Music app, minimise,
+     * and the mini player's list was the whole library again. `_pl` is the widget's own selection so
+     * it still works with the app closed, and the two are kept in step through PC.musicPlaylist. */
+    _pl: null,
+    _plTracks(){
+      const PL = window.PCPlaylists;
+      const pl = this._pl && PL && PL.get(this._pl);
+      if(!pl) return null;
+      const live = new Map(musicTracks(null).map(t=>[t.sha,t]));
+      return pl.tracks.map(sha=>live.get(sha)).filter(Boolean);
+    },
+    _libTracks(){ return (this._plTracks() || musicTracks(null)).map(t=>({sha:t.sha, name:(t.m&&t.m.name)||'track'})); },
+    _plPickHtml(){
+      const PL = window.PCPlaylists;
+      const ls = PL ? PL.all() : [];
+      if(!ls.length) return '';                      // no playlists → no control to explain
+      return `<select class="mp-pl" aria-label="Playlist">
+        <option value=""${this._pl?'':' selected'}>All music</option>
+        ${ls.map(p=>`<option value="${enc(p.id)}"${this._pl===p.id?' selected':''}>${enc(p.name)}</option>`).join('')}
+      </select>`;
+    },
     _shownShas(){ const q=(this._search||'').trim().toLowerCase();
       if(q) return this._libTracks().filter(t=>t.name.toLowerCase().includes(q)).map(t=>t.sha);
       return this.queue; },
@@ -21807,9 +21883,10 @@
    * folder while a generated song went to the library, so where a song ended up depended on which
    * command produced it).
    *
-   * Audio goes to the music LIBRARY: compressed to opus and encrypted to the drive key, so it is a
-   * track you can play on every device rather than a file you can only download again. That needs the
-   * node, so a standalone client falls back to the drive and the caller SAYS which happened. */
+   * Audio goes to the music LIBRARY: stored AS UPLOADED and encrypted to the drive key, so it is a
+   * track you can play on every device rather than a file you can only download again. It is not
+   * re-encoded — see uploadMusicTrack. That needs the node, so a standalone client falls back to the
+   * drive and the caller SAYS which happened. */
   function _wantsLibrary(file, kind){
     return kind === 'audio' || /^audio\//i.test((file && file.type) || '');
   }
