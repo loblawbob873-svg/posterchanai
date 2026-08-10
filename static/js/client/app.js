@@ -9245,7 +9245,33 @@
   // mini-player. Keeping them separate means a feed re-render (cleanupInlineStream) can't tear down
   // a popped-out stream, and closing the mini can't tear down a newer inline stream.
   let _streamHls=null, _miniHls=null, _miniEv=null;
-  function cleanupInlineStream(){ if(_streamHls){ try{ _streamHls.destroy(); }catch(_){} _streamHls=null; } _stopStreamViewers(); }
+  /* IS THE STREAM PLAYING IN A DIFFERENT WINDOW?
+   *
+   * Desktop mode parks an unfocused window by MOVING its nodes into that window's own slot, where
+   * they stay live and on screen. So `#st-video` sitting inside an `.osw-slot` means the stream
+   * belongs to a window that is not the one being re-rendered — and tearing its hls down from here
+   * kills a stream somebody is watching, in a window they did not touch.
+   *
+   * Reported (and confirmed by a second user) as: stream open in one window, Social in another, post
+   * a note — the stream stops. Posting repaints the focused window, renderView() runs, and this used
+   * to destroy the player unconditionally. Same shape as the parked-timeline bug: one global torn
+   * down on behalf of a view that no longer owns it. */
+  function _streamParked(){
+    try{
+      if(!window.PCOS) return false;
+      // If the LIVE feed holds a player, this window owns one and may manage it. Asked this way
+      // round rather than by getElementById, which answers with whichever element it finds first and
+      // cannot tell two open stream windows apart.
+      if(document.querySelector('#feed #st-video')) return false;
+      return !!document.querySelector('.osw-slot #st-video');
+    }catch(_){ return false; }
+  }
+  // The raw teardown, for the one caller that is REPLACING the player it owns.
+  function _disposeInlineHls(){
+    if(_streamHls){ try{ _streamHls.destroy(); }catch(_){} _streamHls=null; } _stopStreamViewers(); }
+  function cleanupInlineStream(){
+    if(_streamParked()) return;      // it is another window's player — not ours to stop
+    _disposeInlineHls(); }
   // Headcount for the stream you're WATCHING. The 30311 is replaceable and the host re-signs it as the
   // number moves, so re-read it on a timer — otherwise the badge freezes at whatever the card happened to
   // carry when you opened it. Cleared by cleanupInlineStream on leaving the view.
@@ -9403,7 +9429,8 @@
   // subdomain bypasses the proxy entirely and never has that cookie to send.
   function attachStream(url){
     const v=$('#st-video'); if(!v) return;
-    cleanupInlineStream();   // drop any previous inline hls before attaching a new one
+    _disposeInlineHls();   // drop any previous inline hls before attaching a new one — unconditional:
+                           // this window is about to replace the player it owns, parked or not
     const isHls=/\.m3u8(\?|#|$)/i.test(url);
     const native=()=>{ v.onerror=()=>_streamNote('Could not play this video here — try the \u201cOpen stream URL\u201d link below.'); v.src=url; };
     if(!isHls){ native(); return; }   // mp4/webm VOD — <video> plays it directly
