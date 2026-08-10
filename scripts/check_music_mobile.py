@@ -104,6 +104,35 @@ DRIVE = r"""(async () => {
   out.miniCls = el.className;
   out.miniBottomGap = Math.round(window.innerHeight - m.bottom);
   MP.setMin(false);
+
+  /* THE MUSIC APP's transport — a different surface from the floating widget, and for a long time
+     the one with no scrubber at all: prev / play / next and nothing to move through a track with.
+     It is also where .ma-now WRAPS on a phone, which is how a seek bar ends up as a 40px stub
+     sharing a line with four buttons. Measured here rather than reasoned about. */
+  try {
+    if (P.renderMusicApp) {
+      P.renderMusicApp();
+      await sleep(150);
+      const bar = document.getElementById('ma-seek');
+      out.appSeek = !!bar;
+      if (bar) {
+        const br = bar.getBoundingClientRect();
+        const row = bar.parentElement.getBoundingClientRect();
+        out.appSeekW = Math.round(br.width);
+        out.appSeekH = Math.round(br.height);
+        out.appSeekRowW = Math.round(row.width);
+        // A drag that the browser steals as a page scroll stops sending pointermove mid-gesture.
+        out.appSeekTouch = getComputedStyle(bar).touchAction;
+        out.appSeekFill = !!bar.querySelector('.mp-seek-fill');
+        out.appSeekRole = bar.getAttribute('role') || '';
+        out.appSeekFocusable = bar.tabIndex >= 0;
+        out.appSeekOverflow = document.documentElement.scrollWidth > window.innerWidth + 1;
+        // Both times must be present, or the bar is a position with no scale to read it against.
+        out.appTimes = !!(document.getElementById('ma-cur') && document.getElementById('ma-dur'));
+      }
+    }
+  } catch (e) { out.appErr = String(e && e.message || e); }
+
   return out;
 })()"""
 
@@ -237,6 +266,41 @@ async def drive(url):
                     if r["w"] >= r["vw"] - 2:
                         problems.append((label, "not-full-screen",
                                          "the desktop player went full-screen; it is a window there"))
+
+                # ---- the Music app's scrubber, at every width ----------------------------------
+                if r.get("appErr"):
+                    problems.append((label, "app-broken", f"renderMusicApp threw: {r['appErr']}"))
+                elif not r.get("appSeek"):
+                    problems.append((label, "no-app-scrubber",
+                                     "the Music app has no seek bar — prev/play/next is not a way "
+                                     "to move through a track"))
+                else:
+                    if not r.get("appSeekFill"):
+                        problems.append((label, "no-app-scrubber",
+                                         "the seek bar has no fill element, so it can show no position"))
+                    if not r.get("appTimes"):
+                        problems.append((label, "no-app-scrubber",
+                                         "elapsed/duration are missing — a position with no scale"))
+                    # A bar you aim with has to be big enough to hit, and wide enough to aim ALONG.
+                    # 24px is the phone minimum for a target; the width one is what catches the bar
+                    # being squeezed to a stub by the buttons when .ma-now wraps.
+                    if r["appSeekH"] < (14 if phone else 8):
+                        problems.append((label, "tap-targets",
+                                         f"the Music app scrubber is {r['appSeekH']}px tall"))
+                    if r["appSeekW"] < r["appSeekRowW"] * 0.55:
+                        problems.append((label, "app-scrubber-squeezed",
+                                         f"the scrubber is {r['appSeekW']}px in a {r['appSeekRowW']}px "
+                                         "row — it is sharing a line instead of owning one"))
+                    if r.get("appSeekTouch") not in ("none", "pinch-zoom"):
+                        problems.append((label, "drag-stolen",
+                                         f"touch-action is {r.get('appSeekTouch')!r} — the browser "
+                                         "takes the drag as a page scroll and pointermove stops"))
+                    if r.get("appSeekRole") != "slider" or not r.get("appSeekFocusable"):
+                        problems.append((label, "app-scrubber-unreachable",
+                                         "the scrubber is not a focusable slider — no keyboard seek"))
+                    if r.get("appSeekOverflow"):
+                        problems.append((label, "horizontal-overflow",
+                                         "the Music app scrolls sideways with the seek row in it"))
     finally:
         proc.terminate()
         subprocess.run(["rm", "-rf", PROFILE], check=False)

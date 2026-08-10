@@ -1062,6 +1062,30 @@ def sniff_ext(head: bytes) -> str:
     return ""
 
 
+_SNIFF_MIME = {
+    "png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "image/webp",
+    "mp4": "video/mp4", "webm": "video/webm", "avi": "video/x-msvideo",
+    "wav": "audio/wav", "ogg": "audio/ogg", "flac": "audio/flac", "mp3": "audio/mpeg",
+    "pdf": "application/pdf", "zip": "application/zip", "gz": "application/gzip",
+    "7z": "application/x-7z-compressed", "rar": "application/vnd.rar",
+}
+
+
+def sniff_mime(head: bytes) -> str:
+    """MIME implied by a blob's first bytes, or ''.
+
+    An UNTYPED blob is not a rare edge case: anything that rebuilds a file from raw bytes gets
+    `type === ''` from the File constructor unless it is passed one explicitly, and the upload then
+    stores `application/octet-stream`. Those blobs are real media, but every decision keyed on the
+    stored MIME — most visibly whether a thumbnail is worth generating — reads them as opaque, so
+    they render as a generic paperclip in the drive forever after.
+
+    The write paths that caused it are fixed, but the blobs they already stored are immutable and
+    still on people's drives, and the bytes are the one source that cannot be wrong.
+    """
+    return _SNIFF_MIME.get(sniff_ext(head), "")
+
+
 def safe_filename(name: str) -> str:
     """A user-supplied filename reduced to a harmless BASENAME.
 

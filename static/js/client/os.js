@@ -190,14 +190,43 @@
     w.parked = true;
   }
 
+  /* The slot of a PARKED window that is currently showing `view`.
+   *
+   * app.js needs this to deliver live timeline posts to the RIGHT window. Parking MOVES a window's
+   * nodes into its slot, so with both Home and Nostrverse open there are two `id="tl-notes"` in one
+   * document — and `getElementById` answers with whichever was opened first, which would prepend the
+   * firehose into the following-feed (or the reverse) while the window they belong to never updates.
+   * Only this module knows which window is which, so the question is answered here rather than
+   * guessed from the DOM.
+   *
+   * Matched on `appView` — what the client reported the window was showing when it was parked —
+   * falling back to the view it was OPENED as, because a window navigated inside itself (a hashtag
+   * or a search opened from the timeline) is no longer the latter. */
+  function parkedSlot(view){
+    if(!on || !view) return null;
+    const w = wins.find(x => x.parked && x.slot && ((x.appView || x.view) === view));
+    return w ? w.slot : null;
+  }
+
   /* Put the feed back where this window left it.
    *
    * Retried rather than set once: a view may await the relay before it has any content, and
    * scrollTop against a zero-height element silently does nothing — which is the difference between
    * "restores your spot" and "looks like it tried". Bounded at ~1s, and abandoned the moment the
    * feed belongs to some other window, so a slow view cannot scroll a window you have left. */
+  /* A parked window's slot is LIVE, not a frozen picture — app.js prepends new timeline posts into
+   * it while it sits there, correcting the slot's own scrollTop so the reading position holds. The
+   * offset captured at park time knows nothing about that, and replaying it on restore would land
+   * several posts away from where the user actually was. So whoever moves content in says so. */
+  function noteScroll(slot){
+    if(!slot) return;
+    const w = wins.find(x => x.slot === slot);
+    if(w && w.parked) w.scrollTop = slot.scrollTop || 0;
+  }
+
   function restoreScroll(w){
-    const want = w && w.scrollTop || 0;
+    // The slot's own offset wins while it is parked: it is the one that has been kept up to date.
+    const want = (w && w.parked && w.slot ? w.slot.scrollTop : 0) || (w && w.scrollTop) || 0;
     if(!want || !realFeed) return;
     let tries = 0;
     const put = () => {
@@ -1584,6 +1613,6 @@
   }
 
   window.PCOS = { enter, exit, suspend, toggle, restore, refresh, isOn: () => on, openDoc, focusDoc, routeView, snapTo, osToast,
-                  isRepainting: () => repainting > 0,
+                  isRepainting: () => repainting > 0, parkedSlot, noteScroll,
                   windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min })) };
 })();

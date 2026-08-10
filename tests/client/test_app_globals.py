@@ -200,23 +200,35 @@ class TestParkedTimelineKeepsLivePosts(unittest.TestCase):
     were not deferred, they were destroyed — and nothing backfills, because markEosed only draws on
     the first EOSE. Refocusing showed exactly what it showed before: "not showing new posts when
     other window is focused".
+
+    Routing them to `_livePending` was the FIRST fix and it did not work either: the "↑ N new posts"
+    pill that reads that list computes its count as `(VIEW==='home'||VIEW==='global') ? … : 0`, and
+    parked means VIEW is neither — so the pill is always hidden on this path, and the next
+    `_resetLive()` empties the list. The posts have to be DRAWN into the parked window, which is on
+    screen the whole time. See tests/test_desktop_parked_feed.py for the full set.
     """
 
     def test_flush_live_does_not_drop_a_parked_window_s_posts(self):
         src = open(APP, encoding="utf-8").read()
-        i = src.index("function flushLive()")
-        body = src[i:i + 1600]
+        i = src.index("function _flushLiveFor(")
+        body = src[i:i + 3600]
         self.assertIn("_tlParked()", body,
                       "flushLive must keep live posts when the timeline is parked in an unfocused "
                       "desktop-mode window; the splice above has already emptied the buffer, so an "
                       "early return here deletes them")
-        self.assertIn("_livePending.push(ev)", body)
+        self.assertIn("_prependLive(evs, slot)", body,
+                      "a parked window is on screen — its posts must be drawn into it, not held "
+                      "behind a pill that is force-hidden while parked")
 
     def test_they_are_buffered_in_the_first_place(self):
         """The subscription's own handler gates on VIEW too, so without this there is nothing for
         flushLive to keep."""
         src = open(APP, encoding="utf-8").read()
-        self.assertIn("(VIEW===view || _tlParked())", src)
+        # `_parkedSlot(view)`, not `_tlParked()`: the latter asks "VIEW is not a timeline", which is
+        # FALSE whenever the focused window is the OTHER timeline — so with Home in front and
+        # Nostrverse parked beside it, the global sub's events were never buffered at all and that
+        # window stayed frozen for as long as both were open.
+        self.assertIn("(VIEW===view || _parkedSlot(view))", src)
 
     def test_parked_means_alive_but_not_current(self):
         src = open(APP, encoding="utf-8").read()

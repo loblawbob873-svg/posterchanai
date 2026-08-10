@@ -76,6 +76,7 @@
   <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.2" y="4.8" width="17.6" height="14.4" rx="2.4"/><circle cx="8.8" cy="10" r="1.7"/><path d="M3.6 16.6l4.6-4.2 3.6 3.2 3.2-2.8 5.4 4.6"/></symbol>
   <symbol id="i-text" viewBox="0 0 24 24"><path d="M5 6.4V4.8h14v1.6"/><path d="M12 4.8v14.4"/><path d="M9 19.2h6"/></symbol>
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M8.4 5.6l10 6.4-10 6.4z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="7" y="5.2" width="3.6" height="13.6" rx="1.2"/><rect x="13.4" y="5.2" width="3.6" height="13.6" rx="1.2"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.4 6.6h15.2"/><path d="M9.4 6.6V4.8a1.2 1.2 0 011.2-1.2h2.8a1.2 1.2 0 011.2 1.2v1.8"/><path d="M6.4 6.6l.9 12a1.6 1.6 0 001.6 1.5h6.2a1.6 1.6 0 001.6-1.5l.9-12"/><path d="M10.4 10.4v6M13.6 10.4v6"/></symbol>
   <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="M19.6 11.2l-7.9 7.9a4.6 4.6 0 01-6.5-6.5l8.3-8.3a3.1 3.1 0 014.4 4.4l-8.3 8.3a1.6 1.6 0 01-2.2-2.2l7.5-7.5"/></symbol>
   <symbol id="i-share" viewBox="0 0 24 24"><circle cx="17.6" cy="5.8" r="2.6"/><circle cx="6.4" cy="12" r="2.6"/><circle cx="17.6" cy="18.2" r="2.6"/><path d="M8.7 10.8l6.6-3.6M8.7 13.2l6.6 3.6"/></symbol>

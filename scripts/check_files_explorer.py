@@ -150,7 +150,14 @@ function paint(which){
     /* The landing view: folder TILES, no columns. Sampled rather than rendered from the real
      * function because the risk here is entirely CSS — a tile grid that overflows a phone, or a long
      * folder name that stretches its track and misaligns the row. Both names below are deliberately
-     * awkward for that reason. */
+     * awkward for that reason.
+     *
+     * IT GOES INSIDE #bl-grid, and that is not a detail. _renderDriveHome writes the home INTO the
+     * existing `.files-grid` element, which is itself a grid of 150px file-card tracks — so the home
+     * is a grid ITEM and lays out in ONE track. This harness used to drop .fx-home straight into
+     * .fx-main, where it had the whole pane and looked perfect, while the real screen stacked every
+     * folder into a single 150px column that ran off the bottom of the page. A sampled DOM is only
+     * worth anything if it is nested the way the real one is. */
     const tile = (ic, name, sub) =>
       '<button class="fx-home-tile"><span class="fx-home-ic">' + ic + '</span>'
       + '<span class="fx-home-name">' + name + '</span>'
@@ -158,6 +165,7 @@ function paint(which){
     document.getElementById('feed').innerHTML =
       '<div class="fx-explorer"><div class="fx-side">' + side() + '</div>'
       + '<div class="fx-main">' + _fxBarHTML(CRUMBS.slice(0,1))
+      + '<div class="files-grid" id="bl-grid">'
       + '<div class="fx-home">'
       + tile('📁','Posts','128 files') + tile('🎵','Music','2410 files')
       + tile('🔒','Voices','3 files')
@@ -166,7 +174,7 @@ function paint(which){
       + tile('🔄','Documents','15819 files') + tile('🔄','Pictures','6793 files')
       + '<div class="fx-home-sec">Everything</div>'
       + tile('🗂','All files','browse the whole drive')
-      + '</div></div></div>';
+      + '</div></div></div></div>';
     return;
   }
   const nosel = which === 'synced';
@@ -188,6 +196,20 @@ AUDIT = r"""(() => {
   const vis = el => !!(el && el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden');
   const out = { vw, overflow: document.documentElement.scrollWidth > vw + 1,
                 homeTiles: document.querySelectorAll('.fx-home-tile').length };
+
+  /* How many COLUMNS the folder tiles actually landed in, and how wide the tile grid got.
+   * "It rendered tiles" was the only thing asked before, and that stayed true while the home was
+   * squeezed into one 150px track of its host grid and ran vertically off the page. Distinct x
+   * positions is the measurement that tells those two apart. */
+  {
+    const tiles = Array.from(document.querySelectorAll('.fx-home-tile')).filter(vis);
+    out.homeCols = new Set(tiles.map(t => Math.round(box(t).x))).size;
+    const home = document.querySelector('.fx-home');
+    const host = document.querySelector('.fx-home') && document.querySelector('.fx-home').parentElement;
+    out.homeW = home ? Math.round(box(home).w) : 0;
+    out.homeHostW = host ? Math.round(box(host).w) : 0;
+    out.homeH = home ? Math.round(box(home).h) : 0;
+  }
 
   // Headings over their own columns. The header and each row are SEPARATE grid containers that share
   // a template, so this compares the real laid-out x of each header cell with the row cell that
@@ -365,6 +387,18 @@ def judge(label, r, phone, which):
         # the grid overflowing (checked above), a name stretching its track, or nothing rendering.
         if not r.get("homeTiles"):
             bad.append(f"[home-empty] {label}: the drive home drew no folder tiles at all")
+        # The home is written into #bl-grid, a grid whose tracks are 150px file cards. If it is
+        # laid out as one ITEM of that grid it gets a single track, falls to one column, and every
+        # folder stacks — which is what shipped, and what "it drew tiles" could not see. It has to
+        # take the host's full width.
+        elif r.get("homeHostW") and r["homeW"] < r["homeHostW"] * 0.8:
+            bad.append(f"[home-squeezed] {label}: the tile grid is {r['homeW']}px inside a "
+                       f"{r['homeHostW']}px host — it is sitting in one track of #bl-grid, not spanning it")
+        # A phone is one column by design; a desktop pane fits several, and one there means the
+        # same squeeze by another name.
+        elif not phone and r.get("homeCols", 0) < 2:
+            bad.append(f"[home-onecolumn] {label}: {r['homeTiles']} folder tiles in "
+                       f"{r.get('homeCols')} column ({r.get('homeH')}px tall) — the grid is not laying out")
         for c in r["clipped"]:
             bad.append(f"[text-clipped] {label}: “{c['text']}” needs {c['needs']}px, has {c['shown']} ({c['cls']})")
         return bad

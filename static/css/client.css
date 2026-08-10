@@ -6632,6 +6632,22 @@ body.os-on #os-root{pointer-events:auto}
 .ma-meta{flex:1 1 170px;min-width:0}
 .ma-meta b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px}
 .ma-ctl{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+/* The Music app's seek row. Full width of the panel (flex-basis 100% in a wrapping .ma-now), so the
+ * bar is never squeezed to a stub by the buttons beside it. `touch-action:none` is load-bearing on a
+ * phone: without it the browser claims the gesture as a page scroll and the pointermove events that
+ * drag the handle simply stop arriving mid-drag. */
+.ma-seek-row{flex:1 1 100%;display:flex;align-items:center;gap:10px;margin-top:2px}
+.ma-seek-row .ma-t{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:38px}
+.ma-seek-row .ma-t:last-child{text-align:right}
+/* 14px, not the widget's 7 — and that is not a taste call. The client scales the whole app down on
+ * desktop (body{zoom} ~.72 between 821 and 1920px), so a bar authored at 10px is drawn at seven
+ * PHYSICAL pixels: measured, not assumed. This is the one control here you have to aim ALONG, and a
+ * 7px-tall target is a miss waiting to happen with a mouse and hopeless with a thumb. */
+.ma-seek{flex:1 1 auto;margin:0;height:14px;touch-action:none}
+.ma-seek:focus-visible{outline:2px solid var(--neon);outline-offset:3px}
+/* No zoom applies on a phone, so the number here is the number the thumb gets. */
+@media (max-width:820px){ .ma-seek{height:16px} .ma-seek-row{gap:8px} }
+.mp-seek{touch-action:none}
 .ma-ctl .btn.on{border-color:var(--neon);color:var(--neon)}
 .ma-q{width:100%}
 .music-app .music-list{flex:1;min-height:0;overflow-y:auto}
@@ -6914,6 +6930,13 @@ html.os-on #upload-badge.upbadge{z-index:333}
  * layout earns its keep when you are comparing sizes and dates, which folders do not have. */
 .fx-home{ display:grid; gap:10px; padding:12px 0;
   grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); }
+/* The home is written INTO #bl-grid, which is `.files-grid` — itself a grid of 150px file-card
+ * tracks. A single child of that lands in ONE track, so the tile grid inside it had ~150px to lay
+ * out in, fell to one column, and stacked every folder into a strip that ran off the bottom of the
+ * page. MEASURED, not reasoned: .fx-home came out 150px wide and 801px tall in a 673px pane. It has
+ * to span the host's tracks. Written as a child selector so it applies only while the home is the
+ * thing in there — the file grid needs no cleanup when it takes the element back. */
+.files-grid > .fx-home{ grid-column:1/-1; }
 .fx-home-sec{ grid-column:1/-1; margin:6px 0 0; font-weight:600; opacity:.7; font-size:.85rem; }
 .fx-home-tile{ display:flex; flex-direction:column; align-items:flex-start; gap:2px;
   padding:14px; border-radius:12px; text-align:left; cursor:pointer;
@@ -6942,7 +6965,6 @@ body.popout #feed{ max-width:none; width:100%; margin:0; padding:0; }
 body.popout .stream-view{ height:100dvh; display:flex; flex-direction:column; padding:0; }
 body.popout .stream-layout{ flex:1 1 auto; min-height:0; }
 body.popout .stream-main{ min-height:0; }
-body.popout .stream-player video{ max-height:min(64dvh, 100%); }
 
 /* ---- Encrypted thumbnails in a synced folder -----------------------------------------------
  * The icon box doubles as the preview surface: when the blob has been fetched and decrypted its
@@ -6996,23 +7018,43 @@ body.popout .stream-view{ max-width:none !important; padding:0 !important; margi
 body.popout .stream-layout{
   display:flex !important; flex-direction:row; align-items:stretch; gap:0;
   height:100%; min-height:0; }
-/* The player BOX must not be taller than the frame it holds. height:100% stretched it to fill the
- * column and the 16:9 video letterboxed itself inside, which is the black band above and below in
- * the render. `align-self:center` lets it be exactly as tall as the picture, and the pane centres it
- * — so a 16:9 stream in a taller window sits in the middle instead of being padded to the edges. */
-body.popout .stream-main{ justify-content:center; }
+body.popout .stream-main{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column;
+  justify-content:center; align-items:center; }
+/* `.stream-player` IS the <video> — the class is on the element itself (see the .stream-player rule
+ * in the Streams block), NOT on a wrapper around one. Two earlier passes styled `.stream-player
+ * video`, a selector that matches nothing in this markup, which is why the window kept rendering
+ * exactly as if none of it had been written.
+ *
+ * The bands: stretching the element (flex:1 1 auto / height:100%) makes the BOX the size of the
+ * pane, and a 16:9 picture in a 1600x768 box letterboxes itself inside — the black above and below
+ * in the render. So the element is sized by its own aspect ratio instead: width/height auto with
+ * max-width/height 100% scales a replaced element down to fit while keeping its ratio, so the box
+ * IS the picture and there is nothing left over to paint black. The pane centres what remains. */
 body.popout .stream-player{
-  max-height:100% !important; height:auto !important; align-self:center; margin:0 !important;
+  flex:0 1 auto; min-height:0;
+  width:100% !important; height:auto !important;
+  max-width:100% !important; max-height:100% !important;
+  /* `auto 16/9`, not a plain ratio: the keyword means "use the intrinsic ratio when there is one,
+   * and this only when there is not". Before metadata arrives a <video> with no poster has NO
+   * natural size, and CSS gives it the default 300x150 — so sizing purely from content drew a
+   * postage stamp in the middle of a black window for the seconds hls.js takes to attach, and
+   * permanently when the stream URL is dead (the popout hides the button row and an empty #st-note,
+   * so there is nothing else on screen to explain it). Once the first frame lands the real ratio
+   * takes over and the box is the picture again. */
+  aspect-ratio:auto 16/9;
+  /* Only reachable for a stream whose shape the pane cannot match — a portrait phone broadcast in a
+   * landscape window, where some empty space is unavoidable. Transparent, so it is the window's own
+   * background rather than a black block sitting inside a dark one. */
+  object-fit:contain;
+  margin:0 !important; background:transparent !important;
   border:0 !important; border-radius:0 !important; box-shadow:none !important; }
-body.popout .stream-player video{ display:block; }
 /* "Pop out player" and "Open stream URL" inside a window that IS the popped-out player: the first
- * does nothing you have not already done, and the second sends you out to a raw HLS URL. The row is
- * the only thing left in that block, so the block goes with it. */
-body.popout .stream-main > .row:last-child{ display:none !important; }
-body.popout .stream-main{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
-body.popout .stream-player{ flex:1 1 auto; min-height:0; display:flex; }
-body.popout .stream-player video{ width:100%; height:100%; max-height:none; object-fit:contain;
-  background:#000; }
+ * does nothing you have not already done, and the second sends you out to a raw HLS URL.
+ * NOT `:last-child` — a stream with a `summary` renders `.about` after this row, and every live
+ * stream measured on the relay has one, so the qualifier meant the row was never matched. There is
+ * only one `.row` in `.stream-main`, so it needs no qualifier at all. */
+body.popout .stream-main > .row{ display:none !important; }
+body.popout #st-note:empty{ display:none; }
 body.popout .stream-chat{
   flex:0 0 340px !important; width:auto !important; height:auto !important;
   max-width:38vw; min-width:260px; display:flex; flex-direction:column; min-height:0;

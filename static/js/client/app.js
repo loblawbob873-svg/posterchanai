@@ -1171,15 +1171,24 @@
   }
   // Shareable web link for a NIP-19 entity (npub/note/nevent/naddr) → poster.place/<entity>.
   function _webLink(entity){ return _serverOrigin() + '/' + entity; }
+  /* `?e=<bech32>` — the same deep link, carried as a query instead of a path segment.
+   * A bundled app (desktop Electron, the APK) has no router: its shell reads files off disk, so a
+   * path segment after index.html is a 404 and nothing else. Anything that needs to point the app at
+   * an entity from inside a bundle has to use this form, and openStreamWindow does. */
+  function _entityFromQuery(){
+    let q=''; try{ q = new URLSearchParams(location.search).get('e') || ''; }catch(_){ return null; }
+    const m = q.match(/^(?:nostr:)?((?:npub1|nprofile1|note1|nevent1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]+)$/i);
+    return m ? { kind:'bech32', q: m[1] } : null;
+  }
   function _entityFromPath(){
     let p; try{ p = decodeURIComponent(location.pathname||'/'); }catch(_){ p = location.pathname||'/'; }
     p = p.replace(/^\/client(?=\/|$)/,'').replace(/^\/+/,'').replace(/\/+$/,'');
-    if(!p) return null;
+    if(!p) return _entityFromQuery();
     const seg = p.split('/');
     if(/^users$/i.test(seg[0]) && seg[1]) return { kind:'user', q: seg[1] };
     const m = seg[0].match(/^(?:nostr:)?((?:npub1|nprofile1|note1|nevent1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]+)$/i);
     if(m) return { kind:'bech32', q: m[1] };
-    return null;
+    return _entityFromQuery();
   }
   async function routeFromPath(){
     const e = _entityFromPath();
@@ -3939,7 +3948,12 @@
       // Only prepend as "live" if it's genuinely new — NOT a backfilled/synced event with an old
       // created_at (those jump to the top as if new). kind-5 deletions are NOT posts (render blank) —
       // watchDeletions handles them, so keep them out of the prepend. A small grace covers skew.
-      if ((VIEW===view || _tlParked()) && ev.kind!==5 && _TL_KINDS.includes(ev.kind) && _tl.eosed && ev.created_at >= _liveSince-120) _bufferLive(ev, fn); } };
+      /* `_parkedSlot(view)`, not `_tlParked()`. The latter is "VIEW is not a timeline", which is
+       * false whenever the FOCUSED window is the other timeline — so with Home in front and
+       * Nostrverse parked beside it, the global subscription's events were never buffered at all and
+       * that window stayed frozen for as long as both were open. Asking whether THIS view has a
+       * parked window is the question that was meant, and it is true in both arrangements. */
+      if ((VIEW===view || _parkedSlot(view)) && ev.kind!==5 && _TL_KINDS.includes(ev.kind) && _tl.eosed && ev.created_at >= _liveSince-120) _bufferLive(ev, fn, view); } };
     // Draw ONLY on the first EOSE. The relay re-EOSEs on reconnect; redrawing then wipes the feed.
     const markEosed = ()=>{ if(VIEW===view && !_tl.eosed){ _tl.eosed=true; _drawTimeline(false); } };
     // Re-entrancy token: a slow async negSync that resolves AFTER the user re-navigated (or re-rendered)
@@ -3989,9 +4003,43 @@
   // Batched live updates: a busy global feed must NOT prepend + re-render per event (that pegged
   // the CPU and flashed). Buffer incoming notes and prepend them together a few times a second,
   // capping the feed and keeping scroll stable.
-  let _liveBuf=[], _liveT=null, _liveFn=null, _livePending=[];
+  let _liveT=null, _liveFn=null, _livePending=[];
+  /* ONE BUFFER PER TIMELINE, not one for the app.
+   *
+   * `home` and `global` are two live subscriptions with two different filters, and in desktop mode
+   * they can be two windows on screen at the same time. A single `_liveBuf` + `_liveFn` merged both
+   * streams and kept only the LAST writer's filter and view, so a flush delivered the whole mixed
+   * batch to one window through the other's filter: unfollowed strangers from the firehose prepended
+   * into the following-feed, while the window they belonged to got nothing. Keyed by view, each
+   * batch keeps the filter and the destination it was collected for. */
+  const _liveBufs = new Map();          // view -> { buf:[], fn }
   const _LIVE_READ_PX=400;   // once scrolled this far down we stop auto-prepending (see below)
-  function _bufferLive(ev, fn){ _liveFn=fn; _liveBuf.push(ev); if(!_liveT) _liveT=setTimeout(flushLive, 1800); }
+  function _bufferLive(ev, fn, view){
+    const k = view || VIEW;
+    let b = _liveBufs.get(k);
+    if(!b){ b = { buf:[], fn }; _liveBufs.set(k, b); }
+    b.fn = fn; b.buf.push(ev);
+    if(!_liveT) _liveT=setTimeout(flushLive, 1800);
+  }
+  /* Where a PARKED timeline's live posts belong.
+   *
+   * os.js owns the answer — it is the only thing that knows which window shows which view, and with
+   * Home and Nostrverse both open the document holds two elements with `id="tl-notes"`, so
+   * getElementById would silently answer with whichever opened first. The single-match DOM fallback
+   * is for a client running an os.js from before parkedSlot existed: unambiguous, so it cannot pick
+   * the wrong one; with two timelines open it declines to guess and the posts wait for the redraw. */
+  function _parkedSlot(view){
+    /* When os.js can answer, its answer is FINAL — including "no". The fallback used to run on any
+     * null, which turned a deliberate refusal ("the one parked timeline is not the one that
+     * buffered these") back into the wrong window, defeating the lookup it was there to back up.
+     * It exists only for a client whose os.js predates parkedSlot. */
+    try{ if(window.PCOS) return (PCOS.parkedSlot ? PCOS.parkedSlot(view) : _parkedSlotDom()) || null; }catch(_){}
+    return null;
+  }
+  function _parkedSlotDom(){
+    const all=document.querySelectorAll('[id="tl-notes"]');
+    return all.length===1 ? all[0].closest('.osw-slot') : null;   // two open → decline rather than guess
+  }
   /* Is the timeline PARKED in an unfocused desktop-mode window?
    *
    * Desktop mode moves an unfocused window's DOM out of #feed into its own slot and hands the VIEW
@@ -4002,24 +4050,65 @@
     return !!(window.PCOS && VIEW!=='home' && VIEW!=='global' && document.getElementById('tl-notes'));
   }
   function flushLive(){
-    _liveT=null; const evs=_liveBuf.splice(0);
-    if(!evs.length) return;
-    if(VIEW!=='home'&&VIEW!=='global'){
+    _liveT=null;
+    // Each timeline's batch is delivered on its own terms: the focused one paints into #feed, a
+    // parked one into its own window. Draining them together through one destination is what mixed
+    // the firehose into the following feed.
+    for(const [view, b] of [..._liveBufs]){
+      const evs = b.buf.splice(0);
+      if(evs.length) _flushLiveFor(view, evs, b.fn);
+    }
+  }
+  function _flushLiveFor(view, evs, fn){
+    _liveFn = fn;                     // _prependLive filters with this; set per batch, not per app
+    if(VIEW!==view){
       /* KEEP them. The buffer has already been drained by the splice above, so returning here does
        * not defer these posts — it destroys them, and nothing ever backfills: markEosed only draws
        * on the FIRST EOSE, so refocusing the timeline showed exactly what it showed before. That is
        * "not showing new posts when other window is focused" in desktop mode.
        *
-       * Parked they go to the pending list, which is the same place the "↑ N new posts" pill reads —
-       * so the count is already right when the window comes back, and clicking it prepends them. The
-       * DOM they belong to travels back with the window, pill included. */
-      if(_tlParked()){
-        for(const ev of evs) _livePending.push(ev);
-        if(_livePending.length>300) _livePending=_livePending.slice(-300);
-        _updateNewPostsPill();
+       * Parked, they are DRAWN into the window they belong to (see below). The pending list is not
+       * a way to keep them here — it is read through a pill whose count is forced to zero on this
+       * exact path, and emptied outright by the next _resetLive. */
+      {
+        /* PREPEND, and never stash. A parked window is ON SCREEN — it is parked because another
+         * window took focus, not because it is hidden — and os.js MOVES its nodes into the slot
+         * rather than copying them, so #tl-notes there is the real timeline with its real handlers.
+         *
+         * THE PENDING LIST IS NOT AN OPTION HERE, and that is the part that took two attempts.
+         * `_updateNewPostsPill` computes its count as `(VIEW==='home'||VIEW==='global') ? … : 0`,
+         * and `_tlParked()` is true only when VIEW is NEITHER — so every call from this path resolves
+         * to zero and HIDES the pill. Posts routed there are invisible with no control to release
+         * them, the feed stays frozen (the reported bug, intact), and refocusing runs `_resetLive()`
+         * which empties `_livePending` outright, so they are destroyed rather than merely delayed.
+         * The pill could not serve this window anyway: it floats over `.main` — the FOCUSED window —
+         * and `_flushPending` prepends into `$('#feed')`, which belongs to whatever is in front, so
+         * clicking it would pour timeline posts into a Profile or Post window.
+         *
+         * Mixing the two is worse than either: posts drawn here while older ones sat in the pending
+         * list came out of order, because `_flushPending` later inserts its batch at `firstChild` —
+         * above the newer posts already on screen.
+         *
+         * Reading position is safe without the pill: `_prependLive` measures scrollHeight before and
+         * after and corrects scrollTop by the difference, so nothing moves under someone scrolled
+         * down. That is what AUTO_NEW_POSTS protects against on the focused feed, and it is already
+         * handled here — which is why this does not consult it. */
+        const slot=_parkedSlot(view);
+        if(slot && !_tlMedia){
+          _prependLive(evs, slot);
+          /* Tell os.js where the window is now looking. It captures scrollTop ONCE, at park time,
+           * and replays exactly that number on restore — so content inserted above the reading
+           * position while parked leaves the saved offset pointing somewhere else, and refocusing
+           * lands several posts away from where you were. _prependLive has already corrected the
+           * slot's live scrollTop; this is what makes the restore read it. */
+          try{ if(window.PCOS && PCOS.noteScroll) PCOS.noteScroll(slot); }catch(_){}
+        }
+        // _tlMedia (the media grid) does not take live prepends on any path — the grid would break.
+        // New images appear on the next redraw, the same contract the focused timeline has.
       }
       return;
     }
+    if(VIEW!=='home'&&VIEW!=='global') return;   // the focused view is not a timeline at all
     const feed=$('#feed'); if(!feed) return;
     if(_tlMedia) return;   // media grid doesn't live-prepend (would break the grid) — new images show on redraw/re-entry
     // While the user is reading below the top, DON'T mutate the timeline under them (prepending +
@@ -9166,8 +9255,38 @@
       naddr = NT().nip19.naddrEncode({ identifier:(ev.tags.find(t=>t[0]==='d')||[])[1]||'',
                                        pubkey:ev.pubkey, kind:30311 });
     }catch(_){ toast('could not build a link to this stream'); return; }
-    const base = location.pathname.replace(/\/client(?:\/.*)?$/,'/client').replace(/\/+$/,'');
-    const url = location.origin + (base || '') + '/' + naddr + '?popout=1';
+    /* The window's URL has to be a document that this shell can actually SERVE.
+     *
+     * On the web /client/<naddr> is a real route, so appending the entity as a path segment works.
+     * In the desktop bundle there is no server and no router: app:// reads a FILE off disk, and the
+     * page is /index.html — so `app://posterchan/index.html/naddr1…` is a path that exists nowhere
+     * and the new window rendered the scheme handler's own 404 body, reported as "a new window
+     * opening saying not found".
+     *
+     * So the entity travels as a QUERY on the document that is ALREADY loaded, which is a real URL
+     * in both shells. Strip any entity segment the current URL is carrying so the popout of a stream
+     * opened from a deep link doesn't inherit it; `_entityFromPath` reads `?e=` for exactly this. */
+    /* Strip BOTH path forms `_entityFromPath` decodes — the bech32 segment and `/users/<name>` —
+     * because a path entity is read BEFORE the query, so anything left behind wins over the `?e=`
+     * this URL is built around. Reached by opening the app from a shared profile link
+     * (poster.place/users/alice): the popout would show alice's profile instead of the stream. */
+    let doc = location.pathname
+      .replace(/\/(?:nostr:)?(?:npub1|nprofile1|note1|nevent1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]+\/*$/i, '')
+      .replace(/\/users\/[^/]+\/*$/i, '')
+      .replace(/\/+$/,'');
+    /* A bundle serves FILES, so the only safe target is a real one. `location.pathname` is not
+     * reliably that: _navUrl pushes `/note1…`, `/naddr1…` and `/` as you move around, and none of
+     * those exist on disk — which is the same 404 ("not found" in a new window) this is here to fix,
+     * just arrived at by a different route. Anything that is not an .html file becomes the entry
+     * point.
+     *
+     * And never a bare "/" on the web: `GET /` is a 302 to /client (app/main.py) and a redirect
+     * DROPS THE QUERY, so the window would open with neither `popout=1` nor the naddr and paint the
+     * ordinary timeline — while this tab has already torn its own player down. Reachable in one
+     * step: a shared root link leaves location.pathname at "/" for the rest of the session. */
+    if(BUNDLED) doc = /\.html?$/i.test(location.pathname) ? location.pathname : '/index.html';
+    else if(!doc) doc = '/client';
+    const url = location.origin + doc + '?popout=1&e=' + encodeURIComponent(naddr);
     const name = 'pcstream_' + naddr.slice(-24);
     /* Sized to the SCREEN, not to a fixed guess: at zoom 1 the chat needs real width beside the
      * player, and a 1180px cap on a 4K monitor is a small window on a big screen for no reason. */
@@ -13111,6 +13230,42 @@
   const _MIME_EXT={'image/jpeg':'jpg','image/png':'png','image/gif':'gif','image/webp':'webp','image/avif':'avif',
     'video/mp4':'mp4','video/webm':'webm','video/quicktime':'mov','audio/mpeg':'mp3','audio/ogg':'ogg','audio/wav':'wav','audio/mp4':'m4a','audio/aac':'aac','audio/flac':'flac'};
   function extFor(file){ const n=(file.name||'').match(/\.([a-z0-9]{2,5})$/i); if(n) return n[1].toLowerCase(); return _MIME_EXT[file.type]||''; }
+  /* Name → MIME, for the places that rebuild a File out of RAW BYTES.
+   *
+   * `new File([bytes], 'holiday.jpg')` has `type === ''` — the constructor does not look at the name,
+   * and nothing downstream recovers it. Blossom then stores the blob untyped, and the drive decides
+   * a card's preview purely from the stored type (blobThumb), so the file rendered as a generic 📎
+   * with no thumbnail: reported after copying a picture out of a synced folder. The same blank type
+   * makes _wantsLibrary say "not audio", so an mp3 copied the same way went to Posts instead of the
+   * music library — the one thing that button's own comment promises it does.
+   *
+   * Extends the reverse of _MIME_EXT rather than replacing it, so the two tables cannot disagree
+   * about the formats both know; the extras are the ones that only ever arrive as a filename. */
+  const _EXT_MIME = (() => {
+    const m = {};
+    for(const mime in _MIME_EXT) m[_MIME_EXT[mime]] = mime;
+    return Object.assign(m, {
+      jpeg:'image/jpeg', svg:'image/svg+xml', bmp:'image/bmp', ico:'image/x-icon', heic:'image/heic',
+      tif:'image/tiff', tiff:'image/tiff',
+      mkv:'video/x-matroska', avi:'video/x-msvideo', m4v:'video/mp4', mpg:'video/mpeg', mpeg:'video/mpeg',
+      opus:'audio/ogg', oga:'audio/ogg', m4b:'audio/mp4', wma:'audio/x-ms-wma', aif:'audio/aiff',
+      aiff:'audio/aiff', ape:'audio/x-ape', mka:'audio/x-matroska',
+      pdf:'application/pdf', txt:'text/plain', md:'text/markdown', csv:'text/csv',
+      json:'application/json', xml:'application/xml', html:'text/html', htm:'text/html',
+      zip:'application/zip', gz:'application/gzip', tar:'application/x-tar', '7z':'application/x-7z-compressed',
+      rar:'application/vnd.rar', epub:'application/epub+zip',
+    });
+  })();
+  function mimeForName(name){
+    const e = (String(name||'').match(/\.([A-Za-z0-9]{1,8})$/)||[])[1];
+    return (e && _EXT_MIME[e.toLowerCase()]) || '';
+  }
+  /* A File rebuilt from bytes, carrying the type its NAME implies. Everything that reconstructs a
+   * file from a decrypted/downloaded buffer should go through this rather than `new File(...)`. */
+  function fileFromBytes(bytes, name, type){
+    const t = type || mimeForName(name);
+    return t ? new File([bytes], name, { type: t }) : new File([bytes], name);
+  }
   // NIP-92 source metadata for media we've uploaded this session, keyed by the exact URL we append to
   // a note. Lets imetaTagsFor() emit `imeta` tags so other clients render our art inline at the right
   // aspect ratio (dim), verify it (x = sha256) and know its type (m). Session-scoped, never persisted.
@@ -13265,7 +13420,15 @@
     // auto-fallback — keep it on the built-in server even if that surfaces a permission error.
     if(opts&&opts.noMirror && tgt.proto==='nip96' && !ClientSettings.get('blossomEnabled')) tgt=_blossomBuiltin();
     const server=tgt.url; if(!server) throw new Error('no media server set');
-    file=await compressMedia(file);   // auto-compress images AND video (no-op for gif/svg/already-small)
+    /* auto-compress images AND video (no-op for gif/svg/already-small)
+     *
+     * …EXCEPT for an ARCHIVAL copy. compressMedia is right for something being posted — a 6 MB phone
+     * photo does not need to reach a timeline at full size — and wrong for "keep this file", which
+     * has to store the bytes it was given. It re-encodes anything over 800 KB or 2560px to JPEG at a
+     * quality as low as 0.45 and drops EXIF with it, so a copy kept from a synced folder would land
+     * in the drive smaller, lossier, stripped of its capture date and under a DIFFERENT sha256 than
+     * the original it claims to be a copy of — with nothing in the UI to say so. */
+    if(!(opts && opts.noCompress)) file=await compressMedia(file);
     if(tgt.proto==='nip96') return await uploadNip96(file, server);
     const buf=await file.arrayBuffer(); const hash=await sha256hex(buf);
     // Reuse the BATCH auth when this blob's hash is one it already commits to (BUD-01 allows many `x` tags,
@@ -13442,10 +13605,41 @@
     const room = suf ? Math.max(6, 20-suf.length) : 20;
     return (stem.length>room ? stem.slice(0,room)+'…' : stem) + (suf?'.'+suf:'');
   }
+  /* Turn a tile whose preview did not load into the icon it would have been.
+   *
+   * Both halves matter and both must be bound wherever blobThumb's markup is rendered. The video one
+   * has always existed; the image one is newly needed because an untyped blob's type is now a GUESS
+   * from its extension — and a wrong guess, or a format the server cannot preview (it answers 404
+   * with a day of cache), otherwise leaves the browser's broken-image glyph on the card for that
+   * long. A paperclip is what these showed before, and it is the honest answer when there is no
+   * picture to draw. Shared, because it was bound in the Files grid and not in the attach picker,
+   * which renders the identical markup. */
+  function _bindThumbFallback(root){
+    if(!root) return;
+    const swap=(im, glyph, dflt)=>{ const d=document.createElement('div'); d.className='file-icon';
+      d.innerHTML=glyph+'<span>'+enc(im.dataset.ext||dflt)+'</span>'; im.replaceWith(d); };
+    $$('.vthumb',root).forEach(im=> im.onerror=()=>swap(im,'🎬','video'));
+    $$('.ithumb',root).forEach(im=> im.onerror=()=>swap(im,'📎','file'));
+  }
   function blobThumb(b, ext){
-    const t=b.type||'';
+    let t=b.type||'';
+    /* A blob stored with no type at all — or the octet-stream a typeless upload becomes — is still a
+     * photograph if its name ends in .jpg. This decides the CARD, so without the fallback a picture
+     * copied out of a synced folder drew a paperclip and never even requested a preview. The server
+     * sniffs the bytes for the same reason, and the two have to agree: the client is what asks.
+     *
+     * The extension is resolved from the BLOB before the type is consulted. Deriving it from the
+     * MIME first — as the ext argument's old default did — turns `application/octet-stream` into the
+     * string "octet-stre", which matches nothing, so the fallback silently could not fire on any
+     * caller that omits `ext`: the compose/DM attach picker calls `blobThumb(b)` and showed every
+     * untyped photo as an identical anonymous tile. */
+    if(!ext) ext = extOfBlob(b);
+    if(!t || /^application\/octet-stream/i.test(t)){ const g = ext && mimeForName('x.' + ext); if(g) t = g; }
     ext=(ext||(t.split('/')[1]||'file')).slice(0,10);
-    if(/image/.test(t)) return `<img src="${enc(thumbUrl(b.url))}" loading="lazy">`;
+    // onerror → the icon. A guessed type can be wrong, and a server that cannot make a preview
+    // answers 404 with a day's cache; without this the card shows the browser's broken-image glyph
+    // for as long as that lasts, which is strictly worse than the paperclip it replaced.
+    if(/image/.test(t)) return `<img class="ithumb" data-ext="${enc(ext)}" src="${enc(thumbUrl(b.url))}" loading="lazy">`;
     // video: ffmpeg frame thumbnail (server ?thumb=1); falls back to a 🎬 icon if it can't be decoded
     if(/video/.test(t)) return `<img class="vthumb" data-ext="${enc(ext)}" src="${enc(thumbUrl(b.url))}" loading="lazy">`;
     if(/audio/.test(t)) return `<div class="file-icon">🎵<span>${enc(ext)}</span></div>`;
@@ -13686,6 +13880,7 @@
         grid.innerHTML = shown.length ? shown.map(b=>
           `<div class="file-card" data-url="${enc(b.url)}" data-type="${enc(b.type||'')}">${blobThumb(b)}</div>`).join('')
           : `<div class="empty">${cur?'Nothing in this folder.':enc(opts.empty||'No files yet — upload some in the Files tab.')}</div>`;
+        _bindThumbFallback(grid);   // same markup as the Files grid, so the same fallback
         grid.querySelectorAll('[data-url]').forEach(el=> el.onclick=()=>{
           const type=el.dataset.type||''; const ext=_MIME_EXT[type]||''; const url=el.dataset.url;
           close();
@@ -13872,6 +14067,16 @@
           <button class="btn btn-ghost small" id="ma-next" title="Next"><svg class="ic b-ic" aria-hidden="true"><use href="#i-next"></use></svg></button>
           <button class="btn btn-cyan small" id="ma-add" title="Add music"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add music</button>
         </div>
+        <!-- The scrubber gets its OWN row rather than sharing the control line, so it can be the
+             full width of the panel at every size. On a phone .ma-now wraps to two or three lines,
+             and a bar sharing a row with four buttons is left a stub too short to aim with — the
+             one thing a seek bar cannot afford to be. -->
+        <div class="ma-seek-row">
+          <span class="ma-t" id="ma-cur">0:00</span>
+          <div class="mp-seek ma-seek" id="ma-seek" role="slider" tabindex="0"
+               aria-label="Seek" aria-valuemin="0" aria-valuemax="100" aria-valuetext="not playing"><div class="mp-seek-fill"></div></div>
+          <span class="ma-t" id="ma-dur">0:00</span>
+        </div>
       </div>
       <input class="input ma-q" id="ma-q" type="search" autocomplete="off"
              placeholder="Search your library" aria-label="Search your library">
@@ -13905,6 +14110,9 @@
       const q=musicTracks(null); if(!q.length){ toast('no music yet — add some'); return; }
       MusicPlayer.refreshQueue(); MusicPlayer.play(q[0].sha); });
     b('#ma-add',()=>openMusicFolder());
+    // The same scrubber the floating widget uses — one implementation, so the two cannot drift.
+    MusicPlayer.bindSeek($('#ma-seek',feed));
+    MusicPlayer._tickApp();   // paint the position immediately: entering mid-track must not read 0:00
     { const qi=$('#ma-q',feed);
       if(qi){ qi.value=_musicQ;
         // Re-render the LIST only. Repainting the whole app would take the caret out of this box.
@@ -13922,6 +14130,16 @@
     const playing=_audioEl && !_audioEl.paused;
     if(sub) sub.textContent=MusicPlayer.cur ? (playing?'playing':'paused')+(MusicPlayer.shuffle?' · shuffle':'') : '';
     const sh=document.getElementById('mus-shuffle'); if(sh) sh.classList.toggle('on', !!MusicPlayer.shuffle);
+    /* THE BUTTON HAS TO SAY WHICH IT IS. #ma-play was rendered once with a fixed ▶ and nothing ever
+     * changed it, so the Music app's main control showed "play" while a track was playing — the one
+     * piece of state a transport exists to report. (The floating widget rebuilds its whole innerHTML
+     * on every _render and so has always been right; this view updates in place, which is why it
+     * needs saying explicitly.) */
+    { const pb=document.getElementById('ma-play');
+      if(pb){ const u=pb.querySelector('use');
+        if(u) u.setAttribute('href', playing?'#i-pause':'#i-play');
+        pb.title = playing?'Pause':'Play';
+        pb.setAttribute('aria-label', pb.title); } }
     try{ _updateMusicListBtns(); }catch(_){}
   }
   function openMusic(){   // the Music nav button → shuffle-play your whole library right away
@@ -15041,7 +15259,12 @@
       b.disabled=true;
       try{
         const bytes=await _syncBlobBytes(sha);
-        const r=await _keepBytes(new File([bytes], name), '');
+        // fileFromBytes, not `new File(...)`: a synced blob is ciphertext with no type of its own,
+        // so the NAME is the only thing that still knows what it is. Without it the copy is stored
+        // untyped and the drive draws it as a generic 📎 — and a track would miss the music library.
+        // exact: this is an ARCHIVE of a file that already exists — the drive must get the bytes
+        // that were synced, not a re-encoded approximation of them under a different hash.
+        const r=await _keepBytes(fileFromBytes(bytes, name), '', {exact:true});
         _keptToast(r);
       }catch(err){ toast('couldn’t save: '+((err&&err.message)||err)); }
       finally{ b.disabled=false; }
@@ -15364,7 +15587,7 @@
     if(details) _fxBindCols(grid);
     { const mb=$('.bl-more',grid); if(mb) mb.onclick=()=>{ _filesShown+=_FILES_PAGE; _renderFilesGrid(grid, list); }; }
     $$('.enc-open',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); try{ toast('decrypting…'); const u=await trackUrl(a.dataset.sha); window.open(u,'_blank'); }catch(err){ toast('decrypt failed: '+(err.message||'')); } });
-    $$('.vthumb',grid).forEach(im=> im.onerror=()=>{ const d=document.createElement('div'); d.className='file-icon'; d.innerHTML='🎬<span>'+enc(im.dataset.ext||'video')+'</span>'; im.replaceWith(d); });
+    _bindThumbFallback(grid);
     // Encrypted files can't be downloaded by URL (that would save the ciphertext) — decrypt in the
     // browser first, then save the plaintext under its real name.
     $$('.dlenc',grid).forEach(b=> b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); saveEncrypted(b.dataset.sha, b.dataset.name); });
@@ -16477,6 +16700,82 @@
       if(!this.queue.length) this.refreshQueue();
       if(!this.queue.length) return; let i=this.queue.indexOf(this.cur); this.play(this.queue[(i-1+this.queue.length)%this.queue.length], {back:true, force:true}); },
     seekTo(f){ if(_audioEl && _audioEl.duration) _audioEl.currentTime=Math.max(0,Math.min(1,f))*_audioEl.duration; },
+    /* THE SCRUBBER — one implementation, bound to whichever transport is on screen.
+     *
+     * The floating widget's bar was click-only. That lets you jump to a point but not FIND one, and
+     * finding one is the whole job: you cannot aim at the second chorus by clicking blind and hoping.
+     * The Music app — the desktop's Music window, and ☰ More → Music on a phone — had no bar at all,
+     * only prev/play/next, so a long track could not be moved through in any way whatsoever. Both
+     * call this, so a fix to one is a fix to both.
+     *
+     * POINTER events, not mouse: the same code then works for a finger, a pen and a trackpad, and
+     * setPointerCapture is what keeps a drag alive after the pointer leaves the bar — which on a
+     * 7px-tall strip happens on the first vertical wobble of a thumb, i.e. immediately.
+     *
+     * While a drag is in progress `_scrub` holds the position and _tick must not paint over it, or
+     * the handle springs back to the playhead on every timeupdate (~4x a second) and the bar fights
+     * the finger dragging it. Seeking on MOVE as well as on release would restart the decoder dozens
+     * of times per drag, so the audio is moved once, at the end; the fill follows continuously so
+     * the drag still looks live. */
+    bindSeek(bar){
+      if(!bar || bar._pcSeek) return; bar._pcSeek=true;
+      const fillEl=()=>bar.querySelector('.mp-seek-fill');
+      const fracOf=e=>{ const r=bar.getBoundingClientRect();
+        return r.width ? Math.max(0, Math.min(1, (e.clientX-r.left)/r.width)) : 0; };
+      const paint=f=>{ const el=fillEl(); if(el) el.style.width=(f*100)+'%'; };
+      const seekable=()=>!!(_audioEl && isFinite(_audioEl.duration) && _audioEl.duration>0);
+      const end=e=>{
+        if(this._scrub==null) return;
+        const f=this._scrub; this._scrub=null;
+        try{ bar.releasePointerCapture(e.pointerId); }catch(_){}
+        this.seekTo(f); this._media(); this._tick();
+      };
+      bar.onpointerdown=e=>{
+        if(!seekable() || e.button>0) return;
+        e.preventDefault();
+        this._scrub=fracOf(e); paint(this._scrub);
+        try{ bar.setPointerCapture(e.pointerId); }catch(_){}
+      };
+      // …and if the bar was replaced under the drag, stop tracking rather than moving a dead node.
+      bar.onpointermove=e=>{ if(this._scrub==null) return;
+        if(!bar.isConnected){ this._scrub=null; return; }
+        this._scrub=fracOf(e); paint(this._scrub); };
+      bar.onpointerup=end;
+      // A cancelled pointer (a system gesture, a call arriving, the tab losing the touch) never
+      // sends pointerup. Without this the bar stays stuck to a drag that ended, and _tick is frozen.
+      bar.onpointercancel=end;
+      /* Keyboard, because a scrubber that only answers a pointer is unusable without one and this is
+       * one line of arithmetic. ±5s per press, ±1 minute on Page keys, Home/End for the ends. */
+      bar.onkeydown=e=>{
+        if(!seekable()) return;
+        const d=_audioEl.duration, t=_audioEl.currentTime||0;
+        let to=null;
+        if(e.key==='ArrowRight') to=t+5; else if(e.key==='ArrowLeft') to=t-5;
+        else if(e.key==='PageUp') to=t+60; else if(e.key==='PageDown') to=t-60;
+        else if(e.key==='Home') to=0; else if(e.key==='End') to=Math.max(0,d-1);
+        if(to==null) return;
+        e.preventDefault();
+        _audioEl.currentTime=Math.max(0, Math.min(d, to)); this._media(); this._tick();
+      };
+    },
+    /* The Music APP's transport, ticked from here rather than from _musicAppNow.
+     *
+     * _musicAppNow only runs on state CHANGES, and a position that moves only when you press
+     * something is not a timeline. This has to run BEFORE _tick's own early return, because the
+     * widget is hidden exactly when the app is mounted — which is exactly when this bar is the only
+     * one on screen. */
+    _tickApp(){
+      const bar=document.getElementById('ma-seek'); if(!bar) return;
+      const d=(_audioEl&&_audioEl.duration)||0, t=(_audioEl&&_audioEl.currentTime)||0;
+      const ok=isFinite(d)&&d>0;
+      const cur=document.getElementById('ma-cur'), dur=document.getElementById('ma-dur');
+      if(dur) dur.textContent=ok?_fmtTime(d):'0:00';
+      if(cur) cur.textContent=_fmtTime(this._scrub!=null&&ok ? this._scrub*d : t);
+      bar.setAttribute('aria-valuetext', ok?_fmtTime(t)+' of '+_fmtTime(d):'not playing');
+      if(this._scrub!=null) return;   // a drag owns the fill until it ends
+      const f=bar.querySelector('.mp-seek-fill');
+      if(f) f.style.width=(ok ? (t/d*100) : 0)+'%';
+    },
     setMin(m){ this.min=m; this._render(); },
     close(){ this._nativeOff=true; if(_audioEl) _audioEl.pause(); if(this.el) this.el.classList.add('hidden');
       /* Take the native controls down WITH the player. A media notification (and a widget) still
@@ -16495,9 +16794,15 @@
         this.el.classList.remove('hidden');
         this._render();
       }
+      this._tickApp();   // before the early return: the widget is hidden exactly when the app is up
       if(!this.el||this.el.classList.contains('hidden')||this.min) return;
       const f=this.el.querySelector('.mp-seek-fill'), c=this.el.querySelector('.mp-cur'), du=this.el.querySelector('.mp-dur');
-      if(_audioEl && _audioEl.duration){ if(f) f.style.width=((_audioEl.currentTime/_audioEl.duration*100)||0)+'%'; if(c) c.textContent=_fmtTime(_audioEl.currentTime); if(du) du.textContent=_fmtTime(_audioEl.duration); }
+      if(_audioEl && _audioEl.duration){
+        // Not while a drag owns it — repainting from currentTime here is what snaps the handle back
+        // to the playhead on every timeupdate and makes the bar fight the finger moving it.
+        if(f && this._scrub==null) f.style.width=((_audioEl.currentTime/_audioEl.duration*100)||0)+'%';
+        if(c) c.textContent=_fmtTime(this._scrub!=null ? this._scrub*_audioEl.duration : _audioEl.currentTime);
+        if(du) du.textContent=_fmtTime(_audioEl.duration); }
       // …and tell the OS once a second, so a car's elapsed/remaining time tracks the audio. timeupdate
       // fires ~4x a second; the media session does not need that and every call is a cross-process hop.
       { const sec=Math.floor((_audioEl&&_audioEl.currentTime)||0);
@@ -16505,6 +16810,13 @@
     onChange:null,   // the Music app mirrors this widget's state; see _musicAppNow
     _render(){
       try{ if(this.onChange) this.onChange(); }catch(_){}
+      /* ABANDON ANY DRAG. This rebuilds the widget's innerHTML, so the bar a pointer is currently
+       * captured on is about to be detached — and a detached element never fires pointerup or
+       * pointercancel, so `_scrub` would stay set for ever. Both _tick and _tickApp refuse to paint
+       * the fill while it is set, so the progress bar and the elapsed time freeze on BOTH transports
+       * while the audio keeps playing. Easy to hit: _render runs on every state change, including
+       * the auto-advance when a track ends. */
+      this._scrub=null;
       this.ensure(); const d=this.el;
       /* The floating widget and the Music APP are the same transport. When the app is on screen the
        * widget is a second copy of its own controls, which is what "it loads the new player and the
@@ -16536,7 +16848,7 @@
       b('.mp-play',()=>this.toggle()); b('.mp-min',()=>this.setMin(true)); b('.mp-exp',()=>this.setMin(false));
       b('.mp-close',()=>this.close()); b('.mp-prev',()=>this.prev()); b('.mp-next',()=>this.next());
       b('.mp-shuffle',()=>{ this.shuffle=!this.shuffle; this._render(); });
-      const seek=qq('.mp-seek'); if(seek) seek.onclick=e=>{ const r=seek.getBoundingClientRect(); this.seekTo((e.clientX-r.left)/r.width); };
+      this.bindSeek(qq('.mp-seek'));
       const srch=qq('.mp-search');
       if(srch){ srch.oninput=()=>{ this._search=srch.value; const lst=qq('.mp-list'); if(lst){ lst.innerHTML=this._listHtml(); this._wireList(); } };
         srch.onkeydown=e=>{ if(e.key==='Enter'){ const s=this._shownShas(); if(s.length) this.play(s[0]); } }; }   // Enter = play first match
@@ -21201,15 +21513,28 @@
   function _wantsLibrary(file, kind){
     return kind === 'audio' || /^audio\//i.test((file && file.type) || '');
   }
-  async function _keepBytes(file, kind){
-    if(_wantsLibrary(file, kind)){
+  /* `opts.exact` — store the bytes as given, never re-encoded.
+   *
+   * For a file being KEPT rather than shared. Saving a copy of something that already exists
+   * elsewhere is an archive operation: coming back smaller and lossier than the original, under a
+   * different hash, is a silent corruption of the one thing the action promised to preserve. */
+  async function _keepBytes(file, kind, opts){
+    const exact = !!(opts && opts.exact);
+    const up = Object.assign({folder:'Posts'}, exact ? {noCompress:true} : null);
+    /* The music library is a TRANSCODER, not a filing cabinet: uploadMusicTrack POSTs to
+     * /client/music-compress and stores the returned Opus. That is right for adding a song and wrong
+     * for archiving one — and it is newly reachable here, because giving the copy its real type is
+     * what makes _wantsLibrary say "audio" in the first place. So an exact save never takes that
+     * branch: it would re-encode a lossy source again, under a new hash, while the toast said the
+     * copy had been kept. */
+    if(_wantsLibrary(file, kind) && !exact){
       try{ await uploadMusicTrack(file); return { library:true }; }
       catch(err){
         console.warn('[music] library save failed, falling back to the drive:', err);
-        return { url: await uploadBlob(file, {folder:'Posts'}), fellBack:true };
+        return { url: await uploadBlob(file, up), fellBack:true };
       }
     }
-    return { url: await uploadBlob(file, {folder:'Posts'}) };
+    return { url: await uploadBlob(file, up) };
   }
   function _keptToast(r){
     toast(r.library ? 'added to your Music library'

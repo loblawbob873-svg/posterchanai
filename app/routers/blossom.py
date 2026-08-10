@@ -53,6 +53,12 @@ _THUMB_MAX = 400
 # ever — not on every restart or re-list (the cause of one user pegging a core). Tiny JPEGs keyed by
 # sha, plus a `.none` sentinel for undecodable blobs.
 _THUMB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "blossom_thumbs")
+# Largest blob we will buffer whole in order to MAKE a thumbnail. Generation needs the bytes in RAM
+# (both ffmpeg and PIL do), in the single uvicorn worker, on a route that needs no authentication —
+# so the ceiling is what stops one URL from allocating a node's memory. It matters most for untyped
+# blobs, which are the encrypted drive, the music library and the folder-sync manifests: the class
+# where the multi-gigabyte objects actually are. Past this a blob is served as itself.
+_THUMB_MAX_SRC = 256 * 1024 * 1024
 # Cap concurrent thumbnail GENERATION (ffmpeg/Pillow are CPU-bound). Without it a folder of videos
 # spawned ~one ffmpeg per pool thread and pegged every core; 3 leaves headroom for serving requests.
 _thumb_sem = asyncio.Semaphore(3)
@@ -152,6 +158,38 @@ def _strip_ext(token: str) -> str:
 def _safe_filename(name: str) -> str:
     """Sanitise a filename that will end up in a Content-Disposition header (see blossom_service)."""
     return blossom_service.safe_filename(name)
+
+
+async def _read_head(db: Session, blob, n: int = 16) -> bytes:
+    """The first `n` bytes of a blob, for the magic-number sniffs — and only those bytes.
+
+    The obvious alternative, `read_full`, is a trap on exactly the blobs that need sniffing: an
+    untyped blob is what every encrypted-drive upload, music track and folder-sync manifest is, so
+    the class is the LARGEST one stored. Buffering a 2 GB `.enc` into the single uvicorn worker to
+    look at sixteen bytes is enough to OOM a 12 GB node from one unauthenticated blob URL — and a
+    Files grid of them does it once per tile.
+    """
+    head = await blossom_service.read_range(db, blob, 0, n - 1)
+    if head is None:
+        return b""
+    buf = b""
+    try:
+        async for chunk in head:
+            buf += chunk
+            if len(buf) >= n:
+                break
+    except Exception:
+        return buf
+    finally:
+        # On the proxy backend this iterator owns an open upstream response; abandoning it
+        # mid-stream would hold the connection until GC.
+        aclose = getattr(head, "aclose", None)
+        if aclose:
+            try:
+                await aclose()
+            except Exception:
+                pass
+    return buf
 
 
 def _disposition(disp: str, name: str) -> str:
@@ -393,26 +431,9 @@ async def _serve_blob(sha256: str, request: Request, db: Session, force_thumb: b
         # Still nameless: the MIME is generic (octet-stream) and nobody told us a filename. The bytes
         # themselves are the last honest source — 16 of them, and only on an explicit download, so the
         # thumbnail/inline hot path never pays for it.
-        head = await blossom_service.read_range(db, blob, 0, 15)
-        if head is not None:
-            buf = b""
-            try:
-                async for chunk in head:
-                    buf += chunk
-                    if len(buf) >= 16:
-                        break
-            finally:
-                # On the proxy backend this iterator owns an open upstream response; abandoning it
-                # mid-stream would hold the connection until GC.
-                aclose = getattr(head, "aclose", None)
-                if aclose:
-                    try:
-                        await aclose()
-                    except Exception:
-                        pass
-            _ext = blossom_service.sniff_ext(buf)
-            if _ext:
-                _fname += f".{_ext}"
+        _ext = blossom_service.sniff_ext(await _read_head(db, blob))
+        if _ext:
+            _fname += f".{_ext}"
     headers["Content-Disposition"] = _disposition("attachment" if _dl else "inline", _fname)
     if request.method == "HEAD":
         return Response(status_code=200, media_type=mime,
@@ -422,34 +443,71 @@ async def _serve_blob(sha256: str, request: Request, db: Session, force_thumb: b
     # Images compress directly; videos get an ffmpeg-extracted frame (covers old + new uploads with no
     # batch step — the grid requests it on demand). An empty-bytes sentinel caches "no thumbnail" so a
     # video ffmpeg can't decode isn't re-run on every render.
-    if (force_thumb or request.query_params.get("thumb")) and (mime.startswith("image/") or mime.startswith("video/")):
+    # An UNTYPED blob gets in too. `new File([bytes], 'photo.jpg')` has `type === ''` — the
+    # constructor never looks at the name — so anything that rebuilt a file from raw bytes without
+    # passing a type explicitly stored real media as `application/octet-stream`. Gated on the stored
+    # MIME alone, those blobs could never have a thumbnail made: the branch was skipped, the full
+    # file was served to an <img>, and the drive drew a paperclip for a photograph. The write paths
+    # are fixed, but a blob is immutable and content-addressed, so the ones already on people's
+    # drives keep the wrong type for ever and the read path has to cope.
+    #
+    # THE SNIFF READS SIXTEEN BYTES, NOT THE BLOB. Doing it after read_full would have been free only
+    # if every candidate were small — and the untyped class is the opposite: every encrypted-drive
+    # file, music track and sync manifest is octet-stream, so it is where the multi-gigabyte blobs
+    # are. See _read_head.
+    #
+    # And a blob the table CANNOT name is not decided here at all. sniff_ext knows thirteen magic
+    # numbers; a bmp/tiff/ico/svg falls through it, and treating that as "no thumbnail" would write a
+    # sentinel to DISK — permanent, surviving any later fix — for a file PIL can decode perfectly
+    # well. Falling out of the branch instead serves the original bytes, which is what these blobs
+    # did before this feature existed: a real picture, just not a downscaled one.
+    _generic = (not blob.mime) or mime.startswith("application/octet-stream")
+    if force_thumb or request.query_params.get("thumb"):
+        # THE CACHE ANSWERS FIRST, for a blob of ANY type. Deciding the kind before looking meant a
+        # generic blob whose thumbnail was already made took the sniff-skipping path on every later
+        # request — `_tmime` stayed octet-stream, the branch was not entered, and the THUMBNAIL url
+        # answered with the whole original file. Under the `immutable, max-age=31536000` these
+        # responses carry, that pins a multi-megabyte blob to the thumbnail URL at the edge for a
+        # year: exactly the cache poisoning the separate /thumb/ path exists to prevent, and for a
+        # video the <img> cannot decode it, so the tile reverts to an icon after its first view.
         t = _thumb_get(sha)
         if t is None:
-            async with _thumb_sem:               # bound concurrent generation so a list can't peg cores
-                t = _thumb_get(sha)              # re-check: a concurrent request may have just made it
-                if t is None:
-                    data = await blossom_service.read_full(db, blob)
-                    if data is None:
-                        blossom_service.revalidate_meta(db, sha)   # self-heal ONLY if the row is truly gone (not a transient outage)
-                        return _err(404, "blob bytes unavailable")
-                    if mime.startswith("video/"):
-                        t = await asyncio.to_thread(_video_thumb_bytes, data, 320)
-                        _thumb_put(sha, t if t is not None else b"")   # sentinel: don't retry a failed decode
-                    else:
-                        try:
-                            from app.services.media_service import compress_image
-                            t = await asyncio.to_thread(compress_image, data, 320, 70)
-                        except Exception:
-                            t = data   # undecodable → fall back to the original bytes
-                        _thumb_put(sha, t)
-        if not t:   # cached no-thumbnail sentinel (video undecodable / ffmpeg missing) — cache the
-            # negative so the grid's <img> onerror→icon fallback doesn't re-request it on every render
-            return Response(status_code=404, headers={**_CORS, "Cache-Control": "public, max-age=86400"})
-        return Response(t, media_type="image/jpeg",
-                        headers={**headers, "Content-Length": str(len(t)),
-                                 # this response is a JPEG preview, not the blob — don't hand the
-                                 # browser the full file's name for it
-                                 "Content-Disposition": _disposition("inline", f"{sha}.jpg")})
+            _tmime = (blossom_service.sniff_mime(await _read_head(db, blob)) or mime) if _generic else mime
+            # Generating one means holding the whole blob in RAM (ffmpeg and PIL both want the bytes),
+            # in the single uvicorn worker. That was survivable while only DECLARED media got here;
+            # untyped blobs are the encrypted drive, the music library and the sync manifests, which
+            # is where the multi-gigabyte objects live, and /thumb/<sha> needs no authentication. So
+            # anything oversized falls through and is served as itself rather than buffered.
+            if (_tmime.startswith("image/") or _tmime.startswith("video/")) \
+                    and (blob.size or 0) <= _THUMB_MAX_SRC:
+                async with _thumb_sem:           # bound concurrent generation so a list can't peg cores
+                    t = _thumb_get(sha)          # re-check: a concurrent request may have just made it
+                    if t is None:
+                        data = await blossom_service.read_full(db, blob)
+                        if data is None:
+                            blossom_service.revalidate_meta(db, sha)   # self-heal ONLY if the row is truly gone (not a transient outage)
+                            return _err(404, "blob bytes unavailable")
+                        if _tmime.startswith("video/"):
+                            t = await asyncio.to_thread(_video_thumb_bytes, data, 320)
+                            _thumb_put(sha, t if t is not None else b"")   # sentinel: don't retry a failed decode
+                        else:
+                            try:
+                                from app.services.media_service import compress_image
+                                t = await asyncio.to_thread(compress_image, data, 320, 70)
+                            except Exception:
+                                t = data   # undecodable → fall back to the original bytes
+                            _thumb_put(sha, t)
+        # t is None only when there is no preview to make (not media, or too large to buffer) — fall
+        # through and serve the blob itself, which is what these did before thumbnails existed.
+        if t is not None:
+            if not t:   # cached no-thumbnail sentinel (video undecodable / ffmpeg missing) — cache the
+                # negative so the grid's <img> onerror→icon fallback doesn't re-request it every render
+                return Response(status_code=404, headers={**_CORS, "Cache-Control": "public, max-age=86400"})
+            return Response(t, media_type="image/jpeg",
+                            headers={**headers, "Content-Length": str(len(t)),
+                                     # this response is a JPEG preview, not the blob — don't hand the
+                                     # browser the full file's name for it
+                                     "Content-Disposition": _disposition("inline", f"{sha}.jpg")})
 
     # HTTP Range (video/audio seeking + MP4s with a trailing moov atom). Streams ONLY the requested
     # window — from the RAM cache (slice), the storage proxy (Range forwarded → nas 206), or a local
