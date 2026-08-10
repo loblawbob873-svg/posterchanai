@@ -9154,8 +9154,10 @@
     const base = location.pathname.replace(/\/client(?:\/.*)?$/,'/client').replace(/\/+$/,'');
     const url = location.origin + (base || '') + '/' + naddr + '?popout=1';
     const name = 'pcstream_' + naddr.slice(-24);
-    const w = Math.min(1180, Math.max(720, Math.round(screen.availWidth * 0.6)));
-    const h = Math.min(800, Math.max(520, Math.round(screen.availHeight * 0.7)));
+    /* Sized to the SCREEN, not to a fixed guess: at zoom 1 the chat needs real width beside the
+     * player, and a 1180px cap on a 4K monitor is a small window on a big screen for no reason. */
+    const w = Math.max(900, Math.round(screen.availWidth * 0.7));
+    const h = Math.max(600, Math.round(screen.availHeight * 0.8));
     let win=null;
     try{ win = window.open(url, name, 'width='+w+',height='+h+',menubar=no,toolbar=no'); }catch(_){}
     if(!win){ toast('your browser blocked the window — allow pop-ups for this site'); return; }

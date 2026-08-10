@@ -6952,3 +6952,18 @@ body.popout .stream-player video{ max-height:min(64dvh, 100%); }
 .file-icon[data-thumb]{ background-size:cover; background-position:center; }
 .file-icon.has-thumb > *{ visibility:hidden; }
 .file-icon.has-thumb{ color:transparent; }
+
+/* The popout is ONE VIEW, so it must not take the app's desktop shrink.
+ *
+ * The client scales the whole app down (body{zoom:.67-.77} between 821 and 1920px) because the full
+ * layout — sidebar, feed, rightbar — has three columns to fit. A stream window has one, and it
+ * opens at whatever fraction of a screen fits, so it lands in the .67 tier and draws everything at
+ * two-thirds size: reported as "all the elements are super tiny". At zoom 1 the content is at its
+ * natural size and the layout flexes to the window, which is the auto-adjustment wanted.
+ *
+ * Placed after the tiers and matched on `body.popout` so it wins on both order and specificity, and
+ * .app's height has to come with it: those rules pair height:calc(100dvh / zoom) with the zoom, so
+ * leaving the old height behind makes the window scroll by exactly the difference. */
+body.popout{ zoom:1 !important; --zf:1 !important; }
+body.popout .app{ height:100dvh !important; }
+body.popout .main{ height:100% !important; }
