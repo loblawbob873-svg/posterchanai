@@ -55,6 +55,28 @@
   }
   function prefs(f){ return Object.assign({}, S.DEFAULT_PREFS, (f && f.prefs) || {}); }
 
+  /* THE PAIR KEY — what makes two devices the same folder.
+   *
+   * `f.id` is the PLATFORM's handle for a directory and it is device-local by construction: a random
+   * hex id on desktop, a SAF tree URI on Android. Keying the manifest on it meant every device wrote
+   * and read a DIFFERENT document, so each one synced happily with itself and never saw the others.
+   * Sync between devices could not work at all.
+   *
+   * So the manifest is keyed on a name the user gives the pair — "Documents", "Pictures" — which is
+   * the same on every device by definition, while the local path stays local. That is also what makes
+   * the mapping per-device: same pair, different directory, chosen on each machine.
+   *
+   * The server sanitises this into a d-tag (`pcai:sync:<key>`), so it is normalised the same way here
+   * to keep what the user typed and what gets addressed in step. */
+  function pairKey(name){
+    return String(name || '').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
+  }
+  /* Older entries pre-date the pair key and were keyed on the platform id. Derive one from the folder
+   * NAME so two devices that both synced "Documents" land on the same manifest — which is the answer
+   * they should have had all along. Their old per-device manifests are simply left behind; nothing is
+   * deleted, and the first sweep after this rebuilds from what is actually on disk. */
+  function keyOf(f){ return f.key || pairKey(f.name || (f.dir || '').split(/[/\\]/).pop()) || 'folder'; }
+
   // ---- the store -------------------------------------------------------------------------------
   const store = {
     async _post(body){
@@ -154,7 +176,7 @@
       setStatus(f.id, o.dryRun ? 'checking…' : 'syncing…');
       try{
         const rep = await RUN.sweep(fs, store, {
-          id: f.id, device: deviceName(), now: Date.now(),
+          id: f.id, key: keyOf(f), device: deviceName(), now: Date.now(),
           excludes: f.excludes || [], maxBytes: await maxBytes(),
           hash: decision.mode === 'full', dryRun: !!o.dryRun,
           // The first sweep of a Pictures folder is minutes of silence, and silence is
@@ -280,8 +302,9 @@
       // "unknown sync folder" on every sweep forever.
       const lost = granted && granted.length >= 0 && !(granted || []).some(g => g.id === f.id);
       return `<div class="sync-card" data-id="${PC.enc(f.id)}">
-        <div class="sync-head"><b>${PC.enc(f.name || f.dir || 'folder')}</b>
-          <span class="muted small">${PC.enc(f.dir || '')}</span></div>
+        <div class="sync-head"><b>${PC.enc(keyOf(f))}</b>
+          <span class="muted small">${PC.enc(f.dir || '')}</span>
+          <span class="sync-pair muted small">pairs with “${PC.enc(keyOf(f))}” on your other devices</span></div>
         <div class="sync-status muted small">${lost ? 'access to this folder was withdrawn — remove it and add it again'
           : PC.enc(st.text || 'not synced yet')}</div>
         ${details(st.report)}
@@ -335,10 +358,15 @@
     feed.querySelectorAll('.sync-adopt').forEach(b => { b.onclick = () => {
       const l = folders();
       if(l.some(x => x.id === b.dataset.oid)) return;
-      l.push({ id: b.dataset.oid, dir: b.dataset.odir,
-               name: (b.dataset.odir || b.dataset.oid).split(/[/\\]/).pop(),
-               excludes: [], prefs: {}, lastSyncAt: 0, lastFullScanAt: 0 });
-      saveFolders(l); watch(b.dataset.oid); paint();
+      const guess = pairKey((b.dataset.odir || '').split(/[/\\]/).pop()) || 'Folder';
+      Promise.resolve(PC.uiPrompt('Name this folder — use the SAME name on your other devices.', guess))
+        .then(ans => {
+          const key = pairKey(ans || '');
+          if(!key || key.length < 4) return;
+          l.push({ id: b.dataset.oid, key, dir: b.dataset.odir, name: key,
+                   excludes: [], prefs: {}, lastSyncAt: 0, lastFullScanAt: 0 });
+          saveFolders(l); watch(b.dataset.oid); paint();
+        });
     }; });
 
     const add = document.getElementById('sync-add');
@@ -348,7 +376,16 @@
         if(!picked) return;
         const list2 = folders();
         if(list2.some(x => x.id === picked.id)){ PC.toast('that folder is already syncing'); return; }
-        list2.push({ id: picked.id, dir: picked.dir, name: picked.dir.split(/[/\\]/).pop(),
+        const guess = pairKey(picked.dir.split(/[/\\]/).pop()) || 'Folder';
+        /* The name IS the pairing. Two devices sync together because they used the same one, so this
+         * asks rather than inventing a hidden id — and says so, because "Documents" on the laptop
+         * meeting "Docs" on the phone is two folders, not one, and nothing later would explain why. */
+        const key = pairKey(await PC.uiPrompt(
+          'Name this folder. Use the SAME name on your other devices to sync them together — the '
+          + 'folder can be anywhere on each one.', guess) || '');
+        if(!key) return;
+        if(key.length < 4){ PC.toast('use at least 4 letters or digits'); return; }
+        list2.push({ id: picked.id, key, dir: picked.dir, name: key,
                      excludes: [], prefs: {}, lastSyncAt: 0, lastFullScanAt: 0 });
         saveFolders(list2); watch(picked.id); paint();
       }catch(e){ PC.toast('could not add: ' + ((e && e.message) || e)); }

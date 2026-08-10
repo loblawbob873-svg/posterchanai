@@ -40,7 +40,12 @@
    */
   async function sweep(fs, store, opts){
     const o = opts || {};
-    const id = o.id, device = o.device || 'this device', now = o.now || 0;
+    /* TWO IDENTIFIERS, and conflating them is what stopped devices seeing each other.
+     *   id  — the PLATFORM's handle for this directory. Device-local: a random hex id on desktop, a
+     *         SAF tree URI on Android. Only the filesystem adapter may see it.
+     *   key — the PAIR key, the name the user gave this folder. The same on every device, so it is
+     *         what the manifest is stored under. */
+    const id = o.id, key = o.key || o.id, device = o.device || 'this device', now = o.now || 0;
     const report = { uploaded:[], downloaded:[], trashed:[], conflicted:[], removedRemote:[],
                      failed:[], skipped:[], excluded:0, unchanged:0, dryRun:!!o.dryRun };
     /* Progress, per file. A folder sync is the one operation where "it is doing something" is not
@@ -56,8 +61,8 @@
     const local = scanned.files || {};
 
     step('reading the manifest');
-    const remote = await store.manifest(id);            // {} when the folder has never synced
-    const base = (await store.base(id)) || {};
+    const remote = await store.manifest(key);           // {} when the folder has never synced
+    const base = (await store.base(key)) || {};
 
     const plan = S.diff({ local, remote, base, device, now, excludes:o.excludes||[] });
     report.unchanged = plan.unchanged;
@@ -143,7 +148,7 @@
       agree(n.path, l ? { sha:l.sha, size:l.size, mtime:l.mtime } : { deletedAt:(rm&&rm.deletedAt)||now });
     }
 
-    if(dirty){ step('saving'); await store.save(id, { manifest: nextRemote, base: nextBase }); }
+    if(dirty){ step('saving'); await store.save(key, { manifest: nextRemote, base: nextBase }); }
     report.ok = report.failed.length === 0;
     return report;
   }
