@@ -14234,7 +14234,17 @@
       : `${folderBar}<div class="blossom-locked glass"><b>🔒 Upload access needed</b>
            <p class="muted small">You don't have permission to upload files to this server yet. Request access and the admin can grant it from Admin → Users.</p>
            <button class="btn btn-cyan" id="bl-request"><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg>Request upload access</button></div>`;
-    pane.innerHTML = head + '<div class="files-selbar" id="bl-selbar"></div><div class="files-grid" id="bl-grid"><div class="spinner"></div></div>';
+    /* EXPLORER LAYOUT. The folder list becomes a left PANE and everything else a right one, which is
+     * the shape every file manager has settled on because it is the one that scales: a row of chips
+     * wraps into three lines the moment you have eight folders, and then the files start below the
+     * fold. Same markup, same handlers — the chips are still .folder-chip[data-folder] — so nothing
+     * about uploading, selecting or deleting changes; only where they sit. Collapses back to a single
+     * column on a phone, where a 140px sidebar would leave nothing for the files. */
+    pane.innerHTML = '<div class="fx-explorer">'
+      + '<div class="fx-side">' + folderBar + '</div>'
+      + '<div class="fx-main">' + head.slice(folderBar.length)
+      + '<div class="files-selbar" id="bl-selbar"></div>'
+      + '<div class="files-grid" id="bl-grid"><div class="spinner"></div></div></div></div>';
     $$('.folder-chip[data-folder]',pane).forEach(b=> b.onclick=()=>{ _filesFolder=b.dataset.folder; renderBlossom(); });
     { const nf=$('#bl-newfolder',pane); if(nf) nf.onclick=_newFolderModal; }
     { const df=$('#bl-delfolder',pane); if(df) df.onclick=async()=>{ if(await uiConfirm('Delete folder “'+_filesFolder+'”? Its files move to All — the files themselves aren\'t deleted.')){ FilesIdx.removeFolder(_filesFolder); _filesFolder=''; renderBlossom(); } }; }
