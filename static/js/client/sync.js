@@ -427,7 +427,14 @@
     // A checkpoint that could not be stored means the next sweep repeats this work. Say so — the
     // alternative is a progress bar that starts at one again with no explanation anywhere.
     if(rep.checkpointFailed) bits.push('couldn’t save progress (' + rep.checkpointFailed + ')');
-    if(!bits.length) return 'in step' + (decision ? ' · ' + decision.why : '');
+    /* A FINISHED SWEEP DOES NOT BORROW A REASON FROM THE POLICY. `decision.why` answers "why is this
+     * running, or not" — "waiting for Wi-Fi", "on battery — changed files only", "you asked for it" —
+     * and those belong on a sweep that was SKIPPED, which is where setStatus already puts them.
+     * Pasted after a completed one it produced "in step · you asked for it", which reads as a
+     * non-answer to a question nobody asked. What someone wants here is what the sweep found. */
+    if(!bits.length) return rep.unchanged
+      ? ('in step · nothing to sync (' + rep.unchanged + ' file' + (rep.unchanged === 1 ? '' : 's') + ' checked)')
+      : 'in step · nothing to sync';
     return bits.join(' · ');
   }
   function setStatus(id, text, report, liveOnly){
