@@ -732,10 +732,13 @@ scenario('a-legacy-chunked-file-does-not-duplicate-either', async () => {
   phone.files.set('clip.mp4', { bytes: big, mtime: Date.UTC(2014, 1, 1) });   // same bytes, SAF mtime
   const rep = await phone.sweep({ hash: true });
 
+  /* `failed` matters as much as `conflicted`. Without the check above, the conflict path THREW after
+   * renaming the local file — so nothing was counted as a conflict and the original name was simply
+   * gone. A test asserting only `conflicted === 0` passes on that, which this one did. */
   return {
-    ok: rep.conflicted.length === 0 && phone.live().length === 1,
-    detail: { conflicted: rep.conflicted.length, onDisk: phone.live().length,
-              chunks: (w.manifestOf('Pictures')['clip.mp4'] || {}).chunks?.length },
+    ok: rep.conflicted.length === 0 && rep.failed.length === 0
+        && phone.live().join() === 'clip.mp4',
+    detail: { conflicted: rep.conflicted.length, failed: rep.failed, onDisk: phone.live() },
   };
 });
 

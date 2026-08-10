@@ -221,9 +221,22 @@
       }
       try{
         await fs.move(id, c.path, c.keepAs);            // the local edit is safe from here on
-        const bytes = await store.getBlob(c.sha);
-        const st = await fs.write(id, c.path, bytes, (remote[c.path] || {}).mtime || 0);
-        agree(c.path, { sha:c.sha, csum:(remote[c.path]||{}).csum, size:st.size, mtime:st.mtime });
+        /* THE INCOMING COPY ARRIVES THE SAME WAY A DOWNLOAD DOES, chunks included. This used to be
+         * `store.getBlob(c.sha)` alone, and a chunked entry has no `sha` — so a real conflict on a
+         * file over one chunk threw AFTER the rename above had already happened: the local copy sat
+         * under its conflict name, the incoming one never arrived, and the original name was simply
+         * gone. Renaming first is what makes that survivable; it is not a reason to leave the second
+         * half broken. */
+        const R = remote[c.path] || {};
+        let st;
+        if(R.chunks && R.chunks.length && store.getParts && typeof fs.writePart === 'function'){
+          await store.getParts(R.chunks, (off, bytes) => fs.writePart(id, c.path, off, bytes));
+          st = await fs.writeCommit(id, c.path, R.mtime || 0);
+        } else {
+          const bytes = await store.getBlob(c.sha || R.sha);
+          st = await fs.write(id, c.path, bytes, R.mtime || 0);
+        }
+        agree(c.path, { sha:c.sha || R.sha, csum:R.csum, chunks:R.chunks, size:st.size, mtime:st.mtime });
         report.conflicted.push({ path:c.path, keptAs:c.keepAs });
         // The renamed copy is a new local file; the next sweep uploads it as one. Deliberately not
         // uploaded here — a conflict should not also become a network burst mid-sweep.
