@@ -571,12 +571,25 @@
    * that already, and "reported, never silent" is the rule) rather than taking the app down with it.
    * Streaming the encrypt and upload would raise this a lot, and until something does, a ceiling the
    * process survives beats a ceiling the server would allow. */
-  const SYNC_MAX_BYTES = 256 * 1024 * 1024;
+  /* MEASURED, on the real Blossom endpoint: 4 MB chunks cost a flat 76 ms each (mean over 384 MB,
+   * p95 80 ms, no drift as the blob count grows) at ~50 MB/s, so 5 GB is ~1280 chunks and about a
+   * minute and a half of uploading on a LAN. Client memory does not enter into it — readPart/
+   * writePart bound it to one chunk by construction, which is the thing the old 256 MB number
+   * existed to protect and no longer describes. scripts/measure_chunked_upload.py is the harness.
+   *
+   * 8 GB rather than no limit at all: a ceiling is still worth having, because past this a single
+   * file dominates a whole sweep and its chunk list alone (~70 bytes each, so ~140 KB here) is
+   * several times the manifest's inline budget. Over it a file is REPORTED as skipped, never
+   * silently dropped. */
+  const SYNC_MAX_BYTES = 8 * 1024 * 1024 * 1024;
   /* ...and much lower where the file cannot be chunked at all. Without slice I/O the whole file, its
    * ciphertext and the upload body are all in memory at once, and an Android WebView has far less
    * headroom than Electron: a tablet crashed on a Pictures folder that a desktop swallowed. Once a
    * platform gains readPart this stops applying, because chunking makes size irrelevant. */
   const SYNC_MAX_UNCHUNKED = 32 * 1024 * 1024;
+  // What a platform gets when it exposes readPart but no chunkBytes — the same figure syncrun uses
+  // as `chunkAbove`, so "a chunk" means one thing on both sides of this file.
+  const CHUNK_FALLBACK = 16 * 1024 * 1024;
   let _maxBytes = null;
   async function maxBytes(){
     if(_maxBytes !== null) return _maxBytes;
@@ -588,8 +601,18 @@
       server = mb > 0 ? mb * 1024 * 1024 : 0;
     }catch(_){}
     const fs = FS();
-    const ceiling = (fs && typeof fs.readPart === 'function') ? SYNC_MAX_BYTES : SYNC_MAX_UNCHUNKED;
-    _maxBytes = server > 0 ? Math.min(server, ceiling) : ceiling;
+    const chunked = !!(fs && typeof fs.readPart === 'function');
+    /* The server's limit is PER UPLOAD, and a chunked upload's uploads are CHUNKS. Taking the lower
+     * of it and the file ceiling was conflating the two: a node configured with a 100 MB maximum
+     * capped synced FILES at 100 MB while every request it was actually being sent was 4 MB. So the
+     * server bound applies to the file only where the file IS the request — and where it is smaller
+     * than a chunk, that is what it bounds instead. */
+    if(chunked){
+      const chunk = (fs && fs.chunkBytes) || CHUNK_FALLBACK;
+      _maxBytes = (server > 0 && server < chunk) ? server : SYNC_MAX_BYTES;
+      return _maxBytes;
+    }
+    _maxBytes = server > 0 ? Math.min(server, SYNC_MAX_UNCHUNKED) : SYNC_MAX_UNCHUNKED;
     return _maxBytes;
   }
 
