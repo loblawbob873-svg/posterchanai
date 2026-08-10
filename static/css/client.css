@@ -6967,3 +6967,33 @@ body.popout .stream-player video{ max-height:min(64dvh, 100%); }
 body.popout{ zoom:1 !important; --zf:1 !important; }
 body.popout .app{ height:100dvh !important; }
 body.popout .main{ height:100% !important; }
+
+/* The popout window's own layout.
+ *
+ * The stream view is built for a page with a sidebar beside it: a header row, the poster's about
+ * block, breadcrumbs, and a player sized to a column. In a window whose entire job is "the stream
+ * and its chat" all of that is competing for the space the two things actually need, and the
+ * chat — the reason for the second monitor — ends up as a strip at the bottom.
+ *
+ * So the window is a two-pane split: the player takes the room it can, the chat takes a real column
+ * beside it and scrolls on its own. Below 900px there is no room for a column, so it stacks. */
+body.popout .stream-view > .row:first-child,
+body.popout .stream-view .about,
+body.popout .fx-bar{ display:none !important; }
+body.popout .stream-layout{
+  display:flex !important; flex-direction:row; align-items:stretch; gap:0;
+  height:100%; min-height:0; }
+body.popout .stream-main{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+body.popout .stream-player{ flex:1 1 auto; min-height:0; display:flex; }
+body.popout .stream-player video{ width:100%; height:100%; max-height:none; object-fit:contain;
+  background:#000; }
+body.popout .stream-chat{
+  flex:0 0 340px; max-width:38vw; min-width:260px; display:flex; flex-direction:column;
+  min-height:0; border-left:1px solid var(--line, rgba(255,255,255,.10)); }
+body.popout .stream-chat .scm-list{ flex:1 1 auto; min-height:0; overflow-y:auto; }
+body.popout .stream-layout.chat-hidden .stream-chat{ display:none !important; }
+@media (max-width:900px){
+  body.popout .stream-layout{ flex-direction:column; }
+  body.popout .stream-chat{ flex:1 1 auto; max-width:none; border-left:0;
+    border-top:1px solid var(--line, rgba(255,255,255,.10)); }
+}

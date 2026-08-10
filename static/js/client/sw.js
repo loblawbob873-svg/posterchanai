@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v1041';
+const CACHE = 'pc-nostr-v1042';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -226,6 +226,29 @@ function shellDoc(req){
 // offline it degraded to `{}` and the client did not even know which relay to reconnect TO when the radio
 // came back. Network-first (it must never go stale while online) with a cache fallback so a cold offline
 // boot still gets the last-known config.
+/* OUR OWN app code: network-first with a short timeout, cache as the fallback.
+ *
+ * It was stale-while-revalidate — the cached copy paints and the new one is fetched FOR NEXT TIME —
+ * so every change needed two reloads and the first one showed the old client. From the outside that
+ * is indistinguishable from a deploy that never happened, and the standard advice ("close every tab,
+ * unregister the worker") is asking the user to do the worker's job.
+ *
+ * The timeout is what keeps this from costing anything offline or on a bad link: 2.5s and we take
+ * the cached copy, so a plane still gets the app instantly. `no-store` on the network attempt stops
+ * the HTTP cache answering with the same stale body the SW was already holding. */
+const APP_FRESH_MS = 2500;
+function freshFirst(req){
+  return caches.open(CACHE).then(cache => new Promise(resolve => {
+    let settled = false;
+    const fallback = () => cache.match(req).then(hit => { if (hit && !settled) { settled = true; resolve(hit); } });
+    const timer = setTimeout(fallback, APP_FRESH_MS);
+    fetch(req, { cache: 'no-store' }).then(res => {
+      clearTimeout(timer);
+      if (res && res.ok) { cache.put(req, res.clone()).catch(() => {}); if (!settled) { settled = true; resolve(res); } }
+      else if (!settled) fallback().then(() => { if (!settled) { settled = true; resolve(res); } });
+    }).catch(() => { clearTimeout(timer); fallback().then(() => { if (!settled) { settled = true; resolve(Response.error()); } }); });
+  }));
+}
 function networkFirst(req){
   return caches.open(CACHE).then(cache =>
     fetch(req).then(res => { if (res && res.ok) cache.put(req, res.clone()); return res; })
@@ -497,6 +520,10 @@ self.addEventListener('fetch', e => {
            && url.origin !== self.location.origin) return;
   // Avatars + images always; videos only get stored if played + small (see cacheFirstMedia).
   else if (e.request.destination === 'image' || e.request.destination === 'video') e.respondWith(cacheFirstMedia(e.request));
+  // Our own client code — the one thing that must never be a version behind on a reload.
+  else if (url.origin === self.location.origin
+           && (url.pathname.startsWith('/static/js/client/') || url.pathname.startsWith('/static/css/')))
+    e.respondWith(freshFirst(e.request));
   else e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));  // everything else
 });
 
