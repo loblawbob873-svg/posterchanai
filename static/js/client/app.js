@@ -25277,12 +25277,16 @@
          * registers you as an owner, and skipping it would leave you referencing a blob that goes
          * when its real owner lets go. */
         const sha = await sha256hex(blob);
-        if(await _blobAlreadyStored(sha)) return sha;
+        // `existed` is not bookkeeping — it is what lets the sweep say "already stored" instead of
+        // "uploading" for a file it is only hashing. Reported as "uploading 900/15790" while sending
+        // nothing, a first sweep after a lost agreement is indistinguishable from the resync bug
+        // that used to cause it, which is a bad thing for a progress bar to be ambiguous about.
+        if(await _blobAlreadyStored(sha)) return { sha, existed:true };
         const url = await uploadBlob(new File([blob], 'sync.enc', {type:'application/octet-stream'}),
                                      { noMirror:true, keep:true });
         const got = _shaFromUrl(url);
         if(!got) throw new Error('upload returned no hash');
-        return got;
+        return { sha: got, existed:false };
       },
       // Shared with the Files → synced-folder browser, so "which key opens a sync blob" has exactly
       // one answer in this codebase rather than two that can drift.

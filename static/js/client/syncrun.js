@@ -161,7 +161,16 @@
           continue;                                     // reported, never silent — and base does NOT advance
         }
         const bytes = await fs.read(id, u.path);
-        const sha = await store.putBlob(bytes);         // encrypt + upload; dedups on identical bytes
+        /* putBlob may answer with a bare sha or with {sha, existed} — the second lets this report
+         * "already stored" for a file whose bytes the server turned out to hold, which on a first
+         * sweep after a lost agreement is most of them. Both shapes are accepted so a caller that
+         * only ever returns a sha (and every existing test double) keeps working. */
+        const put = await store.putBlob(bytes);         // encrypt + upload; dedups on identical bytes
+        const sha = (put && typeof put === 'object') ? put.sha : put;
+        if(put && typeof put === 'object' && put.existed){
+          report.alreadyStored = (report.alreadyStored || 0) + 1;
+          step('already stored', u.path, ui, plan.upload.length);
+        }
         const entry = { sha, size:(meta&&meta.size)||bytes.length, mtime:(meta&&meta.mtime)||now, device };
         nextRemote[u.path] = entry;
         agree(u.path, entry);

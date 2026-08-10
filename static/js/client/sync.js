@@ -232,7 +232,10 @@
       if(json.length < MANIFEST_INLINE_MAX){
         doc.sealed = await PC.nip44enc(PC.me().pubkey, json);
       } else {
-        doc.pathsSha = await PC.syncBlobs.put(new TextEncoder().encode(json));
+        // put() may answer {sha, existed} or a bare sha — normalise, or the pointer becomes an
+        // object and every device reads a manifest it cannot find.
+        const put = await PC.syncBlobs.put(new TextEncoder().encode(json));
+        doc.pathsSha = (put && typeof put === 'object') ? put.sha : put;
         doc.sealed = 'v2:' + doc.pathsSha;      // the marker above — deliberately undecryptable
       }
       try{
@@ -409,6 +412,9 @@
     if(rep.conflicted.length) bits.push(rep.conflicted.length + ' conflict' + (rep.conflicted.length>1?'s':''));
     if(rep.failed.length) bits.push(rep.failed.length + ' failed');
     if(rep.skipped.length) bits.push(rep.skipped.length + ' skipped');
+    // Said out loud, because "900 up" for files that were never sent is how a working first sweep
+    // gets mistaken for the resync bug it is recovering from.
+    if(rep.alreadyStored) bits.push(rep.alreadyStored + ' already stored');
     // A checkpoint that could not be stored means the next sweep repeats this work. Say so — the
     // alternative is a progress bar that starts at one again with no explanation anywhere.
     if(rep.checkpointFailed) bits.push('couldn’t save progress (' + rep.checkpointFailed + ')');
