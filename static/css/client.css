@@ -6996,9 +6996,19 @@ body.popout .stream-view{ max-width:none !important; padding:0 !important; margi
 body.popout .stream-layout{
   display:flex !important; flex-direction:row; align-items:stretch; gap:0;
   height:100%; min-height:0; }
+/* The player BOX must not be taller than the frame it holds. height:100% stretched it to fill the
+ * column and the 16:9 video letterboxed itself inside, which is the black band above and below in
+ * the render. `align-self:center` lets it be exactly as tall as the picture, and the pane centres it
+ * — so a 16:9 stream in a taller window sits in the middle instead of being padded to the edges. */
+body.popout .stream-main{ justify-content:center; }
 body.popout .stream-player{
-  max-height:none !important; height:100% !important; margin:0 !important;
+  max-height:100% !important; height:auto !important; align-self:center; margin:0 !important;
   border:0 !important; border-radius:0 !important; box-shadow:none !important; }
+body.popout .stream-player video{ display:block; }
+/* "Pop out player" and "Open stream URL" inside a window that IS the popped-out player: the first
+ * does nothing you have not already done, and the second sends you out to a raw HLS URL. The row is
+ * the only thing left in that block, so the block goes with it. */
+body.popout .stream-main > .row:last-child{ display:none !important; }
 body.popout .stream-main{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
 body.popout .stream-player{ flex:1 1 auto; min-height:0; display:flex; }
 body.popout .stream-player video{ width:100%; height:100%; max-height:none; object-fit:contain;
