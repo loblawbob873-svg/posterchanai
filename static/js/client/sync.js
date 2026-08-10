@@ -665,6 +665,7 @@
           <button class="btn btn-ghost small sync-dry">Check</button>
           ${pr.paused ? '<button class="btn btn-neon small sync-start">Start syncing ▶</button>'
                       : '<button class="btn btn-neon small sync-now">Sync now</button>'}
+          ${pr.paused ? '' : '<button class="btn btn-ghost small sync-pause" title="Stop this folder syncing until you press Start. Nothing is deleted and nothing is undone.">Pause</button>'}
           <button class="btn btn-ghost small sync-deep" title="Re-read and re-hash every file. Slow on a big folder — for a file edited in place without changing its size or timestamp.">Deep check</button>
           <button class="btn btn-ghost small sync-tidy">Tidy up conflict copies</button>
           <button class="btn btn-ghost small sync-trash">Empty trash</button>
@@ -798,6 +799,21 @@
       card.querySelector('.sync-dry').onclick = () => sweep(get(), { manual:true, dryRun:true }).catch(()=>{});
       { const now = card.querySelector('.sync-now');
         if(now) now.onclick = () => sweep(get(), { manual:true }).catch(()=>{}); }
+      /* PAUSE, for a folder that is already running.
+       *
+       * `paused` existed only for a NEWLY ADDED folder, so there was no way to stop one that was
+       * already going — and every resume, focus or heartbeat starts a sweep, which is precisely when
+       * someone wants it to stop. Asked for at the worst possible moment: a phone republishing a
+       * thousand files that should not have existed, with nothing on the screen able to halt it.
+       *
+       * It stops the automatic paths only. Nothing is deleted, nothing already uploaded is undone,
+       * and Start picks it up exactly where it was. */
+      { const pz = card.querySelector('.sync-pause');
+        if(pz) pz.onclick = () => {
+          put(f => { f.prefs = Object.assign({}, f.prefs, { paused: true }); });
+          setStatus(id, 'paused — press Start when you want it to run again');
+          paint();
+        }; }
       { const st = card.querySelector('.sync-start');
         if(st) st.onclick = () => {
           // Commit whatever is in the exclusions box FIRST — someone types the patterns and presses
