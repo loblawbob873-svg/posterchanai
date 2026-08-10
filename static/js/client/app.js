@@ -13903,7 +13903,29 @@
       // A wrapped key that won't unwrap (signer not ready / wrong account / NIP-44 denied) must FAIL,
       // never silently mint a replacement: the new key can't read the existing encrypted index or Music
       // blobs, and re-wrapping it over the old one in localStorage destroys the only way back to them.
-      if(this._mkWrapped){ this.mk=await _unwrapMK(this._mkWrapped); return this.mk; }
+      /* A BAD LOCAL KEY IS NOT A DEAD END — the server holds the real one.
+       *
+       * This used to unwrap the local copy and throw if it would not, so a device whose stored key
+       * was corrupt, truncated, or wrapped to a different account could never read its own files
+       * again: it never reached the pull below, where the correct key has been sitting the whole
+       * time. The tablet that reported "the folder list is stored but unreadable", then "failed to
+       * execute importKey", was exactly this — locked out by a local value while the real key was
+       * one request away.
+       *
+       * So a local key that will not unwrap is DISCARDED and the server is asked. Discarding is safe
+       * precisely because it is unusable: it decrypts nothing, so nothing is lost with it, and the
+       * copy that matters lives in the drive index. Minting still never happens here. */
+      if(this._mkWrapped){
+        try{ this.mk=await _unwrapMK(this._mkWrapped); return this.mk; }
+        catch(e){
+          // Only a key that CANNOT become a key is discarded. A signer that did not answer is asked
+          // again next time; throwing that copy away would be the one irreversible move here.
+          if(!e || !e.badKey) throw e;
+          console.warn('files: the drive key stored on this device is unusable, asking the server —', e.message);
+          this._mkWrapped=null;
+          try{ this.saveLocal(); }catch(_){ }
+        }
+      }
       /* ABSENT IS NOT "NONE". The guard above covers a key that won't unwrap and misses the case
        * that actually happened: no local key at all — a fresh device, cleared storage, a private
        * window, or a saveLocal() that failed under quota pressure. Minting there produced a key that
@@ -15516,9 +15538,17 @@
     try{ k = JSON.parse(raw).k; }catch(_){ }
     const mk = k ? _b64u8(k) : new Uint8Array(0);
     if(mk.length !== 32){
-      throw new Error('your drive key came back the wrong size (' + mk.length + ' bytes, expected 32), '
-                      + 'so this device cannot read your encrypted files. Nothing has been changed or lost — '
-                      + 'the key on the server is untouched.');
+      /* STRUCTURALLY WRONG, as opposed to temporarily unavailable — and the caller must be able to
+       * tell them apart. This value can never become a key however many times it is tried, so it is
+       * safe to throw away and re-fetch; a signer that merely did not answer (locked phone, denied
+       * prompt, bunker offline) throws above WITHOUT this mark, because discarding a good key over a
+       * momentary refusal is how a device ends up minting a fresh one and locking itself out of its
+       * own files. */
+      const e = new Error('your drive key came back the wrong size (' + mk.length + ' bytes, expected 32), '
+                          + 'so this device cannot read your encrypted files. Nothing has been changed or lost — '
+                          + 'the key on the server is untouched.');
+      e.badKey = true;
+      throw e;
     }
     return mk;
   }
