@@ -6980,16 +6980,27 @@ body.popout .main{ height:100% !important; }
 body.popout .stream-view > .row:first-child,
 body.popout .stream-view .about,
 body.popout .fx-bar{ display:none !important; }
+/* The cap is on .stream-view itself (max-width:900px; margin:0 auto), NOT on #feed — which is why
+ * overriding #feed did nothing and the window kept drawing a 900px column down the middle of a
+ * 1800px screen. The player and the chat carry fixed viewport heights (62vh / 44vh) on the elements
+ * too, sized for a page you scroll; in a window that fits exactly one thing, both have to become
+ * "take what is left". */
+body.popout .stream-view{ max-width:none !important; padding:0 !important; margin:0 !important; }
 body.popout .stream-layout{
   display:flex !important; flex-direction:row; align-items:stretch; gap:0;
   height:100%; min-height:0; }
+body.popout .stream-player{
+  max-height:none !important; height:100% !important; margin:0 !important;
+  border:0 !important; border-radius:0 !important; box-shadow:none !important; }
 body.popout .stream-main{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
 body.popout .stream-player{ flex:1 1 auto; min-height:0; display:flex; }
 body.popout .stream-player video{ width:100%; height:100%; max-height:none; object-fit:contain;
   background:#000; }
 body.popout .stream-chat{
-  flex:0 0 340px; max-width:38vw; min-width:260px; display:flex; flex-direction:column;
-  min-height:0; border-left:1px solid var(--line, rgba(255,255,255,.10)); }
+  flex:0 0 340px !important; width:auto !important; height:auto !important;
+  max-width:38vw; min-width:260px; display:flex; flex-direction:column; min-height:0;
+  border:0 !important; border-radius:0 !important;
+  border-left:1px solid var(--line, rgba(255,255,255,.10)) !important; }
 body.popout .stream-chat .scm-list{ flex:1 1 auto; min-height:0; overflow-y:auto; }
 body.popout .stream-layout.chat-hidden .stream-chat{ display:none !important; }
 @media (max-width:900px){
