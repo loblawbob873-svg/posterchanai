@@ -1422,7 +1422,9 @@
     /* No `!netOpen` here. The flyout lives on `root`, NOT inside `#os-bar`, so drawBar() cannot
      * disturb it — adding it to this guard protected nothing and only stopped the taskbar CLOCK
      * while the panel was open, which is the one thing on the bar that has to keep moving. */
-    _clock = setInterval(() => { if(on && !startOpen && !notiOpen) drawBar(); }, 30000);
+    // The desktop taskbar clock: nobody is reading it behind another window, and it repaints the
+    // whole bar. 30s of DOM work every 30s, forever, for a clock nobody can see.
+    _clock = setInterval(() => { if(document.hidden) return; if(on && !startOpen && !notiOpen) drawBar(); }, 30000);
     // Leaving full screen by pressing Escape never goes through our button, so the label has to
     // follow the browser rather than our own last action.
     document.addEventListener('fullscreenchange', onFullChange);

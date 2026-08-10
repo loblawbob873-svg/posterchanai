@@ -2392,7 +2392,7 @@
         if(e.target.closest('#rb-notif-head')){ e.preventDefault(); switchView('notifications'); } });
     }
     window.addEventListener('popstate', ()=>{ _navPushed=Math.max(0,_navPushed-1); if(ME) routeFromPath(); });   // back/forward
-    setInterval(refreshRightbar, 150000);   // routinely refresh trending + prepend new hot posts (rightbar only on home/global)
+    everyVisible(refreshRightbar, 150000);   // routinely refresh trending + prepend new hot posts (rightbar only on home/global)
     // Re-fetch profiles for on-screen authors still showing as npub — as the relay backfills
     // profiles, already-displayed posts resolve to names/avatars without needing a re-render.
     setInterval(()=>{ if(document.hidden) return; let n=0; const vh=innerHeight||800;
@@ -2640,7 +2640,7 @@
     if(!on) return;
     const paint = ()=>{ const t = $('#offline-bar-text'); if(t) t.textContent = _offlineText(); };
     paint();
-    _offTick = setInterval(paint, 60000);   // keep "synced Xm ago" honest without a per-second tick
+    _offTick = setInterval(()=>{ if(!document.hidden) paint(); }, 60000);   // keep "synced Xm ago" honest without a per-second tick
   }
   // Let other code (the Outbox) refresh the banner's wording without knowing how it is built.
   function refreshOfflineBar(){ if(document.body.classList.contains('is-offline')) _setOffline(true); }
@@ -3300,7 +3300,7 @@
   function observeCelebrations(scope){
     if(NO_IMAGES) return;                                                    // data saver: no decorative animation
     try{ if(matchMedia('(prefers-reduced-motion: reduce)').matches) return; }catch(_){}
-    if(!_celebTick && $$('.note[data-celebrate]', scope||document).length) _celebTick=setInterval(_celebSweep, _CELEB_SWEEP);
+    if(!_celebTick && $$('.note[data-celebrate]', scope||document).length) _celebTick=setInterval(()=>{ if(!document.hidden) _celebSweep(); }, _CELEB_SWEEP);
   }
   function _celebInView(el){
     const r=el.getBoundingClientRect();
@@ -3489,6 +3489,27 @@
   // _routing set, so nothing is pushed and this stays 0 — Back then goes Home instead of walking out of
   // the app entirely, which is what history.back() would do on a single-entry history.
   let _navPushed=0;
+  /* A timer that does NOT run while the app is in the background.
+   *
+   * On a phone a backgrounded tab is still a tab: every tick is CPU the OS bills to us, and a tick
+   * that fetches is the radio, which costs far more than the bytes suggest. Chromium throttles
+   * background timers but does not stop them, and it cannot know that refreshing a trending sidebar
+   * nobody is looking at is pointless.
+   *
+   * It also CATCHES UP on the way back: skipping ticks would otherwise mean returning to an app whose
+   * sidebar is however many minutes stale, which is the reason a naive version of this gets reverted.
+   * The catch-up is deliberately not a burst — one run, on becoming visible, and only if a tick was
+   * actually missed. */
+  function everyVisible(fn, ms){
+    let missed = false;
+    const run = () => { try{ fn(); }catch(_){} };
+    setInterval(() => { if(document.hidden){ missed = true; return; } run(); }, ms);
+    document.addEventListener('visibilitychange', () => {
+      if(document.hidden || !missed) return;
+      missed = false; run();
+    });
+  }
+
   function _clearNav(){ $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); _syncRightbar(); }
   /* The instance logo opens PosterChan OS — a windowed desktop over this same client.
    *
