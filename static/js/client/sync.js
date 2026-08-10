@@ -396,9 +396,12 @@
         const rep = await RUN.sweep(fs, store, {
           id: f.id, key: keyOf(f), device: deviceName(), now: Date.now(),
           excludes: f.excludes || [], maxBytes: await maxBytes(),
-          // Above this a file is uploaded in pieces instead of whole — see syncrun's upload loop.
-          // Well under the whole-file ceiling, because the point is to stop approaching it at all.
-          chunkAbove: 64 * 1024 * 1024,
+          /* Above ONE CHUNK a file goes up in pieces. This used to be 64 MB, which left every file
+           * under it on the whole-file path — and a 60 MB photo there costs ~240 MB of renderer
+           * memory, which is what kept killing the window on a big Pictures folder. Chunking is the
+           * normal path now, not the exception for enormous files: past 16 MB nothing is ever held
+           * whole, so no single file can spike memory however large it is. */
+          chunkAbove: 16 * 1024 * 1024,
           hash: decision.mode === 'full', dryRun: !!o.dryRun,
           // The first sweep of a Pictures folder is minutes of silence, and silence is
           // indistinguishable from a hang, a failed login or a 404 on the manifest — which is

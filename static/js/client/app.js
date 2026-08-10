@@ -14575,7 +14575,12 @@
    * off the exported object: inside app.js there is no `PC` binding — the object is assigned straight
    * to window.__PC — so `PC.syncBlobs.CHUNK` threw ReferenceError on the first chunked upload and
    * took every one of them with it. */
-  const _SYNC_CHUNK = 32 * 1024 * 1024;
+  /* 16 MB, not 32. This bounds PEAK memory, not throughput: a chunk is held as plaintext, as
+   * ciphertext and again as the upload body, so the figure that matters is three to four times this.
+   * At 32 MB that is ~120 MB per file in flight and the renderer was still being killed on a large
+   * Pictures folder; at 16 MB it is ~60 MB, which a WebView survives as comfortably as Electron. The
+   * cost is more blobs per file — a 2 GB iso becomes 128 shas, about 8 KB in the manifest entry. */
+  const _SYNC_CHUNK = 16 * 1024 * 1024;
   async function _blobAlreadyStored(sha){
     try{
       const r = await fetch(mediaServer() + '/' + sha, { method:'HEAD', cache:'no-store' });
@@ -25437,14 +25442,21 @@
         let existed = true;
         for(let off = 0; off < size; off += CH){
           const want = Math.min(CH, size - off);
-          const plain = await readPart(off, want);
+          /* `let` and an explicit release, not `const`. A const binding lives to the end of the
+           * iteration, so the plaintext would stay resident through the hash AND the whole upload —
+           * a second copy of every chunk held for the length of a network round trip, for no reason.
+           * On a folder of thousands of files that is the difference between a steady ~50 MB and a
+           * sawtooth the collector cannot keep up with. */
+          let plain = await readPart(off, want);
           if(!plain || !plain.length) throw new Error('short read at ' + off);
-          const blob = await _masterEncrypt(mk, plain, await _contentIV(plain));
+          let blob = await _masterEncrypt(mk, plain, await _contentIV(plain));
+          plain = null;
           const sha = await sha256hex(blob);
-          if(await _blobAlreadyStored(sha)){ chunks.push(sha); }
+          if(await _blobAlreadyStored(sha)){ chunks.push(sha); blob = null; }
           else {
-            const url = await uploadBlob(new File([blob], 'sync.enc', {type:'application/octet-stream'}),
-                                         { noMirror:true, keep:true });
+            const file = new File([blob], 'sync.enc', {type:'application/octet-stream'});
+            blob = null;
+            const url = await uploadBlob(file, { noMirror:true, keep:true });
             const got = _shaFromUrl(url);
             if(!got) throw new Error('upload returned no hash');
             chunks.push(got); existed = false;
