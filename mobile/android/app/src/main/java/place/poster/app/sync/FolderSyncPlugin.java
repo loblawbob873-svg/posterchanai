@@ -378,6 +378,27 @@ public class FolderSyncPlugin extends Plugin {
   @PluginMethod
   public void unwatch(PluginCall call) { call.resolve(); }
 
+  /* The background CHANGE CHECK — see SyncCheckWorker for why it can only detect and not upload.
+   * Scheduling is idempotent (KEEP), so calling this on every app start does not reset the period
+   * and starve a job that has been waiting for a charger. */
+  @PluginMethod
+  public void backgroundCheck(PluginCall call) {
+    boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+    Integer mins = call.getInt("minutes", 180);
+    SyncCheckWorker.schedule(getContext(), enabled, mins == null ? 180 : mins);
+    JSObject o = new JSObject();
+    o.put("enabled", enabled);
+    call.resolve(o);
+  }
+
+  /** Called after a real sweep so the next check compares against what was actually synced, rather
+   *  than against the last thing we happened to mention to the user. */
+  @PluginMethod
+  public void markSynced(PluginCall call) {
+    try { SyncCheckWorker.markSynced(getContext()); } catch (Exception ignored) {}
+    call.resolve();
+  }
+
   /** What the battery policy reads (foldersync.js shouldSync). */
   @PluginMethod
   public void power(PluginCall call) {

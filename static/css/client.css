@@ -6714,3 +6714,6 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .sync-grp b{font-size:13px;color:var(--cyan)}
 .sync-grp ul{margin:4px 0 0;padding-left:18px}
 .sync-grp li{font-size:13px;overflow-wrap:anywhere;word-break:break-word;line-height:1.5}
+.sync-bg{display:flex;gap:10px;align-items:flex-start;margin-top:14px;padding:12px;border-radius:12px;
+  border:1px solid var(--line);background:var(--panel2)}
+.sync-bg input{margin-top:3px;flex:0 0 auto}

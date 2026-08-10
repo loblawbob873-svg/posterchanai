@@ -159,6 +159,9 @@
           },
         });
         if(!o.dryRun){
+          // Tell the background checker what "synced" now looks like, or its next run compares
+          // against a stale signature and notifies about changes that are already up.
+          try{ if(fs.markSynced) await fs.markSynced(); }catch(_){}
           f.lastSyncAt = Date.now();
           if(decision.mode === 'full') f.lastFullScanAt = Date.now();
           f._dirty = false;
@@ -286,7 +289,20 @@
         Where a folder lives is set per device.</p>
       ${rows || (fs ? '<div class="empty">No folders yet.</div>' : '')}
       ${fs ? '<button class="btn btn-neon" id="sync-add">Add a folder…</button>' : ''}
+      ${(fs && fs.backgroundCheck) ? `<label class="sync-bg"><input type="checkbox" id="sync-bg"${
+          ClientSettings.get('syncBgCheck', false) ? ' checked' : ''}>
+        <span>Watch for changes in the background<br>
+        <span class="muted small">Checks while charging on Wi-Fi and tells you when there is something to
+        sync. It cannot upload on its own: every upload is signed by your key, and with a remote signer
+        that key is not on this device — so opening the app is what syncs.</span></span></label>` : ''}
     </div>`;
+
+    { const bg = document.getElementById('sync-bg');
+      if(bg) bg.onchange = async () => {
+        ClientSettings.set('syncBgCheck', bg.checked);
+        try{ await FS().backgroundCheck(bg.checked, 180); }
+        catch(e){ PC.toast('could not change that: ' + ((e && e.message) || e)); }
+      }; }
 
     const add = document.getElementById('sync-add');
     if(add) add.onclick = async () => {
@@ -383,6 +399,10 @@
       }
     }catch(_){}
     setInterval(() => { if(!document.hidden) nudge('heartbeat'); }, HEARTBEAT_MS);
+    // Re-assert the stored preference on every start. Scheduling is idempotent on the Android side
+    // (ExistingPeriodicWorkPolicy.KEEP), so this cannot reset the period and starve a job that has
+    // been waiting for a charger.
+    try{ if(fs.backgroundCheck) fs.backgroundCheck(!!ClientSettings.get('syncBgCheck', false), 180); }catch(_){}
     nudge('startup');
   }
 

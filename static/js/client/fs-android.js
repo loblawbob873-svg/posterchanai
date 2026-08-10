@@ -44,6 +44,12 @@
     trash: (id, rel, when) => P.trash({ id, rel, when: when || 0 }).then(r => r.to),
     emptyTrash: (id, days) => P.emptyTrash({ id, days: days || 30 }),
     power: () => P.power(),
+    /* Background change DETECTION, not sync — see SyncCheckWorker. It cannot upload because every
+     * network step of a sweep is signed by the user's nostr key (a kind-24242 per blob, a 27235 for
+     * the manifest, NIP-44 for the manifest body), and with Amber or a remote signer that key is not
+     * on the device at all. So the job notices and notifies; opening the app does the sync. */
+    backgroundCheck: (enabled, minutes) => P.backgroundCheck({ enabled: !!enabled, minutes: minutes || 180 }),
+    markSynced: () => P.markSynced(),
     // No tree watcher exists in SAF worth having, and polling one is the battery bug the sync policy
     // exists to avoid. The app sweeps when it is opened and when the OS says the constraints are met.
     watch: () => Promise.resolve(false),
