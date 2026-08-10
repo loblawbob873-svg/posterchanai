@@ -497,6 +497,24 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   not lose a setting, it loses the folder. `/client/sync-folders` enumerates the manifests' own
   d-tags so a device that syncs NOTHING can still browse a folder from Files; there is deliberately
   no index document, since an index is a second source of truth one empty read can wipe.
+  **THE FEATURE HAD A HARD CEILING AT ~376 FILES, and every symptom of it was "it synced fine, then
+  synced everything again".** NIP-44 refuses a plaintext over 65535 bytes and a manifest entry is
+  ~174, so past that `store.save()` threw at the LAST step of every sweep: the blobs were all
+  uploaded, the manifest was never stored, `base` was never written, and the next sweep read the
+  whole folder as new. Measured on a real 15790-file folder. Past 45 KB the paths now go to an
+  encrypted Blossom blob with a pointer in the doc (what `FilesIdx` already does) — and `sealed` is
+  still set, to an undecryptable marker, because a client older than this reads `sealed`, falls back
+  to `doc.paths`, and would take a v2 document as an EMPTY manifest: every file "deleted elsewhere",
+  trashed locally and tombstoned for the others. Two more of the same shape: `base` (same size as the
+  manifest) was in localStorage under a `catch` that swallowed the quota error — it is in IndexedDB
+  now and a failed write is reported; and `base` was persisted ONCE at the end of a sweep, so an
+  interrupted sweep resumed from file one — it checkpoints during the sweep now, bounded to ~20
+  manifest writes however big the folder is. `tests/client/test_sync_store_scale.py` drives the real
+  store at those sizes with the real ceilings stubbed in.
+  **An empty `base` must not conflict the whole folder.** Both sides look changed for every path at
+  once (re-adding a synced folder, a cleared agreement), and an ordinary sweep does NOT hash — so a
+  convergence test written as `L.sha === R.sha` can never fire, and every file becomes a
+  "(conflict from …)" copy on every device. It is `same(L, R)`, which falls back to size+mtime.
   **Background sync cannot upload and that is not a bug**: every network step is signed by the user's
   Nostr key, which with Amber/NIP-46 is not on the device — so Android's WorkManager job notices
   changes and notifies, and opening the app is what syncs. See `docs/FOLDER_SYNC.md`.

@@ -403,6 +403,78 @@ scenario('a-missing-blob-does-not-poison-the-sweep', async () => {
   };
 });
 
+/* AN INTERRUPTED SWEEP MUST RESUME, NOT RESTART.
+ *
+ * `base` advanced per file in memory and was written once, at the very end — so a sweep that never
+ * reached the end (the laptop closed, the app killed mid-upload) recorded nothing at all and the
+ * next one began at the first file. On a 15790-file folder that is not a slow resume, it is a folder
+ * that can never finish on a machine anyone ever closes.
+ *
+ * A kill is modelled the way it actually lands: the world stops at the last checkpoint. So this runs
+ * a sweep, takes the state as of the FIRST checkpoint, and starts a fresh device from exactly that —
+ * which is what a restarted app reads.
+ */
+scenario('an-interrupted-sweep-resumes', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Pictures' });
+  const N = 450;                                  // more than one checkpoint's worth
+  for(let i = 0; i < N; i++) laptop.put('DSC_' + String(i).padStart(4,'0') + '.jpg', 'PHOTO ' + i);
+
+  const checkpoints = [];
+  const realSave = laptop.store.save.bind(laptop.store);
+  laptop.store.save = async (k, s) => {
+    checkpoints.push({ base: JSON.parse(JSON.stringify(s.base)), manifest: JSON.parse(JSON.stringify(s.manifest)) });
+    return realSave(k, s);
+  };
+  const first = await laptop.sweep();
+  if(checkpoints.length < 2) return { ok:false, detail:{ why:'no checkpoint before the final save', checkpoints:checkpoints.length } };
+
+  // The world as it was when the app died: the first checkpoint's manifest, and its agreement.
+  const killed = checkpoints[0];
+  const w2 = makeWorld();
+  w2.docs.set(dtag('Pictures'), killed.manifest);
+  for(const [sha, bytes] of w.blobs) w2.blobs.set(sha, bytes);   // the uploads really happened
+  const restarted = makeDevice(w2, { name:'laptop', id:'aaa1', key:'Pictures' });
+  for(const [p, f] of laptop.files) restarted.files.set(p, f);
+  restarted.bases.set('Pictures', killed.base);
+
+  const resumed = await restarted.sweep();
+  const done = Object.keys(killed.base).length;
+
+  return {
+    ok: first.uploaded.length === N && checkpoints.length > 1
+        && resumed.uploaded.length === N - done      // only the remainder
+        && resumed.conflicted.length === 0,
+    detail: { files: N, checkpoints: checkpoints.length, agreedAtKill: done,
+              reuploaded: resumed.uploaded.length, conflicts: resumed.conflicted.length },
+  };
+});
+
+/* AN EMPTY `base` AGAINST A FULL FOLDER MUST NOT CONFLICT EVERY FILE.
+ *
+ * Re-adding a folder that is already synced, or any device whose local agreement was cleared, gives
+ * base={} with both sides full. Both then look "changed", and a convergence test that required
+ * `L.sha === R.sha` could never fire on an ORDINARY sweep — an incremental one does not hash, so
+ * there is no local sha — and every single file became a conflict copy. On a real folder that is the
+ * whole library duplicated as "(conflict from …)" on every device.
+ */
+scenario('an-empty-base-does-not-conflict-the-whole-folder', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Documents' });
+  for(let i = 0; i < 40; i++) laptop.put('doc' + i + '.txt', 'contents of ' + i);
+  await laptop.sweep();
+
+  laptop.bases.clear();                        // "Stop syncing", then add it back
+  const rep = await laptop.sweep({ hash: false });   // the ordinary sweep: no hashing
+
+  return {
+    ok: rep.conflicted.length === 0 && rep.uploaded.length === 0 && rep.trashed.length === 0
+        && laptop.live().length === 40,
+    detail: { conflicted: rep.conflicted.length, uploaded: rep.uploaded.length,
+              onDisk: laptop.live().length, notes: (rep.plan||{}).notes && (rep.plan.notes||[]).length },
+  };
+});
+
 /* THREE devices, because "the other device" is not always the same one. A file added on the third
  * has to reach both of the others, and a delete on the first has to reach both of the others. */
 scenario('three-devices-converge', async () => {

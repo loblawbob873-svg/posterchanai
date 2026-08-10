@@ -98,6 +98,19 @@ class TestTwoDeviceSync(unittest.TestCase):
     def test_a_missing_blob_does_not_poison_the_sweep(self):
         self.check("a-missing-blob-does-not-poison-the-sweep")
 
+    def test_an_interrupted_sweep_resumes(self):
+        """`base` advanced per file in MEMORY and was written once, at the end — so a sweep that was
+        killed recorded nothing and the next one started at the first file. Reported from a real
+        15790-file folder: 'the windows app didn't finish it, it started to resync from the
+        beginning'."""
+        self.check("an-interrupted-sweep-resumes")
+
+    def test_an_empty_base_does_not_conflict_the_whole_folder(self):
+        """An ordinary sweep does not hash, so a convergence test that required both shas could
+        never fire on one — and with an empty base every path looked divergent. Reverting the fix
+        duplicates the entire folder as '(conflict from …)' copies: 40 files became 80."""
+        self.check("an-empty-base-does-not-conflict-the-whole-folder")
+
     def test_three_devices_converge(self):
         self.check("three-devices-converge")
 

@@ -77,6 +77,93 @@
    * deleted, and the first sweep after this rebuilds from what is actually on disk. */
   function keyOf(f){ return f.key || pairKey(f.name || (f.dir || '').split(/[/\\]/).pop()) || 'folder'; }
 
+  /* WHAT THIS DIRECTORY WAS PAIRED AS, remembered across "Stop syncing".
+   *
+   * Stopping removes the mapping, so picking the same folder up again asked "Name this folder — use
+   * the SAME name on your other devices" about a folder that already HAS a name on the other
+   * devices. It reads as a new pairing when it is a resumption, and getting it wrong quietly makes a
+   * second folder that never meets the first.
+   *
+   * Kept per identity, keyed by the platform's handle for the directory (and by the directory path,
+   * which is what survives a grant being re-issued with a fresh handle). Deliberately not deleted
+   * when a folder is forgotten: remembering the NAME costs nothing and is the whole point. */
+  const PAIRED_KEY = () => 'pc_sync_paired_' + ((PC.me && PC.me() && PC.me().pubkey) || 'anon');
+  function pairedNames(){
+    try{ const o = JSON.parse(localStorage.getItem(PAIRED_KEY()) || '{}'); return (o && typeof o === 'object') ? o : {}; }
+    catch(_){ return {}; }
+  }
+  function rememberPair(id, dir, key){
+    if(!key) return;
+    const o = pairedNames();
+    if(id) o[id] = key;
+    if(dir) o['dir:' + dir] = key;
+    try{ localStorage.setItem(PAIRED_KEY(), JSON.stringify(o)); }catch(_){}
+  }
+  function recallPair(id, dir){
+    const o = pairedNames();
+    return o[id] || o['dir:' + (dir || '')] || '';
+  }
+
+  /* Past this the paths leave the document for an encrypted Blossom blob. 45 KB is the FILES INDEX's
+   * threshold, chosen for the same reason and kept identical on purpose: NIP-44 refuses a plaintext
+   * over 65535 bytes, and the margin is for the JSON growing between the check and the encrypt. */
+  const MANIFEST_INLINE_MAX = 45000;
+
+  /* ---- `base`: this device's agreement, in IndexedDB ------------------------------------------
+   *
+   * It used to live in localStorage under a try/catch that swallowed everything. A base is the same
+   * size as the manifest — ~174 bytes per file, so ~2.6 MB for a 15790-file folder — against a 5 MB
+   * localStorage budget shared with every other thing this client stores. A quota failure there is
+   * silent, and a base that does not persist means the next sweep re-reads the whole folder as new:
+   * the same infinite-resync as a failed save, from a different cause, with nothing said either way.
+   *
+   * So: IndexedDB, which is sized for this, and a failure that is REPORTED. Reads still fall back to
+   * the old localStorage key, so a device that already has an agreement keeps it and does not
+   * re-upload its folder once on upgrade. */
+  const _IDB = { DB:'pcsync', VER:1, STORE:'base', _db:null,
+    _open(){
+      if(this._db) return Promise.resolve(this._db);
+      return new Promise((res, rej) => {
+        let rq; try{ rq = indexedDB.open(this.DB, this.VER); }catch(e){ return rej(e); }
+        rq.onupgradeneeded = () => { const db = rq.result;
+          if(!db.objectStoreNames.contains(this.STORE)) db.createObjectStore(this.STORE); };
+        rq.onsuccess = () => { this._db = rq.result; res(this._db); };
+        rq.onerror = () => rej(rq.error || new Error('indexeddb unavailable'));
+      });
+    },
+    async _tx(mode, fn){
+      const db = await this._open();
+      return new Promise((res, rej) => {
+        const tx = db.transaction(this.STORE, mode), st = tx.objectStore(this.STORE);
+        let out; try{ out = fn(st); }catch(e){ return rej(e); }
+        // `'result' in out`, not `out.result !== undefined`: a MISS gives a request whose result is
+        // undefined, and unwrapping on truthiness returns the request OBJECT instead — which reads
+        // as a base containing one file called "result", so the localStorage fallback below is never
+        // reached and every existing device re-uploads its whole folder once.
+        tx.oncomplete = () => res(out && typeof out === 'object' && ('result' in out) ? out.result : out);
+        tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error);
+      });
+    },
+  };
+  async function _loadBase(key){
+    try{
+      const v = await _IDB._tx('readonly', st => st.get(key));
+      if(v && typeof v === 'object') return v;
+    }catch(e){ console.warn('folder sync: could not read the local agreement', e); }
+    // Pre-IndexedDB devices, and the small folders that fitted. Read once; the next save moves it.
+    try{ return JSON.parse(localStorage.getItem(BASE_KEY(key)) || '{}') || {}; }catch(_){ return {}; }
+  }
+  async function _saveBase(key, base){
+    // NOT swallowed. A base that silently fails to persist is an infinite resync, and the only way
+    // anyone would ever find out is by watching their upload counter start again from one.
+    await _IDB._tx('readwrite', st => st.put(base, key));
+    try{ localStorage.removeItem(BASE_KEY(key)); }catch(_){}   // the old copy is now stale, not a fallback
+  }
+  async function _dropBase(key){
+    try{ await _IDB._tx('readwrite', st => st.delete(key)); }catch(_){}
+    try{ localStorage.removeItem(BASE_KEY(key)); }catch(_){}
+  }
+
   // ---- the store -------------------------------------------------------------------------------
   const store = {
     async _post(body){
@@ -98,6 +185,15 @@
     async manifest(id){
       const j = await this._post({ folder: id });
       const doc = j.manifest || {};
+      // v2 first: the paths are an encrypted Blossom blob. See save() for why they had to leave the
+      // document, and for the marker `sealed` carries so an older build cannot misread this.
+      if(doc.pathsSha){
+        let bytes;
+        try{ bytes = await PC.syncBlobs.get(doc.pathsSha); }
+        catch(e){ throw new Error('the folder list is stored but unreadable: ' + ((e && e.message) || e)); }
+        try{ return JSON.parse(new TextDecoder().decode(bytes)) || {}; }
+        catch(e){ throw new Error('the stored folder list is damaged'); }
+      }
       if(doc.sealed){
         try{ return JSON.parse(await PC.nip44dec(PC.me().pubkey, doc.sealed)) || {}; }
         catch(e){ throw new Error('could not decrypt the manifest — wrong key or damaged'); }
@@ -106,17 +202,42 @@
     },
     // The per-device agreement. Local by definition, and a corrupt one is recoverable by resyncing —
     // it costs a full compare, never data.
-    async base(id){
-      try{ return JSON.parse(localStorage.getItem(BASE_KEY(id)) || '{}') || {}; }catch(_){ return {}; }
-    },
+    base(id){ return _loadBase(id); },
+    /* NIP-44 REFUSES A PLAINTEXT OVER 65535 BYTES, and a manifest entry is ~174 of them — so this
+     * document could hold about 376 files, and a folder with more than that COULD NOT BE SAVED AT
+     * ALL. Measured on a real 15790-file folder: every sweep uploaded everything, the save threw at
+     * the very end, `base` was never written, and the next sweep started from the beginning. For
+     * ever. The sync looked like it worked, because everything except the last step did.
+     *
+     * So past ~45 KB the paths move into an encrypted Blossom blob and the document keeps a pointer
+     * — exactly what the FILES INDEX does, for exactly this reason (`indexSha` in FilesIdx.push).
+     * The plaintext `n` stays either way: it is what the server's collapse guard reads, and it is
+     * the only thing it can read.
+     *
+     * `sealed` IS STILL SET, to a string that cannot possibly decrypt, and that is not decoration.
+     * A client older than this change looks for `sealed`, falls back to `doc.paths`, and would read
+     * a v2 document as an EMPTY manifest — which is not a harmless misread: an empty remote means
+     * every file is "deleted elsewhere", and that device would move all of them to its trash and
+     * publish tombstones the others would honour. With the marker present it throws instead, the
+     * sweep fails, and nothing is touched. (nostr-tools rejects a payload under 132 chars outright,
+     * so this is a deterministic failure, not a hopeful one.) */
     async save(id, s){
       const paths = s.manifest || {};
       const live = Object.keys(paths).filter(p => paths[p] && !paths[p].deletedAt).length;
-      const sealed = await PC.nip44enc(PC.me().pubkey, JSON.stringify(paths));
-      await this._post({ folder: id, manifest: { n: live, sealed } });
+      const json = JSON.stringify(paths);
+      const doc = { n: live };
+      if(json.length < MANIFEST_INLINE_MAX){
+        doc.sealed = await PC.nip44enc(PC.me().pubkey, json);
+      } else {
+        doc.pathsSha = await PC.syncBlobs.put(new TextEncoder().encode(json));
+        doc.sealed = 'v2:' + doc.pathsSha;      // the marker above — deliberately undecryptable
+      }
+      await this._post({ folder: id, manifest: doc });
       // Only after the shared manifest is safely stored — a base that runs ahead of it would make
-      // this device believe in an agreement the others never saw.
-      try{ localStorage.setItem(BASE_KEY(id), JSON.stringify(s.base || {})); }catch(_){}
+      // this device believe in an agreement the others never saw. AWAITED: an unawaited write is a
+      // save that reports success before it has one, and its failure is an unhandled rejection
+      // nobody sees.
+      await _saveBase(id, s.base || {});
     },
     putBlob: (bytes) => PC.syncBlobs.put(bytes),
     getBlob: (sha) => PC.syncBlobs.get(sha),
@@ -222,6 +343,9 @@
     if(rep.conflicted.length) bits.push(rep.conflicted.length + ' conflict' + (rep.conflicted.length>1?'s':''));
     if(rep.failed.length) bits.push(rep.failed.length + ' failed');
     if(rep.skipped.length) bits.push(rep.skipped.length + ' skipped');
+    // A checkpoint that could not be stored means the next sweep repeats this work. Say so — the
+    // alternative is a progress bar that starts at one again with no explanation anywhere.
+    if(rep.checkpointFailed) bits.push('couldn’t save progress (' + rep.checkpointFailed + ')');
     if(!bits.length) return 'in step' + (decision ? ' · ' + decision.why : '');
     return bits.join(' · ');
   }
@@ -364,15 +488,23 @@
 
     feed.querySelectorAll('.sync-adopt').forEach(b => { b.onclick = () => {
       const l = folders();
-      if(l.some(x => x.id === b.dataset.oid)) return;
-      const guess = pairKey((b.dataset.odir || '').split(/[/\\]/).pop()) || 'Folder';
+      const id = b.dataset.oid, dir = b.dataset.odir || '';
+      if(l.some(x => x.id === id)) return;
+      const add = (key) => {
+        l.push({ id, key, dir, name: key, excludes: [], prefs: {}, lastSyncAt: 0, lastFullScanAt: 0 });
+        saveFolders(l); rememberPair(id, dir, key); watch(id); paint();
+      };
+      /* ALREADY PAIRED ONCE → just resume it. Asking someone to name a folder they named last week,
+       * with "use the SAME name on your other devices" underneath, invites them to type a different
+       * one — and a different name is a different folder that will never meet the first. */
+      const known = recallPair(id, dir);
+      if(known){ add(known); PC.toast('syncing “' + known + '” again'); return; }
+      const guess = pairKey(dir.split(/[/\\]/).pop()) || 'Folder';
       Promise.resolve(PC.uiPrompt('Name this folder — use the SAME name on your other devices.', guess))
         .then(ans => {
           const key = pairKey(ans || '');
           if(!key || key.length < 4) return;
-          l.push({ id: b.dataset.oid, key, dir: b.dataset.odir, name: key,
-                   excludes: [], prefs: {}, lastSyncAt: 0, lastFullScanAt: 0 });
-          saveFolders(l); watch(b.dataset.oid); paint();
+          add(key);
         });
     }; });
 
@@ -383,7 +515,10 @@
         if(!picked) return;
         const list2 = folders();
         if(list2.some(x => x.id === picked.id)){ PC.toast('that folder is already syncing'); return; }
-        const guess = pairKey(picked.dir.split(/[/\\]/).pop()) || 'Folder';
+        // Picked a directory this identity has paired before? Then it already has a name on the
+        // other devices; offer that, rather than a guess from the path that may not match it.
+        const guess = recallPair(picked.id, picked.dir)
+                   || pairKey(picked.dir.split(/[/\\]/).pop()) || 'Folder';
         /* The name IS the pairing. Two devices sync together because they used the same one, so this
          * asks rather than inventing a hidden id — and says so, because "Documents" on the laptop
          * meeting "Docs" on the phone is two folders, not one, and nothing later would explain why. */
@@ -394,7 +529,7 @@
         if(key.length < 4){ PC.toast('use at least 4 letters or digits'); return; }
         list2.push({ id: picked.id, key, dir: picked.dir, name: key,
                      excludes: [], prefs: {}, lastSyncAt: 0, lastFullScanAt: 0 });
-        saveFolders(list2); watch(picked.id); paint();
+        saveFolders(list2); rememberPair(picked.id, picked.dir, key); watch(picked.id); paint();
       }catch(e){ PC.toast('could not add: ' + ((e && e.message) || e)); }
     };
 
@@ -431,8 +566,8 @@
          * device. Both keys go, because a build older than the pair key wrote the id one.
          * tests/client/two_device_sim.js — 'stale-base-is-what-deletes-everything'. */
         const f = folders().find(x => x.id === id);
-        try{ localStorage.removeItem(BASE_KEY(id)); }catch(_){}
-        try{ if(f) localStorage.removeItem(BASE_KEY(keyOf(f))); }catch(_){}
+        await _dropBase(id);                       // a build older than the pair key wrote this one
+        if(f) await _dropBase(keyOf(f));
         saveFolders(folders().filter(x => x.id !== id));
         paint();
       };

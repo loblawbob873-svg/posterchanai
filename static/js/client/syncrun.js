@@ -32,6 +32,19 @@
   const S = (typeof require !== 'undefined' && typeof module !== 'undefined')
     ? require('./foldersync.js') : root.PCFolderSync;
 
+  /* How many files may move before the agreement is stored.
+   *
+   * A checkpoint re-writes the WHOLE manifest — that is what the document is — so this is not a free
+   * knob: at 200 files flat, a first sync of a 15790-file folder would write it 79 times, and past
+   * ~376 files the manifest is a fresh encrypted blob each time. So the interval also SCALES with
+   * the work in front of it, capped at _MAX_CHECKPOINTS writes per sweep. A small folder checkpoints
+   * every 200 files; a huge one checkpoints twenty times, whatever its size.
+   *
+   * (Superseded manifest blobs are not collected yet — see docs/FOLDER_SYNC.md. That is the reason
+   * this is bounded rather than generous.) */
+  const _CHECKPOINT = 200;
+  const _MAX_CHECKPOINTS = 20;
+
   /* One sweep of one folder.
    *
    * fs     : { scan, read, write, move, trash }        — the platform adapter
@@ -74,6 +87,36 @@
     const nextBase = Object.assign({}, base);
     const nextRemote = Object.assign({}, remote);
     let dirty = false;
+
+    /* CHECKPOINTS, because rule 3 was only half true.
+     *
+     * `base` advanced per file in MEMORY and was written once, at the very end. So a sweep that did
+     * not reach the end — the laptop closed, the phone unplugged, the app killed mid-upload —
+     * persisted nothing at all and the next one started from the first file. On a 15790-file folder
+     * that is not a slow resume, it is a folder that can never finish on a machine anyone ever
+     * closes. Measured: a first sync of that folder restarted from zero every time.
+     *
+     * Every `_CHECKPOINT` files, the agreement so far is stored. It is always safe to do: the
+     * manifest only ever GAINS entries and tombstones during a sweep, never loses them, so a
+     * checkpoint cannot trip the server's collapse guard; and `base` only names files that have
+     * actually moved, so a resumed sweep re-does exactly the ones that had not.
+     *
+     * A FAILED checkpoint is not a failed sweep. The work is real either way, and the final save is
+     * still the one that decides — but it is recorded, because a folder that silently cannot store
+     * its agreement is the infinite resync above wearing a different hat. */
+    const _work = plan.conflicts.length + plan.download.length + plan.upload.length + plan.deleteLocal.length;
+    const _every = Math.max(_CHECKPOINT, Math.ceil(_work / _MAX_CHECKPOINTS));
+    let sinceCheck = 0;
+    const checkpoint = async (force) => {
+      if(!dirty || (!force && ++sinceCheck < _every)) return;
+      sinceCheck = 0;
+      try{
+        await store.save(key, { manifest: nextRemote, base: nextBase });
+        report.checkpoints = (report.checkpoints || 0) + 1;
+      }catch(e){
+        report.checkpointFailed = (e && e.message) || String(e);
+      }
+    };
     const agree = (path, entry) => { nextBase[path] = entry; dirty = true; };
     const fail = (path, e, what) => {
       report.failed.push({ path, what, error: (e && e.message) || String(e) });
@@ -93,6 +136,7 @@
         // The renamed copy is a new local file; the next sweep uploads it as one. Deliberately not
         // uploaded here — a conflict should not also become a network burst mid-sweep.
       }catch(e){ fail(c.path, e, 'conflict'); }
+      await checkpoint();
     }
 
     let di=0;
@@ -104,6 +148,7 @@
         agree(d.path, { sha:d.sha, size:st.size, mtime:st.mtime });
         report.downloaded.push(d.path);
       }catch(e){ fail(d.path, e, 'download'); }
+      await checkpoint();
     }
 
     let ui=0;
@@ -122,6 +167,7 @@
         agree(u.path, entry);
         report.uploaded.push(u.path);
       }catch(e){ fail(u.path, e, 'upload'); }
+      await checkpoint();
     }
 
     let ti=0;
@@ -132,6 +178,7 @@
         agree(t.path, { deletedAt: (remote[t.path]||{}).deletedAt || now });
         report.trashed.push({ path:t.path, to });
       }catch(e){ fail(t.path, e, 'delete'); }
+      await checkpoint();
     }
 
     for(const r of plan.deleteRemote){
@@ -148,6 +195,8 @@
       agree(n.path, l ? { sha:l.sha, size:l.size, mtime:l.mtime } : { deletedAt:(rm&&rm.deletedAt)||now });
     }
 
+    // The final save is deliberately NOT a checkpoint: a checkpoint that fails is a slower resume,
+    // and this one failing means the sweep's whole result was never recorded. It throws.
     if(dirty){ step('saving'); await store.save(key, { manifest: nextRemote, base: nextBase }); }
     report.ok = report.failed.length === 0;
     return report;

@@ -62,7 +62,42 @@ These are the rules the engine will not bend, each one a way to lose a file:
   that does *not* exclude it syncing happily.
 - **Agreement advances per file, and only after that file has actually moved.** A sweep interrupted
   halfway resumes rather than restarting, and a failed upload never becomes a silent delete.
-- **Stopping a sync deletes nothing** — on this device or any other. It stops being kept in step.
+- **Stopping a sync deletes nothing** — on this device or any other. It stops being kept in step, the
+  local agreement is dropped, and the folder's NAME is remembered, so picking it up again rejoins the
+  same pair instead of asking you to name it a second time (a different answer there would be a
+  second folder that never meets the first).
+- **An empty agreement is not a conflict.** A device whose `base` was cleared sees both sides
+  "changed" for every file at once; an ordinary sweep does not hash, so a convergence test that
+  demanded checksums could never fire and the whole folder duplicated itself as conflict copies.
+  Size and modification time settle it, the same comparison used for change detection everywhere.
+
+## Size, and why a big folder used to be unsyncable
+
+A folder of 15790 files uploaded everything, then resynced from the first file — over and over. Three
+separate ceilings, all of them silent, all now handled:
+
+- **The manifest.** NIP-44 refuses a plaintext over 65535 bytes and a manifest entry measures ~174,
+  so the document held about **376 files**. Past that `save()` threw at the very last step of every
+  sweep: the uploads had happened, the manifest was never stored, the agreement was never written,
+  and the next sweep read the whole folder as new. Everything except the final step worked, which is
+  precisely why it looked like a working sync. Past 45 KB the paths now move into an encrypted
+  Blossom blob and the document keeps a pointer — the same thing the files index does, for the same
+  reason. `sealed` is still set, to a deliberately undecryptable marker, so a client older than this
+  change **fails** instead of reading the document as an empty folder and trashing everything in it.
+- **The agreement.** `base` is the same size as the manifest (~2.6 MB for that folder) and lived in
+  localStorage under a `catch` that swallowed the quota error. It is in IndexedDB now, and a write
+  that fails is reported rather than swallowed — a base that does not persist is the same infinite
+  resync from a different cause.
+- **Interruption.** `base` advanced per file in memory but was written once, at the end, so a sweep
+  that never reached the end recorded nothing and the next began at file one. On a big folder that is
+  not a slow resume, it is a folder that can never finish on a machine anyone ever closes. Progress
+  is checkpointed during the sweep now, at most 20 times per sweep however large the folder is —
+  each checkpoint rewrites the whole manifest, so they are bounded on purpose.
+
+**Known, not yet solved:** superseded manifest blobs are not collected, so a long first sync leaves
+its checkpoints behind in Blossom. And a sweep that deletes a large share of a folder trips the
+server's collapse guard (a 409); the files index answers that by asking the user and re-sending with
+`force`, and sync does not yet.
 
 ## When it runs
 
@@ -117,6 +152,7 @@ server-side, where no client build can route around it.
 venv-unified/bin/python -m unittest tests.client.test_folder_sync      # the merge, thousands of scenarios
 venv-unified/bin/python -m unittest tests.client.test_sync_run         # the ordering rules
 venv-unified/bin/python -m unittest tests.client.test_two_device_sync  # two devices, one manifest
+venv-unified/bin/python -m unittest tests.client.test_sync_store_scale # a 15790-file folder's store
 venv-unified/bin/python -m unittest tests.test_sync_folders_endpoint   # the account's folder list
 venv-unified/bin/python scripts/check_files_explorer.py                # the Files layout, phone + desktop
 ```
