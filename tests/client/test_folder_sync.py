@@ -264,9 +264,22 @@ class TestSyncPolicy(unittest.TestCase):
 
     def test_pressing_the_button_always_works(self):
         """Refusing someone who just pressed Sync because the battery is at 19% is how a feature
-        earns a reputation."""
+        earns a reputation. It runs whatever the battery, the network and the interval say."""
         r = self.ask({"manual": True, "charging": False, "battery": 5, "metered": True},
                      {"onlyWhenCharging": True, "wifiOnly": True})
+        self.assertTrue(r["run"])
+
+    def test_pressing_the_button_does_not_rehash_the_whole_folder(self):
+        """It asks for a SYNC, not for a rehash of everything. `full` re-reads and re-hashes every
+        file, which on a 15790-file folder is minutes of disk naming each file as it goes — from the
+        outside, indistinguishable from the sync starting over, and reported as exactly that."""
+        r = self.ask({"manual": True, "charging": False, "battery": 5, "metered": True},
+                     {"onlyWhenCharging": True, "wifiOnly": True})
+        self.assertEqual(r["mode"], "incremental")
+
+    def test_a_deep_check_still_rehashes(self):
+        """For the case size+mtime cannot see: a file edited in place, same size, inside the slop."""
+        r = self.ask({"manual": True, "deep": True, "charging": False}, {})
         self.assertEqual(r["mode"], "full")
 
     def test_offline_does_nothing(self):

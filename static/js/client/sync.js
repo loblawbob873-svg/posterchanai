@@ -357,7 +357,7 @@
 
     const p = await power();
     const decision = RUN.due(Object.assign({}, p, {
-      now: Date.now(), manual: !!o.manual, dirty: !!f._dirty,
+      now: Date.now(), manual: !!o.manual, deep: !!o.deep, dirty: !!f._dirty,
       lastSyncAt: f.lastSyncAt || 0, lastFullScanAt: f.lastFullScanAt || 0,
     }), prefs(f));
     if(!decision.run && !o.dryRun){ setStatus(f.id, decision.why); return { skipped:true, why:decision.why }; }
@@ -524,6 +524,7 @@
         <div class="sync-actions">
           <button class="btn btn-ghost small sync-dry">Check</button>
           <button class="btn btn-neon small sync-now">Sync now</button>
+          <button class="btn btn-ghost small sync-deep" title="Re-read and re-hash every file. Slow on a big folder — for a file edited in place without changing its size or timestamp.">Deep check</button>
           <button class="btn btn-ghost small sync-trash">Empty trash</button>
           <button class="btn btn-ghost small danger sync-forget">Stop syncing</button>
         </div></div>`;
@@ -653,6 +654,7 @@
         put(f => { f.prefs = Object.assign({}, f.prefs, { wifiOnly: e.target.checked }); });
       card.querySelector('.sync-dry').onclick = () => sweep(get(), { manual:true, dryRun:true }).catch(()=>{});
       card.querySelector('.sync-now').onclick = () => sweep(get(), { manual:true }).catch(()=>{});
+      card.querySelector('.sync-deep').onclick = () => sweep(get(), { manual:true, deep:true }).catch(()=>{});
       card.querySelector('.sync-trash').onclick = async () => {
         if(!await PC.uiConfirm('Empty this folder’s .pc-trash of anything older than 30 days?')) return;
         try{ const r = await FS().emptyTrash(id, 30); PC.toast('emptied ' + (r.removed||0) + ' day(s)'); }
