@@ -224,8 +224,30 @@
      * publish tombstones the others would honour. With the marker present it throws instead, the
      * sweep fails, and nothing is touched. (nostr-tools rejects a payload under 132 chars outright,
      * so this is a deterministic failure, not a hopeful one.) */
+    /* MERGE, DO NOT OVERWRITE, when this sweep knows which paths it changed.
+     *
+     * The manifest is one replaceable document per folder, and a sweep's copy of it is a snapshot
+     * taken when that sweep started. Two devices syncing the same folder at once therefore each hold
+     * a stale copy, and writing it whole means the later save erases every path the other added —
+     * silently, because the blobs are still there and only the entries are gone.
+     *
+     * Re-reading here costs one round trip per checkpoint (about twenty in a big first sync) and
+     * turns that into a merge: whatever the manifest holds NOW, plus the paths this sweep actually
+     * touched. A read that FAILS falls back to writing our snapshot, which is what it did before —
+     * worse than merging, better than not saving at all, and the collapse guard still stands behind
+     * it because a merge can only ever add. */
     async save(id, s){
-      const paths = s.manifest || {};
+      let paths = s.manifest || {};
+      if(Array.isArray(s.touched) && s.touched.length){
+        try{
+          const fresh = await this.manifest(id);
+          if(fresh && typeof fresh === 'object'){
+            const merged = Object.assign({}, fresh);
+            for(const p of s.touched) if(paths[p] !== undefined) merged[p] = paths[p];
+            paths = merged;
+          }
+        }catch(_){ /* keep our snapshot — see above */ }
+      }
       const live = Object.keys(paths).filter(p => paths[p] && !paths[p].deletedAt).length;
       const json = JSON.stringify(paths);
       const doc = { n: live };
@@ -495,6 +517,11 @@
    * Streaming the encrypt and upload would raise this a lot, and until something does, a ceiling the
    * process survives beats a ceiling the server would allow. */
   const SYNC_MAX_BYTES = 256 * 1024 * 1024;
+  /* ...and much lower where the file cannot be chunked at all. Without slice I/O the whole file, its
+   * ciphertext and the upload body are all in memory at once, and an Android WebView has far less
+   * headroom than Electron: a tablet crashed on a Pictures folder that a desktop swallowed. Once a
+   * platform gains readPart this stops applying, because chunking makes size irrelevant. */
+  const SYNC_MAX_UNCHUNKED = 32 * 1024 * 1024;
   let _maxBytes = null;
   async function maxBytes(){
     if(_maxBytes !== null) return _maxBytes;
@@ -505,7 +532,9 @@
       const mb = +(j && (j.blossom_max_upload_mb || j.max_upload_mb)) || 0;
       server = mb > 0 ? mb * 1024 * 1024 : 0;
     }catch(_){}
-    _maxBytes = server > 0 ? Math.min(server, SYNC_MAX_BYTES) : SYNC_MAX_BYTES;
+    const fs = FS();
+    const ceiling = (fs && typeof fs.readPart === 'function') ? SYNC_MAX_BYTES : SYNC_MAX_UNCHUNKED;
+    _maxBytes = server > 0 ? Math.min(server, ceiling) : ceiling;
     return _maxBytes;
   }
 

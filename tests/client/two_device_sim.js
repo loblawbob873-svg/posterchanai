@@ -134,7 +134,16 @@ function makeDevice(world, opts){
     async base(k){ return JSON.parse(JSON.stringify(bases.get(k) || {})); },
     async save(k, s){
       world.writes++;
-      world.docs.set(dtag(k), JSON.parse(JSON.stringify(s.manifest || {})));
+      // Mirrors sync.js: merge the touched paths onto what the document holds NOW, so a concurrent
+      // sweep on another device cannot be erased by this one's stale snapshot.
+      let paths = JSON.parse(JSON.stringify(s.manifest || {}));
+      if(Array.isArray(s.touched) && s.touched.length){
+        const fresh = world.manifestOf(k);
+        const merged = Object.assign({}, fresh);
+        for(const p of s.touched) if(paths[p] !== undefined) merged[p] = paths[p];
+        paths = merged;
+      }
+      world.docs.set(dtag(k), paths);
       bases.set(k, JSON.parse(JSON.stringify(s.base || {})));
     },
     async putBlob(bytes){ const sha = sha256(bytes); world.blobs.set(sha, new Uint8Array(bytes)); return sha; },
@@ -579,6 +588,58 @@ scenario('a-chunked-file-settles', async () => {
     }
   }
   return { ok: moved.length === 0, detail: { moved } };
+});
+
+/* A DEVICE JOINING A FOLDER THAT ALREADY EXISTS, with the files already on its disk and mtimes that
+ * do NOT match the manifest — which is every Android device, because SAF ignores the last-modified
+ * you ask for and the provider decides. Without hashing that first sweep, every identical file looks
+ * divergent and the whole folder is duplicated as conflict copies. */
+scenario('a-joining-device-with-different-mtimes-does-not-duplicate', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Pictures' });
+  for(let i = 0; i < 12; i++) laptop.put('img' + i + '.jpg', 'PHOTO ' + i);
+  await laptop.sweep();
+
+  // The tablet already holds the same bytes, written at a different time entirely.
+  const tablet = makeDevice(w, { name:'tablet', id:'bbb2', key:'Pictures' });
+  for(let i = 0; i < 12; i++){
+    tablet.files.set('img' + i + '.jpg', { bytes: bytesOf('PHOTO ' + i), mtime: Date.UTC(2019, 0, 1) });
+  }
+  // An ORDINARY sweep — the caller asks for no hashing at all. The executor must hash anyway,
+  // because this device has never agreed about this folder.
+  const rep = await tablet.sweep({ hash: false });
+
+  return {
+    ok: rep.conflicted.length === 0 && rep.uploaded.length === 0 && rep.downloaded.length === 0
+        && tablet.live().length === 12,
+    detail: { conflicted: rep.conflicted.length, uploaded: rep.uploaded.length,
+              downloaded: rep.downloaded.length, onDisk: tablet.live().length },
+  };
+});
+
+/* TWO DEVICES SYNCING THE SAME FOLDER AT ONCE must not erase each other.
+ *
+ * Each sweep holds a snapshot of the manifest taken when it started, so writing that snapshot whole
+ * is last-writer-wins: the later save drops every path the other device added. The blobs survive —
+ * they are uploaded and content-addressed — but the ENTRIES go, so the files are missing from the
+ * folder everywhere else, and the device that uploaded them never adds them again because its own
+ * `base` says they are agreed. Silent, and permanent until something else changes those files. */
+scenario('concurrent-sweeps-do-not-erase-each-other', async () => {
+  const w = makeWorld();
+  const a = makeDevice(w, { name:'laptop', id:'aaa1', key:'Pictures' });
+  const b = makeDevice(w, { name:'tablet', id:'bbb2', key:'Pictures' });
+  for(let i = 0; i < 6; i++) a.put('from-laptop-' + i + '.jpg', 'L' + i);
+  for(let i = 0; i < 6; i++) b.put('from-tablet-' + i + '.jpg', 'T' + i);
+
+  // Interleaved: both read an empty manifest, then both save. Whoever writes second used to win
+  // outright and take the other's six paths with it.
+  await Promise.all([a.sweep(), b.sweep()]);
+
+  const man = w.manifestOf('Pictures');
+  const fromA = Object.keys(man).filter(p => p.startsWith('from-laptop-')).length;
+  const fromB = Object.keys(man).filter(p => p.startsWith('from-tablet-')).length;
+  return { ok: fromA === 6 && fromB === 6,
+           detail: { laptopPaths: fromA, tabletPaths: fromB, total: Object.keys(man).length } };
 });
 
 /* THREE devices, because "the other device" is not always the same one. A file added on the third

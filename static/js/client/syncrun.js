@@ -68,20 +68,34 @@
     const tick = (typeof o.onProgress === 'function') ? o.onProgress : function(){};
     const step = (phase, path, i, n) => { try{ tick({ phase, path, i, n }); }catch(_){} };
 
+    /* THE MANIFEST AND THE AGREEMENT ARE READ FIRST, because whether this device has ever agreed
+     * about this folder decides HOW to scan it.
+     *
+     * A device joining a folder that already exists — the second machine, a reinstall, a reconnect —
+     * has an empty `base` and a full local directory, so every path looks changed on both sides at
+     * once. Settling that means comparing CONTENT, and content is a hash: size+mtime cannot do it,
+     * because a file downloaded on Android gets whatever last-modified the SAF provider decides (it
+     * has no writable column, see fs-android.js) and so never matches the mtime the manifest holds.
+     * Without hashing, a tablet joining Documents would call every identical file divergent and
+     * write a conflict copy of the entire folder.
+     *
+     * So a first sweep hashes whatever the battery policy said. It is the one sweep where that cost
+     * is unambiguously worth paying — the alternative is re-uploading, or duplicating, everything. */
+    step('reading the manifest');
+    const remote = await store.manifest(key);           // {} when the folder has never synced
+    const base = (await store.base(key)) || {};
+    const firstEver = !Object.keys(base).length;
+
     step('scanning');
     /* THE SCAN MUST NOT CAP WHAT THE UPLOADER CAN CHUNK. The adapter drops anything over `maxBytes`
      * during the walk — right when a big file cannot be sent at all, and wrong the moment it can,
      * because then the engine never even sees the file it is now able to handle. Shipping chunked
      * uploads without this left every file over the ceiling skipped exactly as before. */
     const chunky = typeof fs.readPart === 'function' && !!store.putParts;
-    const scanned = await fs.scan(id, { hash:!!o.hash, excludes:o.excludes||[],
+    const scanned = await fs.scan(id, { hash: !!o.hash || firstEver, excludes:o.excludes||[],
                                         maxBytes: chunky ? 0 : (o.maxBytes || 0) });
     report.skipped = scanned.skipped || [];
     const local = scanned.files || {};
-
-    step('reading the manifest');
-    const remote = await store.manifest(key);           // {} when the folder has never synced
-    const base = (await store.base(key)) || {};
 
     const plan = S.diff({ local, remote, base, device, now, excludes:o.excludes||[] });
     report.unchanged = plan.unchanged;
@@ -92,6 +106,19 @@
     // Agreement is recorded per file, the moment that file is actually in step — see rule 3.
     const nextBase = Object.assign({}, base);
     const nextRemote = Object.assign({}, remote);
+    /* WHICH PATHS THIS SWEEP ACTUALLY TOUCHED.
+     *
+     * The manifest is a replaceable document and `nextRemote` is a snapshot taken when this sweep
+     * started, so writing it whole is last-writer-wins: two devices syncing the SAME folder at once
+     * each save their own stale copy, and the later one erases every path the other added. The blobs
+     * survive — they are uploaded and content-addressed — but the ENTRIES vanish, so the files are
+     * missing from the folder on every other device and the device that uploaded them will not add
+     * them again, because its own `base` says they are agreed.
+     *
+     * With the list of paths we changed, the store can merge onto whatever the manifest holds NOW
+     * instead of overwriting it. */
+    const touched = new Set();
+    const remember = (path, entry) => { nextRemote[path] = entry; touched.add(path); };
     let dirty = false;
 
     /* CHECKPOINTS, because rule 3 was only half true.
@@ -117,7 +144,7 @@
       if(!dirty || (!force && ++sinceCheck < _every)) return;
       sinceCheck = 0;
       try{
-        await store.save(key, { manifest: nextRemote, base: nextBase });
+        await store.save(key, { manifest: nextRemote, base: nextBase, touched: [...touched] });
         report.checkpoints = (report.checkpoints || 0) + 1;
       }catch(e){
         report.checkpointFailed = (e && e.message) || String(e);
@@ -202,7 +229,7 @@
            * same() then falls back to size+mtime, exactly as it does for every other file. */
           const entry = { sha:meta.sha, chunks:res.chunks, size:meta.size, mtime:meta.mtime || now, device };
           if(!entry.sha) delete entry.sha;
-          nextRemote[u.path] = entry;
+          remember(u.path, entry);
           agree(u.path, entry);
           if(res.existed) report.alreadyStored = (report.alreadyStored || 0) + 1;
           report.uploaded.push(u.path);
@@ -221,7 +248,7 @@
           step('already stored', u.path, ui, plan.upload.length);
         }
         const entry = { sha, size:(meta&&meta.size)||bytes.length, mtime:(meta&&meta.mtime)||now, device };
-        nextRemote[u.path] = entry;
+        remember(u.path, entry);
         agree(u.path, entry);
         report.uploaded.push(u.path);
       }catch(e){ fail(u.path, e, 'upload'); }
@@ -240,7 +267,7 @@
     }
 
     for(const r of plan.deleteRemote){
-      nextRemote[r.path] = { deletedAt: now };          // a tombstone, so other devices learn of it
+      remember(r.path, { deletedAt: now });             // a tombstone, so other devices learn of it
       agree(r.path, { deletedAt: now });
       report.removedRemote.push(r.path);
       dirty = true;
@@ -261,7 +288,8 @@
      * paths were deliberately removed, so it is what lets the store answer without asking. */
     if(dirty){
       step('saving');
-      await store.save(key, { manifest: nextRemote, base: nextBase, removed: report.removedRemote.length });
+      await store.save(key, { manifest: nextRemote, base: nextBase, touched: [...touched],
+                              removed: report.removedRemote.length });
     }
     report.ok = report.failed.length === 0;
     return report;
