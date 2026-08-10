@@ -352,6 +352,14 @@ async def _serve_blob(sha256: str, request: Request, db: Session, force_thumb: b
         "Cache-Control": "public, max-age=31536000, immutable",
         "Accept-Ranges": "bytes",   # advertise range support so browsers will seek/play video
     }
+    # IS THIS BLOB ON DEATH ROW? Folder sync asks with a HEAD before uploading, and skips the body
+    # when the bytes are already here — which also skips save_blob, and save_blob is what CLEARS an
+    # expiry when a blob becomes referenced again. Without this the sweep could record a manifest
+    # entry pointing at bytes already scheduled for deletion, and that file would go missing from
+    # every device a week later with nothing said. Advertised so the client can decline to skip.
+    # `Access-Control-Expose-Headers: *` above is what lets it read this cross-origin.
+    if getattr(blob, "expires_at", None):
+        headers["X-Expires-At"] = str(int(blob.expires_at))
     # Name the download. `inline` keeps images/video previewing in the tab (an `attachment` would
     # force a download on every view), but a "Save as" — and the old EXTENSIONLESS /<sha> links
     # already living in notes — now lands as `report.pdf` (or `<sha>.pdf`) instead of a bare hash.

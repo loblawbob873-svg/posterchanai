@@ -206,14 +206,19 @@ def _cache_drop(sha256: str) -> None:
 # delete. Bounded entry count (each entry is a few hundred bytes → a full cache is a few MB).
 from collections import namedtuple  # noqa: E402
 
-BlobMeta = namedtuple("BlobMeta", "sha256 pubkey size mime created_at storage path")
+# `expires_at` is carried because a READ has to be able to say the blob is on its way out: folder
+# sync HEADs before uploading and skips the body when the bytes are here, which also skips the save
+# that would have cleared the stamp. Defaulted, so nothing that builds one positionally breaks.
+BlobMeta = namedtuple("BlobMeta", "sha256 pubkey size mime created_at storage path expires_at",
+                      defaults=(None,))
 _META_MAX = 50000
 _meta_cache: "OrderedDict[str, BlobMeta]" = OrderedDict()
 _meta_lock = threading.Lock()
 
 
 def _meta_from_row(blob: BlossomBlob) -> BlobMeta:
-    return BlobMeta(blob.sha256, blob.pubkey, blob.size, blob.mime, blob.created_at, blob.storage, blob.path)
+    return BlobMeta(blob.sha256, blob.pubkey, blob.size, blob.mime, blob.created_at, blob.storage,
+                    blob.path, blob.expires_at)
 
 
 def _meta_put(m: BlobMeta) -> None:

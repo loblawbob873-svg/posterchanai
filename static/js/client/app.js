@@ -14467,7 +14467,15 @@
   async function _blobAlreadyStored(sha){
     try{
       const r = await fetch(mediaServer() + '/' + sha, { method:'HEAD', cache:'no-store' });
-      return !!(r && r.ok);
+      if(!r || !r.ok) return false;
+      /* PRESENT IS NOT ENOUGH — it must not be on its way out. Skipping the upload also skips the
+       * server's save path, and that save is what clears an expiry when a blob becomes referenced
+       * again. A blob carrying one is scheduled for deletion (a superseded manifest, an index blob
+       * out of backup retention), so recording a manifest entry against it would point every device
+       * at bytes due to vanish. Upload instead: the write clears the stamp, which is exactly the
+       * "a fresh reference clears the TTL" rule the reclaim path depends on. */
+      if(r.headers && r.headers.get('X-Expires-At')) return false;
+      return true;
     }catch(_){ return false; }
   }
   // Fetch + decrypt one synced blob. The same two steps PC.syncBlobs.get does — shared rather than
