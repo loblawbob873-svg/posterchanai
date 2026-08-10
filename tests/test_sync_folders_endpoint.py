@@ -126,5 +126,87 @@ class TestSyncFolders(unittest.TestCase):
         self.assertEqual(resp.status_code, 403)
 
 
+class TestSupersededManifestBlobs(unittest.TestCase):
+    """Every manifest save past ~45 KB uploads a whole new encrypted blob, so a first sync of a big
+    folder leaves one per checkpoint and every later change leaves another. They are `keep` blobs,
+    and the cleanup sweep skips those unconditionally — that exemption is what stops an admin turning
+    on a TTL from eating an encrypted drive — so nothing else was ever going to collect them.
+
+    The document therefore carries a one-deep chain (`pathsSha` + `prevSha`) and the server releases
+    the generation behind it, ownership-checked. The check is the load-bearing part: the sha comes
+    out of a document the client wrote, so without it a crafted manifest would have this node delete
+    somebody else's bytes.
+    """
+
+    def test_a_ttl_would_not_have_worked(self):
+        """The reason this is a release and not an expiry. If the cleanup sweep ever stops skipping
+        `keep` blobs this test should fail and the simpler approach becomes available — but silently
+        setting a TTL that can never fire is the failure mode to avoid."""
+        import inspect
+
+        from app.services import blossom_service
+
+        src = inspect.getsource(blossom_service._cleanup_once)
+        self.assertIn("keep.is_(False)", src.replace(" ", ""),
+                      "the cleanup sweep no longer skips keep blobs — re-check how superseded "
+                      "manifest blobs are collected")
+
+    def test_release_is_gated_on_ownership(self):
+        """A crafted manifest naming somebody else's sha must not delete their bytes."""
+        from app.services import blossom_service as bs
+
+        seen = {}
+
+        def _owner(db, sha, pk):
+            seen["asked"] = True
+            return False
+
+        def _release(*a, **k):
+            raise AssertionError("released a blob this user does not own")
+
+        with mock.patch.object(bs, "is_owner", _owner), \
+                mock.patch.object(bs, "release_owner", _release):
+            asyncio.run(C._release_sync_blob(_FakeDB(), "a" * 64, "b" * 64))
+        self.assertTrue(seen.get("asked"), "ownership was never checked")
+
+    def test_the_bytes_go_only_when_the_last_owner_releases(self):
+        """Blossom dedups, so one set of bytes can be referenced by several accounts."""
+        from app.services import blossom_service as bs
+
+        db = mock.MagicMock()
+        deleter = mock.AsyncMock()
+        with mock.patch.object(bs, "is_owner", lambda *a: True), \
+                mock.patch.object(bs, "release_owner", lambda *a: 1), \
+                mock.patch.object(bs, "delete_blob_bytes", deleter):
+            asyncio.run(C._release_sync_blob(db, "a" * 64, "b" * 64))
+        deleter.assert_not_called()
+        db.delete.assert_not_called()
+
+    def test_the_last_owner_takes_the_bytes_with_them(self):
+        """...and when nobody else references them, the bytes and the row both go."""
+        from app.services import blossom_service as bs
+
+        db = mock.MagicMock()
+        deleter = mock.AsyncMock()
+        with mock.patch.object(bs, "is_owner", lambda *a: True), \
+                mock.patch.object(bs, "release_owner", lambda *a: 0), \
+                mock.patch.object(bs, "delete_blob_bytes", deleter):
+            asyncio.run(C._release_sync_blob(db, "a" * 64, "b" * 64))
+        deleter.assert_awaited()
+        db.delete.assert_called()
+        db.commit.assert_called()
+
+    def test_a_failure_never_raises_into_the_save(self):
+        """Collecting a superseded blob is housekeeping — it must never turn a stored manifest into
+        a failed one."""
+        from app.services import blossom_service as bs
+
+        def _boom(*a, **k):
+            raise RuntimeError("db gone")
+
+        with mock.patch.object(bs, "is_owner", _boom):
+            asyncio.run(C._release_sync_blob(mock.MagicMock(), "a" * 64, "b" * 64))   # must not raise
+
+
 if __name__ == "__main__":
     unittest.main()

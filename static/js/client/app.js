@@ -14384,33 +14384,23 @@
   let _syncRoot = '';                 // the pair key being browsed ('' = the drive, not a synced folder)
   let _syncPath = '';                 // subdirectory inside it ('' = its root)
   let _syncPairs = null;              // [{key,n,updated_at}] · null = not asked yet · 'error' = asked and failed
-  let _syncPairsInflight = false, _syncPairsAt = 0;
   const _syncManifests = new Map();   // pair key -> {at, paths:{path:{sha,size,mtime,deletedAt}}}
-  const _SYNC_TTL = 60000, _SYNC_PAIRS_TTL = 300000;
+  const _SYNC_TTL = 60000;   // how long a decrypted manifest is reused while walking its subfolders
 
+  /* Which folders this ACCOUNT syncs. The fetch, the TTL and the cache all live in sync.js — the
+   * Folder Sync screen asks the same question to offer an unmapped folder back to a device that lost
+   * its mapping, and two caches would mean two answers and two requests per visit. A 503 there means
+   * the relay did not answer, which is NOT "you have no synced folders": that distinction is made on
+   * the server and carried through here as 'error'. */
   async function _ensureSyncPairs(){
     // No instance means no manifest endpoint at all — the bundled desktop/APK build runs against
     // relays alone, and asking would 404 on every render.
     if(_standalone() || !ME || !ME.pubkey) { _syncPairs = []; return false; }
-    // TTL'd rather than asked once: a folder synced from another device five minutes ago should turn
-    // up, and — the case that actually matters — a failure must not read as "you have no synced
-    // folders" for the rest of the session. A failed read retries sooner than a good one refreshes.
-    const fresh = _syncPairs !== null
-      && (Date.now() - _syncPairsAt) < (_syncPairs === 'error' ? _SYNC_TTL : _SYNC_PAIRS_TTL);
-    if(fresh || _syncPairsInflight) return false;
-    _syncPairsInflight = true;
-    _syncPairsAt = Date.now();       // stamped up front → at most one attempt per window, success or failure
-    try{
-      const auth = await sign(27235, 'sync-folders', [['p', ME.pubkey]]);
-      const r = await fetch('/client/sync-folders', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ pubkey: ME.pubkey, auth: btoa(JSON.stringify(auth)) }) });
-      const j = await r.json().catch(() => ({}));
-      // A 503 here means the relay did not answer, which is NOT "you have no synced folders" — the
-      // server keeps those apart on purpose and so must this.
-      _syncPairs = (r.ok && j && j.ok && Array.isArray(j.folders)) ? j.folders : 'error';
-    }catch(_){ _syncPairs = 'error'; }
-    _syncPairsInflight = false;
-    return true;
+    const S = window.PCSync;
+    if(!S || !S.accountFolders){ _syncPairs = []; return false; }
+    const changed = await S.accountFolders();
+    _syncPairs = S.acct() === null ? [] : S.acct();
+    return changed;
   }
   function _fxSyncedHTML(){
     if(_standalone()) return '';

@@ -515,6 +515,22 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   once (re-adding a synced folder, a cleared agreement), and an ordinary sweep does NOT hash — so a
   convergence test written as `L.sha === R.sha` can never fire, and every file becomes a
   "(conflict from …)" copy on every device. It is `same(L, R)`, which falls back to size+mtime.
+  **A DEVICE THAT LOSES ITS MAPPING MUST NOT LOOK LIKE AN ACCOUNT THAT SYNCS NOTHING.** The mapping is
+  localStorage, so a reinstall or an app update that moves the storage origin takes it — reported as
+  "I updated the windows app and my existing Folder sync was no longer there". `/client/sync-folders`
+  is what makes that recoverable: anything the ACCOUNT syncs that this device has no directory for is
+  offered back under "Synced on your other devices", and re-attaching asks only WHERE, never for the
+  name (a different name is a second folder that never meets the first). Nothing is re-uploaded —
+  that is the empty-base rule above doing its job. The cache lives in `sync.js` and Files borrows it
+  through `PCSync.accountFolders()`, so the same question is not asked twice per visit.
+  **Superseded manifest blobs are RELEASED, not expired.** `expire_blob_in` cannot collect them: the
+  cleanup sweep filters `keep.is_(False)` and a manifest blob is a `keep` blob. The doc carries a
+  one-deep chain (`pathsSha`/`prevSha`, written server-side) and `_release_sync_blob` releases the
+  generation behind it — ownership-checked, because the sha comes out of a client-written document.
+  **A mass delete has to be able to complete.** The collapse guard refused the save, so the agreement
+  was never written and every later sweep re-proposed the same delete and was refused again. The 409
+  now carries `old`/`new`, and the sweep passes `removed`: when it accounts for the shrink the store
+  re-sends with `force`, otherwise it asks and honours a no.
   **Background sync cannot upload and that is not a bug**: every network step is signed by the user's
   Nostr key, which with Amber/NIP-46 is not on the device — so Android's WorkManager job notices
   changes and notifies, and opening the app is what syncs. See `docs/FOLDER_SYNC.md`.

@@ -4096,18 +4096,90 @@ async def sync_manifest(data: SyncManifestReq, db: Session = Depends(get_db)):
         logger.warning("[client] sync-manifest: cannot read %s, refusing to write: %s", key, e)
         return JSONResponse({"ok": False, "error": "manifest unavailable, not saved"}, status_code=503)
 
+    prev = prev if isinstance(prev, dict) else {}
+    live_sha = prev.get("pathsSha")          # the blob the CURRENT manifest points at
+    new_sha = data.manifest.get("pathsSha") if isinstance(data.manifest, dict) else None
+
     drop = _files_index_collapse(prev, data.manifest)
     if drop and not data.force:
         logger.warning("[client] sync-manifest: REFUSED a collapsing write for %s %s (%s)",
                        pk[:12], key, drop)
-        return JSONResponse({"ok": False, "error": "refused: " + drop, "collapse": True},
+        # The blob went up BEFORE this pointer was offered, so a refusal leaves it referenced by
+        # nothing at all — release it rather than leaving a few MB behind on every refusal.
+        if new_sha and new_sha not in (live_sha, prev.get("prevSha")):
+            await _release_sync_blob(db, new_sha, pk)
+        # The COUNTS, not just a sentence. The client knows how many paths it deleted this sweep, so
+        # with these it can tell a deliberate mass-delete (re-send with force, no question asked)
+        # from a shrink it cannot account for (ask, because that one might be a bug about to empty
+        # the folder on every device). Parsing the message for them would be a guess.
+        return JSONResponse({"ok": False, "error": "refused: " + drop, "collapse": True,
+                             "old": _files_index_count(prev), "new": _files_index_count(data.manifest)},
                             status_code=409)
 
-    if not await store.put_doc(port, sk, key, data.manifest):
+    # ONE GENERATION BACK IS KEPT, AND THE ONE BEHIND THAT IS RELEASED.
+    #
+    # Every save past ~45 KB uploads a whole new encrypted blob, so a first sync of a big folder
+    # leaves one per checkpoint and every later change leaves another. They are `keep` blobs, which
+    # no cleanup sweep may ever touch (that exemption is what stops an admin turning on a TTL from
+    # eating an encrypted drive), so nothing else was ever going to collect them.
+    #
+    # The chain lives in the document because the SERVER is where the ownership check has to happen
+    # anyway — a client cannot be trusted to name a blob for deletion. Keeping one generation means
+    # the manifest a save replaced stays readable for the length of one more save, the same bargain
+    # the files index makes with its backup slots.
+    doc = dict(data.manifest) if isinstance(data.manifest, dict) else data.manifest
+    if new_sha and live_sha and new_sha != live_sha:
+        doc["prevSha"] = live_sha
+    elif isinstance(doc, dict) and not new_sha:
+        doc.pop("prevSha", None)          # back to an inline manifest: the chain ends here
+
+    if not await store.put_doc(port, sk, key, doc):
         logger.warning("[client] sync-manifest: relay REJECTED the write for %s %s", pk[:12], key)
+        if new_sha and new_sha not in (live_sha, prev.get("prevSha")):
+            await _release_sync_blob(db, new_sha, pk)
         return JSONResponse({"ok": False, "error": "relay rejected the write, not saved"},
                             status_code=503)
+
+    # Only now that the replacement is safely stored. Two generations back is referenced by nothing.
+    old = prev.get("prevSha")
+    if old and old not in (new_sha, live_sha):
+        await _release_sync_blob(db, old, pk)
     return JSONResponse({"ok": True})
+
+
+async def _release_sync_blob(db, sha: str | None, pubkey_hex: str) -> None:
+    """Let go of a superseded manifest blob. Best-effort, never raises.
+
+    GATED ON OWNERSHIP, and that is not a formality: the sha comes out of a document the client
+    wrote, so without the check a crafted manifest would make this node delete somebody else's
+    bytes. Blossom is content-addressed and shared, so this releases THIS user's reference and the
+    bytes go only when the last owner lets go — the same path the BUD-02 delete route takes.
+
+    A TTL would not work here. `expires_at` is honoured by the cleanup sweep, and that sweep skips
+    every `keep` blob unconditionally — which is what stops an admin turning a TTL on from eating an
+    encrypted drive. Manifest blobs are `keep` blobs, so nothing but this would ever collect them.
+    """
+    if not sha:
+        return
+    try:
+        from app.models import BlossomBlob
+        from app.services import blossom_service
+        if not blossom_service.is_owner(db, sha, pubkey_hex):
+            return
+        if blossom_service.release_owner(db, sha, pubkey_hex):
+            return                       # somebody else still references these bytes
+        blob = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha).first()
+        if blob is None:
+            return
+        await blossom_service.delete_blob_bytes(db, blob)
+        db.delete(blob)
+        db.commit()
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        logger.debug("[client] sync-manifest: could not release %s: %s", str(sha)[:12], e)
 
 
 class SyncFoldersReq(BaseModel):

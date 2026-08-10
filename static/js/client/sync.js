@@ -173,6 +173,9 @@
         body: JSON.stringify(Object.assign({ pubkey: PC.me().pubkey, auth: btoa(JSON.stringify(auth)) }, body)),
       });
       const j = await r.json().catch(() => ({}));
+      if(r.status === 409 && j && j.collapse){
+        const e = new Error(j.error || 'refused'); e.collapse = j; throw e;
+      }
       if(!r.ok || !j.ok) throw new Error(j.error || ('manifest ' + r.status));
       return j;
     },
@@ -232,7 +235,29 @@
         doc.pathsSha = await PC.syncBlobs.put(new TextEncoder().encode(json));
         doc.sealed = 'v2:' + doc.pathsSha;      // the marker above — deliberately undecryptable
       }
-      await this._post({ folder: id, manifest: doc });
+      try{
+        await this._post({ folder: id, manifest: doc });
+      }catch(e){
+        /* THE SERVER REFUSED A SHRINK. It holds a count and nothing else, so a deliberate mass
+         * delete and a broken client about to empty the folder on every device look identical from
+         * there — which is exactly why the guard is server-side. THIS side is not guessing: `removed`
+         * is how many paths this sweep deleted, and if it accounts for the shrink then the write is
+         * precisely what the user asked for and there is nothing to ask about.
+         *
+         * Without this the guard makes a legitimate mass delete IMPOSSIBLE: the save fails, the
+         * agreement is never written, and every sweep from then on proposes the same delete and is
+         * refused again. */
+        if(!e || !e.collapse) throw e;
+        const c = e.collapse, shrink = Math.max(0, (+c.old || 0) - (+c.new || 0));
+        const removed = +(s.removed || 0);
+        if(!(removed > 0 && removed >= shrink)){
+          const ok = await PC.uiConfirm('“' + id + '” is about to go from ' + c.old + ' files to '
+            + c.new + ' on every device.\n\nThis device only deleted ' + removed
+            + '. If you did not expect that, cancel — nothing has been changed anywhere yet.');
+          if(!ok) throw new Error('not saved — the change was refused (' + c.old + ' → ' + c.new + ')');
+        }
+        await this._post({ folder: id, manifest: doc, force: true });
+      }
       // Only after the shared manifest is safely stored — a base that runs ahead of it would make
       // this device believe in an agreement the others never saw. AWAITED: an unawaited write is a
       // save that reports success before it has one, and its failure is an unhandled rejection
@@ -242,6 +267,47 @@
     putBlob: (bytes) => PC.syncBlobs.put(bytes),
     getBlob: (sha) => PC.syncBlobs.get(sha),
   };
+
+  /* ---- WHAT THIS ACCOUNT SYNCS, as opposed to what THIS DEVICE maps ---------------------------
+   *
+   * The mapping is device-local by necessity — a path on a laptop means nothing on a phone — but it
+   * was device-local with no way back: reported after a Windows app update, "my existing Folder sync
+   * was no longer there". A bundled app that changes its storage origin, a reinstall, a cleared
+   * profile, or simply painting this screen before the signer has resolved all produce the same
+   * screen: "No folders syncing under this account yet", about an account that syncs two folders.
+   *
+   * The manifests know better, and they are on the relay. /client/sync-folders lists the pair keys
+   * this account actually has, so a device with no mapping can OFFER them back — point "Documents"
+   * at a directory here and it rejoins the pair it always belonged to. Nothing is re-uploaded: the
+   * first sweep finds the same bytes on both sides and records agreement (see the empty-base rule in
+   * foldersync.js, without which this would conflict every file instead).
+   *
+   * Cached with a TTL because it is drawn on every repaint, and repaints happen per keystroke of an
+   * exclusion list. A failure is remembered as a FAILURE, never as "this account syncs nothing" —
+   * the whole point of this section is that an empty answer used to be a lie. */
+  let _acct = null, _acctAt = 0, _acctBusy = false;
+  const _ACCT_TTL = 120000, _ACCT_RETRY = 20000;
+  async function accountFolders(){
+    if(!PC.me || !PC.me() || !PC.me().pubkey){ _acct = null; return false; }
+    const age = Date.now() - _acctAt;
+    if(_acctBusy || (_acct !== null && age < (_acct === 'error' ? _ACCT_RETRY : _ACCT_TTL))) return false;
+    _acctBusy = true; _acctAt = Date.now();
+    try{
+      const auth = await PC.signAuth('sync-folders');
+      const r = await fetch('/client/sync-folders', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ pubkey: PC.me().pubkey, auth: btoa(JSON.stringify(auth)) }) });
+      const j = await r.json().catch(() => ({}));
+      _acct = (r.ok && j && j.ok && Array.isArray(j.folders)) ? j.folders : 'error';
+    }catch(_){ _acct = 'error'; }
+    _acctBusy = false;
+    return true;
+  }
+  // What this account syncs that this device has no directory for.
+  function unmapped(){
+    if(!Array.isArray(_acct)) return [];
+    const mine = new Set(folders().map(keyOf));
+    return _acct.filter(f => f && f.key && !mine.has(f.key));
+  }
 
   // ---- running a sweep -------------------------------------------------------------------------
   /* ONE SWEEP PER FOLDER AT A TIME. The watcher fires while a sweep is running as a matter of course
@@ -425,6 +491,10 @@
     }
     const mapped = new Set(list.map(f => f.id));
     const orphans = (Array.isArray(granted) ? granted : []).filter(g => !mapped.has(g.id));
+    /* What the ACCOUNT syncs that this device cannot see. Asked once per visit and repainted when it
+     * lands — never awaited, because this screen must draw immediately and the answer is an extra. */
+    const elsewhere = unmapped();
+    accountFolders().then(changed => { if(changed && PC.VIEW === 'sync') paint(); });
     const rows = list.map(f => {
       const st = status.get(f.id) || {};
       const pr = prefs(f);
@@ -463,7 +533,19 @@
       ${(!PC.me || !PC.me()) ? '<div class="empty">Sign in to sync — folder mappings belong to an '
         + 'account, so that switching identity never uploads this machine\'s files into someone '
         + 'else\'s.</div>' : ''}
-      ${rows || (fs ? '<div class="empty">No folders syncing under this account yet.</div>' : '')}
+      ${rows || (fs ? ('<div class="empty">' + (Array.isArray(_acct) && _acct.length
+          ? 'This device isn’t set up for any of them yet — pick one up below.'
+          : (_acct === null ? 'Checking what this account syncs…' : 'No folders syncing under this account yet.'))
+        + '</div>') : '')}
+      ${elsewhere.length ? `<div class="sync-orphans"><b>Synced on your other devices</b>
+        <p class="muted small">These folders belong to your account but this device has no directory for
+        them — after a reinstall, an app update, or on a machine you have not set up yet. Choose where
+        each one lives here and it rejoins the same folder; nothing is re-uploaded.</p>
+        ${elsewhere.map(f => `<div class="sync-orphan"><span>🔄 ${PC.enc(f.key)}
+            <span class="muted small">· ${f.n} file${f.n === 1 ? '' : 's'}</span></span>
+          <button class="btn btn-neon small sync-attach" data-key="${PC.enc(f.key)}"${fs ? '' : ' disabled'}
+            >Set up on this device…</button></div>`).join('')}</div>` : ''}
+      ${_acct === 'error' ? '<p class="muted small">(Couldn’t check what your other devices sync just now.)</p>' : ''}
       ${orphans.length ? `<div class="sync-orphans"><b>Already allowed on this device</b>
         <p class="muted small">You granted access to these, but they are not syncing under the account
         you are signed in with now. Nothing has been lost — pick one up to start syncing it here.</p>
@@ -506,6 +588,23 @@
           if(!key || key.length < 4) return;
           add(key);
         });
+    }; });
+
+    /* Re-attach a folder this account already syncs. The pair key is KNOWN, so there is no name to
+     * ask for — asking would only give someone a chance to type a different one, which is a second
+     * folder that never meets the first. All this needs is where it lives on this machine. */
+    feed.querySelectorAll('.sync-attach').forEach(b => { b.onclick = async () => {
+      const key = b.dataset.key;
+      try{
+        const picked = await FS().pick();
+        if(!picked) return;
+        const l = folders();
+        if(l.some(x => x.id === picked.id)){ PC.toast('that folder is already syncing'); return; }
+        l.push({ id: picked.id, key, dir: picked.dir, name: key,
+                 excludes: [], prefs: {}, lastSyncAt: 0, lastFullScanAt: 0 });
+        saveFolders(l); rememberPair(picked.id, picked.dir, key); watch(picked.id); paint();
+        PC.toast('“' + key + '” is set up here — the first check compares, it does not re-upload');
+      }catch(e){ PC.toast('could not set that up: ' + ((e && e.message) || e)); }
     }; });
 
     const add = document.getElementById('sync-add');
@@ -632,5 +731,8 @@
     nudge('startup');
   }
 
-  window.PCSync = { paint, folders, sweep, startAll, store, status };
+  // accountFolders/acct are shared with Files → Blossom, which lists the same pair keys as browsable
+  // roots. One fetch, one cache, one answer about what this account syncs.
+  window.PCSync = { paint, folders, sweep, startAll, store, status,
+                    accountFolders, acct: () => _acct };
 })();

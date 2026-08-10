@@ -80,13 +80,27 @@ function makeWorld(){
     },
   };
 
+  /* The endpoint, including its collapse guard — the server refuses a manifest that drops to under
+   * half of what it holds, and that refusal is the only thing standing between a bug and a folder
+   * emptied on every device. Modelled here rather than stubbed away, because the client's handling
+   * of the 409 is what these scenarios are about. */
+  w.collapseGuard = true;
   w.fetch = async (_url, opts) => {
     const body = JSON.parse((opts && opts.body) || '{}');
     w.posts.push(body);
     if(body.manifest === undefined){
       return { ok: true, json: async () => ({ ok: true, manifest: w.docs.get(body.folder) || {} }) };
     }
+    const prev = w.docs.get(body.folder);
+    const oldN = prev && typeof prev.n === 'number' ? prev.n : null;
+    const newN = typeof body.manifest.n === 'number' ? body.manifest.n : null;
+    if(w.collapseGuard && !body.force && oldN !== null && newN !== null && oldN >= 10 && newN < Math.floor(oldN / 2)){
+      w.refusals = (w.refusals || 0) + 1;
+      return { ok: false, status: 409, json: async () => ({
+        ok: false, collapse: true, old: oldN, new: newN, error: 'refused: ' + oldN + ' entries -> ' + newN }) };
+    }
     w.saves++;
+    if(body.force) w.forced = (w.forced || 0) + 1;
     w.docs.set(body.folder, JSON.parse(JSON.stringify(body.manifest)));
     return { ok: true, json: async () => ({ ok: true }) };
   };
@@ -269,6 +283,74 @@ scenario('the-collapse-guard-still-gets-a-count', async () => {
   await store.save('Documents', { manifest: paths, base: {} });
   const doc = world.docs.get('Documents') || {};
   return { ok: doc.n === 2000, detail: { n: doc.n, entries: Object.keys(paths).length } };
+});
+
+/* A DELIBERATE MASS DELETE MUST BE ABLE TO COMPLETE.
+ *
+ * The server refuses a sharp shrink because it holds a count and nothing else — a real mass delete
+ * and a broken client about to empty the folder everywhere look identical from there. But the client
+ * knows how many paths this sweep deleted, so when that accounts for the shrink there is nothing to
+ * ask: it re-sends with force. Without this the save fails, the agreement is never written, and
+ * every sweep from then on proposes the same delete and is refused again — the delete can never
+ * land, for ever. */
+scenario('a-deliberate-mass-delete-completes-without-asking', async () => {
+  const { world, store } = boot();
+  const paths = manifest(40);
+  await store.save('Documents', { manifest: paths, base: {} });
+
+  const kept = {};                                        // 38 deleted, 2 left
+  const keys = Object.keys(paths);
+  keys.slice(0, 2).forEach(k => { kept[k] = paths[k]; });
+  keys.slice(2).forEach(k => { kept[k] = { deletedAt: 1786000000000 }; });
+
+  let asked = false;
+  world.PC.uiConfirm = async () => { asked = true; return true; };
+  let err = '';
+  try{ await store.save('Documents', { manifest: kept, base: {}, removed: 38 }); }
+  catch(e){ err = (e && e.message) || String(e); }
+
+  const doc = world.docs.get('Documents') || {};
+  return {
+    ok: !err && !asked && world.refusals === 1 && world.forced === 1 && doc.n === 2,
+    detail: { error: err, asked, refusals: world.refusals || 0, forced: world.forced || 0, n: doc.n },
+  };
+});
+
+/* ...and a shrink this device CANNOT account for must ask, and must honour a no. That is the bug
+ * case: a manifest collapsing for a reason the sweep cannot explain is the one the guard exists for,
+ * and forcing past it unasked would make the guard decorative. */
+scenario('an-unexplained-collapse-asks-and-honours-no', async () => {
+  const { world, store } = boot();
+  await store.save('Documents', { manifest: manifest(40), base: {} });
+
+  let asked = false;
+  world.PC.uiConfirm = async () => { asked = true; return false; };      // the user says no
+  let err = '';
+  try{ await store.save('Documents', { manifest: manifest(1), base: {}, removed: 0 }); }
+  catch(e){ err = (e && e.message) || String(e); }
+
+  const doc = world.docs.get('Documents') || {};
+  return {
+    ok: asked && !!err && !world.forced && doc.n === 40,      // nothing written, the folder intact
+    detail: { asked, error: err, forced: world.forced || 0, stillHolds: doc.n },
+  };
+});
+
+/* The manifest blob chain: the server keeps ONE generation and releases the one behind it. The
+ * client's half of that contract is simply that a pointer save carries a fresh sha each time, so a
+ * generation can be identified at all. */
+scenario('each-save-points-at-a-fresh-blob', async () => {
+  const { world, store } = boot();
+  const paths = manifest(2000);
+  await store.save('Documents', { manifest: paths, base: {} });
+  const first = (world.docs.get('Documents') || {}).pathsSha;
+  paths['Pictures/2019/Holiday/NEW.jpg'] = { sha: 'b'.repeat(64), size: 1, mtime: 2, device: 'x' };
+  await store.save('Documents', { manifest: paths, base: {} });
+  const second = (world.docs.get('Documents') || {}).pathsSha;
+  return {
+    ok: !!first && !!second && first !== second && world.blobs.size === 2,
+    detail: { first, second, blobs: world.blobs.size },
+  };
 });
 
 (async () => {

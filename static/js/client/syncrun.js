@@ -195,9 +195,16 @@
       agree(n.path, l ? { sha:l.sha, size:l.size, mtime:l.mtime } : { deletedAt:(rm&&rm.deletedAt)||now });
     }
 
-    // The final save is deliberately NOT a checkpoint: a checkpoint that fails is a slower resume,
-    // and this one failing means the sweep's whole result was never recorded. It throws.
-    if(dirty){ step('saving'); await store.save(key, { manifest: nextRemote, base: nextBase }); }
+    /* The final save is deliberately NOT a checkpoint: a checkpoint that fails is a slower resume,
+     * and this one failing means the sweep's whole result was never recorded. It throws.
+     *
+     * `removed` travels with it because the SERVER refuses a manifest that shrinks sharply and
+     * cannot tell a deliberate mass delete from a bug — this is the only place that knows how many
+     * paths were deliberately removed, so it is what lets the store answer without asking. */
+    if(dirty){
+      step('saving');
+      await store.save(key, { manifest: nextRemote, base: nextBase, removed: report.removedRemote.length });
+    }
     report.ok = report.failed.length === 0;
     return report;
   }

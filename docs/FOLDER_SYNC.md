@@ -94,10 +94,27 @@ separate ceilings, all of them silent, all now handled:
   is checkpointed during the sweep now, at most 20 times per sweep however large the folder is —
   each checkpoint rewrites the whole manifest, so they are bounded on purpose.
 
-**Known, not yet solved:** superseded manifest blobs are not collected, so a long first sync leaves
-its checkpoints behind in Blossom. And a sweep that deletes a large share of a folder trips the
-server's collapse guard (a 409); the files index answers that by asking the user and re-sending with
-`force`, and sync does not yet.
+- **Superseded manifest blobs.** Each save past that threshold uploads a whole new encrypted blob, so
+  a long first sync leaves one per checkpoint. They are `keep` blobs and the cleanup sweep skips
+  those unconditionally — the exemption that stops an admin turning on a TTL from eating an encrypted
+  drive — so nothing else would ever collect them. The document carries a one-deep chain and the
+  server releases the generation behind it, ownership-checked, once the replacement is safely stored.
+- **A deliberate mass delete.** Deleting most of a folder trips the server's collapse guard, and a
+  refused save meant the agreement was never written and every later sweep proposed the same delete
+  and was refused again — the delete could never land. The sweep knows how many paths it removed, so
+  when that accounts for the shrink it re-sends with `force`; when it does not, it asks, and honours
+  a no.
+
+## If a device loses its mapping
+
+Where a folder lives is per device, so that mapping is local — and after a reinstall, an app update
+that moves the app's storage, or on a machine you have not set up yet, it is simply not there. That
+used to read as *"No folders syncing under this account yet"*, about an account syncing two folders.
+
+Folder Sync now asks the account what it syncs and lists anything this device has no directory for
+under **Synced on your other devices**. Point it at a folder and it rejoins the same pair — no name to
+type, and nothing re-uploaded: the first sweep finds the same bytes on both sides and just records
+that they agree.
 
 ## When it runs
 
