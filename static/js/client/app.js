@@ -14457,6 +14457,19 @@
     if(by === 'type') return it.dir ? '' : ((String(it.name).match(/\.([A-Za-z0-9]{1,8})$/) || [])[1] || '');
     return String(it.name || '').toLowerCase();
   }
+  /* Does the server already hold these exact bytes? A HEAD, so the answer costs a round trip instead
+   * of the file.
+   *
+   * UNKNOWN MUST MEAN "UPLOAD IT". A failed HEAD — offline, a blip, a server that dislikes the
+   * method — has to fall through to the real upload: sending bytes that were already there is
+   * wasted bandwidth, while skipping bytes that were NOT there is a manifest entry pointing at a
+   * blob nobody has, i.e. a file that is silently missing from every other device. */
+  async function _blobAlreadyStored(sha){
+    try{
+      const r = await fetch(mediaServer() + '/' + sha, { method:'HEAD', cache:'no-store' });
+      return !!(r && r.ok);
+    }catch(_){ return false; }
+  }
   // Fetch + decrypt one synced blob. The same two steps PC.syncBlobs.get does — shared rather than
   // written twice, because "which key decrypts a sync blob" must have exactly one answer.
   async function _syncBlobBytes(sha){
@@ -25240,18 +25253,36 @@
      * Deliberately NOT uploadEncFile, which takes a File and registers it in the drive index. A
      * synced Documents folder must not land in your Files grid, and 40k index entries in the one
      * document that already sits at ~133KB would take the drive down with it. Same master key, same
-     * deterministic IV (so identical bytes dedup on Blossom and an unchanged file costs nothing),
-     * and keep:true so the TTL sweep never reclaims something a folder still references.
+     * deterministic IV, and keep:true so the TTL sweep never reclaims something a folder still
+     * references.
      */
     syncBlobs: {
       async put(bytes){
         const mk = await FilesIdx._ensureMK();
         const blob = await _masterEncrypt(mk, bytes, await _contentIV(bytes));
+        /* ASK BEFORE SENDING. Blossom dedups on arrival, so the SERVER never stores the same bytes
+         * twice — but it only learns they are the same after receiving them, and this used to send
+         * every file regardless. A folder whose agreement was lost (a reinstall, a device that never
+         * had one) therefore re-uploaded its entire contents to be told each time "already had it":
+         * measured on a real folder, 11 GB over the wire to change nothing.
+         *
+         * The hash is knowable WITHOUT asking: the IV is derived from the content and the key is
+         * this drive's master key, so the ciphertext — and its sha256 — are a pure function of the
+         * file. Hash it here, ask if the server has it, and skip the body when it does.
+         *
+         * Skipping is safe on THIS path specifically, and the reason does not generalise: only this
+         * drive's master key produces ciphertext with this hash, so "the server has it" can only
+         * mean "I put it there" — ownership and `keep` are already recorded against it. Never do
+         * this for an upload whose bytes somebody else could have produced; there the PUT is what
+         * registers you as an owner, and skipping it would leave you referencing a blob that goes
+         * when its real owner lets go. */
+        const sha = await sha256hex(blob);
+        if(await _blobAlreadyStored(sha)) return sha;
         const url = await uploadBlob(new File([blob], 'sync.enc', {type:'application/octet-stream'}),
                                      { noMirror:true, keep:true });
-        const sha = _shaFromUrl(url);
-        if(!sha) throw new Error('upload returned no hash');
-        return sha;
+        const got = _shaFromUrl(url);
+        if(!got) throw new Error('upload returned no hash');
+        return got;
       },
       // Shared with the Files → synced-folder browser, so "which key opens a sync blob" has exactly
       // one answer in this codebase rather than two that can drift.
