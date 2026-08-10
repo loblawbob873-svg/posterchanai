@@ -138,6 +138,11 @@ jobs:
       # a real breakage still fails all three and still fails the job.
       - name: Install deps
         working-directory: desktop
+        # `shell: bash` is REQUIRED, not stylistic. Windows runners default to PowerShell, which
+        # parses a bash for-loop as a syntax error before running anything — the retry added here
+        # broke the Windows build outright while Linux and macOS carried on. The Bundle Tor step
+        # above already declares it, for the same reason.
+        shell: bash
         run: |
           for i in 1 2 3; do
             npm ci && exit 0
