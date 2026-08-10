@@ -182,11 +182,13 @@ class TestSyncRun(unittest.TestCase):
         self.assertEqual(out["rep"]["trashed"][0]["path"], "g.txt")
 
     def test_a_settled_sweep_writes_nothing_and_the_next_one_is_quiet(self):
+        """The manifest already carries the checksum, so there is nothing left to learn or record."""
         out = self.run_js("""
           (async () => {
-            const same = {'a.txt': {sha:'A', size:3, mtime:1000}};
-            const fs = makeFs(JSON.parse(JSON.stringify(same)));
-            const store = makeStore(JSON.parse(JSON.stringify(same)), JSON.parse(JSON.stringify(same)));
+            const scan = {'a.txt': {sha:'A', size:3, mtime:1000}};          // a scan reports the FILE's hash
+            const entry = {'a.txt': {csum:'A', size:3, mtime:1000}};        // an entry carries it as csum
+            const fs = makeFs(JSON.parse(JSON.stringify(scan)));
+            const store = makeStore(JSON.parse(JSON.stringify(entry)), JSON.parse(JSON.stringify(entry)));
             const rep = await R.sweep(fs, store, {id:'r1', device:'laptop', now:5000});
             process.stdout.write(JSON.stringify({rep, calls: fs.calls, saves: store.saved.length}));
           })();
@@ -194,6 +196,38 @@ class TestSyncRun(unittest.TestCase):
         self.assertEqual(out["rep"]["unchanged"], 1)
         self.assertEqual(out["calls"], [], "a settled folder must touch no files")
         self.assertEqual(out["saves"], 0, "a settled folder must not rewrite the manifest")
+
+    def test_a_folder_missing_checksums_records_them_ONCE(self):
+        """The repair is a write, and it has to be a one-off.
+
+        An entry with no `csum` cannot be compared by content, so every device that hashes falls back
+        to size+mtime and conflicts — which is why a sweep records what it hashed. But a repair that
+        did not converge would rewrite the whole manifest on every sweep for ever, and each rewrite
+        of a large folder is a fresh multi-megabyte blob.
+        """
+        out = self.run_js("""
+          (async () => {
+            const scan  = {'a.txt': {sha:'A', size:3, mtime:1000}};
+            const entry = {'a.txt': {size:3, mtime:1000}};                  // legacy: no identity at all
+            const fs = makeFs(JSON.parse(JSON.stringify(scan)));
+            const store = makeStore(JSON.parse(JSON.stringify(entry)), JSON.parse(JSON.stringify(entry)));
+            const first = await R.sweep(fs, store, {id:'r1', device:'laptop', now:5000});
+            // The store now holds what the first sweep wrote — the same thing a real one would read.
+            const stored = store.saved[store.saved.length - 1].manifest;
+            const store2 = makeStore(JSON.parse(JSON.stringify(stored)), JSON.parse(JSON.stringify(stored)));
+            const second = await R.sweep(makeFs(JSON.parse(JSON.stringify(scan))), store2,
+                                         {id:'r1', device:'laptop', now:6000});
+            process.stdout.write(JSON.stringify({
+              firstSaves: store.saved.length, repaired: first.repaired || 0,
+              csum: stored['a.txt'].csum || null,
+              secondSaves: store2.saved.length, secondRepaired: second.repaired || 0 }));
+          })();
+        """)
+        self.assertEqual(out["repaired"], 1, "the sweep should record the hash it computed")
+        self.assertEqual(out["csum"], "A", "and record it as the content identity")
+        self.assertEqual(out["firstSaves"], 1)
+        self.assertEqual(out["secondRepaired"], 0, "nothing left to repair once it is recorded")
+        self.assertEqual(out["secondSaves"], 0, "so the second sweep writes nothing at all")
 
     def test_dry_run_touches_nothing(self):
         out = self.run_js("""
