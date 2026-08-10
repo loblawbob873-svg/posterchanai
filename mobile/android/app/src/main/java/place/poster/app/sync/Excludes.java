@@ -33,10 +33,15 @@ final class Excludes {
       if (p.startsWith("/")) p = p.substring(1);
       // Anything clever is JavaScript's job — see the class comment.
       if (p.isEmpty() || p.contains("*") || p.contains("?")) continue;
-      if (rel.equals(p) || rel.startsWith(p + "/")) return true;
+      // CASE-INSENSITIVE, matching foldersync.js. Both platforms show `Old` and accept `old`, so a
+      // pattern typed on one device excluded a folder and the same pattern typed on another did not
+      // — and the devices then synced different numbers of files.
+      String r = rel.toLowerCase(Locale.US);
+      p = p.toLowerCase(Locale.US);
+      if (r.equals(p) || r.startsWith(p + "/")) return true;
       // A bare folder name matches at any depth, which is what someone means by typing "Old".
       if (!p.contains("/")) {
-        if (rel.endsWith("/" + p) || rel.contains("/" + p + "/")) return true;
+        if (r.endsWith("/" + p) || r.contains("/" + p + "/")) return true;
       }
     }
     return false;

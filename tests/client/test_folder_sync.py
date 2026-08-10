@@ -202,6 +202,46 @@ class TestFolderSync(unittest.TestCase):
         self.assertIn("live.txt", out)
 
 
+class TestExcludesAreCaseInsensitive(unittest.TestCase):
+    """Typing a folder name means the folder you can see.
+
+    Windows and Android both display `Old` and accept `old`, so a pattern typed on one device
+    excluded a folder and the same pattern typed on another did not — and the devices then synced
+    different numbers of files. Reported as exactly that: "all three exclude a folder called old, yet
+    the number of files synced is inconsistent".
+
+    Broadening a pattern is the safe direction. An exclusion drops a path from ALL THREE snapshots,
+    so it can never delete anything anywhere; the worst case is a folder that stops syncing until the
+    pattern is made more specific.
+    """
+
+    def excluded(self, path, patterns):
+        js = "const S = require(%s);\n" % json.dumps(MOD) + textwrap.dedent("""
+          const f = S.excluder(%s);
+          process.stdout.write(JSON.stringify(f(%s)));
+        """ % (json.dumps(patterns), json.dumps(path)))
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            raise AssertionError("node failed:\n" + r.stderr[-2000:])
+        return json.loads(r.stdout)
+
+    def test_lowercase_pattern_matches_the_folder_as_shown(self):
+        self.assertTrue(self.excluded("Old/2019/img.jpg", ["old"]))
+        self.assertTrue(self.excluded("Pictures/OLD/x.png", ["old"]))
+
+    def test_uppercase_pattern_matches_a_lowercase_folder(self):
+        self.assertTrue(self.excluded("old/2019/img.jpg", ["Old"]))
+
+    def test_it_still_only_matches_that_name(self):
+        """Case-insensitive is not vague — a different folder is still a different folder."""
+        self.assertFalse(self.excluded("older/2019/img.jpg", ["old"]))
+        self.assertFalse(self.excluded("Pictures/holiday.jpg", ["old"]))
+
+    def test_globs_keep_working(self):
+        self.assertTrue(self.excluded("a/b/CACHE/x", ["**/cache"]))
+        self.assertTrue(self.excluded("Thumbs.DB", ["*.db"]))
+
+
 class TestRedundantConflicts(unittest.TestCase):
     """Which conflict copies can be PROVEN redundant.
 
