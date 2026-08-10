@@ -25528,11 +25528,12 @@
       /* The chunk addresses a file WOULD have, without uploading it. Same determinism as blobSha,
        * one chunk at a time, so verifying a large file costs its size in reads and nothing in
        * transfer — and never more than one chunk of memory. */
-      async chunkShas(readPart, size){
+      async chunkShas(readPart, size, chunkBytes){
         const mk = await FilesIdx._ensureMK();
+        const CH = chunkBytes || _SYNC_CHUNK;
         const out = [];
-        for(let off = 0; off < size; off += _SYNC_CHUNK){
-          let plain = await readPart(off, Math.min(_SYNC_CHUNK, size - off));
+        for(let off = 0; off < size; off += CH){
+          let plain = await readPart(off, Math.min(CH, size - off));
           if(!plain || !plain.length) throw new Error('short read at ' + off);
           const ct = await _masterEncrypt(mk, plain, await _contentIV(plain));
           plain = null;
@@ -25544,9 +25545,9 @@
         const mk = await FilesIdx._ensureMK();
         return await sha256hex(await _masterEncrypt(mk, bytes, await _contentIV(bytes)));
       },
-      async putParts(readPart, size, onProgress){
+      async putParts(readPart, size, onProgress, chunkBytes){
         const mk = await FilesIdx._ensureMK();
-        const CH = _SYNC_CHUNK;
+        const CH = chunkBytes || _SYNC_CHUNK;
         const chunks = [];
         let existed = true;
         for(let off = 0; off < size; off += CH){
@@ -25574,7 +25575,7 @@
         }
         // The identity of a chunked file is the identity of its parts, in order.
         const sha = await sha256hex(new TextEncoder().encode(chunks.join('')));
-        return { sha, chunks, existed };
+        return { sha, chunks, existed, cs: CH };
       },
       async getParts(chunks, writePart){
         let off = 0;

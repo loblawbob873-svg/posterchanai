@@ -311,13 +311,13 @@
     },
     blobSha: (PC.syncBlobs && PC.syncBlobs.blobSha) ? (bytes) => PC.syncBlobs.blobSha(bytes) : null,
     chunkShas: (PC.syncBlobs && PC.syncBlobs.chunkShas)
-      ? (read, size) => PC.syncBlobs.chunkShas(read, size) : null,
+      ? (read, size, cs) => PC.syncBlobs.chunkShas(read, size, cs) : null,
     putBlob: (bytes) => PC.syncBlobs.put(bytes),
     getBlob: (sha) => PC.syncBlobs.get(sha),
     // The chunked pair. Present only when the client build has them, so an older bundle simply does
     // not take the chunked path rather than calling something undefined.
     putParts: PC.syncBlobs && PC.syncBlobs.putParts
-      ? (read, size, onProgress) => PC.syncBlobs.putParts(read, size, onProgress) : null,
+      ? (read, size, onProgress, cs) => PC.syncBlobs.putParts(read, size, onProgress, cs) : null,
     getParts: PC.syncBlobs && PC.syncBlobs.getParts
       ? (chunks, write) => PC.syncBlobs.getParts(chunks, write) : null,
   };
@@ -423,6 +423,8 @@
           id: f.id, key: keyOf(f), device: deviceName(), now: Date.now(),
           excludes: f.excludes || [], maxBytes: await maxBytes(),
           shouldStop: () => stopping.has(f.id),
+          // The platform decides how much it can hold at once; see fs-android.js.
+          chunkBytes: (FS() && FS().chunkBytes) || 0,
           /* Above ONE CHUNK a file goes up in pieces. This used to be 64 MB, which left every file
            * under it on the whole-file path — and a 60 MB photo there costs ~240 MB of renderer
            * memory, which is what kept killing the window on a big Pictures folder. Chunking is the

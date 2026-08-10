@@ -253,7 +253,9 @@
          && L0.size && L0.size <= _VERIFY_MAX){
         let settled = false;
         try{
-          const mine = await store.chunkShas((off, len) => fs.readPart(id, c.path, off, len), L0.size);
+          // At the size the ENTRY used — our own preference would produce a different list and
+          // 'different' is exactly the wrong answer here.
+          const mine = await store.chunkShas((off, len) => fs.readPart(id, c.path, off, len), L0.size, R0.cs || 0);
           if(mine.length === R0.chunks.length && mine.every((x, i) => x === R0.chunks[i])){
             const entry = Object.assign({}, R0, { csum: L0.csum, size: L0.size, mtime: L0.mtime });
             if(!entry.csum) delete entry.csum;

@@ -801,6 +801,35 @@ scenario('an-unhashed-sweep-does-not-duplicate-a-folder-that-has-checksums', asy
   };
 });
 
+/* TWO DEVICES THAT SPLIT A FILE DIFFERENTLY must not decide it is two different files.
+ *
+ * Android moves every chunk across a bridge as base64, so it has to use a smaller one than a desktop
+ * — and a chunk list only identifies content at the size it was made with. Without recording the
+ * size, the same video split 16 MB at a time and 4 MB at a time produces two lists with nothing in
+ * common, which is indistinguishable from a genuine edit. */
+scenario('a-different-chunk-size-is-not-a-different-file', async () => {
+  const w = makeWorld();
+  const a = makeDevice(w, { name:'laptop', id:'aaa1', key:'Pictures' });
+  const big = new Uint8Array(20 * 1024).map((_, i) => (i * 17) & 0xff);
+  a.files.set('clip.mp4', { bytes: big, mtime: Date.UTC(2026, 7, 1) });
+  await a.sweep({ hash: false });                       // chunked, and no csum recorded
+
+  const entry = w.manifestOf('Pictures')['clip.mp4'];
+  const sizes = { recorded: entry.cs || 0, chunks: (entry.chunks || []).length };
+
+  // A device that would split it differently still recognises it, because the entry says which size
+  // was used and the check follows that rather than its own preference.
+  const b = makeDevice(w, { name:'tablet', id:'bbb2', key:'Pictures' });
+  b.files.set('clip.mp4', { bytes: big, mtime: Date.UTC(2013, 1, 1) });
+  const rep = await b.sweep({ hash: false });
+
+  return {
+    ok: sizes.chunks > 1 && rep.conflicted.length === 0 && rep.failed.length === 0
+        && b.live().join() === 'clip.mp4',
+    detail: { ...sizes, conflicted: rep.conflicted.length, failed: rep.failed.length },
+  };
+});
+
 /* THREE devices, because "the other device" is not always the same one. A file added on the third
  * has to reach both of the others, and a delete on the first has to reach both of the others. */
 scenario('three-devices-converge', async () => {

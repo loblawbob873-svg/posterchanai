@@ -29,7 +29,20 @@
     return btoa(s);
   };
 
+  /* HOW MUCH THIS PLATFORM SHOULD MOVE AT ONCE.
+   *
+   * Every chunk crosses the Capacitor bridge as base64: 4 bytes of string per 3 of data, held as
+   * UTF-16 in the WebView, so a 16 MB chunk is ~21 MB of string ≈ 42 MB of memory before the plain
+   * bytes, the ciphertext and the Java-side copy are counted. Electron pays none of that — it moves
+   * Buffers over IPC — which is why the same size that is comfortable on a desktop reloads a tablet
+   * mid-sync. 4 MB keeps the whole round trip inside a WebView's budget.
+   *
+   * The size is recorded in each manifest entry (`cs`), so a device choosing a different one cannot
+   * make an identical file look different to a device that chose another. */
+  const CHUNK_BYTES = 4 * 1024 * 1024;
+
   window.pcFs = {
+    chunkBytes: CHUNK_BYTES,
     list: () => P.list().then(r => r.roots || []),
     // {} when the user backed out of the system picker — a cancel is not an error.
     pick: () => P.pick().then(r => (r && r.id) ? r : null),
