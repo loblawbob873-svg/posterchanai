@@ -150,6 +150,14 @@ function makeDevice(world, opts){
     // The address these bytes WOULD have. Deterministic here for the same reason it is in life:
     // content in, one address out.
     async blobSha(bytes){ return sha256(bytes); },
+    async chunkShas(readPart, size){
+      const out = [];
+      for(let off = 0; off < size; off += 4096){
+        const p = await readPart(off, Math.min(4096, size - off));
+        out.push(sha256(p));
+      }
+      return out;
+    },
     async putBlob(bytes){ const sha = sha256(bytes); world.blobs.set(sha, new Uint8Array(bytes)); return sha; },
     /* The chunked pair, with the SAME contract the client's syncBlobs has: one chunk in memory at a
      * time, each content-addressed and skipped when the store already holds it, and an identity for
@@ -703,6 +711,31 @@ scenario('a-legacy-manifest-does-not-duplicate-on-a-joining-device', async () =>
     ok: rep.conflicted.length === 0 && tablet.live().length === 8 && upgraded === 8,
     detail: { conflicted: rep.conflicted.length, onDisk: tablet.live().length,
               entriesGivenAnIdentity: upgraded },
+  };
+});
+
+/* ...AND THE SAME FOR A FILE STORED IN CHUNKS. A chunked entry has no `sha` at all — its address is
+ * the LIST — so the verify above skipped every file over one chunk and duplicated it anyway.
+ * Reported after the first fix shipped: still conflicting, on the big ones. */
+scenario('a-legacy-chunked-file-does-not-duplicate-either', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Pictures' });
+  const big = new Uint8Array(20 * 1024).map((_, i) => (i * 31) & 0xff);
+  laptop.files.set('clip.mp4', { bytes: big, mtime: Date.UTC(2026, 7, 1) });
+  await laptop.sweep({ hash: false });                 // chunked, and no content identity recorded
+
+  const man = w.manifestOf('Pictures');
+  for(const p in man){ delete man[p].csum; }            // age it into the old shape
+  w.docs.set(dtag('Pictures'), man);
+
+  const phone = makeDevice(w, { name:'phone', id:'ccc3', key:'Pictures' });
+  phone.files.set('clip.mp4', { bytes: big, mtime: Date.UTC(2014, 1, 1) });   // same bytes, SAF mtime
+  const rep = await phone.sweep({ hash: true });
+
+  return {
+    ok: rep.conflicted.length === 0 && phone.live().length === 1,
+    detail: { conflicted: rep.conflicted.length, onDisk: phone.live().length,
+              chunks: (w.manifestOf('Pictures')['clip.mp4'] || {}).chunks?.length },
   };
 });
 

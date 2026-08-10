@@ -25498,6 +25498,21 @@
       /* The address these bytes WOULD have, without uploading them. Encryption here is deterministic
        * — the IV comes from the content and the key is this drive's — so the ciphertext hash is a
        * content identity, and it is the only one an entry written before `csum` existed carries. */
+      /* The chunk addresses a file WOULD have, without uploading it. Same determinism as blobSha,
+       * one chunk at a time, so verifying a large file costs its size in reads and nothing in
+       * transfer — and never more than one chunk of memory. */
+      async chunkShas(readPart, size){
+        const mk = await FilesIdx._ensureMK();
+        const out = [];
+        for(let off = 0; off < size; off += _SYNC_CHUNK){
+          let plain = await readPart(off, Math.min(_SYNC_CHUNK, size - off));
+          if(!plain || !plain.length) throw new Error('short read at ' + off);
+          const ct = await _masterEncrypt(mk, plain, await _contentIV(plain));
+          plain = null;
+          out.push(await sha256hex(ct));
+        }
+        return out;
+      },
       async blobSha(bytes){
         const mk = await FilesIdx._ensureMK();
         return await sha256hex(await _masterEncrypt(mk, bytes, await _contentIV(bytes)));

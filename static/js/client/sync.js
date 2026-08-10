@@ -296,6 +296,8 @@
       return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join('');
     },
     blobSha: (PC.syncBlobs && PC.syncBlobs.blobSha) ? (bytes) => PC.syncBlobs.blobSha(bytes) : null,
+    chunkShas: (PC.syncBlobs && PC.syncBlobs.chunkShas)
+      ? (read, size) => PC.syncBlobs.chunkShas(read, size) : null,
     putBlob: (bytes) => PC.syncBlobs.put(bytes),
     getBlob: (sha) => PC.syncBlobs.get(sha),
     // The chunked pair. Present only when the client build has them, so an older bundle simply does

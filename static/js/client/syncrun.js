@@ -42,6 +42,9 @@
    *
    * (Superseded manifest blobs are not collected yet — see docs/FOLDER_SYNC.md. That is the reason
    * this is bounded rather than generous.) */
+  // How large a file is worth re-reading to avoid duplicating it. Reading costs time; a conflict
+  // copy costs a permanent duplicate on every device, so this is deliberately generous.
+  const _VERIFY_MAX = 2 * 1024 * 1024 * 1024;
   const _CHECKPOINT = 200;
   const _MAX_CHECKPOINTS = 20;
 
@@ -183,6 +186,24 @@
        * Bounded by the whole-file ceiling: this reads the file, and reading a 2 GB one to avoid a
        * conflict would trade a duplicate for a dead renderer. */
       const R0 = remote[c.path] || {}, L0 = local[c.path] || {};
+      /* A CHUNKED entry has no `sha` at all — its address is the LIST — so the check below skipped
+       * every file over one chunk and duplicated it anyway. Reported after the first fix landed:
+       * still conflicting, on the big ones. Comparing the list costs a read and an encrypt of the
+       * local file and no transfer at all, which is far cheaper than the copy it avoids. */
+      if(!R0.csum && R0.chunks && R0.chunks.length && store.chunkShas && typeof fs.readPart === 'function'
+         && L0.size && L0.size <= _VERIFY_MAX){
+        let settled = false;
+        try{
+          const mine = await store.chunkShas((off, len) => fs.readPart(id, c.path, off, len), L0.size);
+          if(mine.length === R0.chunks.length && mine.every((x, i) => x === R0.chunks[i])){
+            const entry = Object.assign({}, R0, { csum: L0.csum, size: L0.size, mtime: L0.mtime });
+            if(!entry.csum) delete entry.csum;
+            remember(c.path, entry); agree(c.path, entry);
+            report.unchanged++; settled = true;
+          }
+        }catch(_){ }
+        if(settled){ await checkpoint(); continue; }
+      }
       if(!R0.csum && R0.sha && store.blobSha && L0.size && (!o.maxBytes || L0.size <= o.maxBytes)){
         let settled = false;
         try{
