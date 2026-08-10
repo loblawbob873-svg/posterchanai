@@ -282,6 +282,20 @@ class TestSyncPolicy(unittest.TestCase):
         r = self.ask({"manual": True, "deep": True, "charging": False}, {})
         self.assertEqual(r["mode"], "full")
 
+    def test_a_new_folder_does_not_start_on_its_own(self):
+        """Adding a folder used to arm it immediately — the watcher fires, a resume or a focus nudges,
+        and the first sweep is under way before anyone has typed a line into "Don't sync these".
+        Reported from a phone: "the apk is syncing before I can put what to exclude". That first sweep
+        is also the expensive one, and the one that publishes the folder to every other device."""
+        r = self.ask({"charging": True, "dirty": True}, {"paused": True})
+        self.assertEqual(r["mode"], "none")
+        self.assertIn("Start", r["why"])
+
+    def test_start_overrides_paused(self):
+        """Start (and Check) are how someone LEAVES that state, so the button still runs."""
+        r = self.ask({"manual": True, "charging": False}, {"paused": True})
+        self.assertTrue(r["run"])
+
     def test_offline_does_nothing(self):
         self.assertEqual(self.ask({"online": False, "charging": True})["mode"], "none")
 

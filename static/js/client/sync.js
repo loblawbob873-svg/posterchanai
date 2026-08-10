@@ -545,9 +545,13 @@
           <label><input type="checkbox" class="sync-charge"${pr.onlyWhenCharging?' checked':''}> Only when plugged in</label>
           <label><input type="checkbox" class="sync-wifi"${pr.wifiOnly?' checked':''}> Wi-Fi only</label>
         </div>
+        ${pr.paused ? `<div class="sync-new"><b>Not syncing yet.</b>
+          <span class="muted small">Nothing has been uploaded. Add anything you want left out below —
+          a folder name covers everything inside it — then press Start. You can change it later.</span></div>` : ''}
         <div class="sync-actions">
           <button class="btn btn-ghost small sync-dry">Check</button>
-          <button class="btn btn-neon small sync-now">Sync now</button>
+          ${pr.paused ? '<button class="btn btn-neon small sync-start">Start syncing ▶</button>'
+                      : '<button class="btn btn-neon small sync-now">Sync now</button>'}
           <button class="btn btn-ghost small sync-deep" title="Re-read and re-hash every file. Slow on a big folder — for a file edited in place without changing its size or timestamp.">Deep check</button>
           <button class="btn btn-ghost small sync-trash">Empty trash</button>
           <button class="btn btn-ghost small danger sync-forget">Stop syncing</button>
@@ -604,7 +608,8 @@
       const id = b.dataset.oid, dir = b.dataset.odir || '';
       if(l.some(x => x.id === id)) return;
       const add = (key) => {
-        l.push({ id, key, dir, name: key, excludes: [], prefs: {}, lastSyncAt: 0, lastFullScanAt: 0 });
+        // Paused: adding a folder must not start uploading it before its exclusions are set.
+        l.push({ id, key, dir, name: key, excludes: [], prefs: { paused: true }, lastSyncAt: 0, lastFullScanAt: 0 });
         saveFolders(l); rememberPair(id, dir, key); watch(id); paint();
       };
       /* ALREADY PAIRED ONCE → just resume it. Asking someone to name a folder they named last week,
@@ -632,7 +637,7 @@
         const l = folders();
         if(l.some(x => x.id === picked.id)){ PC.toast('that folder is already syncing'); return; }
         l.push({ id: picked.id, key, dir: picked.dir, name: key,
-                 excludes: [], prefs: {}, lastSyncAt: 0, lastFullScanAt: 0 });
+                 excludes: [], prefs: { paused: true }, lastSyncAt: 0, lastFullScanAt: 0 });
         saveFolders(l); rememberPair(picked.id, picked.dir, key); watch(picked.id); paint();
         PC.toast('“' + key + '” is set up here — the first check compares, it does not re-upload');
       }catch(e){ PC.toast('could not set that up: ' + ((e && e.message) || e)); }
@@ -658,7 +663,7 @@
         if(!key) return;
         if(key.length < 4){ PC.toast('use at least 4 letters or digits'); return; }
         list2.push({ id: picked.id, key, dir: picked.dir, name: key,
-                     excludes: [], prefs: {}, lastSyncAt: 0, lastFullScanAt: 0 });
+                     excludes: [], prefs: { paused: true }, lastSyncAt: 0, lastFullScanAt: 0 });
         saveFolders(list2); rememberPair(picked.id, picked.dir, key); watch(picked.id); paint();
       }catch(e){ PC.toast('could not add: ' + ((e && e.message) || e)); }
     };
@@ -677,7 +682,18 @@
       card.querySelector('.sync-wifi').onchange = (e) =>
         put(f => { f.prefs = Object.assign({}, f.prefs, { wifiOnly: e.target.checked }); });
       card.querySelector('.sync-dry').onclick = () => sweep(get(), { manual:true, dryRun:true }).catch(()=>{});
-      card.querySelector('.sync-now').onclick = () => sweep(get(), { manual:true }).catch(()=>{});
+      { const now = card.querySelector('.sync-now');
+        if(now) now.onclick = () => sweep(get(), { manual:true }).catch(()=>{}); }
+      { const st = card.querySelector('.sync-start');
+        if(st) st.onclick = () => {
+          // Commit whatever is in the exclusions box FIRST — someone types the patterns and presses
+          // Start without leaving the field, so a change event may never have fired.
+          const ta = card.querySelector('.sync-ex-ta');
+          if(ta) put(f => { f.excludes = ta.value.split('\n').map(x => x.trim()).filter(Boolean); });
+          put(f => { f.prefs = Object.assign({}, f.prefs, { paused: false }); });
+          paint();
+          sweep(get(), { manual:true }).catch(()=>{});
+        }; }
       card.querySelector('.sync-deep').onclick = () => sweep(get(), { manual:true, deep:true }).catch(()=>{});
       card.querySelector('.sync-trash').onclick = async () => {
         if(!await PC.uiConfirm('Empty this folder’s .pc-trash of anything older than 30 days?')) return;

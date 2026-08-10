@@ -6761,6 +6761,11 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .sync-orphan{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0}
 .sync-orphan span{overflow-wrap:anywhere;word-break:break-all;min-width:0}
 .sync-pair{flex:1 1 100%;opacity:.75}
+/* A folder that has not been started. Deliberately loud: it is the one moment where doing nothing is
+   correct, and the screen has to say that rather than look like a sync that failed. */
+.sync-new{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border-radius:10px;
+  border:1px solid var(--neon);background:rgba(var(--accent-rgb),.10)}
+.sync-new b{color:var(--text)}
 
 /* ===== Files → Blossom: an Explorer layout =======================================================
    The folder list is a PANE, not a row of chips. A chip row wraps to three lines the moment there
