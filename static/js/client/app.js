@@ -2063,7 +2063,22 @@
     /* Opened by "🗔 Open in a window": the same client, drawn without the sidebar, nav and rightbar
      * it has no room for. A class rather than a separate page, because the whole point is that this
      * IS the ordinary stream view — nothing here is a second implementation to fall behind. */
-    try{ if(new URLSearchParams(location.search).get('popout')==='1') document.body.classList.add('popout'); }catch(_){}
+    try{
+      if(new URLSearchParams(location.search).get('popout')==='1'){
+        document.body.classList.add('popout');
+        /* ...and set the same thing INLINE. The class relies on a stylesheet rule, and a stylesheet
+         * is the one part of this that can be served from a stale cache — in which case the window
+         * silently keeps the app's desktop shrink (body{zoom:.67} between 821 and 1920px) and every
+         * element is drawn at two-thirds size with nothing to show why. An inline style beats every
+         * rule in the sheet, so the window is right even against an old CSS.
+         * The .app height has to move with the zoom: those tiers pair height:calc(100dvh / zoom)
+         * with each zoom, and leaving the old height behind scrolls the window by the difference. */
+        document.body.style.zoom = '1';
+        document.body.style.setProperty('--zf', '1');
+        const fix = () => { const a=document.querySelector('.app'); if(a) a.style.height='100dvh'; };
+        fix(); setTimeout(fix, 0); setTimeout(fix, 400);
+      }
+    }catch(_){}
     // Remember this identity so it can be switched back to later. Done HERE rather than at each of
     // the six login paths, because this is the one place they all arrive with both a session and a
     // pubkey; the name and picture are filled in by renderMe once the profile loads.
