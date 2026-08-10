@@ -742,6 +742,42 @@ scenario('a-legacy-chunked-file-does-not-duplicate-either', async () => {
   };
 });
 
+/* A FOLDER WITH NO CONTENT IDENTITY REPAIRS ITSELF, rather than conflicting on every device in turn.
+ *
+ * Entries written before `csum` existed can only be compared by size+mtime, which Android can never
+ * match. The verify in the conflict path rescues the ones headed for a conflict on THAT sweep and
+ * leaves the rest unverifiable — so the next device conflicts on them, and the next. A sweep that
+ * has hashed the files writes what it learned into the entries it already agrees with. */
+scenario('a-manifest-without-checksums-repairs-itself', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Pictures' });
+  for(let i = 0; i < 6; i++) laptop.put('p' + i + '.jpg', 'PHOTO ' + i);
+  await laptop.sweep({ hash: false });
+
+  const man = w.manifestOf('Pictures');               // age it: addresses, no identity
+  for(const p in man){ delete man[p].csum; }
+  w.docs.set(dtag('Pictures'), man);
+
+  // The laptop sweeps again, hashing this time. It has nothing to move — but it knows the hashes.
+  const rep = await laptop.sweep({ hash: true });
+  const after = w.manifestOf('Pictures');
+  const withCsum = Object.keys(after).filter(p => after[p] && after[p].csum).length;
+
+  // ...so a device joining afterwards has something to compare against, and does not duplicate.
+  const phone = makeDevice(w, { name:'phone', id:'ccc3', key:'Pictures' });
+  for(let i = 0; i < 6; i++){
+    phone.files.set('p' + i + '.jpg', { bytes: bytesOf('PHOTO ' + i), mtime: Date.UTC(2013, 3, 3) });
+  }
+  const joined = await phone.sweep({ hash: true });
+
+  return {
+    ok: withCsum === 6 && rep.uploaded.length === 0 && joined.conflicted.length === 0
+        && phone.live().length === 6,
+    detail: { entriesRepaired: withCsum, reUploaded: rep.uploaded.length,
+              conflictsOnJoin: joined.conflicted.length, onDisk: phone.live().length },
+  };
+});
+
 /* THREE devices, because "the other device" is not always the same one. A file added on the third
  * has to reach both of the others, and a delete on the first has to reach both of the others. */
 scenario('three-devices-converge', async () => {

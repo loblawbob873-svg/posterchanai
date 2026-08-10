@@ -165,6 +165,31 @@
       report.failed.push({ path, what, error: (e && e.message) || String(e) });
     };
 
+    /* GIVE EVERY ENTRY A CONTENT IDENTITY WHILE WE ARE HERE.
+     *
+     * An entry written before `csum` existed can never be compared by content, so every device that
+     * hashes has to fall back to size+mtime — which Android can never match, because SAF assigns its
+     * own last-modified. Those paths conflict for ever, and the verify below only rescues the ones
+     * already headed for a conflict on THIS sweep; the rest stay unverifiable and conflict on the
+     * next device, and the next.
+     *
+     * So whenever this device has hashed a file and the manifest agrees it is the same file, the
+     * entry gains that hash. It is not a new fact — it is the one this sweep just established,
+     * written down where the other devices can use it. Nothing else about the entry changes, and a
+     * path that is genuinely different is untouched, because same() had to be true to get here.
+     *
+     * This is what turns "all my devices are on the latest build and it still conflicts" into a
+     * folder that repairs itself on the first hashing sweep from any device that can read it. */
+    let repaired = 0;
+    for(const path in local){
+      const L = local[path], R = remote[path];
+      if(!L || !L.csum || !R || R.csum || R.deletedAt) continue;
+      if(!S.same(L, R)) continue;                     // only where the two already agree
+      remember(path, Object.assign({}, R, { csum: L.csum }));
+      repaired++;
+    }
+    if(repaired){ report.repaired = repaired; dirty = true; }
+
     /* 1 & 2 — conflicts first: they are the only step that both writes AND renames, and the rename
      * has to happen before anything else can clobber the local copy. */
     let ci=0;
