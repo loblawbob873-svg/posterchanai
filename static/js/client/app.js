@@ -15674,7 +15674,12 @@
       return new Promise((res,rej)=>{
         const tx=db.transaction(this.STORE, mode), st=tx.objectStore(this.STORE);
         let out; try{ out=fn(st); }catch(e){ return rej(e); }
-        tx.oncomplete=()=>res(out && out.result !== undefined ? out.result : out);
+        // `'result' in out`, not `out.result !== undefined`: a MISS gives a request whose result is
+        // undefined, and unwrapping on that returns the REQUEST OBJECT instead of nothing. Every
+        // caller here happens to survive it — get() tests `v && v.b` — but it is the same trap that
+        // in folder sync returned "a base containing one file called result", so it is spelled the
+        // same way in both places rather than left as luck.
+        tx.oncomplete=()=>res(out && typeof out==='object' && ('result' in out) ? out.result : out);
         tx.onerror=()=>rej(tx.error); tx.onabort=()=>rej(tx.error);
       });
     },

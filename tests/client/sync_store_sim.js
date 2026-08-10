@@ -262,6 +262,20 @@ scenario('an-existing-localstorage-base-is-still-read', async () => {
 
 /* Small folders stay INLINE: the blob path costs an upload and a fetch, most folders never need it,
  * and staying inline is what keeps every manifest written before this change readable. */
+/* The manifest cache must not hand the same object to two callers: a sweep mutates what it gets. */
+scenario('a-cached-manifest-is-not-shared-between-callers', async () => {
+  const { store } = boot();
+  const paths = manifest(2000);
+  await store.save('Documents', { manifest: paths, base: {} });
+  const a = await store.manifest('Documents');
+  a['Pictures/2019/Holiday/DSC_00000.jpg'].size = 1;         // a caller mutating its copy
+  const b = await store.manifest('Documents');               // served from the cache
+  return {
+    ok: b['Pictures/2019/Holiday/DSC_00000.jpg'].size !== 1,
+    detail: { mutatedLeakedIntoNextRead: b['Pictures/2019/Holiday/DSC_00000.jpg'].size === 1 },
+  };
+});
+
 scenario('a-small-folder-stays-inline', async () => {
   const { world, store } = boot();
   const paths = manifest(50);

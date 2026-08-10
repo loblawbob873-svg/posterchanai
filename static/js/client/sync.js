@@ -185,9 +185,24 @@
      * up under the user's SERVER-HELD storage key, which is the trade the calendar makes on purpose
      * (a CalDAV client sends plaintext, so the node must be able to answer it) and which a folder
      * sync has no reason to make: nothing on the server ever needs to know a filename. */
+    /* The decrypted paths, cached by the POINTER they came from.
+     *
+     * Merging on save re-reads the manifest, and a sweep checkpoints about twenty times — so a big
+     * folder was fetching and AES-decrypting a three-megabyte blob twenty times per sweep, then
+     * parsing it, for an answer that had usually not changed. The document names the blob it points
+     * at, and that name is plaintext, so an unchanged pointer means unchanged paths: the round trip
+     * for the small document still happens (it is what detects another device's write), and the
+     * expensive half is skipped.
+     *
+     * One entry. Two folders alternating would evict each other, which costs exactly what this used
+     * to cost and never more. */
+    _mcache: { sha:null, paths:null },
     async manifest(id){
       const j = await this._post({ folder: id });
       const doc = j.manifest || {};
+      if(doc.pathsSha && this._mcache.sha === doc.pathsSha && this._mcache.paths){
+        return JSON.parse(JSON.stringify(this._mcache.paths));   // a copy: callers mutate what they get
+      }
       // v2 first: the paths are an encrypted Blossom blob. See save() for why they had to leave the
       // document, and for the marker `sealed` carries so an older build cannot misread this.
       if(doc.pathsSha){
@@ -208,7 +223,11 @@
                           + ' (' + m + '). The list itself is fine — check this device is pointed at the '
                           + 'same media server as your others.');
         }
-        try{ return JSON.parse(new TextDecoder().decode(bytes)) || {}; }
+        try{
+          const paths = JSON.parse(new TextDecoder().decode(bytes)) || {};
+          this._mcache = { sha: doc.pathsSha, paths };
+          return JSON.parse(JSON.stringify(paths));
+        }
         catch(e){ throw new Error('the stored folder list is damaged'); }
       }
       if(doc.sealed){
@@ -941,8 +960,15 @@
     }, 1500);
   }
 
+  let _started = false;
   function startAll(){
     const fs = FS(); if(!fs) return;
+    /* ONCE. Every line below attaches something that has no matching detach — a document listener, a
+     * window listener, a Capacitor listener, an interval — so a second call would double the sweeps
+     * for every resume, focus and heartbeat, and a third would treble them. It is called from one
+     * place today; this is what keeps that true when it is called from two. */
+    if(_started) return;
+    _started = true;
     folders().forEach(f => watch(f.id));
     if(fs.onChanged) fs.onChanged((id) => {
       const l = folders(); const f = l.find(x => x.id === id); if(!f) return;

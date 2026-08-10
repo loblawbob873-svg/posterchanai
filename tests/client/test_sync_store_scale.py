@@ -77,6 +77,13 @@ class TestSyncStoreScale(unittest.TestCase):
         """Or every device that already had an agreement re-uploads its whole folder once."""
         self.check("an-existing-localstorage-base-is-still-read")
 
+    def test_a_cached_manifest_is_not_shared_between_callers(self):
+        """The decrypted paths are cached by the pointer they came from, because a sweep re-reads the
+        manifest about twenty times and decrypting three megabytes each time is most of what a
+        checkpoint costs. A cache that handed out the same object would be worse than the cost it
+        saves: a sweep mutates what it is given."""
+        self.check("a-cached-manifest-is-not-shared-between-callers")
+
     def test_a_small_folder_stays_inline(self):
         self.check("a-small-folder-stays-inline")
 
