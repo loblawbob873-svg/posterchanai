@@ -2975,8 +2975,48 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:4px;color
 .ac-body img{max-width:100%;border-radius:10px}
 .ac-reply{padding:4px 12px;font-size:12px}
 .article-editor{padding:18px 20px 60px;max-width:none;margin:0 auto;display:flex;flex-direction:column;gap:12px;animation:fade .2s}   /* wide format (also used by New/Edit listing) — fill the column, not centered */
-.article-body{width:100%;min-height:46vh;resize:vertical;font-family:inherit;font-size:15px;line-height:1.6}
-.article-preview{min-height:46vh;padding:8px 2px}
+.article-body{width:100%;resize:none;font-family:inherit;font-size:15px;line-height:1.6}
+
+/* ===== Article editor: write and preview, side by side ==========================================
+   Two panes of equal weight on a desktop, one at a time behind the Write/Preview tabs on a phone.
+   Both panes are always in the DOM — the tabs only decide which is SHOWN — so switching is instant
+   and the preview never has to be rebuilt. Every colour is a theme token, so all seven themes get
+   this without a second pass. */
+.ae-split{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-3, 10px);align-items:stretch;min-width:0}
+.ae-pane{display:flex;flex-direction:column;min-width:0;border:1px solid var(--line);border-radius:12px;
+  background:var(--panel);overflow:hidden}
+/* A quiet label on each half. Without it the two columns read as one wrapped box, and on a narrow
+   desktop window it is genuinely unclear which side is which. */
+.ae-pane-hd{flex:0 0 auto;padding:7px 12px;font-size:11px;font-weight:700;letter-spacing:1px;
+  text-transform:uppercase;color:var(--muted);background:var(--panel2);border-bottom:1px solid var(--line)}
+/* THE HEIGHT IS ON THE PANE, not on the textarea, and both panes scroll their own content. Sizing the
+   textarea instead lets the two halves grow to different heights, which is what makes a split view
+   look broken the moment one side has more in it than the other. */
+.ae-pane > .article-body, .ae-pane > .article-preview{
+  flex:1 1 auto;height:clamp(320px, 52dvh, 720px);overflow-y:auto;margin:0;border:0;border-radius:0;
+  background:transparent}
+.ae-pane > .article-body{padding:12px 14px}
+.ae-pane > .article-body:focus{outline:none;box-shadow:none}
+.ae-pane > .article-preview{padding:12px 14px;overflow-wrap:anywhere}
+/* The preview renders real article markup — keep the first heading from adding a big empty gap at
+   the top of a pane that already has a label. */
+.ae-pane > .article-preview > :first-child{margin-top:0}
+.ae-pane:focus-within{border-color:var(--neon);box-shadow:0 0 0 1px rgba(var(--accent-rgb),.35)}
+/* Above 820px both panes are visible, so a Write/Preview switch would mean nothing. */
+.ae-tabs{display:none}
+
+@media(max-width:820px){
+  /* One column, and the tabs come back as the way to choose. Whichever pane is hidden is hidden
+     completely — `display:none`, not width:0 — so nothing of it can push the page sideways. */
+  .ae-split{grid-template-columns:1fr}
+  .ae-tabs{display:flex}
+  .ae-split .ae-pane-hd{display:none}                    /* the tab already says which one this is */
+  .ae-split:not(.show-preview) .ae-pane:last-child{display:none}
+  .ae-split.show-preview .ae-pane:first-child{display:none}
+  .ae-pane > .article-body, .ae-pane > .article-preview{height:clamp(280px, 48dvh, 560px)}
+  .ae-pane > .article-body{font-size:16px}               /* 16px or iOS zooms on focus and never zooms back */
+  .cmp-tab{min-height:38px}                              /* thumb-sized, like every other control here */
+}
 
 /* shared markdown typography (articles + previews) */
 .markdown{font-size:17px;line-height:1.6}

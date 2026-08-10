@@ -5127,10 +5127,21 @@
       <label class="fld">Header image<input class="input" id="ae-img" placeholder="https://… (optional)" value="${enc(g('image'))}"></label>
       <div class="row" style="margin:-6px 0 2px"><button type="button" class="btn btn-ghost small" id="ae-img-up"><svg class="ic b-ic" aria-hidden="true"><use href="#i-image"></use></svg>Upload header image</button></div>
       <input type="file" id="ae-img-file" accept="image/*" hidden>
-      <div class="cmp-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview"><svg class="ic b-ic" aria-hidden="true"><use href="#i-eye"></use></svg>Preview</button></div>
+      <div class="cmp-tabs ae-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview"><svg class="ic b-ic" aria-hidden="true"><use href="#i-eye"></use></svg>Preview</button></div>
       <div class="row cmp-tools"><button class="btn btn-ghost small" id="ae-insert"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Insert image</button><input type="file" id="ae-body-file" accept="image/*" multiple hidden><span class="spacer"></span><span class="muted small">Markdown</span></div>
-      <textarea id="ae-body" class="article-body" placeholder="Write your article in markdown…">${enc(existing?existing.content:'')}</textarea>
-      <div id="ae-preview" class="markdown article-preview hidden"></div>
+      <!-- Side by side on a desktop, one at a time behind the tabs above on a phone. Both panes exist
+           in the DOM either way — the tabs only change which is SHOWN, so switching costs nothing and
+           the preview never has to be rebuilt from scratch. -->
+      <div class="ae-split" id="ae-split">
+        <div class="ae-pane">
+          <div class="ae-pane-hd">Write</div>
+          <textarea id="ae-body" class="article-body" placeholder="Write your article in markdown…">${enc(existing?existing.content:'')}</textarea>
+        </div>
+        <div class="ae-pane">
+          <div class="ae-pane-hd">Preview</div>
+          <div id="ae-preview" class="markdown article-preview"></div>
+        </div>
+      </div>
       <div class="row"><span class="muted small" id="ae-status"></span><span class="spacer"></span><button type="button" class="btn btn-ghost small" id="ae-draft"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save draft</button><button class="btn btn-neon" id="ae-pub">Publish ▶</button></div>
     </div>`;
     $('#ae-back').onclick=()=>switchView('articles');
@@ -5150,7 +5161,45 @@
     { const d=$('#ae-draft'); if(d) d.onclick=()=>_doSaveDraft(true); }
     // Gentle auto-save to a 30024 so work survives a refresh (cleared when you publish).
     body.addEventListener('input', ()=>{ clearTimeout(_aeDraftT); _aeDraftT=setTimeout(()=>_doSaveDraft(false), 4000); });
-    $$('.cmp-tab',feed).forEach(b=> b.onclick=()=>{ $$('.cmp-tab',feed).forEach(x=>x.classList.toggle('active',x===b)); const pv=b.dataset.t==='preview'; body.classList.toggle('hidden',pv); const prev=$('#ae-preview'); prev.classList.toggle('hidden',!pv); if(pv) prev.innerHTML=InstEmoji.render(mdToHtml(body.value))||'<div class="muted small">Nothing to preview.</div>'; });   // article preview: same custom-emoji pass as the post composer
+    /* LIVE PREVIEW. Same custom-emoji pass as the post composer, so a :shortcode: looks in the
+     * preview the way it will look published.
+     *
+     * Debounced rather than per-keystroke: mdToHtml + the emoji pass over a long article is real work,
+     * and running it on every character is how a writing surface starts dropping keys. 120ms is under
+     * the gap between words, so it reads as live while never running mid-burst. */
+    const prev=$('#ae-preview'), split=$('#ae-split');
+    let _pvT=null;
+    const renderPreview=()=>{
+      try{ prev.innerHTML=InstEmoji.render(mdToHtml(body.value))||'<div class="muted small">Nothing to preview yet — start writing on the left.</div>'; }
+      catch(_){ prev.innerHTML='<div class="muted small">Couldn’t render that markdown.</div>'; }
+    };
+    const queuePreview=()=>{ clearTimeout(_pvT); _pvT=setTimeout(renderPreview, 120); };
+    body.addEventListener('input', queuePreview);
+    renderPreview();
+    /* The tabs are the PHONE's control — CSS hides them above 820px, where both panes are on screen
+     * and switching would mean nothing. Kept in the DOM at every width so the class they toggle is
+     * the single thing deciding which pane shows. */
+    $$('.cmp-tab',feed).forEach(b=> b.onclick=()=>{
+      $$('.cmp-tab',feed).forEach(x=>x.classList.toggle('active',x===b));
+      const pv=b.dataset.t==='preview';
+      split.classList.toggle('show-preview', pv);
+      if(pv) renderPreview();                 // catch up if the debounce had not fired yet
+      else body.focus();
+    });
+    /* Scroll the preview WITH the text, proportionally. Both panes scroll independently, so without
+     * this the two halves drift apart the moment an article is longer than the pane and side-by-side
+     * stops being side-by-side. `_lock` breaks the feedback loop: setting scrollTop fires scroll on
+     * the other pane, which would set this one back. */
+    let _lock=false;
+    const sync=(from,to)=>()=>{
+      if(_lock || split.classList.contains('show-preview')) return;
+      const fr=from.scrollHeight-from.clientHeight, tr=to.scrollHeight-to.clientHeight;
+      if(fr<=0 || tr<=0) return;
+      _lock=true; to.scrollTop=(from.scrollTop/fr)*tr;
+      requestAnimationFrame(()=>{ _lock=false; });
+    };
+    body.addEventListener('scroll', sync(body, prev), { passive:true });
+    prev.addEventListener('scroll', sync(prev, body), { passive:true });
     $('#ae-img-up').onclick=()=>$('#ae-img-file').click();
     $('#ae-img-file').onchange=async ev=>{ const f=ev.target.files[0]; if(!f)return; $('#ae-status').textContent='uploading image…'; try{ $('#ae-img').value=await uploadBlob(f); $('#ae-status').textContent='image uploaded'; }catch(err){ $('#ae-status').textContent='upload failed: '+err.message; } };
     $('#ae-insert').onclick=()=>$('#ae-body-file').click();
