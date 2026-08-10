@@ -422,8 +422,18 @@
         if(!await PC.uiConfirm('Stop syncing this folder?\n\nNothing is deleted — the files stay on this '
                                + 'device and on your other devices. It simply stops being kept in step.')) return;
         try{ await FS().forget(id); }catch(_){}
-        saveFolders(folders().filter(x => x.id !== id));
+        /* CLEAR THE AGREEMENT UNDER THE KEY IT WAS WRITTEN WITH — and under the old one too.
+         *
+         * `base` moved from the platform id to the pair key when the manifest did; this removeItem
+         * did not move with it, so "Stop syncing" left the agreement behind. Re-adding the folder
+         * later then starts from a base claiming files are synced that are no longer on this disk,
+         * the engine correctly reads that as "deleted here", and they are removed from every other
+         * device. Both keys go, because a build older than the pair key wrote the id one.
+         * tests/client/two_device_sim.js — 'stale-base-is-what-deletes-everything'. */
+        const f = folders().find(x => x.id === id);
         try{ localStorage.removeItem(BASE_KEY(id)); }catch(_){}
+        try{ if(f) localStorage.removeItem(BASE_KEY(keyOf(f))); }catch(_){}
+        saveFolders(folders().filter(x => x.id !== id));
         paint();
       };
     });

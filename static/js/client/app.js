@@ -13569,7 +13569,10 @@
     return false;
   }
 
-  function openMusicFolder(){ _filesTab='public'; _filesFolder='Music'; switchView('blossom'); }   // the file-manager Music folder
+  // The file-manager Music folder. _syncRoot is cleared because it is a different SOURCE, not a
+  // sibling folder: leaving it set would send the music player's "open the folder" into a synced
+  // folder's browser, which has no track list.
+  function openMusicFolder(){ _filesTab='public'; _filesFolder='Music'; _syncRoot=''; _syncPath=''; switchView('blossom'); }
 
   /* The Music APP: a player, not a folder. Opening Music used to land you in Files → 🎵 Music — the
    * same screen you use to UPLOAD, complete with folder chips and a drop zone — which is a file
@@ -14202,52 +14205,446 @@
       this.push(); },
   };
   function _shaFromUrl(url){ const m=String(url||'').match(/([0-9a-f]{64})/i); return m?m[1].toLowerCase():''; }
+
+  /* ================= Explorer: how the files are LAID OUT — never what they are =================
+   *
+   * Everything below decides ORDER and SHAPE. The list itself, and every rule about which blobs are
+   * even eligible to be in it — deleted-this-session tombstones, every superseded index blob,
+   * encrypted music ciphertext, unnamed octet-stream noise — stays exactly where it is, in
+   * _renderFilesGrid's filter. That chain is the part that took a long time to get right and it is
+   * the part a redesign has no business touching, so the details view is a different set of columns
+   * over the SAME filtered array, not a second way of deciding what a file is.
+   *
+   * Sort and view mode are per device (localStorage), not per account: which way someone likes to
+   * look at a folder belongs to the screen they are looking at it on. */
+  const _FX_COLS = [['name','Name'],['size','Size'],['type','Type'],['modified','Modified']];
+  function _fxView(){ return ClientSettings.get('filesView','tiles')==='details' ? 'details' : 'tiles'; }
+  function _fxSort(){
+    const s = ClientSettings.get('filesSort', null);
+    /* NEWEST FIRST is the default, and it is load-bearing rather than a taste: a Blossom /list comes
+     * back OLDEST first and can be thousands of entries long, so any other default buries a file you
+     * just uploaded (or a stream you just recorded) past the 60-per-page window — which reads as "my
+     * recording isn't in the drive". A sort the user CHOSE is another matter; that is their call. */
+    if(!s || !_FX_COLS.some(c => c[0] === s.by)) return { by:'modified', dir:-1 };
+    return { by: s.by, dir: s.dir === 1 ? 1 : -1 };
+  }
+  function _fxSetSort(by){
+    const cur = _fxSort();
+    // Clicking the column you are already sorted by flips it; a fresh column starts in its natural
+    // direction — A→Z for text, largest/newest first for numbers. Explorer's behaviour, and the one
+    // people expect without being told.
+    ClientSettings.set('filesSort', { by, dir: cur.by === by ? -cur.dir : (by === 'name' || by === 'type' ? 1 : -1) });
+  }
+  /* One comparator for both sources (Blossom blobs and a synced folder's manifest); each supplies a
+   * keyOf(item, column). `numeric` is what puts img2 before img10 — the ordering a file manager has
+   * and a plain string sort does not. Ties fall back to the name so a repaint can't reshuffle rows
+   * that compare equal. */
+  function _fxCompare(keyOf){
+    const { by, dir } = _fxSort();
+    return (a, b) => {
+      const ka = keyOf(a, by), kb = keyOf(b, by);
+      let c = (typeof ka === 'number' && typeof kb === 'number')
+        ? (ka - kb)
+        : String(ka).localeCompare(String(kb), undefined, { numeric:true, sensitivity:'base' });
+      if(!c) c = String(keyOf(a,'name')).localeCompare(String(keyOf(b,'name')), undefined, { numeric:true });
+      return c * dir;
+    };
+  }
+  /* Sort keys for a Blossom blob. The NAME is the same three-step fallback the cards draw with —
+   * ours from the Files index, then the server's stored upload name, then a VOD label — so sorting by
+   * Name orders by what is actually on screen. Without that, files the drive labels "Stream 3 Aug"
+   * would sort under their sha256 and land in an order nobody could account for. */
+  function _fxBlobName(b){
+    const m = FilesIdx.meta(b.sha256) || {};
+    return m.name || b.name || _vodNameMap[b.sha256] || '';
+  }
+  function _fxBlobKey(b, by){
+    if(by === 'size') return +b.size || 0;
+    if(by === 'modified') return +b.uploaded || 0;
+    const m = FilesIdx.meta(b.sha256) || {};
+    if(by === 'type') return extOfBlob(b, m.name ? m : { name:_fxBlobName(b), mime:m.mime }) || '';
+    return String(_fxBlobName(b) || b.sha256 || '').toLowerCase();
+  }
+  function _fxBytes(n){ n = +n || 0; const u = ['B','KB','MB','GB','TB']; let i = 0;
+    while(n >= 1024 && i < u.length-1){ n /= 1024; i++; }
+    return (i && n < 10 ? n.toFixed(1) : Math.round(n)) + ' ' + u[i]; }
+  // Seconds or milliseconds — a Blossom listing stamps `uploaded` in seconds and a filesystem mtime
+  // arrives in milliseconds, and mixing them up dates half the drive to 1970.
+  function _fxWhen(t){
+    t = +t || 0; if(!t) return '';
+    const d = new Date(t < 1e11 ? t * 1000 : t);
+    if(isNaN(d.getTime())) return '';
+    return d.toLocaleDateString(undefined, { year:'numeric', month:'short', day:'numeric' })
+         + ' ' + d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  }
+  // "PNG image" beats "image/png" in a column someone is scanning, and beats a bare extension for
+  // the things that have no useful one.
+  const _FX_KINDS = [[/^(jpg|jpeg|png|gif|webp|avif|bmp|svg|heic|tiff?)$/,'image'],
+                     [/^(mp4|webm|mkv|mov|avi|m4v|mpg|mpeg|wmv)$/,'video'],
+                     [/^(mp3|m4a|aac|flac|wav|ogg|oga|opus|wma|aif|aiff)$/,'audio'],
+                     [/^(zip|7z|rar|tar|gz|bz2|xz|zst)$/,'archive'],
+                     [/^(txt|md|rtf|log|csv|json|xml|yml|yaml)$/,'document'],
+                     [/^(pdf|doc|docx|odt|xls|xlsx|ods|ppt|pptx|odp|epub)$/,'document']];
+  function _fxType(ext){
+    ext = String(ext || '').toLowerCase();
+    if(!ext) return 'File';
+    for(const [rx, word] of _FX_KINDS) if(rx.test(ext)) return ext.toUpperCase() + ' ' + word;
+    return ext.toUpperCase() + ' file';
+  }
+  function _fxIcon(ext, type){
+    const t = String(type || ''), e = String(ext || '').toLowerCase();
+    if(/image/.test(t) || /^(jpg|jpeg|png|gif|webp|avif|bmp|svg|heic)$/.test(e)) return '🖼️';
+    if(/video/.test(t) || /^(mp4|webm|mkv|mov|avi|m4v)$/.test(e)) return '🎬';
+    if(/audio/.test(t) || /^(mp3|m4a|aac|flac|wav|ogg|opus)$/.test(e)) return '🎵';
+    if(/pdf/.test(t) || e === 'pdf') return '📕';
+    if(/zip|compress|tar|gzip|7z|rar/.test(t) || /^(zip|7z|rar|tar|gz|xz|zst)$/.test(e)) return '📦';
+    if(/text|json|xml|csv/.test(t) || /^(txt|md|log|csv|json|xml|yml|yaml|doc|docx|odt)$/.test(e)) return '📄';
+    return '📎';
+  }
+  /* The column header. It is rendered INSIDE the grid rather than above it because it carries the
+   * sort arrow, so it has to repaint when the sort changes — and the grid is what repaints. */
+  // `sel` mirrors whether the rows below carry a select checkbox — the header shares their grid
+  // template, so a column the rows have and the header does not shifts every heading by one.
+  function _fxColsHTML(sel){
+    const s = _fxSort();
+    return '<div class="fx-cols">' + (sel === false ? '' : '<span class="fx-c-box"></span>') + _FX_COLS.map(([k, label]) =>
+      `<button class="fx-col fx-c-${k}${s.by===k?' on':''}" data-sort="${k}">${label}`
+      + `<span class="fx-arrow">${s.by===k ? (s.dir===1 ? '▲' : '▼') : ''}</span></button>`).join('')
+      + '<span class="fx-c-acts"></span></div>';
+  }
+  /* ONE details row, for both sources. The drive's blobs and a synced folder's manifest entries have
+   * nothing in common as data — one is addressed by hash and the other by path — but as a ROW they
+   * are the same four columns, so they are drawn by the same function. Two copies of this template
+   * would drift, and the way they drift is the header lining up with one of them and not the other.
+   *
+   * Every class a handler selects on is passed in by the caller (`acts`, `box`) rather than decided
+   * here: this function knows about layout and nothing else.
+   * Extracted by name in scripts/check_files_explorer.py, which lays real rows out under the real
+   * stylesheet — keep it free of dependencies beyond enc(). */
+  function _fxDetailsRow(o){
+    const cls = 'file-card row' + (o.enc ? ' enc' : '') + (o.dir ? ' isdir' : '') + (o.selected ? ' selected' : '');
+    const attrs = (o.sha ? ` data-sha="${enc(o.sha)}"` : '') + (o.dir ? ` data-dir="${enc(o.name)}"` : '')
+                + (o.draggable ? ' draggable="true"' : '');
+    const inner = `<span class="fx-ic">${o.icon || '📎'}</span>`
+                + `<span class="fname" title="${enc(o.title || o.name)}">${enc(o.name)}</span>`;
+    const name = o.href
+      ? `<a href="${enc(o.href)}" class="fx-name${o.encOpen ? ' enc-open' : ''}"${o.sha && o.encOpen ? ` data-sha="${enc(o.sha)}"` : ''}${o.mime !== undefined ? ` data-mime="${enc(o.mime||'')}"` : ''}${o.encOpen ? '' : ' target="_blank"'}>${inner}</a>`
+      : `<span class="fx-name">${inner}</span>`;
+    return `<div class="${cls}"${attrs}>${o.box || ''}${name}`
+      + `<span class="fx-size">${enc(o.size)}</span>`
+      + `<span class="fx-type">${enc(o.type)}</span>`
+      + `<span class="fx-mod">${enc(o.when)}</span>`
+      + `<span class="fc-acts">${o.acts || ''}</span></div>`;
+  }
+  function _fxBindCols(grid){
+    $$('.fx-col', grid).forEach(b => b.onclick = () => { _fxSetSort(b.dataset.sort); renderBlossom(); });
+  }
+  /* Breadcrumbs + the tiles/details switch. A crumb's target is a string the one handler below can
+   * parse: `b:<folder>` for the drive, `s:<pairkey>/<subdir>` for a synced folder — one place that
+   * knows how to get anywhere, rather than a click handler per crumb. */
+  function _fxBarHTML(crumbs){
+    const v = _fxView();
+    return `<div class="fx-bar"><nav class="fx-crumbs">${crumbs.map((c, i) => (i ? '<span class="fx-sep">›</span>' : '')
+        + `<button class="fx-crumb${i === crumbs.length-1 ? ' on' : ''}" data-crumb="${enc(c.to)}"`
+        + `${i === crumbs.length-1 ? ' disabled' : ''}>${enc(c.label)}</button>`).join('')}</nav>
+      <div class="fx-views">
+        <button class="fx-vw${v==='tiles'?' on':''}" data-view="tiles" title="Tiles" aria-label="Tiles">▦</button>
+        <button class="fx-vw${v==='details'?' on':''}" data-view="details" title="Details" aria-label="Details">☰</button>
+      </div></div>`;
+  }
+  function _fxBindBar(pane){
+    $$('.fx-vw', pane).forEach(b => b.onclick = () => { ClientSettings.set('filesView', b.dataset.view); renderBlossom(); });
+    $$('.fx-crumb[data-crumb]', pane).forEach(b => b.onclick = () => {
+      const to = b.dataset.crumb || '';
+      if(to.charAt(0) === 's'){ const rest = to.slice(2); const cut = rest.indexOf('/');
+        _syncRoot = cut < 0 ? rest : rest.slice(0, cut); _syncPath = cut < 0 ? '' : rest.slice(cut+1); }
+      else { _syncRoot = ''; _syncPath = ''; _filesFolder = to.slice(2); }
+      renderBlossom();
+    });
+  }
+
   let _filesFolder = '';   // current folder ('' = All)
   // Pagination for the FILES GRID only (NOT the Music list — the player needs the whole queue). Render
   // a page at a time so a big folder doesn't fire hundreds of thumbnail requests (CPU) at once.
   const _FILES_PAGE = 60;
   let _filesShown = _FILES_PAGE, _filesShownFolder = null;
+
+  /* ---------- Synced folders, as browsable roots ------------------------------------------------
+   *
+   * A folder pair lives on the devices that sync it, in each one's own localStorage — so a phone
+   * that syncs nothing had no way to learn that "Documents" exists, and Files could show you your
+   * drive but not the folders that are the point of the feature. /client/sync-folders enumerates the
+   * manifests themselves (their d-tags ARE the pair keys); nothing new is written, because an index
+   * of folders would be one more replaceable document that a single empty read could wipe.
+   *
+   * Browsing one is READ-ONLY here, deliberately. Renaming or deleting a file in this view would be
+   * a write to the shared manifest that every other device then applies to real files on real disks
+   * — the one thing this screen has no business doing without the sync engine, its three snapshots
+   * and its trash. Downloads decrypt in the browser, like every other encrypted file here. */
+  let _syncRoot = '';                 // the pair key being browsed ('' = the drive, not a synced folder)
+  let _syncPath = '';                 // subdirectory inside it ('' = its root)
+  let _syncPairs = null;              // [{key,n,updated_at}] · null = not asked yet · 'error' = asked and failed
+  let _syncPairsInflight = false, _syncPairsAt = 0;
+  const _syncManifests = new Map();   // pair key -> {at, paths:{path:{sha,size,mtime,deletedAt}}}
+  const _SYNC_TTL = 60000, _SYNC_PAIRS_TTL = 300000;
+
+  async function _ensureSyncPairs(){
+    // No instance means no manifest endpoint at all — the bundled desktop/APK build runs against
+    // relays alone, and asking would 404 on every render.
+    if(_standalone() || !ME || !ME.pubkey) { _syncPairs = []; return false; }
+    // TTL'd rather than asked once: a folder synced from another device five minutes ago should turn
+    // up, and — the case that actually matters — a failure must not read as "you have no synced
+    // folders" for the rest of the session. A failed read retries sooner than a good one refreshes.
+    const fresh = _syncPairs !== null
+      && (Date.now() - _syncPairsAt) < (_syncPairs === 'error' ? _SYNC_TTL : _SYNC_PAIRS_TTL);
+    if(fresh || _syncPairsInflight) return false;
+    _syncPairsInflight = true;
+    _syncPairsAt = Date.now();       // stamped up front → at most one attempt per window, success or failure
+    try{
+      const auth = await sign(27235, 'sync-folders', [['p', ME.pubkey]]);
+      const r = await fetch('/client/sync-folders', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ pubkey: ME.pubkey, auth: btoa(JSON.stringify(auth)) }) });
+      const j = await r.json().catch(() => ({}));
+      // A 503 here means the relay did not answer, which is NOT "you have no synced folders" — the
+      // server keeps those apart on purpose and so must this.
+      _syncPairs = (r.ok && j && j.ok && Array.isArray(j.folders)) ? j.folders : 'error';
+    }catch(_){ _syncPairs = 'error'; }
+    _syncPairsInflight = false;
+    return true;
+  }
+  function _fxSyncedHTML(){
+    if(_standalone()) return '';
+    const p = _syncPairs;
+    if(p === 'error') return '<div class="fx-sec"><b>Synced folders</b>'
+      + '<div class="muted small fx-secnote">couldn’t be loaded just now</div></div>';
+    if(!Array.isArray(p)) return '<div class="fx-sec"><b>Synced folders</b>'
+      + '<div class="muted small fx-secnote">looking…</div></div>';
+    if(!p.length) return '';        // nothing synced — Folder Sync is its own screen; no empty shelf here
+    return '<div class="fx-sec"><b>Synced folders</b>' + p.map(f =>
+      `<button class="folder-chip syncroot${_syncRoot===f.key?' active':''}" data-synckey="${enc(f.key)}"
+         title="${enc(f.key)} — ${f.n} file${f.n===1?'':'s'}">🔄 ${enc(f.key)}<span class="fx-n">${f.n}</span></button>`).join('')
+      + '</div>';
+  }
+  // The manifest for one pair, decrypted by sync.js's store (NIP-44 to the user's own key — this
+  // node cannot read it, and neither can this code without the signer).
+  async function _syncManifest(key, force){
+    // Cached only briefly: walking in and out of subdirectories must not re-read and re-decrypt the
+    // whole manifest each time, but a folder that finished syncing while this screen was open should
+    // not stay wrong until reload either.
+    const hit = _syncManifests.get(key);
+    if(!force && hit && (Date.now() - hit.at) < _SYNC_TTL) return hit.paths;
+    const S = window.PCSync;
+    if(!S || !S.store) throw new Error('folder sync is not loaded on this build');
+    const paths = await S.store.manifest(key) || {};
+    _syncManifests.set(key, { at: Date.now(), paths });
+    return paths;
+  }
+  /* One directory's worth of a manifest — the immediate children of `dir` only. The manifest is a
+   * flat map of full paths, so the folders are implied by them and have to be re-derived here; a
+   * directory's size and date are the sum and the newest of what is inside it, which is what a file
+   * manager shows and what makes the columns meaningful on a folder row. */
+  function _syncEntries(paths, dir){
+    const pre = dir ? dir + '/' : '';
+    const dirs = new Map(), files = [];
+    for(const p in paths){
+      const e = paths[p];
+      if(!e || e.deletedAt) continue;                       // a tombstone is not a file
+      if(pre && p.indexOf(pre) !== 0) continue;
+      const rest = p.slice(pre.length);
+      if(!rest || rest.split('/')[0] === '.pc-trash') continue;   // the folder's own trash is not content
+      const cut = rest.indexOf('/');
+      if(cut < 0){ files.push({ path:p, name:rest, size:+e.size||0, mtime:+e.mtime||0, sha:e.sha }); continue; }
+      const nm = rest.slice(0, cut);
+      const d = dirs.get(nm) || { name:nm, dir:true, n:0, size:0, mtime:0 };
+      d.n++; d.size += +e.size || 0; d.mtime = Math.max(d.mtime, +e.mtime || 0);
+      dirs.set(nm, d);
+    }
+    return { dirs:[...dirs.values()], files };
+  }
+  function _syncSortKey(it, by){
+    if(by === 'size') return it.size || 0;
+    if(by === 'modified') return it.mtime || 0;
+    if(by === 'type') return it.dir ? '' : ((String(it.name).match(/\.([A-Za-z0-9]{1,8})$/) || [])[1] || '');
+    return String(it.name || '').toLowerCase();
+  }
+  // Fetch + decrypt one synced blob. The same two steps PC.syncBlobs.get does — shared rather than
+  // written twice, because "which key decrypts a sync blob" must have exactly one answer.
+  async function _syncBlobBytes(sha){
+    const r = await fetch(mediaServer() + '/' + sha);
+    if(!r.ok) throw new Error('blob ' + String(sha).slice(0,8) + ' unavailable (' + r.status + ')');
+    return await _masterDecrypt(await FilesIdx._ensureMK(), new Uint8Array(await r.arrayBuffer()));
+  }
+  async function _syncDownload(btn, sha, name){
+    if(!sha){ toast('this file has no stored copy yet'); return; }
+    // innerHTML, not textContent: the button IS an <svg> sprite reference, so textContent reads as ''
+    // and writing to it deletes the icon — restoring the empty string afterwards leaves a blank
+    // button for the rest of the session.
+    const was = btn ? btn.innerHTML : '';
+    try{
+      if(btn){ btn.disabled = true; btn.innerHTML = '…'; }
+      toast('decrypting…');
+      await saveBlobAs(new Blob([await _syncBlobBytes(sha)]), name || 'file');
+    }catch(e){ toast('download failed: ' + ((e && e.message) || e)); }
+    finally{ if(btn){ btn.disabled = false; btn.innerHTML = was; } }
+  }
+
+  /* The sidebar: the drive's own folders, then the synced ones. Built by both renderers so the two
+   * sources sit in one tree — which is the whole idea of showing them here rather than on a separate
+   * screen. Identical markup to before for the drive half; the chips are still
+   * .folder-chip[data-folder] and every handler they had still finds them. */
+  function _fxSideHTML(){
+    const folders = FilesIdx.folders();
+    return `<div class="folder-bar">
+        <button class="folder-chip${(!_syncRoot&&_filesFolder==='')?' active':''}" data-folder=""><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>All</button>
+        ${folders.map(f=>`<button class="folder-chip${(!_syncRoot&&_filesFolder===f)?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':(FilesIdx.isEncFolder(f)?'🔒':'📁')} ${enc(f)}</button>`).join('')}
+        <button class="folder-chip newfolder" id="bl-newfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New folder</button>
+        ${(!_syncRoot && _filesFolder && _filesFolder!=='Music') ? `<button class="folder-chip delfolder" id="bl-delfolder" title="Delete this folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete “${enc(_filesFolder)}”</button>` : ''}
+      </div>` + _fxSyncedHTML();
+  }
+  /* Dropping a file onto a folder chip moves it. Lives in its own function because the sidebar can
+   * repaint on its own — when the synced-folder list lands a moment after first paint — and a chip
+   * redrawn without this is a drop target that silently stops accepting drops. */
+  function _fxBindChipDrop(root){
+    $$('.folder-chip[data-folder]', root || document).forEach(chip=>{
+      chip.ondragover=e=>{ e.preventDefault(); chip.classList.add('drop'); };
+      chip.ondragleave=()=>chip.classList.remove('drop');
+      chip.ondrop=e=>{ e.preventDefault(); chip.classList.remove('drop'); const sha=e.dataTransfer&&e.dataTransfer.getData('text/sha'); if(sha){ FilesIdx.move(sha, chip.dataset.folder); toast('moved to '+(chip.dataset.folder||'All')); renderBlossom(); } };
+    });
+  }
+  function _fxBindSide(root){
+    const r = root || document;
+    $$('.folder-chip[data-folder]', r).forEach(b=> b.onclick=()=>{ _syncRoot=''; _syncPath=''; _filesFolder=b.dataset.folder; renderBlossom(); });
+    $$('.folder-chip[data-synckey]', r).forEach(b=> b.onclick=()=>{ _syncRoot=b.dataset.synckey; _syncPath=''; renderBlossom(); });
+    { const nf=$('#bl-newfolder',r); if(nf) nf.onclick=_newFolderModal; }
+    { const df=$('#bl-delfolder',r); if(df) df.onclick=async()=>{ if(await uiConfirm('Delete folder “'+_filesFolder+'”? Its files move to All — the files themselves aren\'t deleted.')){ FilesIdx.removeFolder(_filesFolder); _filesFolder=''; renderBlossom(); } }; }
+    _fxBindChipDrop(r);
+    // The synced-folder list is one request away and must never hold up the drive's first paint, so
+    // it lands into the sidebar afterwards. In place — a full re-render here would throw away an
+    // upload queue mid-upload.
+    _ensureSyncPairs().then(changed=>{
+      if(!changed || VIEW!=='blossom' || _filesTab!=='public') return;
+      const side=document.querySelector('.fx-side'); if(!side) return;
+      side.innerHTML=_fxSideHTML(); _fxBindSide(side);
+    });
+  }
+  function _fxCrumbs(){
+    const home = { label:'Files', to:'b:' };
+    if(_syncRoot){
+      const out = [home, { label:'🔄 ' + _syncRoot, to:'s:' + _syncRoot }];
+      let acc = '';
+      for(const seg of String(_syncPath||'').split('/').filter(Boolean)){
+        acc = acc ? acc + '/' + seg : seg;
+        out.push({ label:seg, to:'s:' + _syncRoot + '/' + acc });
+      }
+      return out;
+    }
+    if(!_filesFolder) return [home];
+    const ic = _filesFolder==='Music' ? '🎵 ' : (FilesIdx.isEncFolder(_filesFolder) ? '🔒 ' : '📁 ');
+    return [home, { label: ic + _filesFolder, to:'b:' + _filesFolder }];
+  }
+
+  /* Browsing a synced folder. The rows come from the manifest — the same document the sync engine
+   * agrees on — so this shows what your DEVICES agreed the folder contains, which is why it works on
+   * a phone that syncs nothing and in a browser that cannot sync at all.
+   *
+   * No thumbnails, on purpose: every blob here is AES-GCM ciphertext under the drive's master key, so
+   * a preview costs a full download and a decrypt per file. A folder of 4000 photos would do that
+   * 4000 times to draw one screen. */
+  async function _renderSyncedRoot(pane){
+    const details = _fxView()==='details';
+    pane.innerHTML = '<div class="fx-explorer">'
+      + '<div class="fx-side">' + _fxSideHTML() + '</div>'
+      + '<div class="fx-main">' + _fxBarHTML(_fxCrumbs())
+      + '<div class="files-grid' + (details?' details nosel':'') + '" id="bl-grid"><div class="spinner"></div></div>'
+      + '</div></div>';
+    _fxBindSide(pane); _fxBindBar(pane);
+    const grid = $('#bl-grid', pane); if(!grid) return;
+
+    let paths=null, err='';
+    try{ paths = await _syncManifest(_syncRoot); }
+    catch(e){ err = (e && e.message) || String(e); }
+    if(VIEW!=='blossom' || _filesTab!=='public' || !_syncRoot) return;   // navigated away while it loaded
+    if(paths===null){
+      grid.innerHTML = '<div class="empty">Couldn’t read “'+enc(_syncRoot)+'” ('+enc(err)+').<br>'
+        + '<span class="muted small">Your files are safe — this is the shared list of them, not the files.</span></div>';
+      return;
+    }
+    const { dirs, files } = _syncEntries(paths, _syncPath);
+    // FOLDERS ALWAYS FIRST, whatever the sort — the one place a file manager overrides the column
+    // you clicked, and every one of them does it. Within each group the chosen sort applies.
+    const cmp = _fxCompare(_syncSortKey);
+    dirs.sort(cmp); files.sort(cmp);
+    const items = dirs.concat(files);
+    if(!items.length){
+      grid.innerHTML = '<div class="empty">'+(_syncPath?('“'+enc(_syncPath)+'” is empty.'):('Nothing in “'+enc(_syncRoot)+'” yet — sync a device and it appears here.'))+'</div>';
+      return;
+    }
+    const rowFor = (it) => {
+      const ext = it.dir ? '' : ((String(it.name).match(/\.([A-Za-z0-9]{1,8})$/)||[])[1]||'').toLowerCase();
+      const icon = it.dir ? '📁' : _fxIcon(ext, '');
+      const type = it.dir ? (it.n + ' item' + (it.n===1?'':'s')) : _fxType(ext);
+      const act = it.dir ? ''
+        : `<button class="dlsync" data-sha="${enc(it.sha||'')}" data-name="${enc(it.name)}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`;
+      const nav = it.dir ? ` data-dir="${enc(it.name)}"` : '';
+      if(details) return _fxDetailsRow({ dir:!!it.dir, name:it.name, icon:icon, size:_fxBytes(it.size),
+        type:type, when:_fxWhen(it.mtime), acts:act });
+      return `<div class="file-card${it.dir?' isdir':''}"${nav}>
+        <div class="file-icon">${icon}<span>${enc(it.dir?'folder':(ext||'file'))}</span></div>
+        <div class="meta"><span class="fname" title="${enc(it.name)}">${enc(fileLabel(it.name, ext, it.size))}</span>${act?`<span class="fc-acts">${act}</span>`:''}</div></div>`;
+    };
+    grid.innerHTML = (details ? _fxColsHTML(false) : '') + items.map(rowFor).join('');
+    if(details) _fxBindCols(grid);
+    $$('.file-card[data-dir]', grid).forEach(c=> c.onclick=(e)=>{
+      if(e.target.closest('.fc-acts')) return;
+      _syncPath = _syncPath ? _syncPath + '/' + c.dataset.dir : c.dataset.dir; renderBlossom();
+    });
+    // Clicking a FILE downloads it, the same as pressing its ⬇. A row you can click that does
+    // nothing is the thing that makes a list feel broken, and a synced file has no URL to open —
+    // the bytes are ciphertext, so opening one IS decrypting and saving it.
+    $$('.file-card:not(.isdir)', grid).forEach(c=> c.onclick=(e)=>{
+      if(e.target.closest('.fc-acts')) return;
+      const b = c.querySelector('.dlsync'); if(b) b.click();
+    });
+    $$('.dlsync', grid).forEach(b=> b.onclick=(e)=>{ e.preventDefault(); e.stopPropagation();
+      _syncDownload(b, b.dataset.sha, b.dataset.name); });
+  }
+
   // Public tab — your Blossom blobs, organised into client-side folders. Drag-drop + folders + grid.
   async function renderPublicFiles(pane){
     const server=mediaServer();
     if(!server){ pane.innerHTML='<div class="empty">Blossom server not configured.</div>'; return; }
     FilesIdx.loadLocal();
     if(!FilesIdx._pulled){ FilesIdx._pulled=true; FilesIdx.pull().then(()=>{ if(VIEW==='blossom') renderBlossom(); }); }
+    /* A synced folder is a different SOURCE, not a different folder of the drive: its list comes from
+     * the sync manifest, not from Blossom's /list. Branch BEFORE the upload probe and the listing —
+     * neither is anything to do with it, and both are a round trip. */
+    if(_syncRoot) return _renderSyncedRoot(pane);
     pane.innerHTML='<div class="spinner"></div>';
     // Anything that throws below leaves this spinner on screen forever unless it is caught, and
     // "a spinner that never stops" tells the user nothing and tells us less. Surface it instead.
     let canUp=false;
     try{ canUp=await blossomCanUpload(); }
     catch(e){ console.warn('blossom: upload probe failed', e); canUp=true; }   // inconclusive → let the real PUT decide
-    const folders=FilesIdx.folders();
-    const folderBar = `<div class="folder-bar">
-        <button class="folder-chip${_filesFolder===''?' active':''}" data-folder=""><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>All</button>
-        ${folders.map(f=>`<button class="folder-chip${_filesFolder===f?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':(FilesIdx.isEncFolder(f)?'🔒':'📁')} ${enc(f)}</button>`).join('')}
-        <button class="folder-chip newfolder" id="bl-newfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New folder</button>
-        ${(_filesFolder && _filesFolder!=='Music') ? `<button class="folder-chip delfolder" id="bl-delfolder" title="Delete this folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete “${enc(_filesFolder)}”</button>` : ''}
-      </div>`;
     const head = canUp
-      ? `${folderBar}<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple ${_filesFolder==='Music'?'accept="audio/*,.mp3,.m4a,.m4b,.aac,.flac,.wav,.ogg,.oga,.opus,.wma,.aif,.aiff,.mka,.ape,.dsf"':''} hidden><input type="file" id="bl-folder" webkitdirectory hidden>
+      ? `<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple ${_filesFolder==='Music'?'accept="audio/*,.mp3,.m4a,.m4b,.aac,.flac,.wav,.ogg,.oga,.opus,.wma,.aif,.aiff,.mka,.ape,.dsf"':''} hidden><input type="file" id="bl-folder" webkitdirectory hidden>
           <div class="dz-inner"><span class="dz-ic">⬆</span> Drop files/folders here, or <button class="btn btn-cyan small" id="bl-pick">choose files</button> <button class="btn btn-neon small" id="bl-pickfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>choose folder</button>
           <div class="muted small">→ ${_filesFolder?((FilesIdx.isEncFolder(_filesFolder)?'🔒 ':'📁 ')+enc(_filesFolder)):'All files'} · uploaded one at a time${_filesFolder==='Music'?' · non-audio skipped':(FilesIdx.isEncFolder(_filesFolder)?' · encrypted on this device':'')}</div></div>
           <div class="up-queue" id="bl-queue"></div></div>`
-      : `${folderBar}<div class="blossom-locked glass"><b>🔒 Upload access needed</b>
+      : `<div class="blossom-locked glass"><b>🔒 Upload access needed</b>
            <p class="muted small">You don't have permission to upload files to this server yet. Request access and the admin can grant it from Admin → Users.</p>
            <button class="btn btn-cyan" id="bl-request"><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg>Request upload access</button></div>`;
-    /* EXPLORER LAYOUT. The folder list becomes a left PANE and everything else a right one, which is
-     * the shape every file manager has settled on because it is the one that scales: a row of chips
-     * wraps into three lines the moment you have eight folders, and then the files start below the
-     * fold. Same markup, same handlers — the chips are still .folder-chip[data-folder] — so nothing
-     * about uploading, selecting or deleting changes; only where they sit. Collapses back to a single
-     * column on a phone, where a 140px sidebar would leave nothing for the files. */
+    /* EXPLORER LAYOUT. The folder list is a left PANE and everything else a right one, which is the
+     * shape every file manager has settled on because it is the one that scales: a row of chips wraps
+     * into three lines the moment you have eight folders, and then the files start below the fold.
+     * Same markup, same handlers — the chips are still .folder-chip[data-folder] — so nothing about
+     * uploading, selecting or deleting changes; only where they sit. Collapses back to a single
+     * column on a phone, where a 220px sidebar would leave nothing for the files. */
     pane.innerHTML = '<div class="fx-explorer">'
-      + '<div class="fx-side">' + folderBar + '</div>'
-      + '<div class="fx-main">' + head.slice(folderBar.length)
+      + '<div class="fx-side">' + _fxSideHTML() + '</div>'
+      + '<div class="fx-main">' + _fxBarHTML(_fxCrumbs()) + head
       + '<div class="files-selbar" id="bl-selbar"></div>'
       + '<div class="files-grid" id="bl-grid"><div class="spinner"></div></div></div></div>';
-    $$('.folder-chip[data-folder]',pane).forEach(b=> b.onclick=()=>{ _filesFolder=b.dataset.folder; renderBlossom(); });
-    { const nf=$('#bl-newfolder',pane); if(nf) nf.onclick=_newFolderModal; }
-    { const df=$('#bl-delfolder',pane); if(df) df.onclick=async()=>{ if(await uiConfirm('Delete folder “'+_filesFolder+'”? Its files move to All — the files themselves aren\'t deleted.')){ FilesIdx.removeFolder(_filesFolder); _filesFolder=''; renderBlossom(); } }; }
+    _fxBindSide(pane); _fxBindBar(pane);
     if(canUp){
       const fileInput=$('#bl-file',pane), folderInput=$('#bl-folder',pane), drop=$('#bl-drop',pane);
       $('#bl-pick',pane).onclick=()=>fileInput.click();
@@ -14427,27 +14824,49 @@
       if(!m && /octet-stream/.test(b.type||'')) return false;                  // stale index blobs / unnamed binaries (the "OCTET-STE" noise)
       if(m && m.enc && FilesIdx.folderOf(b.sha256)==='Music') return false;    // music ciphertext → Music list only
       return _filesFolder==='' ? true : FilesIdx.folderOf(b.sha256)===_filesFolder;
-    }).sort((a,b)=>(b.uploaded||0)-(a.uploaded||0));   // NEWEST first — else a fresh upload/VOD is buried at the
-                                                       // END of a big (3000+) oldest-first Blossom /list, past the 60-per-page window (the "my recording isn't in the drive" bug)
+    }).sort(_fxCompare(_fxBlobKey));   // default is NEWEST first — else a fresh upload/VOD is buried at the END of a
+                                       // big (3000+) oldest-first Blossom /list, past the 60-per-page window (the
+                                       // "my recording isn't in the drive" bug). See _fxSort().
     if(_filesShownFolder!==_filesFolder){ _filesShownFolder=_filesFolder; _filesShown=_FILES_PAGE; _filesSelClear(); }   // reset paging AND selection on folder change (never act on off-screen files)
     const _shown = inFolder.slice(0, _filesShown), _more = inFolder.length - _shown.length;
-    grid.innerHTML = inFolder.length ? (_shown.map(b=>{
+    /* TILES or DETAILS — the same filtered, sorted array, drawn two ways. Every class the handlers
+     * below select on (.file-card, .selbox, .del, .copy, .dlbtn, .dlenc, .movebtn, .enc-open) is
+     * present in BOTH, so selecting, deleting, moving, dragging and downloading are the same code in
+     * either view. That is the whole reason the details view is markup and CSS and not a second
+     * implementation of the drive. */
+    const details = _fxView()==='details';
+    grid.className = 'files-grid' + (details ? ' details' : '') + (grid.classList.contains('selmode') ? ' selmode' : '');
+    grid.innerHTML = inFolder.length ? ((details ? _fxColsHTML() : '') + _shown.map(b=>{
       // Name: ours (Files index) → the server's stored upload name → a VOD label. The last two are why
       // a file uploaded from another device/client isn't an anonymous "412KB" tile any more.
       const m=FilesIdx.meta(b.sha256)||{}; const nm=m.name||b.name||_vodNameMap[b.sha256]||'';
       const ext=extOfBlob(b, m.name?m:{name:nm, mime:m.mime});
       const dlName=downloadName(b, nm, ext);
+      const sel=_filesSel.has(b.sha256)?' selected':'';
+      const box=`<input type="checkbox" class="selbox" data-sha="${b.sha256}"${_filesSel.has(b.sha256)?' checked':''} title="Select">`;
+      const del=`<button class="del" data-sha="${b.sha256}" aria-label="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>`;
+      const move=`<button class="movebtn" data-sha="${b.sha256}" title="Move to folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg></button>`;
+      const dl=m.enc
+        ? `<button class="dlbtn dlenc" data-sha="${b.sha256}" data-name="${enc(dlName)}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`
+        : `<button class="dlbtn" data-url="${enc(b.url)}" data-name="${enc(dlName)}" title="Download ${enc(dlName)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`;
+      if(details) return _fxDetailsRow({
+        sha:b.sha256, draggable:true, selected:_filesSel.has(b.sha256), enc:!!m.enc, box:box,
+        href: m.enc ? '#' : b.url, encOpen: !!m.enc, mime: m.enc ? undefined : (b.type||''),
+        icon: m.enc ? '🔒' : _fxIcon(ext, b.type), name: nm || (m.enc ? 'encrypted' : dlName), title: nm || dlName,
+        size:_fxBytes(b.size), type:(m.enc?'🔒 ':'')+_fxType(ext), when:_fxWhen(b.uploaded),
+        acts: (m.enc ? '' : `<button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>`) + dl + move + del,
+      });
       if(m.enc){   // encrypted file — lock card; opening decrypts in-browser (never exposes the ciphertext URL)
-        return `<div class="file-card enc${_filesSel.has(b.sha256)?' selected':''}" draggable="true" data-sha="${b.sha256}"><a href="#" class="enc-open" data-sha="${b.sha256}"><div class="file-icon">🔒<span>${enc(ext||'enc')}</span></div></a>
-          <input type="checkbox" class="selbox" data-sha="${b.sha256}"${_filesSel.has(b.sha256)?' checked':''} title="Select">
-          <button class="del" data-sha="${b.sha256}" aria-label="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
-          <div class="meta"><span class="fname" title="${enc(nm)}">${nm?enc(fileLabel(nm,ext,b.size)):'encrypted'}</span><span class="fc-acts"><button class="dlbtn dlenc" data-sha="${b.sha256}" data-name="${enc(dlName)}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button><button class="movebtn" data-sha="${b.sha256}" title="Move to folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg></button></span></div></div>`;
+        return `<div class="file-card enc${sel}" draggable="true" data-sha="${b.sha256}"><a href="#" class="enc-open" data-sha="${b.sha256}"><div class="file-icon">🔒<span>${enc(ext||'enc')}</span></div></a>
+          ${box}${del}
+          <div class="meta"><span class="fname" title="${enc(nm)}">${nm?enc(fileLabel(nm,ext,b.size)):'encrypted'}</span><span class="fc-acts">${dl}${move}</span></div></div>`;
       }
-      return `<div class="file-card${_filesSel.has(b.sha256)?' selected':''}" draggable="true" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b, ext)}</a>
-        <input type="checkbox" class="selbox" data-sha="${b.sha256}"${_filesSel.has(b.sha256)?' checked':''} title="Select">
-        <button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${b.sha256}" aria-label="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
-        <div class="meta"><span class="fname" title="${enc(nm||dlName)}">${enc(fileLabel(nm,ext,b.size))}</span><span class="fc-acts"><button class="dlbtn" data-url="${enc(b.url)}" data-name="${enc(dlName)}" title="Download ${enc(dlName)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button><button class="movebtn" data-sha="${b.sha256}" title="Move to folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg></button></span></div></div>`;
+      return `<div class="file-card${sel}" draggable="true" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b, ext)}</a>
+        ${box}
+        <button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>${del}
+        <div class="meta"><span class="fname" title="${enc(nm||dlName)}">${enc(fileLabel(nm,ext,b.size))}</span><span class="fc-acts">${dl}${move}</span></div></div>`;
     }).join('') + (_more>0 ? `<button class="btn btn-ghost bl-more" data-id="bl-more" style="grid-column:1/-1;justify-self:center;margin:10px 0"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-down"></use></svg>Load ${Math.min(_more,_FILES_PAGE)} more · ${_more} left</button>` : '')) : '<div class="empty">No files'+(_filesFolder?(' in '+enc(_filesFolder)):'')+' yet — drop some above.</div>';
+    if(details) _fxBindCols(grid);
     { const mb=$('.bl-more',grid); if(mb) mb.onclick=()=>{ _filesShown+=_FILES_PAGE; _renderFilesGrid(grid, list); }; }
     $$('.enc-open',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); try{ toast('decrypting…'); const u=await trackUrl(a.dataset.sha); window.open(u,'_blank'); }catch(err){ toast('decrypt failed: '+(err.message||'')); } });
     $$('.vthumb',grid).forEach(im=> im.onerror=()=>{ const d=document.createElement('div'); d.className='file-icon'; d.innerHTML='🎬<span>'+enc(im.dataset.ext||'video')+'</span>'; im.replaceWith(d); });
@@ -14466,11 +14885,7 @@
       const card=cb.closest('.file-card'); if(card) card.classList.toggle('selected', cb.checked);
       _filesSelBar(grid, list); });
     _filesSelBar(grid, list);
-    $$('.folder-chip[data-folder]').forEach(chip=>{
-      chip.ondragover=e=>{ e.preventDefault(); chip.classList.add('drop'); };
-      chip.ondragleave=()=>chip.classList.remove('drop');
-      chip.ondrop=e=>{ e.preventDefault(); chip.classList.remove('drop'); const sha=e.dataTransfer&&e.dataTransfer.getData('text/sha'); if(sha){ FilesIdx.move(sha, chip.dataset.folder); toast('moved to '+(chip.dataset.folder||'All')); renderBlossom(); } };
-    });
+    _fxBindChipDrop();
     // Re-attach the keyboard cursor. _selEl() re-finds the row by key and re-adds .sel, but only when
     // something asks it to — so after "Load more" redraws the grid the highlight vanished until the next
     // keypress, even though the selection was still live (the next Enter loaded another page just fine).
@@ -24848,11 +25263,9 @@
         if(!sha) throw new Error('upload returned no hash');
         return sha;
       },
-      async get(sha){
-        const r = await fetch(mediaServer() + '/' + sha);
-        if(!r.ok) throw new Error('blob ' + String(sha).slice(0,8) + ' unavailable (' + r.status + ')');
-        return await _masterDecrypt(await FilesIdx._ensureMK(), new Uint8Array(await r.arrayBuffer()));
-      },
+      // Shared with the Files → synced-folder browser, so "which key opens a sync blob" has exactly
+      // one answer in this codebase rather than two that can drift.
+      get: (sha) => _syncBlobBytes(sha),
     },
     // NIP-98-style self-auth for the client endpoints (the same proof /files-index takes).
     signAuth: (tag) => sign(27235, String(tag||'sync'), [['p', ME.pubkey]]),

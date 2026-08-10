@@ -6734,7 +6734,7 @@ html.os-on #upload-badge.upbadge{z-index:333}
   max-height:70vh;overflow-y:auto}
 .fx-main{min-width:0;padding:12px;display:flex;flex-direction:column;gap:10px}
 /* The chips become tree rows: full width, left-aligned, one per line. */
-.fx-side .files-folders{display:flex;flex-direction:column;gap:2px;padding:0;margin:0;overflow:visible}
+.fx-side .folder-bar{display:flex;flex-direction:column;gap:2px;padding:0;margin:0;overflow:visible}
 .fx-side .folder-chip{width:100%;justify-content:flex-start;text-align:left;border-radius:8px;
   border:1px solid transparent;background:none;padding:8px 10px;font-size:14px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -6748,10 +6748,117 @@ html.os-on #upload-badge.upbadge{z-index:333}
      folder list scrolling horizontally the way it did before. */
   .fx-explorer{display:block;border-radius:12px}
   .fx-side{border-right:0;border-bottom:1px solid var(--line);max-height:none;padding:8px}
-  .fx-side .files-folders{flex-direction:row;flex-wrap:nowrap;overflow-x:auto;gap:6px;
+  .fx-side .folder-bar{flex-direction:row;flex-wrap:nowrap;overflow-x:auto;gap:6px;
     scrollbar-width:none;-webkit-overflow-scrolling:touch}
-  .fx-side .files-folders::-webkit-scrollbar{display:none}
+  .fx-side .folder-bar::-webkit-scrollbar{display:none}
   .fx-side .folder-chip{width:auto;flex:0 0 auto;border:1px solid var(--line);border-radius:999px;
     padding:8px 12px;min-height:36px}
   .fx-side .folder-chip.newfolder{margin-top:0;border-top:1px solid var(--line);border-radius:999px;padding-top:8px}
+}
+
+/* ---- Synced folders, as roots beside the drive's own folders --------------------------------- */
+.fx-sec{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:2px}
+.fx-sec > b{font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);padding:0 10px 6px}
+.fx-secnote{padding:0 10px 4px}
+.folder-chip .fx-n{margin-left:auto;font-size:11px;font-weight:600;color:var(--muted);
+  background:rgba(var(--accent-rgb),.12);border-radius:999px;padding:1px 7px}
+.folder-chip.active .fx-n{background:rgba(0,0,0,.18);color:inherit}
+
+/* ---- The toolbar: breadcrumbs on the left, the view switch on the right ----------------------- */
+.fx-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  padding-bottom:8px;border-bottom:1px solid var(--line)}
+.fx-crumbs{display:flex;align-items:center;gap:2px;min-width:0;flex-wrap:wrap}
+.fx-crumb{background:none;border:0;font:inherit;font-size:14px;font-weight:600;color:var(--muted);
+  cursor:pointer;padding:4px 7px;border-radius:8px;max-width:240px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fx-crumb:hover:not(:disabled){background:rgba(var(--accent-rgb),.12);color:var(--text)}
+.fx-crumb.on{color:var(--text);cursor:default}
+.fx-sep{color:var(--muted);opacity:.55}
+.fx-views{display:flex;gap:4px;flex:0 0 auto}
+.fx-vw{background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);cursor:pointer;
+  font-size:15px;line-height:1;padding:6px 10px;min-height:32px}
+.fx-vw:hover{color:var(--text);border-color:var(--cyan)}
+.fx-vw.on{color:var(--text);border-color:var(--neon);background:rgba(var(--accent-rgb),.16)}
+
+/* ---- Details view ----------------------------------------------------------------------------
+   The SAME cards as the tiles view — same classes, same handlers — laid out as rows. Both the header
+   and the rows are grid children of the same container and share one template, so the headings stay
+   over their columns however wide the pane is. */
+.files-grid.details{display:block;padding:0;gap:0}
+/* THE ACTIONS COLUMN IS A FIXED WIDTH, NOT `auto`, AND THAT IS LOAD-BEARING. Every row is its own
+   grid container, so an `auto` last column resolves against ITS OWN buttons: a row with four of them
+   takes 52px out of the name column and a header with none takes zero, so the headings sat 52px off
+   their columns and the sizes appeared under "Type". An encrypted row (no Copy URL) and a synced
+   folder row (no buttons at all) would each land somewhere different again.
+   scripts/check_files_explorer.py measures this per column, per row. */
+.files-grid.details{--fx-acts:124px}
+.files-grid.details.nosel{--fx-acts:40px}   /* a synced folder has one button per row, and none on a folder */
+.fx-cols,.files-grid.details .file-card.row{
+  display:grid;grid-template-columns:24px minmax(0,1fr) 88px 140px 172px var(--fx-acts);align-items:center;gap:8px}
+.files-grid.details.nosel .fx-cols,
+.files-grid.details.nosel .file-card.row{grid-template-columns:minmax(0,1fr) 88px 140px 172px var(--fx-acts)}
+.fx-cols{position:sticky;top:0;z-index:2;padding:4px 8px;background:var(--panel);
+  border-bottom:1px solid var(--line)}
+.fx-col{background:none;border:0;font:inherit;font-size:12px;font-weight:700;letter-spacing:.5px;
+  text-transform:uppercase;color:var(--muted);cursor:pointer;text-align:left;padding:6px 4px;
+  border-radius:6px;display:flex;align-items:center;gap:4px;min-width:0}
+.fx-col:hover{color:var(--text);background:rgba(var(--accent-rgb),.10)}
+.fx-col.on{color:var(--text)}
+.fx-arrow{font-size:9px;opacity:.9}
+.fx-c-size,.fx-c-type,.fx-c-modified{justify-content:flex-start}
+/* Rows override the tile chrome: no card border, no rounded corners, no thumbnail box. */
+.files-grid.details .file-card.row{border:0;border-bottom:1px solid var(--line);border-radius:0;
+  background:none;padding:6px 8px;overflow:visible}
+.files-grid.details .file-card.row:hover{background:rgba(var(--accent-rgb),.07)}
+.files-grid.details .file-card.row.selected{background:rgba(var(--accent-rgb),.16);box-shadow:none}
+.files-grid.details .file-card.row.isdir{cursor:pointer}
+/* The checkbox is a normal column here, not an overlay on a photo — so it loses the contrast ring it
+   needs when it sits ON an image. */
+.files-grid.details .file-card.row .selbox{position:static;width:16px;height:16px;box-shadow:none;background:none}
+.fx-name{display:flex;align-items:center;gap:8px;min-width:0;color:var(--text);text-decoration:none}
+.fx-name .fname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.fx-name:hover .fname{color:var(--cyan)}
+.fx-ic{flex:0 0 auto;font-size:17px;line-height:1}
+.fx-size,.fx-type,.fx-mod{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.files-grid.details .file-card.row .fc-acts{display:flex;align-items:center;gap:2px;justify-self:end}
+/* Every action is a plain icon button on a row — the tile view positions .del/.copy absolutely over
+   the thumbnail, which would drop them out of the row entirely. */
+.files-grid.details .file-card.row .del,
+.files-grid.details .file-card.row .copy{position:static;background:none;border:0;padding:4px 6px;line-height:1}
+.files-grid.details .file-card.row .dlbtn,
+.files-grid.details .file-card.row .movebtn,
+.files-grid.details .file-card.row .dlsync{background:none;border:0;color:var(--muted);cursor:pointer;
+  padding:4px 6px;line-height:1}
+.files-grid.details .file-card.row .dlbtn:hover,
+.files-grid.details .file-card.row .movebtn:hover,
+.files-grid.details .file-card.row .dlsync:hover{color:var(--cyan)}
+.files-grid.details .file-card.row.enc{border-bottom-color:rgba(255,210,90,.35)}
+/* A synced folder's TILES: no thumbnails are possible (the bytes are ciphertext), so the icon block
+   carries the whole card and must not keep the 140px photo well. */
+.files-grid .file-card.isdir{cursor:pointer}
+.files-grid .file-card.isdir .file-icon{height:96px;font-size:34px}
+.fc-acts .dlsync{background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:4px 6px;line-height:1}
+.fc-acts .dlsync:hover{color:var(--cyan)}
+
+@media(max-width:820px){
+  /* The sidebar is a horizontal strip on a phone, so the synced section joins the same strip rather
+     than stacking a second scroller under it. */
+  .fx-sec{margin-top:8px;padding-top:8px;flex-direction:row;align-items:center;gap:6px;
+    overflow-x:auto;scrollbar-width:none}
+  .fx-sec::-webkit-scrollbar{display:none}
+  .fx-sec > b{padding:0 4px 0 0;flex:0 0 auto}
+  .fx-secnote{padding:0;flex:0 0 auto}
+  .folder-chip .fx-n{margin-left:6px}
+  /* Type and Modified are the first columns to go: a name and a size are what a phone screen has
+     room for, and a truncated date is worse than no date. */
+  .fx-cols,.files-grid.details .file-card.row{grid-template-columns:24px minmax(0,1fr) 74px var(--fx-acts)}
+  .files-grid.details.nosel .fx-cols,
+  .files-grid.details.nosel .file-card.row{grid-template-columns:minmax(0,1fr) 74px var(--fx-acts)}
+  .fx-c-type,.fx-c-modified,.fx-type,.fx-mod{display:none}
+  /* Everything you tap gets a thumb-sized box. A 27px sort heading and a 27px crumb are the two
+     controls this screen is navigated with. */
+  .fx-crumb{font-size:15px;max-width:150px;display:inline-flex;align-items:center;min-height:36px}
+  .fx-col{min-height:36px}
+  .files-grid.details .file-card.row{min-height:42px}
+  .fx-vw{min-height:38px;min-width:42px}
 }

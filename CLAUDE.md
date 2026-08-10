@@ -469,6 +469,37 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   treated as "not configured" rather than honoured, since the box behind it is gone.
   See `docs/WEBSEARCH.md`; `tests/test_websearch.py` + `scripts/check_websearch_mobile.py` (the
   generic `check_client_mobile.py` never opens this screen).
+- **Folder Sync** (`static/js/client/foldersync.js` + `syncrun.js` + `sync.js`, `desktop/fsbridge.js` /
+  `FolderSyncPlugin.java`; sidebar → Folder Sync): Documents/Pictures kept in step across devices in
+  encrypted Blossom. **Desktop + Android only** — a browser has no filesystem, and Firefox has no File
+  System Access API at all. The split is load-bearing: everything that can get the ANSWER wrong is
+  pure and tested (`diff()`'s three-way merge, the battery policy, the exclusion matcher), everything
+  that can destroy a FILE is a thin platform adapter.
+  **THE PAIR KEY.** `f.id` is the PLATFORM's handle for a directory — random hex on desktop, a SAF
+  tree URI on Android — and is device-local by construction. Keying the manifest on it meant every
+  device wrote and read a DIFFERENT document, so each synced happily with itself and **cross-device
+  sync could not work at all**; every test passed because they all inject the "remote" snapshot by
+  hand, which is the one thing the bug prevents two devices from sharing. It is keyed on `f.key`, the
+  NAME the user gives the pair ("Documents"), the same on every device; the local path stays local,
+  and that IS the per-device mapping. `tests/client/two_device_sim.js` now runs two (and once three)
+  independent devices — own filesystem, own `base`, own platform id — against ONE manifest addressed
+  the way the server addresses it, so this cannot come back silently.
+  **Rules that cost data if changed**, each with a test verified to bite: THREE snapshots (`base` per
+  PATH is what tells "new here" from "deleted there"); a conflict renames the local copy BEFORE
+  writing the incoming one; delete loses to edit both ways; identical bytes arriving independently is
+  NOT a conflict; `base` advances PER FILE and only on success; excluding a folder drops it from ALL
+  THREE snapshots so it is never DELETED elsewhere; nothing is deleted in place (`.pc-trash/<date>/`).
+  **And `base` must be cleared under the key it was WRITTEN under** — it moved to the pair key and
+  "Stop syncing"'s `removeItem` did not, so re-adding a folder started from an agreement claiming
+  files were synced that were no longer on disk, and the engine correctly deleted them everywhere.
+  The manifest goes through the SERVER (`/client/sync-manifest`) purely for the collapse guard — the
+  same one that saved the drive index — because an empty read written back over a full manifest does
+  not lose a setting, it loses the folder. `/client/sync-folders` enumerates the manifests' own
+  d-tags so a device that syncs NOTHING can still browse a folder from Files; there is deliberately
+  no index document, since an index is a second source of truth one empty read can wipe.
+  **Background sync cannot upload and that is not a bug**: every network step is signed by the user's
+  Nostr key, which with Amber/NIP-46 is not on the device — so Android's WorkManager job notices
+  changes and notifies, and opening the app is what syncs. See `docs/FOLDER_SYNC.md`.
 - **Notes** (`static/js/client/notes.js` + `joplin.js`; sidebar → Notes, ☰ More on mobile): private
   encrypted note taking, offline-first. **ONE kind-30078 event PER NOTE** (`d=pcai:note:<id>`,
   folders `pcai:notefolder:<id>`, both tagged `l=pcai-notes` so the library is one indexed

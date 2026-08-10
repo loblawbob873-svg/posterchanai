@@ -4110,6 +4110,65 @@ async def sync_manifest(data: SyncManifestReq, db: Session = Depends(get_db)):
     return JSONResponse({"ok": True})
 
 
+class SyncFoldersReq(BaseModel):
+    pubkey: str
+    auth: str
+
+
+@router.post("/sync-folders")
+async def sync_folders(data: SyncFoldersReq, db: Session = Depends(get_db)):
+    """Every synced folder this ACCOUNT has — the pair keys, with a live file count and when each was
+    last written.
+
+    Nothing enumerated them before. A folder pair exists on the devices that sync it, in each one's
+    own localStorage, so a device that does not sync `Documents` has no way to learn that Documents
+    exists at all — which is why Files could show your drive but not the folders that are the point of
+    the feature. The manifests themselves ARE the list: their d-tags are `pcai:sync:<key>` and the key
+    is the name the user typed, so this reads what is already there rather than adding a second record
+    of it. An index of the folders would be one more replaceable document that one empty read could
+    wipe, and this feature has already paid that bill twice.
+
+    The PATHS are not here and cannot be: they are NIP-44-sealed to the user's own key inside each
+    manifest, so only the client can open them (`n` beside the seal is plaintext because the collapse
+    guard needs a count). This answers "which folders" — the client asks /sync-manifest for "what is
+    in one".
+    """
+    from app.services import nostr_store as store
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    if not _verify_self_auth(data.auth, pk):
+        return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    if not user:
+        return JSONResponse({"ok": True, "folders": []})
+    sk = store.user_storage_seckey(db, user)
+    port = int(_setting(db, "nostr_relay_port", "3052"))
+    try:
+        # strict: "no synced folders" and "the relay did not answer" must not look the same. The
+        # client draws the first as an empty sidebar section and the second as an error — telling
+        # someone their folders are gone because a socket blinked is the reading to avoid.
+        docs = await store.list_docs(port, "pcai:sync:", seckey=sk, strict=True, with_meta=True)
+    except Exception as e:
+        logger.warning("[client] sync-folders: unreadable: %s", e)
+        return JSONResponse({"ok": False, "error": "folder list unavailable"}, status_code=503)
+    out = []
+    for d_tag, (doc, at) in docs.items():
+        key = d_tag[len("pcai:sync:"):]
+        if not key:
+            continue
+        doc = doc if isinstance(doc, dict) else {}
+        # `n` is the count the collapse guard reads. Pre-seal manifests kept the paths in the clear,
+        # so fall back to counting them — those documents are still perfectly readable.
+        n = doc.get("n")
+        if n is None:
+            paths = doc.get("paths") or {}
+            n = sum(1 for p in paths.values() if isinstance(p, dict) and not p.get("deletedAt"))
+        out.append({"key": key, "n": int(n or 0), "updated_at": int(at or 0)})
+    out.sort(key=lambda f: f["key"].lower())
+    return JSONResponse({"ok": True, "folders": out})
+
+
 class FilesIndexReq(BaseModel):
     pubkey: str
     auth: str
