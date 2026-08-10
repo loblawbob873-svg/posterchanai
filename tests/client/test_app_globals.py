@@ -1,0 +1,69 @@
+"""app.js must not reference `PC` — the name exists in every OTHER client module and not in that one.
+
+Run: venv-unified/bin/python -m unittest tests.client.test_app_globals
+
+sync.js, notes.js, calendar.js and the rest all open with `const PC = window.__PC || {}`, so `PC.foo`
+is idiomatic across this codebase. app.js is where that object is BUILT — it assigns straight to
+`window.__PC` and never binds `PC` — so the identical line is a ReferenceError there, and one that
+only fires when the code path runs.
+
+It shipped: `PC.syncBlobs.CHUNK` inside the chunked-upload helper, which is reached only by a file
+over 64 MB. Every large upload failed with `upload: PC is not defined` while everything else worked,
+so nothing about the sweep looked wrong until someone read the failure list.
+
+There is no linter over this file — it is a 25k-line IIFE — and pyflakes has no JavaScript
+equivalent here, so this is the cheapest thing that catches the whole class.
+"""
+
+import os
+import re
+import unittest
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+APP = os.path.join(REPO, "static", "js", "client", "app.js")
+
+
+def _strip_comments_and_strings(src: str) -> str:
+    """Crude but adequate: block comments, line comments, then quoted runs.
+
+    Deliberately not a JS parser. A false NEGATIVE here (a real `PC.` hidden inside something this
+    mangles) is possible; a false POSITIVE is what would make the test annoying, and stripping is
+    what prevents those.
+    """
+    src = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+    src = re.sub(r"(?m)^\s*//.*$", " ", src)
+    src = re.sub(r"(?m)\s//[^\n]*$", " ", src)
+    src = re.sub(r"'(?:\\.|[^'\\\n])*'", "''", src)
+    src = re.sub(r'"(?:\\.|[^"\\\n])*"', '""', src)
+    src = re.sub(r"`(?:\\.|[^`\\])*`", "``", src, flags=re.S)
+    return src
+
+
+class TestAppJsHasNoPCBinding(unittest.TestCase):
+    def test_app_js_never_uses_PC_dot(self):
+        code = _strip_comments_and_strings(open(APP, encoding="utf-8").read())
+        # `PC.` not preceded by a word char, a dot or an underscore — so window.__PC, _PC and PCSync
+        # are all left alone; only a bare `PC.something` is a finding.
+        hits = [m.start() for m in re.finditer(r"(?<![\w.$_])PC\.", code)]
+        if hits:
+            lines = sorted({code[:h].count("\n") + 1 for h in hits})
+            self.fail(
+                "app.js references a bare `PC.` at line(s) %s. That name is bound in the other client "
+                "modules but NOT here — app.js builds the object and assigns it to window.__PC — so "
+                "this is a ReferenceError the moment the line runs. Use a module-level value instead."
+                % lines)
+
+    def test_the_check_can_actually_see_one(self):
+        """A stripper this crude could silently mangle the file into nothing, and then the test above
+        passes for ever without looking at anything."""
+        planted = _strip_comments_and_strings("function f(){ return PC.syncBlobs.CHUNK; }")
+        self.assertTrue(re.search(r"(?<![\w.$_])PC\.", planted),
+                        "the comment/string stripper is eating real code")
+
+    def test_window_dunder_pc_is_not_a_finding(self):
+        for ok in ["window.__PC = {", "window.__PC.syncBlobs.get(sha)", "_PC.foo", "PCSync.paint()"]:
+            self.assertIsNone(re.search(r"(?<![\w.$_])PC\.", _strip_comments_and_strings(ok)), ok)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -14464,6 +14464,11 @@
    * method — has to fall through to the real upload: sending bytes that were already there is
    * wasted bandwidth, while skipping bytes that were NOT there is a manifest entry pointing at a
    * blob nobody has, i.e. a file that is silently missing from every other device. */
+  /* How much of a big file is in memory at once. A module-level constant, NOT a property read back
+   * off the exported object: inside app.js there is no `PC` binding — the object is assigned straight
+   * to window.__PC — so `PC.syncBlobs.CHUNK` threw ReferenceError on the first chunked upload and
+   * took every one of them with it. */
+  const _SYNC_CHUNK = 32 * 1024 * 1024;
   async function _blobAlreadyStored(sha){
     try{
       const r = await fetch(mediaServer() + '/' + sha, { method:'HEAD', cache:'no-store' });
@@ -25317,10 +25322,10 @@
        *   - `sha` stays meaningful: it is the hash OF THE CHUNK LIST, so the engine's same() compares
        *     content exactly as before and nothing in foldersync.js has to know chunking exists.
        */
-      CHUNK: 32 * 1024 * 1024,
+      CHUNK: _SYNC_CHUNK,
       async putParts(readPart, size, onProgress){
         const mk = await FilesIdx._ensureMK();
-        const CH = PC.syncBlobs.CHUNK;
+        const CH = _SYNC_CHUNK;
         const chunks = [];
         let existed = true;
         for(let off = 0; off < size; off += CH){
