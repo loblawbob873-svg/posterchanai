@@ -191,5 +191,42 @@ class TestUploadsAreFiledSafely(unittest.TestCase):
         self.assertIn("folder:'Posts'", src)
 
 
+class TestParkedTimelineKeepsLivePosts(unittest.TestCase):
+    """Desktop mode parks an unfocused window: its DOM leaves #feed and VIEW goes to whichever window
+    took focus. Every painter keys on VIEW, so the timeline is alive and on screen in another window
+    while VIEW says 'profile'.
+
+    flushLive drained its buffer with a splice and THEN returned on that VIEW check, so the posts
+    were not deferred, they were destroyed — and nothing backfills, because markEosed only draws on
+    the first EOSE. Refocusing showed exactly what it showed before: "not showing new posts when
+    other window is focused".
+    """
+
+    def test_flush_live_does_not_drop_a_parked_window_s_posts(self):
+        src = open(APP, encoding="utf-8").read()
+        i = src.index("function flushLive()")
+        body = src[i:i + 1600]
+        self.assertIn("_tlParked()", body,
+                      "flushLive must keep live posts when the timeline is parked in an unfocused "
+                      "desktop-mode window; the splice above has already emptied the buffer, so an "
+                      "early return here deletes them")
+        self.assertIn("_livePending.push(ev)", body)
+
+    def test_they_are_buffered_in_the_first_place(self):
+        """The subscription's own handler gates on VIEW too, so without this there is nothing for
+        flushLive to keep."""
+        src = open(APP, encoding="utf-8").read()
+        self.assertIn("(VIEW===view || _tlParked())", src)
+
+    def test_parked_means_alive_but_not_current(self):
+        src = open(APP, encoding="utf-8").read()
+        i = src.index("function _tlParked()")
+        body = src[i:i + 300]
+        for needle in ("window.PCOS", "tl-notes"):
+            self.assertIn(needle, body,
+                          "parked is 'the timeline DOM exists while VIEW is elsewhere, in desktop "
+                          "mode' — any looser test would buffer for a timeline that is simply gone")
+
+
 if __name__ == "__main__":
     unittest.main()

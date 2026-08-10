@@ -3924,7 +3924,7 @@
       // Only prepend as "live" if it's genuinely new — NOT a backfilled/synced event with an old
       // created_at (those jump to the top as if new). kind-5 deletions are NOT posts (render blank) —
       // watchDeletions handles them, so keep them out of the prepend. A small grace covers skew.
-      if (VIEW===view && ev.kind!==5 && _TL_KINDS.includes(ev.kind) && _tl.eosed && ev.created_at >= _liveSince-120) _bufferLive(ev, fn); } };
+      if ((VIEW===view || _tlParked()) && ev.kind!==5 && _TL_KINDS.includes(ev.kind) && _tl.eosed && ev.created_at >= _liveSince-120) _bufferLive(ev, fn); } };
     // Draw ONLY on the first EOSE. The relay re-EOSEs on reconnect; redrawing then wipes the feed.
     const markEosed = ()=>{ if(VIEW===view && !_tl.eosed){ _tl.eosed=true; _drawTimeline(false); } };
     // Re-entrancy token: a slow async negSync that resolves AFTER the user re-navigated (or re-rendered)
@@ -3977,9 +3977,34 @@
   let _liveBuf=[], _liveT=null, _liveFn=null, _livePending=[];
   const _LIVE_READ_PX=400;   // once scrolled this far down we stop auto-prepending (see below)
   function _bufferLive(ev, fn){ _liveFn=fn; _liveBuf.push(ev); if(!_liveT) _liveT=setTimeout(flushLive, 1800); }
+  /* Is the timeline PARKED in an unfocused desktop-mode window?
+   *
+   * Desktop mode moves an unfocused window's DOM out of #feed into its own slot and hands the VIEW
+   * global to whichever window took focus. So `VIEW` says 'profile' while the timeline is alive and
+   * on screen in another window — and every painter keys on VIEW. `#tl-notes` existing while VIEW is
+   * not a timeline view is exactly that state and nothing else. */
+  function _tlParked(){
+    return !!(window.PCOS && VIEW!=='home' && VIEW!=='global' && document.getElementById('tl-notes'));
+  }
   function flushLive(){
     _liveT=null; const evs=_liveBuf.splice(0);
-    if((VIEW!=='home'&&VIEW!=='global') || !evs.length) return;
+    if(!evs.length) return;
+    if(VIEW!=='home'&&VIEW!=='global'){
+      /* KEEP them. The buffer has already been drained by the splice above, so returning here does
+       * not defer these posts — it destroys them, and nothing ever backfills: markEosed only draws
+       * on the FIRST EOSE, so refocusing the timeline showed exactly what it showed before. That is
+       * "not showing new posts when other window is focused" in desktop mode.
+       *
+       * Parked they go to the pending list, which is the same place the "↑ N new posts" pill reads —
+       * so the count is already right when the window comes back, and clicking it prepends them. The
+       * DOM they belong to travels back with the window, pill included. */
+      if(_tlParked()){
+        for(const ev of evs) _livePending.push(ev);
+        if(_livePending.length>300) _livePending=_livePending.slice(-300);
+        _updateNewPostsPill();
+      }
+      return;
+    }
     const feed=$('#feed'); if(!feed) return;
     if(_tlMedia) return;   // media grid doesn't live-prepend (would break the grid) — new images show on redraw/re-entry
     // While the user is reading below the top, DON'T mutate the timeline under them (prepending +
