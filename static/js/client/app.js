@@ -13952,11 +13952,17 @@
   async function renderBlossom(){
     const feed=$('#feed');
     feed.innerHTML=`<div class="files-tabs">
-        <button class="ftab${_filesTab==='public'?' active':''}" data-ft="public"><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg>Public</button>
+        <button class="ftab${_filesTab==='public'?' active':''}" data-ft="public"><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg>My Files</button>
         ${_standalone()?'':`<button class="ftab${_filesTab==='ai'?' active':''}" data-ft="ai"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>AI Chat</button>`}
         ${IS_ADMIN?`<button class="ftab${_filesTab==='admin'?' active':''}" data-ft="admin"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shield"></use></svg>Admin</button>`:''}
       </div><div id="files-pane"></div>`;
-    $$('.ftab',feed).forEach(b=> b.onclick=()=>{ _filesAdminPk=null; _filesTab=b.dataset.ft; renderBlossom(); });
+    /* Clicking the tab you are already on RESETS it to the folder list, the way clicking Files in
+     * the sidebar does. Landing back where you last were is right for navigating INTO something and
+     * wrong for pressing the top-level tab, which reads as "take me back to the start". */
+    $$('.ftab',feed).forEach(b=> b.onclick=()=>{
+      _filesAdminPk=null;
+      if(b.dataset.ft==='public'){ _syncRoot=''; _syncPath=''; _filesFolder=null; }
+      _filesTab=b.dataset.ft; renderBlossom(); });
     const pane=$('#files-pane',feed);
     // A remembered tab can name one that is no longer drawn (the AI tab, with no server) — the same
     // reason switchView re-checks a view the nav has stopped offering.
