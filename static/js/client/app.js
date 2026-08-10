@@ -9470,6 +9470,17 @@
     if(!p || typeof p!=='object') return '';
     const direct = p.monero_address || p.xmr || p.monero || p.xmr_address;
     if(direct && isXmrAddr(direct)) return String(direct).trim();
+    /* `cryptocurrency_addresses` — a MAP of coin name → address, which is the shape Garnet uses (the
+     * Amethyst fork that added Monero tipping; stock Amethyst has no Monero support at all). Someone
+     * whose address only appears in that map would otherwise be untippable here, which is the same
+     * one-client-one-key problem the flat aliases above already exist to avoid. */
+    const map = p.cryptocurrency_addresses;
+    if(map && typeof map==='object'){
+      for(const k of ['monero','xmr','XMR','Monero']){
+        const v = map[k];
+        if(typeof v==='string' && isXmrAddr(v)) return v.trim();
+      }
+    }
     for(const k in p){ const v=p[k]; if(typeof v==='string' && isXmrAddr(v)) return v.trim(); }
     for(const k of ['about','website']){ const v=p[k]; if(typeof v==='string'){ const m=v.match(_XMR_RX); if(m && isXmrAddr(m[0])) return m[0]; } }
     return '';
@@ -19759,9 +19770,30 @@
         const _xmrWas = xmrOf(p), _bchWas = bchDirect(p);
         if(_xmr){
           meta.xmr=_xmr; meta.monero_address=_xmr;
+          /* …and the MAP form, so a Garnet reader (the Amethyst fork with Monero tipping — stock
+           * Amethyst has none) sees it. Reported as "I added a Monero address with poster.place and
+           * it doesn't show up in Amethyst": the address was written correctly, to keys that client
+           * does not read. Merged into whatever else is in the map rather than replacing it — the
+           * same rule as the aliases below, since the other coins in there are not ours to manage. */
+          if(_xmr !== _xmrWas){
+            const _m = (p.cryptocurrency_addresses && typeof p.cryptocurrency_addresses==='object')
+              ? Object.assign({}, p.cryptocurrency_addresses) : {};
+            _m.monero = _xmr;
+            meta.cryptocurrency_addresses = _m;
+          }
           if(_xmr !== _xmrWas) delete meta.monero;
         } else if(_xmrWas){
           delete meta.xmr; delete meta.monero_address; delete meta.monero;
+          /* Clearing has to reach the MAP too, or a stale address stays live under a key we no
+           * longer write and money goes to the wrong place — the reason the aliases are folded in
+           * on a change. The map itself is only dropped when Monero was the last thing in it; the
+           * other coins there belong to whatever client put them there. */
+          if(p.cryptocurrency_addresses && typeof p.cryptocurrency_addresses==='object'){
+            const _m = Object.assign({}, p.cryptocurrency_addresses);
+            for(const k of ['monero','xmr','XMR','Monero']) delete _m[k];
+            if(Object.keys(_m).length) meta.cryptocurrency_addresses = _m;
+            else delete meta.cryptocurrency_addresses;
+          }
         }
         if(_bch){
           meta.bch=_bch; meta.bitcoincash_address=_bch;
