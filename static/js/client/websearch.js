@@ -209,19 +209,23 @@
     }
 
     // ---- the reader --------------------------------------------------------------------------
-    // Opening a result shows the PAGE. The extracted text is fetched only if the reader is actually
-    // switched to Reader (or Summarize asks for it) — in page mode that request buys nothing, and it
-    // is a second full fetch of the same URL through this node.
-    async function openReader(r){
+    /* A RESULT OPENS IN THE USER'S BROWSER. It is someone else's page, and re-serving it from our
+     * origin — which is what the old in-app frame did — meant inheriting every way that can go wrong:
+     * a site that breaks without its scripts, a login that cannot complete, a video that will not
+     * play, a link inside the frame with nowhere sane to go. Reported as "too many issues opening
+     * links in the posterchan window/app". The browser already solves all of it.
+     *
+     * What survives is TEXT: the reader now has one mode, the extracted article, which is ours to
+     * render and carries none of those problems. Summarize and Save to Notes read the same text. */
+    function openResult(r){
+      if(r && r.url && PC.openExternal(r.url)) return;
+      toast('couldn’t open that link');
+    }
+    function openReader(r){
       S.scroll = scrollTop();                              // remember where the results were
-      S.reader = { url:r.url, title:r.title, mode:'page', content:'', error:'', loading:false, scroll:0 };
-      // In the bundled apps the frame needs its ticket BEFORE it is painted, or the first load 401s
-      // and the user sees an empty page they then have to back out of. One request per 15 minutes.
-      if(bundled()){
-        try{ await ensureTicket(); }catch(_){}
-        if(!S.reader || S.reader.url !== r.url) return;    // they moved on while we asked
-      }
+      S.reader = { url:r.url, title:r.title, content:'', error:'', loading:false, scroll:0 };
       paint();
+      loadText();
     }
     async function loadText(){
       const r = S.reader;
@@ -238,13 +242,6 @@
         if(S.reader && S.reader.url === r.url){ S.reader.loading = false; paint(); }
       }
     }
-    function toggleMode(){
-      const r = S.reader; if(!r) return;
-      r.mode = (r.mode === 'text') ? 'page' : 'text';
-      r.scroll = 0;                       // the two modes are different documents; don't cross the offsets
-      paint();
-      if(r.mode === 'text') loadText();
-    }
     /* An image result, in the app's own lightbox — with the whole page of results as its pager, so
      * ←/→ walk the search the way they walk a post's gallery. */
     function openImage(i){
@@ -258,9 +255,9 @@
                         { items: shots.map(x => ({ src:x.src, kind:null })), i: at });
         return;
       }
-      // No lightbox on this build (an older bundled client): the page it came from is the next best
-      // thing, and it is still IN the app.
-      openReader(r);
+      // No lightbox on this build (an older bundled client): open the page it came from, in the
+      // browser — the same place every other result now goes.
+      openResult(r);
     }
     function closeReader(){
       if(!S.reader) return false;
@@ -336,10 +333,11 @@
     function resultCard(r, i){
       const url = safeUrl(r.url);
       const thumb = safeUrl(r.thumbnail);
-      // No "Read here" button: the title — and the card — already open the page, and a fourth action
-      // per result wrapped onto a second row on a phone, which is most of what made a page of results
-      // read as a wall of buttons.
+      /* "Read here" EARNS its place now that it is the only thing that stays in the app. The title
+       * and the card open the real page in the browser; this is the one that does not, and without
+       * it the extracted-text view — which Summarize and Notes are built on — has no way in. */
       const acts = `<div class="ws-acts">
+          <button class="btn btn-ghost small ws-read" data-i="${i}">📄 Read here</button>
           <button class="btn btn-ghost small ws-share" data-i="${i}">↗ Share</button>
           <button class="btn btn-ghost small ws-note" data-i="${i}">📓 Notes</button>
           ${aiOff() ? '' : `<button class="btn btn-ghost small ws-sum" data-i="${i}">✨ Summarize</button>`}
@@ -457,115 +455,34 @@
       return `${answers}<div id="ws-ov-slot">${overviewCard()}</div>${list}${sugg}${more}`;
     }
 
-    /* The opened result.
+    /* The opened result — its TEXT.
      *
-     * TWO modes, and PAGE is the default: clicking a search result should give you the page, laid
-     * out the way its author laid it out. The extracted-text mode is still there behind "Reader",
-     * because it is the better answer for a wall of ads around four paragraphs — but it is not what
-     * "open this result" means, and a screen full of stripped paragraphs reads as broken.
+     * There used to be a second mode that FRAMED the page from our own origin
+     * (/api/websearch/page), because most sites refuse to be framed at all. It worked, and it
+     * inherited every problem a re-served page has: sites that break without their scripts, logins
+     * that cannot complete, players that will not play, and links inside the frame with nowhere sane
+     * to go. Reported as "too many issues opening links in the posterchan window/app", and the
+     * browser already solves all of it — so a result now opens in a real tab (see openResult) and
+     * this screen keeps only the part that is genuinely ours to render.
      *
-     * The page is framed from OUR origin (/api/websearch/page) rather than pointed straight at the
-     * site, because most sites refuse to be framed at all (X-Frame-Options / frame-ancestors). The
-     * endpoint strips everything that executes and serves a no-script CSP, so the frame lays itself
-     * out and does nothing else.
+     * The server endpoint is deliberately left in place: an older cached client or an installed APK
+     * still asks for it, and removing it would break their reader rather than upgrade it.
      */
-    /* The frame's key.
-     *
-     * On the WEB the frame is same-origin and the session cookie rides along, so nothing goes in the
-     * URL at all — which matters, because the URL is what nginx and Cloudflare write to their logs.
-     * Only the BUNDLED shells (app://posterchan, the APK WebView) need a value, and what they get is
-     * a ticket: 15 minutes, this endpoint only, useless for anything else. The session JWT never
-     * goes near a query string.
-     */
-    let _ticket = { v:'', exp:0 };
-    const bundled = () => { try{ const b = PC.apiBase && PC.apiBase(); return !!b && b !== location.origin; }
-                            catch(_){ return false; } };
-    async function ensureTicket(){
-      if(!bundled()) return '';
-      if(_ticket.v && Date.now() < _ticket.exp) return _ticket.v;
-      try{
-        const r = await jsonPost('/api/websearch/ticket', {});
-        _ticket = { v: r.ticket || '', exp: Date.now() + Math.max(60, (r.expires_in || 900) - 60) * 1000 };
-      }catch(_){ _ticket = { v:'', exp:0 }; }
-      return _ticket.v;
-    }
-    /* A VIDEO result PLAYS, rather than showing the site's script-only page.
-     *
-     * YouTube's watch page is an application: with scripts off it is a blank rectangle, and no amount
-     * of proxying changes that — a player IS its scripts. But these sites all publish an EMBED meant
-     * to be framed by other people, so that is what a video result gets, straight from the site.
-     * (-nocookie for YouTube: the same URL every privacy-minded embed uses.)
-     */
-    function embedUrl(u){
-      try{
-        const x = new URL(u);
-        const h = x.hostname.replace(/^www\./, '');
-        if(h === 'youtube.com' || h === 'm.youtube.com'){
-          const v = x.searchParams.get('v');
-          if(v) return 'https://www.youtube-nocookie.com/embed/' + encodeURIComponent(v);
-          const m = x.pathname.match(/^\/(?:shorts|embed|live)\/([\w-]+)/);
-          if(m) return 'https://www.youtube-nocookie.com/embed/' + m[1];
-        }
-        if(h === 'youtu.be'){
-          const id = x.pathname.slice(1).split('/')[0];
-          if(id) return 'https://www.youtube-nocookie.com/embed/' + encodeURIComponent(id);
-        }
-        if(h === 'vimeo.com'){
-          const id = (x.pathname.match(/\/(\d+)/) || [])[1];
-          if(id) return 'https://player.vimeo.com/video/' + id;
-        }
-        if(h === 'odysee.com') return u.replace('odysee.com/', 'odysee.com/$/embed/');
-      }catch(_){}
-      return '';
-    }
-    function pageUrl(u){
-      // ABSOLUTE against the instance, never root-relative. The bundled desktop app and the APK serve
-      // this page from app://posterchan (or the WebView's own origin) and rewrite fetch() through a
-      // shim — but an <iframe src> is a NAVIGATION, which the shim never sees, so a root-relative URL
-      // resolves against the bundle and the frame comes up blank ("Blocked script execution in
-      // 'app://posterchan/api/websearch/page…'" on Windows).
-      let base = '';
-      try{ base = (PC.apiBase && PC.apiBase()) || ''; }catch(_){}
-      let s = base + '/api/websearch/page?url=' + encodeURIComponent(u);
-      if(_ticket.v && Date.now() < _ticket.exp) s += '&t=' + encodeURIComponent(_ticket.v);
-      return s;
-    }
     function readerView(){
       const r = S.reader;
       const url = safeUrl(r.url);
-      const isPage = r.mode !== 'text';
-      const embed = isPage ? embedUrl(r.url) : '';
-      const body = embed
-        // The site's OWN player, framed straight from the site — NOT through our proxy, which strips
-        // the scripts a player is made of. This is the ordinary thing any page embedding a video
-        // does, and it is why a video result plays instead of showing a script-only shell.
-        ? `<iframe class="ws-frame" id="ws-frame" src="${enc(embed)}" allowfullscreen
-                   referrerpolicy="no-referrer"
-                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture; fullscreen"
-                   title="${enc(r.title || host(url))}"></iframe>`
-        : isPage
-        /* allow-same-origin is BACK, and it is not a loosening: without it the frame gets an opaque
-         * origin, and a page's own fonts and CORS-fetched images are then refused ("blocked by CORS
-         * policy … from origin 'null'" — measured on apple.com), so the page renders half-dressed.
-         * What actually keeps this safe is the response's CSP: `default-src 'none'` with no
-         * script-src at all, plus every script, handler and form stripped server-side. The document
-         * is inert markup; giving inert markup our origin buys it nothing. */
-        ? `<iframe class="ws-frame" id="ws-frame" src="${enc(pageUrl(r.url))}"
-                   sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-                   referrerpolicy="no-referrer" title="${enc(r.title || host(url))}"></iframe>`
-        : (r.loading ? '<div class="spinner"></div>'
-           : r.error ? `<div class="ws-err">${enc(r.error)} — the page is still there, open it in a tab.</div>`
-           : `<div class="ws-rtext">${r.content.split(/\n+/).filter(l=>l.trim()).map(l=>`<p>${enc(l)}</p>`).join('')}</div>`);
-      return `<div class="ws-reader${isPage ? ' ws-reader-page' : ''}">
+      const body = r.loading ? '<div class="spinner"></div>'
+        : r.error ? `<div class="ws-err">${enc(r.error)} — the page is still there; ↗ Open reads it in your browser.</div>`
+        : `<div class="ws-rtext">${r.content.split(/\n+/).filter(l=>l.trim()).map(l=>`<p>${enc(l)}</p>`).join('')}</div>`;
+      return `<div class="ws-reader">
         <div class="ws-rbar">
           <button class="btn btn-ghost small ws-back" id="ws-back">← Results</button>
           <div class="ws-rsrc" title="${enc(url)}">${enc(host(url))}</div>
           <div class="ws-rbar-acts">
-            <button class="btn btn-ghost small" id="ws-mode">${isPage ? '📄 Reader' : '🖼 Page'}</button>
-            <a class="btn btn-ghost small" href="${enc(url||'#')}" target="_blank" rel="noopener noreferrer">↗ Open</a>
+            <button class="btn btn-ghost small" id="ws-open">↗ Open</button>
           </div>
         </div>
-        ${isPage ? '' : `<h2 class="ws-rtitle">${enc(r.title || host(url))}</h2>`}
+        <h2 class="ws-rtitle">${enc(r.title || host(url))}</h2>
         <div class="ws-acts ws-racts">
           <button class="btn btn-ghost small" id="ws-r-share">↗ Share</button>
           <button class="btn btn-ghost small" id="ws-r-note">📓 Notes</button>
@@ -604,17 +521,14 @@
       if(more) more.onclick = ()=>{ if(S.loading) return; S.page += 1; runSearch(true); };
 
       const at = i => S.results[+i];
-      // A plain left click reads it here; ctrl/cmd/middle-click keeps the browser's own behaviour,
-      // because the title IS a real link and people expect one to open in a tab.
-      $$('.ws-title', root).forEach(a => a.onclick = (e)=>{
-        if(e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
-        e.preventDefault(); const r = at(a.dataset.i); if(r) openReader(r);
-      });
-      // The whole card opens the result — the actions stop the click themselves, and the title is a
-      // real link so ctrl/⌘/middle-click still gets a tab.
+      /* A RESULT OPENS IN THE BROWSER. The title is a real <a target="_blank">, so a plain click
+       * needs no handler at all and ctrl/⌘/middle-click already do the right thing — anything we add
+       * here can only get in the way of behaviour the browser has correct. */
+      // The whole card is the target too, since most of a result is not the title. The actions stop
+      // their own clicks, and a click that landed on the anchor is already handled by being one.
       $$('.ws-card', root).forEach(card => card.onclick = (e)=>{
         if(e.target.closest('a, button')) return;
-        const r = at(card.dataset.i); if(r) openReader(r);
+        const r = at(card.dataset.i); if(r) openResult(r);
       });
       // Images: the picture in the app's lightbox (with the whole page of results as its pager), the
       // ⧉ button for the page it came from. Modified clicks are left alone — that is the browser's.
@@ -625,8 +539,9 @@
       });
       $$('.ws-imgpg', root).forEach(b => b.onclick = (e)=>{
         e.preventDefault(); e.stopPropagation();
-        const r = at(b.dataset.i); if(r) openReader(r);
+        const r = at(b.dataset.i); if(r) openResult(r);   // the page it came from — in the browser
       });
+      $$('.ws-read', root).forEach(b => b.onclick = ()=>{ const r = at(b.dataset.i); if(r) openReader(r); });
       $$('.ws-share', root).forEach(b => b.onclick = ()=>{ const r = at(b.dataset.i);
         if(r) compose({ text: (r.title||'') + '\n\n' + r.url }); });
       $$('.ws-note', root).forEach(b => b.onclick = ()=>{ const r = at(b.dataset.i); if(!r) return;
@@ -641,7 +556,7 @@
     function wireReader(root){
       const r = S.reader;
       const back = $('#ws-back', root); if(back) back.onclick = closeReader;
-      const md = $('#ws-mode', root); if(md) md.onclick = toggleMode;
+      const op = $('#ws-open', root); if(op) op.onclick = ()=> openResult(r);
       const sh = $('#ws-r-share', root);
       if(sh) sh.onclick = ()=> compose({ text: (r.title||'') + '\n\n' + r.url });
       const nt = $('#ws-r-note', root);

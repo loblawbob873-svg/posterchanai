@@ -25,7 +25,12 @@ Assertions, each a way THIS screen breaks:
                         lose the query, the results, or where you were in them. #feed is shared by
                         every view and app.js blanks it on entry, so a screen that keeps its results
                         in the DOM has already lost them.
-  reader-dead-end       Opening a result must show the PAGE (an iframe of it, which is what "open
+  opens-in-app          A RESULT MUST LEAVE THE APP. Clicking a result opens the real site in the
+                        user's browser — re-serving someone else's page from our origin inherited
+                        every way that can go wrong (scripts stripped, logins that cannot complete,
+                        players that will not play), reported as "too many issues opening links in
+                        the posterchan window/app". The card must not mount an in-app frame.
+  reader-dead-end       "Read here" must show the extracted TEXT (an iframe of it, which is what "open
                         this result" means) with a way back to the results — a phone has no second
                         pane and no browser chrome to fall back on. The text-only Reader mode must
                         still be one tap away, and the frame must be a definite size: an <iframe>
@@ -74,7 +79,7 @@ const $  = (s,r)=> (r||document).querySelector(s);
 const $$ = (s,r)=> Array.from((r||document).querySelectorAll(s));
 const enc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 window.__view = 'websearch';
-window.__toasts = [];
+window.__toasts = []; window.__opened = [];
 // A long, unbroken URL and title — the shape that pushes a page sideways.
 const LONG = 'https://example.com/some/extremely/long/path/that/never/breaks/anywhere-at-all/'
            + 'because-real-urls-do-not-contain-spaces-1234567890';
@@ -110,6 +115,12 @@ window.__PC = {
     $('#modal-root').appendChild(bg); if(onMount) onMount(bg.querySelector('.modal')); },
   closeModal: () => { const m=$('#modal-root .modal-bg'); if(m) m.remove(); },
   authFetch: (u,o) => window.fetch(u,o),
+  // The REAL one (app.js) tries window.open and falls back to a synthetic anchor click for the
+  // WebView, which returns null from window.open. The stub keeps that shape so the check can see
+  // where a result was pointed; a stub missing it is indistinguishable, from inside the module,
+  // from a result that opened nothing.
+  openExternal: (u) => { if(!/^https?:\/\//i.test(String(u||''))) return false;
+                         window.__opened.push(String(u)); return true; },
   ensureAiSession: async () => ({ can_ai:true }),
   switchView: v => { window.__view = v; },
   get ME(){ return {pubkey:'me'}; },
@@ -194,39 +205,44 @@ LEAVE_AND_RETURN = r"""(async () => {
 })()"""
 
 # The card itself opens the result now — there is no separate "Read here" button to click.
-OPEN_READER = r"""(async () => {
+# Clicking a RESULT must leave the app. window.open is stubbed so the check can see where it was
+# pointed without a real tab opening in the harness.
+OPEN_RESULT = r"""(async () => {
   const feed = document.getElementById('feed');
   feed.scrollTop = 350;
   await new Promise(r=>setTimeout(r,150));
+  window.__opened.length = 0;
   const card = document.querySelector('.ws-card');
   if (!card) return {error:'no result card to open'};
   card.click();
-  for (let i=0;i<60 && !document.querySelector('.ws-frame'); i++) await new Promise(r=>setTimeout(r,50));
+  await new Promise(r=>setTimeout(r,400));
+  return { opened: window.__opened.slice(),
+           inAppFrame: !!document.querySelector('.ws-frame'),
+           reader: !!document.querySelector('.ws-reader'),
+           titleIsBlank: !!document.querySelector('.ws-title[target="_blank"]') };
+})()"""
+
+# …and "Read here" is the one control that stays in the app, showing the extracted text.
+OPEN_READER = r"""(async () => {
+  const b = document.querySelector('.ws-read');
+  if (!b) return {error:'no "Read here" action on a result'};
+  b.click();
+  for (let i=0;i<80 && !document.querySelector('.ws-rtext p, .ws-err'); i++) await new Promise(r=>setTimeout(r,50));
   await new Promise(r=>setTimeout(r,250));
-  const fr = document.querySelector('.ws-frame');
   const nav = document.querySelector('.mobilenav');
   const vis = el => el && (!el.checkVisibility || el.checkVisibility());
   return { reader: !!document.querySelector('.ws-reader'),
            back: !!document.querySelector('#ws-back'),
-           frame: !!fr,
-           frameH: fr ? Math.round(fr.getBoundingClientRect().height) : 0,
-           frameBottom: fr ? Math.round(fr.getBoundingClientRect().bottom) : 0,
+           frame: !!document.querySelector('.ws-frame'),
+           paras: document.querySelectorAll('.ws-rtext p').length,
+           err: !!document.querySelector('.ws-err'),
            navTop: (nav && vis(nav)) ? Math.round(nav.getBoundingClientRect().top) : window.innerHeight,
-           mode: !!document.querySelector('#ws-mode'),
-           original: !!document.querySelector('.ws-rbar a[target="_blank"]'),
+           original: !!document.querySelector('#ws-open'),
            readerOpen: !!(window.PCWebSearch.readerOpen && window.PCWebSearch.readerOpen()) };
 })()"""
 
 # …and the text mode has to still be reachable, since a page the frame renders badly is exactly when
 # you want it.
-TOGGLE_READER = r"""(async () => {
-  const b = document.querySelector('#ws-mode');
-  if (!b) return {error:'no Page/Reader toggle'};
-  b.click();
-  for (let i=0;i<60 && !document.querySelector('.ws-rtext p'); i++) await new Promise(r=>setTimeout(r,50));
-  return { paras: document.querySelectorAll('.ws-rtext p').length,
-           frame: !!document.querySelector('.ws-frame') };
-})()"""
 
 BACK_TO_RESULTS = r"""(async () => {
   const feed = document.getElementById('feed');
@@ -381,47 +397,41 @@ async def drive(url):
                         problems.append((label, "state-lost",
                                          f"came back at {round(st['scroll'])}px instead of {round(st['wasScroll'])}px"))
 
-                # A result opens IN the app, and comes back to where you were.
+                # A result LEAVES the app.
+                op = await js(OPEN_RESULT, awaited=True)
+                if not op or op.get("error"):
+                    problems.append((label, "opens-in-app", f"could not click a result ({(op or {}).get('error')})"))
+                else:
+                    if not op["opened"]:
+                        problems.append((label, "opens-in-app",
+                                         "clicking a result opened nothing externally"))
+                    if op["inAppFrame"] or op["reader"]:
+                        problems.append((label, "opens-in-app",
+                                         "clicking a result mounted an in-app view instead of a browser tab"))
+                    if not op["titleIsBlank"]:
+                        problems.append((label, "opens-in-app",
+                                         'the title is not a target="_blank" link, so ctrl/middle-click loses its tab'))
+
+                # …and "Read here" shows the extracted text, with a way back.
                 rd = await js(OPEN_READER, awaited=True)
                 if not rd or rd.get("error"):
-                    problems.append((label, "reader-dead-end", f"could not open a result ({(rd or {}).get('error')})"))
+                    problems.append((label, "reader-dead-end", f"could not open the reader ({(rd or {}).get('error')})"))
                 else:
-                    if not rd["reader"] or not rd["frame"]:
-                        problems.append((label, "reader-dead-end", "opening a result showed no page"))
+                    if rd["frame"]:
+                        problems.append((label, "reader-dead-end",
+                                         "the reader mounted an iframe — it is text-only now"))
+                    if not rd["reader"] or (not rd["paras"] and not rd["err"]):
+                        problems.append((label, "reader-dead-end", "the reader showed neither text nor a reason"))
                     # DESKTOP: the frame must actually FILL the column. Desktop applies
                     # body{zoom:.67-.77} and viewport units are not rescaled by zoom, so a raw
                     # 100dvh height paints at ~2/3 of what it asked for — a small box floating in a
                     # large empty column. A >200px floor never caught it.
-                    if not phone and rd["frame"]:
-                        print(f"    [{label}] frame fills {rd['frameH']}px of {h}px "
-                              f"({100.0*rd['frameH']/h:.0f}%)")
-                    if not phone and rd["frame"] and rd["frameH"] < 0.7 * h:
-                        problems.append((label, "frame-too-small",
-                                         f"the page frame is {rd['frameH']}px tall in a {h}px "
-                                         "viewport — is the height compensating for body{zoom} "
-                                         "(calc(100dvh / var(--zf)))?"))
-                    if rd["frame"] and rd["frameH"] < 200:
-                        problems.append((label, "reader-dead-end",
-                                         f"the page frame is only {rd['frameH']}px tall — an <iframe> with no "
-                                         "height collapses to 150px and the page scrolls in a letterbox"))
-                    if phone and rd["frame"] and rd["frameBottom"] > rd["navTop"] + 1:
-                        problems.append((label, "results-under-nav",
-                                         f"the page frame's bottom ({rd['frameBottom']}px) is under the "
-                                         f"nav ({rd['navTop']}px)"))
-                    if not rd["mode"]:
-                        problems.append((label, "reader-dead-end", "no Page/Reader toggle"))
-                    else:
-                        tg = await js(TOGGLE_READER, awaited=True)
-                        if not tg or tg.get("error") or not tg.get("paras"):
-                            problems.append((label, "reader-dead-end",
-                                             f"Reader mode showed no text ({(tg or {}).get('error')})"))
-                        await js("document.querySelector('#ws-mode').click()")
-                        await asyncio.sleep(0.4)
                     if not rd["back"]:
                         problems.append((label, "reader-dead-end", "the reader has no way back to the results"))
                     if not rd["original"]:
                         problems.append((label, "reader-dead-end",
-                                         "no link to the original — the reader cannot parse every page"))
+                                         "no ↗ Open — the reader cannot parse every page, so there "
+                                         "must always be a way to the real one"))
                     if not rd["readerOpen"]:
                         problems.append((label, "reader-dead-end",
                                          "PCWebSearch.readerOpen() is false with the reader open — the Android "

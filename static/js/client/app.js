@@ -211,6 +211,32 @@
    * from Settings without a reload path that guarantees a fresh script evaluation. */
   const BUNDLED = (typeof window.__PC_API_BASE__ !== 'undefined');
   function _instanceBase(){ return String((BUNDLED ? window.__PC_API_BASE__ : (self.location && self.location.origin)) || '').replace(/\/+$/, ''); }
+  /* Open somebody else's page in the USER'S BROWSER, never inside this app.
+   *
+   * One helper because each shell needs a different nudge to do the same thing:
+   *   - a browser tab: window.open is the whole job;
+   *   - the desktop app: window.open reaches setWindowOpenHandler in desktop/main.js, which hands
+   *     any off-origin http(s) URL to shell.openExternal — so it lands in the real browser;
+   *   - the APK: a WebView with no multiple-window support returns null from window.open and does
+   *     NOTHING, silently. A synthetic anchor click is a NAVIGATION, which Capacitor's
+   *     shouldOverrideUrlLoading sees, and an off-origin host is launched into the system browser.
+   *
+   * So try the tab, and fall back to the anchor whenever the tab did not happen. `noopener` is not
+   * decoration: without it the opened page gets a live `window.opener` back into this origin. */
+  function openExternal(url){
+    const u = String(url || '').trim();
+    if(!/^https?:\/\//i.test(u)) return false;      // never let this become a javascript:/data: sink
+    let win = null;
+    try{ win = window.open(u, '_blank', 'noopener,noreferrer'); }catch(_){ win = null; }
+    if(win){ try{ win.opener = null; }catch(_){} return true; }
+    try{
+      const a = document.createElement('a');
+      a.href = u; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.style.display = 'none';
+      document.body.appendChild(a); a.click(); a.remove();
+      return true;
+    }catch(_){ return false; }
+  }
   function _standalone(){ return BUNDLED && !_instanceBase(); }
   /* The desktop app ships its own tor and proxies the whole session through it, so Tor there is a
    * switch and a country, not an errand. Android can only ASK Orbot (a separate app) — a different
@@ -26156,6 +26182,7 @@
     $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast,
     ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
     runSearch,                                                // → the desktop's taskbar search box
+    openExternal,                                             // → web search results, and anything else that must leave the app
     // The desktop hides the sidebar, and #me-card was the only way to reach your own profile.
     openProfile: (pk) => renderProfileView(pk || (ME && ME.pubkey)),
     /* Who is signed in. os.js and the other modules live OUTSIDE this IIFE, so `window.ME` is

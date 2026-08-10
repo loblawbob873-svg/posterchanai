@@ -466,19 +466,40 @@ class KeyboardWiringTests(unittest.TestCase):
             self.assertIn(f'ws-{sel.split("ws-")[-1]}', self.ws_js,
                           f"key '{key}' presses .{sel}, which websearch.js does not render")
 
-    def test_video_results_use_the_sites_own_embed(self):
-        """A player IS its scripts, and this frame runs none — so YouTube's watch page arrives blank
-        no matter how well it is proxied. Every one of these sites publishes an embed meant to be
-        framed, which is what a video result gets instead."""
-        import re
-        m = re.search(r"function embedUrl\(u\)\{(.+?)\n    \}", self.ws_js, re.S)
-        self.assertIsNotNone(m, "embedUrl is gone — video results would frame a blank page")
-        body = m.group(1)
-        for host in ("youtube.com", "youtu.be", "vimeo.com"):
-            self.assertIn(host, body)
-        self.assertIn("youtube-nocookie.com/embed/", body)
-        # …and it must NOT go through our page proxy, which is what strips the player.
-        self.assertNotIn("websearch/page", body)
+    def test_a_result_leaves_the_app_rather_than_being_framed(self):
+        """RESULTS OPEN IN THE USER'S BROWSER, and nothing here frames anybody else's page.
+
+        There used to be two framing paths: the page itself, re-served from our origin by
+        /api/websearch/page, and — for a video result — the site's own embed. The first inherited
+        every way a re-served page can go wrong (scripts stripped, logins that cannot complete,
+        links inside the frame with nowhere to go), reported as "too many issues opening links in
+        the posterchan window/app". The second was a genuinely nice thing, but a video result is
+        still a result, and "all web search results should open in a new tab" does not have an
+        exception for the ones that happen to be playable.
+
+        What stays in the app is the extracted TEXT behind "Read here" — ours to render, and the
+        thing Summarize and Save to Notes are built on.
+        """
+        self.assertIn("function openResult(", self.ws_js,
+                      "there must be one place that sends a result to the browser")
+        self.assertIn("PC.openExternal(", self.ws_js,
+                      "openExternal is the shell-aware opener — window.open alone does nothing in a WebView")
+        # No frame of any kind survives in this view.
+        self.assertNotIn("<iframe", self.ws_js, "websearch.js still frames something")
+        self.assertNotIn("function embedUrl(", self.ws_js)
+        self.assertNotIn("function pageUrl(", self.ws_js)
+        # …and the card's click must not route back into an in-app reader.
+        i = self.ws_js.find("$$('.ws-card', root).forEach(card => card.onclick")
+        self.assertNotEqual(i, -1, "no .ws-card click handler")
+        handler = self.ws_js[i:self.ws_js.index("});", i) + 3]
+        self.assertIn("openResult(", handler)
+        self.assertNotIn("openReader(", handler)
+
+    def test_read_here_is_the_way_into_the_text_reader(self):
+        """Rerouting the card without giving the reader its own entry point would have made the
+        extracted-text view — and Summarize with it — unreachable dead code."""
+        self.assertIn("ws-read", self.ws_js, "no 'Read here' action on a result")
+        self.assertIn("openReader(r)", self.ws_js)
 
     def test_escape_closes_the_open_page(self):
         self.assertIn("Escape", self.ws_js)
