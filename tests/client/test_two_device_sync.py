@@ -111,6 +111,21 @@ class TestTwoDeviceSync(unittest.TestCase):
         duplicates the entire folder as '(conflict from …)' copies: 40 files became 80."""
         self.check("an-empty-base-does-not-conflict-the-whole-folder")
 
+    def test_a_file_too_big_to_hold_crosses_in_chunks(self):
+        """The whole-file path holds the plaintext, the ciphertext and the upload body at once —
+        three to four times the file — so a 2 GB document asked for ~7 GB and Chromium killed the
+        renderer, which in the desktop app is a black window. The same ceiling is a proxy's: a
+        request body over ~95 MB is refused by Cloudflare whatever the app allows. This asserts both
+        halves: the bytes arrive identical, and no single request carried more than one chunk."""
+        self.check("a-file-too-big-to-hold-crosses-in-chunks")
+
+    def test_a_chunked_file_settles(self):
+        """Found by writing it: `sha` has to keep meaning "the hash of this file's content". An
+        earlier version stored the hash of the CHUNK LIST, which no scan will ever produce — so every
+        sweep compared a whole-file hash against a list hash, called the file changed, and re-uploaded
+        it. For ever, on both devices."""
+        self.check("a-chunked-file-settles")
+
     def test_three_devices_converge(self):
         self.check("three-devices-converge")
 

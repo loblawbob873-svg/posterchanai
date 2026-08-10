@@ -143,9 +143,22 @@
     for(const d of plan.download){
       step('downloading', d.path, ++di, plan.download.length);
       try{
-        const bytes = await store.getBlob(d.sha);
-        const st = await fs.write(id, d.path, bytes, (remote[d.path] || {}).mtime || 0);
-        agree(d.path, { sha:d.sha, size:st.size, mtime:st.mtime });
+        const R = remote[d.path] || {};
+        let st;
+        if(R.chunks && R.chunks.length && store.getParts && typeof fs.writePart === 'function'){
+          // Written a chunk at a time into the same `.part` file the whole-file path uses, and only
+          // renamed into place at the end — so an interrupted download leaves a partial temp file and
+          // never a half-written file under the real name.
+          await store.getParts(R.chunks, (off, bytes) => fs.writePart(id, d.path, off, bytes));
+          st = await fs.writeCommit(id, d.path, R.mtime || 0);
+        } else if(R.chunks && R.chunks.length){
+          fail(d.path, new Error('this device cannot receive a file that large'), 'download');
+          continue;
+        } else {
+          const bytes = await store.getBlob(d.sha);
+          st = await fs.write(id, d.path, bytes, R.mtime || 0);
+        }
+        agree(d.path, { sha:d.sha, chunks:R.chunks, size:st.size, mtime:st.mtime });
         report.downloaded.push(d.path);
       }catch(e){ fail(d.path, e, 'download'); }
       await checkpoint();
@@ -156,9 +169,39 @@
       step('uploading', u.path, ++ui, plan.upload.length);
       const meta = local[u.path];
       try{
-        if(o.maxBytes && meta && meta.size > o.maxBytes){
+        /* BIG FILES GO UP IN PIECES, when the platform can read a slice and the store can take one.
+         * The whole-file path holds the plaintext, the ciphertext and the upload body at once — three
+         * to four times the file — so it is the file SIZE, not the server's limit, that decides which
+         * path a file takes. Where slicing is unavailable (a platform whose adapter has no readPart)
+         * an oversized file is reported and skipped exactly as before: never silently dropped. */
+        const big = meta && o.chunkAbove && meta.size > o.chunkAbove;
+        const canChunk = big && typeof fs.readPart === 'function' && store.putParts;
+        if(big && !canChunk){
+          report.skipped.push({ path:u.path, why:'too big for this device', size:meta.size });
+          continue;
+        }
+        if(!big && o.maxBytes && meta && meta.size > o.maxBytes){
           report.skipped.push({ path:u.path, why:'too big', size:meta.size });
           continue;                                     // reported, never silent — and base does NOT advance
+        }
+        if(canChunk){
+          const res = await store.putParts(
+            (off, len) => fs.readPart(id, u.path, off, len), meta.size,
+            (done, total) => step('uploading', u.path + ' ' + Math.round(done / total * 100) + '%', ui, plan.upload.length));
+          /* `sha` MUST KEEP MEANING "the hash of this file's content", and it is the scan that
+           * computes it (streamed, in the adapter). An earlier version put the hash of the CHUNK
+           * LIST here, which no scan will ever produce — so every sweep compared a whole-file hash
+           * against a list hash, called the file changed, and re-uploaded it. For ever, on every
+           * device. An incremental scan hashes nothing and leaves it undefined, which is correct:
+           * same() then falls back to size+mtime, exactly as it does for every other file. */
+          const entry = { sha:meta.sha, chunks:res.chunks, size:meta.size, mtime:meta.mtime || now, device };
+          if(!entry.sha) delete entry.sha;
+          nextRemote[u.path] = entry;
+          agree(u.path, entry);
+          if(res.existed) report.alreadyStored = (report.alreadyStored || 0) + 1;
+          report.uploaded.push(u.path);
+          await checkpoint();
+          continue;
         }
         const bytes = await fs.read(id, u.path);
         /* putBlob may answer with a bare sha or with {sha, existed} — the second lets this report

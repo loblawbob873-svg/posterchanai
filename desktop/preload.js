@@ -73,6 +73,16 @@ if (isOurPage) {
     write: (id, rel, bytes, mtime) =>
       ipcRenderer.invoke('pc:fs:write', String(id || ''), String(rel || ''),
                          bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []), mtime || 0),
+    // Slice I/O. Present only where the platform implements it; sync checks for it and falls back to
+    // whole-file reads (and refuses oversized files) where it is absent.
+    readPart: (id, rel, offset, len) =>
+      ipcRenderer.invoke('pc:fs:read-part', String(id || ''), String(rel || ''), offset || 0, len || 0)
+        .then((b) => new Uint8Array(b)),
+    writePart: (id, rel, offset, bytes) =>
+      ipcRenderer.invoke('pc:fs:write-part', String(id || ''), String(rel || ''), offset || 0,
+                         bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || [])),
+    writeCommit: (id, rel, mtime) =>
+      ipcRenderer.invoke('pc:fs:write-commit', String(id || ''), String(rel || ''), mtime || 0),
     move: (id, from, to) => ipcRenderer.invoke('pc:fs:move', String(id || ''), String(from || ''), String(to || '')),
     trash: (id, rel, when) => ipcRenderer.invoke('pc:fs:trash', String(id || ''), String(rel || ''), when || 0),
     emptyTrash: (id, days) => ipcRenderer.invoke('pc:fs:empty-trash', String(id || ''), days || 30),

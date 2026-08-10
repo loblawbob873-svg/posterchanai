@@ -58,6 +58,7 @@ function makeWorld(){
 function makeDevice(world, opts){
   const name = opts.name, id = opts.id, key = opts.key;
   const files = new Map();               // relpath -> {bytes, mtime}
+  const parts = new Map();               // relpath -> [{offset, bytes}] mid-download, like a .part file
   // A real wall-clock start, not a counter from zero: `.pc-trash/<date>/` and the "(conflict from
   // laptop, <date>)" suffix are both formatted from it, and a 1970 date in a report is a detail that
   // reads as a bug when someone eyeballs the output.
@@ -94,6 +95,28 @@ function makeDevice(world, opts){
       const f = files.get(from); if(!f) throw new Error('ENOENT ' + from);
       files.delete(from); files.set(to, f); return true;
     },
+    // Slice I/O — what lets a file bigger than the renderer's heap (and bigger than a proxy's
+    // request-body cap) move at all. Same shape as the desktop adapter's.
+    async readPart(_id, p, offset, len){
+      const f = files.get(p); if(!f) throw new Error('ENOENT ' + p);
+      return f.bytes.subarray(offset, offset + len);
+    },
+    async writePart(_id, p, offset, bytes){
+      const cur = parts.get(p) || [];
+      cur.push({ offset, bytes: new Uint8Array(bytes) });
+      parts.set(p, cur);
+      return true;
+    },
+    async writeCommit(_id, p, mtime){
+      const cur = parts.get(p) || [];
+      const total = cur.reduce((n, c) => Math.max(n, c.offset + c.bytes.length), 0);
+      const out = new Uint8Array(total);
+      for(const c of cur) out.set(c.bytes, c.offset);
+      parts.delete(p);
+      const t = mtime || ++clock;
+      files.set(p, { bytes: out, mtime: t });
+      return { size: out.length, mtime: t };
+    },
     async trash(_id, p, now){
       const f = files.get(p); if(!f) throw new Error('ENOENT ' + p);
       const to = S.trashPath(p, now || clock);
@@ -115,6 +138,33 @@ function makeDevice(world, opts){
       bases.set(k, JSON.parse(JSON.stringify(s.base || {})));
     },
     async putBlob(bytes){ const sha = sha256(bytes); world.blobs.set(sha, new Uint8Array(bytes)); return sha; },
+    /* The chunked pair, with the SAME contract the client's syncBlobs has: one chunk in memory at a
+     * time, each content-addressed and skipped when the store already holds it, and an identity for
+     * the whole file that is the hash of its parts in order — so the engine's same() keeps working
+     * without knowing chunking exists. */
+    CHUNK: 4096,
+    async putParts(readPart, size){
+      const chunks = []; let existed = true;
+      for(let off = 0; off < size; off += 4096){
+        const want = Math.min(4096, size - off);
+        const plain = await readPart(off, want);
+        if(!plain || !plain.length) throw new Error('short read at ' + off);
+        const sha = sha256(plain);
+        if(!world.blobs.has(sha)){ world.blobs.set(sha, new Uint8Array(plain)); existed = false; }
+        world.maxBody = Math.max(world.maxBody || 0, plain.length);   // nothing may exceed one chunk
+        chunks.push(sha);
+      }
+      return { sha: sha256(bytesOf(chunks.join(''))), chunks, existed };
+    },
+    async getParts(chunks, writePart){
+      let off = 0;
+      for(const sha of chunks){
+        const b = world.blobs.get(sha);
+        if(!b) throw new Error('chunk ' + sha.slice(0,8) + ' unavailable (404)');
+        await writePart(off, b); off += b.length;
+      }
+      return off;
+    },
     async getBlob(sha){
       const b = world.blobs.get(sha);
       if(!b) throw new Error('blob ' + String(sha).slice(0,8) + ' unavailable (404)');
@@ -132,7 +182,7 @@ function makeDevice(world, opts){
     // A sweep, as sync.js calls it: the PLATFORM id for the filesystem, the PAIR key for the store.
     sweep(o){
       return RUN.sweep(fs, store, Object.assign({
-        id, key, device: name, now: ++clock, hash: true, excludes: [],
+        id, key, device: name, now: ++clock, hash: true, excludes: [], chunkAbove: 8192,
       }, o || {}));
     },
   };
@@ -473,6 +523,61 @@ scenario('an-empty-base-does-not-conflict-the-whole-folder', async () => {
     detail: { conflicted: rep.conflicted.length, uploaded: rep.uploaded.length,
               onDisk: laptop.live().length, notes: (rep.plan||{}).notes && (rep.plan.notes||[]).length },
   };
+});
+
+/* A FILE TOO BIG TO HOLD IN ONE PIECE still crosses, and no single request carries more than a chunk.
+ *
+ * The whole-file path holds the plaintext, the ciphertext and the upload body at once — three to four
+ * times the file — so a 2 GB document asked for ~7 GB and Chromium killed the renderer instead, which
+ * in the desktop app is a black window. The same ceiling is a proxy's: a request body over ~95 MB is
+ * refused by Cloudflare whatever the app allows.
+ *
+ * Chunking answers both, and this asserts both: the bytes arrive identical on the other device, and
+ * the largest single request was one chunk. */
+scenario('a-file-too-big-to-hold-crosses-in-chunks', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Documents' });
+  const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Documents' });
+
+  // 40 KB against an 8 KB chunk-above and a 4 KB chunk: ten pieces, and well over the threshold.
+  const big = new Uint8Array(40 * 1024);
+  for(let i = 0; i < big.length; i++) big[i] = (i * 7 + (i >> 8)) & 0xff;   // not compressible to one value
+  laptop.files.set('video.mp4', { bytes: big, mtime: Date.UTC(2026, 7, 1) });
+
+  const up = await laptop.sweep();
+  const down = await phone.sweep();
+
+  const got = phone.files.get('video.mp4');
+  const same = !!got && got.bytes.length === big.length && Buffer.compare(Buffer.from(got.bytes), Buffer.from(big)) === 0;
+  const entry = w.manifestOf('Documents')['video.mp4'] || {};
+  return {
+    ok: same && up.uploaded.join() === 'video.mp4' && down.downloaded.join() === 'video.mp4'
+        && Array.isArray(entry.chunks) && entry.chunks.length === 10
+        && !!entry.sha && w.maxBody === 4096,
+    detail: { bytesMatch: same, chunks: (entry.chunks || []).length, maxRequestBytes: w.maxBody,
+              uploaded: up.uploaded, downloaded: down.downloaded },
+  };
+});
+
+/* ...and the second device does not re-send what it already agreed: a chunked file settles like any
+ * other, or a big file would re-upload on every sweep for ever. */
+scenario('a-chunked-file-settles', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Documents' });
+  const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Documents' });
+  const big = new Uint8Array(20 * 1024).map((_, i) => (i * 13) & 0xff);
+  laptop.files.set('big.bin', { bytes: big, mtime: Date.UTC(2026, 7, 1) });
+  await laptop.sweep(); await phone.sweep();
+
+  const moved = [];
+  for(let i = 0; i < 3; i++){
+    for(const d of [laptop, phone]){
+      const r = await d.sweep();
+      if(r.uploaded.length || r.downloaded.length || r.conflicted.length)
+        moved.push({ device: d.name, up: r.uploaded, down: r.downloaded, conflicts: r.conflicted.length });
+    }
+  }
+  return { ok: moved.length === 0, detail: { moved } };
 });
 
 /* THREE devices, because "the other device" is not always the same one. A file added on the third

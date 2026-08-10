@@ -25299,6 +25299,59 @@
       // Shared with the Files → synced-folder browser, so "which key opens a sync blob" has exactly
       // one answer in this codebase rather than two that can drift.
       get: (sha) => _syncBlobBytes(sha),
+
+      /* ---- FILES TOO BIG TO HOLD ------------------------------------------------------------
+       *
+       * put() is the whole-file path and it costs three to four times the file's size in renderer
+       * memory: the plaintext, the ciphertext, and the Blob, all alive together, then a hash pass.
+       * A 2 GB document asks for ~7 GB, and what happens is not an error — Chromium kills the render
+       * process, which in the desktop app is a black window.
+       *
+       * So a big file is stored as SEVERAL blobs, a chunk at a time, and the manifest entry carries
+       * the list. Peak memory is one chunk, whatever the file weighs. Three things fall out of it
+       * for free, and they matter as much as the memory did:
+       *
+       *   - it RESUMES. Each chunk is content-addressed and checked for existence before it is sent,
+       *     so a transfer interrupted at 90% re-sends the last 10%, not the file.
+       *   - it DEDUPS per chunk, so appending to a file re-sends only what was appended.
+       *   - `sha` stays meaningful: it is the hash OF THE CHUNK LIST, so the engine's same() compares
+       *     content exactly as before and nothing in foldersync.js has to know chunking exists.
+       */
+      CHUNK: 32 * 1024 * 1024,
+      async putParts(readPart, size, onProgress){
+        const mk = await FilesIdx._ensureMK();
+        const CH = PC.syncBlobs.CHUNK;
+        const chunks = [];
+        let existed = true;
+        for(let off = 0; off < size; off += CH){
+          const want = Math.min(CH, size - off);
+          const plain = await readPart(off, want);
+          if(!plain || !plain.length) throw new Error('short read at ' + off);
+          const blob = await _masterEncrypt(mk, plain, await _contentIV(plain));
+          const sha = await sha256hex(blob);
+          if(await _blobAlreadyStored(sha)){ chunks.push(sha); }
+          else {
+            const url = await uploadBlob(new File([blob], 'sync.enc', {type:'application/octet-stream'}),
+                                         { noMirror:true, keep:true });
+            const got = _shaFromUrl(url);
+            if(!got) throw new Error('upload returned no hash');
+            chunks.push(got); existed = false;
+          }
+          if(onProgress) { try{ onProgress(Math.min(off + want, size), size); }catch(_){} }
+        }
+        // The identity of a chunked file is the identity of its parts, in order.
+        const sha = await sha256hex(new TextEncoder().encode(chunks.join('')));
+        return { sha, chunks, existed };
+      },
+      async getParts(chunks, writePart){
+        let off = 0;
+        for(const sha of (chunks || [])){
+          const bytes = await _syncBlobBytes(sha);
+          await writePart(off, bytes);
+          off += bytes.length;
+        }
+        return off;
+      },
     },
     // NIP-98-style self-auth for the client endpoints (the same proof /files-index takes).
     signAuth: (tag) => sign(27235, String(tag||'sync'), [['p', ME.pubkey]]),

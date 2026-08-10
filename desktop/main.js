@@ -653,6 +653,20 @@ ipcMain.handle('pc:fs:pick', async (e) => {
 ipcMain.handle('pc:fs:forget', (e, id) => { fsGuard(e); return fsbridge.removeRoot(String(id || '')); });
 ipcMain.handle('pc:fs:scan', (e, id, opts) => { fsGuard(e); return fsbridge.scan(String(id || ''), opts || {}); });
 ipcMain.handle('pc:fs:read', (e, id, rel) => { fsGuard(e); return fsbridge.read(String(id || ''), String(rel || '')); });
+// Slice I/O, so a file bigger than the renderer's heap can still be synced — see fsbridge.readPart.
+ipcMain.handle('pc:fs:read-part', (e, id, rel, offset, len) => {
+  fsGuard(e);
+  return fsbridge.readPart(String(id || ''), String(rel || ''), Number(offset) || 0, Number(len) || 0);
+});
+ipcMain.handle('pc:fs:write-part', (e, id, rel, offset, bytes) => {
+  fsGuard(e);
+  return fsbridge.writePart(String(id || ''), String(rel || ''), Number(offset) || 0,
+                            bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []));
+});
+ipcMain.handle('pc:fs:write-commit', (e, id, rel, mtime) => {
+  fsGuard(e);
+  return fsbridge.writeCommit(String(id || ''), String(rel || ''), Number(mtime) || 0);
+});
 ipcMain.handle('pc:fs:write', (e, id, rel, bytes, mtime) => {
   fsGuard(e); return fsbridge.write(String(id || ''), String(rel || ''), bytes, mtime);
 });

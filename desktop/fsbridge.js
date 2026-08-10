@@ -155,6 +155,57 @@ async function read(id, rel){
   return await fsp.readFile(abs);          // Buffer → the preload hands the page a Uint8Array
 }
 
+/* ---- PART I/O: a file too big to hold in one piece ------------------------------------------
+ *
+ * Uploading a file used to mean reading all of it, encrypting all of it, and handing the result to
+ * fetch — the plaintext, the ciphertext and the Blob alive at once, three to four times the file's
+ * size in the renderer. A 2 GB document asked for ~7 GB and Chromium killed the window instead
+ * (which in the app is a black screen, and on the way down its in-flight requests fail in the way
+ * the console calls a CORS error).
+ *
+ * These read and write SLICES, so the renderer only ever holds one chunk. Deliberately stateless:
+ * each call carries its own offset, because the alternative is an open file handle living across
+ * IPC calls, and then a renderer that dies mid-transfer leaks it.
+ */
+async function readPart(id, rel, offset, len){
+  const abs = await resolveIn(id, rel);
+  const fh = await fsp.open(abs, 'r');
+  try{
+    const buf = Buffer.allocUnsafe(Math.max(0, len | 0));
+    const { bytesRead } = await fh.read(buf, 0, buf.length, Number(offset) || 0);
+    return bytesRead === buf.length ? buf : buf.subarray(0, bytesRead);
+  } finally { await fh.close(); }
+}
+
+/* Writes land in the SAME `.part` file `write()` uses, at an offset, and are only renamed into place
+ * by writeCommit. So an interrupted download leaves a partial `.part` and never a half-written file
+ * under the real name — the rule the whole-file path already follows, kept for the chunked one. */
+async function writePart(id, rel, offset, bytes){
+  const abs = await resolveIn(id, rel);
+  await fsp.mkdir(path.dirname(abs), { recursive: true });
+  const tmp = abs + PART;
+  const off = Number(offset) || 0;
+  const fh = await fsp.open(tmp, off === 0 ? 'w' : 'r+').catch(async (e) => {
+    if(off === 0) throw e;
+    return await fsp.open(tmp, 'w+');        // a resumed write whose part file went missing
+  });
+  try{ await fh.write(Buffer.from(bytes), 0, bytes.length, off); }
+  finally { await fh.close(); }
+  return true;
+}
+
+async function writeCommit(id, rel, mtime){
+  const abs = await resolveIn(id, rel);
+  const tmp = abs + PART;
+  const fh = await fsp.open(tmp, 'r+');
+  try{ await fh.sync(); }                    // the rename is only atomic if the BYTES landed first
+  finally { await fh.close(); }
+  await fsp.rename(tmp, abs);
+  if(mtime) { try{ const t = new Date(mtime); await fsp.utimes(abs, t, t); }catch(_){} }
+  const st = await fsp.stat(abs);
+  return { size: st.size, mtime: Math.floor(st.mtimeMs) };
+}
+
 async function write(id, rel, bytes, mtime){
   const abs = await resolveIn(id, rel);
   await fsp.mkdir(path.dirname(abs), { recursive: true });
@@ -265,4 +316,5 @@ function removeRoot(id){
 }
 
 module.exports = { init, list, addRoot, removeRoot, resolveIn, scan, sha256,
+                   readPart, writePart, writeCommit,
                    read, write, move, trash, emptyTrash, watch, unwatch, IGNORE };

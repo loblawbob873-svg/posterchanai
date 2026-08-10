@@ -269,6 +269,12 @@
     },
     putBlob: (bytes) => PC.syncBlobs.put(bytes),
     getBlob: (sha) => PC.syncBlobs.get(sha),
+    // The chunked pair. Present only when the client build has them, so an older bundle simply does
+    // not take the chunked path rather than calling something undefined.
+    putParts: PC.syncBlobs && PC.syncBlobs.putParts
+      ? (read, size, onProgress) => PC.syncBlobs.putParts(read, size, onProgress) : null,
+    getParts: PC.syncBlobs && PC.syncBlobs.getParts
+      ? (chunks, write) => PC.syncBlobs.getParts(chunks, write) : null,
   };
 
   /* ---- WHAT THIS ACCOUNT SYNCS, as opposed to what THIS DEVICE maps ---------------------------
@@ -368,6 +374,9 @@
         const rep = await RUN.sweep(fs, store, {
           id: f.id, key: keyOf(f), device: deviceName(), now: Date.now(),
           excludes: f.excludes || [], maxBytes: await maxBytes(),
+          // Above this a file is uploaded in pieces instead of whole — see syncrun's upload loop.
+          // Well under the whole-file ceiling, because the point is to stop approaching it at all.
+          chunkAbove: 64 * 1024 * 1024,
           hash: decision.mode === 'full', dryRun: !!o.dryRun,
           // The first sweep of a Pictures folder is minutes of silence, and silence is
           // indistinguishable from a hang, a failed login or a 404 on the manifest — which is
