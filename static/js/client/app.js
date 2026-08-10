@@ -14883,6 +14883,67 @@
    * No thumbnails, on purpose: every blob here is AES-GCM ciphertext under the drive's master key, so
    * a preview costs a full download and a decrypt per file. A folder of 4000 photos would do that
    * 4000 times to draw one screen. */
+  /* THUMBNAILS FOR A SYNCED FOLDER.
+   *
+   * Every one of these bytes is an encrypted blob: there is no thumbnail on the server and there
+   * cannot be one, because the server cannot read the picture. So a preview means fetching the whole
+   * blob and decrypting it HERE — which is affordable for what is on screen and ruinous for a folder
+   * of six thousand photos. Hence all four limits below, none of which is optional:
+   *
+   *   lazy        only what has actually been scrolled into view (IntersectionObserver)
+   *   bounded     at most _THUMB_PAR at once, or a fast scroll opens hundreds of parallel fetches
+   *   small only  a full-size photo is the whole file; past _THUMB_MAX it is not worth the bytes
+   *   revoked     object URLs are LRU-capped and revoked, or browsing a folder leaks every picture
+   *               it drew until the tab is closed
+   */
+  const _THUMB_MAX = 12 * 1024 * 1024;
+  const _THUMB_PAR = 3;
+  const _THUMB_KEEP = 120;
+  const _thumbs = new Map();          // sha -> object URL (insertion-ordered = LRU)
+  let _thumbBusy = 0;
+  const _THUMB_EXT = /^(jpg|jpeg|png|gif|webp|avif|bmp)$/i;
+
+  function _thumbRemember(sha, url){
+    _thumbs.set(sha, url);
+    while(_thumbs.size > _THUMB_KEEP){
+      const oldest = _thumbs.keys().next().value;
+      try{ URL.revokeObjectURL(_thumbs.get(oldest)); }catch(_){}
+      _thumbs.delete(oldest);
+    }
+  }
+  async function _thumbFor(sha){
+    if(_thumbs.has(sha)) return _thumbs.get(sha);
+    while(_thumbBusy >= _THUMB_PAR) await new Promise(r=>setTimeout(r, 120));
+    _thumbBusy++;
+    try{
+      const bytes = await _syncBlobBytes(sha);
+      const url = URL.createObjectURL(new Blob([bytes]));
+      _thumbRemember(sha, url);
+      return url;
+    } finally { _thumbBusy--; }
+  }
+  let _thumbObs = null;
+  function _bindThumbs(grid){
+    try{ if(_thumbObs) _thumbObs.disconnect(); }catch(_){}
+    if(!window.IntersectionObserver) return;     // no observer → no previews, never eager ones
+    _thumbObs = new IntersectionObserver((entries)=>{
+      for(const en of entries){
+        if(!en.isIntersecting) continue;
+        const el = en.target, sha = el.dataset.thumb;
+        _thumbObs.unobserve(el);
+        if(!sha) continue;
+        _thumbFor(sha).then(url=>{
+          // The grid is rebuilt on every navigation, so a decrypt that lands after the user has
+          // moved on must not paint into a card that is no longer on the page.
+          if(!el.isConnected) return;
+          el.style.backgroundImage = 'url("' + url + '")';
+          el.classList.add('has-thumb');
+        }).catch(()=>{});
+      }
+    }, { rootMargin: '200px' });
+    $$('[data-thumb]', grid).forEach(el=>_thumbObs.observe(el));
+  }
+
   async function _renderSyncedRoot(pane){
     const details = _fxView()==='details';
     pane.innerHTML = '<div class="fx-explorer">'
@@ -14916,13 +14977,15 @@
       const ext = it.dir ? '' : ((String(it.name).match(/\.([A-Za-z0-9]{1,8})$/)||[])[1]||'').toLowerCase();
       const icon = it.dir ? '📁' : _fxIcon(ext, '');
       const type = it.dir ? (it.n + ' item' + (it.n===1?'':'s')) : _fxType(ext);
+      const canThumb = !it.dir && it.sha && _THUMB_EXT.test(ext) && (it.size||0) <= _THUMB_MAX;
       const act = it.dir ? ''
-        : `<button class="dlsync" data-sha="${enc(it.sha||'')}" data-name="${enc(it.name)}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`;
+        : `<button class="dlsync" data-sha="${enc(it.sha||'')}" data-name="${enc(it.name)}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`
+          + `<button class="keepsync" data-sha="${enc(it.sha||'')}" data-name="${enc(it.name)}" title="Save a copy to your drive"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg></button>`;
       const nav = it.dir ? ` data-dir="${enc(it.name)}"` : '';
       if(details) return _fxDetailsRow({ dir:!!it.dir, name:it.name, icon:icon, size:_fxBytes(it.size),
         type:type, when:_fxWhen(it.mtime), acts:act });
       return `<div class="file-card${it.dir?' isdir':''}"${nav}>
-        <div class="file-icon">${icon}<span>${enc(it.dir?'folder':(ext||'file'))}</span></div>
+        <div class="file-icon"${canThumb?` data-thumb="${enc(it.sha)}"`:''}>${icon}<span>${enc(it.dir?'folder':(ext||'file'))}</span></div>
         <div class="meta"><span class="fname" title="${enc(it.name)}">${enc(fileLabel(it.name, ext, it.size))}</span>${act?`<span class="fc-acts">${act}</span>`:''}</div></div>`;
     };
     grid.innerHTML = (details ? _fxColsHTML(false) : '') + items.map(rowFor).join('');
@@ -14940,6 +15003,27 @@
     });
     $$('.dlsync', grid).forEach(b=> b.onclick=(e)=>{ e.preventDefault(); e.stopPropagation();
       _syncDownload(b, b.dataset.sha, b.dataset.name); });
+    /* "Save a copy to your drive" — the same _keepBytes every other save in the app uses, so a photo
+     * kept from a synced folder lands in Posts and a track lands in the music library, exactly as it
+     * would from anywhere else.
+     *
+     * There is deliberately no DELETE here. Removing a file from a synced folder is not a drive
+     * operation: it has to become a tombstone in the manifest and then a deletion on every other
+     * device, which is the sweep's job and is guarded by three snapshots and a collapse check. A
+     * button here that wrote the manifest directly would be a second, unguarded way to delete
+     * somebody's files off every machine they own. Delete it on a device and let sync carry it. */
+    $$('.keepsync', grid).forEach(b=> b.onclick=async (e)=>{ e.preventDefault(); e.stopPropagation();
+      const sha=b.dataset.sha, name=b.dataset.name||'file';
+      if(!sha){ toast('this file has no stored copy yet'); return; }
+      b.disabled=true;
+      try{
+        const bytes=await _syncBlobBytes(sha);
+        const r=await _keepBytes(new File([bytes], name), '');
+        _keptToast(r);
+      }catch(err){ toast('couldn’t save: '+((err&&err.message)||err)); }
+      finally{ b.disabled=false; }
+    });
+    _bindThumbs(grid);
   }
 
   // Public tab — your Blossom blobs, organised into client-side folders. Drag-drop + folders + grid.

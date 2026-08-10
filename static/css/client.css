@@ -6943,3 +6943,12 @@ body.popout .stream-view{ height:100dvh; display:flex; flex-direction:column; pa
 body.popout .stream-layout{ flex:1 1 auto; min-height:0; }
 body.popout .stream-main{ min-height:0; }
 body.popout .stream-player video{ max-height:min(64dvh, 100%); }
+
+/* ---- Encrypted thumbnails in a synced folder -----------------------------------------------
+ * The icon box doubles as the preview surface: when the blob has been fetched and decrypted its
+ * bitmap becomes the background and the glyph/extension label is hidden. Doing it this way means
+ * a card is the same size before and after the picture arrives, so a folder does not reflow line
+ * by line as thumbnails land. */
+.file-icon[data-thumb]{ background-size:cover; background-position:center; }
+.file-icon.has-thumb > *{ visibility:hidden; }
+.file-icon.has-thumb{ color:transparent; }

@@ -228,5 +228,45 @@ class TestParkedTimelineKeepsLivePosts(unittest.TestCase):
                           "mode' — any looser test would buffer for a timeline that is simply gone")
 
 
+class TestSyncedFolderThumbnails(unittest.TestCase):
+    """A preview in a synced folder means fetching and DECRYPTING a whole blob on this device.
+
+    There is no server-side thumbnail and there cannot be one — the server cannot read the picture.
+    That is affordable for what is on screen and ruinous for a folder of thousands, so four limits
+    hold it up and none of them is decorative: lazy (only what was scrolled to), bounded (a fast
+    scroll must not open hundreds of parallel decrypts), size-capped, and LRU-revoked (object URLs
+    leak the whole picture until the tab closes otherwise).
+    """
+
+    def test_previews_are_lazy_bounded_capped_and_revoked(self):
+        src = open(APP, encoding="utf-8").read()
+        for needle, why in (
+            ("IntersectionObserver", "previews must be lazy — a folder can hold thousands"),
+            ("_THUMB_PAR", "a fast scroll would otherwise start hundreds of parallel decrypts"),
+            ("_THUMB_MAX", "a full-size photo IS the whole file; past a point it is not worth it"),
+            ("revokeObjectURL", "object URLs leak every picture drawn until the tab is closed"),
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, src, why)
+
+    def test_a_late_decrypt_does_not_paint_a_dead_card(self):
+        """The grid is rebuilt on every navigation, so a decrypt landing after the user moved on
+        must not write into a card that has left the page."""
+        src = open(APP, encoding="utf-8").read()
+        i = src.index("function _bindThumbs")
+        self.assertIn("isConnected", src[i:i + 900])
+
+    def test_a_synced_folder_has_no_delete_button(self):
+        """Deleting from a synced folder is not a drive operation — it has to become a tombstone in
+        the manifest and then a deletion on every other device, which is the sweep's job and is
+        guarded by three snapshots and a collapse check. A button here writing the manifest directly
+        would be a second, unguarded way to delete someone's files off every machine they own."""
+        src = open(APP, encoding="utf-8").read()
+        i = src.index("async function _renderSyncedRoot")
+        body = src[i:i + 6000]
+        self.assertNotIn("delsync", body)
+        self.assertIn("keepsync", body)
+
+
 if __name__ == "__main__":
     unittest.main()
