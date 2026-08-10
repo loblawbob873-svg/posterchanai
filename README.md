@@ -122,6 +122,23 @@ A companion **browser extension** (Firefox, and Chrome / Brave via MV3) makes yo
   Sent/Drafts mailboxes don't match the guess. The mailbox is **local to your node** and never
   federated. Optional background polling pushes new mail to a locked phone. See
   **[docs/MAIL.md](docs/MAIL.md)**
+- **Folder sync**: a folder on your desktop kept in step with a folder on your phone, through your
+  own node — Documents, Pictures, whatever you point it at. File **contents are AES-GCM encrypted
+  under your drive key before they leave**, and the file list is NIP-44 encrypted on top of that, so
+  your node stores a folder it cannot read. Two devices pair by **giving the folder the same name**
+  on each; where it lives is chosen per device. Conflicts keep **both** copies, deletions go to
+  `.pc-trash` inside the folder rather than away, an exclusion means "stop looking at this" and can
+  never delete anything, and large files move in chunks so an interrupted transfer resumes instead of
+  restarting. Desktop app and Android; a browser has no filesystem to sync, but can still browse and
+  download from a synced folder. See **[docs/FOLDER_SYNC.md](docs/FOLDER_SYNC.md)**
+- **Share to PosterChan**: the app is an Android **share target** and a PWA Web Share Target, so
+  *Share* from any app — a photo from the gallery, a link from a browser, a file from a file manager —
+  opens the composer with the text and the files already attached.
+- **Desktop mode**: a windowed desktop *inside* the client — draggable, resizable, snappable windows
+  for the timeline, chats, Notes and the rest, with a wallpaper and a taskbar. Entered from the
+  instance logo. **Desktop only, deliberately**: below 1024px the logo does nothing and the ordinary
+  client stays, because a draggable window on a phone screen is worse than the app it replaces. The
+  windows are real DOM, not iframes — one app, one relay socket, however many windows are open.
 - **Calendar (CalDAV)**: a calendar server *inside* the app at `/caldav` — your phone and desktop
   calendar app sync with it like any other CalDAV server, no extra service to run. Events are
   encrypted Nostr events; the web client has a month grid, an event editor, `.ics` import/export and
