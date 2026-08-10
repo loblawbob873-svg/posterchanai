@@ -92,5 +92,44 @@ class TestNoDuplicateFunctionDeclarations(unittest.TestCase):
         self.assertEqual(sorted({n for n in names if names.count(n) > 1}), ["dup"])
 
 
+class TestSyncedPrefsRoundTrip(unittest.TestCase):
+    """Every pref WRITTEN to the pcai:client-prefs doc must also be READ back from it.
+
+    `saveClientPrefsNostr({k: v})` and `restoreClientPrefsNostr()` are two lists a hundred lines
+    apart, and a key added to one and not the other fails in the quietest possible way: the value is
+    published, so the sync looks done and the relay really does hold it, but no device ever adopts
+    it. Nothing errors and nothing is lost — the setting just silently does not travel, which is
+    indistinguishable from the sync being broken generally.
+
+    The storage budgets are the reason this exists: localStorage is what a reinstall takes with it,
+    so a budget that publishes but never restores would be lost by exactly the event it was meant to
+    survive.
+    """
+
+    def test_every_saved_pref_is_also_restored(self):
+        src = open(APP, encoding="utf-8").read()
+        saved = set(re.findall(r"saveClientPrefsNostr\(\s*{\s*([^}]*)}", src))
+        keys = set()
+        for blob in saved:
+            keys |= set(re.findall(r"([A-Za-z_$][\w$]*)\s*:", blob))
+        self.assertTrue(keys, "found no saveClientPrefsNostr calls — has the helper been renamed?")
+        body = src[src.index("async function restoreClientPrefsNostr"):]
+        body = body[:body.index("\n  }")]
+        missing = sorted(k for k in keys if ("pr.%s" % k) not in body)
+        self.assertFalse(
+            missing,
+            "published to pcai:client-prefs but never read back in restoreClientPrefsNostr: %s. "
+            "The value reaches the relay, so the sync looks like it worked, but no device adopts it."
+            % missing)
+
+    def test_the_budgets_are_in_that_set(self):
+        """Named, because they are the ones a reinstall was losing."""
+        src = open(APP, encoding="utf-8").read()
+        for key in ("musicOfflineGB", "mediaCacheGB"):
+            with self.subTest(key=key):
+                self.assertIn("saveClientPrefsNostr({ %s" % key, src)
+                self.assertIn("pr.%s" % key, src)
+
+
 if __name__ == "__main__":
     unittest.main()

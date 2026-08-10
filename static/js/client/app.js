@@ -12975,6 +12975,24 @@
           try{ switchView(pr.startTimeline); _onLandingView = true; }catch(_){}
         }
       }
+      /* The two STORAGE BUDGETS. localStorage is what a reinstall — or an app update that moves the
+       * storage origin — takes with it, which is not hypothetical here: it is what made a synced
+       * folder "no longer there" after a Windows update. How much of your own library you want kept
+       * is a decision about the library, not about the device, so it follows the account; what a
+       * given device can actually hold is still bounded by its own free space, which is why the stat
+       * line under each setting reports the OS ceiling.
+       * `musicOfflineGB` is checked with `>= 0` and not for truthiness, because 0 IS a value here —
+       * it means no limit, and it is the default, so a `||` would silently drop the commonest one. */
+      if(!_prefTouched.has('musicOfflineGB') && typeof pr.musicOfflineGB==='number' && pr.musicOfflineGB>=0)
+        ClientSettings.set('musicOfflineGB', pr.musicOfflineGB);
+      // Adopting a media budget means telling the service worker: the number alone changes nothing.
+      // Deliberately no music trim here — a smaller limit arriving from another device would DELETE
+      // tracks during boot, with nothing done on this device to explain it. The next download applies it.
+      if(!_prefTouched.has('mediaCacheGB') && typeof pr.mediaCacheGB==='number' && pr.mediaCacheGB>0
+         && pr.mediaCacheGB!==ClientSettings.get('mediaCacheGB', 4)){
+        ClientSettings.set('mediaCacheGB', pr.mediaCacheGB);
+        try{ _applyMediaCacheBudget(pr.mediaCacheGB); }catch(_){}
+      }
       if(!_prefTouched.has('vimKeys') && typeof pr.vimKeys==='boolean') ClientSettings.set('vimKeys', pr.vimKeys);
       if(!_prefTouched.has('cleanLinks') && typeof pr.cleanLinks==='boolean') ClientSettings.set('cleanLinks', pr.cleanLinks);   // 🧹 link-tracker removal follows across devices
       if(!_prefTouched.has('xmrTip') && pr.xmrTip!=null && String(pr.xmrTip)) ClientSettings.set('xmrLastAmt', String(pr.xmrTip));
@@ -21702,12 +21720,12 @@
           <label class="fld">💾 Media cache size
             <select class="input" id="set-media-cache">${[1,2,4,8,16,32].map(g=>`<option value="${g}"${(+ClientSettings.get('mediaCacheGB',4)===g)?' selected':''}>${g} GB${g===4?' (default)':''}</option>`).join('')}</select>
           </label>
-          <div class="muted small">How much offline media (avatars, images, played videos) to keep cached on THIS device. Larger = fewer re-downloads on a slow/throttled link, but more storage used. Per-device.</div>
+          <div class="muted small">How much offline media (avatars, images, played videos) to keep cached on THIS device. Larger = fewer re-downloads on a slow/throttled link, but more storage used. The setting follows your account; what a device can actually hold is capped by its own free space.</div>
           <div class="muted small" id="media-cache-stat" style="margin-top:4px">Checking device storage…</div>
           <label class="fld">🎵 Offline music limit
             <select class="input" id="set-music-offline">${(()=>{const cur=+ClientSettings.get('musicOfflineGB',0)||0;const opts=[0,5,10,20,50,100,250,500];if(!opts.includes(cur))opts.push(cur);return opts.sort((a,b)=>a-b).map(g=>`<option value="${g}"${cur===g?' selected':''}>${g?g+' GB':'No limit (default)'}</option>`).join('');})()}</select>
           </label>
-          <div class="muted small">How much of your music library to keep playable offline on THIS device. <b>No limit</b> keeps everything you download — a library is not a cache, and nothing is ever evicted. Set a size and the tracks stored longest ago make room once it is reached. Per-device: a phone and a desktop can hold different amounts of the same library.</div>
+          <div class="muted small">How much of your music library to keep playable offline on THIS device. <b>No limit</b> keeps everything you download — a library is not a cache, and nothing is ever evicted. Set a size and the tracks stored longest ago make room once it is reached. The setting follows your account, so a new device starts where you left off; what each device can actually hold is still capped by its own free space.</div>
           <div class="muted small" id="music-offline-stat" style="margin-top:4px">Checking…</div>
           ${BUNDLED ? `<label class="fld">🌐 Instance
             <div class="instance-pick" id="us-instance-pick"></div>
@@ -22008,13 +22026,15 @@
     // Media cache size (per-device): persist + push the new byte budget to the service worker.
     { const mc=$('#set-media-cache'); if(mc) mc.onchange=()=>{
         const gb=+mc.value||4; ClientSettings.set('mediaCacheGB', gb); _applyMediaCacheBudget(gb);
+        _prefTouched.add('mediaCacheGB'); saveClientPrefsNostr({ mediaCacheGB: gb });
         toast('media cache set to '+gb+' GB'); _fillMediaCacheStat(); }; }
     _fillMediaCacheStat();
-    /* Offline music limit (per-device). Lowering it TRIMS IMMEDIATELY rather than at the next
+    /* Offline music limit. Lowering it TRIMS IMMEDIATELY rather than at the next
      * download: someone reaching for this setting is usually reaching for space, and a limit that
      * takes effect the next time you happen to save a track has not given them any. */
     { const mo=$('#set-music-offline'); if(mo) mo.onchange=async ()=>{
         const gb=Math.max(0, +mo.value||0); ClientSettings.set('musicOfflineGB', gb);
+        _prefTouched.add('musicOfflineGB'); saveClientPrefsNostr({ musicOfflineGB: gb });
         let freed=0; try{ freed=await MusicOffline.trim(); }catch(_){}
         toast(gb ? ('offline music limit set to '+gb+' GB' + (freed ? ' · freed '+_fmtBytes(freed) : ''))
                  : 'offline music: no limit');
