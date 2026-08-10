@@ -146,6 +146,7 @@ function makeDevice(world, opts){
       world.docs.set(dtag(k), paths);
       bases.set(k, JSON.parse(JSON.stringify(s.base || {})));
     },
+    async hashBytes(bytes){ return sha256(bytes); },
     async putBlob(bytes){ const sha = sha256(bytes); world.blobs.set(sha, new Uint8Array(bytes)); return sha; },
     /* The chunked pair, with the SAME contract the client's syncBlobs has: one chunk in memory at a
      * time, each content-addressed and skipped when the store already holds it, and an identity for
@@ -563,8 +564,10 @@ scenario('a-file-too-big-to-hold-crosses-in-chunks', async () => {
   return {
     ok: same && up.uploaded.join() === 'video.mp4' && down.downloaded.join() === 'video.mp4'
         && Array.isArray(entry.chunks) && entry.chunks.length === 10
-        && !!entry.sha && w.maxBody === 4096,
-    detail: { bytesMatch: same, chunks: (entry.chunks || []).length, maxRequestBytes: w.maxBody,
+        // identity is the file's own hash, or the chunk list when the sweep did not hash — never the
+        // blob address, which is the hash of the ciphertext and means nothing to another device.
+        && (!!entry.csum || entry.chunks.length > 0) && !entry.sha && w.maxBody === 4096,
+    detail: { bytesMatch: same, chunks: (entry.chunks || []).length, csum: !!entry.csum, maxRequestBytes: w.maxBody,
               uploaded: up.uploaded, downloaded: down.downloaded },
   };
 });
@@ -640,6 +643,31 @@ scenario('concurrent-sweeps-do-not-erase-each-other', async () => {
   const fromB = Object.keys(man).filter(p => p.startsWith('from-tablet-')).length;
   return { ok: fromA === 6 && fromB === 6,
            detail: { laptopPaths: fromA, tabletPaths: fromB, total: Object.keys(man).length } };
+});
+
+/* A DEVICE THAT HASHES MUST RECOGNISE FILES UPLOADED BY ONE THAT DID NOT.
+ *
+ * The manifest used to record the BLOB address in `sha` — the hash of the ciphertext — while a scan
+ * reports the hash of the FILE. As soon as anything hashed, it compared one against the other, they
+ * never matched, and every identical file was called divergent and duplicated as a conflict copy.
+ * Reported from a tablet joining a folder the desktop had filled: "lots of conflicts". */
+scenario('a-hashing-device-recognises-what-an-unhashed-sweep-uploaded', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Pictures' });
+  for(let i = 0; i < 10; i++) laptop.put('img' + i + '.jpg', 'PHOTO ' + i);
+  await laptop.sweep({ hash: false });            // an ordinary sweep: nothing is hashed
+
+  const tablet = makeDevice(w, { name:'tablet', id:'bbb2', key:'Pictures' });
+  for(let i = 0; i < 10; i++){                     // same bytes, an mtime SAF would have invented
+    tablet.files.set('img' + i + '.jpg', { bytes: bytesOf('PHOTO ' + i), mtime: Date.UTC(2015, 5, 5) });
+  }
+  const rep = await tablet.sweep({ hash: true });  // and this one hashes
+
+  return {
+    ok: rep.conflicted.length === 0 && rep.uploaded.length === 0 && rep.downloaded.length === 0,
+    detail: { conflicted: rep.conflicted.length, uploaded: rep.uploaded.length,
+              downloaded: rep.downloaded.length },
+  };
 });
 
 /* THREE devices, because "the other device" is not always the same one. A file added on the third

@@ -32,8 +32,15 @@ NODE = shutil.which("node") or shutil.which("nodejs")
 DAY = 86400000
 
 
-def f(sha, size=10, mtime=1000):
-    return {"sha": sha, "size": size, "mtime": mtime}
+def f(csum, size=10, mtime=1000):
+    """An entry identified by CONTENT.
+
+    `csum` is the file's own hash. A manifest entry's `sha` is something else entirely — the address
+    of its encrypted blob, the hash of the CIPHERTEXT — and the two were once the same field, so as
+    soon as a device hashed anything it compared one against the other, never matched, and duplicated
+    every identical file as a conflict copy.
+    """
+    return {"csum": csum, "size": size, "mtime": mtime}
 
 
 @unittest.skipIf(not NODE, "no node on this node")
@@ -140,16 +147,16 @@ class TestFolderSync(unittest.TestCase):
 
     def test_sha_beats_mtime_when_both_sides_have_one(self):
         """A file restored from a backup has new mtimes and identical bytes. It is not a change."""
-        p = self.plan(local={"a.txt": {"sha": "A", "size": 10, "mtime": 999999}},
-                      remote={"a.txt": {"sha": "A", "size": 10, "mtime": 1000}},
-                      base={"a.txt": {"sha": "A", "size": 10, "mtime": 1000}})
+        p = self.plan(local={"a.txt": {"csum": "A", "size": 10, "mtime": 999999}},
+                      remote={"a.txt": {"csum": "A", "size": 10, "mtime": 1000}},
+                      base={"a.txt": {"csum": "A", "size": 10, "mtime": 1000}})
         self.assertEqual(p["unchanged"], 1)
 
     def test_a_changed_file_is_still_caught_when_the_size_matches(self):
         """Same length, different bytes — an edit that a size-only check would miss."""
-        p = self.plan(local={"a.txt": {"sha": "NEW", "size": 10, "mtime": 1000}},
-                      remote={"a.txt": {"sha": "OLD", "size": 10, "mtime": 1000}},
-                      base={"a.txt": {"sha": "OLD", "size": 10, "mtime": 1000}})
+        p = self.plan(local={"a.txt": {"csum": "NEW", "size": 10, "mtime": 1000}},
+                      remote={"a.txt": {"csum": "OLD", "size": 10, "mtime": 1000}},
+                      base={"a.txt": {"csum": "OLD", "size": 10, "mtime": 1000}})
         self.assertEqual(self.paths(p, "upload"), ["a.txt"])
 
     # ---- trash + bookkeeping ---------------------------------------------------------------

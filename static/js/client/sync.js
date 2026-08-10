@@ -289,6 +289,12 @@
       // nobody sees.
       await _saveBase(id, s.base || {});
     },
+    /* The FILE's hash, for the manifest's content identity — distinct from the blob address, which is
+     * the hash of the ciphertext. Provided by the store because syncrun.js has no crypto of its own. */
+    hashBytes: async (bytes) => {
+      const h = await crypto.subtle.digest('SHA-256', bytes);
+      return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join('');
+    },
     putBlob: (bytes) => PC.syncBlobs.put(bytes),
     getBlob: (sha) => PC.syncBlobs.get(sha),
     // The chunked pair. Present only when the client build has them, so an older bundle simply does

@@ -90,8 +90,8 @@ class TestSyncRun(unittest.TestCase):
         out = self.run_js("""
           (async () => {
             const fs = makeFs({'doc.txt': {sha:'LOCAL', size:5, mtime:2000}});
-            const store = makeStore({'doc.txt': {sha:'REMOTE', size:5, mtime:3000, device:'phone'}},
-                                    {'doc.txt': {sha:'OLD', size:5, mtime:1000}});
+            const store = makeStore({'doc.txt': {sha:'REMOTE', csum:'REMOTE', size:5, mtime:3000, device:'phone'}},
+                                    {'doc.txt': {csum:'OLD', size:5, mtime:1000}});
             const rep = await R.sweep(fs, store, {id:'r1', device:'laptop', now:5000});
             process.stdout.write(JSON.stringify({calls: fs.calls, rep}));
           })();

@@ -95,7 +95,14 @@
     const scanned = await fs.scan(id, { hash: !!o.hash || firstEver, excludes:o.excludes||[],
                                         maxBytes: chunky ? 0 : (o.maxBytes || 0) });
     report.skipped = scanned.skipped || [];
-    const local = scanned.files || {};
+    /* The scan reports the FILE's hash in `sha`; a manifest entry's `sha` is the address of its
+     * encrypted blob. Renaming the scan's into `csum` here is what stops the engine ever comparing
+     * the two — which it used to, and called every identical file divergent. */
+    const local = {};
+    for(const p in (scanned.files || {})){
+      const e = scanned.files[p];
+      local[p] = (e && e.sha) ? { size:e.size, mtime:e.mtime, csum:e.sha } : e;
+    }
 
     const plan = S.diff({ local, remote, base, device, now, excludes:o.excludes||[] });
     report.unchanged = plan.unchanged;
@@ -164,7 +171,7 @@
         await fs.move(id, c.path, c.keepAs);            // the local edit is safe from here on
         const bytes = await store.getBlob(c.sha);
         const st = await fs.write(id, c.path, bytes, (remote[c.path] || {}).mtime || 0);
-        agree(c.path, { sha:c.sha, size:st.size, mtime:st.mtime });
+        agree(c.path, { sha:c.sha, csum:(remote[c.path]||{}).csum, size:st.size, mtime:st.mtime });
         report.conflicted.push({ path:c.path, keptAs:c.keepAs });
         // The renamed copy is a new local file; the next sweep uploads it as one. Deliberately not
         // uploaded here — a conflict should not also become a network burst mid-sweep.
@@ -191,7 +198,7 @@
           const bytes = await store.getBlob(d.sha);
           st = await fs.write(id, d.path, bytes, R.mtime || 0);
         }
-        agree(d.path, { sha:d.sha, chunks:R.chunks, size:st.size, mtime:st.mtime });
+        agree(d.path, { sha:d.sha, csum:R.csum, chunks:R.chunks, size:st.size, mtime:st.mtime });
         report.downloaded.push(d.path);
       }catch(e){ fail(d.path, e, 'download'); }
       await checkpoint();
@@ -227,8 +234,8 @@
            * against a list hash, called the file changed, and re-uploaded it. For ever, on every
            * device. An incremental scan hashes nothing and leaves it undefined, which is correct:
            * same() then falls back to size+mtime, exactly as it does for every other file. */
-          const entry = { sha:meta.sha, chunks:res.chunks, size:meta.size, mtime:meta.mtime || now, device };
-          if(!entry.sha) delete entry.sha;
+          const entry = { csum:meta.csum, chunks:res.chunks, size:meta.size, mtime:meta.mtime || now, device };
+          if(!entry.csum) delete entry.csum;   // `chunks` is the identity when the scan did not hash
           remember(u.path, entry);
           agree(u.path, entry);
           if(res.existed) report.alreadyStored = (report.alreadyStored || 0) + 1;
@@ -247,7 +254,15 @@
           report.alreadyStored = (report.alreadyStored || 0) + 1;
           step('already stored', u.path, ui, plan.upload.length);
         }
-        const entry = { sha, size:(meta&&meta.size)||bytes.length, mtime:(meta&&meta.mtime)||now, device };
+        /* csum is computed here when the scan did not hash, because it is the only thing that lets
+         * ANOTHER device recognise this file as one it already has. Without it the manifest carries
+         * no content identity at all and every joining device falls back to size+mtime — which on
+         * Android cannot match, since SAF assigns its own last-modified. We are holding the bytes
+         * already; the hash is the cheapest part of this loop. */
+        let csum = meta && meta.csum;
+        if(!csum && store.hashBytes){ try{ csum = await store.hashBytes(bytes); }catch(_){} }
+        const entry = { sha, csum, size:(meta&&meta.size)||bytes.length, mtime:(meta&&meta.mtime)||now, device };
+        if(!entry.csum) delete entry.csum;
         remember(u.path, entry);
         agree(u.path, entry);
         report.uploaded.push(u.path);
@@ -277,7 +292,8 @@
     // to be recorded, or every sweep re-decides them forever.
     for(const n of plan.notes){
       const l = local[n.path], rm = remote[n.path];
-      agree(n.path, l ? { sha:l.sha, size:l.size, mtime:l.mtime } : { deletedAt:(rm&&rm.deletedAt)||now });
+      agree(n.path, l ? { csum:l.csum, chunks:(rm&&rm.chunks), size:l.size, mtime:l.mtime }
+                      : { deletedAt:(rm&&rm.deletedAt)||now });
     }
 
     /* The final save is deliberately NOT a checkpoint: a checkpoint that fails is a slower resume,
