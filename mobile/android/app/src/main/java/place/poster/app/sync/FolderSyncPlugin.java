@@ -23,8 +23,11 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import android.os.ParcelFileDescriptor;
 import java.security.MessageDigest;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -236,6 +239,137 @@ public class FolderSyncPlugin extends Plugin {
         ret.put("b64", Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP));
         call.resolve(ret);
       } catch (Exception e) { call.reject("read failed: " + e.getMessage()); }
+    });
+  }
+
+  /* ---- SLICE I/O: a file too big to hold in one piece -----------------------------------------
+   *
+   * read()/write() move a whole file through one base64 string, so a 200 MB video is that much in
+   * the plugin, again across the bridge, and again in the WebView — where it is then encrypted,
+   * making three or four copies of the file in a process with far less headroom than a desktop.
+   * Android simply died. These move one chunk at a time instead, so the ceiling stops depending on
+   * the size of the file.
+   *
+   * RANDOM ACCESS, NOT skip(). InputStream.skip is allowed to skip fewer bytes than asked and gives
+   * no way to distinguish that from a short file, so seeking with it silently reads the wrong
+   * offset. A ParcelFileDescriptor gives a real channel position; the stream fallback exists for a
+   * provider that refuses one, and loops until the offset is genuinely reached.
+   */
+  @PluginMethod
+  public void readPart(PluginCall call) {
+    final String id = call.getString("id", ""), rel = call.getString("rel", "");
+    final long off = call.getLong("offset", 0L);
+    final int len = call.getInt("len", 0);
+    getBridge().execute(() -> {
+      try {
+        Uri tree = Uri.parse(id);
+        String docId = resolve(tree, rel, false);
+        if (docId == null) { call.reject("not found: " + rel); return; }
+        Uri doc = DocumentsContract.buildDocumentUriUsingTree(tree, docId);
+        ContentResolver cr = getContext().getContentResolver();
+        byte[] buf = new byte[Math.max(0, len)];
+        int got = 0;
+        ParcelFileDescriptor pfd = null;
+        try {
+          pfd = cr.openFileDescriptor(doc, "r");
+        } catch (Exception ignored) { }
+        if (pfd != null) {
+          try (FileInputStream fin = new FileInputStream(pfd.getFileDescriptor())) {
+            fin.getChannel().position(off);
+            int n;
+            while (got < buf.length && (n = fin.read(buf, got, buf.length - got)) > 0) got += n;
+          } finally { pfd.close(); }
+        } else {
+          InputStream in = cr.openInputStream(doc);
+          if (in == null) { call.reject("cannot open: " + rel); return; }
+          try {
+            long left = off;
+            while (left > 0) {
+              long sk = in.skip(left);
+              if (sk <= 0) { byte[] one = new byte[1]; if (in.read(one) < 0) break; sk = 1; }
+              left -= sk;
+            }
+            int n;
+            while (got < buf.length && (n = in.read(buf, got, buf.length - got)) > 0) got += n;
+          } finally { in.close(); }
+        }
+        byte[] out = (got == buf.length) ? buf : java.util.Arrays.copyOf(buf, got);
+        JSObject ret = new JSObject();
+        ret.put("b64", Base64.encodeToString(out, Base64.NO_WRAP));
+        call.resolve(ret);
+      } catch (Exception e) { call.reject("readPart failed: " + e.getMessage()); }
+    });
+  }
+
+  /**
+   * Write one slice into `name.pcpart`. Offset 0 creates it (clearing any leftovers from a crash);
+   * later offsets seek into it. Nothing appears under the real name until writeCommit, so an
+   * interrupted download leaves a part file and never a half-written document.
+   */
+  @PluginMethod
+  public void writePart(PluginCall call) {
+    final String id = call.getString("id", ""), rel = call.getString("rel", "");
+    final String b64 = call.getString("b64", "");
+    final long off = call.getLong("offset", 0L);
+    getBridge().execute(() -> {
+      try {
+        Uri tree = Uri.parse(id);
+        byte[] bytes = Base64.decode(b64, Base64.DEFAULT);
+        String name = baseName(rel), dirRel = dirName(rel);
+        String dirId = resolve(tree, dirRel, true);
+        if (dirId == null) { call.reject("cannot create " + dirRel); return; }
+        ContentResolver cr = getContext().getContentResolver();
+
+        String partId = childId(cr, tree, dirId, name + PART);
+        if (off == 0 && partId != null) { deleteDoc(cr, tree, partId); partId = null; }
+        Uri partUri;
+        if (partId == null) {
+          partUri = DocumentsContract.createDocument(cr,
+              DocumentsContract.buildDocumentUriUsingTree(tree, dirId), "application/octet-stream", name + PART);
+        } else {
+          partUri = DocumentsContract.buildDocumentUriUsingTree(tree, partId);
+        }
+        if (partUri == null) { call.reject("cannot write " + rel); return; }
+
+        // "rw" keeps what is already there; "w" truncates, which would throw away every chunk
+        // written before this one.
+        ParcelFileDescriptor pfd = cr.openFileDescriptor(partUri, "rw");
+        if (pfd == null) { call.reject("cannot open " + rel + " for writing"); return; }
+        try (FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
+          fos.getChannel().position(off);
+          fos.write(bytes);
+          fos.flush();
+        } finally { pfd.close(); }
+        call.resolve(new JSObject());
+      } catch (Exception e) { call.reject("writePart failed: " + e.getMessage()); }
+    });
+  }
+
+  /** Put the finished part file in place — the tail of write(), reused so both paths land the same. */
+  @PluginMethod
+  public void writeCommit(PluginCall call) {
+    final String id = call.getString("id", ""), rel = call.getString("rel", "");
+    getBridge().execute(() -> {
+      try {
+        Uri tree = Uri.parse(id);
+        String name = baseName(rel), dirRel = dirName(rel);
+        String dirId = resolve(tree, dirRel, true);
+        if (dirId == null) { call.reject("cannot create " + dirRel); return; }
+        ContentResolver cr = getContext().getContentResolver();
+        String partId = childId(cr, tree, dirId, name + PART);
+        if (partId == null) { call.reject("nothing to commit for " + rel); return; }
+
+        String existing = childId(cr, tree, dirId, name);
+        if (existing != null) trashDoc(cr, tree, existing, rel, call.getLong("when", 0L));
+        DocumentsContract.renameDocument(cr, DocumentsContract.buildDocumentUriUsingTree(tree, partId), name);
+
+        String finalId = childId(cr, tree, dirId, name);
+        long[] st = finalId == null ? null : statById(cr, tree, finalId);
+        JSObject ret = new JSObject();
+        ret.put("size", st != null ? st[0] : 0);
+        ret.put("mtime", st != null ? st[1] : System.currentTimeMillis());
+        call.resolve(ret);
+      } catch (Exception e) { call.reject("writeCommit failed: " + e.getMessage()); }
     });
   }
 

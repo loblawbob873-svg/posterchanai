@@ -93,6 +93,12 @@ separate ceilings, all of them silent, all now handled:
   not a slow resume, it is a folder that can never finish on a machine anyone ever closes. Progress
   is checkpointed during the sweep now, at most 20 times per sweep however large the folder is —
   each checkpoint rewrites the whole manifest, so they are bounded on purpose.
+- **Big files are chunked, on every platform.** Past 16 MB a file goes up in pieces rather than
+  whole, because the whole-file path holds the plaintext, the ciphertext and the upload body at once
+  — three to four times the file — and that killed the desktop renderer and the Android WebView
+  alike. Each chunk is content-addressed and checked before it is sent, so an interrupted transfer
+  resumes, appending to a file re-sends only the new part, and no single request exceeds a chunk
+  (which is also what makes this work behind a proxy that refuses bodies over ~95 MB).
 - **Superseded manifest blobs.** Each save past that threshold uploads a whole new encrypted blob, so
   a long first sync leaves one per checkpoint. The document carries a one-deep chain and the server
   lets go of the generation behind it once the replacement is safely stored — ownership-checked, so

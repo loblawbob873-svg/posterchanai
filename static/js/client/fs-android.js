@@ -36,6 +36,17 @@
     forget: (id) => P.forget({ id }),
     scan: (id, opts) => P.scan(Object.assign({ id }, opts || {})),
     read: (id, rel) => P.read({ id, rel }).then(r => toBytes(r.b64)),
+    /* Slice I/O — what lets a file bigger than this process can hold move at all. Whole-file read()
+     * puts the file in the plugin, again across the bridge as base64, and again in the WebView,
+     * which is then asked to encrypt it: a WebView has far less headroom than a desktop and simply
+     * died. Their presence is also the signal syncrun checks before choosing the chunked path, so a
+     * build without them keeps the old behaviour instead of calling something undefined. */
+    readPart: (id, rel, offset, len) =>
+      P.readPart({ id, rel, offset: offset || 0, len: len || 0 }).then(r => toBytes(r.b64)),
+    writePart: (id, rel, offset, bytes) =>
+      P.writePart({ id, rel, offset: offset || 0, b64: toB64(bytes) }),
+    writeCommit: (id, rel, mtime) =>
+      P.writeCommit({ id, rel, when: mtime || 0 }),
     /* `mtime` is accepted and ignored: SAF has no writable last-modified column, so the provider
      * decides. What comes back is what the file ACTUALLY became, and syncrun.js records that as the
      * agreed state — which is what stops the next sweep reading our own download as a local edit. */
