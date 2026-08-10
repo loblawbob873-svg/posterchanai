@@ -122,11 +122,14 @@ agreeing, or if a background script starts using something a worker does not hav
 
 ### Getting it
 
-> Just installing it? **Firefox:
-> <https://addons.mozilla.org/firefox/addon/posterchan-passwords/>** (or `poster.place/extension`,
-> which redirects there). **[extension/README.md](../extension/README.md)** is the step-by-step for
-> Chrome/Edge/Brave and for sideloading your own build, plus pairing and turning on bookmark sync.
-> The rest of this section is why it's built the way it is.
+> Just installing it? Both stores now carry it, so nobody has to sideload:
+> **Firefox: <https://addons.mozilla.org/firefox/addon/posterchan-passwords/>**
+> (or `poster.place/extension`, which redirects there) ·
+> **Chrome/Edge/Brave:
+> <https://chromewebstore.google.com/detail/posterchan-passwords/iigdaolbcfinlkmkhkfignoknfpmnfeg>**.
+> **[extension/README.md](../extension/README.md)** is the step-by-step, including sideloading your
+> own build, pairing, and turning on bookmark sync. The rest of this section is why it's built the
+> way it is.
 
     https://poster.place/extension            the signed listing on addons.mozilla.org
     https://poster.place/extension/unpacked   the unpacked bundle (.tar.gz) — for about:debugging
@@ -150,6 +153,25 @@ For Chrome (and Edge/Brave): `chrome://extensions` → **Developer mode** → **
 `extension/dist/chrome`. Chrome will not install a zip directly, and unlike a Firefox temporary
 add-on an unpacked extension stays loaded across restarts — no signing, no store account. The release
 also ships `posterchan-passwords-chrome.zip`, which is the same folder zipped for transport.
+
+**That is now the DEVELOPER path, not the install path.** Ordinary users get it from the Chrome Web
+Store listing above, which auto-updates the same way AMO does.
+
+### Listed on the Chrome Web Store
+
+**<https://chromewebstore.google.com/detail/posterchan-passwords/iigdaolbcfinlkmkhkfignoknfpmnfeg>**
+— item id `iigdaolbcfinlkmkhkfignoknfpmnfeg`, covering Chrome, Edge and Brave in one listing.
+
+A store install differs from a loaded-unpacked one in a way worth knowing when a bug report arrives:
+the MV3 **service worker is only started on demand** and is torn down after ~30s idle. If it fails to
+boot at all — an exception anywhere in the `importScripts` chain leaves `onMessage` unregistered —
+then every popup action's `sendMessage` REJECTS, and what the user sees is whatever generic sentence
+that action prints. "Pairing failed" is the usual one, and it says nothing about the real fault: the
+pairing code was never even parsed. `popup.js` therefore reports an unanswered message as itself,
+with Chrome's own explanation, rather than collapsing it to `null`; and
+`tests/test_extension_worker_boot.py` boots the worker's exact file list in a stubbed MV3 global
+(no `window`, no DOM) and drives a real `pair` through it, because headless Chrome on a build box
+will not load an unpacked extension and so cannot be asked directly.
 
 ### Signed and listed on AMO
 

@@ -13,14 +13,16 @@ own — it is paired to a vault that already exists.
 
 ---
 
-## Firefox — install it from Mozilla
+## Install it from your browser's store
 
-**<https://addons.mozilla.org/firefox/addon/posterchan-passwords/>** — or `poster.place/extension`,
-which redirects there.
+**Firefox:** <https://addons.mozilla.org/firefox/addon/posterchan-passwords/> — or
+`poster.place/extension`, which redirects there.
 
-That's the whole thing: one click, on **release Firefox and Firefox for Android**, and it
-**auto-updates** from then on. Everything below this section is for Chrome, or for running a build
-you made yourself; you don't need any of it to install the add-on.
+**Chrome, Edge, Brave:**
+<https://chromewebstore.google.com/detail/posterchan-passwords/iigdaolbcfinlkmkhkfignoknfpmnfeg>
+
+That's the whole thing: one click, and it **auto-updates** from then on. Everything below this
+section is for running a build you made yourself; you don't need any of it to install the add-on.
 
 Firefox for Android in particular has **no other route** — it installs add-ons only from AMO or a
 custom collection, so the sideload options further down don't exist there at all.
@@ -75,7 +77,11 @@ exactly the bug this arrangement prevents.
 
 ## 2. Install it
 
-### Chrome, Edge, Brave — permanent, no store, no signing
+### Chrome, Edge, Brave — from a build you made
+
+> Installing normally? Use the [Web Store
+> listing](https://chromewebstore.google.com/detail/posterchan-passwords/iigdaolbcfinlkmkhkfignoknfpmnfeg)
+> — one click and it auto-updates. This is the developer path.
 
 1. Extract `posterchan-passwords-chrome.zip` (or use `extension/dist/chrome/` if you built it).
 2. Go to **`chrome://extensions`**.
@@ -207,8 +213,14 @@ every one. A bump releases to both; an ordinary commit releases to neither.
 A step whose secrets are absent is **skipped, not failed** — forks and PRs cannot see them.
 
 Both stores still put a submission through **human review**; this automates the upload, which was the
-manual and error-prone part. The first upload to each store must be done by hand: AMO needs the
-listing to exist, and the Web Store's **item ID** does not exist until it does.
+manual and error-prone part. The first upload to each store had to be done by hand — AMO needs the
+listing to exist, and the Web Store's **item ID** does not exist until it does — and **both are now
+done**, so a version bump is the entire release on both:
+
+| | Listing | `CWS_ITEM_ID` |
+|---|---|---|
+| **AMO** | <https://addons.mozilla.org/firefox/addon/posterchan-passwords/> | — |
+| **Chrome Web Store** | <https://chromewebstore.google.com/detail/posterchan-passwords/iigdaolbcfinlkmkhkfignoknfpmnfeg> | `iigdaolbcfinlkmkhkfignoknfpmnfeg` |
 
 **The one trap that bites later, not now:** while the Google OAuth consent screen is in *Testing*,
 Google expires the refresh token after **7 days** — so Chrome publishing starts failing about a week

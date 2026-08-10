@@ -18579,12 +18579,22 @@
         this.sync(false).catch(()=>{});             // non-manual → notifies rather than toasting
       };
       this._pollT = setInterval(tick, this.POLL_MS);
-      document.addEventListener('visibilitychange', () => {
-        // Catch up on becoming visible, but only if the last check is actually stale — switching tabs
-        // twice in a minute must not mean two IMAP syncs.
-        if(document.visibilityState === 'visible'
-           && Date.now() - (this._lastSync || 0) > this.POLL_MS) tick();
-      });
+      /* The listener is bound ONCE for the life of the page, not once per startPolling().
+       *
+       * The interval is guarded by `_pollT`, but this was not: it sits after that guard, so it is
+       * only safe while nothing ever calls stopPolling() — which is true today and is exactly the
+       * kind of thing that stops being true without anyone noticing. Every stop/start cycle would
+       * otherwise leave another live listener behind, and each one fires its own tick() on the next
+       * visibility change: N IMAP syncs per tab switch, growing the longer the window is open. */
+      if(!this._visWired){
+        this._visWired = true;
+        document.addEventListener('visibilitychange', () => {
+          // Catch up on becoming visible, but only if the last check is actually stale — switching
+          // tabs twice in a minute must not mean two IMAP syncs.
+          if(this._pollT && document.visibilityState === 'visible'
+             && Date.now() - (this._lastSync || 0) > this.POLL_MS) tick();
+        });
+      }
     },
     stopPolling(){ if(this._pollT){ clearInterval(this._pollT); this._pollT = 0; } },
 

@@ -14,7 +14,47 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
 
 let tabUrl = '', matches = [], everything = [], ticker = null, vaultCount = 0;
 
-const send = (msg) => B.runtime.sendMessage(msg).catch(() => null);
+/* A message to the background, and WHY it failed when it does.
+ *
+ * A REJECTED sendMessage does not mean the operation failed; it means nothing ANSWERED. On
+ * Chrome/Brave MV3 that is the background service worker having failed to start — an exception
+ * anywhere in the importScripts chain leaves no listener registered — and Chrome's own text for it,
+ * "Could not establish connection. Receiving end does not exist.", is the only clue there is.
+ * Swallowing it turned every such fault into whatever generic line the caller happened to print;
+ * "pairing failed" is the one people report, and it names the wrong layer entirely.
+ *
+ * STILL RESOLVES null WHEN NOTHING ANSWERED. Every caller in this file distinguishes "the
+ * background said no" from "the background did not answer" with a plain `if(!r)`, and several act on
+ * the reply's fields immediately after: returning a truthy error object instead made the Relays pane
+ * paint `(r.relays||[])` — an EMPTY textarea — which one Save then wrote back as the user's real
+ * relay list, stopping the vault syncing. A diagnostic must not be able to delete anything.
+ *
+ * So the REASON is kept beside the null rather than in place of it. `lastNoAnswer()` is what the
+ * pairing screen shows instead of its own generic sentence, and the console line is what someone
+ * reporting the fault can be asked for. */
+let _noAnswerWhy = '';
+const send = async (msg) => {
+  try{
+    const r = await B.runtime.sendMessage(msg);
+    if(r !== undefined){ _noAnswerWhy = ''; return r; }
+    _noAnswerWhy = 'the background sent no reply';
+  }catch(e){
+    _noAnswerWhy = (e && e.message)
+      || (B.runtime && B.runtime.lastError && B.runtime.lastError.message) || '';
+  }
+  try{ console.error('[pcvault] background did not answer:', _noAnswerWhy || '(no detail)'); }catch(_){}
+  return null;
+};
+/* Named for the browser the user is actually in — `chrome://extensions` does not exist in Firefox,
+ * and sending a Firefox-for-Android user there is worse than saying nothing. */
+function lastNoAnswer(){
+  const where = (typeof browser !== 'undefined')
+    ? 'about:addons → disable and re-enable PosterChan Passwords'
+    : 'chrome://extensions → reload';
+  return 'the extension’s background didn’t answer'
+       + (_noAnswerWhy ? ' — ' + _noAnswerWhy : '')
+       + '. Try ' + where + ', then pair again.';
+}
 
 /* EVERY pane in the document, not a hardcoded list of three.
  *
@@ -273,7 +313,9 @@ for(const b of document.querySelectorAll('.nav .tab')){
 $('#pair-go').onclick = async () => {
   const r = await send({ type:'pair', code: $('#pair-code').value });
   if(r && r.ok){ $('#pair-err').textContent = ''; boot(); }
-  else $('#pair-err').textContent = (r && r.error) || 'pairing failed';
+  // `r` is null only when nothing answered — say which of the two it was, since "pairing failed"
+  // described neither, and for a dead background it named the wrong layer entirely.
+  else $('#pair-err').textContent = r ? (r.error || 'pairing failed') : lastNoAnswer();
 };
 /* What the signer has been allowed to do, and how to take it back.
  *
