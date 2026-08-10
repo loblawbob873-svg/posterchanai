@@ -369,6 +369,9 @@
    * half-applied state, which is the one input the engine is not designed for. */
   let granted = null;                 // what the PLATFORM says this device can reach
   const running = new Map();          // id -> promise
+  // Folders asked to stop. Read by the sweep between files, so Pause takes effect on the run that is
+  // actually happening rather than the one after it.
+  const stopping = new Set();
   const status = new Map();           // id -> {when, text, report}
 
   function deviceName(){
@@ -419,6 +422,7 @@
         const rep = await RUN.sweep(fs, store, {
           id: f.id, key: keyOf(f), device: deviceName(), now: Date.now(),
           excludes: f.excludes || [], maxBytes: await maxBytes(),
+          shouldStop: () => stopping.has(f.id),
           /* Above ONE CHUNK a file goes up in pieces. This used to be 64 MB, which left every file
            * under it on the whole-file path — and a 60 MB photo there costs ~240 MB of renderer
            * memory, which is what kept killing the window on a big Pictures folder. Chunking is the
@@ -811,7 +815,8 @@
       { const pz = card.querySelector('.sync-pause');
         if(pz) pz.onclick = () => {
           put(f => { f.prefs = Object.assign({}, f.prefs, { paused: true }); });
-          setStatus(id, 'paused — press Start when you want it to run again');
+          stopping.add(id);                       // and stop the sweep that is running RIGHT NOW
+          setStatus(id, running.has(id) ? 'stopping…' : 'paused — press Start when you want it to run again');
           paint();
         }; }
       { const st = card.querySelector('.sync-start');
@@ -821,6 +826,7 @@
           const ta = card.querySelector('.sync-ex-ta');
           if(ta) put(f => { f.excludes = ta.value.split('\n').map(x => x.trim()).filter(Boolean); });
           put(f => { f.prefs = Object.assign({}, f.prefs, { paused: false }); });
+          stopping.delete(id);
           paint();
           sweep(get(), { manual:true }).catch(()=>{});
         }; }

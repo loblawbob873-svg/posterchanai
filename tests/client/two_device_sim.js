@@ -778,6 +778,29 @@ scenario('a-manifest-without-checksums-repairs-itself', async () => {
   };
 });
 
+/* THE MANIFEST HAS CHECKSUMS AND THE SWEEP DOES NOT HASH — the ordinary case, and the one that kept
+ * a folder conflicting after every entry had already been given a content identity. An ordinary
+ * sweep never hashes, so the local side has nothing to compare with and falls back to size+mtime,
+ * which Android can never match. */
+scenario('an-unhashed-sweep-does-not-duplicate-a-folder-that-has-checksums', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Pictures' });
+  for(let i = 0; i < 9; i++) laptop.put('p' + i + '.jpg', 'PHOTO ' + i);
+  await laptop.sweep({ hash: true });                  // entries carry a csum
+
+  const phone = makeDevice(w, { name:'phone', id:'ccc3', key:'Pictures' });
+  for(let i = 0; i < 9; i++){
+    phone.files.set('p' + i + '.jpg', { bytes: bytesOf('PHOTO ' + i), mtime: Date.UTC(2012, 2, 2) });
+  }
+  phone.bases.set('Pictures', { seeded: { size: 0, mtime: 0 } });   // not a first sweep: no forced hash
+  const rep = await phone.sweep({ hash: false });
+
+  return {
+    ok: rep.conflicted.length === 0 && rep.failed.length === 0 && phone.live().length === 9,
+    detail: { conflicted: rep.conflicted.length, failed: rep.failed.length, onDisk: phone.live().length },
+  };
+});
+
 /* THREE devices, because "the other device" is not always the same one. A file added on the third
  * has to reach both of the others, and a delete on the first has to reach both of the others. */
 scenario('three-devices-converge', async () => {

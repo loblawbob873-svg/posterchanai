@@ -229,6 +229,29 @@ class TestSyncRun(unittest.TestCase):
         self.assertEqual(out["secondRepaired"], 0, "nothing left to repair once it is recorded")
         self.assertEqual(out["secondSaves"], 0, "so the second sweep writes nothing at all")
 
+    def test_stopping_halts_the_sweep_that_is_running(self):
+        """Pause used to set a flag the POLICY reads — which decides whether a sweep may START. So
+        pressing it during a sweep of several hundred files did nothing for as long as that sweep
+        took, and the button plainly lied. It has to stop THIS run: the file in flight finishes,
+        what has been agreed is stored, and the next run resumes from there."""
+        out = self.run_js("""
+          (async () => {
+            const files = {};
+            for(let i = 0; i < 8; i++) files['f' + i + '.txt'] = {sha:'S' + i, size:3, mtime:1};
+            const fs = makeFs(files);
+            const store = makeStore({}, {});
+            let seen = 0;
+            const rep = await R.sweep(fs, store, {id:'r1', device:'laptop', now:5000,
+              shouldStop: () => (++seen > 3)});      // asked to stop partway through
+            process.stdout.write(JSON.stringify({ stopped: !!rep.stopped,
+              uploaded: rep.uploaded.length, saves: store.saved.length }));
+          })();
+        """)
+        self.assertTrue(out["stopped"], "the report must say it was stopped")
+        self.assertLess(out["uploaded"], 8, "it must not have finished the whole plan")
+        self.assertGreaterEqual(out["saves"], 1,
+                                "what it DID agree has to be stored, or the work is thrown away")
+
     def test_dry_run_touches_nothing(self):
         out = self.run_js("""
           (async () => {

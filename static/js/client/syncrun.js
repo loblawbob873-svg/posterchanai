@@ -70,6 +70,17 @@
      * whatever it likes; nothing here depends on it. */
     const tick = (typeof o.onProgress === 'function') ? o.onProgress : function(){};
     const step = (phase, path, i, n) => { try{ tick({ phase, path, i, n }); }catch(_){} };
+    /* STOPPING HAS TO STOP THIS SWEEP, not the next one.
+     *
+     * Pausing a folder used to set a flag the POLICY reads, which decides whether a sweep may start —
+     * so pressing it during a sweep of several hundred files did nothing at all for as long as that
+     * sweep took, and the button plainly lied. Checked between files here: a file in flight finishes
+     * (interrupting mid-upload just wastes the transfer), then the sweep stores what it has agreed
+     * and returns. Everything already done stays done, and the next run resumes from the checkpoint,
+     * because that is what checkpoints are for. */
+    const stopping = () => { try{ return typeof o.shouldStop === 'function' && !!o.shouldStop(); }catch(_){ return false; } };
+    const halt = async () => { report.stopped = true; await checkpointRef.fn(true); return report; };
+    const checkpointRef = { fn: async () => {} };
 
     /* THE MANIFEST AND THE AGREEMENT ARE READ FIRST, because whether this device has ever agreed
      * about this folder decides HOW to scan it.
@@ -160,6 +171,7 @@
         report.checkpointFailed = (e && e.message) || String(e);
       }
     };
+    checkpointRef.fn = checkpoint;
     const agree = (path, entry) => { nextBase[path] = entry; dirty = true; };
     const fail = (path, e, what) => {
       report.failed.push({ path, what, error: (e && e.message) || String(e) });
@@ -194,6 +206,7 @@
      * has to happen before anything else can clobber the local copy. */
     let ci=0;
     for(const c of plan.conflicts){
+      if(stopping()) return await halt();
       step('conflict', c.path, ++ci, plan.conflicts.length);
       /* VERIFY BEFORE DUPLICATING.
        *
@@ -211,6 +224,27 @@
        * Bounded by the whole-file ceiling: this reads the file, and reading a 2 GB one to avoid a
        * conflict would trade a duplicate for a dead renderer. */
       const R0 = remote[c.path] || {}, L0 = local[c.path] || {};
+      /* THE OTHER HALF: the manifest HAS a content identity and this scan does not.
+       *
+       * An ordinary sweep never hashes — that is what makes it ordinary — so `L0.csum` is absent and
+       * the comparison falls back to size+mtime, which on Android can never match, because SAF gives
+       * a downloaded file whatever last-modified it likes. So a folder whose entries all carry a
+       * checksum STILL conflicted on every file, for want of hashing the one file about to be
+       * duplicated. Everything below covered the reverse case and missed this one.
+       *
+       * Hash it now. It is one file, already about to be read and copied, and the answer is exact. */
+      if(R0.csum && !L0.csum && store.hashBytes && L0.size && (!o.maxBytes || L0.size <= o.maxBytes)){
+        let settled = false;
+        try{
+          if(await store.hashBytes(await fs.read(id, c.path)) === R0.csum){
+            const entry = Object.assign({}, R0, { size: L0.size, mtime: L0.mtime });
+            remember(c.path, entry);
+            agree(c.path, Object.assign({}, entry, { csum: R0.csum }));
+            report.unchanged++; settled = true;
+          }
+        }catch(_){ }
+        if(settled){ await checkpoint(); continue; }
+      }
       /* A CHUNKED entry has no `sha` at all — its address is the LIST — so the check below skipped
        * every file over one chunk and duplicated it anyway. Reported after the first fix landed:
        * still conflicting, on the big ones. Comparing the list costs a read and an encrypt of the
@@ -271,6 +305,7 @@
 
     let di=0;
     for(const d of plan.download){
+      if(stopping()) return await halt();
       step('downloading', d.path, ++di, plan.download.length);
       try{
         const R = remote[d.path] || {};
@@ -296,6 +331,7 @@
 
     let ui=0;
     for(const u of plan.upload){
+      if(stopping()) return await halt();
       step('uploading', u.path, ++ui, plan.upload.length);
       const meta = local[u.path];
       try{
@@ -362,6 +398,7 @@
 
     let ti=0;
     for(const t of plan.deleteLocal){
+      if(stopping()) return await halt();
       step('to trash', t.path, ++ti, plan.deleteLocal.length);
       try{
         const to = await fs.trash(id, t.path, now);
