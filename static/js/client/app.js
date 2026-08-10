@@ -11819,9 +11819,33 @@
         if(v==='__music'){ closeModal(); renderMusicApp(); return; } if(v==='__files'){ closeModal(); filesMenu(); return; } if(v==='__golive'){ closeModal(); _goLive(); return; } if(v==='__accounts'){ closeModal(); accountMenu(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
     });
   }
-  function filesMenu(){   // mobile Files sub-sheet — mirrors the desktop sidebar's Files group
-    const items=[['blossom','flower','Blossom'],['__music','music','Music']];
-    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-folder"></use></svg> Files</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
+  /* Mobile Files sub-sheet — DERIVED from the desktop sidebar's Files group, not a second list of it.
+   *
+   * It used to be `[['blossom',…],['__music',…]]` under a comment claiming it mirrored the sidebar,
+   * which it did until anything was added to one of them. Folder Sync shipped, appeared in the
+   * sidebar, and was simply unreachable on a phone: the view worked, the modules were loaded, the
+   * nav entry existed — and the only surface a phone can reach it through never learned about it.
+   * Three rebuilds and a nav-injection fix later, it was still this list.
+   *
+   * Reading the sidebar means the phone cannot fall behind it: a row added to `#files-sub` is in both
+   * places at once, with the same icon and the same label. The literal below is the fallback for a
+   * shell too old to have the group at all. */
+  function filesMenu(){
+    const rows = $$('#files-sub .nav-item').map(b => {
+      const v = b.dataset.view || (b.id === 'nav-music' ? '__music' : '');
+      if(!v || b.classList.contains('hidden')) return null;    // gated off for this install → gated off here
+      const use = b.querySelector('use');
+      const href = (use && (use.getAttribute('href') || use.getAttribute('xlink:href'))) || '#i-folder';
+      const label = ((b.querySelector('span') || {}).textContent || v).trim();
+      return { v, svg: '<svg class="ic" aria-hidden="true"><use href="' + href + '"></use></svg>', label };
+    }).filter(Boolean);
+    if(rows.length) return _filesSheet(rows);
+    return _filesSheet([{ v:'blossom', svg:ICO('flower'), label:'Blossom' },
+                        { v:'__music', svg:ICO('music'),  label:'Music' },
+                        { v:'sync',    svg:ICO('refresh'), label:'Folder Sync' }]);
+  }
+  function _filesSheet(rows){
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-folder"></use></svg> Files</h3><div class="more-grid">${rows.map(r=>`<button class="more-item" data-v="${enc(r.v)}"><span class="more-ic">${r.svg}</span><span>${enc(r.label)}</span></button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; closeModal(); if(v==='__music') openMusic(); else switchView(v); });
     });
   }
