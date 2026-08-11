@@ -207,9 +207,14 @@ def test_a_replay_is_never_matched_to_an_earlier_broadcasts_recording(tmp_path):
     harness.write_text(
         body.replace("async function _vodUrlFor(token, starts){", "function pick(vods, starts){")
             .replace("if(!token) return '';", "")
+            # The fetch was refactored into _vodList; strip whatever line currently BINDS `vods`,
+            # by name rather than by its exact text — the harness's whole job is to substitute that
+            # binding with a parameter, and pinning the old spelling made this a SyntaxError
+            # ("Identifier 'vods' has already been declared") the moment the fetch moved.
             .replace("const r = await _streamFetch('/api/streams/vods/by-token/' + encodeURIComponent(token));", "")
             .replace("if(!(r && r.ok)) return '';", "")
             .replace("const vods = ((await r.json()) || {}).vods || [];", "")
+            .replace("const vods = await _vodList(token);", "")
         + """
 const GOOD={url:'GOOD',started_at:1785955398}, BAD={url:'BAD',started_at:1785948486};
 const STARTS=[1785955397,1785955420,1785955454,1785955477];

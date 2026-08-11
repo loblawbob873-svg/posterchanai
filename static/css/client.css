@@ -4580,6 +4580,11 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
    flow it would fly to the nearest positioned ancestor — the same correction .av-title and
    .streams-top each had to make. */
 .st-selfhd{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:700}
+/* Its OWN class, not the generic `.row`. `body.popout .stream-main > .row{display:none}` is an
+   UNQUALIFIED selector that exists to hide the pop-out/open-URL buttons, and a second .row in
+   .stream-main would silently be hidden by it too — which tests/test_stream_popout.py pins for
+   exactly this reason, and caught this. */
+.st-self-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .st-selfhd .live-badge{position:static;font-size:12px;display:inline-flex;align-items:center;
   -webkit-text-fill-color:#fff}
 .stream-chat{width:100%;flex:none;display:flex;flex-direction:column;border:1px solid var(--line,#2a2a3a);border-radius:12px;overflow:hidden;height:44vh}

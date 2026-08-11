@@ -1,0 +1,43 @@
+# Posterchan AI — SSH terminal keeper, as its OWN unit.
+#
+# Template. scripts/install_services.sh writes the real file with this node's user/paths/launcher.
+#
+# WHY, and it is the opposite of every other unit here. The others are split out because restarting
+# THEM is expensive; this one is split out because restarting the APP must not touch it. It holds
+# people's open shells — the working directory, the running command, the scrollback — and this app is
+# deployed several times a day. Under the single-unit layout a terminal session's realistic lifetime
+# was "until the next ./sync.sh", which is minutes.
+#
+# scripts/deploy_targets.py therefore leaves this unit OUT of its "restart everything" set — the only
+# one it does — because restarting it destroys user state, and it is a leaf (paramiko + ssh_service +
+# settings_store at runtime), so running slightly older code until someone restarts it on purpose is
+# the recoverable direction. See app/services/ssh_keeper.py and docs/TERMINAL.md.
+#
+# Nothing is required on the hosts you connect to beyond sshd. If tmux or screen is installed there,
+# `ssh_terminal_multiplex` puts the shell inside one as well, and then the session survives a reboot
+# of THIS box too.
+
+[Unit]
+Description=Posterchan AI — SSH terminal keeper (shells that outlive a deploy)
+After=network.target
+
+[Service]
+Type=simple
+User=CHANGEME
+WorkingDirectory=/home/CHANGEME/posterchanai
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="HOME=/home/CHANGEME"
+ExecStart=/home/CHANGEME/posterchanai/run-intel.sh --role shell
+
+TimeoutStopSec=10
+KillMode=mixed
+KillSignal=SIGTERM
+SendSIGKILL=yes
+
+Restart=always
+RestartSec=3
+TimeoutStartSec=120
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

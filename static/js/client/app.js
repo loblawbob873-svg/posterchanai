@@ -7318,7 +7318,7 @@
             <div class="muted small">The player is off on purpose — you are streaming from this
               device, so playing it back would echo your own mic and re-download the video you are
               uploading. Your chat and headcount are live${isDesktop()?' beside this':' below'}.</div>
-            <div class="row" style="gap:8px;flex-wrap:wrap">
+            <div class="st-self-actions">
               ${watchLink?`<button class="btn btn-neon small" id="st-selflink"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy watch link</button>`:''}
               <button class="btn btn-ghost small" id="st-selfprev"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg>Preview it anyway (muted)</button>
             </div></div>`:''}

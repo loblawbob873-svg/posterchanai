@@ -177,10 +177,13 @@ class Mapping(unittest.TestCase):
 
     def test_every_mapped_unit_is_a_real_unit_template(self):
         """A mapping naming a unit that does not exist would silently fail to restart at deploy."""
+        # Against UNITS, not ALL: ALL is the "restart everything" set, and the shell keeper is
+        # deliberately absent from it (restarting it destroys open shells). "Is this a real unit" and
+        # "is this restarted by a conservative fallback" are different questions.
         for _prefix, units in dt._OWNED:
             for u in units:
-                self.assertIn(u, dt.ALL, u)
-        for u in dt.ALL:
+                self.assertIn(u, dt.UNITS, u)
+        for u in dt.UNITS:
             if u == dt.APP:
                 name = "posterchanai.service"
             else:

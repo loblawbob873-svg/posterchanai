@@ -173,9 +173,11 @@ def test_a_glance_at_the_shade_does_not_reopen_every_socket():
     # The native PAUSE branch has to record the timestamp — the gate above reads a number that was
     # otherwise only ever written by the least reliable signal. (It also drops the timeline there; see
     # tests/test_timeline_background_pause.py.)
+    # Sliced to the END of the listener rather than a guessed number of characters: a fixed window
+    # goes red when the code around it grows, which is what it did twice.
     i = APPJS.index("addListener('appStateChange'")
-    pause = APPJS[i:i + 800]
-    assert re.search(r"else \{[^}]*_hiddenAt = Date\.now\(\);", pause), (
+    pause = APPJS[i:APPJS.index("}); }catch(_){} }", i)]
+    assert re.search(r"else \{[\s\S]*_hiddenAt = Date\.now\(\);", pause), (
         "nothing records when the app was BACKGROUNDED natively, so the gate above reads a number "
         "only the unreliable signal ever wrote")
 

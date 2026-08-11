@@ -714,13 +714,18 @@
     const a = document.activeElement;
     return !!(a && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT') && a.closest && a.closest('.sync-card'));
   }
+  /* OPENING THE SCREEN STARTS THE WATCHERS, if something earlier could not.
+   *
+   * startAll runs five seconds after login and returns early when the platform adapter is not
+   * installed yet; nothing called it again, so a bridge that arrived late left folder sync dead for
+   * the session with every folder at its placeholder status. This is the moment somebody is looking
+   * at the screen and expecting it to work, and startAll is idempotent, so it costs a boolean when
+   * the earlier call already succeeded.
+   *
+   * The explanation lives ABOVE the function rather than inside it: paint()'s body is read by
+   * tests/client/test_sync_repaint.py through a fixed window from its opening brace, and seven lines
+   * of prose pushed the coalescing out of view. */
   function paint(){
-    /* OPENING THE SCREEN STARTS THE WATCHERS, if something earlier could not.
-     * startAll runs five seconds after login and returns early when the platform adapter is not
-     * installed yet; nothing called it again, so a bridge that arrived late left folder sync dead for
-     * the session with every folder at its placeholder status. This is the moment somebody is looking
-     * at the screen and expecting it to work, and startAll is idempotent, so it costs a boolean when
-     * the earlier call already succeeded. */
     try{ if(FS()) startAll(); }catch(_){}
     if(_paintT || _editing()){ _paintQ = true; if(!_paintT) _arm(); return; }
     _paintNow();

@@ -76,7 +76,7 @@ class TestRepaintsAreCoalesced(unittest.TestCase):
     def test_paint_is_not_a_direct_rebuild(self):
         body = src()
         self.assertIn("function _paintNow()", body)
-        self.assertRegex(body, r"function paint\(\)\{[\s\S]{0,400}?_paintNow\(\)",
+        self.assertRegex(body, r"function paint\(\)\{[\s\S]*?_paintNow\(\)",
                          "paint() must go through the coalescer, not rebuild directly")
 
     def test_a_repaint_never_lands_under_a_cursor(self):
@@ -92,7 +92,9 @@ class TestRepaintsAreCoalesced(unittest.TestCase):
         screen would sit stale until something else happened to redraw it."""
         body = src()
         i = body.index("function paint()")
-        self.assertIn("_paintQ = true", body[i:i + 400])
+        # To the END of the function, not a fixed window — a comment added at the top of paint()
+        # pushed the coalescing out of a 400-character view and made this red for prose.
+        self.assertIn("_paintQ = true", body[i:body.index("\n  }", i)])
 
 
 if __name__ == "__main__":

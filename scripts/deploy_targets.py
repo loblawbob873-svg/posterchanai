@@ -42,6 +42,11 @@ GIT = "posterchanai-git.service"
 # restarts it on purpose — visible, harmless, and recoverable, which is not true the other way round.
 SHELL = "posterchanai-shell.service"
 ALL = (APP, RELAY, WORKER, MEDIA, TOR, PROXY, GIT)
+# Every unit this file may name. `ALL` is the "restart everything" SET, which SHELL is deliberately
+# not in (see above); this is the list of units that EXIST, and it is what "a mapping must not name a
+# unit that does not exist" is checked against. Two different questions, and conflating them is what
+# made adding a deliberately-excluded unit look like a typo.
+UNITS = ALL + (SHELL,)
 
 # (prefix, units) — longest prefix wins. Only paths whose owners are KNOWN belong here.
 #

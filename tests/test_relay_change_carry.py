@@ -37,9 +37,21 @@ class TopLevelBindings(unittest.TestCase):
     """
 
     def test_app_js_never_uses_the_sub_module_PC_binding(self):
+        """`PC.` in app.js is a ReferenceError — the bridge it BUILDS is window.__PC.
+
+        Comment lines are skipped, and that is not a softening: the three hits this had were all
+        prose EXPLAINING the bug (one of them the note left when `PC.syncBlobs.CHUNK` threw on the
+        first chunked upload), so the test was red for describing what it exists to prevent. A test
+        that cannot be made green without deleting the explanation is one people turn off.
+        """
         s = _src()
-        hits = [(i + 1, ln.strip()) for i, ln in enumerate(s.splitlines())
-                if re.search(r"(?<![\w.$])PC\.", ln)]
+        hits = []
+        for i, ln in enumerate(s.splitlines()):
+            t = ln.strip()
+            if t.startswith("//") or t.startswith("*") or t.startswith("/*"):
+                continue
+            if re.search(r"(?<![\w.$])PC\.", ln):
+                hits.append((i + 1, t))
         self.assertEqual(hits, [], "app.js has no `PC`; the bridge it builds is window.__PC")
 
     def test_app_js_never_calls_ME_as_a_function(self):
@@ -62,7 +74,13 @@ class CarryOnRelayChange(unittest.TestCase):
 
     def test_it_runs_on_reconnect_not_on_every_boot(self):
         s = _src()
-        self.assertIn("if(s === 'ok'){ _flushOutbox(); _carryIfRelaysChanged(); }", s)
+        # The BRANCH, not the exact line: things legitimately join it (the notes/vault queue drain
+        # did), and pinning the punctuation makes this go red for a change that is not a regression.
+        i = s.index("if(s === 'ok'){")
+        branch = s[i:s.index("}", i)]
+        self.assertIn("_carryIfRelaysChanged()", branch,
+                      "the carry no longer runs when the relay comes back")
+        self.assertIn("_flushOutbox()", branch)
         body = s[s.index("async function _carryIfRelaysChanged"):]
         body = body[:body.index("\n  }")]
         self.assertIn("localStorage.getItem(_CARRY_KEY)", body)

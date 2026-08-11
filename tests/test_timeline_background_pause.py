@@ -63,10 +63,14 @@ def test_both_background_signals_arm_it():
     """`visibilitychange` is the least reliable of them on a frozen or kept-alive Android process."""
     assert len(re.findall(r"_tlBackground\(\)", APPJS)) >= 3, (
         "only one signal arms the pause (definition + visibilitychange + appStateChange expected)")
+    # Sliced to the END of the listener, not a guessed number of characters — a fixed window is a
+    # test that goes red when the code around it grows, which is exactly what it did.
     i = APPJS.index("addListener('appStateChange'")
-    body = APPJS[i:i + 700]
-    assert "_tlBackground()" in body, "the native background signal does not drop the timeline"
+    body = APPJS[i:APPJS.index("}); }catch(_){} }", i)]
     assert "st.isActive" in body
+    assert "_tlBackground()" in body, "the native background signal does not drop the timeline"
+    # …and specifically in the PAUSE branch, not the resume one.
+    assert "_tlBackground()" in body[body.index("else"):]
 
 
 def test_returning_resumes_it_and_cancels_a_pending_pause():
