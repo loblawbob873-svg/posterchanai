@@ -6269,7 +6269,9 @@ body.os-on #os-root{pointer-events:auto}
    disappears out of the grid reflows every icon after it, so the row you are aiming at moves while
    you aim at it. What follows the pointer is a copy. */
 .os-icon.os-dragging{opacity:.35}
-.os-drag{position:absolute;width:96px;height:80px;display:flex;flex-direction:column;
+/* Moved with a transform per animation frame (os.js), so promote it to its own compositor layer —
+   the same treatment .osw.dragging gets, for the same reason. */
+.os-drag{will-change:transform;position:absolute;width:96px;height:80px;display:flex;flex-direction:column;
   align-items:center;justify-content:center;gap:5px;padding:6px 4px;border-radius:10px;
   background:var(--panel);border:1px solid var(--neon);color:var(--text);
   pointer-events:none;opacity:.92;z-index:400;box-shadow:0 10px 26px rgba(0,0,0,.5)}

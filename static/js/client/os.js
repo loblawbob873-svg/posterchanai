@@ -1248,63 +1248,92 @@
 
   // ---- dragging icons ---------------------------------------------------------------------------
 
-  /* Where a drop would land, decided from the ELEMENT under the pointer rather than from arithmetic
-   * over the grid: the icons are laid out by CSS grid at a column count that changes with the
-   * window, and a folder window's own grid is a third one. elementFromPoint knows all of that for
-   * free, and it is the same call the modal hit-tests in the check harness use.
+  /* Where a drop would land — arithmetic over rectangles MEASURED ONCE, at the start of the drag.
+   *
+   * The first version asked the DOM on every pointermove: elementFromPoint, then
+   * querySelectorAll('.os-icon') and getBoundingClientRect on the target. Each of those forces the
+   * browser to flush style and layout, and a desktop window holds a LIVE timeline — thousands of
+   * nodes — so that is three synchronous layouts of a very large document per pointer event, at
+   * whatever rate the mouse reports. This file already learned that lesson once, in startDrag:
+   * "Dragging used to write style.left/top on every pointermove … that is the tablet sluggishness."
+   * I repeated it in the icon drag; this is the same discipline applied here.
+   *
+   * Nothing MOVES during an icon drag — the source tile stays in place at reduced opacity and the
+   * ghost is a separate absolutely-positioned element — so the rectangles cannot go stale. (The one
+   * exception is scrolling a folder window mid-drag, which needs a second pointer.)
    *
    *   into   — the middle of another icon: make a folder of the two, or add to the folder that is
    *            already there. The edges stay reorder, so the common gesture cannot be swallowed by
    *            the rarer one (this is how a phone home screen splits the same drop).
    *   before/after — beside that icon, in whichever container it lives in.
    *   end    — empty space: the end of the desktop, or of the folder window it was dropped in. */
-  function hitTest(cx, cy, dragKey){
-    let el = null;
-    try{ el = document.elementFromPoint(cx, cy); }catch(_){ return null; }
-    if(!el || !el.closest) return null;
-    const t = el.closest('.os-icon');
-    const boxOf = n => {
-      const f = n && n.closest('.osw-slot.os-folder');
-      const w = f && wins.find(x => x.slot === f);
-      return (w && w.view && w.view.indexOf('folder:') === 0) ? w.view.slice(7) : null;
-    };
-    if(t && t.dataset.view !== dragKey){
-      const dest = boxOf(t);
-      const r = t.getBoundingClientRect();
-      const mid = cx > r.left + r.width * 0.3 && cx < r.right - r.width * 0.3;
-      // "Into" is a DESKTOP gesture. Inside a folder window every drop is a reorder — there is
-      // nothing sensible for a folder within a folder to mean.
-      if(!dest && mid && dragKey.indexOf('folder:') !== 0) return { mode: 'into', key: t.dataset.view, dest: null };
-      return { mode: cx < r.left + r.width / 2 ? 'before' : 'after', key: t.dataset.view, dest };
+  function dragTargets(){
+    const out = [];
+    for(const n of $$('.os-icon', desk)){
+      const slot = n.closest('.osw-slot.os-folder');
+      const w = slot && wins.find(x => x.slot === slot);
+      const dest = (w && w.view && w.view.indexOf('folder:') === 0) ? w.view.slice(7) : null;
+      const r = n.getBoundingClientRect();
+      if(!r.width || !r.height) continue;                 // a minimised window's icons
+      out.push({ view: n.dataset.view, el: n, dest,
+                 l: r.left, t: r.top, w: r.width, h: r.height,
+                 slot: slot ? slot.getBoundingClientRect() : null });
     }
-    const box = el.closest('.osw-slot.os-folder');
-    if(box){ const dest = boxOf(box); return dest ? { mode: 'end', key: null, dest } : null; }
-    if(el === desk || el.classList.contains('os-icons')) return { mode: 'end', key: null, dest: null };
-    return null;
+    return out;
   }
 
+  function hitTest(targets, cx, cy, dragKey){
+    for(const t of targets){
+      if(cx < t.l || cx > t.l + t.w || cy < t.t || cy > t.t + t.h) continue;
+      if(t.view === dragKey) return null;
+      const mid = cx > t.l + t.w * 0.3 && cx < t.l + t.w * 0.7;
+      // "Into" is a DESKTOP gesture. Inside a folder window every drop is a reorder — there is
+      // nothing sensible for a folder within a folder to mean.
+      if(!t.dest && mid && dragKey.indexOf('folder:') !== 0) return { mode: 'into', key: t.view, dest: null, t };
+      return { mode: cx < t.l + t.w / 2 ? 'before' : 'after', key: t.view, dest: t.dest, t };
+    }
+    // Empty space INSIDE an open folder window: the end of that folder.
+    for(const t of targets){
+      const s = t.slot;
+      if(s && cx >= s.left && cx <= s.right && cy >= s.top && cy <= s.bottom)
+        return { mode: 'end', key: null, dest: t.dest, t: null };
+    }
+    // …or the desktop itself. Anything else (a window, the taskbar) is not a drop target at all.
+    const d = _deskRect || desk.getBoundingClientRect();
+    if(cx >= d.left && cx <= d.right && cy >= d.top && cy <= d.bottom &&
+       !wins.some(w => !w.min && _inRect(w.el.getBoundingClientRect(), cx, cy)))
+      return { mode: 'end', key: null, dest: null, t: null };
+    return null;
+  }
+  const _inRect = (r, x, y) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  let _deskRect = null;
+
+  /* Paint the drop indicator ONLY when it CHANGES — not 120 times a second, which is the same rule
+   * the window drag's snap ghost follows. The rectangle comes from the cached target, so this costs
+   * no layout either. */
+  let _dropKey = '', _mark = null, _intoEl = null;
   function paintDrop(hit){
-    desk.querySelectorAll('.os-into').forEach(n => n.classList.remove('os-into'));
-    let mark = desk.querySelector('.os-ins');
-    if(!hit || hit.mode === 'end'){ if(mark) mark.remove(); return; }
+    const key = hit ? hit.mode + ':' + (hit.key || '') + ':' + (hit.dest || '') : '';
+    if(key === _dropKey) return;
+    _dropKey = key;
+    if(_intoEl){ _intoEl.classList.remove('os-into'); _intoEl = null; }
+    if(!hit || hit.mode === 'end' || !hit.t){ if(_mark) _mark.style.display = 'none'; return; }
     if(hit.mode === 'into'){
-      if(mark) mark.remove();
-      const t = [...desk.querySelectorAll('.os-icon')].find(n => n.dataset.view === hit.key);
-      if(t) t.classList.add('os-into');
+      if(_mark) _mark.style.display = 'none';
+      _intoEl = hit.t.el; _intoEl.classList.add('os-into');
       return;
     }
-    const t = [...desk.querySelectorAll('.os-icon')].find(n => n.dataset.view === hit.key);
-    if(!t){ if(mark) mark.remove(); return; }
-    if(!mark){ mark = document.createElement('div'); mark.className = 'os-ins'; desk.appendChild(mark); }
-    const r = t.getBoundingClientRect(), k = zf();
-    mark.style.left = ((hit.mode === 'before' ? r.left : r.right) / k - 1) + 'px';
-    mark.style.top = (r.top / k) + 'px';
-    mark.style.height = (r.height / k) + 'px';
+    if(!_mark){ _mark = document.createElement('div'); _mark.className = 'os-ins'; desk.appendChild(_mark); }
+    const k = zf();
+    _mark.style.display = 'block';
+    _mark.style.left = ((hit.mode === 'before' ? hit.t.l : hit.t.l + hit.t.w) / k - 1) + 'px';
+    _mark.style.top = (hit.t.t / k) + 'px';
+    _mark.style.height = (hit.t.h / k) + 'px';
   }
   function clearDrop(){
-    if(!desk) return;
-    desk.querySelectorAll('.os-into').forEach(n => n.classList.remove('os-into'));
-    desk.querySelectorAll('.os-ins').forEach(n => n.remove());
+    _dropKey = '';
+    if(_intoEl){ _intoEl.classList.remove('os-into'); _intoEl = null; }
+    if(_mark){ _mark.remove(); _mark = null; }
   }
 
   let _dragEnd = 0;             // a drag ends with a click on the icon it started from — see wireIcons
@@ -1315,7 +1344,7 @@
     const key = icon.dataset.view;
     const k = zf();
     const sx = ev.clientX, sy = ev.clientY;
-    let moved = false, gh = null, hit = null, ended = false, longT = 0;
+    let moved = false, gh = null, hit = null, ended = false, longT = 0, targets = [];
     /* Touch has no right button, so a press-and-hold is the context menu. Cancelled by the first
      * movement, which is a drag rather than a hold.
      *
@@ -1332,6 +1361,17 @@
         iconMenu(icon, srcFolder, sx, sy);
       }, 500);
     }
+    /* The gesture runs on the COMPOSITOR, exactly as the window drag does: the ghost is placed once
+     * and then moved with a transform inside one requestAnimationFrame per frame, rather than
+     * written to style.left/top on every pointer event. A mouse can report far more moves than the
+     * screen has frames, and each write is a layout of a document holding a live timeline. */
+    let cx = 0, cy = 0, raf = 0;
+    const paint = () => {
+      raf = 0;
+      gh.style.transform = `translate(${(cx - sx) / k}px, ${(cy - sy) / k}px)`;
+      hit = hitTest(targets, cx, cy, key);
+      paintDrop(hit);
+    };
     const move = (e) => {
       // A released mouse reports buttons === 0 on its next move. Same guard the window drag needs,
       // for the same reason: the pointerup can be lost entirely.
@@ -1341,15 +1381,19 @@
         moved = true;
         clearTimeout(longT);
         icon.classList.add('os-dragging');
+        // Measured ONCE, here: every drop target's rectangle, and the desk's. Nothing moves during
+        // the drag, so asking the DOM again per pointermove only bought three forced layouts.
+        targets = dragTargets();
+        _deskRect = desk.getBoundingClientRect();
         gh = document.createElement('div');
         gh.className = 'os-drag';
         gh.innerHTML = icon.innerHTML;
+        gh.style.left = (sx / k - ICON_W / 2) + 'px';
+        gh.style.top = (sy / k - ICON_H / 2) + 'px';
         desk.appendChild(gh);
       }
-      gh.style.left = (e.clientX / k - ICON_W / 2) + 'px';
-      gh.style.top = (e.clientY / k - ICON_H / 2) + 'px';
-      hit = hitTest(e.clientX, e.clientY, key);
-      paintDrop(hit);
+      cx = e.clientX; cy = e.clientY;
+      if(!raf) raf = requestAnimationFrame(paint);
     };
     function up(cancel){
       if(ended) return;
@@ -1359,12 +1403,19 @@
       document.removeEventListener('pointerup', end);
       document.removeEventListener('pointercancel', abort);
       window.removeEventListener('blur', abort);
+      if(raf){ cancelAnimationFrame(raf); raf = 0; }
       if(gh) gh.remove();
+      _deskRect = null;
       clearDrop();
       icon.classList.remove('os-dragging');
       if(!moved) return;
       _dragEnd = Date.now();
-      if(cancel || !hit) return;
+      if(cancel) return;
+      // Decided from the LAST pointer position, not from whatever the last animation frame got to:
+      // a release can land between frames, and dropping on a stale hit files the icon somewhere the
+      // user was no longer pointing.
+      hit = hitTest(targets, cx, cy, key);
+      if(!hit) return;
       drop(key, srcFolder, hit);
     }
     /* A RELEASE commits the drop; a CANCELLED gesture must not. They were the same handler, and the
