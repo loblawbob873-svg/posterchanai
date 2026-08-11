@@ -58,6 +58,17 @@
     window.PCNotes = {
       render(){ if(document.querySelector('.nt-wrap')) return; render(); },
       unmount(){ _sel=null; unwatch(); },
+      /* LEAVING THE SCREEN DROPS THE SUBSCRIPTION, keeping everything else.
+       *
+       * `unmount` was never called by anything — renderView replaces #feed and tells no view it is
+       * gone — so after one visit this live subscription stayed open for the WHOLE SESSION. On a
+       * phone that is a relay subscription held for hours to repaint a screen nobody is looking at,
+       * which is exactly the cost the timeline's pause exists to avoid.
+       *
+       * Deliberately NOT unmount: that clears the selection too, and losing your place because you
+       * glanced at the timeline is a worse bug than the one being fixed. The library stays in memory
+       * and `render` re-watches, so coming back is instant and costs one REQ. */
+      sleep(){ unwatch(); },
       // Called on reconnect — flush anything written while offline.
       flush: flushPending,
       // For the offline bar / nav badge: how many writes are still queued.
@@ -123,7 +134,20 @@
     // A reconnect is the moment to drain the queue. 'online' fires on the window; the relay's own
     // reopen is the more reliable signal on mobile (a phone can be "online" with no route), so both.
     window.addEventListener('online', () => { flushPending(); });
-    setInterval(() => { if(navigator.onLine && pending().length) flushPending(); }, 45000);
+    /* A BACKSTOP, and it must cost nothing when there is nothing to do.
+     *
+     * `pending()` reads localStorage and JSON.parses the queue. On the every-45-seconds timer that
+     * was, for the whole life of the page, on every device — a wake-up and a parse a minute and a
+     * half, forever, to discover an empty array. The real drain is now the relay reaching 'ok'
+     * (app.js `_flushPrivateQueues`), which fires on a cold start, a reconnect and a resume; this
+     * only has to catch the case where the socket never dropped but a publish failed.
+     *
+     * So: an in-memory count, maintained by the two functions that can change it, and a longer
+     * period. An idle app now does an integer compare every five minutes instead of parsing storage
+     * every forty-five seconds. */
+    // Seed it once: -1 means "never read", and the tick's `_pend > 0` would be false for ever.
+    try{ pending(); }catch(_){}
+    setInterval(() => { if(_pend > 0 && navigator.onLine) flushPending(); }, 300000);
   }
 
   // ---------------------------------------------------------------- model
@@ -274,10 +298,13 @@
    *    newer edit on another device is DISCARDED on flush rather than published. `_at` is checked
    *    against the library before every resend.
    */
+  let _pend = -1;                 // -1 = not read yet; see the interval in boot()
   function pending(){
-    try{ return JSON.parse(localStorage.getItem(PENDING_KEY)||'[]') || []; }catch(_){ return []; }
+    try{ const l = JSON.parse(localStorage.getItem(PENDING_KEY)||'[]') || []; _pend = l.length; return l; }
+    catch(_){ _pend = 0; return []; }
   }
   function setPending(list){
+    _pend = (list && list.length) || 0;
     // A full localStorage (quota is per-origin and small) must not lose the note the user just
     // typed silently — the write itself already succeeded into Store, so say what was lost.
     try{ localStorage.setItem(PENDING_KEY, JSON.stringify(list)); }

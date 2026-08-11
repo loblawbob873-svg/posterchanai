@@ -3945,6 +3945,24 @@
     if(VIEW!=='terminal' && !(window.PCOS && PCOS.isOn())){
       try{ if(window.PCTerm && PCTerm.isOpen()) PCTerm.unmount(); }catch(_){}
     }
+    /* LEAVING NOTES OR THE VAULT DROPS THEIR LIVE SUBSCRIPTION.
+     *
+     * Both open one so a note written on another device appears without a reload, and both exposed an
+     * `unmount` to close it — which NOTHING EVER CALLED, because renderView replaces #feed and tells
+     * no view it is gone. So one visit to Notes left a live relay subscription open for the rest of
+     * the session, repainting a screen nobody was looking at. Same cost the timeline's pause exists
+     * to avoid, and the same fix.
+     *
+     * `sleep`, not `unmount`: the library and the selected note stay in memory, so coming back is
+     * instant and costs one REQ. Losing your place because you glanced at the timeline would be a
+     * worse bug than the one being fixed.
+     *
+     * NOT on the desktop, for the same reason the terminal is exempt: a view there lives in its own
+     * WINDOW and is still on screen when another one is focused. os.js owns that lifetime. */
+    if(!(window.PCOS && PCOS.isOn())){
+      if(VIEW!=='notes'){ try{ window.PCNotes && PCNotes.sleep && PCNotes.sleep(); }catch(_){} }
+      if(VIEW!=='vault'){ try{ window.PCVault && PCVault.sleep && PCVault.sleep(); }catch(_){} }
+    }
     // Admin uses a PERSISTENT iframe (loaded once, kept alive) so revisiting it doesn't reload
     // /admin every time — that reload was the flicker / "not loading". Hide it + restore #feed for
     // every other view; renderAdmin shows it for admin.

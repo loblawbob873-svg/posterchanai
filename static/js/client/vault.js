@@ -86,6 +86,17 @@
     window.PCVault = {
       render(){ if(document.querySelector('.pv-wrap')) return; render(); },
       unmount(){ _sel=null; unwatch(); _stopTick(); },
+      /* LEAVING THE SCREEN DROPS THE SUBSCRIPTION, keeping everything else.
+       *
+       * `unmount` was never called by anything — renderView replaces #feed and tells no view it is
+       * gone — so after one visit this live subscription stayed open for the WHOLE SESSION. On a
+       * phone that is a relay subscription held for hours to repaint a screen nobody is looking at,
+       * which is exactly the cost the timeline's pause exists to avoid.
+       *
+       * Deliberately NOT unmount: that clears the selection too, and losing your place because you
+       * glanced at the timeline is a worse bug than the one being fixed. The library stays in memory
+       * and `render` re-watches, so coming back is instant and costs one REQ. */
+      sleep(){ unwatch(); _stopTick(); },
       flush: flushPending,
       pendingCount: () => pending().length,
       // The paired-device half (extension / Android) asks for these.
@@ -107,7 +118,20 @@
       __seed: (obj) => { if(_lib) _lib.items.set(obj.id, obj); },
     };
     window.addEventListener('online', () => { flushPending(); });
-    setInterval(() => { if(navigator.onLine && pending().length) flushPending(); }, 45000);
+    /* A BACKSTOP, and it must cost nothing when there is nothing to do.
+     *
+     * `pending()` reads localStorage and JSON.parses the queue. On the every-45-seconds timer that
+     * was, for the whole life of the page, on every device — a wake-up and a parse a minute and a
+     * half, forever, to discover an empty array. The real drain is now the relay reaching 'ok'
+     * (app.js `_flushPrivateQueues`), which fires on a cold start, a reconnect and a resume; this
+     * only has to catch the case where the socket never dropped but a publish failed.
+     *
+     * So: an in-memory count, maintained by the two functions that can change it, and a longer
+     * period. An idle app now does an integer compare every five minutes instead of parsing storage
+     * every forty-five seconds. */
+    // Seed it once: -1 means "never read", and the tick's `_pend > 0` would be false for ever.
+    try{ pending(); }catch(_){}
+    setInterval(() => { if(_pend > 0 && navigator.onLine) flushPending(); }, 300000);
   }
 
   // ---------------------------------------------------------------- ids
@@ -409,10 +433,13 @@
 
   // ---------------------------------------------------------------- offline queue
 
+  let _pend = -1;                 // -1 = not read yet; see the interval in boot()
   function pending(){
-    try{ return JSON.parse(localStorage.getItem(PENDING_KEY)||'[]') || []; }catch(_){ return []; }
+    try{ const l = JSON.parse(localStorage.getItem(PENDING_KEY)||'[]') || []; _pend = l.length; return l; }
+    catch(_){ _pend = 0; return []; }
   }
   function setPending(list){
+    _pend = (list && list.length) || 0;
     try{ localStorage.setItem(PENDING_KEY, JSON.stringify(list)); }
     catch(_){ toast('this device is out of storage — that entry is saved here but may not sync'); }
   }
