@@ -191,6 +191,27 @@
   // Short enough to get the CLOSE frame out before the OS freezes the socket (after that the relay
   // keeps streaming regardless), long enough to absorb a glance at the notification shade.
   const _TL_HIDE_AFTER = 20000;
+  /* GOING TO THE BACKGROUND ON A PHONE DROPS THE TIMELINE. One pair of functions, called from every
+   * signal that means it, because they must not disagree.
+   *
+   * This became more important the day "stay connected" shipped, not less. It used to be armed only
+   * from `visibilitychange`, and a phone that never delivered that event was harmless because the OS
+   * froze the process a moment later and nothing was streaming anyway. A KEPT-ALIVE process is not
+   * frozen: a missed or coalesced visibilitychange would leave the firehose subscription open over a
+   * live socket, in a pocket, indefinitely — the exact battery cost the whole pause exists to avoid,
+   * introduced by the thing that keeps the app running. So the NATIVE background signal arms it too.
+   *
+   * NOT on the desktop app: Chromium reports `hidden` for a window merely COVERED by another one, and
+   * a covered window is still an app someone is running with no radio to spare. */
+  function _tlBackground(){
+    if(_isDesktopApp()) return;
+    clearTimeout(_tlHideTimer);
+    _tlHideTimer = setTimeout(()=>{ try{ _tlPause && _tlPause(); }catch(_){} }, _TL_HIDE_AFTER);
+  }
+  function _tlForeground(){
+    clearTimeout(_tlHideTimer); _tlHideTimer = null;
+    try{ _tlResume && _tlResume(); }catch(_){}
+  }
   let CFG = {}, ME = null, FOLLOWS = new Set(), FOLLOWERS = new Set(), MUTED = new Set(), MUTED_WORDS = new Set(), MUTED_THREADS = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false, GUEST = false;
 
   /* ---------- how this copy of the client is running ----------
@@ -2430,10 +2451,12 @@
         if(_App && _App.addListener){ try{ _App.addListener('resume', ()=>{ _reShare(); _reMusic(); _reCal(); _nativeResume(); });
           _App.addListener('appStateChange', st=>{
             if(st && st.isActive){ _reShare(); _reMusic(); _reCal(); _nativeResume(); }
-            // The PAUSE half is what makes the gate above mean anything. A frozen WebView can deliver
-            // its `visibilitychange` late or not at all, so _hiddenAt was the one number in this
-            // decision that the least reliable signal owned.
-            else _hiddenAt = Date.now();
+            /* The PAUSE half is what makes the gate above mean anything. A frozen WebView can
+             * deliver its `visibilitychange` late or not at all, so _hiddenAt was the one number in
+             * this decision that the least reliable signal owned — and with "stay connected" on,
+             * nothing freezes, so a missed event would also leave the TIMELINE streaming the
+             * firehose into a pocket. Both are armed from here. */
+            else { _hiddenAt = Date.now(); _tlBackground(); }
           }); }catch(_){} }
         /* RECONNECT ON THE NATIVE RESUME SIGNAL, not only on visibilitychange.
          *
@@ -2506,13 +2529,10 @@
          * reported as "not showing new posts when other window is focused". A covered window is still
          * an app someone is running, and once it can also sit in the tray the whole point is that it
          * keeps up while out of sight. There is no radio to spare and no battery argument here. */
-        if(_isDesktopApp()) return;
-        clearTimeout(_tlHideTimer);
-        _tlHideTimer = setTimeout(()=>{ try{ _tlPause && _tlPause(); }catch(_){} }, _TL_HIDE_AFTER);
+        _tlBackground();
         return;
       }
-      clearTimeout(_tlHideTimer);
-      try{ _tlResume && _tlResume(); }catch(_){}
+      _tlForeground();
       // Resumed to the foreground. A mobile PWA's relay WebSocket is frozen while backgrounded and very
       // often comes back DEAD-but-"open" (zombie) — the feed then looks stuck / a query "relay timeouts".
       // If we were away long enough for the OS to have suspended the socket, force a fresh relay
