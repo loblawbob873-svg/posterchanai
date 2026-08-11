@@ -126,7 +126,17 @@
   let _wr = false;        // a relay ANSWERED, so a write cannot replace a layout we never read
   let _layLoading = null, _layLoadingPk = '', _laySub = null, _layChain = Promise.resolve();
 
-  const Relay = () => window.Relay;
+  /* NEVER name a local binding `Relay` (or `Store`) in this file.
+   *
+   * That is not style: this module already reaches the pool as the GLOBAL — `Relay.conns()` in
+   * netConns, `Relay.watch` in enter, `Relay.wake` in the tray — and every one of those is written
+   * `window.Relay && Relay.foo && Relay.foo()`. A local `const Relay = () => window.Relay` shadows
+   * the object across the whole IIFE, so `Relay.conns` is `undefined` on a FUNCTION, the guard
+   * quietly evaluates false, and the taskbar reports "no relays are configured" on a client that is
+   * connected and working — no error, nothing in the console, and classic mode fine because it
+   * never goes through here. Shipped exactly once, by the desktop-layout change.
+   * Asserted by tests/test_desktop_layout.py::ShadowTests. */
+  const RelayOf = () => window.Relay;
   const StoreOf = () => window.Store;
   const LFILTER = () => ({ authors: [me().pubkey], kinds: [LAY_KIND], '#d': [D_LAY], limit: 1 });
   const _clone = o => JSON.parse(JSON.stringify(o));
@@ -246,7 +256,7 @@
   }
 
   function loadLayout(){
-    if(!me() || !PC().nip44dec || !Relay()) return Promise.resolve(null);
+    if(!me() || !PC().nip44dec || !RelayOf()) return Promise.resolve(null);
     const pk = me().pubkey;
     /* Shared per IDENTITY, not globally. A read that finds nothing retries for over a second (a
      * first REQ at a still-warming socket EOSEs empty, and treating that as "no layout" is the
@@ -270,12 +280,12 @@
       }catch(_){}
       /* A query fired at a socket that is still CONNECTING is silently dropped, so waiting for the
        * pool first is half of not mistaking "nobody answered" for "you have no layout". */
-      try{ if(Relay().ready) await Relay().ready(); }catch(_){}
+      try{ if(RelayOf().ready) await RelayOf().ready(); }catch(_){}
       let ev = null, answered = false;
       for(let a = 0; a < 3 && !ev; a++){
         if(a) await new Promise(r => setTimeout(r, 450 * a));
         let got = [], threw = false;
-        try{ got = await Relay().query([LFILTER()]) || []; }catch(_){ threw = true; }
+        try{ got = await RelayOf().query([LFILTER()]) || []; }catch(_){ threw = true; }
         /* `complete`, NOT the absence of a throw — the other half, and the one that made the
          * identical guard in vault.js DEAD CODE until it was found. Relay.query() has no reject
          * path at all: when no relay EOSEs it RESOLVES with [] and marks the array
@@ -330,11 +340,11 @@
   // `since` only: the full filter would replay the document as the opening batch and decrypt it a
   // second time straight after loadLayout has just done it.
   function watchLayout(){
-    if(_laySub || !me() || !Relay() || !Relay().subscribe) return;
+    if(_laySub || !me() || !RelayOf() || !RelayOf().subscribe) return;
     try{
       const f = Object.assign(LFILTER(), { since: Math.floor(Date.now() / 1000) - 120 });
       delete f.limit;
-      _laySub = Relay().subscribe([f], { live: true, onEvent: async (ev) => {
+      _laySub = RelayOf().subscribe([f], { live: true, onEvent: async (ev) => {
         if(!ev || ev.created_at <= _docAt) return;
         const d = await _decode(ev);
         if(!d) return;
@@ -343,7 +353,7 @@
       }});
     }catch(_){ _laySub = null; }
   }
-  function unwatchLayout(){ if(_laySub){ try{ Relay().close(_laySub); }catch(_){} _laySub = null; } }
+  function unwatchLayout(){ if(_laySub){ try{ RelayOf().close(_laySub); }catch(_){} _laySub = null; } }
 
   function saveLayout(next){
     const prev = _doc, prevAt = _docAt;

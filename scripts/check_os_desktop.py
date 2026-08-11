@@ -63,6 +63,11 @@ Assertions, each a way a window manager breaks:
                        draws, which looks exactly like never having arranged one.
   layout-no-rollback   A write the relay REFUSED still shows as applied, so the next reload silently
                        undoes it.
+  tray-not-connected   The taskbar's network widget says "No relays configured" while the pool is
+                       connected. os.js reaches the pool as the GLOBAL `Relay`, guarded as
+                       `window.Relay && Relay.conns && …` — so a local binding named `Relay` in that
+                       file turns every one of those into a silent false. Classic mode is unaffected,
+                       which is what makes it look like a server outage.
   layout-wipe          A read that never completed is taken as "this account has no layout", so the
                        next drag publishes the DEFAULTS over the real document — on every device,
                        since it is addressable. Relay.query() resolves [] (complete:false) rather
@@ -174,6 +179,14 @@ Object.assign(window.__PC, {
 });
 window.Store = { query: () => [] };     // cold cache: the read has to come off the relay
 window.Relay = {
+  /* The POOL, as the taskbar sees it. These three are reached as GLOBALS by os.js
+   * (`window.Relay && Relay.conns && Relay.conns()`), and a local binding named `Relay` in that
+   * file shadows them into `undefined` — silently, because every call site is guarded. That shipped
+   * once and the desktop's tray read "No relays configured" on a working, connected client. */
+  conns: () => [{ url:'wss://relay.example/one', status:'ok', open:true, idle:100 },
+                { url:'wss://relay.example/two', status:'ok', open:true, idle:100 }],
+  watch: () => () => {},
+  wake: () => {},
   // Honours `authors`, because "does another account see this desktop" is one of the questions —
   // a stub that answered every author with the one document could never fail that.
   query: (fs) => {
@@ -562,6 +575,11 @@ LAYOUT = r"""(async () => {
 
   PCOS.enter(); await sleep(250);          // …which reads the (empty) layout off the stub relay
   out.start = views();
+  // The taskbar's own view of the pool. Two live relays are stubbed above, so anything other than
+  // "connected" means os.js is not reaching the global Relay object any more.
+  { const nb = document.querySelector('#os-net');
+    out.netTitle = nb ? (nb.getAttribute('title') || '') : '(no tray button)';
+    out.netClass = nb ? nb.className : ''; }
 
   // 1. Drop Notes on the MIDDLE of News: a folder holding both, in News's place.
   window.__clicked_open = 0;
@@ -1008,6 +1026,14 @@ async def drive(url):
                     if q.get("otherAccount") == q.get("wanted") and q.get("wanted"):
                         problems.append((label, "layout-not-hydrated",
                                          "another account sees the first account's desktop"))
+                    if "No relays configured" in (q.get("netTitle") or "") \
+                            or "Connected" not in (q.get("netTitle") or ""):
+                        problems.append((label, "tray-not-connected",
+                                         "the taskbar reports "
+                                         f"{q.get('netTitle')!r} with two live relays in the pool — "
+                                         "os.js is not reaching the GLOBAL Relay object (a local "
+                                         "binding named `Relay` shadows it, and every call site is "
+                                         "guarded so it fails silently)"))
                     if q.get("wipePublished"):
                         problems.append((label, "layout-wipe",
                                          "a rearrangement was PUBLISHED after a read that never "

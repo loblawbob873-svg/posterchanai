@@ -19,6 +19,7 @@ The rules being asserted, all of which are decisions rather than accidents:
     placed, and a folder with nothing in it is not drawn.
 """
 import json
+import re
 import shutil
 import subprocess
 import unittest
@@ -238,6 +239,35 @@ class DocumentTests(unittest.TestCase):
         d = norm({"folders": [{"key": "u1", "label": "a", "views": ["news"]},
                               {"key": "u1", "label": "b", "views": ["notes"]}]})
         self.assertEqual([f["key"] for f in d["folders"]], ["u1"])
+
+
+class ShadowTests(unittest.TestCase):
+    """os.js must not declare a local `Relay` or `Store` — it reaches both as GLOBALS.
+
+    Shipped, in the first version of the layout store: `const Relay = () => window.Relay;` shadowed
+    the pool object across the whole IIFE. Every existing use is written defensively —
+    `window.Relay && Relay.conns && Relay.conns()` — so `Relay.conns` being `undefined` on a
+    FUNCTION made the guard quietly false instead of throwing. Result: the desktop's taskbar said
+    "no relays are configured" on a client that was connected and working, `Relay.wake` never woke
+    the pool, and `Relay.watch` never updated the tray. Nothing in the console, and CLASSIC mode was
+    fine, because classic never goes through this file.
+
+    Checked as a declaration ban rather than by testing the widget: the widget needs a browser, and
+    the bug is not in the widget — it is in a name.
+    """
+
+    SRC = OS_JS.read_text()
+
+    def test_no_local_relay_or_store_binding(self):
+        for name in ("Relay", "Store"):
+            hits = re.findall(rf"^\s*(?:const|let|var|function)\s+{name}\b.*$", self.SRC, re.M)
+            self.assertEqual(hits, [], f"os.js declares a local `{name}`, shadowing the global that "
+                                       f"netConns/enter/the tray reach as `{name}.foo`: {hits}")
+
+    def test_the_global_uses_are_still_there(self):
+        """The other half — if these ever stop existing, the ban above protects nothing."""
+        for use in ("window.Relay && Relay.conns", "Relay.watch(onNetChange)", "Relay.wake && Relay.wake()"):
+            self.assertIn(use, self.SRC, f"expected os.js to use the global pool via {use!r}")
 
 
 class RegistrationTests(unittest.TestCase):
