@@ -163,6 +163,7 @@
   let _docAt = 0;         // created_at of the newest version we have seen
   let _wr = false;        // a relay ANSWERED, so a write cannot replace a layout we never read
   let _layWhy = '';       // why not, when not: 'relay' (nobody EOSEd) | 'signer' (would not decrypt)
+  let _signerRetried = false;   // the one automatic re-read after a signer that did not answer
   let _layLoading = null, _layLoadingPk = '', _laySub = null, _layChain = Promise.resolve();
 
   /* NEVER name a local binding `Relay` (or `Store`) in this file.
@@ -334,7 +335,9 @@
     // An account switch keeps the module alive; drawing the previous account's desktop (or worse,
     // saving it back under the new key) is not a hypothetical — the switcher never reloads.
     const pk = (me() || {}).pubkey || '';
-    if(pk !== _docPk){ _doc = null; _docAt = 0; _wr = false; _docPk = pk; unwatchLayout(); }
+    // The signer-retry budget belongs to the ACCOUNT, not the page: switching accounts asks a
+    // different key to decrypt a different document, and that deserves its own second chance.
+    if(pk !== _docPk){ _doc = null; _docAt = 0; _wr = false; _layWhy = ''; _signerRetried = false; _docPk = pk; unwatchLayout(); }
     _lay = computeLayout(apps(), _doc);
     return _lay;
   }
@@ -347,9 +350,31 @@
 
   // ---- reading and writing the document ---------------------------------------------------------
 
+  /* A REMOTE SIGNER CAN SIMPLY NOT ANSWER, and that has to be survivable.
+   *
+   * With Amber (NIP-55) or nsec.app (NIP-46) the decryption is not local: it is a request to another
+   * app, or to a relay the signer may not be listening on. A declined prompt rejects and a timed-out
+   * relay round trip rejects, but a signer that is asleep, unpaired, or waiting on a notification
+   * nobody has tapped yet does neither — the promise stays pending, for ever.
+   *
+   * That is exactly what "Tablet says: still loading your desktop layout after a long time" is,
+   * while the same account behaves on a laptop with a local key: `await nip44dec(...)` never settles,
+   * so loadLayout never settles, so the write gate is never decided and every drag repeats the same
+   * message. Bounding it turns a hang into an ANSWER — an unreadable document, which the caller
+   * already knows how to talk about and retry from. 25 seconds is long enough to pick up a phone and
+   * approve a prompt, and short enough that a desktop is not stuck for a session over it. */
+  function _bounded(p, ms){
+    return new Promise((resolve, reject) => {
+      let done = false;
+      const t = setTimeout(() => { if(!done){ done = true; reject(new Error('signer timeout')); } }, ms);
+      Promise.resolve(p).then(
+        (v) => { if(!done){ done = true; clearTimeout(t); resolve(v); } },
+        (e) => { if(!done){ done = true; clearTimeout(t); reject(e); } });
+    });
+  }
   async function _decode(ev){
     if(!ev || !ev.content) return null;
-    try{ return _normDoc(JSON.parse(await PC().nip44dec(me().pubkey, ev.content))); }
+    try{ return _normDoc(JSON.parse(await _bounded(PC().nip44dec(me().pubkey, ev.content), 25000))); }
     catch(_){ return null; }   // not ours, or not decryptable here — never read as "no layout"
   }
 
@@ -417,6 +442,15 @@
        * which is a fact about that device, and the message has to be able to say which one. */
       _layWhy = !answered ? 'relay' : unreadable ? 'signer' : '';
       if(answered && !unreadable){ _wr = true; if(!_doc){ _doc = BLANK(); _docPk = pk; } }
+      /* ONE automatic retry when the signer was the problem, because the usual cause is a prompt
+       * that had not been approved YET — the phone was face down, the notification was tapped a
+       * minute later. Retrying once, quietly, means the desktop comes good on its own for the
+       * common case instead of requiring the user to know to drag something again. Once only: a
+       * signer that is genuinely unreachable must not become a prompt loop. */
+      if(_layWhy === 'signer' && !_signerRetried){
+        _signerRetried = true;
+        setTimeout(() => { if(!_wr && me()) loadLayout().catch(() => {}); }, 20000);
+      }
       refreshIcons(); watchLayout(); arrangeHint();
       return _doc;
     })();
