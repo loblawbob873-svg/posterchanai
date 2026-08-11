@@ -82,6 +82,41 @@ async def _fetch_prices() -> dict:
     return out
 
 
+# ---- live prices, for the desktop ticker widget -------------------------------------------------
+# The digest above is generated twice a day; a ticker is useless at that rate. This is the same ONE
+# upstream request, cached IN PROCESS and shared by every viewer — a desktop full of ticker widgets, on
+# every open client, costs this node at most one CoinGecko call per _PRICES_TTL. Serving the stale copy
+# while a refresh is in flight is deliberate: a rate-limited or slow upstream must degrade to "the price
+# is a minute old", never to a widget that empties itself.
+_PRICES_TTL = 90.0
+_prices_cache: dict = {}
+_prices_at: float = 0.0
+_prices_lock: asyncio.Lock = None
+
+
+async def get_prices() -> dict:
+    """{"at": epoch, "prices": {SYM: {"usd", "chg24h"}}} — cached, never raises."""
+    global _prices_cache, _prices_at, _prices_lock
+    now = time.time()
+    if _prices_cache and (now - _prices_at) < _PRICES_TTL:
+        return {"at": int(_prices_at), "prices": _prices_cache}
+    if _prices_lock is None:
+        _prices_lock = asyncio.Lock()
+    # Single-flight: a burst of cold clients must not each launch the same request.
+    async with _prices_lock:
+        now = time.time()
+        if _prices_cache and (now - _prices_at) < _PRICES_TTL:
+            return {"at": int(_prices_at), "prices": _prices_cache}
+        fresh = await _fetch_prices()
+        if fresh:
+            _prices_cache, _prices_at = fresh, time.time()
+        elif _prices_cache:
+            # Upstream said no. Keep the old numbers AND the old timestamp, so the client can see for
+            # itself how stale they are rather than being told a failure was a refresh.
+            return {"at": int(_prices_at), "prices": _prices_cache, "stale": True}
+    return {"at": int(_prices_at), "prices": _prices_cache}
+
+
 def _fmt_price(usd: float) -> str:
     """Sub-dollar coins need real precision — DOGE at $0.07 and ADA at $0.17 both round to $0.00 at 2dp."""
     if usd >= 1:

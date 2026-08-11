@@ -16867,7 +16867,22 @@
         <button class="btn btn-ghost small" id="mus-refresh" title="Fetch the library again — songs added on another device appear here">
           <svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg>Refresh</button>
         ${gone ? `<button class="btn btn-ghost small" id="mus-tidy">Remove ${gone} missing</button>` : ''}</div>`;
-    grid.innerHTML = head + (tracks.length ? tracks.map(t=>`<div class="track${t.missing?' gone':''}" data-sha="${t.sha}">
+    /* THE WHOLE LIBRARY USED TO BE ON SCREEN AT ONCE, and a big one made the entire app sluggish for
+     * as long as the window was open — with nothing playing. Reported as "the music player on the
+     * desktop slows everything down, window movement included; it's fast again once Music is closed",
+     * in both Firefox and the packaged Windows app, which is what ruled out the visualiser and the
+     * player's own animations (both are gated on actually playing).
+     *
+     * A track row is seven elements, four of them buttons carrying an inline <svg><use>, and each
+     * <use> instantiates a shadow tree. At the 2422-track library the tidy-up code above was written
+     * for that is roughly 17,000 nodes, permanently, in a document every style recalculation and
+     * every layout of the whole page has to walk — which is why dragging an unrelated WINDOW got
+     * slow. Nothing here was looping; the cost was the document itself.
+     *
+     * So one page is rendered and the rest waits behind a button. The rows are built for the whole
+     * filtered set (they are strings — cheap to hold, and the search still filters everything, not
+     * just what is drawn), and _musMore appends the next slice. */
+    const rows = tracks.map(t=>`<div class="track${t.missing?' gone':''}" data-sha="${t.sha}">
         ${t.missing ? '<span class="track-play" aria-hidden="true">✕</span>'
                     : `<button class="track-play" data-sha="${t.sha}" aria-label="Play"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>`}
         <span class="track-name">${enc(t.m.name||'track')}</span>
@@ -16878,7 +16893,13 @@
         ${t.missing ? '' : `<button class="track-add" data-sha="${t.sha}" title="Add to a playlist" aria-label="Add to a playlist"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg></button>`}
         ${t.missing ? '' : `<button class="track-dl" data-sha="${t.sha}" data-name="${enc((t.m.name||'track')+'.'+_musicExt(t.m))}" title="Save a copy to your files (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg></button>`}
         <button class="track-del" data-sha="${t.sha}" title="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
-      </div>`).join('')
+      </div>`);
+    const first = rows.slice(0, MUS_PAGE);
+    grid._musRest = rows.slice(MUS_PAGE);
+    grid.innerHTML = head + (rows.length
+      ? first.join('') + (grid._musRest.length
+          ? `<button class="mus-more">Show ${Math.min(MUS_PAGE, grid._musRest.length)} more (${grid._musRest.length} left)</button>`
+          : '')
       : (needle ? `<div class="empty">Nothing in your library matches “${enc(needle)}”.</div>`
                 : '<div class="empty">No music yet — drop audio files above. They\'re Opus-compressed + encrypted automatically, and only you can play them.</div>'));
     /* Clear out entries whose bytes the SERVER says it does not have. Only offered once the blob
@@ -16921,28 +16942,57 @@
     /* Pressing play inside a playlist makes the PLAYLIST the queue, in its order — otherwise
      * ⏭ walks the whole library from wherever that track happens to sit in it, which is not what
      * "play this playlist" means anywhere else. */
-    $$('.track-play',grid).forEach(b=> b.onclick=()=>{
-      if(only && only.length){ MusicPlayer.queue = only.map(t=>t.sha); MusicPlayer.shuffle = false; }
-      MusicPlayer.play(b.dataset.sha);
-    });
+    /* ONE listener for every row, however many rows there are.
+     *
+     * These were bound per button — four `$$('.track-*').forEach(b => b.onclick = …)` passes over the
+     * whole library on every render, and the library re-renders on every keystroke of the search box.
+     * At the 2422 tracks the tidy-up code above was written for that is ~10,000 closures created and
+     * attached per paint, on top of the rows themselves. Delegation is also what lets the list be
+     * PAGED below: appended rows work with nothing to re-wire.
+     *
+     * Rebound (not accumulated) on each render: `grid.onclick` is a single slot, so re-rendering
+     * cannot leave a second handler behind the way addEventListener would. */
+    grid.onclick = async (ev) => {
+      const b = ev.target && ev.target.closest && ev.target.closest(
+        '.track-play,.track-keep,.track-add,.track-dl,.track-del,.mus-more');
+      if(!b || !grid.contains(b)) return;
+      if(b.classList.contains('mus-more')){ _musMore(grid, b); return; }
+      const sha = b.dataset.sha;
+      if(b.classList.contains('track-play')){
+        /* Pressing play inside a playlist makes the PLAYLIST the queue, in its order — otherwise
+         * ⏭ walks the whole library from wherever that track happens to sit in it, which is not what
+         * "play this playlist" means anywhere else. */
+        if(only && only.length){ MusicPlayer.queue = only.map(t=>t.sha); MusicPlayer.shuffle = false; }
+        MusicPlayer.play(sha); return;
+      }
+      if(b.classList.contains('track-dl')){ saveEncrypted(sha, b.dataset.name); return; }
+      if(b.classList.contains('track-add')){ _addToPlaylist(sha); return; }
+      if(b.classList.contains('track-del')){ delBlob(sha); return; }
+      /* KEEP ON THIS DEVICE. Toggling one track, and the whole library at once.
+       *
+       * The button reports per track as it lands rather than after the lot: downloading a few hundred
+       * songs is minutes of work, and a control that says nothing for minutes is one nobody trusts —
+       * they press it again, or decide it is broken. Removing is instant and never touches the server,
+       * so it is safe to undo. */
+      if(b.classList.contains('track-keep')){
+        const kept=(await MusicOffline.have()).has(sha);
+        b.disabled=true;
+        if(kept){ await MusicOffline.drop(sha); toast('offline copy removed'); }
+        else {
+          b.classList.add('working');
+          const r=await MusicOffline.keep([sha]);
+          toast(r.ok ? 'kept on this device' : 'could not download that track');
+        }
+        b.disabled=false;
+        _renderMusicList(grid, list, q, only);
+      }
+    };
     /* KEEP ON THIS DEVICE. Toggling one track, and the whole library at once.
      *
      * The button reports per track as it lands rather than after the lot: downloading a few hundred
      * songs is minutes of work, and a control that says nothing for minutes is one nobody trusts —
      * they press it again, or decide it is broken. Removing is instant and never touches the server,
      * so it is safe to undo. */
-    $$('.track-keep',grid).forEach(b=> b.onclick=async ()=>{
-      const sha=b.dataset.sha, kept=(await MusicOffline.have()).has(sha);
-      b.disabled=true;
-      if(kept){ await MusicOffline.drop(sha); toast('offline copy removed'); }
-      else {
-        b.classList.add('working');
-        const r=await MusicOffline.keep([sha]);
-        toast(r.ok ? 'kept on this device' : 'could not download that track');
-      }
-      b.disabled=false;
-      _renderMusicList(grid, list, q, only);
-    });
     /* GO AND LOOK AGAIN.
      *
      * The library is pulled from the relay ONCE per session (`if(!FilesIdx._pullDone)` in
@@ -16983,13 +17033,42 @@
       }; }
     // A track is stored as Opus ciphertext, so "download" means decrypt-then-save — same path the
     // file grid's lock cards use. Without this the only way out of the Music folder was the player.
-    $$('.track-dl',grid).forEach(b=> b.onclick=()=>saveEncrypted(b.dataset.sha, b.dataset.name));
-    $$('.track-add',grid).forEach(b=> b.onclick=()=>_addToPlaylist(b.dataset.sha));
-    $$('.track-del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
-    _updateMusicListBtns();
+    _updateMusicListBtns(grid);
+  }
+  /* Reveal the next page of rows by APPENDING them.
+   *
+   * Not by re-rendering with a bigger slice: that rebuilds every row already on screen, so reaching
+   * the end of a large library would cost the same quadratic pile of DOM work this paging exists to
+   * avoid. The rows the button needs are stashed on the grid by _renderMusicList; they are strings,
+   * not nodes, so holding them costs nothing until they are asked for. */
+  const MUS_PAGE = 120;
+  function _musMore(grid, btn){
+    const rest = grid._musRest || [];
+    const next = rest.splice(0, MUS_PAGE);
+    if(!next.length){ btn.remove(); return; }
+    btn.insertAdjacentHTML('beforebegin', next.join(''));
+    if(!rest.length) btn.remove();
+    else btn.textContent = `Show ${Math.min(MUS_PAGE, rest.length)} more (${rest.length} left)`;
+    _updateMusicListBtns(grid);
   }
   function _fmtTime(s){ s=Math.floor(s||0); return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); }
-  function _updateMusicListBtns(){ const playing=_audioEl&&!_audioEl.paused; $$('.track-play').forEach(b=> b.textContent=(b.dataset.sha===MusicPlayer.cur&&playing)?'⏸':'▶'); }
+  /* Mark the row that is playing.
+   *
+   * Scoped to the LIST, not the document: this ran `$$('.track-play')` with no root on every render
+   * and on every play/pause, which walks the entire page — the same "cost proportional to the whole
+   * document" that made a big library slow everything down.
+   *
+   * And it sets a CLASS rather than textContent. The button contains an inline <svg>, so assigning
+   * text to it deleted the icon and replaced it with a bare ▶/⏸ glyph — every row the pointer had
+   * ever touched lost its icon permanently, which is why the list looked like two different designs
+   * once you had played something. The stylesheet swaps the glyph. */
+  function _updateMusicListBtns(root){
+    const scope = root || document.querySelector('.music-list');
+    if(!scope) return;
+    const playing = _audioEl && !_audioEl.paused;
+    $$('.track-play', scope).forEach(b =>
+      b.classList.toggle('playing', playing && b.dataset.sha === MusicPlayer.cur));
+  }
   // The floating cyberpunk player — a persistent widget appended to <body> (NOT #feed), so it hovers over
   // EVERY view and keeps playing as you navigate. Minimizable to a mini bar; draggable anywhere.
   let _audioEl=null;

@@ -2232,6 +2232,19 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .track:hover{border-color:var(--cyan);box-shadow:0 0 14px rgba(0,240,255,.18)}
 .track-play{flex:none;width:40px;height:40px;border-radius:50%;border:2px solid var(--cyan);background:rgba(0,240,255,.1);color:var(--cyan);font-size:15px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:.12s}
 .track-play:hover{background:var(--cyan);color:#04121a;box-shadow:0 0 14px rgba(0,240,255,.5)}
+/* The playing row. `.playing` replaces a textContent assignment that deleted the button's inline
+   <svg> — the icon never came back, so a library you had played from was half icons and half bare
+   glyphs. Swapping which icon SHOWS keeps both in the DOM and costs one class toggle. */
+.track-play .b-ic{display:block}
+.track-play::after{content:'⏸';display:none;font-size:13px;line-height:1}
+.track-play.playing .b-ic{display:none}
+.track-play.playing::after{display:block}
+/* The rest of a large library waits behind this. Full width so it reads as the end of the list
+   rather than as one more row's worth of controls. */
+.mus-more{display:block;width:100%;margin:8px 0 2px;padding:10px;border-radius:10px;
+  border:1px dashed var(--line);background:var(--panel2);color:var(--muted);font-size:12.5px;
+  cursor:pointer}
+.mus-more:hover{border-color:var(--cyan,#0ff);color:var(--text)}
 .track-name{flex:1;min-width:0;color:#eaf0ff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .track-meta{flex:none;color:var(--muted);font-size:12px}
 .track-del{flex:none;background:none;border:none;color:var(--danger);cursor:pointer;font-size:15px;padding:2px 6px;opacity:.7}.track-del:hover{opacity:1}

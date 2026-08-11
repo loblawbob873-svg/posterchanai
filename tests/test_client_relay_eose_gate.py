@@ -103,12 +103,19 @@ def _run(body, src_override=None):
     return json.loads(proc.stdout.decode())
 
 
+# The relay.js that HAD the bug, addressed by BLOB, not by a revision.
+#
+# These two tests read as "HEAD" for about ten minutes: the moment the fix is committed, HEAD contains
+# it and the tests that exist to prove the bug was real start failing — a test that invalidates itself
+# on the commit it ships in. A blob hash is the file, permanently, and cannot drift with the branch.
+_BUGGY_RELAY_BLOB = "90802a1aea80c643b368b554b8152094d092234a"   # static/js/client/relay.js at 5d2a19ac
+
+
 def _old_relay_src():
-    """The shipped file as of the last commit — used to prove each test bites."""
-    return subprocess.run(
-        ["git", "show", "HEAD:static/js/client/relay.js"],
-        cwd=ROOT, capture_output=True, check=True,
-    ).stdout.decode()
+    p = subprocess.run(["git", "cat-file", "-p", _BUGGY_RELAY_BLOB], cwd=ROOT, capture_output=True)
+    if p.returncode != 0:
+        pytest.skip("the pre-fix relay.js blob is not in this clone")
+    return p.stdout.decode()
 
 
 BODY_DEAD_RELAY = """
