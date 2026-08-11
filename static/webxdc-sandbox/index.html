@@ -36,6 +36,19 @@
   var pending = {};                   // rpc id -> resolve
   var nextId = 1;
   var started = false;
+  /* THE HONEST VERSION, after three wrong ones. This is not Enhanced Tracking Protection (it fails
+   * with ETP off) and not the `sandbox` attribute (it fails with none). Firefox does not support
+   * service workers in an embedded frame from another origin, full stop — and the Storage Access API
+   * does not grant them, which is why the button above can ask and still be refused. A mini app is a
+   * cross-origin frame BY DESIGN: that separation is the only thing keeping a stranger's code away
+   * from the keys. So in Firefox the two requirements cannot both be met with this architecture, and
+   * the remaining answer is a Chromium browser or a different design (serving the app with no worker
+   * at all). Say that, rather than sending someone to turn off a security feature that will not
+   * help. */
+  var FIREFOX_VERDICT = 'Firefox cannot run mini apps here: it does not allow service workers in an '
+    + 'embedded frame from another origin, and that separate origin is what keeps the app away from '
+    + 'your keys. This is not a setting you can change — Chrome, Edge and Brave run it as-is.';
+
   var firstFetch = null;          // set once the app frame exists, to narrate the first loads
 
   function say(t){ if(msg) msg.textContent = t; }
@@ -196,21 +209,11 @@
           document.requestStorageAccess().then(function(){
             started = false;            // let boot() run again now that storage is ours
             boot(params);
-          }, function(){
-            fail('Firefox refused: it will not run a service worker inside an embedded frame from '
-               + 'another origin, which is how mini apps are sandboxed. Click the SHIELD in the '
-               + 'address bar and turn Enhanced Tracking Protection off for this site, or open it in '
-               + 'Chrome, Edge or Brave — where it works as-is.');
-          });
+          }, function(){ fail(FIREFOX_VERDICT); });
         };
         return;
       }
-      fail(insecure
-        ? 'Firefox is blocking this: it will not run a service worker inside an embedded frame from '
-          + 'another origin, which is how mini apps are sandboxed. Click the SHIELD in the address '
-          + 'bar and turn Enhanced Tracking Protection off for this site, or open it in Chrome, '
-          + 'Edge or Brave — where it works as-is.'
-        : 'Could not start the sandbox: ' + m);
+      fail(insecure ? FIREFOX_VERDICT : 'Could not start the sandbox: ' + m);
     });
   }
 

@@ -132,6 +132,17 @@ localStorage and get an origin per app, which closes that gap too.
     - So sending is **newest-wins and never queued**: a movement packet is worthless once a newer one
       exists. A remote-signer player simply moves less smoothly and still *sees* everyone else
       perfectly, because receiving costs no signature at all.
+- **Firefox cannot run mini apps at all, and it is not a setting.** It does not allow service
+  workers in an embedded frame from another origin; the Storage Access API does not grant them
+  either. Three wrong diagnoses were tried and disproved in order — Enhanced Tracking Protection (it
+  fails with ETP off), the `sandbox` attribute (it fails with none), and storage access (granted,
+  still refused). A mini app is a cross-origin frame by design, so in Firefox the two requirements
+  cannot both be met with this architecture. Chromium browsers run it as-is. The real fix is to serve
+  an app with **no service worker** — rewriting its HTML references to blob URLs and patching
+  `fetch`/`XHR`/`instantiateStreaming` from the injected bridge — or to open it as a **top-level tab**
+  on the sandbox origin, where it is first-party and workers are allowed, talking to the client
+  through `window.opener` instead of `parent`. The second is much the smaller job and is the obvious
+  next step.
 - **The frame carries no `sandbox` attribute**, deliberately. Firefox refuses to register a service
   worker in a sandboxed frame whatever flags are set (`SecurityError: The operation is insecure`) —
   confirmed with Enhanced Tracking Protection turned *off*, so it is the attribute and not the privacy
