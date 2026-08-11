@@ -577,6 +577,27 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   read meant it finished, saw the pubkey had moved, discarded its result, and nothing read the
   layout again for the whole session; (5) a folder left holding ONE app dissolves, and the survivor
   takes the folder's own place in the order rather than being appended to the end.
+- **Mini apps / webxdc** (`static/js/client/webxdc.js` + `zip.js` + `static/webxdc-sandbox/`): a
+  `.xdc` (a zip with an `index.html`) attached to a post renders as a Play cartridge — games, polls,
+  shared editors — with state synced over Nostr. Ditto's `NOSTR_WEBXDC` draft VERBATIM, so a game
+  started in Ditto is playable here: `imeta`/kind-1063 attachment with `m application/x-webxdc` and a
+  `webxdc` identifier, moves as kind **4932** (`i` tag = that identifier). The identifier, not the
+  file or the event, is what makes two people the same game. **Serials are LOCAL** — assigned by
+  `(created_at, id)` — which is what lets an append-only log ride a network with no global ordering.
+  Kind 4932 must stay out of `_PRUNABLE_KINDS`: a mini app's state IS the sequence, so losing the
+  oldest updates makes the game unreplayable, not shorter (`tests/test_relay_prune.py`).
+  **WHERE IT RUNS IS THE SECURITY.** Untrusted code on the instance's origin could read the
+  localStorage holding the user's key and session, so apps run on **`xdc.<instance>`** — one extra
+  `-d` on the certbot cert, no wildcard. Two designs were measured and rejected first, and neither
+  should be re-attempted: a subdomain per app (what Ditto does via iframe.diy) needs a WILDCARD cert,
+  i.e. DNS-01 and a DNS API token on the web server; a PORT (`:8443`) is a distinct origin needing no
+  cert but **does not survive Cloudflare**, which accepts 8443 from the browser and then connects to
+  the origin on 443 (proven with a marker header — present direct, absent through the CDN). The
+  sandbox origin serves only a loader and a service worker; the app's bytes come from the client,
+  which unzipped them, over postMessage — so "no network access" is structural. TWO frames, because a
+  worker cannot serve the navigation of the page it needs to ask. Trade of one shared origin: apps can
+  read each other's localStorage (keys are namespaced in the bridge — a collision guard, not a
+  boundary); `pc_webxdc_wildcard` upgrades a node that has a wildcard. See `docs/WEBXDC.md`.
 - **Notes** (`static/js/client/notes.js` + `joplin.js`; sidebar → Notes, ☰ More on mobile): private
   encrypted note taking, offline-first. **ONE kind-30078 event PER NOTE** (`d=pcai:note:<id>`,
   folders `pcai:notefolder:<id>`, both tagged `l=pcai-notes` so the library is one indexed

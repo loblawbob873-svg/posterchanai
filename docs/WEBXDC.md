@@ -15,8 +15,12 @@ because an app is code somebody else wrote and it starts when the reader says so
 opens in its own movable window; on a phone, a full-screen sheet. Every move any player makes is a
 Nostr event, so two people with the same post in their timeline are playing the same game.
 
-**To post one:** compose → 📎 → `🎮 Mini app (.xdc)`. Apps are at
-[webxdc.org/apps](https://webxdc.org/apps/).
+**To post one:** compose → 📎 → `🎮 Mini app (.xdc)`.
+
+**Where to get apps:** [webxdc.org/apps](https://webxdc.org/apps/) is the store;
+[codeberg.org/webxdc](https://codeberg.org/webxdc) is where most of them are developed, and each
+repo publishes the `.xdc` as a git release asset — download that file and attach it. Anything posted
+this way is playable by anyone whose client understands the tags above, here or in Ditto.
 
 ## The protocol
 
