@@ -4689,10 +4689,16 @@
     $('#tl-cmp-attach',box).onclick=()=>{
       const opts = window.Capacitor ? [['camera','📷 Camera'],['local','🖼️ Photos / files'],['blossom','🌸 Blossom']]
                                     : [['local','💻 Local'],['blossom','🌸 Blossom']];
+      /* THE TIMELINE COMPOSER IS A SECOND ATTACH MENU, and it is the one people actually use — the
+       * modal is what you get from the New Post button. A feature added to one of them and not the
+       * other is invisible to almost everybody, which is exactly how this shipped the first time
+       * ("i don't see mini app"). If a third composer ever appears, it needs this line too. */
+      if(window.PCWebxdc && PCWebxdc.attach) opts.push(['webxdc','🎮 Mini app (.xdc)']);
       openMenuPopover($('#tl-cmp-attach',box), opts, a=>{
         if(a==='camera') _captureCamera(ta, box);
         else if(a==='local') $('#tl-cmp-file',box).click();
         else if(a==='blossom') blossomPicker(ta);
+        else if(a==='webxdc') PCWebxdc.attach(ta);
       });
     };
     $('#tl-cmp-file',box).onchange=async e=>{ await upload([...e.target.files]); e.target.value=''; };
