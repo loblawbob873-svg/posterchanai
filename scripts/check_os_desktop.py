@@ -792,7 +792,9 @@ LAYOUT = r"""(async () => {
                         && (r.left >= dr.left - 2) && (r.top >= dr.top - 2);
         out.widgetHasBody = !!el.querySelector('.os-wgt-body');
         // Drag it to the lower-left and check the DOCUMENT recorded a fraction, not a pixel.
-        await drag(el.querySelector('.os-wgt-bar'), dr.left + 60, dr.bottom - 90);
+        // The whole panel is the drag handle — widgets have no title bar (that chrome made them
+        // read as little windows sitting on the desktop rather than as part of it).
+        await drag(el, dr.left + 60, dr.bottom - 90);
         await sleep(320);
         out.widgetMoved = (() => { const q = document.querySelector('.os-wgt');
           return q ? Math.round(q.getBoundingClientRect().left - dr.left) : -1; })();

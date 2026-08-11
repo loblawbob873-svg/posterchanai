@@ -673,7 +673,63 @@ def _handle_dm(sender, gameid, state, move_text):
 
 
 # ---- poll loop (mirror process_blackjack — efficient, claim-deduped) -------
+_RESUME_EVERY = 15          # polls (~60s at the 4s cadence) — a backstop, not the main path
+_resume_countdown = 0
+
+
+def _resume_stalled_tables():
+    """Wake any table that is waiting on the BOT and has nobody left to nudge it.
+
+    `_run_bot_turns` is only ever reached from an event handler — a move arrives, the bot answers. So
+    if the process stops while it is the bot's own turn, nothing ever calls it again: the doc still
+    says `betting`, `to_act` is still the bot, and the table sits there for ever. The human sees a
+    game "in play" with nothing happening, and their move is refused with "not your turn" — which is
+    CORRECT and reads as a bug, because it really is the bot's turn and the bot is asleep.
+
+    Every deploy restarts these bots, so the window is not theoretical: eight restarts in a day is
+    eight chances to land mid-hand. Recovery has to be automatic — nobody can tell from the outside
+    that a table needs poking.
+
+    One relay query, and only tables actually waiting on the bot are touched.
+    """
+    try:
+        evs = _nk._run(_nk._svc.relay.query(
+            _nk._RELAYS, [{"authors": [_nk._PUBKEY], "kinds": [_KIND_APP], "limit": 200}])) or []
+    except Exception as e:
+        print(f"[holdem] resume query failed: {e}", flush=True)
+        return
+    for ev in evs:
+        dtag = ""
+        for t in ev.get("tags") or []:
+            if len(t) >= 2 and t[0] == "d":
+                dtag = t[1]
+                break
+        # A game doc, not the per-player pointer (`pcai:holdem:player:<pk>`) and not another feature's.
+        if not dtag.startswith("pcai:holdem:") or dtag.startswith("pcai:holdem:player:"):
+            continue
+        gameid = dtag[len("pcai:holdem:"):]
+        if not gameid:
+            continue
+        try:
+            state = _dec_state(json.loads(ev.get("content") or "{}"))
+        except Exception:
+            continue
+        if not isinstance(state, dict):
+            continue
+        if state.get("status") != "betting":
+            continue
+        bot = state.get("bot")
+        if not bot or state.get("to_act") != bot or bot not in (state.get("seats") or []):
+            continue
+        print(f"[holdem] resuming stalled table {gameid} — it is the bot's turn", flush=True)
+        try:
+            _run_bot_turns(state, gameid, gameid)
+        except Exception as e:
+            print(f"[holdem] resume of {gameid} failed: {e}", flush=True)
+
+
 def process_holdem():
+    global _resume_countdown
     own = _nk.get_own_account()
     if not own:
         print("[holdem] no account (NOSTR_NSEC missing) — idle", flush=True)
@@ -686,6 +742,13 @@ def process_holdem():
     seed_mentions = not os.path.exists(_IDS_FILE)
     seed_dms = not os.path.exists(_DM_IDS_FILE)
     seed_cmds = not os.path.exists(_CMD_IDS_FILE)
+    # Before anything else: a table left waiting on the bot has no event coming to restart it.
+    # Runs on the first poll after start (the case that matters) and then as a slow backstop.
+    if _resume_countdown <= 0:
+        _resume_countdown = _RESUME_EVERY
+        _resume_stalled_tables()
+    else:
+        _resume_countdown -= 1
     # PRIMARY channel: reliable, off-timeline kind-30078 commands (#t=holdemcmd) from the app — solo
     # start + every move. content = {"action","gameid"?,"amount"?}; one replaceable doc per player.
     try:

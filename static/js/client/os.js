@@ -2091,9 +2091,15 @@
       // edge it was put against. Clamped for the case the desk is smaller than the widget.
       el.style.left = Math.round(Math.max(0, (deskW - box.w - WGT_GAP)) * w.x + WGT_GAP / 2) + 'px';
       el.style.top  = Math.round(Math.max(0, (deskH - box.h - WGT_GAP)) * w.y + WGT_GAP / 2) + 'px';
-      el.innerHTML = `<header class="os-wgt-bar"><svg class="ic" aria-hidden="true"><use href="${enc(def.icon)}"></use></svg>
-          <span class="os-wgt-t">${enc(def.label)}</span>
-          <button class="os-wgt-x" aria-label="Remove this widget">✕</button></header>
+      /* NO TITLE BAR. A widget is a piece of the desktop, not a little window — an icon, a label and
+       * a close button on top of a four-line panel is more chrome than content, and it made them read
+       * as boxes sitting ON the desktop rather than part of it. What the bar carried is still here:
+       * the label lives in the widget's own body where each one already says what it is, dragging was
+       * never the bar's job (the whole panel is the handle), and removal is on the right-click menu
+       * plus a ✕ that fades in on hover. `title` keeps the name reachable for anyone who wants it. */
+      el.title = def.label;
+      el.innerHTML = `<button class="os-wgt-x" aria-label="Remove the ${enc(def.label)} widget"
+                              title="Remove">✕</button>
         <div class="os-wgt-body"></div>`;
       desk.appendChild(el);
       const body = el.querySelector('.os-wgt-body');

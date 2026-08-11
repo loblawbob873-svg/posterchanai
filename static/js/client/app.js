@@ -15195,7 +15195,13 @@
              * A SYNCED folder still goes the long way: its listing comes from a manifest and a
              * different renderer, and there is no cached array here to re-filter. */
             const g = document.getElementById('bl-grid');
-            if(!_syncRoot && g && _filesGridList){ _renderFilesGrid(g, _filesGridList); return; }
+            // Re-filter what we already have, through the SAME renderer renderBlossom would pick —
+            // a Music folder drawn by _renderFilesGrid is a different screen, not a filtered one.
+            if(!_syncRoot && g && _filesGridList){
+              if(_filesFolder === 'Music') _renderMusicList(g, _filesGridList, _filesQ);
+              else _renderFilesGrid(g, _filesGridList);
+              return;
+            }
             const at = f.selectionStart;
             await renderBlossom();
             const nf = document.getElementById('fx-find');
@@ -15747,7 +15753,13 @@
       // Guarded: a throw in the grid renderer used to escape renderPublicFiles and leave the grid
       // spinner spinning with no error anywhere the user could see.
       try{
-        if(_filesFolder==='Music') _renderMusicList($('#bl-grid',pane), list); else _renderFilesGrid($('#bl-grid',pane), list);
+        // Cache the list HERE, for both renderers. It used to be set only inside _renderFilesGrid, so
+        // in the Music folder it held the previous folder's list (or nothing) — and the search box's
+        // fast path, which exists precisely to re-filter without a network round trip, either drew the
+        // wrong folder or fell through to a full Blossom /list PER KEYSTROKE. That is the "it searches
+        // again after every character I type" on a drive with thousands of blobs.
+        _filesGridList = list;
+        if(_filesFolder==='Music') _renderMusicList($('#bl-grid',pane), list, _filesQ); else _renderFilesGrid($('#bl-grid',pane), list);
       }catch(e){
         console.error('blossom: grid render failed', e);
         const g=$('#bl-grid',pane); if(g) g.innerHTML='<div class="empty">Couldn\'t draw your files ('+enc(e.message||'error')+'). Your files are safe — reload to try again.</div>';
