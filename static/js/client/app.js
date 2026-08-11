@@ -9832,6 +9832,11 @@
       needEvent(origId);   // fetch the original; flushEvents patches this placeholder in place
       return `<article class="note" data-orig="${origId}" data-reposter="${enc(rp.name||'someone')}"><div class="body"><div class="repost-tag">${RT_ICON} ${enc(rp.name||'someone')} reposted</div><div class="muted small">loading post…</div></div></article>`;
     }
+    /* A mini app posted as NIP-94 file metadata — which is how Ditto publishes them and how the
+     * Half-Life port is published. Without this the client has NO renderer for kind 1063 at all: the
+     * post opens as a bare thread with the app nowhere in it ("half life loads a social reply").
+     * Only when it really carries an app; a 1063 for an ordinary file is left to the generic path. */
+    if (ev.kind===1063 && webxdcCardHtml(ev)) return webxdcFileCard(ev);
     if (ev.kind===1068) return pollCard(ev);   // NIP-88 poll
     if (ev.kind===30023) return articleCard(ev);   // NIP-23 long-form article → reader card
     if (ev.kind===34550) return communityCard(ev);  // NIP-72 community → discovery card in the feed
@@ -24838,6 +24843,27 @@
    * to survive that module being absent (an older cached bundle, a standalone build that does not
    * ship it) by rendering nothing rather than throwing inside noteCard, where one exception replaces
    * EVERY post with "couldn't render this post". */
+  /* A whole post whose SUBJECT is a mini app (kind 1063), rather than a note that happens to carry
+   * one. Same chrome as any card — avatar, name, time — because it is a post and should be
+   * repliable, zappable and openable like one; the difference is that the app IS the content, so the
+   * description sits under it as a caption rather than the app being an attachment to some text. */
+  function webxdcFileCard(ev){
+    try{
+      const p = profOf(ev.pubkey); needProfile(ev.pubkey);
+      const name = p.display_name || p.name || safePk(ev.pubkey);
+      const av = p.picture || LOGO;
+      const desc = String(ev.content || '').trim();
+      return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}">
+        <img class="av" src="${enc(av)}" onerror="this.src='${LOGO}'">
+        <div class="body">
+          <div class="hd"><span class="name" data-prof="${ev.pubkey}">${emojiName(ev.pubkey,name)}</span>
+            <span class="vchk"></span><span class="time">${timeAgo(ev.created_at)}</span></div>
+          ${webxdcCardHtml(ev)}
+          ${desc ? `<div class="txt">${applyEmojis(linkify(desc), ev)}</div>` : ''}
+        </div></article>`;
+    }catch(_){ return ''; }
+  }
+
   function webxdcCardHtml(ev){
     try{
       if(!window.PCWebxdc) return '';
