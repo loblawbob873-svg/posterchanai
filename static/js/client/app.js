@@ -27378,7 +27378,13 @@
       now: () => {
         if(!MusicPlayer.cur) return null;
         const m = FilesIdx.meta(MusicPlayer.cur) || {};
-        return { title: m.name || 'track', playing: !!(_audioEl && !_audioEl.paused) };
+        // What is COMING is most of what a now-playing panel is for: the queue is already in memory,
+        // so naming the next track costs a lookup rather than a fetch.
+        const q = MusicPlayer.queue || [];
+        const i = q.indexOf(MusicPlayer.cur);
+        const nxt = (i >= 0 && i + 1 < q.length) ? (FilesIdx.meta(q[i + 1]) || {}).name : '';
+        return { title: m.name || 'track', playing: !!(_audioEl && !_audioEl.paused),
+                 next: nxt || '', pos: i >= 0 ? i + 1 : 0, total: q.length };
       },
       /* Play must be able to START something.
        *

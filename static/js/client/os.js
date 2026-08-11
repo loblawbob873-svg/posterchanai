@@ -1768,7 +1768,14 @@
       // No `every`: the player tells us. A widget that polls an element it could have listened to is
       // the same mistake the games made.
       mount(el){
-        el.innerHTML = `<div class="wgt-music"><div class="wgt-mtitle wgt-dim">Nothing playing</div>
+        el.innerHTML = `<div class="wgt-music">
+          <div class="wgt-mtop">
+            <div class="wgt-mart"><svg class="ic" aria-hidden="true"><use href="#i-music"></use></svg></div>
+            <div class="wgt-mmeta">
+              <div class="wgt-mtitle wgt-dim">Nothing playing</div>
+              <div class="wgt-mnext wgt-dim"></div>
+            </div>
+          </div>
           <div class="wgt-mctl">
             <button class="wgt-b wgt-bsh" data-m="shuffle" aria-label="Shuffle everything"
                     title="Shuffle your whole library">
@@ -1823,6 +1830,14 @@
         const now = P && P.now ? P.now() : null;
         t.textContent = (now && now.title) || 'Nothing playing';
         t.classList.toggle('wgt-dim', !(now && now.title));
+        /* The panel was a title and a row of buttons with a hole between them. What fills it is the
+         * thing a now-playing panel is actually for — the art, and WHAT IS COMING — rather than a
+         * decoration: the queue is already in memory, so this costs a lookup, not a request. */
+        const nx = $('.wgt-mnext', el);
+        if(nx) nx.textContent = (now && now.next) ? ('next · ' + now.next)
+                              : (now && now.total > 1 ? (now.pos + ' of ' + now.total) : '');
+        const art = $('.wgt-mart', el);
+        if(art) art.classList.toggle('spin', !!(now && now.playing));
         if(main) main.textContent = (now && now.playing) ? '⏸' : '▶';
         // Shuffle is a MODE, not an action — show whether it is on, or pressing it twice looks like
         // nothing happened the second time.
