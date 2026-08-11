@@ -834,9 +834,14 @@
      *   ⇒ both halves hidden, so the Admin window is black. Every time. Reported as "moving the
      *     window makes it black; changing windows makes it not black; going back makes it black".
      *
-     * The host also has to be re-parented, not merely shown: it is a SIBLING of the feed rather than
-     * a child, so it does not travel when claimFeed moves the feed between windows, and it would
-     * otherwise be visible inside whichever window held the feed last. */
+     * The host is re-parented only when it is genuinely in the wrong place, and that condition is
+     * load-bearing rather than defensive: MOVING AN IFRAME IN THE DOM RELOADS IT. This panel is
+     * created once and kept alive on purpose — "reloading on every enter made the panel slow +
+     * flickery and re-ran all its fetches" — so an unconditional appendChild here would reload the
+     * whole admin app on every focus, which on screen is a black frame over a spinner until it
+     * finishes. In the ordinary two-window case nothing moves: the host is a sibling of the feed
+     * INSIDE the window body, so it stays there while the feed visits another window and is already
+     * in place when the feed comes back. */
     const home = realFeed.parentElement;
     if(home && ah.parentElement !== home) home.appendChild(ah);
     ah.style.display = 'block';
@@ -875,9 +880,15 @@
     // (see _feedVisibleFor), which would be a blank main column with nothing to explain it.
     try{ _feedVisibleFor(PC().VIEW); }catch(_){ _feedVisibleFor(''); }
     try{ PC().syncPlayer && PC().syncPlayer(); }catch(_){}   // the music app may have just been unmounted
-    // The admin panel's iframe host is a sibling of the feed and follows it (see _adminFrame). Send
-    // it home too, or leaving the desktop strands it in a window that is about to be destroyed —
-    // which throws away a loaded panel and forces a reload on the next open.
+    /* The admin panel's iframe host is a sibling of the feed and follows it (see _adminFrame). Send
+     * it home too, or leaving the desktop strands it in a window that is about to be destroyed —
+     * which throws away a loaded panel and forces a reload on the next open.
+     *
+     * NOT WHEN PARKING. `park` means the window is coming back (a minimise), and moving the host is
+     * not free: an iframe that changes parent RELOADS, so doing it on every release re-ran the whole
+     * admin app — the black frame and spinner you get while it comes back. Left where it is, the
+     * window it belongs to still has it when it returns. */
+    if(park) return;
     const ah = document.getElementById('admin-host');
     if(ah && ah.parentElement !== realHome) realHome.appendChild(ah);
   }

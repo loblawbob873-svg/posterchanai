@@ -41,36 +41,36 @@
     }
 
     function _shellHtml(){
-      return `<div class="tm-wrap">
-        <div class="tm-bar">
-          <select class="input tm-host" id="tm-host" aria-label="Host"></select>
-          <button class="btn btn-neon small" id="tm-go">Connect</button>
-          <button class="btn btn-ghost small hidden" id="tm-stop">Disconnect</button>
-          <span class="tm-state" id="tm-state"></span>
+      return `<div class="tty-wrap">
+        <div class="tty-bar">
+          <select class="input tty-host" id="tty-host" aria-label="Host"></select>
+          <button class="btn btn-neon small" id="tty-go">Connect</button>
+          <button class="btn btn-ghost small hidden" id="tty-stop">Disconnect</button>
+          <span class="tty-state" id="tty-state"></span>
         </div>
-        <div class="tm-screen" id="tm-screen"></div>
-        <div class="tm-keys" id="tm-keys" hidden>
+        <div class="tty-screen" id="tty-screen"></div>
+        <div class="tty-keys" id="tty-keys" hidden>
           <button data-k="Escape">esc</button>
           <button data-k="Tab">tab</button>
-          <button data-k="ctrl" class="tm-ctrl">ctrl</button>
+          <button data-k="ctrl" class="tty-ctrl">ctrl</button>
           <button data-k="ArrowUp">↑</button>
           <button data-k="ArrowDown">↓</button>
           <button data-k="ArrowLeft">←</button>
           <button data-k="ArrowRight">→</button>
           <button data-k="Home">home</button>
           <button data-k="End">end</button>
-          <button data-k="^C" class="tm-int">^C</button>
-          <button data-k="kbd" class="tm-kbd">⌨</button>
+          <button data-k="^C" class="tty-int">^C</button>
+          <button data-k="kbd" class="tty-kbd">⌨</button>
         </div>
-        <input class="tm-catch" id="tm-catch" autocomplete="off" autocorrect="off"
+        <input class="tty-catch" id="tty-catch" autocomplete="off" autocorrect="off"
                autocapitalize="off" spellcheck="false" aria-label="Terminal input">
       </div>`;
     }
 
     function _state(msg, cls){
-      const s = $('#tm-state'); if(!s) return;
+      const s = $('#tty-state'); if(!s) return;
       s.textContent = msg || '';
-      s.className = 'tm-state' + (cls ? ' ' + cls : '');
+      s.className = 'tty-state' + (cls ? ' ' + cls : '');
     }
 
     async function loadHosts(){
@@ -93,7 +93,7 @@
     }
 
     function _mountTerm(){
-      const box = $('#tm-screen'); if(!box || !XT()) return false;
+      const box = $('#tty-screen'); if(!box || !XT()) return false;
       term = new (XT())({
         fontSize: fontSize(),
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace',
@@ -139,7 +139,7 @@
     }
 
     async function connect(){
-      const sel = $('#tm-host'); if(!sel) return;
+      const sel = $('#tty-host'); if(!sel) return;
       host = sel.value;
       const h = hosts.find(x => x.name === host);
       if(!h){ _state('pick a host', 'err'); return; }
@@ -183,7 +183,7 @@
     function disconnect(){ _send({ t: 'close' }); _bye(); _state('disconnected'); }
 
     function _chrome(on){
-      const go = $('#tm-go'), stop = $('#tm-stop'), keys = $('#tm-keys'), sel = $('#tm-host');
+      const go = $('#tty-go'), stop = $('#tty-stop'), keys = $('#tty-keys'), sel = $('#tty-host');
       if(go) go.classList.toggle('hidden', on);
       if(stop) stop.classList.toggle('hidden', !on);
       if(sel) sel.disabled = on;
@@ -194,7 +194,7 @@
       // xterm takes the keyboard on a desktop; a phone needs a real focused input to raise the soft
       // keyboard, so the hidden catcher is what gets focused there.
       const touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-      if(touch){ const c = $('#tm-catch'); if(c) c.focus(); }
+      if(touch){ const c = $('#tty-catch'); if(c) c.focus(); }
       else if(term) term.focus();
     }
 
@@ -204,23 +204,23 @@
                   ArrowRight: '\x1b[C', ArrowLeft: '\x1b[D', Home: '\x1b[H', End: '\x1b[F', '^C': '\x03' };
     function _key(k){
       if(k === 'kbd'){ _focus(); return; }
-      if(k === 'ctrl'){ ctrl = !ctrl; const b = $('.tm-ctrl'); if(b) b.classList.toggle('on', ctrl); return; }
+      if(k === 'ctrl'){ ctrl = !ctrl; const b = $('.tty-ctrl'); if(b) b.classList.toggle('on', ctrl); return; }
       const s = SEQ[k];
       if(s) _send({ t: 'in', d: s });
       _focus();
     }
 
     function _wire(){
-      const sel = $('#tm-host');
+      const sel = $('#tty-host');
       if(sel) sel.innerHTML = hosts.length
         ? hosts.map(h => `<option value="${enc(h.name)}">${enc(h.name)} — ${enc(h.label)}</option>`).join('')
         : '<option value="">no hosts configured</option>';
-      { const b = $('#tm-go'); if(b) b.onclick = () => connect(); }
-      { const b = $('#tm-stop'); if(b) b.onclick = () => disconnect(); }
-      { const k = $('#tm-keys'); if(k) k.onclick = (ev) => {
+      { const b = $('#tty-go'); if(b) b.onclick = () => connect(); }
+      { const b = $('#tty-stop'); if(b) b.onclick = () => disconnect(); }
+      { const k = $('#tty-keys'); if(k) k.onclick = (ev) => {
           const b = ev.target.closest('[data-k]'); if(!b) return;
           ev.preventDefault(); _key(b.dataset.k); }; }
-      const c = $('#tm-catch');
+      const c = $('#tty-catch');
       if(c){
         // Everything typed into the catcher goes down the wire and the field is emptied again, so it
         // never accumulates a line the shell has already echoed.
@@ -231,7 +231,7 @@
             const ch = d[0].toLowerCase();
             const code = ch.charCodeAt(0) - 96;
             if(code > 0 && code < 27) d = String.fromCharCode(code) + d.slice(1);
-            ctrl = false; const b = $('.tm-ctrl'); if(b) b.classList.remove('on');
+            ctrl = false; const b = $('.tty-ctrl'); if(b) b.classList.remove('on');
           }
           _send({ t: 'in', d });
         };
