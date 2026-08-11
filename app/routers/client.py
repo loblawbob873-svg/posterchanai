@@ -1337,6 +1337,26 @@ async def meme_sounds():
     return JSONResponse({"sounds": names})
 
 
+@router.get("/meme/sound/{name}")
+async def meme_sound_file(name: str):
+    """The actual audio for a named sound effect, so the Meme Builder can PREVIEW it.
+
+    /meme/sounds lists names only, which is all the picker needed — but it left the browser with
+    nothing to play, so a layer's sound existed solely in the render. Its "Sound volume" slider
+    therefore did nothing you could hear until you exported, which is indistinguishable from a
+    control that does nothing at all (reported exactly that way).
+
+    `_sound_path` is the same resolver the renderer uses and it already refuses anything that is not
+    alphanumeric, so a name cannot walk out of the effects package. Read-only, tiny files, and cached
+    hard: the catalogue only changes when the node is redeployed."""
+    from app.services import meme_builder_service as mb
+    path = mb._sound_path(name)
+    if not path or not os.path.isfile(path):
+        return JSONResponse({"error": "no such sound"}, status_code=404)
+    return FileResponse(path, media_type="audio/mpeg",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+
 @router.get("/meme/effects")
 async def meme_effects():
     """Full effects that can be added to a build as a TRANSPARENT overlay LAYER (nakedman, shrug, and

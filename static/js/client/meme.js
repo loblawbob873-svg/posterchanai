@@ -864,6 +864,11 @@
                the same playhead as the video layers (see seekAudio). -->
           <div class="mb-audios" id="mb-audios" aria-hidden="true">
             ${P.layers.filter(l=>l.type==='audio').map(l=>`<audio data-id="${l.id}" src="${enc(l.src)}" preload="metadata"></audio>`).join('')}
+            <!-- …and the per-layer SOUND EFFECTS. Only audio LAYERS were previewed, so a sound
+                 attached to a caption or an effect layer existed solely in the render — and its
+                 "Sound volume" slider therefore did nothing you could hear until you exported,
+                 which is indistinguishable from a control that does nothing at all. -->
+            ${P.layers.filter(l=>l.sound).map(l=>`<audio data-snd="${l.id}" src="/client/meme/sound/${enc(l.sound)}" preload="metadata"></audio>`).join('')}
           </div>
           <div class="mb-playrow">
             <button class="btn btn-ghost small" id="mb-play" aria-label="Play"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>
@@ -2289,8 +2294,8 @@
   // it can no longer be found by querySelector. That is silent for the video layers (they are muted) but
   // would leave music playing over the whole app after leaving the Meme Builder. Holding the elements means
   // stopPlay can always pause them, mounted or not.
-  let _audioEls = [];
-  const pauseAudio = () => _audioEls.forEach(a=>{ try{ a.pause(); }catch(_){ } });
+  let _audioEls = [], _sndEls = [];
+  const pauseAudio = () => _audioEls.concat(_sndEls).forEach(a=>{ try{ a.pause(); }catch(_){ } });
 
   // The music beds, driven by the same playhead. Scrubbing only re-seeks them (silent); they actually
   // sound during playback. Preview volume is capped at 1 because that is all an <audio> element accepts —
@@ -2306,6 +2311,17 @@
       const local=(+l.trim||0)+(t-(+l.start||0));
       if(Math.abs(a.currentTime-local)>0.3){ try{ a.currentTime=local; }catch(_){ } }
       if(playing && a.paused){ try{ a.play().catch(()=>{}); }catch(_){ } }
+    });
+    /* The per-layer SOUND EFFECTS, on the same playhead. A sound starts with its layer and plays
+     * once — it is not trimmed or looped the way a music bed is, which is why this does not seek
+     * within it. Same 0-1 cap as above: an <audio> element accepts no more, while the render honours
+     * the full range, so a sound boosted past 1 previews quieter than it exports. */
+    P.layers.filter(l=>l.sound).forEach(l=>{
+      const a=_sndEls.find(x=>x.dataset.snd===l.id); if(!a) return;
+      const st=(+l.start||0), on = t>=st && t<=st+(+l.dur||0);
+      a.volume = clamp(l.soundVolume==null?1:l.soundVolume, 0, 1);
+      if(!on || !playing){ try{ a.pause(); }catch(_){ } return; }
+      if(a.paused){ try{ a.currentTime=Math.max(0, t-st); a.play().catch(()=>{}); }catch(_){ } }
     });
   }
 
@@ -3728,7 +3744,10 @@
     // characters): picking one renders it server-side and overlays it ON this layer. Trigger dropdown —
     // reset to the placeholder after firing so it can be used again.
     on('mb-f-meme','change',(e)=>{ const nm=e.target.value; e.target.value=''; if(nm) applyMemeEffect(l, nm); });
-    on('mb-f-sndvol','input',(e)=>{ snapBurst('sndvol:'+l.id); l.soundVolume=clamp(e.target.value,0,3); save(); });
+    on('mb-f-sndvol','input',(e)=>{ snapBurst('sndvol:'+l.id); l.soundVolume=clamp(e.target.value,0,3); save();
+      // Audible NOW, like the music-bed slider beside it — waiting for the next seek is what made a
+      // working control feel dead.
+      const a=_sndEls.find(x=>x.dataset.snd===l.id); if(a) a.volume=clamp(l.soundVolume,0,1); });
     on('mb-f-mute','change',(e)=>{ snap(); l.mute=e.target.checked; save(); });
     // Speed. The preview mirrors it with playbackRate + a scaled local time (see seek), so slow-mo and 2×
     // are visible without rendering — the whole reason to have a slider rather than a number.
@@ -3899,7 +3918,8 @@
     // Full-height, non-scrolling layout for this view — same opt-in class the DM/AI/Translate views use.
     feed.classList.add('feed-meme');
     feed.innerHTML=view();
-    _audioEls = Array.from(feed.querySelectorAll('#mb-audios audio'));
+    _audioEls = Array.from(feed.querySelectorAll('#mb-audios audio[data-id]'));
+    _sndEls  = Array.from(feed.querySelectorAll('#mb-audios audio[data-snd]'));
     if(_prevT){ const s=feed.querySelector('#mb-scrub'); if(s) s.value=_prevT.toFixed(2); setTimeout(()=>seek(_prevT),0); }
     const root=feed;
     bindStage(root); bindTimeline(root); bindInspector(root); bindDrop(root);
