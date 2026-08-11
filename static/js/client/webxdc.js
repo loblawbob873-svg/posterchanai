@@ -145,11 +145,30 @@
       const key = app.sha || app.url;
       if(_cache.has(key)) return _cache.get(key);
       const p = (async () => {
+        /* FETCHED ONCE PER DEVICE, NOT PER LAUNCH.
+         *
+         * Uploading the app put it on a SERVER; running it needs the bytes in this BROWSER, because
+         * the sandbox has no network by design and every file it asks for is answered from memory
+         * here. So the download is unavoidable — but repeating it is not, and at 178 MB that is the
+         * difference between "opens instantly" and "why is it downloading again". Kept in a cache of
+         * its own rather than the client's: those evict on rules written for a firehose of timeline
+         * images, and a mini app is a deliberate, enormous, content-addressed thing. */
+        const CACHE = 'pc-webxdc-v1';
+        let bytes = null;
+        try{
+          const c = await caches.open(CACHE);
+          const hit = await c.match(app.url);
+          if(hit) bytes = new Uint8Array(await hit.arrayBuffer());
+        }catch(_){}
+        if(bytes){
+          if(!bytes.length) bytes = null;                  // a truncated entry is not a cache hit
+          else return await _openArchive(bytes, app);
+        }
         const r = await fetch(app.url, { credentials:'omit', referrerPolicy:'no-referrer' });
         if(!r.ok) throw new Error('could not download the app (HTTP ' + r.status + ')');
         const len = Number(r.headers.get('content-length') || 0);
         if(len > MAX_XDC) throw new Error('that app is too large to open here');
-        const bytes = new Uint8Array(await r.arrayBuffer());
+        bytes = new Uint8Array(await r.arrayBuffer());
         if(bytes.length > MAX_XDC) throw new Error('that app is too large to open here');
         /* VERIFY THE HASH — WHEN THERE IS ONE. `x` is defined as the sha256, and checking it is what
          * stops whoever hosts the file swapping the app after it was posted. But the published
@@ -168,14 +187,27 @@
          * again in memory — 178 MB of Half-Life becomes 178 MB of Map on top of the 178 MB of bytes,
          * on a phone, before a single frame is drawn. The central directory is a few KB, and one
          * entry is inflated per request (which is what the sandbox's worker asks for anyway). */
-        const index = new Map();
-        for(const e of window.PCZip.entries(bytes)) if(e.name) index.set(e.name, e);
-        if(!index.has('index.html')) throw new Error('that .xdc has no index.html in it');
-        return { bytes, index };
+        const opened = await _openArchive(bytes, app);
+        // Store only once it has PARSED. Caching bytes that turn out not to be an app would make a
+        // bad download permanent, and the next launch would fail identically with no way to retry.
+        try{
+          const c = await caches.open(CACHE);
+          await c.put(app.url, new Response(bytes, { headers:{ 'content-type': MIME } }));
+        }catch(_){}                                        // out of quota: it still runs, just not cached
+        return opened;
       })();
       _cache.set(key, p);
       p.catch(() => _cache.delete(key));               // a failed load must not be cached for ever
       return p;
+    }
+
+    /* THE DIRECTORY, NOT THE CONTENTS — see load(). Shared by the cached and freshly-downloaded
+     * paths so an app that parses from the network parses identically from the cache. */
+    async function _openArchive(bytes, app){
+      const index = new Map();
+      for(const e of window.PCZip.entries(bytes)) if(e.name) index.set(e.name, e);
+      if(!index.has('index.html')) throw new Error('that .xdc has no index.html in it');
+      return { bytes, index };
     }
 
     /* The app's name and icon, for the card — read from the archive rather than trusted from the
@@ -351,6 +383,20 @@
       };
     },
   };
+  /* AN APP THAT DIES SHOULD SAY SO. It runs in a nested frame on another origin, so its console is
+     two devtools context-switches away from whoever is looking at a black rectangle — and a WebGL
+     context that fails to create, a missing file, or a throw during boot all look identical from
+     outside: nothing. These forward to the parent, which shows them. */
+  window.addEventListener('error', function(e){
+    send({ jsonrpc:'2.0', method:'webxdc.crash', params:{
+      message: (e && (e.message || (e.error && e.error.message))) || 'error',
+      where: (e && e.filename ? String(e.filename).split('/').pop() + ':' + e.lineno : '') } });
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e && e.reason;
+    send({ jsonrpc:'2.0', method:'webxdc.crash', params:{
+      message: (r && (r.message || String(r))) || 'unhandled rejection', where: '' } });
+  });
   send({ jsonrpc:'2.0', method:'webxdc.hello' });
 })();`;
 
@@ -604,6 +650,18 @@
       const id = d.id;
       if(d.method === 'ready'){
         this.post({ jsonrpc:'2.0', method:'init', params:{ version:1 } });
+        return;
+      }
+      if(d.method === 'webxdc.crash'){
+        const p = d.params || {};
+        const m = String(p.message || '').slice(0, 200);
+        // Once per distinct message: a game that throws every frame must not become a toast storm.
+        this._crashed = this._crashed || new Set();
+        if(!this._crashed.has(m)){
+          this._crashed.add(m);
+          toast((this.app.name || 'the app') + ': ' + m + (p.where ? ' (' + p.where + ')' : ''));
+          try{ console.warn('[webxdc]', this.app.name, m, p.where || ''); }catch(_){}
+        }
         return;
       }
       if(d.method === 'sandbox.error'){
