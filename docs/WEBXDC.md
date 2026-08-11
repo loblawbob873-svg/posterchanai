@@ -179,6 +179,14 @@ localStorage and get an origin per app, which closes that gap too.
       ephemeral, never stored, delivered to whoever is connected now — is unattributed.
     - So sending is **newest-wins and never queued**: a movement packet is worthless once a newer one
       exists, and a slow relay or a busy tab must never build a backlog of stale positions.
+    - **The subscription's `since` is backdated two minutes, and that is load-bearing.** It was `now`,
+      which reads as "from here on" and actually means "from here on *by the other player's clock*":
+      the relay compares it against the sender's `created_at`, so a peer whose clock is a couple of
+      seconds behind has **every packet dropped for the whole session** — an OK on their side, silence
+      on ours, nothing logged anywhere. Measured against the live relay: a packet stamped 3s early
+      never arrives. Two browsers on one machine share a clock and hide it completely; a phone and a
+      laptop do not. Backdating costs nothing because 20932 is ephemeral — there is no stored backlog
+      to replay, so the window only decides how much skew the channel survives.
 - **Firefox works, and the evening spent concluding it could not is worth reading.** The symptom was
   `SecurityError: The operation is insecure` from `serviceWorker.register()` inside the sandbox frame,
   and it was diagnosed four times as a platform limit: Enhanced Tracking Protection (it fails with ETP
@@ -221,6 +229,27 @@ localStorage and get an origin per app, which closes that gap too.
   out it is the realtime channel's ephemeral key instead of an empty string — the spec asks for an
   identifier unique in the chat, and Half-Life hashes `selfAddr` into the fake IP it routes
   multiplayer packets by, so two blank ones would collide on a single address and see nobody.
+- **TWO WINDOWS ON ONE ACCOUNT ARE ONE PLAYER, and a LAN-emulating game will show you nothing.**
+  This is the answer to "both browsers are in the same game, both are publishing, neither sees the
+  other", and it is not a bug in the transport — measured with Half-Life's own shipped code:
+
+  ```
+  hashToUint24(npub) → idToFakeIp() :  npub1fdtthaq…  →  10.228.70.225
+                                       npub1fdtthaq…  →  10.228.70.225   ← the same player twice
+                                       a second npub  →  10.125.226.122
+  ```
+
+  Half-Life emulates a LAN by hashing `selfAddr` into an IP, and its receive path drops any broadcast
+  whose source is its own address (`if (isBroadcast(dest) && ipEquals(src, this.myIp)) return`). So
+  with one account signed in twice, each side hears the other perfectly and discards every packet as
+  its own echo, while host election collapses onto a single id. **To test multiplayer you need two
+  identities, not two windows** — and signing out of one is enough now that the realtime channel needs
+  no signer: a signed-out player gets the ephemeral address above and plays fine.
+
+  `selfAddr` stays the npub deliberately rather than being made unique per device. It is what the
+  spec asks for (Delta Chat uses the email address, which is likewise one identity across a person's
+  devices, and breaks the same way), and turn-based apps attribute moves with it — scoping it per
+  device would make your phone a different player from your laptop in the middle of a chess game.
 - **IndexedDB is not namespaced** the way localStorage is, so two apps on the shared origin can see
   each other's databases.
 

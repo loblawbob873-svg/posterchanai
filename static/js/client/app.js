@@ -2144,6 +2144,10 @@
     if(Date.now() - _lastWake < 4000) return;
     _lastWake = Date.now();
     try{ Relay.wake(); }catch(_){}
+    // …and once a socket can actually answer again, re-ask for whatever is still a placeholder on
+    // screen. Waiting for `ready` rather than firing straight away is the point: wake() has just torn
+    // every socket down, so asking now would go nowhere and merely spend the retry budget again.
+    try{ Relay.ready(8000).then(ok=>{ if(ok) _reaskMissing(); }).catch(()=>{}); }catch(_){}
   }
   /* Resume from the NATIVE signal, but only if we were away long enough for the sockets to be worth
    * doubting. `wake()` tears down and reopens every relay connection — on a five-relay pool that is
@@ -2383,6 +2387,10 @@
     // are lost and home/mutes show empty until a manual refresh, while the live notifications sub
     // recovers (the reported "1 notification, 0 home, 0 mutes"). Re-run the one-shot hydration here.
     Relay.onReconnect = ()=>{
+      // A socket that dropped and came back is the other half of the resume case — a tunnel, a wifi
+      // handover — and the placeholders it left behind are the same ones. Before the GUEST return: a
+      // guest reading the public feed gets the same half-drawn cards. Self-throttled.
+      try{ _reaskMissing(); }catch(_){}
       if(GUEST) return;
       // Re-render only the views whose content depends on this per-user data AND that renderView()
       // handles cleanly — NOT thread/channel/group/search/hashtag/other-profile (renderView has no
@@ -2452,9 +2460,19 @@
         window.addEventListener('sendIntentReceived', _reShare);
         document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ _reShare(); _reMusic(); _reCal(); } });
         const _App=_capPlugin('App');
-        if(_App && _App.addListener){ try{ _App.addListener('resume', ()=>{ _reShare(); _reMusic(); _reCal(); _nativeResume(); });
+        /* _tlForeground() BELONGS HERE, beside _nativeResume(), because the pause half below is armed
+         * from this listener too and the two must not disagree. It was armed from both signals and
+         * released from only one — so on a phone that coalesced its `visibilitychange` away (the very
+         * behaviour this native listener exists to work around) the timeline subscription, dropped 20
+         * seconds after the app went into a pocket, was never re-armed on the way back. It then came
+         * back only by accident, via the redraw Relay.onReconnect does after wake() — which does not
+         * happen at all when _resumeRelay's 4s debounce swallows the wake, and never happens on a view
+         * onReconnect declines to repaint. Reported as "bring the app back and the timeline is empty".
+         * Ordered before _nativeResume() to match the visibilitychange handler: the re-issued REQ goes
+         * out first, and wake() re-sends live subs on reopen anyway. */
+        if(_App && _App.addListener){ try{ _App.addListener('resume', ()=>{ _reShare(); _reMusic(); _reCal(); _tlForeground(); _nativeResume(); });
           _App.addListener('appStateChange', st=>{
-            if(st && st.isActive){ _reShare(); _reMusic(); _reCal(); _nativeResume();
+            if(st && st.isActive){ _reShare(); _reMusic(); _reCal(); _tlForeground(); _nativeResume();
               // Only if the snapshot is genuinely old: a resume is frequent and this must not become
               // a request every time the app is looked at.
               try{ if(window.PCCalendar) PCCalendar.widgetTick(12); }catch(_){} }
@@ -10576,28 +10594,76 @@
    *
    * BOUNDED, because "not on any relay we are connected to" is a real and common answer: a few
    * attempts with a widening gap, then that id is left alone. `_evTries` is cleared for anything that
-   * lands and capped, so a long session of scrolling a busy feed cannot grow it without limit. */
+   * lands and capped, so a long session of scrolling a busy feed cannot grow it without limit.
+   *
+   * ONLY AN ANSWER SPENDS THAT BUDGET, and getting that wrong is what made a backgrounded phone come
+   * back to a screen of shells. A frozen socket does not refuse the query, it swallows it: relay.js
+   * drops a REQ written to anything that is not OPEN, and a socket the OS thawed reads OPEN while
+   * being dead, so either way nobody EOSEs and `query` resolves empty on its 6s timer. That is
+   * indistinguishable from "no relay has it" unless you look at `complete` — and read as the latter,
+   * ~40s in a pocket burns all four attempts and the id is then abandoned for the LIFE OF THE PAGE.
+   * Measured: a redraw on resume re-queues it and gets exactly one more shot, which the still-thawing
+   * socket also eats, and after that nothing ever asks again. Hence two counters: misses the relays
+   * actually answered (permanent once spent), and attempts nobody answered — bounded far more
+   * generously, since none of them is evidence, and re-armed wholesale by `_reaskMissing()`. */
   const _EV_TRIES_MAX = 4;
+  const _EV_STALL_MAX = 8;
+  const _evStalls = new Map();
   async function flushEvents(){
     _evT=null; const ids=[..._evQ]; _evQ.clear(); if(!ids.length) return;
-    let evs=[];
+    let evs=[], live=true, threw=false;
+    // Ask a socket that can actually answer. renderThread already waits like this before its first
+    // query (a REQ into a CONNECTING socket is silently dropped); this is the same wait, instant when
+    // we are connected, and it also reconnects a zombie so the query below has somewhere to land.
+    try{ if(Relay.ready) live = await Relay.ready(4000); }catch(_){ live=true; }
     // `query` can reject (no relay is up at all) — unhandled, that killed the whole flush and left
     // every id in this batch unasked AND unqueued.
-    try{ evs=await Relay.query([{ids}]); }catch(_){ evs=[]; }
+    try{ evs=await Relay.query([{ids}]); }catch(_){ evs=[]; threw=true; }
+    // `complete` is true only when every relay we ASKED sent an EOSE. Anything else — a timeout, a
+    // rejection, no live socket to ask in the first place — means the relays never spoke, which says
+    // nothing about whether the event exists.
+    const answered = live && !threw && evs.complete !== false;
     const got=new Set();
-    for(const e of evs){ got.add(e.id); _evTries.delete(e.id); Store.saveEvent(e); needProfile(e.pubkey); patchLoaded(e); }
+    for(const e of evs){ got.add(e.id); _evTries.delete(e.id); _evStalls.delete(e.id); Store.saveEvent(e); needProfile(e.pubkey); patchLoaded(e); }
     decorateProfiles();
     const missing=ids.filter(id=>!got.has(id) && !Store.get(id));
     if(!missing.length) return;
     let worst=0;
     for(const id of missing){
-      const n=(_evTries.get(id)||0)+1;
-      if(n>_EV_TRIES_MAX) continue;         // it is probably on no relay we hold; stop asking
-      _evTries.set(id,n); _evQ.add(id); if(n>worst) worst=n;
+      if((_evTries.get(id)||0) >= _EV_TRIES_MAX) continue;   // answered that many times and not there; stop asking
+      const map = answered ? _evTries : _evStalls, max = answered ? _EV_TRIES_MAX : _EV_STALL_MAX;
+      const n=(map.get(id)||0)+1;
+      if(n>max) continue;
+      map.set(id,n); _evQ.add(id); if(n>worst) worst=n;
     }
     if(_evTries.size>2000) _evTries.clear();
+    if(_evStalls.size>2000) _evStalls.clear();
     // Widening gap, so a feed full of unreachable references does not become a query loop.
     if(_evQ.size && !_evT) _evT=setTimeout(flushEvents, Math.min(15000, 900*Math.pow(2, worst-1)));
+  }
+  /* Ask again for every reference still rendered as a placeholder.
+   *
+   * The moment the app comes BACK is the one moment when "we asked and got nothing" is worth
+   * revisiting, because the reason we got nothing — a socket the OS froze — has just gone away. And
+   * nothing else revisits it: `_drawTimeline` reconciles by KEY and reuses the cards already on
+   * screen, so a repaint does not re-run the `needEvent()` that built them. A card that gave up while
+   * the phone was in a pocket therefore stays a shell until the page is reloaded, which is exactly
+   * "come back to the app and every post is a placeholder".
+   *
+   * The selectors are `patchLoaded`'s, deliberately: those are the placeholders it knows how to fill
+   * in, so everything asked for here has somewhere to land. Throttled, because a flapping relay fires
+   * onReconnect repeatedly and this clears the give-up state each time. */
+  let _lastReask = 0;
+  function _reaskMissing(){
+    if(Date.now() - _lastReask < 15000) return;
+    _lastReask = Date.now();
+    _evTries.clear(); _evStalls.clear();
+    let n=0;
+    document.querySelectorAll('.note[data-orig],[data-qload],[data-nctx]').forEach(el=>{
+      if(n>=200) return;                                   // the timeline caps at 200 cards; don't build a huge REQ
+      const d=el.dataset, id=d.orig||d.qload||d.nctx;
+      if(id && !Store.get(id)){ n++; needEvent(id); }
+    });
   }
   // Patch repost/quote placeholders in place when their referenced event loads — NO full feed
   // re-render (that flashed the whole screen on the busy global feed).

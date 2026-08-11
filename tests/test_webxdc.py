@@ -31,6 +31,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 import zipfile
 from pathlib import Path
@@ -230,17 +231,32 @@ class HandAssembledJavaScript(unittest.TestCase):
         body = re.sub(r"\$\{[^}]*\}", "1000", m.group(1)).replace("\\`", "`")
         out = _node("""
         const vm = require('vm');
-        global.window = { addEventListener(){} };
-        global.parent = { postMessage(){} };
+        const sent = [], listeners = [];
+        global.window = { addEventListener(t, fn){ if(t === 'message') listeners.push(fn); } };
+        global.parent = { postMessage(m){ sent.push(m); } };
         global.document = { createElement: () => ({ getContext: () => ({}) }) };
         vm.runInThisContext(%s);
         const w = window.webxdc, ch = w.joinRealtimeChannel();
         let threw = false;
         try { ch.send([1, 2, 3]); } catch (e) { threw = true; }
+        /* THE CODEC, BOTH WAYS, THROUGH THE PUBLIC API. Every packet crosses two frames as base64,
+           and the bytes a game sends are binary: high bytes, zeroes, and CR/LF pairs are exactly
+           what a careless string round trip mangles — silently, into a packet the peer's app
+           discards as malformed. */
+        const BYTES = [0, 1, 127, 128, 200, 255, 13, 10, 0];
+        ch.send(Uint8Array.from(BYTES));
+        const outgoing = sent.filter(m => m.method === 'webxdc.rtSend').pop();
+        let heard = null;
+        ch.setListener((data) => { heard = [...data]; });
+        for (const fn of listeners) fn({ data: { jsonrpc:'2.0', method:'webxdc.realtime',
+                                                 params:{ b64: outgoing.params.b64 } } });
         console.log(JSON.stringify({ keys: Object.keys(w).sort(), channel: Object.keys(ch).sort(),
           addr: w.selfAddr, name: w.selfName, max: typeof w.sendUpdateMaxSize,
-          every: typeof w.sendUpdateInterval, rejectsPlainArrays: threw }));
+          every: typeof w.sendUpdateInterval, rejectsPlainArrays: threw,
+          wire: outgoing.params.b64, sent: BYTES, heard }));
         """ % json.dumps('var __XDC = { addr:"npub1abc", name:"Ann", ns:"game" };\n' + body))
+        self.assertEqual(out["heard"], out["sent"], "the realtime codec does not round-trip bytes")
+        self.assertEqual(out["wire"], "AAF/gMj/DQoA", "the wire form is not base64 of those bytes")
         self.assertEqual(out["keys"], ["joinRealtimeChannel", "selfAddr", "selfName", "sendUpdate",
                                        "sendUpdateInterval", "sendUpdateMaxSize", "setUpdateListener"])
         self.assertEqual(out["channel"], ["leave", "send", "setListener"])
@@ -339,6 +355,114 @@ class TheLoaderWaitsForItsWorker(unittest.TestCase):
         self.assertEqual(out["reloads"], 0, "it reloaded twice — that is a loop")
         self.assertTrue(any(m.get("method") == "fetch" for m in out["toParent"]),
                         "nothing took over: the reader gets a dead status line, not the app")
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class TwoPlayers(unittest.TestCase):
+    """THE RECEIVE PATH, WHICH NOTHING HAD EVER RUN. Sending was proven in production the moment a
+    game moved — packets on the relay, two senders, the right identifier. Receiving is the other
+    half and every way it can fail is silent: a filter that matches nothing, a self-drop that drops
+    everybody, a base64 round trip that mangles high bytes, an `onEvent` that never fires.
+
+    So: two Sessions in one process against a relay stub that matches filters the way NIP-01 says
+    (kinds, single-letter tags and `since`, which is the one that bites). One sends; the other must
+    hand its app the identical bytes, and the sender must not hear its own echo.
+    """
+
+    def play(self, extra="", since_skew=0):
+        return _node("""
+        const APP = 'game-uuid-1';
+        const out = { published: 0, A: [], B: [], filters: [] };
+        function matches(f, ev){
+          if (f.kinds && !f.kinds.map(Number).includes(Number(ev.kind))) return false;
+          if (f.since != null && Number(ev.created_at) < Number(f.since)) return false;
+          for (const k of Object.keys(f)){
+            if (k.length === 2 && k[0] === '#'){
+              const want = new Set(f[k].map(String));
+              const have = new Set((ev.tags||[]).filter(t=>t.length>=2 && t[0]===k[1]).map(t=>String(t[1])));
+              if (![...want].some(v=>have.has(v))) return false;
+            }
+          }
+          return true;
+        }
+        let sn = 0, kn = 0;
+        const RELAY = {
+          subs: [],
+          subscribe(filters, opts){ const id='s'+(++sn); RELAY.subs.push({id, filters, onEvent:opts&&opts.onEvent});
+                                    out.filters.push(JSON.parse(JSON.stringify(filters))); return id; },
+          close(id){ RELAY.subs = RELAY.subs.filter(s=>s.id!==id); },
+          publishFast(ev){ out.published++; ev = Object.assign({}, ev, { created_at: ev.created_at + (%d) });
+            for (const s of RELAY.subs) if (s.onEvent && (s.filters||[]).some(f=>matches(f, ev))) s.onEvent(ev);
+            return true; },
+          query: async () => [],
+        };
+        const NT = {
+          generateSecretKey(){ const a = new Uint8Array(32); a[0] = ++kn; return a; },
+          getPublicKey(sk){ return 'pk' + sk[0]; },
+          finalizeEvent(t, sk){ return Object.assign({}, t, { pubkey: NT.getPublicKey(sk), id: 'ev'+(++kn), sig:'s' }); },
+        };
+        global.window = { addEventListener(){}, removeEventListener(){},
+          NostrTools: NT, Relay: RELAY, Store: { query: () => [] },
+          __PC: { $: () => null, enc: s => s, toast(){}, publish: async () => ({ ok:true, ev:null }),
+                  me: () => ({ pubkey:'me', npub:'npub1me' }), profOf: () => ({}),
+                  apiBase: () => 'https://example.com' } };
+        global.Relay = RELAY;
+        global.document = { addEventListener(){}, querySelectorAll:()=>[],
+          createElement:()=>({ setAttribute(){}, classList:{add(){}}, appendChild(){}, style:{} }) };
+        global.location = { hostname:'example.com', href:'https://example.com/' };
+        global.crypto = require('crypto').webcrypto;
+        require(%s);
+
+        const S = window.PCWebxdc.Session;
+        function mk(tag){
+          const s = new S({ url:'https://x/a.xdc', uuid: APP, name:'g' },
+                          { index:new Map(), bytes:new Uint8Array() });
+          s.origin = 'https://xdc.example';
+          s.frame = { contentWindow: { postMessage(m){ out[tag].push(m); } } };
+          return s;
+        }
+        const A = mk('A'), B = mk('B');
+        A.onRpc({ jsonrpc:'2.0', id:1, method:'webxdc.rtJoin', params:{} });
+        B.onRpc({ jsonrpc:'2.0', id:1, method:'webxdc.rtJoin', params:{} });
+        // High bytes, a zero, and a CR/LF pair — everything a naive string round trip mangles.
+        const BYTES = [2, 0, 255, 128, 13, 10, 0, 254];
+        A.onRpc({ jsonrpc:'2.0', id:2, method:'webxdc.rtSend',
+                  params:{ b64: Buffer.from(BYTES).toString('base64') } });
+        %s
+        setTimeout(() => {
+          const rt = (a) => a.filter(m => m.method === 'webxdc.realtime');
+          console.log(JSON.stringify({
+            published: out.published, filters: out.filters[0],
+            heard: rt(out.B).map(m => [...Buffer.from(m.params.b64, 'base64')]),
+            ownEcho: rt(out.A).length, sent: BYTES,
+            keys: [A.rtPk, B.rtPk],
+          }));
+          process.exit(0);
+        }, 60);
+        """ % (since_skew, json.dumps(str(WEBXDC_JS)), extra))
+
+    def test_a_packet_one_player_sends_is_the_packet_the_other_receives(self):
+        out = self.play()
+        self.assertEqual(out["published"], 1)
+        self.assertEqual(out["heard"], [out["sent"]],
+                         "the other player heard nothing, or heard different bytes")
+
+    def test_a_player_does_not_hear_their_own_echo(self):
+        """An app that folds its own movement back into its state sees every player twice."""
+        out = self.play()
+        self.assertEqual(out["ownEcho"], 0)
+        self.assertNotEqual(out["keys"][0], out["keys"][1],
+                            "both sessions share a channel key — the self-drop would silence both")
+
+    def test_a_peer_whose_clock_is_behind_is_still_heard(self):
+        """`since` is compared against the SENDER's `created_at`, so a peer a few seconds behind had
+        every packet dropped by the relay for the whole session — an OK on their side, silence on
+        ours. Two browsers on one machine share a clock and never show it; a phone and a laptop do."""
+        out = self.play(since_skew=-5)
+        self.assertEqual(out["heard"], [out["sent"]],
+                         "a peer with a slightly slow clock is inaudible")
+        self.assertLess(out["filters"][0]["since"], int(time.time()) - 1,
+                        "the subscription's `since` must leave room for clock skew")
 
 
 @unittest.skipUnless(shutil.which("node"), "node not installed")

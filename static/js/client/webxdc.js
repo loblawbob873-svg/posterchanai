@@ -799,8 +799,19 @@
           // else's, and a packet that arrives before it exists would be delivered back to the app.
           try{ this.rtKey(); }catch(_){}
           try{
+            /* `since` IS BACKDATED, AND IT HAS TO BE. It was `now`, which reads as "only what
+             * happens from here on" and is really "only what the OTHER PLAYER'S CLOCK calls from
+             * here on": the relay compares `created_at` against it (`_match_one`), and a peer whose
+             * clock is two seconds behind ours has EVERY packet dropped, for the whole session, with
+             * an OK on their side and silence on ours. Measured against the live relay — a packet
+             * stamped 3s early never arrives. Two browsers on one machine share a clock and hide it;
+             * a phone and a laptop do not.
+             *
+             * Two minutes costs nothing to be wrong about: 20932 is ephemeral, so this relay stores
+             * none of it and there is no backlog to replay — the window only decides how much clock
+             * skew the channel survives. */
             this.rtSub = Relay.subscribe([{ kinds:[KIND_REALTIME], '#i':[this.app.uuid],
-                                            since: Math.floor(Date.now() / 1000) }], {
+                                            since: Math.floor(Date.now() / 1000) - 120 }], {
               onEvent: (ev) => {
                 if(this.dead || !ev || ev.kind !== KIND_REALTIME) return;
                 // Not our own packets: the sender already has them, and an app that echoes its own
@@ -1036,7 +1047,12 @@
       inp.click();
     }
 
-    window.PCWebxdc = { open, appOf, cardHtml, attach, MIME, KIND_UPDATE };
+    /* `Session` is exported for ONE reason: two of them, in one node process, against a stub relay,
+     * is the only way to test that a packet one player sends is the packet the other player's app
+     * receives. Every part of that path fails silently — a filter that matches nothing, a self-drop
+     * that drops everybody, a base64 round trip that mangles high bytes — and none of it is visible
+     * from either browser. See tests/test_webxdc.py::TwoPlayers. */
+    window.PCWebxdc = { open, appOf, cardHtml, attach, MIME, KIND_UPDATE, Session };
   }
   init();
 })();
