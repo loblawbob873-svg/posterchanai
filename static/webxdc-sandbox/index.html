@@ -36,18 +36,20 @@
   var pending = {};                   // rpc id -> resolve
   var nextId = 1;
   var started = false;
-  /* THE HONEST VERSION, after three wrong ones. This is not Enhanced Tracking Protection (it fails
-   * with ETP off) and not the `sandbox` attribute (it fails with none). Firefox does not support
-   * service workers in an embedded frame from another origin, full stop — and the Storage Access API
-   * does not grant them, which is why the button above can ask and still be refused. A mini app is a
-   * cross-origin frame BY DESIGN: that separation is the only thing keeping a stranger's code away
-   * from the keys. So in Firefox the two requirements cannot both be met with this architecture, and
-   * the remaining answer is a Chromium browser or a different design (serving the app with no worker
-   * at all). Say that, rather than sending someone to turn off a security feature that will not
-   * help. */
-  var FIREFOX_VERDICT = 'Firefox cannot run mini apps here: it does not allow service workers in an '
-    + 'embedded frame from another origin, and that separate origin is what keeps the app away from '
-    + 'your keys. This is not a setting you can change — Chrome, Edge and Brave run it as-is.';
+
+  /* WHO THE CLIENT IS: `parent` in a frame, `opener` in a TAB — and this document runs both ways.
+   *
+   * Firefox will not register a service worker in an embedded frame from another origin (see the
+   * catch in boot()), and the worker is what serves the app its files. The same document opened as a
+   * TOP-LEVEL tab on this origin is first-party, so the worker is allowed and the good path runs
+   * unchanged: real URLs, no rewriting, `import "./x.js"` resolves. The ONLY difference between the
+   * two is which window the client is, so it is resolved once here and everything below uses `peer`.
+   *
+   * The origin separation is untouched by this — arguably stronger, since a tab cannot be framed by
+   * anything at all. What is lost is nothing: `opener` is a postMessage handle, and every message
+   * over it is checked for source and origin at both ends exactly as before. */
+  var IS_TAB = (window.parent === window);
+  var peer = IS_TAB ? window.opener : window.parent;
 
   var firstFetch = null;          // set once the app frame exists, to narrate the first loads
 
@@ -55,8 +57,8 @@
   function fail(t){ say(t); try{ post({ jsonrpc:'2.0', method:'sandbox.error', params:{ message:t } }); }catch(_){} }
 
   function post(m, transfer){
-    if(!parentOrigin) return;
-    try{ parent.postMessage(m, parentOrigin, transfer || []); }catch(_){}
+    if(!parentOrigin || !peer) return;
+    try{ peer.postMessage(m, parentOrigin, transfer || []); }catch(_){}
   }
 
   /* A request to the parent, which is the only place file bytes can come from. */
@@ -75,13 +77,18 @@
      * `ev.source !== parent` is the real check — any page can postMessage into a frame, and a
      * sandbox that accepted file bytes from an arbitrary sender would let a third party feed a
      * different app to a reader who thinks they are running the one that was posted. */
-    if(ev.source !== parent) return;
+    if(ev.source !== peer) return;
     if(parentOrigin === null){
       if(d.method !== 'init') return;                 // the handshake is the only way in
       parentOrigin = ev.origin;
     }else if(ev.origin !== parentOrigin) return;
 
-    if(d.method === 'init'){ boot(d.params || {}); return; }
+    if(d.method === 'init'){
+      // In a tab this document IS the window somebody is looking at, so it says which app it holds.
+      if(IS_TAB && d.params && d.params.name){ try{ document.title = String(d.params.name); }catch(_){} }
+      boot(d.params || {});
+      return;
+    }
     if(d.id !== undefined && d.method === undefined){
       var p = pending[d.id];
       if(!p) return;
@@ -99,7 +106,7 @@
    * its messages are trusted; the parent is not, so nothing from the parent is executed here — it is
    * only ever forwarded, or turned into a Response by the worker. */
   window.addEventListener('message', function(ev){
-    if(ev.source === parent) return;
+    if(peer && ev.source === peer) return;
     var f = document.getElementById('f');
     if(!f || ev.source !== f.contentWindow) return;
     if(ev.origin !== location.origin && ev.origin !== 'null') return;
@@ -180,18 +187,29 @@
       }, 25000);
       post({ jsonrpc:'2.0', method:'sandbox.running' });
     }).catch(function(e){
-      /* NO WORKER? THEN NO WORKER. Firefox will not register a service worker in an embedded frame
-       * from another origin — not because of Enhanced Tracking Protection (it fails with that off)
-       * and not because of the `sandbox` attribute (it fails with none), but because the platform
-       * does not allow it, and the Storage Access API does not grant it either.
+      /* NO WORKER IN A FRAME? THEN NOT IN A FRAME. Firefox will not register a service worker in an
+       * embedded frame from another origin — not Enhanced Tracking Protection (it fails with that
+       * off), not the `sandbox` attribute (it fails with none), not something the Storage Access API
+       * grants (asked, granted, still refused). It is the platform.
        *
-       * The worker was only ever a way to answer the app's requests. There is another: hand the app
-       * BLOB URLs. A blob created HERE inherits THIS document's origin, so the app still runs on
-       * xdc.<instance> and still cannot touch the client's storage — the whole point — and it needs
-       * no worker, no registration and no permission. See bootBlobs. */
+       * The same document as a TOP-LEVEL TAB on this origin is first-party, and there the worker is
+       * allowed — so the answer is to be opened again rather than to serve the app some other way.
+       * We cannot open that tab from here: a popup needs a user gesture, and this failure arrives
+       * asynchronously long after the click that started the app. So the CLIENT is told, and it puts
+       * a button in front of the reader whose click opens us as a tab.
+       *
+       * BLOB URLS WERE THE OTHER ANSWER and are kept only for the case with nothing left after it: a
+       * tab that still cannot register a worker (Firefox private browsing disables them everywhere).
+       * They work — a blob made here inherits THIS origin, so isolation holds — but an ES module
+       * served from a blob: URL cannot resolve `import "./x.js"` against anything, so every app whose
+       * engine is a module dies partway through boot with a loading bar on screen. A button that
+       * works beats a fallback that half-works. */
       var m = String((e && (e.name + ': ' + e.message)) || e);
-      try{ console.warn('[sandbox] service worker unavailable:', m, '— falling back to blob URLs'); }catch(_){}
-      bootBlobs();
+      try{ console.warn('[sandbox] service worker unavailable:', m); }catch(_){}
+      if(IS_TAB){ bootBlobs(); return; }
+      say('This browser will not run a mini app inside a frame. Use the button in PosterChan to open '
+        + 'it in a tab, where it runs normally.');
+      post({ jsonrpc:'2.0', method:'sandbox.needsTab', params:{ message: m } });
     });
   }
 

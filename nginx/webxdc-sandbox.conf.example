@@ -72,7 +72,11 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         add_header Cache-Control "no-store" always;
-        add_header Service-Worker-Allowed "/" always;
+        # NB: Service-Worker-Allowed is set by the APP, not here. Setting it in both places sends the
+        # header TWICE, fetch combines duplicates into "/, /", and that is not a valid scope prefix:
+        # Chrome ignores it (the script is at the root, so "/" is already its maximum scope) and
+        # FIREFOX REFUSES THE REGISTRATION with `SecurityError: The operation is insecure` — which
+        # reads as "Firefox does not allow service workers here" and is not that at all.
     }
 
     location /__sandbox__ {
