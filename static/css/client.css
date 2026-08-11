@@ -6413,9 +6413,30 @@ body.os-on #os-root{pointer-events:auto}
 .wgt-b:hover{color:var(--cyan,#0ff);border-color:var(--cyan,#0ff)}
 .wgt-bmain{width:36px;height:36px;font-size:14px;color:var(--neon);border-color:var(--neon)}
 
-/* Sticky note. The textarea IS the widget — no padding games, so the writing area is the whole panel. */
-.wgt-note{flex:1;min-height:60px;height:calc(100% - 16px);resize:none;line-height:1.45}
-.wgt-notest{height:14px;padding-top:2px}
+/* Sticky note — an actual yellow sticky, not a dark panel like the rest.
+   It is the one widget that is a PHYSICAL object rather than a readout, and the whole reason a sticky
+   note works is that it does not look like the thing it is stuck to. So this overrides the widget
+   chrome: paper, a warm shadow, dark ink, and a title bar that reads as the gummed strip along the
+   top. The text colour is hardcoded rather than themed — the paper is yellow in every theme, so a
+   token that goes pale in a light theme would put white ink on it. */
+.os-wgt[data-type="note"]{background:linear-gradient(170deg,#ffe98a,#ffd94f);
+  border-color:rgba(120,88,0,.4);box-shadow:0 12px 26px rgba(0,0,0,.42),0 2px 0 rgba(255,255,255,.35) inset;
+  border-radius:3px 3px 8px 3px}
+.os-wgt[data-type="note"] .os-wgt-bar{background:rgba(255,255,255,.28);
+  border-bottom:1px solid rgba(120,88,0,.22)}
+.os-wgt[data-type="note"] .os-wgt-bar .ic{color:#7a5c00}
+.os-wgt[data-type="note"] .os-wgt-t{color:#6b4f00}
+.os-wgt[data-type="note"] .os-wgt-x{color:#7a5c00}
+.os-wgt[data-type="note"] .os-wgt-x:hover{background:rgba(160,40,20,.85);color:#fff}
+.os-wgt[data-type="note"] .os-wgt-body{padding:6px 9px 8px}
+/* The textarea IS the widget — transparent, no frame, so the writing area is the paper itself. */
+.wgt-note{flex:1;min-height:60px;height:calc(100% - 16px);resize:none;line-height:1.5;
+  background:transparent;border:0;border-radius:0;padding:2px 0;color:#2c2200;
+  font-family:'Segoe Print','Bradley Hand','Comic Sans MS',ui-rounded,system-ui,sans-serif;font-size:13px}
+.wgt-note:focus{border:0;outline:none}
+.wgt-note::placeholder{color:rgba(90,70,0,.45)}
+.wgt-notest{height:14px;padding-top:2px;color:rgba(90,70,0,.6)}
+.os-wgt[data-type="note"] .wgt-dim{color:rgba(90,70,0,.6)}
 
 /* Search. */
 .wgt-search{display:flex;gap:6px;align-items:center}

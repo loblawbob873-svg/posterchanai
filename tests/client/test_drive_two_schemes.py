@@ -103,7 +103,7 @@ def test_a_v1_per_file_key_blob_decrypts():
         const iv  = crypto.getRandomValues(new Uint8Array(12));
         const blob = await encrypt(key, iv, 'the wallpaper bytes', false);   // v1: iv is NOT prepended
         KEYENC = JSON.stringify({ k: u8b64(key), iv: u8b64(iv) });
-        const plain = await _driveDecrypt({ keyenc: 'nip44-ciphertext', mime: 'image/png' }, blob);
+        const plain = await _driveDecrypt({ keyenc: 'nip44-ciphertext', mime: 'image/png' }, blob, true);
         out({ text: new TextDecoder().decode(plain) });
     """)
     assert r["text"] == "the wallpaper bytes"
@@ -113,7 +113,7 @@ def test_a_v2_master_key_blob_still_decrypts():
     r = _run("""
         const iv = crypto.getRandomValues(new Uint8Array(12));
         const blob = await encrypt(MK, iv, 'the newer bytes', true);        // v2: iv prepended
-        const plain = await _driveDecrypt({ mk: 1, mime: 'image/png' }, blob);
+        const plain = await _driveDecrypt({ mk: 1, mime: 'image/png' }, blob, true);
         out({ text: new TextDecoder().decode(plain) });
     """)
     assert r["text"] == "the newer bytes"
@@ -126,7 +126,7 @@ def test_mk_wins_when_a_record_somehow_carries_both():
         const iv = crypto.getRandomValues(new Uint8Array(12));
         const blob = await encrypt(MK, iv, 'master bytes', true);
         KEYENC = JSON.stringify({ k: u8b64(new Uint8Array(32).fill(9)), iv: u8b64(iv) });
-        const plain = await _driveDecrypt({ mk: 1, keyenc: 'stale' }, blob);
+        const plain = await _driveDecrypt({ mk: 1, keyenc: 'stale' }, blob, true);
         out({ text: new TextDecoder().decode(plain) });
     """)
     assert r["text"] == "master bytes"
@@ -138,7 +138,7 @@ def test_no_meta_at_all_falls_back_to_the_master_key():
     r = _run("""
         const iv = crypto.getRandomValues(new Uint8Array(12));
         const blob = await encrypt(MK, iv, 'unflagged', true);
-        const plain = await _driveDecrypt(null, blob);
+        const plain = await _driveDecrypt(null, blob, false);
         out({ text: new TextDecoder().decode(plain) });
     """)
     assert r["text"] == "unflagged"
@@ -151,10 +151,35 @@ def test_a_file_that_was_never_encrypted_is_returned_as_is():
     preview nor apply actually was: a picture that needed no decrypting, being decrypted."""
     r = _run("""
         const bytes = new TextEncoder().encode('plain PNG bytes');
-        const plain = await _driveDecrypt({ name:'wall.png', mime:'image/png', enc:false }, bytes);
+        const plain = await _driveDecrypt({ name:'wall.png', mime:'image/png', enc:false }, bytes, true);
         out({ text: new TextDecoder().decode(plain) });
     """)
     assert r["text"] == "plain PNG bytes"
+
+
+def test_an_unencrypted_record_with_no_name_is_still_unencrypted():
+    """The first version of this guard inferred "we have an index record" from `m.name !== undefined`,
+    and the index does not promise a name — os.js's own backgrounds() falls back to the sha for exactly
+    that reason. So a real, unencrypted record that happened to carry no name skipped the passthrough
+    and was decrypted anyway: the same failure, on the same screen, one fix later."""
+    r = _run("""
+        const bytes = new TextEncoder().encode('nameless but plain');
+        const plain = await _driveDecrypt({ mime:'image/png', enc:false }, bytes, true);
+        out({ text: new TextDecoder().decode(plain) });
+    """)
+    assert r["text"] == "nameless but plain"
+
+
+def test_a_synthesised_meta_is_not_an_index_record():
+    """A Notes attachment arrives with a `{mime}` built from the NOTE, not from the drive index — it is
+    encrypted, and reading its absent `enc` as "plaintext" would hand ciphertext to an <img>."""
+    r = _run("""
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const blob = await encrypt(MK, iv, 'attachment bytes', true);
+        const plain = await _driveDecrypt({ mime:'image/png' }, blob, false);   // indexed = false
+        out({ text: new TextDecoder().decode(plain) });
+    """)
+    assert r["text"] == "attachment bytes"
 
 
 def test_a_missing_flag_is_not_a_false_one():
@@ -163,7 +188,7 @@ def test_a_missing_flag_is_not_a_false_one():
     r = _run("""
         const iv = crypto.getRandomValues(new Uint8Array(12));
         const blob = await encrypt(MK, iv, 'still sealed', true);
-        const plain = await _driveDecrypt(null, blob);            // no meta → master key, not passthrough
+        const plain = await _driveDecrypt(null, blob, false);      // no record → master key, not passthrough
         out({ text: new TextDecoder().decode(plain) });
     """)
     assert r["text"] == "still sealed"

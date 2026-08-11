@@ -16066,7 +16066,7 @@
    * nor apply, while the identical bytes played fine in the music player.
    *
    * One decryptor, used by both callers, because two of them is how they drifted in the first place. */
-  async function _driveDecrypt(m, bytes){
+  async function _driveDecrypt(m, bytes, indexed){
     /* NOT EVERY FILE IN THE DRIVE IS ENCRYPTED, and decrypting one that isn't fails identically to a
      * wrong key. The index carries `enc` and the Files explorer branches on it everywhere — a plain
      * file keeps its public URL and a normal icon, a sealed one gets the lock card. This reader did
@@ -16075,9 +16075,17 @@
      * desktop background that would neither preview nor apply actually was: a picture that needed no
      * decrypting at all, being decrypted.
      *
-     * `enc` is only trusted when we have a record. With no meta the flag is absent rather than false,
-     * which is not the same thing — those fall through to the master key below. */
-    if(m && m.name !== undefined && !m.enc && !m.mk && !m.keyenc) return bytes;
+     * `enc` may only be trusted when we actually HAVE the index record: with no record the flag is
+     * absent rather than false, and those two must not be confused — a Notes attachment reaches here
+     * with a synthesised `{mime}` from the note itself and IS encrypted, so reading its missing flag
+     * as "plaintext" would hand back ciphertext and draw a broken image with nothing said.
+     *
+     * `indexed` is passed in rather than sniffed off the object. The first version inferred it from
+     * `m.name !== undefined`, and the index does not promise a name — os.js's own `backgrounds()`
+     * falls back to the sha for exactly that reason. So a real, unencrypted record that happened to
+     * carry no name skipped this branch and went on to be decrypted, which is the same failure over
+     * again on the same screen. */
+    if(indexed && m && !m.enc && !m.mk && !m.keyenc) return bytes;
     if(m && m.keyenc && !m.mk){
       const {k,iv}=JSON.parse(await signer.nip44dec(ME.pubkey, m.keyenc));
       return await _aesDecrypt(bytes, _b64u8(k), _b64u8(iv));
@@ -16089,12 +16097,13 @@
     // stores its own name/mime on the note. If a bulk import was interrupted before the index was
     // flushed, meta() is empty, and an object URL typed application/octet-stream does NOT render in
     // an <img>. The note's own copy of the type keeps the picture showing.
-    let m=FilesIdx.meta(sha) || (mimeHint ? {mime:mimeHint} : null);
+    let rec=FilesIdx.meta(sha);
+    let m=rec || (mimeHint ? {mime:mimeHint} : null);
     const r=await fetch(mediaServer()+'/'+sha); if(!r.ok) throw new Error('blob HTTP '+r.status);
     const blob=new Uint8Array(await r.arrayBuffer());
     let plain;
     try{
-      plain=await _driveDecrypt(m, blob);
+      plain=await _driveDecrypt(m, blob, !!rec);
     }catch(e){
       /* AES-GCM failing is "wrong key", not "bad file" — WebCrypto reports it as OperationError,
        * "The operation failed for an operation-specific reason", which reads like corruption and
@@ -16105,9 +16114,10 @@
       try{ await FilesIdx.pull(); }catch(_){ }
       // The pull refreshes the INDEX as well as the key, so re-read the file's record: a blob whose
       // meta was missing (hence no scheme to pick) may have just got it back.
-      m=FilesIdx.meta(sha) || m;
+      rec=FilesIdx.meta(sha) || rec;
+      m=rec || m;
       try{
-        plain=await _driveDecrypt(m, blob);
+        plain=await _driveDecrypt(m, blob, !!rec);
       }catch(e2){
         /* SAY WHICH SCHEME FAILED. Every path here ends in `OperationError`, whose text is the same
          * whether the key is wrong, the bytes are not ciphertext, or the file was never encrypted —
@@ -16808,7 +16818,9 @@
     // shared with _encFileUrl. A track with NEITHER field used to throw 'no key' here; it now tries the
     // master key, which is what an index entry written before the flag existed actually needs.
     if(!m.mk && !m.keyenc) console.warn('track', sha.slice(0,8), 'has no key field — trying the master key');
-    const plain=await _driveDecrypt(m, blob);
+    // `true`: trackUrl already refused anything without a record (`if(!m||!m.enc) throw` above), so
+    // by here the meta IS the index's.
+    const plain=await _driveDecrypt(m, blob, true);
     const u=URL.createObjectURL(new Blob([plain],{type:m.mime||'audio/ogg'})); _trackUrls[sha]=u; _trackUrlOrder.push(sha);
     while(_trackUrlOrder.length>6){ const old=_trackUrlOrder.shift(); if(old!==(MusicPlayer&&MusicPlayer.cur) && _trackUrls[old]){ URL.revokeObjectURL(_trackUrls[old]); delete _trackUrls[old]; } }
     return u;
