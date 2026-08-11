@@ -54,6 +54,21 @@ def _why(e: Exception) -> str:
         return "the host could not be reached"
     if "Timeout" in n or n == "TimeoutError":
         return "the host did not answer in time"
+    # A KEY FILE THAT IS NOT A PRIVATE KEY IS THE COMMON MISTAKE, and "the SSH handshake failed"
+    # sends you to look at the network for it. paramiko raises a plain SSHException here, so the kind
+    # has to come from the message -- which is READ but never echoed, so nothing leaks. The .pub
+    # confusion is worth naming outright: it is the file people have to hand, and pointing at a
+    # public key is the single most likely way to configure this wrong.
+    msg = str(e).lower()
+    # Order matters: paramiko says "Private key file is encrypted", which matches BOTH of the first
+    # two tests, and the passphrase answer is the useful one.
+    if "encrypted" in msg or "passphrase" in msg:
+        return "that private key is passphrase-protected, which this terminal cannot unlock"
+    if "not found" in msg or "no such file" in msg:
+        return "the key file configured for this host is not on the server"
+    if "private key" in msg:
+        return ("that key file is not a usable private key — if the path ends in .pub it is the "
+                "PUBLIC half; the server needs the private one (no .pub)")
     if "SSH" in n:
         return "the SSH handshake failed"
     return "the connection failed"

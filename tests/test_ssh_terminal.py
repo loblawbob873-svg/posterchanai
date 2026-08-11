@@ -194,3 +194,32 @@ def test_every_failure_still_says_something_useful():
     assert _why(TimeoutError("x")) != ""
     assert _why(ConnectionRefusedError("x")) != ""
     assert _why(RuntimeError("x")) != ""
+
+
+def test_a_public_key_says_so_instead_of_blaming_the_handshake():
+    """The single most likely misconfiguration: `key=` pointed at `id_rsa.pub`. paramiko raises a
+    plain SSHException whose message is "not a valid OPENSSH private key file", which the first
+    classifier flattened to "the SSH handshake failed" — sending you to look at the network for a
+    filename problem. Verified against the real exception paramiko raises."""
+    from app.routers.ssh_term import _why
+    import paramiko
+
+    m = _why(paramiko.SSHException("not a valid OPENSSH private key file"))
+    assert ".pub" in m and "private" in m
+    assert "handshake" not in m
+
+
+def test_an_encrypted_key_is_not_reported_as_a_public_one():
+    """paramiko says "Private key file is encrypted", which matches the .pub test too — order matters,
+    and the passphrase answer is the useful one."""
+    from app.routers.ssh_term import _why
+    import paramiko
+
+    assert "passphrase" in _why(paramiko.SSHException("Private key file is encrypted"))
+
+
+def test_a_missing_key_file_is_named_as_such():
+    from app.routers.ssh_term import _why
+    import paramiko
+
+    assert "not on the server" in _why(paramiko.SSHException("No such file or directory"))

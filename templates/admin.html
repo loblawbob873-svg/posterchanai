@@ -35,7 +35,6 @@
             <button class="tab-btn" data-tab="music">Music</button>
             <button class="tab-btn" data-tab="video">Video</button>
             <button class="tab-btn" data-tab="voice">Voice</button>
-            <button class="tab-btn" data-tab="nodes">Nodes</button>
         </div>
         <div class="tab-group">
             <span class="tab-group-label">Nostr</span>
@@ -58,6 +57,10 @@
         </div>
         <div class="tab-group">
             <span class="tab-group-label">System</span>
+            <!-- Nodes is infrastructure, not a model: remote command execution over Nostr, the SSH
+                 terminal, and the health report's node list. It sat under AI because the agentic
+                 runner lives there, which is one of its callers rather than what it is. -->
+            <button class="tab-btn" data-tab="nodes">Nodes</button>
             <button class="tab-btn" data-tab="storage">Storage</button>
             <button class="tab-btn" data-tab="network">Network</button>
             <button class="tab-btn" data-tab="site">Site</button>
