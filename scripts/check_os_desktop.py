@@ -669,6 +669,40 @@ LAYOUT = r"""(async () => {
      *
      * Reproduced without the real panel (it is a cross-origin iframe and an auth session): what the
      * panel actually does to the shared element is the one line below. */
+    /* A WINDOW NAVIGATED INSIDE ITSELF must repaint as what it IS showing.
+     *
+     * The Admin panel is reached from the Settings view's own button, and `admin` is not a sidebar
+     * app — so the settings window paints Admin into itself while `w.view` stays 'settings'. Drag it
+     * and focusWin repainted `switchView(w.view)`: you land back in User Settings, and the admin
+     * host is hidden because _feedVisibleFor was told 'settings' too. Reproduced with the same two
+     * moves the client makes: switch the view inside the focused window, then drag its title bar. */
+    {
+      // The FOCUSED window — the one holding the live feed. That is the precondition: the client
+      // navigates inside the window you are looking at.
+      const w0 = [...document.querySelectorAll('.osw')].pop();
+      if (w0) {
+        // The admin panel is an <iframe> hosted in a sibling of the feed. Stand one in for it: what
+        // is being checked is who decides its visibility, not what is inside it.
+        let ah = document.getElementById('admin-host');
+        if (!ah) { ah = document.createElement('div'); ah.id = 'admin-host'; }
+        const fd = document.querySelector('#feed');
+        fd.parentElement.appendChild(ah);
+        window.__PC.switchView('admin');            // navigate INSIDE the focused window…
+        fd.style.display = 'none'; ah.style.display = 'block';   // …which is what _adminFrame does
+        await sleep(120);
+        const bar = w0.querySelector('.osw-bar');
+        const r = bar.getBoundingClientRect();
+        await drag(bar, r.left + 140, r.top + 90);  // move it
+        await sleep(220);
+        // The invariant: a window SHOWING Admin still shows Admin after it is moved. With the view
+        // read from `w.view` the host is hidden and the (emptied) feed shown — a black window.
+        out.adminBlack = getComputedStyle(document.getElementById('admin-host')).display === 'none';
+        out.afterDragView = window.__view;
+        document.getElementById('admin-host').remove();
+        document.querySelector('#feed').style.display = '';
+      }
+    }
+
     const feed = document.querySelector('#feed');
     if (feed && wins.length >= 2) {
       feed.style.display = 'none';                       // ← what _adminFrame does
@@ -1301,6 +1335,23 @@ async def drive(url):
                                          f"player: {q.get('musicCalls')!r}. Buttons that do nothing "
                                          "are the silent failure this widget has already had once "
                                          "(a bridge method called by the wrong name)."))
+                    if q.get("adminBlack"):
+                        problems.append((label, "admin-window-black-after-move",
+                                         "moving the Admin window left BOTH halves hidden — the feed "
+                                         "and the admin host — so the window is black. Its view is "
+                                         "read from `w.view`, which is what the window was OPENED "
+                                         "as; Admin is reached from the Settings view and paints "
+                                         "into that window, so the window never knew it was showing "
+                                         "Admin. See noteView / the capture in focusWin."))
+                    if q.get("afterDragView") and q.get("afterDragView") != "admin":
+                        problems.append((label, "drag-repaints-wrong-view",
+                                         "dragging a window that had been navigated INSIDE itself "
+                                         f"repainted it as {q.get('afterDragView')!r} instead of the "
+                                         "view it was showing. `w.view` is what a window was OPENED "
+                                         "as; the Admin panel is opened from Settings and paints "
+                                         "into that window, so a drag threw the user back to User "
+                                         "Settings — and _feedVisibleFor, told the same wrong view, "
+                                         "hid the admin host and left the window black."))
                     if q.get("feedHiddenAfterClose"):
                         problems.append((label, "window-black-after-admin",
                                          "the window focused after another one closed inherited a "

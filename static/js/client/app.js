@@ -3827,12 +3827,23 @@
     feed.classList.toggle('feed-meme', VIEW==='meme');     // full-height Meme Builder (stage + one pane)
     feed.classList.toggle('feed-admin', VIEW==='admin');   // full-height admin iframe
     feed.classList.toggle('feed-term', VIEW==='terminal');  // full-height terminal
-    /* LEAVING THE TERMINAL CLOSES IT. Nothing else in this app has to be told it is being replaced —
-     * a view is just markup in #feed — but a terminal is a live PTY on a remote host and a socket
-     * holding it open. Without this, walking away leaves a login open on someone else's machine
-     * until the server's own timeout, and coming back re-renders around an xterm bound to a node
-     * that no longer exists. */
-    if(VIEW!=='terminal'){ try{ if(window.PCTerm && PCTerm.isOpen()) PCTerm.unmount(); }catch(_){} }
+    // Tell the desktop what the focused window is actually showing. A window navigated inside itself
+    // (the Admin panel is opened from Settings) otherwise keeps repainting as the view it was opened
+    // as — which sent a drag of the Admin window back to User Settings, and blacked it out.
+    try{ if(window.PCOS && PCOS.noteView) PCOS.noteView(VIEW); }catch(_){}
+    /* LEAVING THE TERMINAL CLOSES IT — in CLASSIC mode. Nothing else here has to be told it is being
+     * replaced, because a view is just markup in #feed; a terminal is a live PTY on a remote host
+     * and a socket holding it open, so walking away would otherwise leave a login open on someone
+     * else's machine, and coming back would re-render around an xterm bound to a destroyed node.
+     *
+     * NOT on the desktop. There a view lives in its own WINDOW and focusing another one PARKS this
+     * one — its real nodes are moved aside and moved back, so the emulator and its socket survive
+     * intact and are still on screen. Killing the session because you clicked a different window
+     * would disconnect a shell that is visibly still sitting there. os.js owns the lifetime instead:
+     * closing the window is what ends it. */
+    if(VIEW!=='terminal' && !(window.PCOS && PCOS.isOn())){
+      try{ if(window.PCTerm && PCTerm.isOpen()) PCTerm.unmount(); }catch(_){}
+    }
     // Admin uses a PERSISTENT iframe (loaded once, kept alive) so revisiting it doesn't reload
     // /admin every time — that reload was the flicker / "not loading". Hide it + restore #feed for
     // every other view; renderAdmin shows it for admin.

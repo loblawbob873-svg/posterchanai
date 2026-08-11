@@ -800,7 +800,22 @@
     const admin = (view === 'admin');
     realFeed.style.display = admin ? 'none' : '';
     const ah = document.getElementById('admin-host');
-    if(ah && !admin) ah.style.display = 'none';
+    if(!ah) return;
+    if(!admin){ ah.style.display = 'none'; return; }
+    /* AND THE WAY BACK IN. The first version of this only did the leaving half — hide the host, show
+     * the feed — which fixed the window that came after Admin and left Admin itself broken:
+     *
+     *   focus another window  → this runs for that view, hides #admin-host
+     *   focus Admin again     → this hides the FEED (correct) and never re-shows the host
+     *   ⇒ both halves hidden, so the Admin window is black. Every time. Reported as "moving the
+     *     window makes it black; changing windows makes it not black; going back makes it black".
+     *
+     * The host also has to be re-parented, not merely shown: it is a SIBLING of the feed rather than
+     * a child, so it does not travel when claimFeed moves the feed between windows, and it would
+     * otherwise be visible inside whichever window held the feed last. */
+    const home = realFeed.parentElement;
+    if(home && ah.parentElement !== home) home.appendChild(ah);
+    ah.style.display = 'block';
   }
 
   function claimFeed(w){
@@ -849,6 +864,18 @@
 
   function focusWin(w, render){
     if(!w) return;
+    /* CAPTURE WHAT THIS WINDOW IS SHOWING, BEFORE ANYTHING MOVES.
+     *
+     * If it already holds the live feed then the client's current VIEW *is* this window's view —
+     * and this is the only moment that is true, because claimFeed below may hand the feed elsewhere
+     * and the repaint at the end reads `appView`. Doing it here rather than waiting to be told
+     * covers the case that produced the bug: a window nobody ever parked, dragged where it sits.
+     * (noteView keeps it current while the client navigates; this is the belt to that's braces.) */
+    try{
+      if(realFeed && realFeed.parentElement === w.body){
+        const v = PC().VIEW; if(v) w.appView = v;
+      }
+    }catch(_){}
     wins.forEach(x => x.el.classList.toggle('focused', x === w));
     w.el.style.zIndex = String(++zTop);
     if(w.min){ w.min = false; w.el.classList.remove('minimised'); }
@@ -891,7 +918,10 @@
       repainting++;
       try{
         if(w.render){ try{ w.render(); }catch(err){ /* a stale document is not fatal */ } }
-        else try{ PC().switchView ? PC().switchView(w.view) : null; }catch(err){ /* a view that refuses is not fatal */ }
+        // `appView` first, exactly as the restored branch above — repaint what the window IS
+        // showing, not what it was opened as. See noteView.
+        else try{ const v = w.appView || w.view;
+                  PC().switchView ? PC().switchView(v) : null; }catch(err){ /* a view that refuses is not fatal */ }
       }finally{ repainting--; }
     }
     restoreScroll(w);   // …and land back where this window was, once its content exists
@@ -1074,6 +1104,25 @@
    * was created and has already repainted itself), false when the caller should paint where it is —
    * which covers both "that window already exists, the feed has been moved into it" and "this view
    * is not something the launcher knows about", where a window would be a surprise. */
+  /* WHAT THIS WINDOW IS ACTUALLY SHOWING, kept current as the client navigates inside it.
+   *
+   * `w.view` is what the window was OPENED as and never changes. That is wrong for any window
+   * navigated in place — and the Admin panel is exactly that: it is reached from the SETTINGS view's
+   * "Admin panel" button (`switchView('admin')`), and `admin` is not a sidebar app, so routeView
+   * declines and the settings window simply paints Admin into itself. Its `w.view` stays 'settings'.
+   *
+   * `snapshot()` has always captured this at PARK time, which covers a window that lost focus. A
+   * window that never lost focus had nothing — so dragging the Admin window repainted it by
+   * `switchView('settings')` and dropped you back in User Settings, and `_feedVisibleFor` read
+   * 'settings' and hid the admin host, leaving the window black. Both were the same missing fact.
+   *
+   * Called by renderView on every view change; it lands on whichever window holds the live feed. */
+  function noteView(v){
+    if(!on || !v || !realFeed) return;
+    const w = wins.find(x => realFeed.parentElement === x.body);
+    if(w) w.appView = v;
+  }
+
   function routeView(view, focusOnly){
     if(!on || !view) return false;
     if(!apps().some(a => a.view === view)) return false;
@@ -1133,6 +1182,9 @@
     // If this window held the id, hand it back BEFORE removing the element, or `$('#feed')` briefly
     // resolves to nothing and whatever renders next paints into a detached node.
     const wasMusic = (w.view === 'doc:music');
+    // Closing the Terminal window is what ends its SSH session — renderView deliberately does not,
+    // because on the desktop a background window is parked and still running (see the note there).
+    if(w.view === 'terminal'){ try{ if(window.PCTerm) PCTerm.unmount(); }catch(_){} }
     if(realFeed && realFeed.parentElement === w.body) releaseFeed();
     w.el.remove();
     if(wasMusic){
@@ -3478,7 +3530,7 @@
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the
                   // mistake the games were just fixed for.
-                  musicChanged,
+                  musicChanged, noteView,
                   isRepainting: () => repainting > 0, parkedSlot, noteScroll,
                   windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min })),
                   /* The layout arithmetic, exposed so tests/test_desktop_layout.py can run the

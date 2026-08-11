@@ -6355,7 +6355,11 @@ body.os-on #os-root{pointer-events:auto}
    the meme builder and Live Translate already use. */
 .feed-term{display:flex;flex-direction:column;min-height:0;padding:0;overflow:hidden}
 .tm-wrap{display:flex;flex-direction:column;flex:1;min-height:0;background:#07040f}
-.tm-bar{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:8px 10px;flex-wrap:wrap;
+/* `align-content:center` matters with flex-wrap: a wrapped bar distributes its lines with space
+   between them by default, which is what pushed the first row half out of the top of the bar —
+   "buttons cut off at the top". min-height keeps it a real bar even before the state line appears. */
+.tm-bar{flex:0 0 auto;display:flex;align-items:center;align-content:center;gap:8px;padding:8px 10px;
+  flex-wrap:wrap;min-height:34px;box-sizing:border-box;
   border-bottom:1px solid var(--line);background:var(--panel2)}
 .tm-host{flex:0 1 auto;min-width:0;max-width:60%;font-size:12.5px;padding:6px 8px}
 .tm-state{flex:1 1 100%;font-size:11.5px;color:var(--muted);order:9}
@@ -6363,8 +6367,15 @@ body.os-on #os-root{pointer-events:auto}
 .tm-state.err{color:#ff6b8b}
 /* The emulator's own element. min-height:0 is load-bearing inside a flex column — without it the
    screen grows to its content and the fit addon never sees a bounded box. */
-.tm-screen{flex:1;min-height:0;padding:6px 4px 2px 8px;overflow:hidden}
+.tm-screen{flex:1;min-height:0;padding:6px 4px 2px 8px;overflow:hidden;position:relative}
 .tm-screen .xterm{height:100%}
+/* xterm HARDCODES `background-color:#000` on its viewport and forces `overflow-y:scroll`. Against
+   this app's #07040f that black box is a visible seam across the panel — the "weird horizontal
+   line" — and the forced scrollbar reserves a gutter that draws a track down the side even with
+   nothing to scroll. Both are xterm's defaults for a standalone page, not for a panel inside an app;
+   the rest of this client hides its scrollbars the same way (.feed uses scrollbar-width:none). */
+.tm-screen .xterm-viewport{background-color:transparent !important;scrollbar-width:none}
+.tm-screen .xterm-viewport::-webkit-scrollbar{width:0;height:0}
 /* THE KEY BAR — what makes this usable on a phone. A soft keyboard has no Ctrl, Esc, Tab or arrows,
    and a shell without Ctrl-C is not a shell. Scrolls horizontally rather than wrapping, so it stays
    one line tall on the narrowest screen. */
