@@ -1498,6 +1498,13 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .cal-times .fld{flex:1 1 0;min-width:0}
 .cal-allday{display:flex;align-items:center;gap:8px}
 .cal-list{max-height:46vh;overflow:auto}
+/* Subscribed calendars. The tag is a fact about the row (this one is a mirror, editing it is
+   pointless), so it sits with the name rather than in a column of its own. */
+.cal-sub-tag{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--neon);
+  border:1px solid var(--line);border-radius:999px;padding:1px 7px;margin-left:6px;vertical-align:1px}
+.cal-sub-when{flex:none;font-size:11px;color:var(--muted);white-space:nowrap}
+.cal-sub-warn{margin:10px 0 0;padding:10px 12px;border-radius:10px;font-size:12.5px;line-height:1.5;
+  border:1px solid rgba(255,207,43,.4);background:rgba(255,207,43,.08);color:var(--text)}
 .cal-row{display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
 .cal-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 .cal-swatches{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}

@@ -186,3 +186,35 @@ Covers the plugin contract, the password hashing, and the `.ics` helpers. The en
 verified by hand against the mounted server: `PROPFIND` (207 with the password, 401 without),
 `MKCALENDAR`, `PUT`, `GET`, `DELETE`, a wiped cache re-hydrating from the relay, and the stored event
 being ciphertext on the relay rather than plaintext.
+
+## Subscribing to somebody else's calendar
+
+Calendars → **Subscribe to a URL**. Paste a published `.ics` (or the `webcal://` link a site gives
+you) — a school term, a team's fixtures, a holiday feed — and it is copied into a calendar of your
+own and re-checked a few times a day. Because it becomes an ordinary calendar here, it syncs to your
+phone over CalDAV like everything else, with no separate setup on the phone.
+
+**A subscription is a MIRROR, not an import.** The feed is the source of truth, so a refresh also
+DELETES what the feed has dropped — a cancelled fixture that lingers forever is worse than not
+subscribing — and the calendar is read-only in the web UI, because anything you changed would be
+replaced on the next update. **Unsubscribe** stops the updates and keeps the events you already have;
+deleting the calendar is the separate button that removes them.
+
+Refreshing happens in the **worker**, not in the browser, because the people reading these are usually
+on a phone in an app that never opens PosterChan — a refresh that only ran when somebody looked at
+the web UI would leave the phone confidently showing last term.
+
+**Two things you may hit, both the publisher's end:**
+
+* *"that URL did not return a calendar — it looks like a web page"*. The commonest mistake is pasting
+  the page the calendar is displayed on rather than the feed it links to; look for a "subscribe" or
+  `.ics` link on it.
+* *"that site's security certificate could not be verified"*. Usually the site's own misconfiguration,
+  or a certificate authority this server does not know about yet — it is not something you can fix.
+  You are offered **Subscribe anyway**, which skips certificate checking **for that one feed** and
+  nothing else. (Measured on a real school feed: its chain ends at Let's Encrypt's "ISRG Root YR",
+  which no trust store here carries yet. A perfectly valid certificate that every correct client
+  refuses.) The SSRF guard is unaffected by that choice — a private or link-local address is never
+  fetched either way, on any redirect hop.
+
+Tests: `tests/test_calendar_subscribe.py`.

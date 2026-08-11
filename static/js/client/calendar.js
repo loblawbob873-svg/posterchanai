@@ -49,9 +49,24 @@
       const r = await authFetch(path, opts);
       let body = null;
       try{ body = await r.json(); }catch(_){}
-      if(!r.ok) throw new Error((body && (body.detail || body.error)) || ('HTTP ' + r.status));
+      if(!r.ok){
+        /* A STRUCTURED `detail` HAS TO SURVIVE. FastAPI's detail is usually a string, but it can be
+         * an object — the calendar subscription answers `{error, certificate:true}` so the client can
+         * offer "subscribe anyway" instead of dead-ending. `new Error(anObject)` stringifies it to
+         * "[object Object]" and drops the flag entirely, which is a branch that could never run. */
+        const d = body && body.detail;
+        const obj = d && typeof d === 'object' && !Array.isArray(d);
+        const e = new Error((obj ? (d.error || d.detail) : d) || (body && body.error)
+                            || ('HTTP ' + r.status));
+        if(obj) e.detail = d;
+        e.status = r.status;
+        throw e;
+      }
       return body || {};
     }
+    /* A SUBSCRIBED calendar mirrors somebody else's published .ics (see caldav_subscribe.py). Up
+     * here because both the editor's guard and the manager's rows ask. */
+    const subOf = (c) => (c && c.subscribe && c.subscribe.url) ? c.subscribe : null;
     const jpost = (p, o) => api(p, { method:'POST', headers:{'Content-Type':'application/json'},
                                      body: JSON.stringify(o||{}) });
     const jput = (p, o) => api(p, { method:'PUT', headers:{'Content-Type':'application/json'},
@@ -430,6 +445,17 @@
       const key = (ev && ev.key) || S.sel || todayKey();
       const cal = (ev && ev.cal) || S.cal || (S.cals[0] || {}).id || '';
       if(!cal){ makeCalendar(); return; }          // no calendar yet — make one first
+      /* A SUBSCRIBED calendar is a MIRROR, so an edit here is not saved-then-lost, it is saved and
+       * then silently replaced by the next refresh — which is worse, because it looks like it
+       * worked. Refuse with the reason and offer somewhere the edit can actually live. */
+      { const sc = S.cals.find(c => c.id === cal);
+        if(sc && subOf(sc)){
+          const other = S.cals.find(c => !subOf(c));
+          toast(other ? `“${sc.displayname || sc.id}” follows a feed — pick another calendar to add to`
+                      : `“${sc.displayname || sc.id}” follows a feed, so it cannot be edited`);
+          if(other) S.cal = other.id;
+          return;
+        } }
       const e = ev || { title:'', date:key, start:'09:00', end:'10:00', allDay:false, location:'', notes:'' };
       const dateVal = e.key || e.date || key;
       modal(`<h3>${isNew ? 'New event' : 'Event'}</h3>
@@ -485,18 +511,42 @@
       modal(`<h3>Calendars</h3>
         <div class="cal-list">${S.cals.map(c => `<div class="cal-row">
             <i class="cal-dot" style="background:${enc(colorOf(c.id))}"></i>
-            <span class="cal-name">${enc(c.displayname || c.id)}</span>
+            <span class="cal-name">${enc(c.displayname || c.id)}${subOf(c) ? ' <span class="cal-sub-tag">subscribed</span>' : ''}</span>
+            ${subOf(c) ? `<span class="cal-sub-when">${enc(subWhen(subOf(c)))}</span>` : ''}
+            ${subOf(c) ? `<button class="btn btn-ghost small cal-refresh" data-id="${enc(c.id)}">Refresh</button>` : ''}
+            ${subOf(c) ? `<button class="btn btn-ghost small cal-unsub" data-id="${enc(c.id)}">Unsubscribe</button>` : ''}
             <a class="btn btn-ghost small" href="/api/calendar/export?cal=${encodeURIComponent(c.id)}"
                download><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Export</a>
             <button class="btn btn-ghost small cal-del" data-id="${enc(c.id)}">Delete</button>
           </div>`).join('') || '<div class="empty">No calendars yet.</div>'}</div>
         <div class="row" style="margin-top:14px;flex-wrap:wrap;gap:8px">
           <button class="btn btn-cyan small" id="cal-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New calendar</button>
+          <button class="btn btn-cyan small" id="cal-sub"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Subscribe to a URL</button>
           <button class="btn btn-ghost small" id="cal-import"><svg class="ic b-ic" aria-hidden="true"><use href="#i-upload"></use></svg>Import .ics</button>
           <button class="btn btn-ghost small" id="cal-phone"><svg class="ic b-ic" aria-hidden="true"><use href="#i-android"></use></svg>Sync to a device</button>
         </div>
         <input type="file" id="cal-file" accept=".ics,text/calendar" hidden>`, root => {
         $('#cal-add', root).onclick = ()=>{ closeModal(); makeCalendar(); };
+        $('#cal-sub', root).onclick = ()=>{ closeModal(); subscribePanel(); };
+        $$('.cal-refresh', root).forEach(b => b.onclick = async ()=>{
+          b.disabled = true; b.textContent = 'checking…';
+          try{
+            const r = await jpost('/api/calendar/subscribe/refresh?cal=' + encodeURIComponent(b.dataset.id), {});
+            const one = (r.refreshed || [])[0] || {};
+            toast(one.ok === false ? ('could not refresh: ' + (one.error || 'error'))
+                 : one.unchanged ? 'no changes'
+                 : `updated — ${one.count || 0} event${one.count === 1 ? '' : 's'}`);
+          }catch(err){ toast('could not refresh: ' + ((err && err.message) || 'error')); }
+          closeModal(); await load();
+        });
+        $$('.cal-unsub', root).forEach(b => b.onclick = async ()=>{
+          if(!await uiConfirm('Stop following this feed? The events it already gave you stay — '
+                            + 'it just stops updating.', { ok: 'Unsubscribe' })) return;
+          try{ await jpost('/api/calendar/unsubscribe?cal=' + encodeURIComponent(b.dataset.id), {});
+               toast('unsubscribed'); }
+          catch(err){ toast('could not unsubscribe: ' + ((err && err.message) || 'error')); }
+          closeModal(); await load();
+        });
         $('#cal-phone', root).onclick = ()=>{ closeModal(); phonePanel(); };
         $('#cal-import', root).onclick = ()=> $('#cal-file', root).click();
         $('#cal-file', root).onchange = async (e)=>{
@@ -561,6 +611,72 @@
             const c = await jpost('/api/calendar/calendars', { name, color });
             closeModal(); S.cal = c.id; toast('calendar created'); await load();
           }catch(err){ toast('could not create: ' + ((err && err.message) || 'error')); }
+        };
+      });
+    }
+
+    /* A SUBSCRIBED calendar mirrors somebody else's published .ics — a school term, a fixture list.
+     * The subscription lives on the calendar's own metadata (see app/services/caldav_subscribe.py),
+     * so everything else about it is an ordinary calendar: it lists, exports and syncs to a phone. */
+    function subWhen(sub){
+      if(sub.error) return '⚠ ' + sub.error.slice(0, 60);
+      const t = Number(sub.refreshed || 0);
+      if(!t) return 'not fetched yet';
+      const d = Math.max(0, Math.floor(Date.now() / 1000) - t);
+      if(d < 3600) return 'updated ' + Math.max(1, Math.round(d / 60)) + 'm ago';
+      if(d < 172800) return 'updated ' + Math.round(d / 3600) + 'h ago';
+      return 'updated ' + Math.round(d / 86400) + 'd ago';
+    }
+
+    function subscribePanel(prefill){
+      modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-link"></use></svg>Subscribe to a calendar</h3>
+        <p class="muted small">Paste the address of a published calendar — a school term, a team's
+           fixtures, a holiday feed. It is copied into a calendar of your own and re-checked a few
+           times a day, so it reaches your phone too. <b>Read-only:</b> the feed is the source, and
+           anything you change here is replaced on the next update.</p>
+        <label class="fld">Address<input class="input" id="csub-url" spellcheck="false"
+          placeholder="https://example.org/calendar/feed/ical.ics"
+          value="${enc((prefill && prefill.url) || '')}"></label>
+        <label class="fld">Name <span class="muted small">(optional — the feed's own name is used if it has one)</span>
+          <input class="input" id="csub-name" maxlength="80" value="${enc((prefill && prefill.name) || '')}"></label>
+        <div id="csub-warn" class="cal-sub-warn" hidden></div>
+        <div class="set-actions"><button class="btn btn-neon" id="csub-go">Subscribe</button>
+          <button class="btn btn-ghost" id="csub-x">Cancel</button></div>`, root => {
+        $('#csub-x', root).onclick = ()=> closeModal();
+        // `insecure` is only ever set by the person, after being shown WHY — see the certificate
+        // branch below. It skips certificate checking for this one feed and nothing else.
+        let insecure = false;
+        const go = $('#csub-go', root);
+        go.onclick = async ()=>{
+          const url = $('#csub-url', root).value.trim();
+          if(!url){ toast('paste the calendar address'); return; }
+          go.disabled = true; go.textContent = 'fetching…';
+          try{
+            const r = await jpost('/api/calendar/subscribe',
+                                  { url, name: $('#csub-name', root).value.trim(), insecure });
+            closeModal();
+            toast(`subscribed — ${r.count || 0} event${r.count === 1 ? '' : 's'}`);
+            S.cal = r.id; await load();
+          }catch(err){
+            go.disabled = false; go.textContent = 'Subscribe';
+            /* A CERTIFICATE PROBLEM IS NOT A TYPO, and dead-ending on it makes the feature look
+             * broken for feeds that are perfectly fine. Measured on the one this was built for: its
+             * chain ends at a Let's Encrypt root no trust store here carries yet. So say whose
+             * problem it is and offer the choice, once, in plain words. */
+            const d = (err && err.detail) || {};
+            if(d && d.certificate){
+              const w = $('#csub-warn', root);
+              w.hidden = false;
+              w.innerHTML = `<b>That site's security certificate could not be verified.</b>
+                Usually the site's own misconfiguration, or an authority this server does not know
+                yet — not something you can fix. You can subscribe anyway; the events would then be
+                fetched without that check.`;
+              go.textContent = 'Subscribe anyway';
+              insecure = true;
+              return;
+            }
+            toast('could not subscribe: ' + ((err && err.message) || 'error'));
+          }
         };
       });
     }

@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user
 from app.database import get_db
 from app.models import User, UserSetting
-from app.services import caldav_store
+from app.services import caldav_store, caldav_subscribe
 
 # Radicale is imported LAZILY, inside the handlers. `app.services.caldav.auth` and `.storage` import
 # radicale at module level, and a node that has this code but not the library (sync.sh ships code,
@@ -152,6 +152,107 @@ async def create_calendar(body: CalendarIn, current_user: User = Depends(get_cur
         raise HTTPException(status_code=502, detail="Could not save the calendar.")
     _forget(current_user.username)   # so a phone sees it without waiting for a restart
     return {"id": cid, **meta}
+
+
+class SubscribeIn(BaseModel):
+    url: str
+    name: str = ""
+    # Set only after the person has been shown the certificate problem and chosen to go ahead. It
+    # skips certificate verification for THIS feed and nothing else; the SSRF guard is unaffected.
+    insecure: bool = False
+
+
+@router.post("/subscribe")
+async def subscribe(body: SubscribeIn, current_user: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    """Subscribe to a published .ics — a school term, a fixture list, a holiday feed.
+
+    A subscription is a MIRROR, not an import: the refresh below also deletes what the feed has
+    dropped, and the calendar is marked read-only in the UI because the next refresh would overwrite
+    an edit anyway. See app/services/caldav_subscribe.py.
+
+    The first fetch happens HERE, synchronously, and its failure is the answer — a subscription that
+    is created and then silently never works is the failure mode of every feed reader ever written.
+    """
+    _require_enabled()
+    url = caldav_subscribe.normalize_url(body.url)
+    try:
+        text, etag, _ = await caldav_subscribe.fetch_ics(url, insecure=body.insecure)
+    except caldav_subscribe.CertificateProblem as e:
+        # 400 with a MACHINE-READABLE marker, so the client can offer "subscribe anyway" instead of
+        # dead-ending. A publisher's stale certificate chain is not something the reader can fix, and
+        # it is common enough that treating it like a typo makes the feature look broken.
+        raise HTTPException(status_code=400,
+                            detail={"error": str(e), "certificate": True, "url": url})
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # The feed's own name, else something readable from its host — never the generated id, which
+    # would put "www-canoncityschools-org" in the sidebar as the calendar's name.
+    name = ((body.name or "").strip() or caldav_subscribe.name_in(text)
+            or caldav_subscribe.host_label(url).replace("-", " ").title())
+    try:
+        known = await caldav_store.collection_kinds(db, current_user)
+    except Exception as e:
+        logger.warning("[calsub] calendar list unreadable, refusing to subscribe: %s", e)
+        raise HTTPException(status_code=503, detail="Could not reach your calendars just now — try again.")
+    cid = caldav_store.free_id(_slug(caldav_subscribe.id_for(url, name)), known)
+    meta = {"displayname": name or cid, "color": "", "kind": caldav_store.KIND_CALENDAR,
+            "subscribe": {"url": url, "etag": "", "refreshed": 0, "checked": 0, "error": "",
+                          "insecure": bool(body.insecure)}}
+    if not await caldav_store.put_calendar(db, current_user, cid, meta):
+        raise HTTPException(status_code=502, detail="Could not create the calendar.")
+    res = await caldav_subscribe.refresh(db, current_user, cid, meta)
+    _forget(current_user.username)
+    return {"ok": True, "id": cid, "name": meta["displayname"], **res}
+
+
+@router.post("/subscribe/refresh")
+async def refresh_subscriptions(cal: str = Query(""), current_user: User = Depends(get_current_user),
+                                db: Session = Depends(get_db)):
+    """Re-fetch one subscription, or every one that is due.
+
+    The worker refreshes these on its own schedule so a PHONE syncing over CalDAV sees new events
+    without anybody opening the app; this is the "check now" button, and the on-open path for a node
+    running no worker.
+    """
+    _require_enabled()
+    cals = await caldav_store.list_calendars(db, current_user)
+    out = []
+    for c in cals:
+        sub = caldav_subscribe.subscription_of(c)
+        if not sub:
+            continue
+        if cal and c.get("id") != cal:
+            continue
+        if not cal and not caldav_subscribe.due(sub):
+            continue
+        out.append({"id": c.get("id"),
+                    **await caldav_subscribe.refresh(db, current_user, c.get("id"), c)})
+    if out:
+        _forget(current_user.username)
+    return {"ok": True, "refreshed": out}
+
+
+@router.post("/unsubscribe")
+async def unsubscribe(cal: str = Query(...), current_user: User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    """Stop following the feed and KEEP what it last gave us.
+
+    Deliberately not a delete: the events are already in your phone, and turning "stop updating this"
+    into "erase everything it ever gave me" is a surprise nobody wants. Deleting the calendar is a
+    separate button that already exists and says what it does.
+    """
+    _require_enabled()
+    cals = {c.get("id"): c for c in await caldav_store.list_calendars(db, current_user)}
+    meta = cals.get(cal)
+    if not meta:
+        raise HTTPException(status_code=404, detail="No such calendar.")
+    m = {k: v for k, v in meta.items() if k not in ("subscribe", "id")}
+    if not await caldav_store.put_calendar(db, current_user, cal, m):
+        raise HTTPException(status_code=502, detail="Could not save the calendar.")
+    _forget(current_user.username)
+    return {"ok": True}
 
 
 @router.delete("/calendars/{cal_id}")

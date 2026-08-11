@@ -32,6 +32,12 @@ _SCHEDULERS = [
     ("nitter-feeds", "app.services.nitter_feeds_service", "start_nitter_feeds_scheduler"),
     ("stats-bot", "app.services.stats_bot_service", "start_stats_bot_scheduler"),
     ("uptime", "app.services.uptime_service", "start_uptime_scheduler"),
+    # Subscribed calendars (a published .ics mirrored into one of yours). In the WORKER because the
+    # people reading these are on a PHONE, over CalDAV, in an app that never opens PosterChan — a
+    # refresh that only ran when somebody looked at the web UI would leave the phone confidently
+    # showing last term.
+    ("calendar-subscriptions", "app.services.caldav_subscribe",
+     "start_calendar_subscriptions_scheduler"),
     # Pay-to-stay zap watcher — a no-op tick unless nostr_relay_paid_retention_enabled is on.
     ("paid-retention", "app.services.paid_retention_service", "start_paid_retention_scheduler"),
     ("fedi-nostr-bridge", "app.services.fedi_nostr_bridge_service", "start_fedi_bridge_scheduler"),
