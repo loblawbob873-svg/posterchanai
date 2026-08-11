@@ -835,8 +835,11 @@
          * So the game is mounted by hand into the window's own SLOT — a dedicated node that is not
          * the timeline — and `render` is a no-op, present only so the repaint path does not fall
          * through to switchView() and drag the feed in on top of the game. */
+        /* noFeed: a game owns its window. Without it the window joins the shared-feed hand-off, so
+         * clicking any OTHER window pulls the timeline out of this one and repaints it — and a
+         * repaint around a live iframe blanks or restarts the game. Reported exactly that way. */
         const w = PCOS.openDoc('webxdc:' + (session.app.uuid || session.app.sha || String(id)),
-                               name, '#i-gamepad', () => {});
+                               name, '#i-gamepad', () => {}, true);
         const host = w && (w.slot || w.body);
         if(!host){ toast('could not open a window for that app'); return session; }
         host.classList.add('xdc-slot');

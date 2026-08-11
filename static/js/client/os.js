@@ -1194,11 +1194,16 @@
   // A post opens in its OWN window on the desktop, instead of replacing the timeline underneath it
   // — that is the whole point of having windows. Keyed by id, so clicking the same post twice
   // focuses the window it is already in rather than stacking duplicates.
-  function openDoc(key, label, icon, render){
+  /* `noFeed` is forwarded, and it matters for anything that owns its own contents rather than
+   * borrowing the timeline. A window without it JOINS THE FEED HAND-OFF: focusing it claims the
+   * shared #feed, and focusing anything else takes it away and repaints — which for a running mini
+   * app means its iframe is disturbed and the game goes black or starts over, every time you click
+   * another window. A folder already opts out for the same reason. */
+  function openDoc(key, label, icon, render, noFeed){
     const view = 'doc:' + key;
     const existing = wins.find(w => w.view === view);
     if(existing){ focusWin(existing); return existing; }
-    return openApp(view, label, icon, render);
+    return openApp(view, label, icon, render, noFeed);
   }
 
   /* Route a view switch to that feature's OWN window. Returns true when it has taken over (a window
