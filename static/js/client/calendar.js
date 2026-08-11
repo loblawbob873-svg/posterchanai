@@ -349,12 +349,70 @@
         catch(_){ return null; }
       },
       async clear(){ try{ await this._tx('readwrite', st => st.delete('snapshot')); }catch(_){} },
+      // The pending WRITES, kept beside the snapshot in the same store — one database, one upgrade.
+      async saveQ(q){ try{ await this._tx('readwrite', st => st.put(q, 'queue')); }catch(_){} },
+      async readQ(){ try{ return await this._tx('readonly', st => st.get('queue')); }catch(_){ return []; } },
+    };
+
+    /* THE OFFLINE WRITE QUEUE — the half the read cache does not cover.
+     *
+     * Notes can be written on a train and published later; the calendar could not, because every
+     * write is an HTTP call and a failed one was a toast and nothing else. "Add an event" is exactly
+     * the thing people do while offline (on the train, deciding when to meet), so losing it is the
+     * worst possible moment to lose one.
+     *
+     * A queued write is applied to the LOCAL COPY immediately, so the event appears on the grid the
+     * way it would have — the difference is a line saying it has not reached the server yet.
+     *
+     * REPLAY IS IDEMPOTENT by construction: an item is addressed by (calendar, uid) and `put_item`
+     * REPLACES, so re-sending is a no-op, and a delete for something already gone answers 404 and is
+     * dropped. That is what makes a blind flush safe here where it is not for Notes, whose queue has
+     * to check for a newer version first — a note is a document only the author can decrypt, so
+     * nothing else can tell the client it is stale, while the calendar's server answer is the truth
+     * and the next load overwrites everything anyway. */
+    const CalQueue = {
+      async read(){ const s = await CalCache.readQ(); return Array.isArray(s) ? s : []; },
+      async add(op){
+        const q = await this.read();
+        // One entry per (op, cal, uid): editing the same event five times offline should send once.
+        const key = (x) => x.op + '|' + x.cal + '|' + x.uid;
+        const out = q.filter(x => key(x) !== key(op));
+        out.push(op);
+        await CalCache.saveQ(out.slice(-500));
+        S.queued = out.length;
+      },
+      async flush(){
+        const q = await this.read();
+        if(!q.length) return 0;
+        const left = [];
+        let sent = 0;
+        for(const op of q){
+          try{
+            if(op.op === 'del'){
+              await api(`/api/calendar/items?cal=${encodeURIComponent(op.cal)}&uid=${encodeURIComponent(op.uid)}`,
+                        { method:'DELETE' });
+            }else{
+              await jput('/api/calendar/items', { cal: op.cal, uid: op.uid, ics: op.ics });
+            }
+            sent++;
+          }catch(err){
+            // A 4xx is the server REFUSING it — replaying that for ever is a queue that never drains
+            // and an error that is never seen. Only a transport failure is worth keeping.
+            if(err && err.status && err.status < 500) continue;
+            left.push(op);
+          }
+        }
+        await CalCache.saveQ(left);
+        S.queued = left.length;
+        return sent;
+      },
     };
 
     /* Paint from the cache BEFORE the network is asked. Returns whether anything was drawn, so a
      * failed load can say "showing your saved calendar" rather than "could not load". */
     async function loadCached(){
       if(S.ready || S.cals.length) return false;          // the live data is already here
+      try{ S.queued = (await CalQueue.read()).length; }catch(_){}
       const snap = await CalCache.read();
       if(!snap || !Array.isArray(snap.cals) || !snap.cals.length) return false;
       S.cals = snap.cals;
@@ -366,11 +424,26 @@
       return true;
     }
 
+    /* Apply a queued write to what this device is showing. Without it an event added offline is
+     * simply absent from the grid, which reads as the save having failed — and the point of the queue
+     * is that it did not. */
+    function _applyLocal(cal, item){
+      const list = (S.items[cal] = (S.items[cal] || []).filter(x => x.uid !== item.uid));
+      if(!item.remove) list.push({ cal, uid: item.uid, ics: item.ics, component: item.component, ts: Date.now()/1000 });
+      S.rev++;
+      CalCache.save(S.cals, S.items);
+    }
+
     async function load(){
       S.loading = true; S.error = '';
       paint();
       try{
         S.sync = await api('/api/calendar/config');
+        // The config call reaching the server IS the proof that it is reachable, so this is the
+        // cheapest correct moment to drain — before the read, so what comes back already includes it.
+        try{ const n = await CalQueue.flush();
+             if(n) toast(n === 1 ? 'an event you made offline has synced'
+                                 : n + ' events you made offline have synced'); }catch(_){}
         S.enabled = !!S.sync.enabled;
         if(!S.enabled){ S.loading = false; paint(); return; }
         const r = await api('/api/calendar/calendars');
@@ -413,6 +486,9 @@
           <button class="btn btn-ghost small" id="cal-today">Today</button>
           <button class="btn btn-ghost small" id="cal-next" aria-label="Next month">›</button>
           <div class="cal-title">${MONTHS[m.getMonth()]} ${m.getFullYear()}</div>
+          ${S.queued ? `<span class="cal-pending" title="written on this device, not on the server yet"
+            >${S.queued} waiting to sync</span>` : ''}
+          ${S.cached ? '<span class="cal-pending cached" title="the server could not be reached — this is your saved copy">offline copy</span>' : ''}
         </div>
         <div class="cal-tools">
           ${picker}
@@ -568,7 +644,17 @@
           try{
             await jput('/api/calendar/items', { cal, uid: built.uid, ics: built.ics });
             closeModal(); toast('saved'); await load();
-          }catch(err){ toast('could not save: ' + ((err && err.message) || 'error')); }
+          }catch(err){
+            // A REFUSAL is not a network failure. A 4xx means the server read it and said no, and
+            // queueing that would retry a rejection for ever while telling the user it was saved.
+            if(err && err.status && err.status < 500){
+              toast('could not save: ' + ((err && err.message) || 'error')); return;
+            }
+            await CalQueue.add({ op:'put', cal, uid: built.uid, ics: built.ics, at: Date.now() });
+            _applyLocal(cal, { uid: built.uid, ics: built.ics, component: built.component || 'VEVENT' });
+            closeModal(); toast('saved on this device — it will sync when you are back online');
+            paint();
+          }
         };
         const del = $('#cev-del', root);
         if(del) del.onclick = async ()=>{
@@ -577,7 +663,15 @@
             await api(`/api/calendar/items?cal=${encodeURIComponent(cal)}&uid=${encodeURIComponent(e.uid)}`,
                       { method:'DELETE' });
             closeModal(); toast('deleted'); await load();
-          }catch(err){ toast('could not delete: ' + ((err && err.message) || 'error')); }
+          }catch(err){
+            if(err && err.status && err.status < 500){
+              toast('could not delete: ' + ((err && err.message) || 'error')); return;
+            }
+            await CalQueue.add({ op:'del', cal, uid: e.uid, at: Date.now() });
+            _applyLocal(cal, { uid: e.uid, remove: true });
+            closeModal(); toast('deleted here — it will sync when you are back online');
+            paint();
+          }
         };
       });
     }

@@ -240,3 +240,65 @@ def test_the_synthetic_id_is_not_written_back_into_the_document():
     src = (ROOT / "app" / "services" / "caldav_subscribe.py").read_text(encoding="utf-8")
     i = src.index("async def _save_meta(")
     assert 'if k != "id"' in src[i:i + 600]
+
+
+# ---------------------------------------------------------------------------------------------
+# offline: the calendar catching up with Notes
+
+
+CALJS = (ROOT / "static" / "js" / "client" / "calendar.js").read_text(encoding="utf-8")
+
+
+def test_an_event_written_offline_is_kept_and_sent_later():
+    """"What about calendar syncing like notes/music?" — the read cache landed first; this is the
+    other half. Notes can be written on a train and published later; the calendar could not, because
+    every write is an HTTP call and a failed one was a toast and nothing else. Adding an event is
+    exactly what people do while offline, which makes it the worst one to lose."""
+    assert "const CalQueue = {" in CALJS
+    # The EDITOR's save, not the queue's own replay — both call jput, and the first occurrence in the
+    # file is the replay.
+    i = CALJS.index("closeModal(); toast('saved'); await load();")
+    body = CALJS[i:i + 900]
+    assert "CalQueue.add({ op:'put'" in body, "a failed save is still just a toast"
+    assert "_applyLocal(" in body, (
+        "the event would not appear on the grid, which reads as the save having failed")
+
+
+def test_a_refusal_is_not_queued():
+    """A 4xx means the server read it and said no. Queueing that retries a rejection for ever while
+    telling the user it was saved."""
+    for anchor in ("closeModal(); toast('saved'); await load();",
+                   "closeModal(); toast('deleted'); await load();"):
+        i = CALJS.index(anchor)
+        body = CALJS[i:i + 900]
+        assert "err.status < 500" in body, f"a refusal is queued as if it were a network failure ({anchor[:30]})"
+
+
+def test_replaying_the_queue_is_safe_to_do_blindly():
+    """An item is addressed by (calendar, uid) and put_item REPLACES, so re-sending is a no-op and a
+    delete for something already gone answers 404. That is what makes a blind flush right here and
+    wrong for Notes, whose queue has to check for a newer version first."""
+    i = CALJS.index("async flush(){")
+    body = CALJS[i:i + 1400]
+    assert "err.status < 500" in body, "a permanently-refused write would never leave the queue"
+    assert "left.push(op)" in body
+
+
+def test_the_queue_drains_the_moment_the_server_answers():
+    """The config call reaching the server IS the proof it is reachable, and draining before the read
+    means what comes back already includes it."""
+    i = CALJS.index("S.sync = await api('/api/calendar/config')")
+    assert "CalQueue.flush()" in CALJS[i:i + 500]
+
+
+def test_the_screen_says_when_it_is_showing_a_saved_copy():
+    """Silently showing stale data is the failure people cannot see."""
+    assert "waiting to sync" in CALJS and "offline copy" in CALJS
+    css = (ROOT / "static" / "css" / "client.css").read_text(encoding="utf-8")
+    assert ".cal-pending{" in css
+
+
+def test_editing_the_same_event_twice_offline_sends_once():
+    i = CALJS.index("async add(op){")
+    body = CALJS[i:i + 600]
+    assert "x.op + '|' + x.cal + '|' + x.uid" in body, "the queue grows one entry per keystroke-save"

@@ -1500,6 +1500,10 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .cal-list{max-height:46vh;overflow:auto}
 /* Subscribed calendars. The tag is a fact about the row (this one is a mirror, editing it is
    pointless), so it sits with the name rather than in a column of its own. */
+/* "3 waiting to sync" / "offline copy" — a fact about the data, next to the month it belongs to. */
+.cal-pending{font-size:10.5px;letter-spacing:.04em;color:var(--amber,#ffcf2b);border:1px solid rgba(255,207,43,.35);
+  border-radius:999px;padding:2px 9px;margin-left:10px;white-space:nowrap;align-self:center}
+.cal-pending.cached{color:var(--muted);border-color:var(--line)}
 .cal-sub-tag{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--neon);
   border:1px solid var(--line);border-radius:999px;padding:1px 7px;margin-left:6px;vertical-align:1px}
 .cal-sub-when{flex:none;font-size:11px;color:var(--muted);white-space:nowrap}

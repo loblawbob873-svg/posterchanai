@@ -218,3 +218,25 @@ the web UI would leave the phone confidently showing last term.
   fetched either way, on any redirect hop.
 
 Tests: `tests/test_calendar_subscribe.py`.
+
+## Offline
+
+The calendar keeps a copy on the device, so the screen works with no server:
+
+* **Reading** — the month grid is painted from an IndexedDB snapshot before the network is asked, so
+  it is instant on open and correct on a plane. When the server cannot be reached the bar says
+  **offline copy** rather than reporting a failure: the month you are looking at is real, it is just
+  not fresh.
+* **Writing** — an event added or deleted while offline is queued and appears on the grid immediately,
+  with **N waiting to sync** in the bar. It is sent the next time the server answers. A write the
+  server *refused* (a 4xx) is not queued — that is an error to show, not a thing to retry for ever.
+
+Replaying the queue is safe to do blindly because an item is addressed by `(calendar, uid)` and a
+`PUT` replaces: re-sending is a no-op and a delete for something already gone is a 404. (Notes cannot
+do that — a note is a document only its author can decrypt, so its queue has to check for a newer
+version first. Here the server's answer is the truth and the next load overwrites everything anyway.)
+
+**What is cached is what the server can already read.** That is the calendar's stated trade — a
+CalDAV client sends plaintext, so this node can read your calendar — which is why a device-local copy
+is not a new exposure. Notes and the password vault, which the server *cannot* read, are deliberately
+not cached this way.
