@@ -1,87 +1,80 @@
 # ---------------------------------------------------------------------------------------------
-# The webxdc sandbox origin.
+# The webxdc sandbox origin — one throwaway subdomain per running mini app.
 #
-# Mini apps (.xdc files — games, polls, shared editors) are code written by whoever posted them.
-# They run in an iframe, and the ONLY thing standing between that code and this client's
-# localStorage — which is where the user's Nostr key and session live — is the browser's
-# same-origin policy. So every app gets its own ORIGIN, on a wildcard subdomain of this instance.
+# A .xdc app is code written by whoever posted it. It runs in an iframe, and the only thing between
+# that code and the client's localStorage — where the user's Nostr key and session live — is the
+# same-origin policy. So every app gets its OWN origin here.
 #
-# This vhost serves exactly two files: static/webxdc-sandbox/index.html (the loader) and
-# static/webxdc-sandbox/sw.js (the service worker that answers the app's requests). The app's own
-# bytes never touch this server — they come from the .xdc the CLIENT downloaded and unzipped, over
-# postMessage. That is what makes "no network access" (the webxdc spec's one hard requirement) true
-# by construction: there is nothing here to fetch.
+# This vhost serves TWO things, both from the app itself (which is why it is a plain proxy_pass like
+# every other one): the sandbox loader at /__sandbox__/ and the service worker at /sw.js. The app's
+# own bytes never reach this server — the client downloads the .xdc, unzips it in the browser, and
+# hands the files to that worker over postMessage. Nothing here to fetch is what makes "no network
+# access" (the webxdc spec's one hard rule) true by construction.
 #
+# THE SERVER_NAME IS A LENGTH-BOUNDED REGEX, deliberately. A bare wildcard would swallow every other
+# subdomain that has its own vhost. The client's label is 50 characters of base36 (an HMAC of a
+# per-device secret and the app's id), so 40-63 cannot collide with a real hostname like `news` or
+# `ai` — and cannot shadow one added later either.
+#
+# WHAT STILL HAS TO BE ADDED BY HAND, once, and only you can do it:
+#
+#   1. PUBLIC DNS. `*.poster.place` does not exist (checked: NXDOMAIN, while the apex resolves to
+#      Cloudflare). Add a wildcard A/CNAME for `*` in Cloudflare pointing where poster.place points.
+#      Until then nothing outside the LAN can reach a sandbox at all.
+#   2. THE ORIGIN CERTIFICATE. The Let's Encrypt cert here covers `poster.place` and nothing else.
+#      Cloudflare's universal certificate covers one level of subdomain, so the PUBLIC side is fine
+#      the moment the record exists — but if this zone is on SSL mode "Full (strict)", Cloudflare
+#      validates the ORIGIN certificate against the hostname too, and a wildcard host would fail.
+#      Either use a Cloudflare Origin CA certificate here, or reissue with a DNS-01 wildcard.
+#
+# This file is the vhost as DEPLOYED on router.lan (/etc/nginx/sites-enabled/webxdc.conf).
+# Reload: sudo nginx -t && sudo systemctl reload nginx
+#
+# NB: the regex is QUOTED. nginx reads a bare { as the start of a block, so an unquoted {40,63}
+# fails the config test with "server_name is not terminated by ;" — which is a syntax error about
+# a line that is syntactically fine, and reads as nonsense until you know why.
 # ---------------------------------------------------------------------------------------------
-# WHAT YOU HAVE TO ADD, once:
-#
-#   1. DNS:  *.poster.place   A/AAAA/CNAME  ->  this server (or the CDN in front of it)
-#   2. TLS:  a certificate covering *.poster.place. Cloudflare's universal certificate already
-#            covers exactly one level of subdomain, which is what this uses; a Let's Encrypt
-#            wildcard needs the DNS-01 challenge.
-#   3. This vhost.
-#
-# THE SERVER_NAME IS A REGEX ON PURPOSE, and it must stay one. A plain `*.poster.place` would
-# capture news.poster.place, ai.poster.place and every other subdomain that has its own vhost.
-# The label the client generates is 50 characters of base36 (an HMAC of a per-device secret and
-# the app's id), so requiring 40+ characters cannot collide with a real hostname. nginx prefers
-# exact server_name matches over regex ones regardless of file order, but the length bound means
-# this vhost cannot shadow a subdomain added later either.
-# ---------------------------------------------------------------------------------------------
+
+server {
+    listen 80;
+    server_name "~^[a-z0-9]{40,63}\.poster\.place$";
+    # A service worker needs a secure context, so an app reached over http:// would die at
+    # registration with an error nobody can act on. Redirect, never serve.
+    return 301 https://$host$request_uri;
+}
 
 server {
     listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
+    server_name "~^[a-z0-9]{40,63}\.poster\.place$";
 
-    server_name ~^[a-z0-9]{40,63}\.poster\.place$;
-
+    # The apex certificate. Cloudflare terminates TLS for the public with its own universal
+    # certificate (which covers one level of subdomain); this is what CF connects to behind it.
     ssl_certificate     /etc/letsencrypt/live/poster.place/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/poster.place/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
 
-    # router.lan serves the client from its OWN clone of this repo (see docs/) — the same path the
-    # main vhost uses for /static.
-    root /srv/posterchanai/static/webxdc-sandbox;
-
+    # Mini apps are small and self-contained; nothing is uploaded to this origin at all.
+    client_max_body_size 1M;
     access_log off;
 
-    # The loader. It is a fixed path so the service worker can leave it alone: the worker owns "/"
-    # (that is where the app is served) and must not intercept the document that answers its
-    # questions.
-    location /__sandbox__/ {
-        try_files /index.html =404;
-        add_header Cache-Control "no-store" always;
-        # This page is MEANT to be framed, by the client and by nothing else. X-Frame-Options is
-        # deliberately absent (it would block the iframe outright); frame-ancestors is the modern
-        # form and can name the one origin allowed to embed it.
-        add_header Content-Security-Policy "default-src 'self' 'unsafe-inline'; connect-src 'none'; frame-ancestors https://poster.place" always;
-        add_header X-Content-Type-Options "nosniff" always;
-    }
-
-    # The worker. Served from the root so its scope can be "/" — a worker cannot control paths above
-    # the one it is served from, and it has to control every path the app might ask for.
-    location = /sw.js {
-        try_files /sw.js =404;
-        add_header Cache-Control "no-store" always;
-        add_header Service-Worker-Allowed "/" always;
-        add_header Content-Type "text/javascript" always;
-    }
-
-    # Everything else is the app's, and the service worker answers it from the archive. Requests
-    # only reach nginx before the worker is installed (the very first load) or if it was evicted —
-    # in both cases the right answer is the loader, which installs it and starts over. Never a 404:
-    # that would leave a blank frame with nothing to explain it.
+    # Host is load-bearing rather than boilerplate: the app decides WHICH service worker to serve at
+    # /sw.js from the hostname — the PWA's on poster.place, the sandbox's on one of these labels —
+    # and refuses /__sandbox__/ anywhere but here. Rewriting Host would serve the wrong one.
     location / {
-        try_files /index.html =404;
+        proxy_pass http://192.168.0.2:3051;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+
+        # Never cached, anywhere. The loader and the worker are tiny, and a stale worker on an
+        # origin that is meant to be disposable is a mini app that cannot start with no way to say
+        # why. (The app's own files are not served from here at all, so there is nothing else to
+        # cache.)
+        proxy_no_cache 1;
+        proxy_cache_bypass 1;
         add_header Cache-Control "no-store" always;
     }
-}
-
-# Plain HTTP for the same wildcard: redirect, never serve. A service worker needs a secure context,
-# so an app reached over http:// would fail at registration with an error nobody can act on.
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ~^[a-z0-9]{40,63}\.poster\.place$;
-    return 301 https://$host$request_uri;
 }

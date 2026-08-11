@@ -1254,6 +1254,7 @@ async def service_worker(request: Request):
     )
 
 
+@app.get("/__sandbox__")
 @app.get("/__sandbox__/")
 @app.get("/__sandbox__/index.html")
 async def webxdc_sandbox_loader(request: Request):
