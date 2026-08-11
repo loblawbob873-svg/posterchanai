@@ -392,3 +392,21 @@ def test_the_home_screen_calendar_is_redrawn_after_a_reboot():
     """The data survives (it is on disk) but the LAUNCHER rebuilds its widgets from scratch — so the
     first thing seen after a restart would be a widget that has not decided what day it is."""
     assert "CalendarWidget.refresh(ctx)" in BOOT
+
+
+def test_stay_connected_comes_back_after_a_force_stop():
+    """"persistent notification not working if you force close app and reopen, no notification".
+
+    Force-stopping is its own case: it kills the service AND puts the app into Android's "stopped"
+    state, where it receives no broadcasts at all until launched by hand — so BootReceiver never
+    fires, and START_STICKY does not apply either (the system takes a force-stop to mean the user
+    wanted it stopped). The only moment left is the next time the app is opened, which is the
+    plugin's load(). Without it the switch reads "on" while nothing runs behind it: no notifications,
+    and a setting insisting there should be."""
+    assert "public void load()" in PUSHPLUG, "nothing restores the service when the app is opened"
+    i = PUSHPLUG.index("public void load()")
+    body = PUSHPLUG[i:i + 900]
+    assert "StayAwakeService.wanted(getContext())" in body, "it starts whether or not it was asked for"
+    assert "StayAwakeService.running" in body, (
+        "it would restart the service on every ordinary resume as well")
+    assert "startForegroundService" in body

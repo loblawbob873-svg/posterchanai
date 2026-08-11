@@ -528,6 +528,25 @@
       : 'in step · nothing to sync';
     return bits.join(' · ');
   }
+  /* A SWEEP THAT THREW MUST SAY SO ON THE CARD.
+   *
+   * Every automatic caller wrote `sweep(f).catch(()=>{})`, which is right about not wanting an
+   * unhandled rejection and wrong about everything else: a folder whose sweep throws — the
+   * filesystem plugin missing, a SAF permission the OS dropped after an update, a manifest the
+   * server refused — keeps whatever status it had, and for a folder that has never swept that is
+   * the placeholder "not synced yet". Reported as exactly that: "why is Documents in Folder Sync
+   * 'not syncing yet', it was working before". The error existed the whole time; nothing showed it.
+   *
+   * A DECLINE is not an error and still goes through setStatus with its reason ("on battery", "on
+   * cellular"), which is the normal, frequent case. This is only for the throw. */
+  function swept(f, opts){
+    return sweep(f, opts).catch(err => {
+      const why = (err && (err.message || err.detail)) || 'sync failed';
+      try{ setStatus(f.id, String(why).slice(0, 140)); }catch(_){}
+      return { error: why };
+    });
+  }
+
   function setStatus(id, text, report, liveOnly){
     const prev = status.get(id) || {};
     status.set(id, { when: Date.now(), text, report: report || (liveOnly ? prev.report : null),
@@ -696,6 +715,13 @@
     return !!(a && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT') && a.closest && a.closest('.sync-card'));
   }
   function paint(){
+    /* OPENING THE SCREEN STARTS THE WATCHERS, if something earlier could not.
+     * startAll runs five seconds after login and returns early when the platform adapter is not
+     * installed yet; nothing called it again, so a bridge that arrived late left folder sync dead for
+     * the session with every folder at its placeholder status. This is the moment somebody is looking
+     * at the screen and expecting it to work, and startAll is idempotent, so it costs a boolean when
+     * the earlier call already succeeded. */
+    try{ if(FS()) startAll(); }catch(_){}
     if(_paintT || _editing()){ _paintQ = true; if(!_paintT) _arm(); return; }
     _paintNow();
     _arm();
@@ -886,9 +912,9 @@
         put(f => { f.prefs = Object.assign({}, f.prefs, { onlyWhenCharging: e.target.checked }); });
       card.querySelector('.sync-wifi').onchange = (e) =>
         put(f => { f.prefs = Object.assign({}, f.prefs, { wifiOnly: e.target.checked }); });
-      card.querySelector('.sync-dry').onclick = () => sweep(get(), { manual:true, dryRun:true }).catch(()=>{});
+      card.querySelector('.sync-dry').onclick = () => swept(get(), { manual:true, dryRun:true });
       { const now = card.querySelector('.sync-now');
-        if(now) now.onclick = () => sweep(get(), { manual:true }).catch(()=>{}); }
+        if(now) now.onclick = () => swept(get(), { manual:true }); }
       /* PAUSE, for a folder that is already running.
        *
        * `paused` existed only for a NEWLY ADDED folder, so there was no way to stop one that was
@@ -914,9 +940,9 @@
           put(f => { f.prefs = Object.assign({}, f.prefs, { paused: false }); });
           stopping.delete(id);
           paint();
-          sweep(get(), { manual:true }).catch(()=>{});
+          swept(get(), { manual:true });
         }; }
-      card.querySelector('.sync-deep').onclick = () => sweep(get(), { manual:true, deep:true }).catch(()=>{});
+      card.querySelector('.sync-deep').onclick = () => swept(get(), { manual:true, deep:true });
       /* RECONNECT, rather than "remove it and add it again".
        *
        * A grant can go without the folder going: a desktop config file truncated by a crash, an
@@ -1044,13 +1070,26 @@
     // Coalesced: resume, visible and online all fire together when a laptop lid opens.
     _nudgeT = setTimeout(() => {
       if(_idle()) return;
-      folders().forEach(f => { sweep(f, {}).catch(()=>{}); });
+      folders().forEach(f => { swept(f, {}); });
     }, 1500);
   }
 
   let _started = false;
   function startAll(){
-    const fs = FS(); if(!fs) return;
+    const fs = FS();
+    /* NO ADAPTER YET IS NOT "NO ADAPTER". This returned and left `_started` false, which is correct —
+     * but nothing ever called it again, so if the platform adapter installed a moment later (the
+     * Capacitor bridge arriving after the page's scripts) folder sync was dead for the whole session
+     * with every folder sitting at its placeholder status. Bounded retry; fs-android.js is doing the
+     * same on its own side, and either one winning is fine because this is idempotent. */
+    if(!fs){
+      if(startAll._t) return;
+      let n = 0;
+      startAll._t = setInterval(() => {
+        if(FS() || ++n > 40){ clearInterval(startAll._t); startAll._t = 0; if(FS()) startAll(); }
+      }, 500);
+      return;
+    }
     /* ONCE. Every line below attaches something that has no matching detach — a document listener, a
      * window listener, a Capacitor listener, an interval — so a second call would double the sweeps
      * for every resume, focus and heartbeat, and a third would treble them. It is called from one
@@ -1071,7 +1110,7 @@
         _chT.delete(id);
         const cur = folders().find(x => x.id === id); if(!cur) return;
         cur._dirty = true;
-        sweep(cur, {}).catch(()=>{});  // the policy may well decline; that is the point of asking
+        swept(cur, {});                // the policy may well decline; that is the point of asking
       }, 1500));
     });
     document.addEventListener('visibilitychange', () => { if(!document.hidden) nudge('visible'); });
@@ -1098,7 +1137,7 @@
      * same one the button on the folder card runs. */
     try{
       if(window.pcShell && window.pcShell.onSyncNow){
-        window.pcShell.onSyncNow(() => { folders().forEach(f => { sweep(f, { manual:true }).catch(()=>{}); }); });
+        window.pcShell.onSyncNow(() => { folders().forEach(f => { swept(f, { manual:true }); }); });
       }
     }catch(_){}
     nudge('startup');

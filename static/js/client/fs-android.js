@@ -11,8 +11,47 @@
  */
 (function(){
   'use strict';
-  const P = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.FolderSync) || null;
-  if(!P || window.pcFs) return;
+
+  /* FINDING THE PLUGIN IS THE HARD PART, and getting it wrong is silent.
+   *
+   * This used to read `Capacitor.Plugins.FolderSync` ONCE, at script-evaluation time, and give up if
+   * it was not there. Two ways that fails, and both end identically — `window.pcFs` is never set, so
+   * `FS()` is null for the whole session, `startAll()` returns before doing anything, the Sync screen
+   * hides "Add a folder…" and every folder sits at its placeholder status. Reported as "why is
+   * Documents in Folder Sync 'not syncing yet', it was working before", which is exactly what a
+   * STARTUP RACE looks like from the outside: fine most times, dead some times, and an app update is
+   * enough to change which.
+   *
+   *   1. `Capacitor.Plugins.<name>` is EMPTY for a plugin registered in Java with no JS package of
+   *      its own — `registerPlugin(name)` is what resolves those. (The same trap that made a widget
+   *      push do nothing earlier the same day.)
+   *   2. The native bridge may not have injected its plugin list by the time this script runs.
+   *
+   * So: try both, and if the bridge is not up yet, keep trying for a few seconds rather than
+   * deciding for the rest of the session that this device has no filesystem.
+   *
+   * `registerPlugin` is only used on a NATIVE platform. In a browser it would hand back a proxy that
+   * accepts every call and rejects it, which would replace "this device cannot sync" with "every
+   * sync operation fails" — a worse answer, and a wrong one. */
+  function _plugin(){
+    const cap = window.Capacitor;
+    if(!cap) return null;
+    const p = cap.Plugins && cap.Plugins.FolderSync;
+    if(p) return p;
+    const native = cap.isNativePlatform ? cap.isNativePlatform() : !!cap.isNative;
+    if(!native || !cap.registerPlugin) return null;
+    try{ return cap.registerPlugin('FolderSync'); }catch(_){ return null; }
+  }
+
+  function install(){
+    if(window.pcFs) return true;          // the desktop shell sets its own; never replace it
+    const P = _plugin();
+    if(!P) return false;
+    _define(P);
+    return true;
+  }
+
+  function _define(P){
 
   // Bytes cross the Capacitor bridge as base64: the bridge is JSON, so a Uint8Array would arrive as
   // {"0":12,"1":99,…} — roughly 6x the size and a parse of one object per byte.
@@ -80,4 +119,12 @@
     unwatch: () => Promise.resolve(false),
     onChanged: () => {},
   };
+  }
+
+  if(!install()){
+    // The bridge can arrive after this script. Bounded — ten seconds is far longer than it has ever
+    // taken, and after that this really is a platform with no filesystem adapter.
+    let n = 0;
+    const t = setInterval(() => { if(install() || ++n > 40) clearInterval(t); }, 250);
+  }
 })();

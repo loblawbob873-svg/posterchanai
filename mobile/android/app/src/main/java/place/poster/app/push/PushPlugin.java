@@ -50,6 +50,39 @@ import org.unifiedpush.android.connector.UnifiedPush;
 )
 public class PushPlugin extends Plugin {
 
+    /**
+     * Put "stay connected" back when the app is opened.
+     *
+     * FORCE-STOP IS ITS OWN CASE, and it is the one that was reported: "persistent notification not
+     * working if you force close app and reopen, no notification". Force-stopping kills the service
+     * AND puts the app into Android's "stopped" state, where it receives NO broadcasts at all until
+     * the user launches it by hand — so BootReceiver never fires, and START_STICKY does not apply
+     * either (the system takes a force-stop to mean the user wanted it stopped, and it is right to).
+     *
+     * The only moment left to restore it is the next time the app is opened, which is here. It runs
+     * in the foreground, so the Android 12+ ban on background foreground-service starts does not
+     * apply. `running` is a static that dies with the process, so after a force-stop it is false —
+     * which is exactly the condition that should restart it, and which stops this doing anything on
+     * an ordinary resume.
+     *
+     * Without it the switch in Settings reads "on" while nothing is running behind it, which is the
+     * worst of both: no notifications, and a setting insisting there should be.
+     */
+    @Override
+    public void load() {
+        try {
+            if (!StayAwakeService.wanted(getContext()) || StayAwakeService.running) return;
+            Intent i = new Intent(getContext(), StayAwakeService.class)
+                    .setAction(StayAwakeService.ACTION_START);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) getContext().startForegroundService(i);
+            else getContext().startService(i);
+        } catch (Throwable ignored) {
+            // The switch is still on; opening Settings and toggling it is the way back, and the
+            // stored preference means the next open tries again.
+        }
+    }
+
+
     private static final String INSTANCE = "default";
 
     /** Ask the user's distributor for an endpoint. Result arrives via PushEventService. */
