@@ -2186,7 +2186,7 @@
            * feeds" there was a confident lie to somebody who has plenty. */
           let has = -1; try{ has = N.feedCount ? N.feedCount() : -1; }catch(_){ has = -1; }
           box.innerHTML = has < 0 ? '<div class="wgt-dim">loading…</div>'
-                        : has     ? '<div class="wgt-dim">No headlines yet.</div>'
+                        : has     ? '<div class="wgt-news-done">No more News</div>'
                                   : '<div class="wgt-dim">No feeds yet — add them in News.</div>';
           box.onclick = () => openApp('news');
           delete box.dataset.filled;
@@ -2215,12 +2215,19 @@
            * opened a second full copy of the client in a new tab, with its own relay sockets and
            * subscriptions. A row that cannot go anywhere is a row, not a link. */
           const href = _safeHttp(it.link);
+          const id = it.id ? ` data-nid="${enc(String(it.id))}"` : '';
           return href ? `<a class="wgt-nrow" href="${enc(href)}" target="_blank"
-                            rel="noopener noreferrer">${meta}</a>`
-                      : `<div class="wgt-nrow nolink">${meta}</div>`;
+                            rel="noopener noreferrer"${id}>${meta}</a>`
+                      : `<div class="wgt-nrow nolink"${id}>${meta}</div>`;
         }).join('');
-        // A link is a link — but the drag handle is the whole panel, so the row must not start one.
-        for(const a of box.querySelectorAll('a.wgt-nrow')) a.onpointerdown = (ev) => ev.stopPropagation();
+        for(const a of box.querySelectorAll('.wgt-nrow')){
+          // A link is a link — but the drag handle is the whole panel, so the row must not start one.
+          a.onpointerdown = (ev) => ev.stopPropagation();
+          /* OPENING IT IS READING IT. The panel only carries unread items, so without this the same
+           * article comes round for ever — the News screen marks on scroll and nobody scrolls a
+           * widget. It marks on the way out, so the row is gone by the next rotation. */
+          a.onclick = () => { try{ if(a.dataset.nid && N.markRead) N.markRead(a.dataset.nid); }catch(_){} };
+        }
       },
     },
 

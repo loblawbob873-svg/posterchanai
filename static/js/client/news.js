@@ -485,9 +485,17 @@
        * without a pubkey, is reentrancy-guarded, and returns immediately for an account with none. */
       try{ if(!_feeds || Date.now() - _bgLast > 600000) _bgTick(); }catch(_){}
       const urls = new Set((_feeds || []).map(f => f.url));
-      const items = urls.size ? _lastAll.filter(it => !it.feed || urls.has(it.feed)) : _lastAll;
+      /* UNREAD ONLY. A ticker of things you have already read is wallpaper — the panel exists to
+       * answer "is there anything new", so once you have read it, it should not come round again.
+       * `_readSet` is the SAME set the News screen marks on scroll and syncs as a kind-30078 doc, so
+       * reading an article on the phone empties it on the desktop, and the widget's own list shrinks
+       * as you work through it rather than looping. */
+      const items = _lastAll.filter(it => (!it.feed || !urls.size || urls.has(it.feed)) && !isRead(it.id));
       return items.slice(0, Math.max(1, Number(n) || 40));      // already newest-first
     }
+    /* Opening a headline from the widget is reading it. Without this the panel would hand back the
+     * same article for ever — the News screen marks on scroll, and nobody scrolls a widget. */
+    function markReadById(id){ try{ markRead(id); }catch(_){} }
     /* How many feeds this account has — or -1 for "this device does not know yet".
      *
      * The widget uses it to tell "you have no feeds" (actionable) from "nothing has arrived yet"
@@ -501,7 +509,7 @@
       return -1;
     }
 
-    window.PCNews = { render: renderNews, updateBadge, latest, feedCount };
+    window.PCNews = { render: renderNews, updateBadge, latest, feedCount, markRead: markReadById };
     // One-time migration: the old badge counted scroll-unread (stuck at 99+). If there's no "seen" baseline
     // yet, clear that stale count so the new "new since last visit" model starts clean.
     try{

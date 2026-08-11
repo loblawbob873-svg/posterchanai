@@ -6710,9 +6710,19 @@ body.os-on #os-root{pointer-events:auto}
 .os-wgt[data-type="search"] .os-wgt-body{display:flex;align-items:center;padding:5px 28px 5px 7px}
 .wgt-search{display:flex;gap:6px;align-items:center;width:100%}
 .wgt-sinput{flex:1;min-width:0}
-.os-wgt[data-type="search"] .wgt-sinput{padding:5px 9px;border-radius:8px}
-.wgt-sgo{flex:none;width:30px;height:30px;border-radius:8px;border:1px solid var(--neon);
-  background:rgba(var(--accent-rgb),.14);color:var(--neon);cursor:pointer;font-size:13px}
+/* NO OUTLINE, A FILL. A 1px box around a field inside a panel that is itself a box was two frames
+   deep for one input — "looks ugly, remove the textbox outline and fill it". So the field IS its
+   fill: a tinted pill in the theme's own accent, which reads as a search box on every palette
+   without drawing a single line. Focus deepens the fill instead of adding the border back. */
+.os-wgt[data-type="search"] .wgt-sinput{padding:6px 11px;border:0;border-radius:999px;
+  background:rgba(var(--accent-rgb),.11)}
+.os-wgt[data-type="search"] .wgt-sinput:focus{background:rgba(var(--accent-rgb),.18)}
+.os-wgt[data-type="search"] .wgt-sinput::placeholder{color:var(--muted)}
+/* The button matches it: filled, round, no border — an outlined button beside a borderless field is
+   the same mismatch one level down. */
+.wgt-sgo{flex:none;width:30px;height:30px;border-radius:50%;border:0;
+  background:rgba(var(--accent-rgb),.18);color:var(--neon);cursor:pointer;font-size:13px;
+  display:flex;align-items:center;justify-content:center;transition:background .12s,color .12s}
 .wgt-sgo:hover{background:var(--neon);color:var(--bg)}
 /* No room for it in a bar, and it says nothing the placeholder does not. */
 .os-wgt[data-type="search"] .wgt-shint{display:none}
@@ -6723,15 +6733,23 @@ body.os-on #os-root{pointer-events:auto}
    and the cities you follow under that. Tabular figures, or the panel twitches sideways every time a
    1 becomes a 7. The size follows the widget's own size name rather than a container query: the four
    sizes are the vocabulary the rest of this file already speaks. */
-.wgt-clk{display:flex;flex-direction:column;gap:2px;height:100%;min-height:0}
-.wgt-clkt{flex:none;display:flex;align-items:baseline;gap:6px;font-variant-numeric:tabular-nums}
+/* CENTRED, because a clock is one short line and a date under it: pinned to the top-left of a panel
+   that is mostly empty, it read as a corner of a box rather than as the thing the panel is for
+   ("could be centered, it's wasting too much space"). The city rows keep their own left/right
+   columns — a world clock is a table and centring those would make the times stop lining up. */
+.wgt-clk{display:flex;flex-direction:column;gap:2px;height:100%;min-height:0;
+  justify-content:center;align-items:center;text-align:center;position:relative}
+.wgt-clkt{flex:none;display:flex;align-items:baseline;justify-content:center;gap:6px;
+  font-variant-numeric:tabular-nums}
 .wgt-clkh{font-size:34px;font-weight:700;line-height:1.05;color:var(--text)}
 .os-wgt[data-size="s"] .wgt-clkh{font-size:27px}
 .os-wgt[data-size="l"] .wgt-clkh{font-size:42px}
 .wgt-clkap{font-style:normal;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase}
-/* Aligned to the BOTTOM of the numeral's row, deliberately: the widget's own ✕ lives at top-right and
-   fades in on hover, and two round buttons in one corner is a target you hit by accident. */
-.wgt-clkadd{margin-left:auto;align-self:flex-end;flex:none;width:20px;height:20px;border-radius:50%;
+/* Out of the flow entirely, at the BOTTOM-LEFT: it used to sit at the end of the time row on a
+   `margin-left:auto`, which is exactly the thing that stopped the numeral being centred. Bottom-left
+   because the widget's own ✕ owns the top-right and fades in on the same hover — two round buttons in
+   one corner is a target you hit by accident. */
+.wgt-clkadd{position:absolute;left:0;bottom:0;flex:none;width:20px;height:20px;border-radius:50%;
   border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer;font-size:11px;
   line-height:1;display:flex;align-items:center;justify-content:center;opacity:.5;
   transition:opacity .12s,color .12s,border-color .12s}
@@ -6739,7 +6757,11 @@ body.os-on #os-root{pointer-events:auto}
 .wgt-clkadd:hover{color:var(--neon);border-color:var(--neon)}
 .wgt-clkd{flex:none;font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wgt-clkz{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:3px;margin-top:5px}
+/* `flex:0 1 auto`, not `flex:1`: growing to fill the panel is what pushed the clock to the top. It
+   takes the height it needs, scrolls when four cities do not fit, and the whole group stays centred.
+   Width is pinned so the city rows are a column rather than each row being its own width. */
+.wgt-clkz{flex:0 1 auto;min-height:0;width:100%;overflow-y:auto;display:flex;flex-direction:column;
+  gap:3px;margin-top:5px;text-align:left}
 .wgt-clkrow{display:flex;align-items:baseline;gap:8px;font-size:12px;cursor:pointer;
   font-variant-numeric:tabular-nums;border-radius:5px}
 .wgt-clkrow:hover{background:rgba(var(--accent-rgb),.10)}
@@ -6773,6 +6795,10 @@ body.os-on #os-root{pointer-events:auto}
    not pretend to be one by lighting up under the pointer. */
 .wgt-nrow.nolink{cursor:default}
 .wgt-nrow.nolink:hover .wgt-nt{color:var(--text)}
+/* "No more News" is the panel's REST STATE, not an error — you have read everything, which is a good
+   outcome and should look like one. Centred in the panel rather than a dim line in the top corner. */
+.wgt-news-done{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;
+  color:var(--muted);font-size:12.5px}
 @keyframes wgtnews{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
 @media(prefers-reduced-motion:reduce){ .wgt-nrow{animation:none} }
 
@@ -6780,10 +6806,14 @@ body.os-on #os-root{pointer-events:auto}
    anything — and all five ALWAYS, including the zeroes (see _statCells: a cell that vanishes at zero
    reads as a missing feature). auto-fit rather than a fixed column count, because this panel is
    resizable and five cells across a small widget is five unreadable cells. */
+/* CENTRED in both axes. Five cells over three columns leaves two on the last row, and pinned to the
+   top-left that is a panel with a hole in the bottom-right of it — the same "wasting too much space"
+   the clock had. align-content centres the rows in whatever height the widget has, justify-items
+   centres each tile in its column, and the tile centres its own icon+number pair. */
 .wgt-st{display:grid;grid-template-columns:repeat(auto-fit,minmax(78px,1fr));gap:8px 10px;
-  align-content:start;cursor:pointer}
-.wgt-stc{display:grid;grid-template-columns:15px 1fr;grid-template-rows:auto auto;gap:0 6px;
-  align-items:center}
+  height:100%;align-content:center;justify-items:center;cursor:pointer}
+.wgt-stc{display:grid;grid-template-columns:15px auto;grid-template-rows:auto auto;gap:0 6px;
+  align-items:center;justify-content:center}
 .wgt-stc .ic{width:15px;height:15px;color:var(--muted);grid-row:span 2}
 .wgt-stc b{font-size:16px;font-weight:700;color:var(--text);line-height:1.1;
   font-variant-numeric:tabular-nums}
