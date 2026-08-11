@@ -62,6 +62,18 @@
       flush: flushPending,
       // For the offline bar / nav badge: how many writes are still queued.
       pendingCount: () => pending().length,
+      /* Read ONE note, if this session happens to have the library loaded.
+       *
+       * Deliberately does NOT load it: the caller is the desktop's sticky note, which is drawn on a
+       * screen that has nothing to do with Notes, and hydrating a whole notebook to fill in one
+       * square of paper would be the wrong trade. It answers null when the library is not there and
+       * the caller falls back to its own copy — which is the same text, taken from a document that
+       * syncs across devices anyway. */
+      get(id){
+        if(!_lib || !id) return null;
+        const n = _lib.notes.get(String(id));
+        return n ? { id: n.id, title: n.title || '', body: n.body || '', at: n._at || 0 } : null;
+      },
       // The phone folder drawer is an OVERLAY, so the Android back button has to close it before it
       // starts walking the view stack — otherwise Back leaves Notes altogether while a panel is
       // still open over it, which is the "this is just a webview" tell the back handler exists for.

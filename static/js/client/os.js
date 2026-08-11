@@ -1882,6 +1882,9 @@
 
     note: {
       label: 'Sticky note', icon: '#i-note', blurb: 'A note on the desktop — saved in your Notes',
+      // It has to POLL, because the note it shows can change anywhere: in the Notes app on this
+      // screen, on a phone, on a laptop. 20s is a local lookup and a string compare.
+      every: 20000,
       mount(el, w, save){
         el.innerHTML = `<textarea class="wgt-note" placeholder="Write something…" spellcheck="false"></textarea>
                         <div class="wgt-notest wgt-dim"></div>`;
@@ -1893,6 +1896,9 @@
         const flush = async () => {
           t = null;
           const text = ta.value;
+          // Cleared here rather than at the end: from this point the text is being written, and a
+          // refresh that arrives now would be writing the SAME string.
+          delete ta.dataset.typing;
           if(text === (w.cfg.text || '')) return;
           st.textContent = 'saving…';
           /* Notes FIRST, and its answer decides what this says.
@@ -1920,12 +1926,43 @@
           // letting the tail vanish on the next load — Notes has the whole thing.
           if(text.length > WGT_TEXT_MAX && r && r.ok) st.textContent = 'saved to Notes (long notes live there)';
         };
-        ta.oninput = () => { st.textContent = ''; if(t) clearTimeout(t); t = setTimeout(flush, 1200); };
+        ta.oninput = () => { st.textContent = ''; ta.dataset.typing = '1';
+                             if(t) clearTimeout(t); t = setTimeout(flush, 1200); };
         ta.onblur = () => { if(t){ clearTimeout(t); flush(); } };
         // A textarea inside a draggable panel: the pointer belongs to the text, not to the drag.
         ta.onpointerdown = (ev) => ev.stopPropagation();
       },
-      refresh(){},
+      /* SHOW WHAT THE NOTE ACTUALLY SAYS NOW.
+       *
+       * This was an empty function, and `mount` reads the text exactly once — so the paper showed
+       * whatever it said when the widget was drawn, for ever. Edit the note in the Notes app, or on
+       * another device, and the desktop kept the old text: "windows app not updating note contents on
+       * the desktop widget. same for tablet and laptop", which is every device, because it was never
+       * a platform bug.
+       *
+       * Two sources, in order: the NOTES library when this session has it loaded (the real copy, and
+       * the one another device's edit reaches), else the desktop document's own copy — which also
+       * syncs, being a replaceable document, and is what fills the paper in before Notes has loaded
+       * anything.
+       *
+       * IT MUST NEVER CLOBBER TYPING. A refresh landing mid-sentence that replaced the textarea with
+       * the last SAVED text would eat whatever is inside the 1.2s debounce — the same rule notes.js
+       * follows for its own repaint (`if(VIEW==='notes' && !_dirty)`). Focused or dirty means leave
+       * it alone; the flush is about to write anyway. */
+      refresh(el, w){
+        const ta = $('.wgt-note', el); if(!ta) return;
+        if(document.activeElement === ta) return;
+        if(ta.dataset.typing === '1') return;
+        let text = w.cfg.text || '';
+        try{
+          const N = window.PCNotes;
+          if(N && N.get && w.cfg.noteId){
+            const n = N.get(w.cfg.noteId);
+            if(n && typeof n.body === 'string') text = n.body;
+          }
+        }catch(_){}
+        if(ta.value !== text) ta.value = text;
+      },
     },
 
     search: {

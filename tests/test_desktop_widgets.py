@@ -364,3 +364,55 @@ class TodayWidget(unittest.TestCase):
             "console.log(JSON.stringify(occ.map(o => o.title)));"
             % (json.dumps(str(ROOT / "static" / "js" / "client" / "ical.js")), json.dumps(ics)))
         self.assertEqual(out, ["standup"], "a weekly event did not appear on a later week")
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class StickyNoteRefresh(unittest.TestCase):
+    """The sticky note showed whatever it said when it was drawn, for ever.
+
+    Reported as "windows app not updating note contents on the desktop widget. same for tablet and
+    laptop" — every device, because it was never a platform bug: `mount` reads the text once and
+    `refresh` was an empty function. Edit the note in the Notes app, or on another device, and the
+    paper kept the old text until the page was reloaded.
+
+    These are source assertions: the widget's refresh needs a live DOM, a Notes library and a desktop
+    document to be worth driving, and what regresses here is the RULE.
+    """
+
+    def setUp(self):
+        self.os_js = OS_JS.read_text(encoding="utf-8")
+        self.notes = (ROOT / "static" / "js" / "client" / "notes.js").read_text(encoding="utf-8")
+
+    def _note_widget(self):
+        i = self.os_js.index("    note: {")
+        return self.os_js[i:self.os_js.index("\n    },\n", self.os_js.index("refresh(el, w){", i))]
+
+    def test_it_refreshes_at_all(self):
+        w = self._note_widget()
+        self.assertNotIn("refresh(){}", w, "the sticky note still never refreshes")
+        self.assertIn("every: 20000", w,
+                      "it has no interval, so refresh would only run when something else redrew it")
+
+    def test_it_prefers_the_real_note_over_its_own_copy(self):
+        """The Notes library is where another device's edit actually lands."""
+        w = self._note_widget()
+        self.assertIn("N.get(w.cfg.noteId)", w)
+        self.assertIn("PCNotes", w)
+        self.assertIn("get(id){", self.notes, "PCNotes exposes no way to read one note")
+
+    def test_reading_a_note_does_not_hydrate_the_whole_notebook(self):
+        """The caller is a square of paper on a screen that has nothing to do with Notes."""
+        i = self.notes.index("get(id){")
+        body = self.notes[i:i + 400]
+        self.assertIn("if(!_lib", body, "get() would load the library to answer")
+        self.assertNotIn("await", body)
+
+    def test_a_refresh_never_eats_what_is_being_typed(self):
+        """A refresh landing mid-sentence that replaced the textarea with the last SAVED text would
+        eat whatever is inside the 1.2s debounce."""
+        w = self._note_widget()
+        self.assertIn("document.activeElement === ta", w)
+        self.assertIn("ta.dataset.typing === '1'", w)
+        # …and the flag has to be SET while a write is pending, or the guard is decorative.
+        self.assertIn("ta.dataset.typing = '1'", self.os_js)
+        self.assertIn("delete ta.dataset.typing;", self.os_js)
