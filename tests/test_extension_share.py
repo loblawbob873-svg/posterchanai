@@ -406,7 +406,10 @@ def test_read_only_disables_both_destinations():
         "saving a note re-arms the Post button unconditionally, undoing the post-publish lock"
     # And BOTH move together during a publish: an idle-looking button whose handler no-ops is the
     # same dead control one step later.
-    assert "function _postBusy(" in js and "for(const b of [go, nb])" in js, \
+    # THREE destinations now: the page-screenshot button joined post and note, and it was left out of
+    # this lock at first — live during a post, and during another capture, over a handler that returns
+    # silently. Which is the same "button that does nothing" this test was written for.
+    assert "function _postBusy(" in js and "for(const b of [go, nb, sh])" in js, \
         "the publish lock does not cover both destinations"
 
 

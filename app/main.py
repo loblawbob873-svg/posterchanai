@@ -21,6 +21,7 @@ from app.database import init_db, get_db
 from app.auth import get_current_user_optional, get_current_user, create_access_token
 from app.models import User, VerificationToken
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api, voice_api, effects_api
+from app.auth import NATIVE_APP_ORIGINS as _NATIVE_ORIGINS
 from app.routers import fourchan, youtube_thumb, bots, push, calls, streams, rss, markets, websearch, weather, ssh_term
 from app.routers import admin_emoji
 from app.routers import git as git_router
@@ -95,7 +96,7 @@ app.add_middleware(
     # An instance that has not shipped `app://posterchan` here refuses the desktop app's credentialed
     # calls, so a self-hoster upgrading their node is what re-enables AI/media/streams for desktop users
     # pointed at it. The relays-only mode needs nothing from this list — it makes no cross-origin call.
-    allow_origins=["https://localhost", "capacitor://localhost", "app://posterchan"],
+    allow_origins=list(_NATIVE_ORIGINS),   # app/auth.py — shared with the SSH terminal's origin check
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

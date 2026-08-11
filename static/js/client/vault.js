@@ -1396,8 +1396,25 @@
             ...((Relay().urls && Relay().urls()) || []),
             (PC.CFG && PC.CFG.relay_url) || '',
           ].filter(Boolean))];
+          /* …and the INSTANCE, which is new in v1 pairings and additive.
+           *
+           * The extension has never made an HTTP request — it is relay-only by design, and that is
+           * the right default. But a page screenshot cannot live in a note (NIP-44 refuses plaintext
+           * over 65535 bytes), so it has to go to the encrypted drive, and the extension cannot reach
+           * a drive it has no address for. A relay URL is not one: `wss://relay.example` says nothing
+           * about where the app is served from, and guessing is how you upload someone's screenshot
+           * to a host they never chose.
+           *
+           * An older extension ignores the field; a newer one paired by an older app simply has no
+           * screenshot feature and says so, rather than failing at upload time. */
           const payload = { v:1, t:'pcvault', pubkey: ME().pubkey, key: V().toB64(_key),
-                            relay: relays[0] || '', relays, mode };
+                            relay: relays[0] || '', relays, mode,
+                            api: (PC.apiBase && PC.apiBase()) || '',
+                            // …and WHERE ATTACHMENTS LIVE, which is not always the instance. A user
+                            // with their own Blossom server reads `pcres:` blobs from THAT host, so an
+                            // extension uploading to the instance would write a note whose picture
+                            // 404s on the only screen it is ever opened from.
+                            media: (PC.mediaServer && PC.mediaServer()) || '' };
           if(mode === 'full'){
             // Only a LOCAL login has a key to give. nip07/nip46/nip55 hold it in a signer that never
             // hands it over — which is the point of them — so there is nothing to pair, and the

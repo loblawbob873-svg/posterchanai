@@ -223,3 +223,53 @@ def test_a_missing_key_file_is_named_as_such():
     import paramiko
 
     assert "not on the server" in _why(paramiko.SSHException("No such file or directory"))
+
+
+class _WS:
+    def __init__(self, origin, host="poster.place"):
+        self.headers = {"origin": origin, "host": host}
+
+
+def test_the_native_apps_may_open_a_terminal():
+    """The APK is Capacitor with androidScheme=https, so its pages are `https://localhost`. The first
+    version of this check allowed `http://localhost` and not `https://localhost` — backwards on both
+    counts — and the APK over Orbot was refused with "that origin may not open a terminal"."""
+    from app.routers.ssh_term import _origin_ok
+
+    for o in ("https://localhost", "capacitor://localhost", "app://posterchan"):
+        assert _origin_ok(_WS(o)) is True, o
+
+
+def test_plaintext_localhost_is_still_refused():
+    """The CORS middleware excludes it deliberately: with credentials, any http page on localhost
+    could read the victim's authed responses. The socket must not be the softer door."""
+    from app.routers.ssh_term import _origin_ok
+
+    assert _origin_ok(_WS("http://localhost")) is False
+    assert _origin_ok(_WS("http://localhost:8080")) is False
+
+
+def test_a_foreign_site_cannot_open_a_shell():
+    """A WebSocket upgrade is not covered by the same-origin policy, and the session cookie is
+    SameSite=none for the native apps — so without this any page could be handed a shell."""
+    from app.routers.ssh_term import _origin_ok
+
+    assert _origin_ok(_WS("https://evil.example")) is False
+    assert _origin_ok(_WS("https://poster.place.evil.example")) is False
+
+
+def test_same_origin_and_no_origin_are_allowed():
+    """Same-origin is the web client. No Origin at all is a non-browser client, which cannot be a
+    CSRF victim — refusing it would only break scripted use while protecting nobody."""
+    from app.routers.ssh_term import _origin_ok
+
+    assert _origin_ok(_WS("https://poster.place")) is True
+    assert _origin_ok(_WS("")) is True
+
+
+def test_the_trust_list_is_shared_with_the_api():
+    """Two hand-maintained copies is how one ends up wrong — which is exactly what happened here."""
+    import inspect
+    from app.routers import ssh_term
+
+    assert "NATIVE_APP_ORIGINS" in inspect.getsource(ssh_term._origin_ok)

@@ -487,31 +487,41 @@ function paintBm(){
 let _posting = false;                   // a publish is in flight; both buttons are locked
 const POST_LABEL = 'Post to Nostr — public';
 const NOTE_LABEL = 'Save to Notes — private';
+const SHOT_LABEL = 'Save page as a picture';
 
 // Both buttons and the box move together: whichever one is running, the other is not a thing to
 // press. Leaving the idle button enabled made it a dead control that silently did nothing.
 function _postBusy(on, pressed, label){
   _posting = on;
-  const go = $('#post-go'), nb = $('#note-go'), box = $('#post-text');
+  // …including the screenshot button. It was left out, so it stayed live during a post and during
+  // another capture, and its handler just returned — a button that does nothing when pressed.
+  const go = $('#post-go'), nb = $('#note-go'), sh = $('#shot-go'), box = $('#post-text');
   if(box) box.disabled = on;
-  for(const b of [go, nb]) if(b) b.disabled = on;
+  for(const b of [go, nb, sh]) if(b) b.disabled = on;
   if(on && pressed) pressed.textContent = label;
 }
 
 async function preparePost(){
-  const box = $('#post-text'), go = $('#post-go'), note = $('#post-note'), nb = $('#note-go');
+  const box = $('#post-text'), go = $('#post-go'), note = $('#post-note'), nb = $('#note-go'),
+        sh = $('#shot-go');
   if(!box || !go) return;
   if(_posting) return;                          // mid-publish: the buttons are not ours to touch
   if(_mode === 'ro'){
     // BOTH destinations, with one reason. Disabling only the public one left Save to Notes looking
     // live over a handler that returns silently — a button that does nothing, with no message.
-    go.disabled = true; if(nb) nb.disabled = true;
+    // ALL THREE destinations, with one reason. The screenshot button was the third one left live
+    // over a handler that returns silently — the same "button that does nothing" this note is about.
+    go.disabled = true; if(nb) nb.disabled = true; if(sh) sh.disabled = true;
     note.innerHTML = '<b>This pairing is read-only,</b> so it holds no key to sign a post or encrypt ' +
       'a note. Pair again with full access from PosterChan → Passwords → Pair a device.';
     return;
   }
   go.disabled = false; go.textContent = POST_LABEL;
   if(nb){ nb.disabled = false; nb.textContent = NOTE_LABEL; }
+  /* The screenshot button does NOT depend on the text box (it photographs the page), so it is enabled
+   * here and never gated on `box.value` below — but it does need somewhere to put the picture, and a
+   * pairing made before this feature carries no address for one. */
+  if(sh){ sh.disabled = false; sh.textContent = SHOT_LABEL; sh.title = ''; }
   note.textContent = '';
 
   if(!box.value.trim()){
@@ -632,6 +642,32 @@ function _relayLine(r){
     }
     note.innerHTML = `Saved to <b>Notes</b> as “${esc(r.title || 'Untitled')}” — encrypted to you, on ` +
                      _relayLine(r) + '. Open it in PosterChan → Notes.';
+  }; }
+
+
+{ const b = $('#shot-go');
+  if(b) b.onclick = async () => {
+    const note = $('#post-note');
+    if(_posting || _mode === 'ro') return;
+    _postBusy(true, b, 'photographing…');
+    note.textContent = 'Photographing the page…';
+    /* PROGRESS, because this is seconds of work. A long page is a scroll-capture-settle loop per
+     * screenful and a button that sits there saying nothing for ten seconds reads as broken —
+     * which is the reported failure mode of every slow thing in this project. */
+    const onStep = (m) => { try{ if(m && m.type === 'pc-shot-progress') note.textContent = m.text; }catch(_){} };
+    B.runtime.onMessage.addListener(onStep);
+    let r;
+    try{ r = await send({ type:'page-save' }); }
+    finally{ try{ B.runtime.onMessage.removeListener(onStep); }catch(_){} }
+    _postBusy(false);
+    b.textContent = SHOT_LABEL;
+    if(!r || !r.ok){
+      note.innerHTML = '<b>Not saved:</b> ' + esc((r && r.error) || 'no answer from the extension');
+      return;
+    }
+    note.innerHTML = `Saved to <b>Notes</b> as “${esc(r.title || 'Saved page')}” — the picture is in ` +
+                     'your encrypted drive, on ' + _relayLine(r) + '.' +
+                     (r.capped ? '<br><i>The page was longer than one picture; the top of it was saved.</i>' : '');
   }; }
 
 

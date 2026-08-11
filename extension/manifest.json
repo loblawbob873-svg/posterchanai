@@ -23,6 +23,8 @@
       "vendor/nostr.bundle.js",
       "vaultcore.js",
       "bookmarks.js",
+      "shot.js",
+      "drive.js",
       "background.js"
     ]
   },
@@ -68,11 +70,12 @@
     }
   ],
   "permissions": [
-    "storage",
     "activeTab",
-    "clipboardWrite",
+    "alarms",
     "bookmarks",
-    "alarms"
+    "clipboardWrite",
+    "scripting",
+    "storage"
   ],
   "host_permissions": [
     "<all_urls>"

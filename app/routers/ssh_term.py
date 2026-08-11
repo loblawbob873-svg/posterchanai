@@ -88,7 +88,16 @@ def _origin_ok(websocket: WebSocket) -> bool:
     o = (websocket.headers.get("origin") or "").strip()
     if not o:
         return True
-    if o.startswith("app://") or o.startswith("capacitor://") or o.startswith("http://localhost"):
+    # THE SAME LIST THE API TRUSTS, not one written from memory beside it.
+    #
+    # The first version here allowed `http://localhost` and not `https://localhost` -- backwards on
+    # both counts. Capacitor on Android serves the bundle from `https://localhost`, so the APK was
+    # refused with "that origin may not open a terminal"; and `http://localhost` is the one the CORS
+    # middleware deliberately EXCLUDES, because with credentials any plaintext page on localhost could
+    # read the victim's authed responses. Two hand-maintained copies of a trust list is how one of
+    # them ends up wrong, and this was the one.
+    from app.auth import NATIVE_APP_ORIGINS
+    if o in NATIVE_APP_ORIGINS:
         return True
     host = (websocket.headers.get("host") or "").strip().lower()
     try:

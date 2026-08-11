@@ -96,9 +96,9 @@ class ExtensionCore(unittest.TestCase):
         with open(os.path.join(REPO, "extension", "background.js"), encoding="utf-8") as _fh:
             self.assertIn("alarms.", _fh.read(), "the alarms permission is requested but never used")
         self.assertEqual(sorted(man.get("permissions", [])),
-                         ["activeTab", "alarms", "bookmarks", "clipboardWrite", "storage"])
+                         ["activeTab", "alarms", "bookmarks", "clipboardWrite", "scripting", "storage"])
         src = ""
-        for f in ("background.js", "popup.js", "content.js", "bookmarks.js"):
+        for f in ("background.js", "popup.js", "content.js", "bookmarks.js", "shot.js", "drive.js"):
             with open(os.path.join(REPO, "extension", f), encoding="utf-8") as fh:
                 src += fh.read()
         self.assertIn("storage.local", src)
@@ -107,6 +107,13 @@ class ExtensionCore(unittest.TestCase):
         # It is a real cost — both browsers show "read and change your bookmarks" at install — so it
         # has to be earned by a call, exactly like the others, and it is off until switched on.
         self.assertIn("B.bookmarks", src, "the bookmarks permission is requested but never used")
+        # `scripting` arrived with page screenshots: the capture has to run IN the page to measure it,
+        # hide sticky elements and scroll it. Earned by a call, exactly like the others.
+        self.assertIn("B.scripting.executeScript", src,
+                      "the scripting permission is requested but never used")
+        # And NOT `tabs`, which would hand over every tab's URL and title. captureVisibleTab runs on
+        # the host permission this add-on already has, and tabs.get/query return the id, active flag
+        # and windowId — everything the capture needs — without it.
         # Still no history, no cookies, no downloads, no webRequest, no blanket tabs.
         for never in ("history", "cookies", "downloads", "webRequest", "tabs"):
             self.assertNotIn(never, man.get("permissions", []), f"{never} is not needed")

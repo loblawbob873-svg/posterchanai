@@ -218,6 +218,16 @@ def get_ai_user(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
+# The ORIGINS a native build legitimately speaks from — Capacitor on Android (androidScheme=https →
+# https://localhost), Capacitor elsewhere, and the Electron desktop bundle's privileged scheme. One
+# list, because it is used twice: the CORS middleware in main.py and the SSH terminal's WebSocket
+# origin check, and two copies is how the socket ends up refusing the app the API already trusts.
+#
+# NOT http://localhost. With credentials allowed, any plaintext-http page on localhost could read the
+# victim's authed responses — see the note beside the CORS middleware.
+NATIVE_APP_ORIGINS = ("https://localhost", "capacitor://localhost", "app://posterchan")
+
+
 async def get_user_from_websocket(websocket: WebSocket, db: Session) -> Optional[User]:
     # Try to get token from query params or cookies (cookie may be URL-encoded)
     token = websocket.query_params.get("token")

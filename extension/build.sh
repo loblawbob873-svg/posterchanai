@@ -78,7 +78,7 @@ fi
 # own install instructions got that.
 FILES="manifest.json background.js content.js content.css inject.js \
        popup.html popup.js popup.css approve.html approve.js \
-       vaultcore.js bookmarks.js vendor icons"
+       vaultcore.js bookmarks.js shot.js drive.js vendor icons"
 
 # Every file the manifest references must actually be in the bundle. Cheap, and it is the check that
 # would have caught the above the moment inject.js was added.

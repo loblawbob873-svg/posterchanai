@@ -74,7 +74,26 @@ Each permission exists for one feature and is used for nothing else:
 | `clipboardWrite` | Copying a password when you ask (write-only) |
 | `bookmarks` | Bookmark sync — **off until you turn it on** |
 | `alarms` | Waking the extension on a timer so it keeps syncing while the browser is idle |
+| `scripting` | **Save page as a picture** only — running the capture in the page you asked to save, to measure it, hide sticky headers so they do not repeat, and scroll it. Nothing runs in a page you did not press the button on |
 | Access to websites | Detecting login and one-time-code fields on the pages where you have logins. A saved login is matched by **exact origin**, so it is never offered on a different site or a sibling subdomain |
+
+## Saving a page as a picture
+
+When you press **Save page as a picture**, the extension photographs the page you are looking at,
+scrolling it to capture the whole thing, and saves it as a note.
+
+The picture is **encrypted on this device** before it leaves it, with your account's own file key —
+which the server holds only in a form that needs your key to open, and which the extension unwraps
+locally. It is then stored with your other files, and the note that references it is encrypted to you
+like every other note. Nobody operating the server can look at either.
+
+It photographs **only the tab you pressed the button on**, and only while that tab is the one on
+screen: if you switch tabs mid-capture it stops there rather than photographing what you switched to.
+The page's scroll position and any headers hidden for the capture are put back afterwards, including
+when the capture fails.
+
+This is the one feature that talks to your PosterChan server over the web rather than through a
+relay, because a picture is far too large to fit in a note. It talks to no other host.
 
 ## Keeping your data, and deleting it
 

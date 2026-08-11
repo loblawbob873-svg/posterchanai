@@ -696,6 +696,93 @@ const NOTE_KIND = 30078;
 const D_NOTE = 'pcai:note:';
 const L_NOTE = 'pcai-notes';
 
+/* SAVE THE WHOLE PAGE: a picture of it, in a real note.
+ *
+ * The picture goes to the encrypted drive (see drive.js — the only HTTP this extension does) and the
+ * note references it as `pcres:<sha>`, which is how the app's own Notes attachments work: the note
+ * carries the name and mime, so nothing has to be written into the drive INDEX for it to render.
+ *
+ * Every failure below is REPORTED with what it was. This path has four places it can stop — no
+ * instance in the pairing, a page that will not be captured, a drive that will not answer, a relay
+ * that will not take the note — and "couldn't save" for all four is the shape of bug that gets
+ * reported a week later as "it doesn't work".
+ */
+/* Build + sign an auth event. `finalize` signs a TEMPLATE; the drive's two calls each want a
+ * (kind, content, tags) triple, and there is no `signEvent` function in this file — that name is a
+ * NIP-07 METHOD in the permissions Set, which is exactly the kind of thing that looks callable and
+ * is not. */
+function _signAuth(kind, content, tags){
+  return finalize({ kind, content: String(content || ''), created_at: Math.floor(Date.now()/1000),
+                    tags: _cleanTags(tags) });
+}
+
+let _shotBusy = false;
+
+async function savePage(msg, tabId){
+  /* ONE SWEEP AT A TIME. The restore state lives on the PAGE's own `__pcShot*` globals, so a second
+   * sweep overwrites the first one's record of which elements it hid — and whichever finishes last
+   * restores the wrong set, leaving that page's header invisible until it is reloaded. The popup
+   * disables its button, but the popup is not the guard: it closes the moment you click away, and the
+   * message can arrive from a second browser window entirely. */
+  if(_shotBusy) return { ok:false, error:'a page is already being photographed — let it finish' };
+  _shotBusy = true;
+  try{ return await _savePage(msg, tabId); }
+  finally{ _shotBusy = false; }
+}
+
+async function _savePage(msg, tabId){
+  if(!cfg || !key) return { ok:false, error:'PosterChan Passwords is not paired' };
+  if(!(cfg.mode === 'full' && cfg.sk))
+    return { ok:false, error:'this browser is paired READ-ONLY, so it holds no key to encrypt a note with. ' +
+                            'Re-pair with full access from PosterChan → Passwords → Pair a device.' };
+  if(!cfg.api)
+    return { ok:false, error:'this pairing predates page saving, so it carries no address for your ' +
+                            'drive. Pair this browser again from PosterChan → Passwords → Pair a device.' };
+  if(!tabId) return { ok:false, error:'no page to save' };
+
+  const step = (m) => { try{ B.runtime.sendMessage({ type:'pc-shot-progress', text:m }); }catch(_){} };
+  let shot;
+  try{ shot = await self.PCShot.capture(tabId, step); }
+  catch(e){ return { ok:false, error:'could not photograph the page: ' + ((e && e.message) || 'unknown') }; }
+
+  const bytes = new Uint8Array(await shot.blob.arrayBuffer());
+  let sha;
+  try{
+    step('encrypting…');
+    const mk = await self.PCDrive.masterKey(cfg, _skBytes(), _signAuth);
+    const sealed = await self.PCDrive.seal(mk, bytes);
+    step('uploading…');
+    ({ sha } = await self.PCDrive.upload(cfg, sealed, _signAuth));
+  }catch(e){ return { ok:false, error:(e && e.message) || 'the drive refused it' }; }
+
+  const at = Math.floor(Date.now()/1000);
+  const host = (() => { try{ return new URL(shot.meta.url).host; }catch(_){ return ''; } })();
+  const name = (host || 'page') + '-' + at + '.png';
+  const title = (shot.meta.title || host || 'Saved page').slice(0, 200);
+  const body = [
+    shot.meta.url,
+    '',
+    '![' + name + '](pcres:' + sha + ')',
+    shot.meta.capped ? '\n_(the page was longer than one picture — this is the top of it)_' : '',
+  ].join('\n').trim();
+  const note = { v:1, id: randomId(), title, body, folder:'', tags:['clipped'],
+                 created: at, updated: at,
+                 res: [{ sha, name, mime:'image/png', size: bytes.length }] };
+  let ev;
+  try{
+    const T = NT();
+    const ck = T.nip44.v2.utils.getConversationKey(_skBytes(), cfg.pubkey);
+    ev = finalize({ kind: NOTE_KIND, created_at: at, content: T.nip44.v2.encrypt(JSON.stringify(note), ck),
+                    tags: [['d', D_NOTE + note.id], ['l', L_NOTE]] });
+  }catch(e){ return { ok:false, error:'could not encrypt the note: ' + ((e && e.message) || 'bad key') }; }
+  const r = await broadcast(ev);
+  if(!r.accepted)
+    return { ok:false, tried:r.tried,
+             error:'the picture is saved in your drive but no relay took the note (tried ' + r.tried + ')' };
+  return { ok:true, accepted:r.accepted, tried:r.tried, id:note.id, title:note.title,
+           capped: !!shot.meta.capped };
+}
+
 async function saveNote(msg){
   if(!cfg || !key) return { ok:false, error:'PosterChan Passwords is not paired' };
   if(!(cfg.mode === 'full' && cfg.sk))
@@ -998,7 +1085,18 @@ async function pair(code){
                     'Check the app has a relay configured and pair again.');
   cfg = { pubkey: payload.pubkey, key: payload.key, relay: payload.relay || '',
           relays: Array.isArray(payload.relays) ? payload.relays.filter(Boolean) : [],
-          mode: payload.mode === 'full' ? 'full' : 'ro', sk: payload.sk || '' };
+          mode: payload.mode === 'full' ? 'full' : 'ro', sk: payload.sk || '',
+          /* THE INSTANCE, and the only thing in here this extension ever makes an HTTP request to.
+           *
+           * Everything else is relay-only on purpose. Saving a PAGE needs the encrypted drive — a
+           * screenshot cannot fit in a note, NIP-44 refuses plaintext over 65535 bytes — and a drive
+           * has an address that a relay URL does not imply. Absent (an older pairing) simply means no
+           * page-saving, which the popup says out loud rather than discovering at upload time. */
+          api: String(payload.api || '').replace(/\/+$/, ''),
+          /* WHERE ATTACHMENTS LIVE, which is not always the instance: a user with their own Blossom
+           * server reads `pcres:` blobs from THAT host. Uploading to the instance instead writes a
+           * note whose picture 404s on the only screen it is ever opened from — and says "saved". */
+          media: String(payload.media || '').replace(/\/+$/, '') };
   key = V.fromB64(cfg.key);
   initBookmarks();
   items = new Map();
@@ -1144,6 +1242,19 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
         case 'note-save': {
           if(!_fromPopup(sender)) return reply({ ok:false, error:'not available to a page' });
           return reply(await saveNote(msg));
+        }
+        /* Photograph the page and save it. POPUP ONLY, for the same reason as note-save — it writes
+         * to the user's relay with the user's key — and it additionally reads the ACTIVE TAB, so a
+         * page being able to ask for this would be a page able to photograph whatever tab you were
+         * looking at. */
+        case 'page-save': {
+          if(!_fromPopup(sender)) return reply({ ok:false, error:'not available to a page' });
+          let tabId = msg && msg.tabId;
+          if(!tabId){
+            const [t] = await B.tabs.query({ active:true, currentWindow:true });
+            tabId = t && t.id;
+          }
+          return reply(await savePage(msg, tabId));
         }
         case 'approve-answer':
           return reply(await _answerApproval(msg, sender));
