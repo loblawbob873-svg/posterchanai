@@ -6386,6 +6386,23 @@ body.os-on #os-root{pointer-events:auto}
 .tty-state{flex:1 1 100%;font-size:11.5px;color:var(--muted);order:9}
 .tty-state.ok{color:#5dffb0}
 .tty-state.err{color:#ff6b8b}
+/* "Still running" — sessions this ACCOUNT has open that this device is not attached to, which is
+   what makes a shell started on the laptop resumable on the phone. Scrolls sideways rather than
+   wrapping: on a phone this sits above the screen and must never eat rows from it. */
+.tty-sessions{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:6px 10px;
+  overflow-x:auto;overflow-y:hidden;white-space:nowrap;-webkit-overflow-scrolling:touch;
+  border-bottom:1px solid var(--line);background:rgba(0,240,255,.04)}
+.tty-sess-lbl{flex:0 0 auto;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--muted)}
+.tty-sess{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:3px 4px 3px 9px;
+  border:1px solid var(--line);border-radius:999px;background:var(--panel)}
+.tty-sess b{font-size:12px;font-weight:600;color:var(--fg)}
+.tty-sess i{font-size:10.5px;font-style:normal;color:var(--muted)}
+.tty-sess button{font-size:11px;padding:3px 9px;border-radius:999px;cursor:pointer;
+  border:1px solid var(--line);background:transparent;color:var(--fg)}
+.tty-sess button:hover{border-color:var(--accent);color:var(--accent)}
+.tty-kill,.tty-sess button.tty-kill{color:#ff6b8b;border-color:rgba(255,107,139,.4)}
+.tty-kill:hover,.tty-sess button.tty-kill:hover{border-color:#ff6b8b;color:#ff6b8b}
 /* The emulator's own element. min-height:0 is load-bearing inside a flex column — without it the
    screen grows to its content and the fit addon never sees a bounded box. */
 .tty-screen{flex:1;min-height:0;padding:6px 4px 2px 8px;overflow:hidden;position:relative}

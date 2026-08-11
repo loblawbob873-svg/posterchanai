@@ -28,7 +28,7 @@ REVERT=0
 # and drives start/stop/publish through it, and that registry is in-process — split out, the UI shows
 # every bot as stopped (they are running) and `reconcile_now()` from a button makes the app spawn a
 # SECOND copy of every bot. The app therefore runs role "app,bots".
-UNITS=(relay worker media tor proxy git)
+UNITS=(relay worker media tor proxy git shell)
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -70,6 +70,11 @@ for r in "${UNITS[@]}"; do
         tor)    desc="Tor daemons (.onion + SOCKS egress)";       after="network.target" ;;
         proxy)  desc="HTTP proxy fronting Tor";                   after="posterchanai-tor.service" ;;
         git)    desc="git host (GRASP git-over-nostr)";           after="network.target" ;;
+        # The SSH terminal keeper. Split out for the OPPOSITE reason to everything else here: not
+        # because restarting it is expensive, but because restarting the APP must not touch it. It
+        # holds people's open shells, and this app is deployed several times a day — so
+        # scripts/deploy_targets.py deliberately leaves this unit out of its "restart everything" set.
+        shell)  desc="SSH terminal keeper (shells that outlive a deploy)"; after="network.target" ;;
         bots)   desc="bot manager";                               after="posterchanai-relay.service" ;;
     esac
     unit="/etc/systemd/system/posterchanai-$r.service"

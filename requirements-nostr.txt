@@ -74,3 +74,9 @@ pywebpush>=1.14.0
 # relay-backed and has no AI dependency, so a Nostr-only node can still sync a phone's calendar.
 radicale>=3.3,<4
 a2wsgi>=1.10
+
+# SSH terminal (the client's Terminal app). A real PTY on hosts the operator lists, off by default
+# and admin-gated — but a Nostr-only node is exactly the kind of small box someone wants a shell on,
+# and `ssh_service.available()` degrades to "this node has no SSH library installed" rather than
+# erroring, so leaving it out means the feature is silently missing instead of loudly absent.
+paramiko>=3.4

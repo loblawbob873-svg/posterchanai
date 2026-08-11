@@ -308,11 +308,13 @@ class RunPyDispatch(unittest.TestCase):
         self.assertNotRegex(src, r"(?m)^ROLES\s*=\s*\(",
                             "run.py must not redefine ROLES — app/role.py owns it")
         self.assertEqual(set(role.ROLES),
-                         {"all", "app", "relay", "worker", "media", "bots", "tor", "proxy", "git"})
+                         {"all", "app", "relay", "worker", "media", "bots", "tor", "proxy", "git",
+                          "shell"})
 
     def test_role_runner_covers_the_roles_run_py_delegates_to_it(self):
         from app import role_runner
-        self.assertEqual(set(role_runner._ROLE_SERVICES), {"media", "bots", "tor", "proxy", "git"})
+        self.assertEqual(set(role_runner._ROLE_SERVICES),
+                         {"media", "bots", "tor", "proxy", "git", "shell"})
         for svcs in role_runner._ROLE_SERVICES.values():
             for label, module, start_fn, stop_fn in svcs:
                 mod = __import__(module, fromlist=["*"])

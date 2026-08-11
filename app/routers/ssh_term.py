@@ -7,10 +7,16 @@ The socket speaks JSON frames both ways:
     → {"t":"open","host":"build","password":"…","cols":120,"rows":32}
     → {"t":"in","d":"ls -la\\n"}          keystrokes
     → {"t":"size","cols":120,"rows":32}
-    ← {"t":"out","d":"…"}                 terminal bytes, as text
-    ← {"t":"ready"} / {"t":"err","m":"…"} / {"t":"end"}
+    → {"t":"detach"} / {"t":"close"}      leave it running / end it
+    ← {"t":"out","d":"…","seq":N}         terminal bytes, as text, with a resumable cursor
+    ← {"t":"ready","sid":"…"} / {"t":"gone"} / {"t":"err","m":"…"} / {"t":"end"}
+
+A SESSION OUTLIVES ITS SOCKET. `{"t":"open","resume":"<sid>","cursor":N}` reattaches to a shell that
+is still running and is sent whatever it produced past N — which is what makes a dropped Tor circuit
+a two-second gap rather than a lost afternoon. Nothing here expires; `close` is what ends one.
 """
 import asyncio
+import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
@@ -18,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user, get_user_from_websocket
 from app.database import SessionLocal, get_db
-from app.services import ssh_service
+from app.services import ssh_keeper, ssh_service
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +46,15 @@ def _user_from_token(token: str, db: Session):
 
 
 def _why(e: Exception) -> str:
+    return _why_kind(type(e).__name__, str(e))
+
+
+def _why_kind(n: str, raw: str) -> str:
     """The KIND of failure, in words, without the exception's text.
 
     paramiko's messages carry the server-side private-key path, which /api/ssh/hosts deliberately
     withholds; other libraries' carry internal addresses. What a person can act on is which of these
     it was, and that is derivable from the type."""
-    n = type(e).__name__
     if "Authentication" in n:
         return "the host refused those credentials"
     if "BadHostKey" in n:
@@ -59,7 +68,7 @@ def _why(e: Exception) -> str:
     # has to come from the message -- which is READ but never echoed, so nothing leaks. The .pub
     # confusion is worth naming outright: it is the file people have to hand, and pointing at a
     # public key is the single most likely way to configure this wrong.
-    msg = str(e).lower()
+    msg = (raw or "").lower()
     # Order matters: paramiko says "Private key file is encrypted", which matches BOTH of the first
     # two tests, and the passphrase answer is the useful one.
     if "encrypted" in msg or "passphrase" in msg:
@@ -76,8 +85,11 @@ def _why(e: Exception) -> str:
 
 # A PTY is a login on someone else's machine and a thread of the shared executor while it connects.
 # Unbounded, a script (or a stuck reconnect loop) opens as many as it likes on a single-worker node.
+#
+# Counted from the SESSION registry rather than from live sockets, because a detached session is still
+# a shell running on a remote host — the thing the cap is about. Counting sockets would let a client
+# that reconnects in a loop hold eight shells while appearing to hold none.
 MAX_LIVE = 8
-_live: set = set()
 
 
 def _origin_ok(websocket: WebSocket) -> bool:
@@ -130,6 +142,132 @@ async def list_hosts(db: Session = Depends(get_db), user=Depends(get_current_use
     }
 
 
+@router.get("/sessions")
+async def list_sessions(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """The shells this account still has running, attached or not.
+
+    This is what makes the feature tmux-shaped rather than merely reconnect-shaped: a client that was
+    closed, reloaded, or replaced by a different device has no session id to resume from, and without
+    a list its shell exists but is unreachable. Scoped to the caller — a session id is an authorisation
+    to type on someone's servers."""
+    if not ssh_service.is_enabled() or not ssh_service.user_allowed(db, user):
+        raise HTTPException(status_code=403, detail="the SSH terminal is switched off")
+    uid = getattr(user, "id", None)
+    if ssh_keeper.is_up():
+        return {"ok": True, "keeper": True, "sessions": await ssh_keeper.sessions_for(uid)}
+    # No keeper: sessions live in THIS process and end with it. Said out loud, because "my shell
+    # vanished" after a deploy is otherwise indistinguishable from a bug.
+    return {"ok": True, "keeper": False, "sessions": ssh_service.sessions_for(uid)}
+
+
+@router.post("/sessions/kill")
+async def kill_session(body: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """End one outright. Sessions do not expire on their own, so this is the way they end."""
+    if not ssh_service.is_enabled() or not ssh_service.user_allowed(db, user):
+        raise HTTPException(status_code=403, detail="the SSH terminal is switched off")
+    sid = str((body or {}).get("sid") or "")
+    uid = getattr(user, "id", None)
+    if ssh_keeper.is_up():
+        return {"ok": await ssh_keeper.kill(sid, uid)}
+    return {"ok": ssh_service.kill(sid, uid)}
+
+
+async def _via_keeper(websocket: WebSocket, uid, who: str, first: dict, cols: int, rows: int) -> None:
+    """Relay this socket to the keeper process, which is where the PTY actually lives.
+
+    Almost a byte pipe on purpose: the keeper speaks the same frames the browser does, so there is no
+    second copy of the session rules here to drift from the in-process path below. What this end does
+    own is the two things the keeper deliberately does not — turning a failure KIND into a sentence,
+    and resolving a host NAME to a destination (the allowlist; a client may never name an address)."""
+    resume = str(first.get("resume") or "")
+    label = str(first.get("label") or "main")
+    h = ssh_service.hosts().get(str(first.get("host") or ""))
+
+    async def _op(req):
+        r, w = await ssh_keeper.open_conn()
+        w.write((json.dumps(req) + "\n").encode("utf-8"))
+        await w.drain()
+        line = await asyncio.wait_for(r.readline(), timeout=45)
+        return r, w, (json.loads(line.decode("utf-8")) if line else {})
+
+    r = w = None
+    try:
+        if resume:
+            r, w, msg = await _op({"op": "attach", "user_id": uid, "sid": resume,
+                                   "cursor": first.get("cursor"), "cols": cols, "rows": rows})
+            if msg.get("t") == "gone":
+                # Fall through to opening a NEW one, which is what a person wants after a keeper
+                # restart — but say so first, because a silent fresh shell in the same window reads
+                # as "my work vanished".
+                await websocket.send_json({"t": "gone",
+                                           "m": "that session is no longer running — starting a new one"})
+                try:
+                    w.close()
+                except Exception:
+                    pass
+                r = w = None
+            else:
+                await websocket.send_json(msg)
+                logger.info("[ssh] %s reattached to %s via the keeper", who, resume)
+
+        if r is None:
+            if not h:
+                await websocket.send_json({"t": "err", "m": "no such host is configured"})
+                return
+            # Per-ACCOUNT cap. The keeper's sessions outlive this process, so a global count taken
+            # here would be of the wrong thing entirely.
+            if len(await ssh_keeper.sessions_for(uid)) >= MAX_LIVE:
+                await websocket.send_json({"t": "err", "m": "you already have the maximum number of "
+                                                            "sessions open — kill one first"})
+                return
+            r, w, msg = await _op({
+                "op": "open", "user_id": uid, "cols": cols, "rows": rows, "label": label,
+                "password": str(first.get("password") or ""),
+                "host": {"name": h.name, "user": h.user, "host": h.host, "port": h.port, "key": h.key},
+            })
+            if msg.get("t") != "ready":
+                why = _why_kind(str(msg.get("kind") or ""), str(msg.get("m") or ""))
+                logger.warning("[ssh] connect to %s failed: %s", h.name, msg.get("m"))
+                await websocket.send_json({"t": "err", "m": "could not connect: " + why})
+                return
+            await websocket.send_json(msg)
+            logger.info("[ssh] %s opened a terminal on %s via the keeper", who, h.name)
+
+        async def _down():
+            while True:
+                line = await r.readline()
+                if not line:
+                    break
+                try:
+                    await websocket.send_json(json.loads(line.decode("utf-8")))
+                except Exception:
+                    break
+
+        down = asyncio.create_task(_down())
+        try:
+            while not down.done():
+                try:
+                    msg = await asyncio.wait_for(websocket.receive_json(), timeout=30)
+                except asyncio.TimeoutError:
+                    continue                      # reading, not typing — normal
+                t = (msg or {}).get("t")
+                if t not in ("in", "size", "detach", "close"):
+                    continue                      # never relay a browser-supplied `op`
+                w.write((json.dumps(msg) + "\n").encode("utf-8"))
+                await w.drain()
+                if t in ("detach", "close"):
+                    break
+        finally:
+            down.cancel()
+    finally:
+        # Hanging up IS detaching, as far as the keeper is concerned — the shell keeps running.
+        if w:
+            try:
+                w.close()
+            except Exception:
+                pass
+
+
 @ws_router.websocket("/ws/ssh")
 async def websocket_ssh(websocket: WebSocket):
     """A PTY, pumped both ways.
@@ -140,13 +278,12 @@ async def websocket_ssh(websocket: WebSocket):
     db = None
     sess = None
     pump = None
-    slot = None
     try:
         if not _origin_ok(websocket):
             logger.warning("[ssh] refused a socket from origin %r", websocket.headers.get("origin"))
             await websocket.send_json({"t": "err", "m": "that origin may not open a terminal"})
             return
-        if len(_live) >= MAX_LIVE:
+        if ssh_service.live_count() >= MAX_LIVE:
             await websocket.send_json({"t": "err", "m": "too many terminals are open on this server"})
             return
         db = SessionLocal()
@@ -183,59 +320,93 @@ async def websocket_ssh(websocket: WebSocket):
         db.close()
         db = None
 
-        # The client names a HOST, never an address — see the allowlist note in ssh_service.
-        h = ssh_service.hosts().get(str(first.get("host") or ""))
-        if not h:
-            await websocket.send_json({"t": "err", "m": "no such host is configured"})
-            return
         cols, rows = int(first.get("cols") or 80), int(first.get("rows") or 24)
-        sess = ssh_service.SshSession()
-        try:
-            await sess.connect(h, password=str(first.get("password") or ""), cols=cols, rows=rows)
-        except Exception as e:
-            # The KIND of failure matters — "auth failed" and "no route to host" send you to
-            # completely different places, and this is the one screen where a person can act on
-            # either. The exception TEXT does not: paramiko's includes the server-side key path,
-            # which /api/ssh/hosts deliberately withholds sixty lines above. Classify, then log the
-            # detail where the operator can read it and the browser cannot.
-            logger.warning("[ssh] connect to %s failed: %s", h.name, e)
-            await websocket.send_json({"t": "err", "m": "could not connect: " + _why(e)})
-            return
-        logger.info("[ssh] %s opened a terminal on %s (%s@%s)", who, h.name, h.user, h.host)
-        await websocket.send_json({"t": "ready", "host": h.name})
 
-        started = asyncio.get_event_loop().time()
-        # A one-cell list: the pump task below reads it while this loop writes it.
-        last_in = [started]
+        # THE KEEPER OWNS THE SESSION WHEN IT IS RUNNING — see app/services/ssh_keeper.py. That is
+        # what makes a shell survive `./sync.sh`, which restarts this process several times a day.
+        # Falling back in-process when it is not there is deliberate: the terminal still works on a
+        # node that never installed the unit, it just does not outlive a deploy.
+        if ssh_keeper.is_up():
+            await _via_keeper(websocket, getattr(user, "id", None), str(who), first, cols, rows)
+            return
+
+        # RESUME. A Tor circuit dropping is routine, and a shell that dies with its socket is one you
+        # cannot use over Orbot -- you lose the working directory, the running command and the
+        # scrollback every few minutes. So the PTY outlives the connection: the client keeps its
+        # session id, and coming back re-attaches to the shell that is still running.
+        resume = str(first.get("resume") or "")
+        sess = ssh_service.get_session(resume, getattr(user, "id", None)) if resume else None
+        if resume and not sess:
+            # Say which it was. "It didn't resume" covers a shell that timed out, one that belongs to
+            # another account, and a server that restarted — and they need different reactions.
+            await websocket.send_json({"t": "gone", "m": "that session is no longer running — starting a new one"})
+        if sess:
+            sess.attach()
+            await sess.resize(cols, rows)
+            logger.info("[ssh] %s reattached to %s (%s)", who, sess.sid, sess.host_name)
+            await websocket.send_json({"t": "ready", "host": sess.host_name, "sid": sess.sid,
+                                       "resumed": True})
+            # What they missed while they were away, from their own cursor.
+            cur0 = first.get("cursor")
+            have = sess.seq - len(sess.buf)
+            cur0 = sess.seq if cur0 is None else max(have, min(int(cur0), sess.seq))
+            miss = sess.since(cur0)
+            if miss:
+                await websocket.send_json({"t": "out", "d": miss.decode("utf-8", "replace"),
+                                           "seq": sess.seq})
+        else:
+            # The client names a HOST, never an address — see the allowlist note in ssh_service.
+            h = ssh_service.hosts().get(str(first.get("host") or ""))
+            if not h:
+                await websocket.send_json({"t": "err", "m": "no such host is configured"})
+                return
+            sess = ssh_service.SshSession(user_id=getattr(user, "id", None), host_name=h.name)
+            try:
+                await sess.connect(h, password=str(first.get("password") or ""), cols=cols, rows=rows)
+            except Exception as e:
+                # The KIND of failure matters -- "auth failed" and "no route to host" send you to
+                # completely different places, and this is the one screen where a person can act on
+                # either. The exception TEXT does not: paramiko's includes the server-side key path,
+                # which /api/ssh/hosts deliberately withholds. Classify, then log the detail where the
+                # operator can read it and the browser cannot.
+                logger.warning("[ssh] connect to %s failed: %s", h.name, e)
+                await websocket.send_json({"t": "err", "m": "could not connect: " + _why(e)})
+                return
+            sess.attach()
+            logger.info("[ssh] %s opened a terminal on %s (%s@%s)", who, h.name, h.user, h.host)
+            await websocket.send_json({"t": "ready", "host": h.name, "sid": sess.sid})
+
+        # FORWARD FROM THE SESSION'S BUFFER, never from the channel directly.
+        #
+        # The session drains the PTY on its own (see SshSession._drain) so a detached shell keeps
+        # running -- if nobody read it, paramiko's window would fill and the REMOTE command would
+        # block, which turns "my connection dropped" into "my build froze". This loop only moves bytes
+        # the session has already collected, from wherever this client is up to.
+        cursor = sess.seq
+        stop = False
 
         async def to_client():
-            """Poll the channel and forward. paramiko has no awaitable read, so this is a poll — 25ms
-            is under the threshold where typing feels laggy and far above a busy loop."""
-            while True:
-                if sess.closed():
+            nonlocal cursor
+            while not stop:
+                if cursor < sess.seq:
+                    data = sess.since(cursor)
+                    # Hold back a character split across the buffer boundary — see utf8_take. A TUI
+                    # is mostly multi-byte glyphs, and a replacement character written once is there
+                    # for good.
+                    take = ssh_service.utf8_take(data)
+                    if take:
+                        cursor += take
+                        await websocket.send_json({"t": "out", "d": data[:take].decode("utf-8", "replace"),
+                                                   "seq": cursor})
+                        continue
+                if sess.closed() or sess.sid not in ssh_service._sessions:
                     break
-                # BOTH BOUNDS, EVERY PASS. They used to sit on branches a real session never reaches:
-                # MAX_SESSION only where there was nothing to read — so `tail -f`, `top` or `yes` made
-                # the channel readable on essentially every poll and the 12-hour cap was never
-                # evaluated at all — and IDLE_TIMEOUT only inside receive_json's timeout, so any
-                # client frame more often than every 30s (a phone's keyboard toggling sends `size`)
-                # deferred it for ever. A bound that a busy session escapes is not a bound.
-                now = asyncio.get_event_loop().time()
-                if now - started > ssh_service.MAX_SESSION:
-                    await websocket.send_json({"t": "err", "m": "closed after 12 hours"})
-                    break
-                if now - last_in[0] > ssh_service.IDLE_TIMEOUT:
-                    await websocket.send_json({"t": "err", "m": "closed after 30 minutes with nothing typed"})
-                    break
-                if sess.read_ready():
-                    data = await sess.read()
-                    if not data:
-                        break
-                    await websocket.send_json({"t": "out", "d": data.decode("utf-8", "replace")})
-                    continue
-                await asyncio.sleep(0.025)
+                sess.wake.clear()
+                try:
+                    await asyncio.wait_for(sess.wake.wait(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    pass
 
-        slot = object(); _live.add(slot)
         pump = asyncio.create_task(to_client())
         while True:
             if pump.done():
@@ -243,16 +414,22 @@ async def websocket_ssh(websocket: WebSocket):
             try:
                 msg = await asyncio.wait_for(websocket.receive_json(), timeout=30)
             except asyncio.TimeoutError:
-                # An idle SOCKET is normal — you are reading, not typing. The session's own clocks are
-                # in the pump above, which runs whether or not anything arrives here.
+                # An idle SOCKET is normal — you are reading, not typing. The session's own clocks run
+                # in its reader, whether or not anything arrives here.
                 continue
             t = (msg or {}).get("t")
             if t == "in":
-                last_in[0] = asyncio.get_event_loop().time()
                 await sess.send(str(msg.get("d") or ""))
             elif t == "size":
                 await sess.resize(msg.get("cols"), msg.get("rows"))
+            elif t == "detach":
+                # Leave, keep the shell. tmux's Ctrl-B d.
+                break
             elif t == "close":
+                # KILL. The only thing that ends a session, since nothing expires — which is why the
+                # UI keeps this and "detach" as two visibly different buttons rather than one X whose
+                # meaning you have to guess.
+                sess.close()
                 break
     except WebSocketDisconnect:
         pass
@@ -263,12 +440,14 @@ async def websocket_ssh(websocket: WebSocket):
         except Exception:
             pass
     finally:
-        if slot is not None:
-            _live.discard(slot)
         if pump:
             pump.cancel()
-        if sess:
-            sess.close()
+        # DETACH, DO NOT CLOSE. This is the whole of resume: the socket going away is the normal case
+        # over Tor, and the shell has to still be there when the client comes back. The session reaps
+        # itself after DETACH_GRACE with nobody connected, so a walked-away-from login is not held for
+        # ever — and an explicit "close" above already ended it.
+        if sess and not sess.closed():
+            sess.detach()
         if db:
             db.close()
         try:

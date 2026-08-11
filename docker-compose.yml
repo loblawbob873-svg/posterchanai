@@ -76,8 +76,13 @@ x-common: &common
     - POSTERCHANAI_PORT=3051
     # Role of this container. `all` (default) is the single-container layout: app + relay + worker
     # + mediamtx/TURN + bots, exactly as before. Override to run one component per container —
-    # app|relay|worker|media|bots — so restarting the web app no longer drops every connected
+    # app|relay|worker|media|bots|shell — so restarting the web app no longer drops every connected
     # Nostr client, kills live streams mid-broadcast, or restarts the bots. See run.py --role.
+    #
+    # `shell` is the SSH terminal keeper, and in Docker it is the one role worth splitting out for a
+    # reason of its own: it holds people's open shells, so it exists to outlive a restart of the app
+    # container. Under `all` the terminal works exactly the same but every session ends when the
+    # container restarts. See docs/TERMINAL.md.
     - POSTERCHANAI_ROLE=${POSTERCHANAI_ROLE:-all}
     # The web-of-trust relay is ON by default (it's the datastore + the web client's relay) and the
     # container binds it to 0.0.0.0 so the published 3052 above is actually reachable — a browser on a

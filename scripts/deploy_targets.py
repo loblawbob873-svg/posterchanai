@@ -34,6 +34,13 @@ BOTS = APP
 TOR = "posterchanai-tor.service"
 PROXY = "posterchanai-proxy.service"
 GIT = "posterchanai-git.service"
+# The SSH terminal keeper. THE ONLY UNIT DELIBERATELY LEFT OUT OF `ALL`, and the reason inverts this
+# file's usual rule: restarting it DESTROYS USER STATE — every open shell, mid-command. Its whole
+# purpose is to outlive a deploy of the app, so a conservative "restart everything" would quietly
+# undo the feature several times a day. It is a leaf (paramiko + ssh_service + settings_store at
+# runtime), so under-restarting it means it keeps running slightly older SSH code until someone
+# restarts it on purpose — visible, harmless, and recoverable, which is not true the other way round.
+SHELL = "posterchanai-shell.service"
 ALL = (APP, RELAY, WORKER, MEDIA, TOR, PROXY, GIT)
 
 # (prefix, units) — longest prefix wins. Only paths whose owners are KNOWN belong here.
@@ -45,6 +52,11 @@ ALL = (APP, RELAY, WORKER, MEDIA, TOR, PROXY, GIT)
 # worker is included anyway as a hedge against a lazy in-function import, because restarting it is
 # cheap: its cursors are durable.
 _OWNED = (
+    # The keeper's own code, and the session code it runs. These DO restart it — the alternative is
+    # a fix to the terminal that is running nowhere.
+    ("app/services/ssh_keeper.py", (SHELL,)),
+    ("app/services/ssh_service.py", (APP, SHELL)),
+    ("app/routers/ssh_term.py", (APP,)),
     ("app/routers/", (APP, WORKER)),
     # The shared command layer (web UI websocket + Telegram), both of which live in the app.
     # MEASURED the same way app/routers/ was, by importing each role's own modules and checking

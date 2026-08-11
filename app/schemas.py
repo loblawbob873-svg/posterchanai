@@ -411,6 +411,17 @@ class SettingsResponse(BaseModel):
     ssh_terminal_enabled: str = "false"
     ssh_terminal_users: str = ""   # npubs allowed, comma/newline-separated (admins always allowed)
     ssh_hosts: str = ""            # one per line:  name  user@host[:port]  [key=/path/to/private_key]
+    # A SESSION LIVES UNTIL YOU KILL IT — tmux semantics, deliberately. These three bounds are the
+    # operator's to re-impose and are OFF (0/blank) by default; a timer's only effect on someone who
+    # wants their session back is to take it away, and what actually bounds this is the per-account
+    # cap on how many shells one node will run at once.
+    ssh_terminal_idle_min: str = ""     # minutes with nothing typed WHILE ATTACHED (0/blank = never)
+    ssh_terminal_max_hours: str = ""    # a hard ceiling on a session's age (0/blank = none)
+    ssh_terminal_detach_min: str = ""   # how long a detached session is held (0/blank = forever)
+    # Run the shell inside tmux/screen ON THE REMOTE HOST when one is installed. That is the only
+    # thing that survives a reboot of THIS node; it degrades to a plain login shell when neither is
+    # there, which is what the keeper process is for.
+    ssh_terminal_multiplex: str = "true"
     # Node management (Nostr-only transport: remote nodes are npub workers; `local` runs on this host)
     node_exec_enabled: str = "false"
     node_exec_users: str = ""  # comma/newline-separated npubs allowed (first user/admin always allowed)

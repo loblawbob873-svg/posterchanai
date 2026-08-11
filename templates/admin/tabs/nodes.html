@@ -38,6 +38,22 @@
             <textarea id="ssh_terminal_users" name="ssh_terminal_users" rows="2" placeholder="npub1…&#10;npub1…"></textarea>
             <small>Who may open a terminal, one per line or comma-separated. Admins are always allowed. Leave empty to keep it admin-only.</small>
         </div>
+        <div class="form-group">
+            <label for="ssh_terminal_multiplex">
+                <input type="checkbox" id="ssh_terminal_multiplex" name="ssh_terminal_multiplex" checked> Use tmux/screen on the remote host when available
+            </label>
+            <small>Runs your shell inside <code>tmux new-session -A</code> (or <code>screen -xRR</code>) on the far end, so the session survives a reboot of <em>this</em> server too. Nothing is installed for you — if neither is present you simply get a normal login shell, and the keeper below still covers deploys. </small>
+        </div>
+        <div class="form-group">
+            <small><strong>Sessions last until you kill them.</strong> A dropped connection reattaches; closing the app leaves the shell running; a session opened on one device can be picked up on another. These three limits are off unless you set them — leave them blank unless you have a reason.</small>
+            <label for="ssh_terminal_detach_min">Hold a detached session for (minutes)</label>
+            <input type="text" id="ssh_terminal_detach_min" name="ssh_terminal_detach_min" placeholder="blank = forever">
+            <label for="ssh_terminal_idle_min">Close after nothing typed for (minutes)</label>
+            <input type="text" id="ssh_terminal_idle_min" name="ssh_terminal_idle_min" placeholder="blank = never">
+            <label for="ssh_terminal_max_hours">Hard limit on a session's age (hours)</label>
+            <input type="text" id="ssh_terminal_max_hours" name="ssh_terminal_max_hours" placeholder="blank = none">
+            <small>To let shells outlive a deploy of this app, install the keeper unit: <code>scripts/install_services.sh</code> (it adds <code>posterchanai-shell.service</code>). Without it the terminal works exactly the same, but every session ends when the app restarts.</small>
+        </div>
     </fieldset>
 
     <fieldset>

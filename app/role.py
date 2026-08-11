@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 # The single definition — run.py imports this for its --role choices, so the CLI, the unit files and
 # this predicate can never disagree about what a valid role is.
-ROLES = ("all", "app", "relay", "worker", "media", "bots", "tor", "proxy", "git")
+ROLES = ("all", "app", "relay", "worker", "media", "bots", "tor", "proxy", "git", "shell")
 
 # component -> the roles that supervise it. 'all' is implicit for every component (see owns()).
 _OWNERS = {
@@ -38,6 +38,12 @@ _OWNERS = {
     "tor":    ("tor",),
     "proxy":  ("proxy",),
     "git":    ("git",),
+    # The SSH terminal keeper. Split out for the opposite reason to everything else here: not because
+    # a restart of IT is expensive, but because a restart of the APP must not touch it. A shell that
+    # dies on every `./sync.sh` is a shell you cannot leave anything running in, and this app is
+    # deployed several times a day. Under `all` it runs in-process, which works and simply does not
+    # outlive a deploy.
+    "shell":  ("shell",),
 }
 
 

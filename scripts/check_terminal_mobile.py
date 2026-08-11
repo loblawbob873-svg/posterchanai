@@ -66,6 +66,14 @@ PAGE = """<!doctype html><meta charset="utf-8">
                 '<div class="xterm-screen"></div></div>';
   const sel = document.getElementById('tty-host');
   sel.innerHTML = '<option>server1 — verita84@server1.lan</option>';
+  /* "Still running" — the strip that makes a session started on the laptop resumable here. Filled
+   * with what _sessions() actually renders, because an EMPTY strip measures fine and is not the
+   * thing that can push the screen off the bottom of a 320px phone. */
+  const ss = document.getElementById('tty-sessions');
+  ss.innerHTML = '<span class="tty-sess-lbl">still running</span>' +
+    ['server1','nas','a-rather-long-host-name'].map(h =>
+      '<span class="tty-sess"><b>' + h + '</b><i>2h</i>' +
+      '<button>Attach</button><button class="tty-kill">Kill</button></span>').join('');
   document.getElementById('tty-state').textContent = 'connected to server1';
   const out = {};
   const bar = document.querySelector('.tty-bar'), keys = document.querySelector('.tty-keys');
@@ -103,6 +111,13 @@ PAGE = """<!doctype html><meta charset="utf-8">
                 wrap: Math.round(wr.getBoundingClientRect().top),
                 wrapH: Math.round(wr.getBoundingClientRect().height) };
   out.screenH = Math.round(document.querySelector('.tty-screen').getBoundingClientRect().height);
+  // The strip SCROLLS sideways; it must never wrap into a second row (that eats terminal rows) and
+  // never widen the page (which would let the whole app scroll horizontally on a phone).
+  const sr = ss.getBoundingClientRect();
+  out.sessH = Math.round(sr.height);
+  out.sessClip = [...ss.querySelectorAll('.tty-sess')].reduce((n, el) => {
+    const r = el.getBoundingClientRect();
+    return n + ((r.top < sr.top - 0.5 || r.bottom > sr.bottom + 0.5) ? 1 : 0); }, 0);
   out.hOverflow = document.documentElement.scrollWidth > window.innerWidth + 1;
   document.title = JSON.stringify(out);
 </script>"""
@@ -136,7 +151,14 @@ def main():
             q = json.loads(m.group(1).replace("&quot;", '"'))
             tag = f"{w}px"
             print(f"{tag}: barClip={q['barClip']} keyRows={q['keyRows']} keyMin={q['keyMin']} "
-                  f"screenH={q['screenH']} hOverflow={q['hOverflow']}")
+                  f"screenH={q['screenH']} sess={q['sessH']}/{q['sessClip']} "
+                  f"hOverflow={q['hOverflow']}")
+            if q["sessClip"]:
+                problems.append((w, "sessions-wrap", "the 'still running' strip wrapped to a second "
+                                                     "row — it must scroll sideways instead"))
+            if q["sessH"] > 56:
+                problems.append((w, "sessions-tall", f"the session strip is {q['sessH']}px and is "
+                                                     "eating rows from the terminal"))
             if q["barClip"]:
                 problems.append((tag, "bar-clipped",
                                  f"{q['barClip']} toolbar control(s) sit outside the bar — a wrapping "

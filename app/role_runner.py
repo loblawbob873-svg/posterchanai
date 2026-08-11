@@ -41,6 +41,9 @@ _ROLE_SERVICES = {
     "git": [
         ("git host", "app.services.git_http_service", "start_git_http", "stop_git_http"),
     ],
+    "shell": [
+        ("ssh keeper", "app.services.ssh_keeper", "start_ssh_keeper", "stop_ssh_keeper"),
+    ],
 }
 
 
