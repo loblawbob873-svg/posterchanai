@@ -2204,7 +2204,8 @@
     // No bottom guest bar any more: the guest CARD above the timeline (logo, name, Sign up / Log in
     // / Source) says the same thing with more information, in the place people are already looking.
     // Two standing calls-to-action for the same action was just clutter.
-    $('#btn-logout').onclick = logout;
+    // Wired in renderMe(), which is the one place that knows whether there is anybody signed in.
+    _paintAuthButton();
     { const b=$('#btn-install'); if(b){
         if(_deferredInstall) b.classList.remove('hidden');   // prompt already captured before mount
         b.onclick=async()=>{ if(!_deferredInstall) return; _deferredInstall.prompt();
@@ -2992,8 +2993,29 @@
     else uc.classList.add('hidden');
   }
   let _lastStreams=0, _lastCalls=0;
+  /* The button under the profile card is "Logout" OR "Log in", and it used to be Logout always.
+   *
+   * Signing out RELOADS into a guest session — the client is never keyless, it just has no identity
+   * of its own — so after logging out the sidebar showed "Guest" above a button offering to log you
+   * out again. Pressing it did the only thing it could: clear an empty session and reload, which
+   * looks exactly like a button that does nothing. It is one button because there is one slot; what
+   * it must not be is one LABEL. */
+  function _paintAuthButton(){
+    const b = $('#btn-logout');
+    if(!b) return;
+    if(GUEST){
+      b.textContent = 'Log in';
+      b.title = 'Sign in with a Nostr key, an extension or a remote signer';
+      b.onclick = () => _leaveGuest();
+    }else{
+      b.textContent = 'Logout';
+      b.title = 'Sign out of this device';
+      b.onclick = logout;
+    }
+  }
   function renderMe(){
-    if(GUEST){ const mc=$('#me-card'); if(mc){ mc.innerHTML=`<img src="${LOGO}"><div><div class="mn">Guest</div></div>`; mc.onclick=_guestPrompt; } return; }
+    if(GUEST){ const mc=$('#me-card'); if(mc){ mc.innerHTML=`<img src="${LOGO}"><div><div class="mn">Guest</div><div class="muted small">Not signed in</div></div>`; mc.onclick=_guestPrompt; } _paintAuthButton(); return; }
+    _paintAuthButton();
     const p = Store.profile(ME.pubkey) || {};
     const av = p.picture || LOGO;
     // One line only: show the username if set — that's all that's needed. No username → fall back to
@@ -12115,7 +12137,9 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['__music','music','Music'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__accounts','user','Switch account'],['settings','gear','Settings'],['logout','logout','Logout']]
+    const items=[['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['__music','music','Music'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__accounts','user','Switch account'],['settings','gear','Settings'],
+      // Same button, same rule as the sidebar's: a guest is offered a way IN, not a second way out.
+      (GUEST ? ['__login','user','Log in'] : ['logout','logout','Logout'])]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
                    && !(window.PC_NOSTR_ONLY && v==='websearch')   // the search runs on the instance, so it needs one
                    && !(window.PC_NOSTR_ONLY && v==='mail')        // …and so does IMAP/SMTP
@@ -12141,7 +12165,12 @@
          * name nobody would guess held their songs. Opens the LIBRARY (renderMusicApp), not
          * openMusic's immediate shuffle — the nav button's job is to take you there, and
          * deciding what plays is the user's. */
-        if(v==='__music'){ closeModal(); renderMusicApp(); return; } if(v==='__files'){ closeModal(); filesMenu(); return; } if(v==='__golive'){ closeModal(); _goLive(); return; } if(v==='__accounts'){ closeModal(); accountMenu(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
+        if(v==='__music'){ closeModal(); renderMusicApp(); return; } if(v==='__files'){ closeModal(); filesMenu(); return; } if(v==='__golive'){ closeModal(); _goLive(); return; } if(v==='__accounts'){ closeModal(); accountMenu(); return; } closeModal();
+        if(v==='__login') _leaveGuest();
+        else if(v==='logout') logout();
+        // A guest has no profile to open — asking for one is asking to sign in.
+        else if(v==='profile'){ if(GUEST) _guestPrompt(); else renderProfileView(ME.pubkey); }
+        else switchView(v); });
     });
   }
   /* Mobile Files sub-sheet — DERIVED from the desktop sidebar's Files group, not a second list of it.

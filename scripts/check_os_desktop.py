@@ -78,6 +78,10 @@ Assertions, each a way a window manager breaks:
   no-noti-bell         The taskbar has no notification bell (or it does not open the centre, or the
                        unread count is still riding on the clock, where a number reads as part of
                        the time and nothing says it can be pressed).
+  icon-not-placed      An icon dragged to empty desktop space does not land there, does not
+                       persist, moves OTHER icons with it, or cannot be put back into a grid.
+  no-wallpaper         Right-clicking the desktop does not offer a background from the drive's
+                       `Backgrounds` folder, or choosing one does not paint / does not save.
   layout-wipe          A read that never completed is taken as "this account has no layout", so the
                        next drag publishes the DEFAULTS over the real document — on every device,
                        since it is addressable. Relay.query() resolves [] (complete:false) rather
@@ -187,6 +191,18 @@ Object.assign(window.__PC, {
     return Promise.resolve({ ok: window.__pubOk, ev });
   },
 });
+/* The encrypted drive, as the wallpaper picker sees it: a `Backgrounds` folder with two images,
+ * and encFileUrl standing in for fetch+decrypt (the real one returns a one-session object URL). */
+window.__bgFetched = [];
+window.__bgFiles = {};
+window.__bgFiles['a'.repeat(64)] = { folder:'Backgrounds', name:'Neon city', mime:'image/jpeg' };
+window.__bgFiles['b'.repeat(64)] = { folder:'Backgrounds', name:'Aurora',    mime:'image/png'  };
+window.__bgFiles['c'.repeat(64)] = { folder:'Music',       name:'a song',    mime:'audio/mpeg' };
+window.__bgFiles['d'.repeat(64)] = { folder:'Backgrounds', name:'notes.txt', mime:'text/plain' };
+window.__PC.filesIdx = () => ({ _norm: () => ({ folders:['Music','Backgrounds'], files: window.__bgFiles }) });
+window.__PC.encFileUrl = (sha) => { window.__bgFetched.push(sha);
+  // a 1x1 gif, so the <img> really loads
+  return Promise.resolve('data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'); };
 window.Store = { query: () => [] };     // cold cache: the read has to come off the relay
 window.Relay = {
   /* The POOL, as the taskbar sees it. These three are reached as GLOBALS by os.js
@@ -721,7 +737,66 @@ LAYOUT = r"""(async () => {
   }
   window.__pubOk = true;
 
-  /* 7. THE WIPE. Relay.query() has NO reject path: when nothing EOSEs it RESOLVES with [] marked
+  /* 7. MOVING AN ICON ANYWHERE, and the wallpaper. */
+  {
+    const before = {};
+    for (const b of document.querySelectorAll('.os-icons .os-icon')) {
+      const r = b.getBoundingClientRect(); before[b.dataset.view] = [Math.round(r.left), Math.round(r.top)];
+    }
+    const deskR = document.querySelector('#os-desk').getBoundingClientRect();
+    const target = icon(views()[2]);
+    const tx = deskR.right - 220, ty = deskR.bottom - 200;
+    const tv = target.dataset.view;
+    await drag(target, tx, ty);
+    await sleep(320);
+    // Re-find it: the drop redraws the desktop, so the node the drag started on is detached and
+    // measures as 0x0 at 0,0 — which reads as "the icon did not move" whatever actually happened.
+    const moved = (icon(tv) || target).getBoundingClientRect();
+    out.freeDx = Math.round(moved.left + moved.width/2 - tx);
+    out.freeDy = Math.round(moved.top + moved.height/2 - ty);
+    out.freeClass = !!document.querySelector('.os-icons.os-free');
+    // …and NOTHING ELSE moved. The first free placement seeds every other icon with where it
+    // already is; without that, moving one icon rearranges the whole desktop.
+    let shifted = 0;
+    for (const b of document.querySelectorAll('.os-icons .os-icon')) {
+      if (b.dataset.view === tv) continue;
+      const r = b.getBoundingClientRect(), was = before[b.dataset.view];
+      if (was && (Math.abs(r.left - was[0]) > 2 || Math.abs(r.top - was[1]) > 2)) shifted++;
+    }
+    out.othersShifted = shifted;
+    out.freeSaved = /"pos"/.test((window.__relayDoc || {}).content || '');
+
+    // Right-click the wallpaper → the picker, listing only IMAGES from `Backgrounds`.
+    document.querySelector('#os-desk').dispatchEvent(new MouseEvent('contextmenu',
+        { bubbles:true, cancelable:true, clientX: deskR.left + 40, clientY: deskR.bottom - 60 }));
+    await sleep(80);
+    const bgRow = [...document.querySelectorAll('.os-ctx-b')].find(b => /background/i.test(b.textContent));
+    out.hasBgRow = !!bgRow;
+    out.hasLineUpRow = [...document.querySelectorAll('.os-ctx-b')].some(b => /line the icons up/i.test(b.textContent));
+    if (bgRow) bgRow.click();
+    await sleep(200);
+    const pick = document.querySelector('.os-bgpick');
+    out.pickerOpen = !!pick;
+    if (pick) {
+      const tiles = [...pick.querySelectorAll('.os-bg-item')];
+      out.bgTiles = tiles.map(t => (t.getAttribute('title') || 'Default'));
+      const neon = tiles.find(t => /Neon/.test(t.getAttribute('title') || ''));
+      if (neon) { neon.click(); await sleep(300); }
+      out.bgApplied = /url\(/.test(document.querySelector('#os-desk').style.backgroundImage || '');
+      out.bgHasClass = document.querySelector('#os-desk').classList.contains('has-bg');
+      out.bgSaved = /"bg":"a{8}/.test((window.__relayDoc || {}).content || '');
+    }
+    // Line them up again → back to the grid.
+    document.querySelector('#os-desk').dispatchEvent(new MouseEvent('contextmenu',
+        { bubbles:true, cancelable:true, clientX: deskR.left + 40, clientY: deskR.bottom - 60 }));
+    await sleep(80);
+    const lu = [...document.querySelectorAll('.os-ctx-b')].find(b => /line the icons up/i.test(b.textContent));
+    if (lu) lu.click();
+    await sleep(300);
+    out.gridBack = !document.querySelector('.os-icons.os-free');
+  }
+
+  /* 8. THE WIPE. Relay.query() has NO reject path: when nothing EOSEs it RESOLVES with [] marked
    *    `complete:false`. So a zombie socket answers exactly like an account that has never arranged
    *    anything — and if that arms the writer, the first icon dragged publishes the DEFAULTS over a
    *    real layout, on every device, because the event is addressable. This is the failure vault.js
@@ -1118,6 +1193,47 @@ async def drive(url):
                     if q.get("clockHasBadge"):
                         problems.append((label, "no-noti-bell",
                                          "the unread count is still on the clock; it belongs on the bell"))
+                    # `x or 99` would read a PERFECT landing (0px off) as a miss — the falsy zero.
+                    _dx = q.get("freeDx"); _dy = q.get("freeDy")
+                    if _dx is None or _dy is None or abs(_dx) > 12 or abs(_dy) > 12 \
+                            or not q.get("freeClass"):
+                        problems.append((label, "icon-not-placed",
+                                         "an icon dragged to empty desktop did not land where it was "
+                                         f"dropped — off by ({q.get('freeDx')}, {q.get('freeDy')})px, "
+                                         f"free-layout={q.get('freeClass')}"))
+                    if q.get("othersShifted"):
+                        problems.append((label, "icon-not-placed",
+                                         f"{q['othersShifted']} other icon(s) moved when one was placed — "
+                                         "the first free move must SEED the rest with where they already "
+                                         "are, or moving one icon rearranges the whole desktop"))
+                    if not q.get("freeSaved"):
+                        problems.append((label, "icon-not-placed",
+                                         "the position was never written to the layout document, so it "
+                                         "is gone on the next reload and absent on every other device"))
+                    if not q.get("hasBgRow") or not q.get("pickerOpen"):
+                        problems.append((label, "no-wallpaper",
+                                         "right-clicking the desktop does not offer a background picker "
+                                         f"— menu-row={q.get('hasBgRow')} opened={q.get('pickerOpen')}"))
+                    else:
+                        tiles = q.get("bgTiles") or []
+                        if "Neon city" not in tiles or "Aurora" not in tiles:
+                            problems.append((label, "no-wallpaper",
+                                             f"the picker lists {tiles} — it must offer the images in the "
+                                             "drive's Backgrounds folder"))
+                        if "notes.txt" in tiles or "a song" in tiles:
+                            problems.append((label, "no-wallpaper",
+                                             f"the picker lists non-images / other folders: {tiles}"))
+                        if not q.get("bgApplied") or not q.get("bgHasClass"):
+                            problems.append((label, "no-wallpaper",
+                                             "choosing a picture did not paint the desktop — "
+                                             f"applied={q.get('bgApplied')} class={q.get('bgHasClass')}"))
+                        if not q.get("bgSaved"):
+                            problems.append((label, "no-wallpaper",
+                                             "the wallpaper was not saved, so it is gone on reload"))
+                    if not q.get("hasLineUpRow") or not q.get("gridBack"):
+                        problems.append((label, "icon-not-placed",
+                                         "'Line the icons up' is missing or does not restore the grid — "
+                                         f"row={q.get('hasLineUpRow')} back={q.get('gridBack')}"))
                     if q.get("wipePublished"):
                         problems.append((label, "layout-wipe",
                                          "a rearrangement was PUBLISHED after a read that never "

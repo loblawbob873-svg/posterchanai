@@ -118,7 +118,12 @@
    */
   const LAY_KIND = 30078;
   const D_LAY = 'pcai:desktop';
-  const BLANK = () => ({ v: 1, folders: [], order: [], hidden: [] });
+  /* `pos` — where icons are, once the user has MOVED one. Until then it is empty and the desktop
+   *         lays itself out in a grid, which is the right default for "I have never touched this".
+   * `bg`  — the wallpaper: the sha of a picture in the drive's `Backgrounds` folder. The sha, not a
+   *         URL: the bytes are encrypted and only this client can decrypt them, so the URL is an
+   *         object URL that exists for one session on one device. */
+  const BLANK = () => ({ v: 1, folders: [], order: [], hidden: [], pos: {}, bg: '' });
 
   let _doc = null;        // the layout as last read/written; null = nothing read yet (draw defaults)
   let _docPk = '';        // …whose. An account switch must not paint the previous account's desktop.
@@ -168,6 +173,20 @@
       const s = str(v, 120);
       if(s && s.indexOf('folder:') !== 0 && !inFolder.has(s) && out.hidden.indexOf(s) < 0) out.hidden.push(s);
     }
+    /* Free positions. Bounded and integer — they are written into style.left/top, and this document
+     * is the one thing here a future client version could put anything in. A position for a view
+     * that is inside a FOLDER is dropped: it has no place on the desktop to be at. */
+    const posIn = (o && typeof o.pos === 'object' && o.pos) || {};
+    for(const k in posIn){
+      const key = str(k, 120);
+      if(!key || inFolder.has(key)) continue;
+      const v = posIn[k];
+      if(!Array.isArray(v) || v.length < 2) continue;
+      const x = Math.round(Number(v[0])), y = Math.round(Number(v[1]));
+      if(!isFinite(x) || !isFinite(y)) continue;
+      out.pos[key] = [Math.max(0, Math.min(20000, x)), Math.max(0, Math.min(20000, y))];
+    }
+    out.bg = /^[0-9a-f]{64}$/i.test(String((o && o.bg) || '')) ? String(o.bg).toLowerCase() : '';
     const seenOrd = new Set();
     for(const v of (Array.isArray(o && o.order) ? o.order : [])){
       const s = str(v, 120);
@@ -228,7 +247,11 @@
       if(f){ const k = 'folder:' + f.key; if(!used.has(k)){ used.add(k); items.push(item(f)); } continue; }
       used.add(a.view); items.push(a);
     }
-    return { items, folders, hidden: [...hidden].map(v => byView.get(v)) };
+    // `pos` only ever describes things that are ON the desktop — a stale entry for a hidden or
+    // retired view would otherwise keep a place in the arithmetic that decides where windows open.
+    const pos = {};
+    for(const it of items) if(d.pos[it.view]) pos[it.view] = d.pos[it.view];
+    return { items, folders, hidden: [...hidden].map(v => byView.get(v)), pos, bg: d.bg };
   }
 
   let _lay = null;
@@ -531,8 +554,41 @@
     });
   }
 
+  /* PUT AN ICON WHERE IT WAS DROPPED.
+   *
+   * The first free move SEEDS every other icon with the position it already has on screen. Without
+   * that, moving one icon would switch the desktop from grid to free layout and everything else
+   * would jump to wherever the free layout happened to put it — the user moved one icon and the
+   * whole desktop rearranged itself. Seeding from the measured grid means nothing else moves at all.
+   */
+  function placeIcon(view, x, y, seed){
+    return _apply((doc, lay) => {
+      if(!view) return false;
+      doc.pos = Object.assign({}, doc.pos);
+      if(!Object.keys(doc.pos).length && seed) for(const k in seed) doc.pos[k] = seed[k];
+      _pluck(doc, view);                                   // out of any folder it was dragged from
+      if(doc.order.indexOf(view) < 0 && lay.items.every(a => a.view !== view)) doc.order = _orderNow(lay).concat([view]);
+      // Snapped to 8px. Free placement people actually want is "roughly here, tidily" — pixel-exact
+      // means two icons never quite line up with each other.
+      doc.pos[view] = [Math.max(0, Math.round(x / 8) * 8), Math.max(0, Math.round(y / 8) * 8)];
+    });
+  }
+  // …and back to a grid. The opposite of the above, and the way out of a desktop somebody has made a
+  // mess of without losing their folders or their hidden icons.
+  function lineUp(){
+    return _apply((doc) => {
+      if(!Object.keys(doc.pos || {}).length) return false;
+      doc.pos = {};
+    });
+  }
+
+  // The wallpaper: a picture from the drive's `Backgrounds` folder, or '' for the default emblem.
+  function setWallpaper(sha){
+    return _apply((doc) => { doc.bg = /^[0-9a-f]{64}$/i.test(String(sha || '')) ? String(sha).toLowerCase() : ''; });
+  }
+
   function resetLayout(){
-    return _apply((doc) => { doc.folders = []; doc.order = []; doc.hidden = []; });
+    return _apply((doc) => { doc.folders = []; doc.order = []; doc.hidden = []; doc.pos = {}; });
   }
 
   // Who is signed in. NOT window.ME — the client keeps ME inside its IIFE, so window.ME is undefined
@@ -1281,15 +1337,43 @@
 
   function drawDesktop(){
     desk.querySelectorAll('.os-icons').forEach(n => n.remove());
-    const items = launcherItems();
+    const lay = layout();
+    const items = lay.items;
     const grid = document.createElement('div');
     grid.className = 'os-icons';
     grid.innerHTML = items.map(iconHtml).join('');
-    const cols = iconCols(items.length);
-    grid.style.gridTemplateColumns = `repeat(${cols}, ${ICON_W}px)`;
-    // Windows open clear of whatever the launcher actually takes, not a hardcoded guess.
-    iconSpan = ICON_PAD * 2 + cols * ICON_W + (cols - 1) * ICON_GAP;
+    const free = Object.keys(lay.pos || {}).length > 0;
+    if(free){
+      /* FREE PLACEMENT. Once an icon has been moved, the desktop is a canvas rather than a grid —
+       * every icon carries its own left/top and the flow layout is out of the way. Positions are in
+       * LAYOUT pixels (the same space style.left lives in for windows), and are CLAMPED into the
+       * area on every draw: a desktop arranged on a 2560px monitor must not put half its icons off
+       * the edge of a laptop that opens the same account. */
+      grid.classList.add('os-free');
+      const k = zf();
+      const dr = desk.getBoundingClientRect();
+      const maxX = Math.max(0, (dr.width / k) - ICON_W - 4), maxY = Math.max(0, (dr.height / k) - ICON_H - 4);
+      let auto = 0, span = 0;
+      $$('.os-icon', grid).forEach(b => {
+        const p = lay.pos[b.dataset.view];
+        // No saved position (a feature that shipped after the desktop was arranged): drop it into
+        // the next free column slot rather than at 0,0 on top of something else.
+        const x = p ? Math.min(p[0], maxX) : ICON_PAD;
+        const y = p ? Math.min(p[1], maxY) : Math.min(ICON_PAD + (auto++) * (ICON_H + ICON_GAP), maxY);
+        b.style.left = x + 'px'; b.style.top = y + 'px';
+        span = Math.max(span, x + ICON_W);
+      });
+      // Windows open clear of the icons — of where they ACTUALLY are now, bounded so a stray icon
+      // dropped in the middle of the screen doesn't push every window into the corner.
+      iconSpan = Math.min(span + ICON_PAD, Math.round((dr.width / k) / 3));
+    }else{
+      const cols = iconCols(items.length);
+      grid.style.gridTemplateColumns = `repeat(${cols}, ${ICON_W}px)`;
+      // Windows open clear of whatever the launcher actually takes, not a hardcoded guess.
+      iconSpan = ICON_PAD * 2 + cols * ICON_W + (cols - 1) * ICON_GAP;
+    }
     desk.appendChild(grid);
+    applyWallpaper(lay.bg);
     wireIcons(grid, null);
     /* The desktop's own menu is bound to the DESK, not to the icon grid: the grid is only as big as
      * the icons in it, and "right-click the empty wallpaper" is where anyone would look for it.
@@ -1316,6 +1400,65 @@
       if(!f || !f.members.length){ closeWin(w); continue; }
       paintFolder(w, f);
     }
+  }
+
+  /* Where every desktop icon is at this moment, in layout pixels — the seed for the first free move.
+   * Measured from the DOM rather than recomputed from the grid arithmetic, because the grid is CSS
+   * and the arithmetic is a guess at what CSS did. */
+  function gridPositions(){
+    const out = {}, k = zf();
+    const g = desk && desk.querySelector('.os-icons');
+    if(!g) return out;
+    const gr = desk.getBoundingClientRect();
+    for(const b of $$('.os-icon', g)){
+      const r = b.getBoundingClientRect();
+      out[b.dataset.view] = [Math.max(0, Math.round((r.left - gr.left) / k)),
+                             Math.max(0, Math.round((r.top - gr.top) / k))];
+    }
+    return out;
+  }
+
+  // ---- the wallpaper ----------------------------------------------------------------------------
+
+  /* A picture from the drive's `Backgrounds` folder, decrypted here.
+   *
+   * The document stores the SHA, never a URL: drive files are encrypted with the user's master key,
+   * so what an <img> can use is an object URL that exists for one session on one device. Anything
+   * else — a /blossom/<sha> link, a data: URI in the doc — either shows ciphertext or puts the
+   * picture in the document in the clear. Failure is silent BY DESIGN here: a wallpaper that cannot
+   * be fetched leaves the default emblem, which is a desktop, rather than an error where a picture
+   * should be. */
+  let _bgSha = '', _bgUrl = '';
+  function isBackground(m){
+    return !!(m && m.folder === 'Backgrounds' && /^image\//i.test(String(m.mime || '')));
+  }
+  function backgrounds(){
+    const out = [];
+    try{
+      const idx = PC().filesIdx && PC().filesIdx();
+      const files = (idx && idx._norm && idx._norm().files) || {};
+      for(const sha in files) if(isBackground(files[sha]))
+        out.push({ sha, name: String(files[sha].name || sha.slice(0, 8)), mime: files[sha].mime });
+    }catch(_){}
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  }
+  async function applyWallpaper(sha){
+    if(!desk) return;
+    const want = /^[0-9a-f]{64}$/i.test(String(sha || '')) ? String(sha).toLowerCase() : '';
+    if(want === _bgSha && (!want || _bgUrl)){ _paintWallpaper(); return; }
+    _bgSha = want;
+    if(!want){ _bgUrl = ''; _paintWallpaper(); return; }
+    try{
+      const u = await PC().encFileUrl(want);
+      if(_bgSha !== want) return;              // changed again while this was decrypting
+      _bgUrl = u || '';
+    }catch(_){ _bgUrl = ''; }
+    _paintWallpaper();
+  }
+  function _paintWallpaper(){
+    if(!desk) return;
+    desk.classList.toggle('has-bg', !!_bgUrl);
+    desk.style.backgroundImage = _bgUrl ? `url("${_bgUrl}")` : '';
   }
 
   // ---- dragging icons ---------------------------------------------------------------------------
@@ -1488,7 +1631,12 @@
       // user was no longer pointing.
       hit = hitTest(targets, cx, cy, key);
       if(!hit) return;
-      drop(key, srcFolder, hit);
+      // Where the GHOST is, in layout px relative to the desk — not where the pointer is. Dropping
+      // should leave the icon where it looked like it was going to land.
+      const k2 = zf(), dr2 = desk.getBoundingClientRect();
+      const at = hit.dest ? null
+        : { x: (cx - dr2.left) / k2 - ICON_W / 2, y: (cy - dr2.top) / k2 - ICON_H / 2 };
+      drop(key, srcFolder, hit, at);
     }
     /* A RELEASE commits the drop; a CANCELLED gesture must not. They were the same handler, and the
      * difference is a rearrangement the user never asked for and that is then written to the relay:
@@ -1504,7 +1652,7 @@
     window.addEventListener('blur', abort);            // alt-tabbed away mid-drag
   }
 
-  function drop(key, srcFolder, hit){
+  function drop(key, srcFolder, hit, at){
     if(hit.mode === 'into'){
       mergeInto(key, hit.key).then(made => {
         if(!made) return;
@@ -1520,7 +1668,24 @@
       return;
     }
     const after = hit.mode === 'after';
-    if(hit.dest) toFolder(hit.dest, key, hit.key, after);
+    if(hit.dest){ toFolder(hit.dest, key, hit.key, after); return; }
+    /* Dropped on the DESKTOP. Which of the two things that means depends on what the desktop IS:
+     *
+     *   a GRID — dropping beside another icon reorders (the grid decides where things sit, so a
+     *            position would be meaningless); dropping on empty space places it there, and that
+     *            is the move that turns the desktop into a canvas.
+     *   a CANVAS — every drop is a placement. Reordering here would change a list nothing draws:
+     *            the icon would stay exactly where it was while the document said it had moved,
+     *            which is the worst of both.
+     */
+    const free = Object.keys((_lay && _lay.pos) || {}).length > 0;
+    /* Turning the grid into a canvas is a decision, so it takes a deliberate move: dragging an icon
+     * that is ALREADY on the desktop. Dragging one OUT OF A FOLDER onto empty space is a different
+     * gesture with a different meaning — "put this back on the desktop" — and having it silently
+     * switch the whole desktop to free placement (and freeze every other icon where it happened to
+     * be) is a side effect nobody asked for. Once the desktop IS a canvas, every drop is a
+     * placement, including that one: there is no grid left to append to. */
+    if(at && (free || (hit.mode === 'end' && !srcFolder))) placeIcon(key, at.x, at.y, gridPositions());
     else toDesk(key, hit.key, after);
     // srcFolder is not consulted: toDesk/toFolder both pluck the view out of whatever folder held
     // it, so "out of a folder" and "between two folders" are the same write.
@@ -1580,11 +1745,63 @@
     showCtx(x, y, rows);
   }
 
+  /* THE WALLPAPER PICKER. Its own panel rather than the app's modal: this is desktop chrome, the
+   * modal belongs to the client underneath, and everything here is already drawn this way (the
+   * notification centre, the network flyout, the context menus).
+   *
+   * The pictures come from ONE place — a folder called `Backgrounds` in your encrypted drive — and
+   * that is the whole configuration: put a picture there from Files and it is offered here. Nothing
+   * is uploaded from this screen, because a wallpaper picker that can upload is a file manager, and
+   * there is one of those already. */
+  function wallpaperPicker(){
+    hideCtx();
+    if(!root) return;
+    root.querySelectorAll('.os-bgpick').forEach(n => n.remove());
+    const pics = backgrounds();
+    const m = document.createElement('div');
+    m.className = 'os-bgpick';
+    m.innerHTML =
+      `<div class="os-bg-head"><b>Desktop background</b>
+         <button class="os-bg-x" id="os-bg-x" aria-label="Close">✕</button></div>
+       ${pics.length ? `<div class="os-bg-grid">
+           <button class="os-bg-item${_bgSha ? '' : ' on'}" data-sha=""><span class="os-bg-none">Default</span></button>
+           ${pics.map(p => `<button class="os-bg-item${p.sha === _bgSha ? ' on' : ''}" data-sha="${enc(p.sha)}"
+                title="${enc(p.name)}"><img alt="" data-lazy="${enc(p.sha)}"><span>${enc(p.name)}</span></button>`).join('')}
+         </div>`
+        : `<div class="os-bg-empty">
+             <p>No pictures yet.</p>
+             <p class="muted small">Make a folder called <b>Backgrounds</b> in Files → Blossom and put
+                some images in it. They stay encrypted — the desktop decrypts them here.</p>
+             <button class="btn btn-cyan small" id="os-bg-files">Open Files</button></div>`}`;
+    root.appendChild(m);
+    { const x = $('#os-bg-x', m); if(x) x.onclick = () => m.remove(); }
+    { const f = $('#os-bg-files', m); if(f) f.onclick = () => { m.remove(); openApp('blossom'); }; }
+    // Thumbnails are decrypted one at a time, after the panel is up: a folder of 4K wallpapers is
+    // tens of megabytes, and doing it before showing anything is a picker that takes ten seconds to
+    // appear. Each failure leaves that tile blank rather than taking the panel down.
+    (async () => {
+      for(const img of $$('img[data-lazy]', m)){
+        if(!img.isConnected) return;
+        try{ img.src = await PC().encFileUrl(img.dataset.lazy); }catch(_){}
+      }
+    })();
+    $$('.os-bg-item', m).forEach(b => b.onclick = () => {
+      const sha = b.dataset.sha || '';
+      m.remove();
+      applyWallpaper(sha);            // instant, so the choice is visible before the relay answers
+      setWallpaper(sha);
+    });
+  }
+
   function deskMenu(x, y){
     const lay = layout();
     const rows = [];
     for(const a of lay.hidden.slice(0, 12)) rows.push({ label: 'Show ' + a.label, run: () => showItem(a.view) });
     if(rows.length) rows.push({ sep: true });
+    if(Object.keys(lay.pos || {}).length)
+      rows.push({ label: 'Line the icons up', run: () => lineUp() });
+    rows.push({ label: 'Change background…', run: () => wallpaperPicker() });
+    rows.push({ sep: true });
     rows.push({ label: 'Restore the default layout', run: async () => {
       const ask = PC().uiConfirm;
       if(ask && !await ask('Put every icon back where it started? Your folders and hidden icons go with it.')) return;
@@ -2350,6 +2567,9 @@
     // The layout subscription outlives the desktop otherwise — it would go on calling refreshIcons
     // against a torn-down desk, and re-entering would add a second one.
     unwatchLayout(); hideCtx();
+    // The wallpaper is an object URL for THIS session's decrypt; drop it so re-entering (or another
+    // account) re-derives it rather than painting the previous one.
+    _bgSha = ''; _bgUrl = '';
     try{ _netOff && _netOff(); }catch(_){} _netOff = null;
     document.removeEventListener('pointerdown', _trayAway, true);
     window.removeEventListener('online', onNetChange);
@@ -2421,6 +2641,8 @@
      * before this ever runs, which is fine — the result is the same. Where it does reach us (the
      * desktop app, a kiosk WebView) it does the job. */
     if(e.key === 'F11'){ e.preventDefault(); toggleFull(); return; }
+    if(e.key === 'Escape' && root && root.querySelector('.os-bgpick')){
+      e.stopPropagation(); root.querySelectorAll('.os-bgpick').forEach(n => n.remove()); return; }
     if(e.key === 'Escape' && root && root.querySelector('.os-ctx')){ e.stopPropagation(); hideCtx(); return; }
     if(e.key === 'Escape' && netOpen){ e.stopPropagation(); toggleNet(false); return; }
     if(e.key === 'Escape' && notiOpen){ e.stopPropagation(); toggleNoti(false); return; }
