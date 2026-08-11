@@ -125,31 +125,69 @@ localStorage and get an origin per app, which closes that gap too.
       configured is a flood aimed at strangers' infrastructure, and pointless — the other player is
       subscribed here. It does mean two players on *different* relays will not see each other in
       realtime; the turn-based channel (kind 4932) federates normally and is unaffected.
-    - **Every packet is a signature.** Measured at **1.77 ms** with a local key (~560/sec on a desktop
-      core), which is comfortably more than a shooter needs, and **658 bytes on the wire per 200
-      bytes of game data**. With a REMOTE signer (Amber, nsec.app) each signature is a round trip to
-      another app — a handful a second at best.
+    - **Every packet is a signature, and it is signed by NOBODY.** The realtime channel uses a
+      secp256k1 key minted per session, held in memory and never stored — never the reader's identity
+      key. Signing is local and costs **1.77 ms** (~560/sec on a desktop core), against **658 bytes on
+      the wire per 200 bytes of game data**.
+
+      It used to be signed with the account's key through the ordinary signer, and a real game shows
+      why that could not stand: a moving player sends 20-30 packets a *second*, and with an external
+      signer each one is a round trip to another program. Measured, a NIP-07 browser extension answers
+      that with *"extension declined"* — in Brave, on a build where everything else about mini apps
+      worked — so Half-Life announced no LAN server and nobody saw anybody. Amber or a bunker would be
+      a prompt storm instead. Nothing is given up by dropping the identity: the spec is explicit that
+      **nothing inside a mini app is authenticated** (`selfAddr` proves nothing, and a player can
+      already claim to be anyone within the app), so identity there is the app's own business, carried
+      in its payload. What is gained beyond a working channel is that continuous movement telemetry is
+      no longer a stream of events tied to your npub.
+
+      **The relay has to be told**, and this is the trap: its publishing gate is by author, and this
+      key is in nobody's web of trust — so kind 20932 is exempted in `nostr_relay/server.py` beside
+      the other ephemeral transports (NIP-46 signer traffic, call signaling), requiring the `i` tag so
+      it is not an open forwarding pipe. Without that exemption every packet comes back *"blocked: not
+      in web of trust"* and multiplayer dies quietly while single-player looks perfect.
+
+      **The turn-based channel keeps the real key.** Kind 4932 is a durable, attributable move that
+      belongs to the account and is read back by everyone who opens the post later; only 20932 —
+      ephemeral, never stored, delivered to whoever is connected now — is unattributed.
     - So sending is **newest-wins and never queued**: a movement packet is worthless once a newer one
-      exists. A remote-signer player simply moves less smoothly and still *sees* everyone else
-      perfectly, because receiving costs no signature at all.
-- **Firefox cannot run mini apps at all, and it is not a setting.** It does not allow service
-  workers in an embedded frame from another origin; the Storage Access API does not grant them
-  either. Three wrong diagnoses were tried and disproved in order — Enhanced Tracking Protection (it
-  fails with ETP off), the `sandbox` attribute (it fails with none), and storage access (granted,
-  still refused). A mini app is a cross-origin frame by design, so in Firefox the two requirements
-  cannot both be met with this architecture. Chromium browsers run it as-is. The real fix is to serve
-  an app with **no service worker** — rewriting its HTML references to blob URLs and patching
-  `fetch`/`XHR`/`instantiateStreaming` from the injected bridge — or to open it as a **top-level tab**
-  on the sandbox origin, where it is first-party and workers are allowed, talking to the client
-  through `window.opener` instead of `parent`. The second is much the smaller job and is the obvious
-  next step.
-- **The frame carries no `sandbox` attribute**, deliberately. Firefox refuses to register a service
-  worker in a sandboxed frame whatever flags are set (`SecurityError: The operation is insecure`) —
-  confirmed with Enhanced Tracking Protection turned *off*, so it is the attribute and not the privacy
-  setting — and the worker is what serves the app its files. The security here never rested on that
-  attribute: it rests on the app being on a different ORIGIN and having no network, both of which
-  still hold. What is given up is that a frame may navigate the top-level page after a user
-  activation, which is a phishing surface and the price of working in Firefox at all.
+      exists, and a slow relay or a busy tab must never build a backlog of stale positions.
+- **Firefox works, and the evening spent concluding it could not is worth reading.** The symptom was
+  `SecurityError: The operation is insecure` from `serviceWorker.register()` inside the sandbox frame,
+  and it was diagnosed four times as a platform limit: Enhanced Tracking Protection (it fails with ETP
+  off), the `sandbox` attribute (it fails with none), the Storage Access API (granted, still refused),
+  and finally "Firefox does not allow service workers in a cross-origin frame", which was written into
+  this document as fact.
+
+  It was **our own response headers**. `Service-Worker-Allowed: /` was set by nginx *and* by the app,
+  and fetch combines duplicate headers into `"/, /"` — not a valid scope prefix. Chromium never
+  notices, because the script is served from the origin root and `/` is already its maximum scope;
+  Firefox parses it strictly and refuses, with an error that names neither headers nor scope. What
+  broke the deadlock was one outside fact: **Ditto runs the same design in Firefox** through
+  iframe.diy, from a *cross-site* frame — strictly more restricted than ours, which is same-site. A
+  working reference implementation is worth more than any amount of reasoning about what a browser
+  "does not allow". The header is now set in exactly one place (the app); do not add it back to the
+  vhost "to be safe", which is the instinct that caused this.
+
+  The second half was a **race, not a refusal**: the app frame navigates to `/`, and that request only
+  reaches the server while the worker is not yet *controlling* — where this origin has nothing to
+  serve. The loader now reloads itself once rather than framing an uncontrolled app (a timeout that
+  proceeds anyway is a delay, not a wait), and the vhost's `location /` answers a miss with a page
+  that reloads once instead of a 404. Both guards, deliberately: the loader's stops the race being
+  entered, the vhost's stops it being fatal for a client that predates the fix.
+- **The frame carries no `sandbox` attribute.** It was removed on the strength of the wrong diagnosis
+  above — "Firefox refuses a worker in a sandboxed frame" was measured against the broken header, so
+  it proves nothing. The security here never rested on the attribute: it rests on the app being on a
+  different ORIGIN and having no network, both of which still hold. What is given up is that a frame
+  may navigate the top-level page after a user activation, which is a phishing surface. **Worth
+  re-testing now** — `allow-scripts allow-same-origin` should register a worker fine — but not on the
+  same day the header fix ships, or a failure will be impossible to attribute.
+- **The blob fallback cannot run an ES-module app.** When there is no worker at all (a Firefox private
+  window disables them everywhere, first-party included) the loader hands the app blob: URLs instead.
+  It works for a single HTML file with a couple of scripts, and it cannot work for a module:
+  `import "./engine.js"` from a `blob:` URL has no path to resolve against and throws *Error resolving
+  module specifier*, which is fatal to both Quake III and Half-Life. Import maps do not help —
+  relative specifiers resolve before any map is consulted. It is a last resort, not a second design.
 - **`sendToChat` and `importFiles` are not implemented** — same reason, same detection.
 - **`selfAddr` is your npub and proves nothing.** Nothing inside a mini app is signed, so any player
   can claim to be anyone within the app. The NIP says so too; apps must not use it for trust.

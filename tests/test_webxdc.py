@@ -14,13 +14,23 @@ Both halves are pure, and both fail in ways nothing on screen explains:
   * `appOf` decides whether a post carries an app at all. Wrong, and either every post grows a Play
     button or none of them do — and the second one is silent.
 
-The running half (the sandbox origin, the service worker, the bridge) is scripts/check_webxdc.py's
-job: it needs two documents on two origins and a service worker, none of which exist under node.
+  * The LOADER's boot chain decides when the app's frame is created. Creating it before the service
+    worker controls this document sends that navigation to the network, where this origin serves a
+    404 by design — so the app never asks for a single file and there is nothing in any log to say
+    why. That is not a theory: it is what Firefox did, and the old code's 4-second wait for a
+    controller RESOLVED ANYWAY when it timed out, which is a delay rather than a wait. So the real
+    script is run here under node against a stubbed service worker.
+
+  * The BRIDGE and the blob SHIM are hand-assembled JavaScript — a template literal and an array of
+    lines — served into a frame on another origin, where a syntax error is a silent black rectangle.
+    They are parsed here as programs.
 """
 import io
 import json
+import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 import zipfile
 from pathlib import Path
@@ -28,6 +38,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ZIP_JS = ROOT / "static" / "js" / "client" / "zip.js"
 WEBXDC_JS = ROOT / "static" / "js" / "client" / "webxdc.js"
+LOADER = ROOT / "static" / "webxdc-sandbox" / "index.html"
+
+
+def _loader_js() -> str:
+    """The loader's script, as the browser runs it."""
+    m = re.search(r"<script>\n(.*)\n</script>", LOADER.read_text(), re.S)
+    if not m:
+        raise AssertionError("the sandbox loader has no <script> block any more")
+    return m.group(1)
 
 
 def _node(script: str):
@@ -167,6 +186,127 @@ class AttachmentParsing(unittest.TestCase):
             ev = {"kind": 1, "content": "", "tags": [
                 ["imeta", "url " + bad, "m application/x-webxdc"]]}
             self.assertIsNone(self.app_of(ev), f"{bad!r} was accepted as an app")
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class HandAssembledJavaScript(unittest.TestCase):
+    """Two programs in this feature are BUILT AS TEXT and never parsed by anything here: the
+    `window.webxdc` bridge (a template literal in webxdc.js) and the blob path's fetch shim (an array
+    of lines in the loader). Both are served into a document on another origin, where a syntax error
+    produces no toast, no console the reader will ever see, and no request — just a black rectangle.
+    """
+
+    def check(self, source: str, what: str):
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
+            fh.write(source)
+            path = fh.name
+        try:
+            out = subprocess.run(["node", "--check", path], capture_output=True, timeout=60)
+            if out.returncode != 0:
+                raise AssertionError(f"{what} is not a valid program:\n" + out.stderr.decode()[-2000:])
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+    def test_the_injected_bridge_parses(self):
+        src = WEBXDC_JS.read_text()
+        # Up to the first UNESCAPED backtick: the bridge's own comments contain escaped ones.
+        m = re.search(r"const BRIDGE = `((?:[^`\\]|\\.)*)`;", src, re.S)
+        self.assertTrue(m, "BRIDGE is no longer a template literal — update this test")
+        body = m.group(1)
+        # As it is SERVED: the ${…} interpolations are numbers, and the escaped backticks in its
+        # comments are backticks again.
+        body = re.sub(r"\$\{[^}]*\}", "0", body).replace("\\`", "`")
+        self.check("var __XDC = { addr:'', name:'', ns:'x' };\n" + body, "the injected webxdc bridge")
+
+    def test_the_blob_fallback_shim_parses(self):
+        """It is an ARRAY OF STRINGS joined with newlines, so a missing comma or an unbalanced quote
+        is a runtime surprise inside somebody else's app rather than a build error here."""
+        m = re.search(r"var SHIM_SRC = (\[.*?\])\.join\('\\n'\);", _loader_js(), re.S)
+        self.assertTrue(m, "SHIM_SRC is no longer an array of lines — update this test")
+        shim = _node("console.log(JSON.stringify((%s).join('\\n')));" % m.group(1))
+        self.check(shim, "the blob fallback's fetch shim")
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class TheLoaderWaitsForItsWorker(unittest.TestCase):
+    """THE APP FRAME MUST NOT BE CREATED WHILE THE WORKER IS NOT CONTROLLING THIS DOCUMENT.
+
+    That frame navigates to `/`, and the only thing that can answer it is the worker — the app's
+    files are not on the server at all, so the network answers 404 by design. Build the frame a
+    moment too early and the app loads a 404 page: it asks for nothing, draws nothing, throws
+    nothing, and the only symptom is the parent reporting that the sandbox never asked for a file.
+    Chromium's `clients.claim()` hides it; Firefox's timing did not.
+
+    The old code waited 3-4 seconds for a `controllerchange` and then built the frame REGARDLESS,
+    which is why a stubbed run is the only test that can catch this: the code looked like a wait.
+    """
+
+    def run_loader(self, controlled: bool, hash_: str = ""):
+        harness = """
+        const vm = require('vm'), fs = require('fs');
+        const SRC = fs.readFileSync(%s, 'utf8');
+        const out = { said: [], appended: [], toParent: [], reloads: 0 };
+        // Collapse the loader's own waits so the whole boot chain settles inside this test, but keep
+        // them as TIMERS: a resolved promise must still win the race against a timeout, as it does
+        // in a browser, or this harness would prove the opposite of what it is asked.
+        const realSetTimeout = setTimeout;
+        global.setTimeout = (fn, ms) => realSetTimeout(fn, Math.min(ms || 0, 5));
+        const msg = { _t: '', set textContent(v){ this._t = v; out.said.push(v); },
+                      get textContent(){ return this._t; }, remove(){ out.msgRemoved = true; } };
+        const frames = [];
+        global.document = {
+          getElementById(id){ return id === 'm' ? msg : (id === 'f' ? (frames[frames.length-1] || null) : null); },
+          createElement(tag){ return { tag, id:'', src:'', style:{}, setAttribute(k, v){ this[k] = v; },
+                                       addEventListener(){}, remove(){}, contentWindow:{ postMessage(){} } }; },
+          body: { appendChild(e){ frames.push(e); out.appended.push({ id: e.id, src: e.src }); } },
+          addEventListener(){},
+        };
+        const listeners = [];
+        const parentStub = { postMessage(m){ out.toParent.push(m); } };
+        global.parent = parentStub;
+        global.window = { addEventListener(t, fn){ if(t === 'message') listeners.push(fn); },
+                          removeEventListener(){} };
+        global.location = { origin: 'https://xdc.example', href: 'https://xdc.example/__sandbox__/',
+                            pathname: '/__sandbox__/', hash: %s, reload(){ out.reloads++; } };
+        // defineProperty, not assignment: node ships its own read-only `navigator`, and a plain
+        // assignment silently does nothing — the loader then reports "no service worker" and every
+        // assertion below passes for the wrong reason.
+        Object.defineProperty(global, 'navigator', { configurable: true, value: { serviceWorker: {
+          controller: %s, register(){ out.registered = true; return Promise.resolve({}); },
+          ready: Promise.resolve({}), addEventListener(){}, } } });
+        vm.runInThisContext(SRC);
+        // The parent answers the loader's `ready` with `init`, which is what starts the boot chain.
+        for(const fn of listeners) fn({ source: parentStub, origin: 'https://client.example',
+          data: { jsonrpc: '2.0', method: 'init', params: { version: 1 } } });
+        realSetTimeout(() => console.log(JSON.stringify(out)), 120);
+        """ % (json.dumps(str(LOADER.parent / "loader.tmp.js")), json.dumps(hash_),
+               "{}" if controlled else "null")
+        script = LOADER.parent / "loader.tmp.js"
+        script.write_text(_loader_js())
+        try:
+            return _node(harness)
+        finally:
+            script.unlink(missing_ok=True)
+
+    def test_an_uncontrolled_loader_reloads_instead_of_framing_a_404(self):
+        out = self.run_loader(controlled=False)
+        self.assertEqual(out["reloads"], 1, "an uncontrolled loader must reload to become controlled")
+        self.assertEqual([a for a in out["appended"] if a["id"] == "f"], [],
+                         "the app frame was created while nothing was controlling this document")
+
+    def test_a_controlled_loader_frames_the_app_at_the_origin_root(self):
+        out = self.run_loader(controlled=True)
+        self.assertEqual(out["reloads"], 0, "a controlled loader must not reload")
+        self.assertEqual([a["src"] for a in out["appended"] if a["id"] == "f"], ["/"],
+                         "the app owns the origin root; the loader lives at /__sandbox__/")
+
+    def test_it_reloads_only_once_and_then_falls_back(self):
+        """A reload loop is worse than the bug it fixes — the reader watches a frame flicker for
+        ever. After one attempt the blob path takes over, which at least serves the simple apps."""
+        out = self.run_loader(controlled=False, hash_="#pcxdc-reloaded")
+        self.assertEqual(out["reloads"], 0, "it reloaded twice — that is a loop")
+        self.assertTrue(any(m.get("method") == "fetch" for m in out["toParent"]),
+                        "nothing took over: the reader gets a dead status line, not the app")
 
 
 if __name__ == "__main__":

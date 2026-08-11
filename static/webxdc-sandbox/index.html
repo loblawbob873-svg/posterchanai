@@ -36,20 +36,30 @@
   var pending = {};                   // rpc id -> resolve
   var nextId = 1;
   var started = false;
-  /* THE HONEST VERSION, after three wrong ones. This is not Enhanced Tracking Protection (it fails
-   * with ETP off) and not the `sandbox` attribute (it fails with none). Firefox does not support
-   * service workers in an embedded frame from another origin, full stop — and the Storage Access API
-   * does not grant them, which is why the button above can ask and still be refused. A mini app is a
-   * cross-origin frame BY DESIGN: that separation is the only thing keeping a stranger's code away
-   * from the keys. So in Firefox the two requirements cannot both be met with this architecture, and
-   * the remaining answer is a Chromium browser or a different design (serving the app with no worker
-   * at all). Say that, rather than sending someone to turn off a security feature that will not
-   * help. */
-  var FIREFOX_VERDICT = 'Firefox cannot run mini apps here: it does not allow service workers in an '
-    + 'embedded frame from another origin, and that separate origin is what keeps the app away from '
-    + 'your keys. This is not a setting you can change — Chrome, Edge and Brave run it as-is.';
-
   var firstFetch = null;          // set once the app frame exists, to narrate the first loads
+
+  /* ONE RELOAD, MARKED IN THE URL. See boot(): a document is reliably controlled by a service worker
+   * only when it starts its life with one, so an uncontrolled loader reloads itself exactly once.
+   * The marker is the hash and not sessionStorage on purpose — this document is a third-party frame
+   * and may not be allowed to write storage, which is the class of bug that cost the whole evening. */
+  var RELOAD_MARK = 'pcxdc-reloaded';
+  var RELOADED = (location.hash || '').indexOf(RELOAD_MARK) >= 0;
+
+  /* A promise with a ceiling. Everything in the boot chain can HANG rather than fail, and a promise
+   * that never settles never reaches a catch — so the fallback would never run and the reader would
+   * watch "loading…" for ever, which is the failure mode with nothing to report. */
+  function withTimeout(p, ms, what){
+    return new Promise(function(resolve, reject){
+      var done = false;
+      var t = setTimeout(function(){
+        if(done) return;
+        done = true;
+        reject(new Error('the service worker did not ' + what + ' in time'));
+      }, ms);
+      p.then(function(v){ if(done) return; done = true; clearTimeout(t); resolve(v); },
+             function(e){ if(done) return; done = true; clearTimeout(t); reject(e); });
+    });
+  }
 
   function say(t){ if(msg) msg.textContent = t; }
   function fail(t){ say(t); try{ post({ jsonrpc:'2.0', method:'sandbox.error', params:{ message:t } }); }catch(_){} }
@@ -136,21 +146,49 @@
     }
     navigator.serviceWorker.addEventListener('message', onWorkerMessage);
     say('loading…');
-    navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(function(){
-      return navigator.serviceWorker.ready;
+    /* EVERY STEP GETS A CEILING. Each of these can hang rather than fail — a registration that never
+     * settles, a `ready` that never resolves — and a promise that never settles has no catch, so the
+     * blob fallback below would never run and the reader would sit on "loading…" for ever. */
+    withTimeout(navigator.serviceWorker.register('/sw.js', { scope: '/' }), 15000, 'register')
+    .then(function(){
+      return withTimeout(navigator.serviceWorker.ready, 15000, 'activate');
     }).then(function(){
-      /* The worker must be CONTROLLING before the app frame is created, or that frame's own
-       * navigation goes to the network — where there is nothing but this bootstrap, so the app would
-       * silently load a copy of the loader instead of itself. A fresh registration does not control
-       * anything until it claims, so wait for the controller to appear. */
-      if(navigator.serviceWorker.controller) return;
+      /* THE WORKER MUST BE CONTROLLING THIS DOCUMENT BEFORE THE APP FRAME EXISTS.
+       *
+       * The frame navigates to `/`, and if nothing is controlling us at that moment the request goes
+       * to the NETWORK — where this origin serves a 404 by design, because the app's files are not on
+       * the server at all. The app then never asks for a single file, which is precisely the symptom
+       * reported ("the sandbox never asked for a single file"), and nothing anywhere says why.
+       *
+       * `clients.claim()` in the worker is supposed to prevent that and in Chromium it lands fast
+       * enough to hide the problem entirely. It is not a guarantee, and Firefox's timing is different
+       * — so the old code waited 4 seconds for a `controllerchange` AND THEN BUILT THE FRAME ANYWAY.
+       * A timeout that proceeds regardless is not a wait, it is a delay.
+       *
+       * A RELOAD is what reliably makes a page controlled: a document that starts its life with an
+       * active worker in scope is controlled from the first byte. So if the controller is still
+       * missing, reload ONCE — the marker is in the URL hash rather than sessionStorage, which a
+       * third-party frame may not be allowed to write — and the parent re-handshakes with us
+       * automatically, because a reloaded iframe keeps the same window and the loader announces
+       * `ready` on every load. Still uncontrolled after that reload and we take the blob path, which
+       * is honest about being second best rather than pretending with a 404. */
+      if(navigator.serviceWorker.controller) return true;
       return new Promise(function(resolve){
-        var t = setTimeout(resolve, 4000);             // claimed already, or never will
+        var t = setTimeout(function(){ resolve(!!navigator.serviceWorker.controller); }, 3000);
         navigator.serviceWorker.addEventListener('controllerchange', function(){
-          clearTimeout(t); resolve();
+          clearTimeout(t); resolve(!!navigator.serviceWorker.controller);
         }, { once:true });
       });
-    }).then(function(){
+    }).then(function(controlled){
+      if(!controlled){
+        if(!RELOADED){
+          say('starting the app…');
+          try{ location.hash = RELOAD_MARK; }catch(_){}
+          location.reload();
+          return;                                       // this document is going away
+        }
+        throw new Error('the service worker never took control of the sandbox');
+      }
       /* THE APP GETS THE ORIGIN ROOT, and this loader lives at a reserved path instead. An app is
        * allowed to write `/style.css` and `<a href="/">`, and serving it from under a prefix would
        * break exactly those — silently, as a missing stylesheet. So the worker owns `/` and leaves
@@ -180,15 +218,27 @@
       }, 25000);
       post({ jsonrpc:'2.0', method:'sandbox.running' });
     }).catch(function(e){
-      /* NO WORKER? THEN NO WORKER. Firefox will not register a service worker in an embedded frame
-       * from another origin — not because of Enhanced Tracking Protection (it fails with that off)
-       * and not because of the `sandbox` attribute (it fails with none), but because the platform
-       * does not allow it, and the Storage Access API does not grant it either.
+      /* NO WORKER? THEN BLOB URLS — a LAST RESORT, and it is worth knowing exactly how good it is
+       * not, because for one evening it was mistaken for the answer.
        *
-       * The worker was only ever a way to answer the app's requests. There is another: hand the app
-       * BLOB URLs. A blob created HERE inherits THIS document's origin, so the app still runs on
-       * xdc.<instance> and still cannot touch the client's storage — the whole point — and it needs
-       * no worker, no registration and no permission. See bootBlobs. */
+       * A blob created HERE inherits THIS document's origin, so the app still runs on xdc.<instance>
+       * and still cannot touch the client's storage, and it needs no worker and no permission. What
+       * it cannot do is serve an ES MODULE: `import "./engine.js"` from a blob: URL has no path to
+       * resolve against and throws `Error resolving module specifier`, which kills any app whose
+       * engine is a module (measured on both Quake III and Half-Life). Import maps do not help —
+       * relative specifiers resolve before any map is consulted.
+       *
+       * So this is for the app that is a single HTML file with a couple of scripts, and for the
+       * browser that has no service workers at all (a Firefox private window disables them
+       * everywhere, first-party included). The worker path is the one that must work.
+       *
+       * FOR THE RECORD, since a wrong diagnosis lived here for a whole evening: this was NOT a
+       * Firefox platform limit. It was our own `Service-Worker-Allowed` header, sent by both nginx
+       * and the app, which fetch combines into "/, /" — not a valid scope prefix. Chromium ignores
+       * the header entirely (the script is at the origin root, so `/` is already its maximum scope);
+       * Firefox parses it strictly and refuses with `SecurityError: The operation is insecure`,
+       * an error that names neither headers nor scope. Ditto runs the same design in Firefox from a
+       * CROSS-SITE frame, which is what proved the platform was never the problem. */
       var m = String((e && (e.name + ': ' + e.message)) || e);
       try{ console.warn('[sandbox] service worker unavailable:', m, '— falling back to blob URLs'); }catch(_){}
       bootBlobs();

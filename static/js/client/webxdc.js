@@ -433,7 +433,8 @@
       this.rtSub = null;            // the realtime channel, when an app joins one
       this._rtNext = null;          // the newest unsent realtime packet (newest wins)
       this._rtBusy = false;
-      this.selfPk = '';            // to drop our own realtime packets
+      this._rtSk = null;            // the realtime channel's own key — see rtKey()
+      this.rtPk = '';               // its pubkey, which is how we drop our own packets
       this.seen = new Map();             // event id -> serial
       this.ordered = [];                 // events, oldest first
       this.listening = false;
@@ -588,16 +589,47 @@
 
     // ---- mounting ---------------------------------------------------------------------------------
 
+    /* THE REALTIME CHANNEL IS SIGNED BY A KEY THAT IS NOBODY, MINTED PER SESSION AND NEVER STORED.
+     *
+     * It used to be signed with the user's identity, through `PC.sign` like every other event, and
+     * that was wrong in a way only a real game shows: a moving player sends 20-30 packets a SECOND,
+     * and with any external signer each one is a round trip to another program. A browser extension
+     * answers that with "extension declined" — measured, in Brave, where everything else about mini
+     * apps works perfectly — and Amber or a bunker would simply be a prompt storm. The channel is
+     * unusable on exactly the signers most people have.
+     *
+     * A fresh secp256k1 key per session costs nothing and fixes it outright: signing is local and
+     * ~1.77ms, so every signer behaves identically and the limitation this feature documented
+     * ("a remote-signer player simply moves less smoothly") is gone.
+     *
+     * NOTHING IS LOST BY IT. Realtime data is not attributable in webxdc to begin with — the spec is
+     * explicit that nothing inside a mini app is authenticated and that `selfAddr` proves nothing, so
+     * a player can already claim to be anyone within the app; identity there is the app's business,
+     * carried in its own payload. What IS gained beyond the signer: continuous movement telemetry is
+     * no longer a stream of events tied to the reader's npub.
+     *
+     * THE TURN-BASED CHANNEL KEEPS THE REAL KEY. Kind 4932 is a durable, attributable move that
+     * belongs to the account and is read back by everyone who opens the post later; only 20932 —
+     * ephemeral, never stored, delivered to whoever is connected now — is unattributed.
+     *
+     * The relay has to know that: its publishing gate is by author and this key is in nobody's web of
+     * trust, so kind 20932 is exempted alongside the other ephemeral transports (NIP-46 signer
+     * traffic, call signaling) in nostr_relay/server.py. Without that exemption every packet comes
+     * back "blocked: not in web of trust" and multiplayer dies quietly. */
+    Session.prototype.rtKey = function(){
+      if(this._rtSk) return this._rtSk;
+      const NT = window.NostrTools;
+      this._rtSk = NT.generateSecretKey();
+      this.rtPk = NT.getPublicKey(this._rtSk);
+      return this._rtSk;
+    };
+
     /* Send one realtime packet: NEWEST WINS, and never a queue.
      *
      * A movement packet is worthless the moment a newer one exists, so when a send is already in
-     * flight the pending one is REPLACED rather than queued. That single property is what makes this
-     * safe on every signer: each packet costs a signature (measured at 1.77ms with a local key, so
-     * ~560/sec on a desktop core — comfortably more than a shooter needs), while a REMOTE signer
-     * (Amber, nsec.app) needs a round trip to another app per signature and can manage a handful a
-     * second at best. With a queue that would grow without bound and wedge the signer; dropping
-     * instead means a remote-signer player simply moves less smoothly, and still SEES everyone else
-     * perfectly — receiving costs no signature at all. */
+     * flight the pending one is REPLACED rather than queued. That is still right with a local key —
+     * a slow relay or a busy tab must never build a backlog of stale positions — it is simply no
+     * longer the thing standing between a remote-signer player and a playable game. */
     Session.prototype.rtSend = function(b64){
       this._rtNext = b64;
       if(this._rtBusy) return;
@@ -607,9 +639,12 @@
           const payload = this._rtNext;
           this._rtNext = null;
           try{
-            const ev = await sign(KIND_REALTIME, payload, [['i', this.app.uuid]]);
+            const NT = window.NostrTools;
+            const ev = NT.finalizeEvent({ kind: KIND_REALTIME, content: payload,
+                                          tags: [['i', this.app.uuid]],
+                                          created_at: Math.floor(Date.now() / 1000) }, this.rtKey());
             Relay.publishFast(ev);
-          }catch(_){ break; }        // a signer that will not sign: stop this burst, keep the game
+          }catch(_){ break; }        // stop this burst rather than spin; the game itself is fine
         }
         this._rtBusy = false;
       };
@@ -626,7 +661,6 @@
       try{
         const me = (PC.me && PC.me()) || null;
         this.self.addr = (me && (me.npub || me.pubkey)) || '';
-        this.selfPk = (me && me.pubkey) || '';
         const prof = (me && me.pubkey && PC.profOf) ? (PC.profOf(me.pubkey) || {}) : {};
         this.self.name = String(prof.display_name || prof.name || '').slice(0, 60);
       }catch(_){}
@@ -743,14 +777,18 @@
        * a game that just started. */
       if(d.method === 'webxdc.rtJoin'){
         if(!this.rtSub){
+          // Mint the channel key BEFORE subscribing: it is what tells our own packets from everyone
+          // else's, and a packet that arrives before it exists would be delivered back to the app.
+          try{ this.rtKey(); }catch(_){}
           try{
             this.rtSub = Relay.subscribe([{ kinds:[KIND_REALTIME], '#i':[this.app.uuid],
                                             since: Math.floor(Date.now() / 1000) }], {
               onEvent: (ev) => {
                 if(this.dead || !ev || ev.kind !== KIND_REALTIME) return;
                 // Not our own packets: the sender already has them, and an app that echoes its own
-                // movement back into its state sees every player twice.
-                if(ev.pubkey && ev.pubkey === this.selfPk) return;
+                // movement back into its state sees every player twice. Matched on the CHANNEL key
+                // (see rtKey), which is what signs them — the account's key never touches this path.
+                if(ev.pubkey && this.rtPk && ev.pubkey === this.rtPk) return;
                 this.post({ jsonrpc:'2.0', method:'webxdc.realtime', params:{ b64: ev.content || '' } });
               },
             });

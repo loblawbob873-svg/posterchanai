@@ -897,6 +897,26 @@ class RelayServer:
             for _tag in ev.get("tags", []):
                 if len(_tag) >= 2 and _tag[0] == "p" and _tag[1]:
                     self._call_seen[_tag[1]] = _t
+        elif kind == 20932:
+            # WEBXDC REALTIME (NIP-DC): a mini app's continuous channel — a moving player sends 20-30
+            # of these a second. Ephemeral, so NOTHING is stored; it is fanned out to whoever is
+            # subscribed to that app's `i` identifier and then forgotten.
+            #
+            # The WoT gate cannot apply to the author, and deliberately so: the client signs these
+            # with a throwaway key minted per session, never the user's identity, because with an
+            # external signer (a browser extension, Amber, a bunker) one round trip per packet at 30/s
+            # is a decline or a prompt storm — measured as "extension declined" in Brave, on a game
+            # that otherwise ran perfectly. The webxdc spec says nothing inside a mini app is
+            # authenticated anyway (`selfAddr` proves nothing), so signing movement with the account
+            # key bought no trust and cost the whole channel.
+            #
+            # The `i` tag is required: it is the app identifier a player must have seen the post to
+            # know, and it keeps this from being an open "forward anything to anyone" pipe. An event
+            # nobody is subscribed for is dropped by the fan-out, exactly as for the other ephemeral
+            # transports above (NIP-46 signer traffic, call signaling).
+            if not any(len(t) >= 2 and t[0] == "i" and t[1] for t in ev.get("tags", [])):
+                self._send(conn, ["OK", eid, False, "invalid: webxdc realtime needs an app identifier"])
+                return
         elif kind in (30617, 30618):
             # NIP-34 git repo ANNOUNCEMENT (30617) + repo STATE (30618) are PUBLIC, browsable Discover
             # content — accept from ANY author (the repo owner is a datastore operator key that typically
