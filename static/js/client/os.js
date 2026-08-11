@@ -2096,6 +2096,54 @@
   const _mounted = new Map();          // element -> { w, def, due }
   let _wgtTimer = null, _wgtVis = false;
 
+  /* WHERE EACH WIDGET ACTUALLY GOES — fractions in, pixels out, and NOTHING OVERLAPPING.
+   *
+   * A fraction preserves the edge you put a panel against, which is the whole reason positions are
+   * stored that way. What it cannot preserve is the SPACE BETWEEN two panels: the widgets keep a
+   * minimum readable size while the desk shrinks, so a tablet has proportionally less free area, and
+   * an arrangement that is comfortably spread on a monitor lands on top of itself there. The
+   * new-widget positions make it worse by design — they step down the right-hand edge in 0.22
+   * increments, which is four clear panels on a desktop and a stack on a short desk.
+   *
+   * So the fractions are the INTENT and this resolves it: place in reading order, and if a panel
+   * would land on one already placed, push it down; if that runs out of desk, start a new column to
+   * the left. On a screen where nothing overlaps this changes nothing at all — every position is
+   * exactly the fraction asked for — which is what keeps a deliberate arrangement deliberate.
+   *
+   * Kept DOM-free so tests/test_desktop_widgets.py can run it at real tablet sizes; every way it can
+   * be wrong is silent (a panel under another one, or shoved off the edge). */
+  function placeWidgets(list, deskW, deskH){
+    const out = [];
+    const hits = (a, b) => a.x < b.x + b.w + WGT_GAP && a.x + a.w + WGT_GAP > b.x
+                        && a.y < b.y + b.h + WGT_GAP && a.y + a.h + WGT_GAP > b.y;
+    const wanted = (list || []).map((w, i) => {
+      const box = wgtBox(w.size, deskW, deskH, WIDGETS[w.type]);
+      const maxX = Math.max(0, deskW - box.w - WGT_GAP), maxY = Math.max(0, deskH - box.h - WGT_GAP);
+      return { w, i, h: box.h, wd: box.w, maxX, maxY,
+               x: Math.round(maxX * w.x + WGT_GAP / 2), y: Math.round(maxY * w.y + WGT_GAP / 2) };
+    });
+    // Reading order, so the resolution is stable: the same document always lays out the same way,
+    // rather than depending on which widget happened to be added first.
+    wanted.sort((a, b) => (a.y - b.y) || (a.x - b.x) || (a.i - b.i));
+    for(const p of wanted){
+      let { x, y } = p;
+      let guard = 0;
+      while(guard++ < 64){
+        const clash = out.find(o => hits({ x, y, w: p.wd, h: p.h }, o));
+        if(!clash) break;
+        y = clash.y + clash.h + WGT_GAP;                    // straight down, under what is in the way
+        if(y > p.maxY){                                     // out of desk → next column, from the top
+          x = Math.max(0, Math.min(p.maxX, (clash.x - p.wd - WGT_GAP)));
+          y = Math.round(WGT_GAP / 2);
+          if(out.some(o => hits({ x, y, w: p.wd, h: p.h }, o)) && x <= 0) break;   // nowhere left
+        }
+      }
+      out.push({ id: p.w.id, x: Math.max(0, Math.min(p.maxX, x)),
+                 y: Math.max(0, Math.min(p.maxY, y)), w: p.wd, h: p.h });
+    }
+    return out;
+  }
+
   /* RECONCILE, never rebuild wholesale.
    *
    * This runs on every desktop redraw, and a redraw happens on every SAVE — `_apply` updates the
@@ -2114,17 +2162,22 @@
     const k = zf();
     const dr = desk.getBoundingClientRect();
     const deskW = dr.width / k, deskH = dr.height / k;
+    // Resolved once for the whole set — see placeWidgets. Positions are the fractions asked for
+    // wherever they fit, and pushed apart only where they would land on each other.
+    const spots = {};
+    for(const p of placeWidgets(list, deskW, deskH)) spots[p.id] = p;
     for(const w of list){
       const def = WIDGETS[w.type]; if(!def) continue;
       const box = wgtBox(w.size, deskW, deskH, def);
+      const at = spots[w.id] || { x: 0, y: 0 };
       const prev = desk.querySelector('.os-wgt[data-id="' + (window.CSS && CSS.escape ? CSS.escape(w.id) : w.id) + '"]');
       if(prev && prev.dataset.type === w.type && prev.dataset.size === w.size){
         const m = _mounted.get(prev);
         if(m) m.w = w;                       // the row is a fresh object on every save
         prev.style.width = box.w + 'px';
         prev.style.height = box.h + 'px';
-        prev.style.left = Math.round(Math.max(0, (deskW - box.w - WGT_GAP)) * w.x + WGT_GAP / 2) + 'px';
-        prev.style.top  = Math.round(Math.max(0, (deskH - box.h - WGT_GAP)) * w.y + WGT_GAP / 2) + 'px';
+        prev.style.left = at.x + 'px';
+        prev.style.top  = at.y + 'px';
         keep.add(prev);
         continue;
       }
@@ -2136,10 +2189,8 @@
       el.dataset.size = w.size;
       el.style.width = box.w + 'px';
       el.style.height = box.h + 'px';
-      // A fraction of the FREE space, so the widget stays inside the desk at any size and keeps the
-      // edge it was put against. Clamped for the case the desk is smaller than the widget.
-      el.style.left = Math.round(Math.max(0, (deskW - box.w - WGT_GAP)) * w.x + WGT_GAP / 2) + 'px';
-      el.style.top  = Math.round(Math.max(0, (deskH - box.h - WGT_GAP)) * w.y + WGT_GAP / 2) + 'px';
+      el.style.left = at.x + 'px';
+      el.style.top  = at.y + 'px';
       /* NO TITLE BAR. A widget is a piece of the desktop, not a little window — an icon, a label and
        * a close button on top of a four-line panel is more chrome than content, and it made them read
        * as boxes sitting ON the desktop rather than part of it. What the bar carried is still here:
@@ -3673,5 +3724,6 @@
                   // is the whole of the tablet↔desktop requirement and nothing on screen says
                   // when it is wrong — the panel is just too big, or too small to read.
                   __wgtBox: (size, w, h, def) => wgtBox(size, w, h, def),
-                  __wxUnits: (w) => _wxUnits(w) };
+                  __wxUnits: (w) => _wxUnits(w),
+                  __placeWidgets: (l, w, h) => placeWidgets(l, w, h) };
 })();

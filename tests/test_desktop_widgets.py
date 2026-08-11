@@ -225,3 +225,75 @@ class WeatherUnits(unittest.TestCase):
 
     def test_a_junk_stored_value_falls_back_rather_than_sticking(self):
         self.assertEqual(self.units({"units": "kelvin"}, "en-US"), "imperial")
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class WidgetPlacement(unittest.TestCase):
+    """Fractions preserve the EDGE a panel was put against; they cannot preserve the space BETWEEN two
+    of them. Widgets keep a minimum readable size while the desk shrinks, so a tablet has
+    proportionally less free area and an arrangement that is spread out on a monitor lands on top of
+    itself — reported as "on tablet, they overlap"."""
+
+    def place(self, widgets, w, h):
+        return _node("console.log(JSON.stringify(PCOS.__placeWidgets(%s, %d, %d)))"
+                     % (json.dumps(widgets), w, h))
+
+    @staticmethod
+    def _overlaps(rects):
+        bad = []
+        for i, a in enumerate(rects):
+            for b in rects[i + 1:]:
+                if (a["x"] < b["x"] + b["w"] and a["x"] + a["w"] > b["x"]
+                        and a["y"] < b["y"] + b["h"] and a["y"] + a["h"] > b["y"]):
+                    bad.append((a["id"], b["id"]))
+        return bad
+
+    def _stack(self, n=4, size="m"):
+        # Exactly what addWidget produces: down the right-hand edge in 0.22 steps.
+        return [{"id": f"w{i}", "type": "crypto", "x": 1, "y": min(1, i * 0.22), "size": size, "cfg": {}}
+                for i in range(n)]
+
+    def test_four_widgets_do_not_overlap_on_a_tablet(self):
+        r = self.place(self._stack(4), 1024, 640)
+        self.assertEqual(self._overlaps(r), [], f"panels landed on each other: {r}")
+
+    def test_nor_on_a_small_tablet_in_portrait(self):
+        r = self.place(self._stack(4), 800, 1000)
+        self.assertEqual(self._overlaps(r), [])
+
+    def test_nor_when_the_desk_is_really_short(self):
+        r = self.place(self._stack(3, "l"), 1100, 420)
+        self.assertEqual(self._overlaps(r), [])
+
+    def test_everything_stays_inside_the_desk(self):
+        """Pushing panels apart must never push one off the edge — that is worse than the overlap."""
+        for w, h in ((1024, 640), (800, 1000), (1400, 900), (700, 400)):
+            for r in self.place(self._stack(5), w, h):
+                self.assertGreaterEqual(r["x"], 0)
+                self.assertGreaterEqual(r["y"], 0)
+                self.assertLessEqual(r["x"] + r["w"], w + 1, f"off the right at {w}x{h}")
+                self.assertLessEqual(r["y"] + r["h"], h + 1, f"off the bottom at {w}x{h}")
+
+    def test_a_roomy_desktop_is_left_exactly_as_arranged(self):
+        """The resolution must be invisible where nothing collides, or a deliberate arrangement stops
+        being deliberate."""
+        spread = [{"id": "a", "type": "crypto", "x": 0, "y": 0, "size": "m", "cfg": {}},
+                  {"id": "b", "type": "crypto", "x": 1, "y": 1, "size": "m", "cfg": {}}]
+        r = {p["id"]: p for p in self.place(spread, 2560, 1400)}
+        self.assertEqual(r["a"]["x"], 5)
+        self.assertGreater(r["b"]["x"], 2000, "the right-edge panel moved on a desk with room to spare")
+
+    def test_the_same_document_always_lays_out_the_same_way(self):
+        """Resolution order is reading order, not insertion order — otherwise the desktop reshuffles
+        itself depending on which widget happened to be added first."""
+        a = self.place(self._stack(4), 1024, 640)
+        b = self.place(list(reversed(self._stack(4))), 1024, 640)
+        self.assertEqual({p["id"]: (p["x"], p["y"]) for p in a},
+                         {p["id"]: (p["x"], p["y"]) for p in b})
+
+    def test_more_widgets_than_fit_still_produces_a_position_for_each(self):
+        r = self.place(self._stack(12, "l"), 900, 500)
+        self.assertEqual(len(r), 12)
+        for p in r:
+            self.assertGreaterEqual(p["x"], 0)
+            self.assertGreaterEqual(p["y"], 0)
