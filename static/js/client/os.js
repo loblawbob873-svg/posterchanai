@@ -1048,6 +1048,11 @@
              'budget', 'news', 'articles'],
     // Boards. A square-ish window, because the board is square.
     square: ['chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem'],
+    /* Games from a .xdc — a 3D viewport, not a workbench and not a board. They want the largest
+     * 16:9 rectangle that fits: Half-Life in a column-shaped panel is letterboxed on two sides and
+     * unplayable, which is exactly how another client's presentation of the same app was described
+     * ("a rectangle and terrible"). `doc:webxdc:<id>` reduces to `webxdc` here. */
+    game: ['webxdc'],
   };
   function _shapeOf(view){
     const v = String(view || '').replace(/^doc:/, '').split(':')[0];
@@ -1081,6 +1086,14 @@
       // Wide enough for a list AND its pane, and no wider: a mail client at 1800px is two columns
       // of content and a field of empty panel.
       w = Math.min(Math.round(aw * 0.78), 1080); h = Math.round(ah * 0.94);
+    }else if(shape === 'game'){
+      /* The biggest 16:9 that fits, capped so it does not become a billboard on a 4K display. The
+       * aspect is chosen rather than inherited because the app inside cannot ask for one — a webxdc
+       * gets the box it is given and letterboxes whatever is left. */
+      const maxW = Math.min(aw * 0.94, 1600), maxH = Math.min(ah * 0.94, 900);
+      w = Math.round(Math.min(maxW, maxH * 16 / 9));
+      h = Math.round(w * 9 / 16);
+      if(h > maxH){ h = Math.round(maxH); w = Math.round(h * 16 / 9); }
     }else if(shape === 'square'){
       const side = Math.min(Math.round(aw * 0.62), Math.round(ah * 0.96), 900);
       w = side; h = side;

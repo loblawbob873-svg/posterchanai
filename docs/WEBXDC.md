@@ -17,6 +17,13 @@ Nostr event, so two people with the same post in their timeline are playing the 
 
 **To post one:** compose → 📎 → `🎮 Mini app (.xdc)`.
 
+**Half-Life** is the showcase: [`content.hl2dm.org/xdc/hl.xdc`](https://content.hl2dm.org/xdc/hl.xdc)
+(178 MB — it ships the three free demo campaigns; source [webXash](https://github.com/x8BitRain/webXash)).
+It plays the demos immediately, takes your own bought copy of Half-Life or Counter-Strike for the full
+game, and supports multiplayer through the realtime channel. **Quake III** is the other:
+[`quake3.xdc`](https://github.com/WofWca/quake3.xdc/releases/latest/download/quake3.xdc) (4.7 MB, and
+it asks you to supply the demo data yourself — which is how it publishes an id Software game legally).
+
 **Where to get apps:** [webxdc.org/apps](https://webxdc.org/apps/) is the store;
 [codeberg.org/webxdc](https://codeberg.org/webxdc) is where most of them are developed, and each
 repo publishes the `.xdc` as a git release asset — download that file and attach it. Anything posted
@@ -42,9 +49,16 @@ can disagree about the numbers and still agree about the *set*, which is all
 `setUpdateListener(cb, lastSerial)` needs.
 
 The app's own bytes are fetched **directly from wherever they were posted**, exactly like a remote
-image in the timeline — the node stores only the apps posted through it. The `x` hash is verified
-before anything runs: without that, whoever hosts the file could swap the app after it was posted,
-for one reader or for everybody, and nothing about the post would change.
+image in the timeline — the node stores only the apps posted through it. The archive is **never
+unzipped whole**: the central directory is read and one entry is inflated per request, because
+unzipping Half-Life eagerly would cost 178 MB of memory on top of the 178 MB of bytes before a frame
+is drawn.
+
+The `x` hash is verified **when it is a hash** — without that, whoever hosts the file could swap the
+app after it was posted and nothing about the post would change. But the published Half-Life carries
+`["x", "hl"]`, a label rather than a digest, so a non-sha256 `x` is ignored instead of enforced: the
+tag is advisory in the wild, and refusing an app while accusing its author of tampering is worse than
+a missing check on a file the reader chose to open.
 
 ## Where an app runs, and why it matters
 

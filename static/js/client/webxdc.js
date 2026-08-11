@@ -40,7 +40,12 @@
     const KIND_UPDATE = 4932;          // NIP-DC state update (regular event)
     const KIND_REALTIME = 20932;       // NIP-DC realtime data (EPHEMERAL: relays forward, store nothing)
     const MIME = 'application/x-webxdc';
-    const MAX_XDC = 24 * 1024 * 1024;  // a zip of HTML and sprites; past this something is wrong
+    /* 256 MB. Not a guess: the published Half-Life port is 178 MB, because it ships the three demo
+     * campaigns (dayone.zip 75 MB, hldm.zip 62 MB, uplink.zip 29 MB) beside a 3.7 MB Xash wasm. A cap
+     * sized for "a zip of HTML and sprites" refuses the most impressive app in the ecosystem, and the
+     * refusal reads as the app being broken. The archive is never unzipped whole (see load), so the
+     * cost of a big one is the download and one copy of the bytes. */
+    const MAX_XDC = 256 * 1024 * 1024;
     const UPDATE_MAX = 128000;         // the spec's sendUpdateMaxSize default
     const UPDATE_INTERVAL = 1000;      // we are not an email network; a move should land immediately
 
@@ -146,15 +151,27 @@
         if(len > MAX_XDC) throw new Error('that app is too large to open here');
         const bytes = new Uint8Array(await r.arrayBuffer());
         if(bytes.length > MAX_XDC) throw new Error('that app is too large to open here');
-        if(app.sha){
+        /* VERIFY THE HASH — WHEN THERE IS ONE. `x` is defined as the sha256, and checking it is what
+         * stops whoever hosts the file swapping the app after it was posted. But the published
+         * Half-Life port carries `["x", "hl"]` — a label, not a digest — and treating that as a
+         * mismatch refuses the app outright, with a message accusing its author of tampering. So the
+         * check applies to a value that IS a sha256, and a non-hash `x` is ignored rather than
+         * enforced: the tag is advisory in the wild, and a wrong refusal is worse than a missing
+         * check on a file the reader chose to open. */
+        if(/^[0-9a-f]{64}$/i.test(String(app.sha || ''))){
           const got = await sha256Hex(bytes);
           if(got.toLowerCase() !== String(app.sha).toLowerCase()){
             throw new Error('this app does not match the one that was posted — refusing to run it');
           }
         }
-        const files = await window.PCZip.readAll(bytes);
-        if(!files.has('index.html')) throw new Error('that .xdc has no index.html in it');
-        return files;
+        /* THE DIRECTORY, NOT THE CONTENTS. Unzipping everything up front costs the whole archive
+         * again in memory — 178 MB of Half-Life becomes 178 MB of Map on top of the 178 MB of bytes,
+         * on a phone, before a single frame is drawn. The central directory is a few KB, and one
+         * entry is inflated per request (which is what the sandbox's worker asks for anyway). */
+        const index = new Map();
+        for(const e of window.PCZip.entries(bytes)) if(e.name) index.set(e.name, e);
+        if(!index.has('index.html')) throw new Error('that .xdc has no index.html in it');
+        return { bytes, index };
       })();
       _cache.set(key, p);
       p.catch(() => _cache.delete(key));               // a failed load must not be cached for ever
@@ -165,19 +182,19 @@
      * post, because the post is written by whoever shared it and the manifest by whoever wrote the
      * app. A tiny hand-rolled TOML read: the spec defines exactly two keys and pulling in a TOML
      * parser for `name = "…"` would be the third dependency this feature does not need. */
-    function manifestName(files){
-      const b = files.get('manifest.toml');
+    async function manifestName(files){
+      const b = await fileOf(files, 'manifest.toml');
       if(!b) return '';
       let text = '';
       try{ text = new TextDecoder().decode(b); }catch(_){ return ''; }
       const m = /^\s*name\s*=\s*(?:"([^"]*)"|'([^']*)')/m.exec(text);
       return (m && (m[1] || m[2]) || '').slice(0, 80);
     }
-    function iconBlobUrl(files){
-      const b = files.get('icon.png') || files.get('icon.jpg');
-      if(!b) return '';
-      try{ return URL.createObjectURL(new Blob([b], { type: files.has('icon.png') ? 'image/png' : 'image/jpeg' })); }
-      catch(_){ return ''; }
+    // One entry, inflated on demand. Null when the archive has no such file.
+    async function fileOf(files, name){
+      const e = files.index.get(name);
+      if(!e) return null;
+      try{ return await window.PCZip.read(files.bytes, e); }catch(_){ return null; }
     }
 
     // ---- serving the app into the sandbox --------------------------------------------------------
@@ -383,7 +400,7 @@
      * not in the zip; anything else is looked up by path. A miss is a 404 rather than an error,
      * because apps probe for optional files (favicon, a manifest) and a thrown error would surface
      * as a broken sandbox rather than as a missing icon. */
-    Session.prototype.resolve = function(pathname){
+    Session.prototype.resolve = async function(pathname){
       if(pathname === BRIDGE_PATH){
         /* The per-session values are handed to the bridge as ONE object it reads, rather than
          * patched into its source with string replacement. Substituting into code that also
@@ -398,11 +415,9 @@
       let name = decodeURIComponent(String(pathname || '/')).replace(/^\/+/, '');
       if(!name || name.charAt(name.length - 1) === '/') name += 'index.html';
       name = window.PCZip.normalise(name);
-      let bytes = this.files.get(name);
-      if(!bytes && name !== 'index.html' && this.files.has(name + '/index.html')){
-        bytes = this.files.get(name + '/index.html');
-        name = name + '/index.html';
-      }
+      if(!this.files.index.has(name) && name !== 'index.html'
+         && this.files.index.has(name + '/index.html')) name = name + '/index.html';
+      const bytes = await fileOf(this.files, name);
       if(!bytes) return { status:404, contentType:'text/plain', body:_enc.encode('not in this app') };
       const type = mimeOf(name);
       if(type === 'text/html'){
@@ -598,8 +613,7 @@
       if(d.method === 'fetch'){
         let path = '/';
         try{ path = new URL(d.params.request.url).pathname; }catch(_){}
-        const r = this.resolve(path);
-        this.reply(id, {
+        this.resolve(path).then((r) => this.reply(id, {
           status: r.status,
           statusText: '',
           headers: {
@@ -610,7 +624,7 @@
             'x-content-type-options': 'nosniff',
           },
           body: b64(r.body),
-        });
+        }), () => this.fail(id, 'could not read that file from the app'));
         return;
       }
       if(d.method === 'webxdc.sendUpdate'){
@@ -686,7 +700,7 @@
       }catch(e){ toast((e && e.message) || 'could not open that app'); return; }
       if(id !== _openSeq) return;                      // superseded by another launch
 
-      const name = app.name || manifestName(files) || 'Mini app';
+      const name = app.name || (await manifestName(files)) || 'Mini app';
       const session = new Session(Object.assign({}, app, { name }), files);
 
       const mountInto = (el) => {
@@ -805,10 +819,13 @@
           if(file.size > MAX_XDC) throw new Error('that file is too big for a mini app');
           const bytes = new Uint8Array(await file.arrayBuffer());
           let files;
-          try{ files = await window.PCZip.readAll(bytes); }
-          catch(e){ throw new Error('that is not a .xdc archive (' + ((e && e.message) || 'unreadable') + ')'); }
-          if(!files.has('index.html')) throw new Error('that .xdc has no index.html in it — it will not run');
-          const name = manifestName(files) || (file.name || '').replace(/\.xdc$/i, '');
+          try{
+            const index = new Map();
+            for(const e of window.PCZip.entries(bytes)) if(e.name) index.set(e.name, e);
+            files = { bytes, index };
+          }catch(e){ throw new Error('that is not a .xdc archive (' + ((e && e.message) || 'unreadable') + ')'); }
+          if(!files.index.has('index.html')) throw new Error('that .xdc has no index.html in it — it will not run');
+          const name = (await manifestName(files)) || (file.name || '').replace(/\.xdc$/i, '');
           const sha = await sha256Hex(bytes);
           toast('uploading ' + (name || 'the app') + '…');
           /* Uploaded under its real name and type. A Blossom server keys on the hash, so the same
