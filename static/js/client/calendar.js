@@ -322,6 +322,9 @@
         if(S.enabled !== false) S.error = (e && e.message) || 'could not load your calendars';
       }finally{
         S.loading = false; S.ready = true; paint();
+        // After the data, never before: pushWidget reads S.items, and pushing an empty set would
+        // blank a correct widget for as long as the load took.
+        try{ pushWidget(); }catch(_){}
       }
     }
 
@@ -626,6 +629,56 @@
       if(d < 3600) return 'updated ' + Math.max(1, Math.round(d / 60)) + 'm ago';
       if(d < 172800) return 'updated ' + Math.round(d / 3600) + 'h ago';
       return 'updated ' + Math.round(d / 86400) + 'd ago';
+    }
+
+    /* THE ANDROID HOME-SCREEN WIDGET.
+     *
+     * A calendar item is an encrypted document; the widget is drawn by the LAUNCHER, which has no key
+     * and no session. So the decrypting happens here — once, in the code that already does it — and
+     * the widget is handed the answer. Anything else means a second iCalendar parser and a second
+     * recurrence expander in Java, which is how the widget and the app end up disagreeing about what
+     * day something is on.
+     *
+     * SEVERAL DAYS, keyed by LOCAL DATE, because the widget decides which day is "today" at DRAW time
+     * rather than trusting when this was written — that is what keeps it right through midnight and
+     * through the app not being opened for a week. It also fills its rows from the days after today,
+     * the way the desktop "Today" widget does.
+     *
+     * Cheap and idempotent: it runs after a load, and a load is already the expensive part. */
+    async function pushWidget(){
+      const P = PC.capPlugin ? PC.capPlugin('CalendarWidget', 'push') : null;
+      if(!P) return;                                    // not the packaged app
+      let span = 7;
+      try{ span = Number(((await P.window()) || {}).days) || 7; }catch(_){}
+      const I = window.PCIcal;
+      if(!I) return;
+      const now = new Date();
+      const from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + span);
+      const days = {};
+      for(const cid of Object.keys(S.items || {})){
+        for(const rec of (S.items[cid] || [])){
+          let occ = [];
+          // One malformed item must not empty the widget.
+          try{ occ = I.occurrences(I.parseResource(Object.assign({ cal: cid }, rec)), from, to); }
+          catch(_){ occ = []; }
+          for(const o of occ){
+            if(!o || !o.start) continue;
+            (days[o.key] = days[o.key] || []).push({
+              t: o.allDay ? '' : `${pad(o.start.getHours())}:${pad(o.start.getMinutes())}`,
+              s: String(o.title || '(no title)').slice(0, 80),
+              // `p` = already finished. The widget dims those rather than dropping them: a day whose
+              // entries disappear as it goes on reads as a calendar losing things.
+              p: !o.allDay && o.start < now,
+            });
+          }
+        }
+      }
+      for(const k of Object.keys(days)){
+        days[k].sort((a, b) => (a.t || '').localeCompare(b.t || ''));
+        days[k] = days[k].slice(0, 12);        // a widget shows four; this is the "+N more" count
+      }
+      try{ await P.push({ days }); }catch(_){}
     }
 
     function subscribePanel(prefill){

@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Today's events, on the home screen. Deliberately plain RemoteViews: a widget is drawn by the
+     LAUNCHER's process, which supports a fixed handful of view types and no custom drawing.
+
+     The rows are a FIXED SET of TextViews rather than a ListView, and that is the important choice.
+     A ListView in a widget needs a RemoteViewsService bound by the launcher, which on many OEM
+     launchers is where widgets go to be slow, blank or stale — four rows and an "and N more" line
+     covers the day for almost everybody and cannot fail that way. Rows past what the day needs are
+     set to GONE.
+
+     Colours are baked rather than themed, for the same reason the music widget's are: the launcher
+     does not carry this app's theme, so an attribute reference resolves to whatever the launcher
+     happens to be using. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/cw_body"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/widget_bg"
+    android:padding="12dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="6dp">
+
+        <TextView
+            android:id="@+id/cw_day"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:textColor="#00F0FF"
+            android:layout_marginEnd="9dp"
+            android:text="—" />
+
+        <TextView
+            android:id="@+id/cw_date"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textSize="11sp"
+            android:textAllCaps="true"
+            android:textColor="#7FD8E8" />
+    </LinearLayout>
+
+    <TextView android:id="@+id/cw_1" style="@style/PcWidgetRow" />
+    <TextView android:id="@+id/cw_2" style="@style/PcWidgetRow" />
+    <TextView android:id="@+id/cw_3" style="@style/PcWidgetRow" />
+    <TextView android:id="@+id/cw_4" style="@style/PcWidgetRow" />
+
+    <TextView
+        android:id="@+id/cw_more"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textSize="11sp"
+        android:textColor="#7FD8E8"
+        android:layout_marginTop="2dp"
+        android:visibility="gone" />
+
+    <!-- Shown INSTEAD of the rows when there is nothing: an empty widget with no words on it reads
+         as a widget that failed to load, which is the one state a calendar must not be mistaken for. -->
+    <TextView
+        android:id="@+id/cw_empty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="13sp"
+        android:textColor="#9FB4C8"
+        android:visibility="gone" />
+</LinearLayout>

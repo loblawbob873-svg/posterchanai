@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- updatePeriodMillis="0": there is nothing to poll for. What changes the display is a push from
+     the app (CalendarPlugin.push) or the date rolling over, and both arrive as broadcasts — and the
+     platform clamps polling to 30 minutes anyway, which would be a wake-up an hour to redraw the
+     same list. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="3"
+    android:targetCellHeight="3"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/widget_calendar"
+    android:previewLayout="@layout/widget_calendar"
+    android:description="@string/calendar_widget_description"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />

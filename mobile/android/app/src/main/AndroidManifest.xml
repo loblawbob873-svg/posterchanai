@@ -144,6 +144,25 @@
             android:exported="false"
             android:foregroundServiceType="microphone|camera" />
 
+        <!-- Today's events on the home screen. Same split as the music widget: the LAUNCHER draws it
+             and has no key, no session and no business having either, so the WebView pushes what it
+             has already decrypted and this renders it. ACTION_DATE_CHANGED is registered because
+             without it the widget shows YESTERDAY's list until something else happens to redraw it,
+             which on a home screen can be hours. -->
+        <receiver
+            android:name=".calendar.CalendarWidget"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.intent.action.DATE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/calendar_widget_info" />
+        </receiver>
+
         <!-- Headset / steering-wheel buttons on Android versions that deliver them as a broadcast.
              MediaSessionCompat looks this receiver up BY NAME at construction and warns (then routes
              nothing) when it is absent — it is what forwards the button to the service above. -->

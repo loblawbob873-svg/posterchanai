@@ -2410,6 +2410,14 @@
       // so re-checking on every resume can't replay it.
       const _reMusic=()=>{ try{ MusicPlayer.consumeLaunch(); }catch(_){} };
       _reMusic();
+      /* The CALENDAR WIDGET can launch the app cold OR foreground it through onNewIntent, and either
+       * way the press arrives as an Intent extra rather than a JS event — same shape as the music
+       * widget's. Consumed natively, so re-checking on every resume cannot replay it. */
+      const _reCal=()=>{ try{
+        const P=_capPlugin('CalendarWidget','consumeLaunch'); if(!P) return;
+        const r=P.consumeLaunch(); if(r && r.then) r.then(x=>{ if(x && x.open) switchView('calendar'); }).catch(()=>{});
+      }catch(_){} };
+      _reCal();
       // Register the foreground/resume listeners ONCE per page-load — startApp can re-run (guest→login without
       // reload), and without this guard each run leaks another set of listeners → duplicate share re-checks.
       // Warm share: the app is already running and gets foregrounded via onNewIntent — the send-intent plugin
@@ -2417,11 +2425,11 @@
       // getIntent() so the plugin sees the new file). Dedupe in _consumeSendIntent stops reprocessing.
       if(!window.__pcNativeBound){ window.__pcNativeBound=true;
         window.addEventListener('sendIntentReceived', _reShare);
-        document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ _reShare(); _reMusic(); } });
+        document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ _reShare(); _reMusic(); _reCal(); } });
         const _App=_capPlugin('App');
-        if(_App && _App.addListener){ try{ _App.addListener('resume', ()=>{ _reShare(); _reMusic(); _nativeResume(); });
+        if(_App && _App.addListener){ try{ _App.addListener('resume', ()=>{ _reShare(); _reMusic(); _reCal(); _nativeResume(); });
           _App.addListener('appStateChange', st=>{
-            if(st && st.isActive){ _reShare(); _reMusic(); _nativeResume(); }
+            if(st && st.isActive){ _reShare(); _reMusic(); _reCal(); _nativeResume(); }
             // The PAUSE half is what makes the gate above mean anything. A frozen WebView can deliver
             // its `visibilitychange` late or not at all, so _hiddenAt was the one number in this
             // decision that the least reliable signal owned.
@@ -27380,6 +27388,12 @@
     ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
     runSearch,                                                // → the desktop's taskbar search box
     openExternal,                                             // → web search results, and anything else that must leave the app
+    /* THE NATIVE PLUGIN LOOKUP, shared. Not a convenience: `_capPlugin` falls back to
+     * `Capacitor.registerPlugin(name)`, which is what a plugin registered in Java but with no JS
+     * package of its own NEEDS — `Capacitor.Plugins.<name>` is empty for those. A module reaching
+     * for the map directly gets null on the one build the plugin exists in, and does nothing, and
+     * says nothing. */
+    capPlugin: _capPlugin,
     // The desktop hides the sidebar, and #me-card was the only way to reach your own profile.
     openProfile: (pk) => renderProfileView(pk || (ME && ME.pubkey)),
     /* Who is signed in. os.js and the other modules live OUTSIDE this IIFE, so `window.ME` is

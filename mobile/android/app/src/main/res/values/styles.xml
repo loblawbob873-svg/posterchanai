@@ -24,4 +24,19 @@
         <item name="android:background">@drawable/splash</item>
         <item name="android:windowOptOutEdgeToEdgeEnforcement" tools:targetApi="35">true</item>
     </style>
+
+    <!-- One event line in the calendar widget. A STYLE rather than four copies of the same eight
+         attributes: RemoteViews cannot set text appearance at runtime on older platforms, so the
+         rows have to be identical by construction. -->
+    <style name="PcWidgetRow">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:ellipsize">end</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textColor">#E8FBFF</item>
+        <item name="android:paddingTop">2dp</item>
+        <item name="android:paddingBottom">2dp</item>
+        <item name="android:visibility">gone</item>
+    </style>
 </resources>

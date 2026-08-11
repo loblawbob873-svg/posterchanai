@@ -5,4 +5,5 @@
     <string name="package_name">place.poster.app</string>
     <string name="custom_url_scheme">place.poster.app</string>
     <string name="music_widget_description">Play, pause and skip your PosterChan music from the home screen.</string>
+    <string name="calendar_widget_description">Today\'s events from your PosterChan calendars, on the home screen.</string>
 </resources>
