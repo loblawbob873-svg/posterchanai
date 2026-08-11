@@ -16052,17 +16052,38 @@
     const p = _encFileUrl(sha, mimeHint).finally(()=>{ delete _encPending[sha]; });
     _encPending[sha]=p; return p;
   }
+  /* THE DRIVE HAS TWO ENCRYPTION SCHEMES, AND READING ONLY THE NEWER ONE LOOKS EXACTLY LIKE A WRONG KEY.
+   *
+   *   v2 (`meta.mk`)     — the master key, IV prepended to the blob.
+   *   v1 (`meta.keyenc`) — a key PER FILE, itself NIP-44-encrypted to the owner.
+   *
+   * `trackUrl` has always branched on that; `_encFileUrl` — the generic path behind Notes attachments,
+   * the wallpaper and its picker — did not, and ran every blob through `_masterDecrypt`. On a v1 file
+   * that throws AES-GCM's `OperationError`, whose message is "The operation failed for an
+   * operation-specific reason": indistinguishable from the wrong-key case below, which is what the
+   * retry then spent its effort on — re-fetching a key that was never the problem and decrypting
+   * with the same wrong SCHEME again. Reported as a desktop background that would neither preview
+   * nor apply, while the identical bytes played fine in the music player.
+   *
+   * One decryptor, used by both callers, because two of them is how they drifted in the first place. */
+  async function _driveDecrypt(m, bytes){
+    if(m && m.keyenc && !m.mk){
+      const {k,iv}=JSON.parse(await signer.nip44dec(ME.pubkey, m.keyenc));
+      return await _aesDecrypt(bytes, _b64u8(k), _b64u8(iv));
+    }
+    return await _masterDecrypt(await FilesIdx._ensureMK(), bytes);
+  }
   async function _encFileUrl(sha, mimeHint){
     // mimeHint: the drive index is not the only record of a blob any more — a Notes attachment also
     // stores its own name/mime on the note. If a bulk import was interrupted before the index was
     // flushed, meta() is empty, and an object URL typed application/octet-stream does NOT render in
     // an <img>. The note's own copy of the type keeps the picture showing.
-    const m=FilesIdx.meta(sha) || (mimeHint ? {mime:mimeHint} : null);
+    let m=FilesIdx.meta(sha) || (mimeHint ? {mime:mimeHint} : null);
     const r=await fetch(mediaServer()+'/'+sha); if(!r.ok) throw new Error('blob HTTP '+r.status);
     const blob=new Uint8Array(await r.arrayBuffer());
     let plain;
     try{
-      plain=await _masterDecrypt(await FilesIdx._ensureMK(), blob);
+      plain=await _driveDecrypt(m, blob);
     }catch(e){
       /* AES-GCM failing is "wrong key", not "bad file" — WebCrypto reports it as OperationError,
        * "The operation failed for an operation-specific reason", which reads like corruption and
@@ -16071,7 +16092,10 @@
        * from the server, which is the authority, and try once more. Doing it HERE is what heals a
        * device that is already stuck, without the user having to do anything. */
       try{ await FilesIdx.pull(); }catch(_){ }
-      plain=await _masterDecrypt(await FilesIdx._ensureMK(), blob);
+      // The pull refreshes the INDEX as well as the key, so re-read the file's record: a blob whose
+      // meta was missing (hence no scheme to pick) may have just got it back.
+      m=FilesIdx.meta(sha) || m;
+      plain=await _driveDecrypt(m, blob);
     }
     const u=URL.createObjectURL(new Blob([plain],{type:(m&&m.mime)||'application/octet-stream'}));
     _encUrls[sha]=u; _encOrder.push(sha);
@@ -16757,10 +16781,11 @@
       const r=await fetch(mediaServer()+'/'+sha); if(!r.ok) throw new Error('blob HTTP '+r.status);
       blob=new Uint8Array(await r.arrayBuffer());
     }
-    let plain;
-    if(m.mk){ plain=await _masterDecrypt(await FilesIdx._ensureMK(), blob); }            // v2 master-key (IV prepended)
-    else if(m.keyenc){ const {k,iv}=JSON.parse(await signer.nip44dec(ME.pubkey,m.keyenc)); plain=await _aesDecrypt(blob,_b64u8(k),_b64u8(iv)); }  // v1 per-track key
-    else throw new Error('no key');
+    // v2 master-key (IV prepended) or v1 per-track key — _driveDecrypt is the single place that knows,
+    // shared with _encFileUrl. A track with NEITHER field used to throw 'no key' here; it now tries the
+    // master key, which is what an index entry written before the flag existed actually needs.
+    if(!m.mk && !m.keyenc) console.warn('track', sha.slice(0,8), 'has no key field — trying the master key');
+    const plain=await _driveDecrypt(m, blob);
     const u=URL.createObjectURL(new Blob([plain],{type:m.mime||'audio/ogg'})); _trackUrls[sha]=u; _trackUrlOrder.push(sha);
     while(_trackUrlOrder.length>6){ const old=_trackUrlOrder.shift(); if(old!==(MusicPlayer&&MusicPlayer.cur) && _trackUrls[old]){ URL.revokeObjectURL(_trackUrls[old]); delete _trackUrls[old]; } }
     return u;
