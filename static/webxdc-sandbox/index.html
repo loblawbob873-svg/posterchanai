@@ -180,42 +180,147 @@
       }, 25000);
       post({ jsonrpc:'2.0', method:'sandbox.running' });
     }).catch(function(e){
-      /* "The operation is insecure" is Firefox's SecurityError, and on this path it means one thing:
-       * the browser refuses to register a service worker in a cross-origin frame. Firefox's Enhanced
-       * Tracking Protection partitions (and for workers, blocks) storage for an embedded document on
-       * a different origin — and a mini app is exactly that by design, because a different origin is
-       * what keeps it away from the client's keys.
+      /* NO WORKER? THEN NO WORKER. Firefox will not register a service worker in an embedded frame
+       * from another origin — not because of Enhanced Tracking Protection (it fails with that off)
+       * and not because of the `sandbox` attribute (it fails with none), but because the platform
+       * does not allow it, and the Storage Access API does not grant it either.
        *
-       * Nothing in this file can work around it: the whole architecture rests on a worker serving the
-       * app's files. So it says what happened and what to do, rather than repeating the browser's
-       * four-word verdict at somebody staring at a black rectangle. */
+       * The worker was only ever a way to answer the app's requests. There is another: hand the app
+       * BLOB URLs. A blob created HERE inherits THIS document's origin, so the app still runs on
+       * xdc.<instance> and still cannot touch the client's storage — the whole point — and it needs
+       * no worker, no registration and no permission. See bootBlobs. */
       var m = String((e && (e.name + ': ' + e.message)) || e);
-      var insecure = /SecurityError|insecure|not allowed/i.test(m);
-      /* THE STANDARD REMEDY, TRIED BEFORE GIVING UP. Firefox blocks this because the frame is
-       * cross-origin and therefore third-party storage; the Storage Access API is precisely the
-       * mechanism for a frame to ask for its own storage back, and it requires a USER GESTURE inside
-       * the frame — which is why this is a button rather than an automatic retry. If the grant comes
-       * through, registration is attempted again; if it still refuses, the honest message below is
-       * what is left. */
-      if(insecure && document.requestStorageAccess){
-        say('');
-        var b = document.createElement('button');
-        b.textContent = 'Allow this app to run';
-        b.style.cssText = 'padding:10px 18px;border-radius:10px;border:1px solid #555;background:#111;'
-                        + 'color:#ddd;font:inherit;cursor:pointer';
-        msg.appendChild(b);
-        b.onclick = function(){
-          say('asking your browser for permission…');
-          document.requestStorageAccess().then(function(){
-            started = false;            // let boot() run again now that storage is ours
-            boot(params);
-          }, function(){ fail(FIREFOX_VERDICT); });
-        };
-        return;
-      }
-      fail(insecure ? FIREFOX_VERDICT : 'Could not start the sandbox: ' + m);
+      try{ console.warn('[sandbox] service worker unavailable:', m, '— falling back to blob URLs'); }catch(_){}
+      bootBlobs();
     });
   }
+
+  /* ---- the no-worker path ----------------------------------------------------------------------
+   *
+   * Every file becomes a blob URL on THIS origin, and the app's HTML is rewritten to point at them.
+   * What cannot be rewritten (anything the app fetches at runtime, by a name it computes) is caught
+   * by a shim over fetch and XMLHttpRequest that asks the parent, exactly as the worker did.
+   *
+   * The trade against the worker path: the worker sees every request transparently, while this has to
+   * find the references itself. A game that builds URLs in ways the shim does not recognise will miss
+   * files here and not there — which is why the worker is still preferred wherever it is allowed. */
+  function bootBlobs(){
+    say('preparing the app…');
+    var urls = {};                       // app path -> blob URL, for what has already been fetched
+
+    function bytesOf(path){
+      return rpc('fetch', { request: { url: 'https://sandbox.invalid/' + path.replace(/^\/+/, ''),
+                                       method: 'GET', headers: {}, body: null } })
+        .then(function(res){
+          if(!res || (res.status && res.status >= 400)) throw new Error('missing: ' + path);
+          if(res.bytes) return { bytes: new Uint8Array(res.bytes), type: (res.headers||{})['content-type'] || '' };
+          var bin = atob(res.body || ''), out = new Uint8Array(bin.length);
+          for(var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+          return { bytes: out, type: (res.headers||{})['content-type'] || '' };
+        });
+    }
+    function blobFor(path){
+      var key = path.replace(/^\/+/, '');
+      if(urls[key]) return Promise.resolve(urls[key]);
+      if(firstFetch) firstFetch(key);
+      return bytesOf(key).then(function(f){
+        urls[key] = URL.createObjectURL(new Blob([f.bytes], { type: f.type || 'application/octet-stream' }));
+        return urls[key];
+      });
+    }
+
+    bytesOf('index.html').then(function(f){
+      var html = new TextDecoder().decode(f.bytes);
+      /* Rewrite what the browser loads BY ITSELF — script, link, img, source. Those never reach a
+       * fetch shim: the parser resolves them against the document's own URL, which for a blob is
+       * useless. Anything the app requests later goes through the shim instead. */
+      var refs = [];
+      html = html.replace(/(\s(?:src|href))\s*=\s*(["'])([^"']+)\2/gi, function(all, attr, q, url){
+        if(/^(?:[a-z]+:|\/\/|#|data:)/i.test(url)) return all;      // absolute, anchor, data: — leave it
+        var i = refs.push(url.replace(/^\.?\//, '')) - 1;
+        return attr + '=' + q + '__XDCREF' + i + '__' + q;
+      });
+      return Promise.all(refs.map(function(r){ return blobFor(r).catch(function(){ return ''; }); }))
+        .then(function(got){
+          for(var i = 0; i < got.length; i++) html = html.split('__XDCREF' + i + '__').join(got[i]);
+          // The shim goes in FIRST, before any of the app's own scripts, or the app's boot code runs
+          // against the real fetch and asks the network for files that only exist here.
+          var shim = '<script>' + SHIM_SRC + '<\/script>';
+          html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, function(h){ return h + shim; })
+                                           : shim + html;
+          var page = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+          var f2 = document.createElement('iframe');
+          f2.id = 'f';
+          f2.setAttribute('allow', 'autoplay; fullscreen; gamepad');
+          f2.src = page;
+          document.body.appendChild(f2);
+          say('starting the app…');
+          f2.addEventListener('load', function(){ if(msg) msg.remove(); });
+          post({ jsonrpc:'2.0', method:'sandbox.running' });
+        });
+    }).catch(function(e){
+      fail('Could not start the app: ' + ((e && e.message) || e));
+    });
+
+    /* The app frame asks THIS document for a file over postMessage; we answer with a blob URL it can
+     * fetch locally. Same channel the bridge already uses, so there is nothing new crossing origins. */
+    window.addEventListener('message', function(ev){
+      var f2 = document.getElementById('f');
+      if(!f2 || ev.source !== f2.contentWindow) return;
+      var d = ev.data;
+      if(!d || d.__xdcfile === undefined) return;
+      blobFor(String(d.__xdcfile)).then(function(u){
+        ev.source.postMessage({ __xdcfileRes: d.id, url: u }, '*');
+      }, function(err){
+        ev.source.postMessage({ __xdcfileRes: d.id, error: String((err && err.message) || err) }, '*');
+      });
+    });
+  }
+
+  /* Runs INSIDE the app, before its own code. Turns a relative fetch/XHR into "ask the loader for a
+   * blob URL, then fetch that" — which is a local, synchronous-ish read of memory this origin already
+   * holds. */
+  var SHIM_SRC = [
+    '(function(){',
+    '  var n=1, waits={};',
+    '  window.addEventListener("message", function(e){',
+    '    var d=e.data; if(!d||d.__xdcfileRes===undefined) return;',
+    '    var w=waits[d.__xdcfileRes]; if(!w) return; delete waits[d.__xdcfileRes];',
+    '    d.error ? w.rej(new Error(d.error)) : w.res(d.url);',
+    '  });',
+    '  function ask(p){ var id=n++; return new Promise(function(res,rej){ waits[id]={res:res,rej:rej};',
+    '    parent.postMessage({ __xdcfile:p, id:id }, "*"); }); }',
+    '  function local(u){ try{ var s=String(u);',
+    '    if(/^(blob:|data:)/i.test(s)) return null;',
+    '    if(/^https?:/i.test(s)){ var a=new URL(s); if(a.origin===location.origin) return a.pathname.replace(/^\\/+/,""); return null; }',
+    '    return s.replace(/^\\.?\\//,"");',
+    '  }catch(_){ return null; } }',
+    '  var of_=window.fetch ? window.fetch.bind(window) : null;',
+    '  window.fetch = function(input, init){',
+    '    var u = (input && input.url) ? input.url : input;',
+    '    var p = local(u);',
+    '    if(p===null) return of_ ? of_(input, init) : Promise.reject(new Error("no network"));',
+    '    return ask(p).then(function(b){ return of_(b, init); });',
+    '  };',
+    '  var OX = window.XMLHttpRequest;',
+    '  if(OX){ var op = OX.prototype.open;',
+    '    OX.prototype.open = function(m, u){',
+    '      var p = local(u), self_=this, args=[].slice.call(arguments);',
+    '      if(p===null) return op.apply(this, args);',
+    '      this.__xdcOpen = args; this.__xdcPath = p;',
+    '      return op.apply(this, args);',
+    '    };',
+    '    var os = OX.prototype.send;',
+    '    OX.prototype.send = function(body){',
+    '      var self_=this;',
+    '      if(!this.__xdcPath) return os.call(this, body);',
+    '      var args=this.__xdcOpen;',
+    '      ask(this.__xdcPath).then(function(b){ args[1]=b; op.apply(self_, args); os.call(self_, body); },',
+    '        function(){ os.call(self_, body); });',
+    '    };',
+    '  }',
+    '})();'
+  ].join('\n');
 
   // Announce readiness. The parent answers with `init`, which is also what tells us its origin.
   try{ parent.postMessage({ jsonrpc:'2.0', method:'ready', params:{ version:VERSION } }, '*'); }
