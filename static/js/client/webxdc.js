@@ -121,6 +121,9 @@
     function sandboxWildcard(){
       try{ return localStorage.getItem('pc_webxdc_wildcard') === '1'; }catch(_){ return false; }
     }
+    function sandboxHostName(){
+      try{ return SANDBOX_LABEL + '.' + instanceHost(); }catch(_){ return 'the sandbox origin'; }
+    }
     async function sandboxOrigin(appId){
       const host = instanceHost();
       if(sandboxWildcard()) return 'https://' + (await subdomain(appId)) + '.' + host;
@@ -685,6 +688,14 @@
         return;
       }
       if(d.method === 'fetch'){
+        /* WHAT THE SANDBOX ACTUALLY ASKED FOR. "Black screen, no error" has two completely different
+         * causes wearing one face: the app ran and drew nothing, or the app never started and its
+         * injected bridge — which is what reports errors and probes WebGL — never executed, so of
+         * course it said nothing. The parent is the one component guaranteed to be running, and it
+         * sees every request. Served files mean the app is alive. */
+        this._served = (this._served || 0) + 1;
+        try{ console.debug('[webxdc]', this.app.name, 'serving', (this._served) + ':',
+                           new URL(d.params.request.url).pathname); }catch(_){}
         let path = '/';
         try{ path = new URL(d.params.request.url).pathname; }catch(_){}
         /* THE BYTES ARE TRANSFERRED, NOT COPIED, and not base64. A published mini app can hold a
@@ -789,6 +800,17 @@
         el.classList.add('xdc-host');
         session.mount(el).catch((e) => { toast((e && e.message) || 'could not start the sandbox'); });
       };
+
+      /* If nothing has been requested a few seconds in, the app is not merely slow — the pipe never
+       * opened. That is a different bug from a game that renders black, and it is the one nobody can
+       * see, so it says so out loud rather than leaving a dark rectangle to be interpreted. */
+      setTimeout(() => {
+        if(session.dead) return;
+        if(!session._served){
+          toast('the sandbox never asked for a single file — the app frame did not start. Reload the '
+              + 'page, and if it persists the service worker on ' + sandboxHostName() + ' is the suspect.');
+        }
+      }, 9000);
 
       let osWin = null;
       try{ osWin = window.PCOS && PCOS.isOn && PCOS.isOn(); }catch(_){ osWin = false; }
