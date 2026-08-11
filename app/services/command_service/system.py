@@ -254,6 +254,23 @@ def cancel_agent_for_conv(conv_id) -> bool:
     return live
 
 
+
+def fleet_targets(reg: dict) -> dict:
+    """What `all` means: THE FLEET, never the sandbox.
+
+    The sandbox is in the registry so it can be PICKED — it is a legitimate target by name — but it is
+    a throwaway Debian container with no relation to any host, so putting it in a fan-out is wrong
+    twice over. The answers are meaningless (asking every machine its uptime and getting a fresh
+    container's), and it is not free: each run spins a container up, archives its /workspace afterwards
+    and reaps it, so every `node all …` paid for a sandbox nobody asked about.
+
+    A sandbox-ONLY user is the exception and keeps it: with no fleet to fan out over, `all` meaning
+    "nothing" would be a dead command with a confusing message.
+    """
+    fleet = {n: t for n, t in (reg or {}).items() if n != "sandbox"}
+    return fleet or dict(reg or {})
+
+
 class _SystemMixin:
     async def _logs_command(self, arg: str, notify: Optional[Callable] = None) -> dict:
         """Run the agentic system health report and store it in the Logs chat (admin only).
@@ -326,6 +343,9 @@ class _SystemMixin:
                 _reg["sandbox"] = _sbx_target
         else:
             _reg = {"sandbox": _sbx_target}         # sandbox-only user: their container is the only target
+        def _fanout() -> dict:
+            return fleet_targets(_reg)
+
         # "sandboxnostr:…" is a placed-sandbox target: it rides the local job path's shape (in `nodes`) but
         # the agent/shell branches route it over Nostr with the sandbox uid (never a bare local job).
         nodes = {n: t for n, t in _reg.items() if not t.startswith("nostr:")}
@@ -492,8 +512,14 @@ class _SystemMixin:
                 return {"type": "text", "content": "Usage: `node all <command>`"}
             if not _reg:
                 return {"type": "text", "content": _fmt_nodes()}
+            # The fleet, never the sandbox — see _fanout. `nodes`/`_npub_nodes` are derived from the
+            # full registry, so they are narrowed here rather than at the top: the sandbox is still a
+            # target you can NAME, it just is not one of "every node".
+            _fan = _fanout()
+            nodes = {n: t for n, t in _fan.items() if not t.startswith("nostr:")}
+            _npub_nodes = {n: t[len("nostr:"):] for n, t in _fan.items() if t.startswith("nostr:")}
             icon = {"done": "✅", "failed": "❌", "killed": "🛑"}
-            lines = [f"## `{command}` on {len(_reg)} node(s)"]
+            lines = [f"## `{command}` on {len(_fan)} node(s)"]
             # Local nodes → background jobs; a placed sandbox → its worker over Nostr; npub workers → dispatch.
             _local_names = [n for n in nodes if not nodes[n].startswith("sandboxnostr:")]
             _placed = [(n, nodes[n].split(":", 2)) for n in nodes if nodes[n].startswith("sandboxnostr:")]
@@ -525,7 +551,7 @@ class _SystemMixin:
             # Resolve target(s) from the Nostr-only registry. A "nostr:<pk>" target runs the agent loop
             # ON the worker; "local" runs it here. `all` fans out over every node.
             if name == "all":
-                targets = list(_reg.items())
+                targets = list(_fanout().items())     # the fleet, never the sandbox — see _fanout
                 if not targets:
                     return {"type": "text", "content": _fmt_nodes()}
             elif name in _reg:

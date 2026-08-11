@@ -76,9 +76,15 @@ async def _get_json(url: str, params: dict):
         return None
 
 
-async def forecast(lat: float, lon: float) -> dict:
-    """Current conditions + a short daily outlook for one place. Never raises."""
-    key = (round(float(lat), 2), round(float(lon), 2))
+async def forecast(lat: float, lon: float, units: str = "metric") -> dict:
+    """Current conditions + a short daily outlook for one place. Never raises.
+
+    `units` is part of the CACHE KEY rather than a conversion applied afterwards: Open-Meteo does the
+    conversion upstream, and °F/mph are what the reading IS for that caller — converting a rounded
+    Celsius figure back would be a second rounding of someone else's answer. Two units means at most
+    two cached entries per grid square, which is nothing against a 10-minute TTL."""
+    units = "imperial" if str(units).lower() in ("imperial", "f", "us") else "metric"
+    key = (round(float(lat), 2), round(float(lon), 2), units)
     now = time.time()
     hit = _forecast.get(key)
     if hit and (now - hit[0]) < _FORECAST_TTL:
@@ -87,12 +93,15 @@ async def forecast(lat: float, lon: float) -> dict:
         hit = _forecast.get(key)
         if hit and (time.time() - hit[0]) < _FORECAST_TTL:
             return hit[1]
-        data = await _get_json(_FORECAST_URL, {
+        params = {
             "latitude": key[0], "longitude": key[1],
             "current": "temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m",
             "daily": "weather_code,temperature_2m_max,temperature_2m_min",
             "timezone": "auto", "forecast_days": 3,
-        })
+        }
+        if units == "imperial":
+            params.update({"temperature_unit": "fahrenheit", "wind_speed_unit": "mph"})
+        data = await _get_json(_FORECAST_URL, params)
         if not data:
             # Serve the stale copy rather than an empty widget — see the module docstring's sibling
             # reasoning in markets_service.get_prices.

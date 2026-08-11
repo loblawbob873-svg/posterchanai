@@ -187,3 +187,41 @@ class WidgetSizing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class WeatherUnits(unittest.TestCase):
+    """°C on a widget in America is the failure this exists to stop.
+
+    A node in one country serves readers in another, so a SERVER-side default is wrong for somebody by
+    construction. The default comes from the browser's own locale, and an explicit choice wins over it
+    for ever after."""
+
+    def units(self, cfg, locale="en-US", measurement=None):
+        return _node("""
+          const loc = %s, ms = %s;
+          global.Intl = { DateTimeFormat: () => ({ resolvedOptions: () => (
+            ms ? { locale: loc, measurementSystem: ms } : { locale: loc }) }) };
+          global.navigator = { language: loc };
+          console.log(JSON.stringify(PCOS.__wxUnits({ cfg: %s })));
+        """ % (json.dumps(locale), json.dumps(measurement), json.dumps(cfg)))
+
+    def test_an_american_reader_gets_fahrenheit(self):
+        self.assertEqual(self.units({}, "en-US"), "imperial")
+
+    def test_everyone_else_gets_celsius(self):
+        self.assertEqual(self.units({}, "en-GB"), "metric")
+        self.assertEqual(self.units({}, "de-DE"), "metric")
+
+    def test_the_engine_s_own_answer_wins_when_it_has_one(self):
+        """Intl reports the measurement system directly on modern engines; the region list is only the
+        fallback for the ones that do not."""
+        self.assertEqual(self.units({}, "en-GB", "us"), "imperial")
+        self.assertEqual(self.units({}, "en-US", "metric"), "metric")
+
+    def test_a_chosen_unit_beats_the_locale_for_ever(self):
+        self.assertEqual(self.units({"units": "metric"}, "en-US"), "metric")
+        self.assertEqual(self.units({"units": "imperial"}, "en-GB"), "imperial")
+
+    def test_a_junk_stored_value_falls_back_rather_than_sticking(self):
+        self.assertEqual(self.units({"units": "kelvin"}, "en-US"), "imperial")

@@ -1728,14 +1728,16 @@
       async refresh(el, w, save){
         if(w.cfg.lat == null){ if(!$('.wgt-wxpick', el)) el.innerHTML = _wxPickerHtml(); _wxWire(el, w, save); return; }
         const box = $('.wgt-wx', el); if(!box) return;
+        const u = _wxUnits(w);
         let d = null;
-        try{ d = await _wgtFeed('wx:' + w.cfg.lat + ',' + w.cfg.lon, 540000,
+        try{ d = await _wgtFeed('wx:' + w.cfg.lat + ',' + w.cfg.lon + ':' + u, 540000,
                                 () => _wgtJson('/api/weather?lat=' + encodeURIComponent(w.cfg.lat)
-                                                       + '&lon=' + encodeURIComponent(w.cfg.lon))); }
+                                                       + '&lon=' + encodeURIComponent(w.cfg.lon)
+                                                       + '&units=' + u)); }
         catch(_){ if(!box.dataset.filled) box.innerHTML = '<div class="wgt-dim">weather unavailable</div>'; return; }
         if(!d || !d.ok || !d.now){ box.innerHTML = '<div class="wgt-dim">no reading</div>'; return; }
         box.dataset.filled = '1';
-        const u = (d.units && d.units.temp) || '°C';
+        const unit = (d.units && d.units.temp) || (u === 'imperial' ? '°F' : '°C');
         const [g, word] = _wxDesc(d.now.code, d.now.day);
         const days = (d.days || []).slice(1, 3).map(x => {
           const [dg] = _wxDesc(x.code, true);
@@ -1744,10 +1746,20 @@
           return `<span class="wgt-wxday">${enc(nm)} ${dg} ${enc(_wgtNum(x.max, 0))}°</span>`;
         }).join('');
         box.innerHTML = `<div class="wgt-wxnow"><span class="wgt-wxglyph">${g}</span>
-            <span class="wgt-wxt">${enc(_wgtNum(d.now.temp, 0))}<sup>${enc(u)}</sup></span></div>
+            <span class="wgt-wxt">${enc(_wgtNum(d.now.temp, 0))}<sup>${enc(unit)}</sup></span>
+            <button class="wgt-wxu" data-wxu aria-label="Switch units"
+              title="Switch to ${u === 'imperial' ? '°C' : '°F'}">${u === 'imperial' ? '°C' : '°F'}</button></div>
           <div class="wgt-wxwhere">${enc(w.cfg.place || '')}</div>
-          <div class="wgt-dim">${enc(word)} · feels ${enc(_wgtNum(d.now.feels, 0))}° · ${enc(_wgtNum(d.now.wind, 0))} ${enc((d.units && d.units.wind) || '')}</div>
+          <div class="wgt-dim">${enc(word)} · feels ${enc(_wgtNum(d.now.feels, 0))}° · ${enc(_wgtNum(d.now.wind, 0))} ${enc((d.units && d.units.wind) || (u === 'imperial' ? 'mph' : 'km/h'))}</div>
           <div class="wgt-wxdays">${days}</div>`;
+        const ub = $('[data-wxu]', box);
+        if(ub) ub.onclick = async (ev) => {
+          ev.stopPropagation();                       // the panel is draggable; this is a button
+          const next = _wxUnits(w) === 'imperial' ? 'metric' : 'imperial';
+          w.cfg.units = next;
+          await save((row) => { row.cfg = Object.assign({}, row.cfg, { units: next }); });
+          _wgtRefreshOne(el.closest('.os-wgt'));
+        };
       },
     },
 
@@ -1758,6 +1770,9 @@
       mount(el){
         el.innerHTML = `<div class="wgt-music"><div class="wgt-mtitle wgt-dim">Nothing playing</div>
           <div class="wgt-mctl">
+            <button class="wgt-b wgt-bsh" data-m="shuffle" aria-label="Shuffle everything"
+                    title="Shuffle your whole library">
+              <svg class="ic" aria-hidden="true"><use href="#i-shuffle"></use></svg></button>
             <button class="wgt-b" data-m="prev" aria-label="Previous">⏮</button>
             <button class="wgt-b wgt-bmain" data-m="toggle" aria-label="Play or pause">▶</button>
             <button class="wgt-b" data-m="next" aria-label="Next">⏭</button>
@@ -1786,12 +1801,13 @@
             // Say so, or the wait is indistinguishable from the dead button this used to be.
             const t = $('.wgt-mtitle', el);
             let slow = null;
-            if(b.dataset.m !== 'prev' && t && /nothing playing/i.test(t.textContent || ''))
+            if(b.dataset.m !== 'prev' && b.dataset.m !== 'next' && t && /nothing playing/i.test(t.textContent || ''))
               slow = setTimeout(() => { t.textContent = 'loading your library…'; }, 350);
             const done = () => { if(slow) clearTimeout(slow); _wgtRefreshOne(el.closest('.os-wgt')); };
             let r;
             if(b.dataset.m === 'prev') r = P.prev();
             else if(b.dataset.m === 'next') r = P.next();
+            else if(b.dataset.m === 'shuffle') r = P.shuffle && P.shuffle();
             else r = P.toggle();
             if(r && r.then) r.then(done, done); else done();
           }catch(e){
@@ -1808,6 +1824,10 @@
         t.textContent = (now && now.title) || 'Nothing playing';
         t.classList.toggle('wgt-dim', !(now && now.title));
         if(main) main.textContent = (now && now.playing) ? '⏸' : '▶';
+        // Shuffle is a MODE, not an action — show whether it is on, or pressing it twice looks like
+        // nothing happened the second time.
+        const sh = $('[data-m="shuffle"]', el);
+        if(sh) sh.classList.toggle('on', !!(P && P.shuffling && P.shuffling()));
       },
     },
 
@@ -1909,6 +1929,26 @@
     // cfg, which _normDoc drops (strings, numbers and booleans only), so every session would lose the
     // link and start a fresh note beside the last one.
     return { id: (r && r.id) || noteId, ok: true, queued: !!(r && r.queued) };
+  }
+
+  /* WHICH UNITS, defaulted from the BROWSER rather than from the server.
+   *
+   * A node in one country serves readers in another, so a server-side default is wrong for somebody
+   * by construction — and "°C on a widget in America" is exactly that failure. `resolvedOptions()`
+   * reports what this browser's locale actually uses; Intl exposes it directly on modern engines and
+   * the en-US/liberia/… set is the documented fallback list for the rest. Once the reader presses the
+   * toggle, their choice is stored per widget and neither of these is consulted again. */
+  const _F_LOCALES = ['US', 'LR', 'MM', 'BS', 'BZ', 'KY', 'PW', 'FM', 'MH'];
+  function _wxUnits(w){
+    if(w && w.cfg && (w.cfg.units === 'imperial' || w.cfg.units === 'metric')) return w.cfg.units;
+    try{
+      const r = Intl.DateTimeFormat().resolvedOptions();
+      if(r && r.measurementSystem) return r.measurementSystem === 'us' ? 'imperial' : 'metric';
+      const loc = (r && r.locale) || navigator.language || '';
+      const reg = (loc.split('-')[1] || '').toUpperCase();
+      if(reg && _F_LOCALES.indexOf(reg) >= 0) return 'imperial';
+    }catch(_){}
+    return 'metric';
   }
 
   function _wxPickerHtml(){
@@ -3577,5 +3617,6 @@
                   // The size arithmetic, for the same reason: 'a widget fits the screen it is on'
                   // is the whole of the tablet↔desktop requirement and nothing on screen says
                   // when it is wrong — the panel is just too big, or too small to read.
-                  __wgtBox: (size, w, h, def) => wgtBox(size, w, h, def) };
+                  __wgtBox: (size, w, h, def) => wgtBox(size, w, h, def),
+                  __wxUnits: (w) => _wxUnits(w) };
 })();

@@ -11,12 +11,13 @@ router = APIRouter(prefix="/api/weather", tags=["weather"])
 
 
 @router.get("")
-async def current(lat: float = Query(...), lon: float = Query(...)):
-    """Current conditions + a 3-day outlook for one place."""
+async def current(lat: float = Query(...), lon: float = Query(...),
+                  units: str = Query("metric", pattern="^(metric|imperial)$")):
+    """Current conditions + a 3-day outlook for one place, in °C/km-h or °F/mph."""
     # A coordinate off the globe can only be a typo or someone probing the cache key space.
     if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
         raise HTTPException(status_code=400, detail="lat/lon out of range")
-    return await weather_service.forecast(lat, lon)
+    return await weather_service.forecast(lat, lon, units)
 
 
 @router.get("/geocode")

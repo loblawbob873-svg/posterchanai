@@ -27395,6 +27395,22 @@
       },
       prev: () => MusicPlayer.prev(),
       next: () => MusicPlayer.next(),
+      /* Shuffle the whole library and start somewhere in it — what the Music app's own Shuffle-all
+       * button does, so the two cannot mean different things. Pulls the library first for the same
+       * reason `toggle` does: the drive index is loaded once per session by whichever screen needs it
+       * first, and a widget that has not opened Files would otherwise shuffle an empty list.
+       * `force` because the random pick can be the track already playing, which play() reads as a
+       * pause — press shuffle, get silence. */
+      shuffle: async () => {
+        if(!FilesIdx._pullDone){ try{ await FilesIdx.pull(); }catch(_){} }
+        const q = musicTracks(null);
+        if(!q.length){ toast('no music yet — add some'); return; }
+        MusicPlayer.shuffle = true;
+        MusicPlayer.refreshQueue();
+        const pick = MusicPlayer.queue[Math.floor(Math.random() * MusicPlayer.queue.length)];
+        MusicPlayer.play(pick, { force: true });
+      },
+      shuffling: () => !!MusicPlayer.shuffle,
     }),
     mdToHtml, uploadEncFile, encFileUrl, deleteBlobQuiet, filesIdx: () => FilesIdx,
     get ME(){ return ME; }, get CFG(){ return CFG; }, get VIEW(){ return VIEW; },

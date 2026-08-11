@@ -155,6 +155,8 @@ window.__PC = {
     toggle: () => { (window.__music = window.__music || []).push('toggle'); },
     prev:   () => { (window.__music = window.__music || []).push('prev'); },
     next:   () => { (window.__music = window.__music || []).push('next'); },
+    shuffle: () => { (window.__music = window.__music || []).push('shuffle'); },
+    shuffling: () => !!window.__shuffling,
   }),
   compose: () => { window.__composed++; },
   get VIEW(){ return window.__view || 'global'; },
@@ -775,7 +777,7 @@ LAYOUT = r"""(async () => {
         out.musicWidget = !!mw;
         if (mw) {
           window.__music = [];
-          for (const k of ['prev','toggle','next']) {
+          for (const k of ['shuffle','prev','toggle','next']) {
             const b = mw.querySelector('[data-m="' + k + '"]');
             if (b) b.click();
             await sleep(40);
@@ -1348,7 +1350,7 @@ async def drive(url):
                     if q.get("musicWidget") is False:
                         problems.append((label, "music-widget-missing",
                                          "the Now-playing widget did not draw"))
-                    elif q.get("musicWidget") and (q.get("musicCalls") or []) != ["prev", "toggle", "next"]:
+                    elif q.get("musicWidget") and (q.get("musicCalls") or []) != ["shuffle", "prev", "toggle", "next"]:
                         problems.append((label, "music-widget-dead",
                                          "the Now-playing widget's transport did not reach the "
                                          f"player: {q.get('musicCalls')!r}. Buttons that do nothing "
