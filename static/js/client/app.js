@@ -5960,7 +5960,16 @@
     // polling a server every two seconds for the rest of the session.
     _torPollT=setInterval(()=>{
       if(VIEW!=='torrents' || _torTab!=='dl' || !document.getElementById('tm-list')){ _torStopPoll(); return; }
-      if(document.visibilityState==='hidden') return;
+      /* NOT on the desktop app. Chromium reports `hidden` for a window that is merely COVERED by
+       * another one (native occlusion), so putting any other window in front froze the progress bars
+       * for as long as it stayed there — reported as "torrents on desktop, not updating progress if
+       * not focused". A covered window is still an app someone is running, and a download you are
+       * watching in another window is the whole reason to leave that view open. The desktop shell
+       * already sets `backgroundThrottling: false`, so the timer really does keep its 2s rate.
+       *
+       * The check stays for a BROWSER TAB, where hidden means hidden and polling a server twice a
+       * second for a page nobody can see is exactly the waste it was added to prevent. */
+      if(document.visibilityState==='hidden' && !_isDesktopApp()) return;
       _torRefresh(false);
     }, 2000);
   }
@@ -19582,7 +19591,10 @@
       const tick = () => {
         if(GUEST) return;
         if(navigator.onLine === false) return;
-        if(document.visibilityState === 'hidden') return;
+        // Same occlusion trap as the torrent poll above: on the desktop app `hidden` also means
+        // "another window is in front", and a mail check that stops for that is a mail check that
+        // stops whenever you are working.
+        if(document.visibilityState === 'hidden' && !_isDesktopApp()) return;
         if(this._syncing) return;
         this.sync(false).catch(()=>{});             // non-manual → notifies rather than toasting
       };

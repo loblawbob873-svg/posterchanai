@@ -315,3 +315,50 @@ def test_a_refused_start_puts_the_switch_back():
     body = APPJS[i:i + 1400]
     assert "box.checked = !want;" in body, "a rejected change leaves the switch lying"
     assert "P.setStayConnected(" in body
+
+
+# ---------------------------------------------------------------------------------------------
+# what "working in the background" means for everything else
+
+
+SYNCJS = _read(ROOT, "static", "js", "client", "sync.js")
+
+
+def test_folder_sync_may_run_on_a_phone_that_was_asked_to_stay_alive():
+    """"make sure Folder Syncing works in background mode too, if conditions are met, like plugged
+    in, on, wifi".
+
+    The CONDITIONS were already there — RUN.due wants charging, an unmetered link and a battery that
+    is not low, and the WorkManager job carries the same three. What refused every background sweep
+    on Android was `document.hidden`: the phone is hidden the moment you leave the app, so sync could
+    only ever run with it on screen.
+
+    "Stay connected" is an explicit opt-in with a permanent notification saying it costs battery, so
+    an app running under it is not one nobody is looking at — it is one somebody asked to keep
+    working. This changes WHO MAY ASK, not what is allowed."""
+    assert "const _idle = () => document.hidden && !window.pcShell && !_keptAlive;" in SYNCJS, (
+        "a kept-alive phone is still treated as idle, so it never syncs in the background")
+    assert "stayConnected" in SYNCJS
+    i = SYNCJS.index("appStateChange")
+    assert "_readKeptAlive()" in SYNCJS[i:i + 400], (
+        "the switch can move while the app is away and would never be re-read")
+
+
+def test_a_covered_desktop_window_still_updates_torrent_progress():
+    """Chromium reports `hidden` for a window merely COVERED by another one (native occlusion), so
+    putting any other window in front froze the progress bars — "torrents on desktop, not updating
+    progress if not focused". The same trap already had to be worked around for the timeline."""
+    i = APPJS.index("function _torStartPoll()")
+    body = APPJS[i:i + 1400]
+    assert "document.visibilityState==='hidden' && !_isDesktopApp()" in body, (
+        "a covered desktop window stops polling")
+    assert "document.visibilityState==='hidden') return;" not in body, (
+        "the unguarded check is back")
+
+
+def test_the_mail_poll_has_the_same_exemption():
+    """It is the same trap in the same shape: a mail check that stops when another window is in front
+    is a mail check that stops whenever you are working."""
+    i = APPJS.index("startPolling(){")
+    body = APPJS[i:i + 900]
+    assert "document.visibilityState === 'hidden' && !_isDesktopApp()" in body

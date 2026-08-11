@@ -1020,7 +1020,24 @@
    * while out of sight. Chromium also reports `hidden` for a desktop window that is merely covered by
    * another one, so without this a second app in front of it was enough to stop sync for as long as
    * it stayed there. `pcShell` is the Electron preload bridge — present only in the desktop app. */
-  const _idle = () => document.hidden && !window.pcShell;
+  /* …and the same is now true of a PHONE that has been deliberately kept alive. "Stay connected"
+   * (StayAwakeService) is an explicit opt-in with a permanent notification saying it costs battery,
+   * so an app running under it is not an app nobody is looking at — it is one somebody asked to keep
+   * working. Without this, `document.hidden` refused every background nudge on Android and folder
+   * sync could only ever run with the app on screen.
+   *
+   * It is safe to allow because it changes WHO MAY ASK, not what is allowed: RUN.due still requires
+   * charging, an unmetered link and a battery that is not low, so on a phone in a pocket on cellular
+   * the answer is still no and nothing spins up. Re-read on resume, because the switch can move. */
+  let _keptAlive = false;
+  async function _readKeptAlive(){
+    try{
+      const P = PC.capPlugin && PC.capPlugin('PosterChanPush', 'stayConnected');
+      if(!P) return;
+      _keptAlive = !!(((await P.stayConnected()) || {}).on);
+    }catch(_){ /* an APK older than that plugin: the answer is no, which is what it already was */ }
+  }
+  const _idle = () => document.hidden && !window.pcShell && !_keptAlive;
   let _nudgeT = null;
   function nudge(why){
     clearTimeout(_nudgeT);
@@ -1063,9 +1080,13 @@
     // Capacitor's own resume is more reliable than visibilitychange in a WebView that the OS froze.
     try{
       if(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App){
-        window.Capacitor.Plugins.App.addListener('appStateChange', (st) => { if(st && st.isActive) nudge('resume'); });
+        window.Capacitor.Plugins.App.addListener('appStateChange', (st) => {
+          _readKeptAlive();                       // the switch may have moved while we were away
+          if(st && st.isActive) nudge('resume');
+        });
       }
     }catch(_){}
+    _readKeptAlive();
     setInterval(() => { if(!_idle()) nudge('heartbeat'); }, HEARTBEAT_MS);
     // Re-assert the stored preference on every start. Scheduling is idempotent on the Android side
     // (ExistingPeriodicWorkPolicy.KEEP), so this cannot reset the period and starve a job that has
