@@ -68,6 +68,16 @@ Assertions, each a way a window manager breaks:
                        `window.Relay && Relay.conns && …` — so a local binding named `Relay` in that
                        file turns every one of those into a silent false. Classic mode is unaffected,
                        which is what makes it look like a server outage.
+  window-offscreen     A window OPENS partly outside the desktop — under the taskbar or past the
+                       right edge — so it has to be dragged back before it can be used. The cascade
+                       used a fixed step and a fixed size, so on a short screen the sixth window ran
+                       off the bottom.
+  window-too-small     A window opens far smaller than the screen it is on. The size was capped at a
+                       hardcoded 1100x760, so on a large display every app opened as a box in the
+                       corner and the first thing anyone did was resize it.
+  no-noti-bell         The taskbar has no notification bell (or it does not open the centre, or the
+                       unread count is still riding on the clock, where a number reads as part of
+                       the time and nothing says it can be pressed).
   layout-wipe          A read that never completed is taken as "this account has no layout", so the
                        next drag publishes the DEFAULTS over the real document — on every device,
                        since it is addressable. Relay.query() resolves [] (complete:false) rather
@@ -580,6 +590,52 @@ LAYOUT = r"""(async () => {
   { const nb = document.querySelector('#os-net');
     out.netTitle = nb ? (nb.getAttribute('title') || '') : '(no tray button)';
     out.netClass = nb ? nb.className : ''; }
+  /* The notification BELL. Notifications used to live behind the CLOCK, which nothing announces as
+   * a button — the count sat on it and read as part of the time. Hit-tested rather than read off
+   * the markup: it has to be a real, clickable 34px target in the tray. */
+  { const bell = document.querySelector('#os-bell');
+    out.hasBell = !!bell;
+    if (bell) {
+      const r = bell.getBoundingClientRect();
+      out.bellSize = [Math.round(r.width), Math.round(r.height)];
+      const nr = (document.querySelector('#os-net') || bell).getBoundingClientRect();
+      out.netSize = [Math.round(nr.width), Math.round(nr.height)];
+      const hit = document.elementFromPoint(r.left + r.width/2, r.top + r.height/2);
+      out.bellReachable = !!(hit && (hit === bell || bell.contains(hit)));
+      bell.click(); await sleep(80);
+      out.bellOpens = !!document.querySelector('#os-noti');
+      bell.click(); await sleep(60);
+      out.bellCloses = !document.querySelector('#os-noti');
+    }
+    // …and the clock is a clock again: it must not carry the count any more.
+    const clk = document.querySelector('#os-clock');
+    out.clockHasBadge = !!(clk && clk.querySelector('.os-dot')); }
+
+  /* HOW BIG WINDOWS OPEN. Six of them, cascaded, on this screen: every one must land fully inside
+   * the desktop (a window opening under the taskbar or off the right edge has to be dragged back
+   * before it can be used), and the first one must actually USE the screen rather than opening as a
+   * small box on a large display. */
+  {
+    const views = ['calendar','contacts','notes','bookmarks','drafts','meme'];
+    for (const v of views) {
+      const b = document.querySelector('.os-icon[data-view="' + v + '"]');
+      if (b) { b.click(); await sleep(90); }
+    }
+    await sleep(120);
+    const desk = document.querySelector('#os-desk').getBoundingClientRect();
+    const wins = [...document.querySelectorAll('.osw')];
+    out.sized = wins.map(w => {
+      const r = w.getBoundingClientRect();
+      return { v: (w.querySelector('.osw-title')||{}).textContent || '',
+               out: Math.round(Math.max(0, r.right - desk.right) + Math.max(0, r.bottom - desk.bottom)
+                             + Math.max(0, desk.left - r.left) + Math.max(0, desk.top - r.top)),
+               fillW: Math.round(r.width / desk.width * 100),
+               fillH: Math.round(r.height / desk.height * 100) };
+    });
+    out.deskBox = [Math.round(desk.width), Math.round(desk.height)];
+    for (const w of wins) { const x = w.querySelector('.osw-x'); if (x) x.click(); }
+    await sleep(120);
+  }
 
   // 1. Drop Notes on the MIDDLE of News: a folder holding both, in News's place.
   window.__clicked_open = 0;
@@ -1034,6 +1090,34 @@ async def drive(url):
                                          "os.js is not reaching the GLOBAL Relay object (a local "
                                          "binding named `Relay` shadows it, and every call site is "
                                          "guarded so it fails silently)"))
+                    for w in (q.get("sized") or []):
+                        if w["out"] > 2:
+                            problems.append((label, "window-offscreen",
+                                             f"{w['v']!r} opened {w['out']}px outside the desktop — a "
+                                             "window has to be dragged back before it can be used"))
+                        elif w["fillH"] < 55 or w["fillW"] < 30:
+                            problems.append((label, "window-too-small",
+                                             f"{w['v']!r} opened at {w['fillW']}%x{w['fillH']}% of a "
+                                             f"{q.get('deskBox')} desktop — the first thing anyone does "
+                                             "with a window that size is resize it"))
+                    if not q.get("hasBell") or not q.get("bellReachable"):
+                        problems.append((label, "no-noti-bell",
+                                         "the taskbar has no clickable notification bell — "
+                                         f"present={q.get('hasBell')} reachable={q.get('bellReachable')}. "
+                                         "Notifications were behind the CLOCK, which nothing "
+                                         "announces as a button."))
+                    elif not (q.get("bellOpens") and q.get("bellCloses")):
+                        problems.append((label, "no-noti-bell",
+                                         "the bell does not toggle the notification centre — "
+                                         f"opens={q.get('bellOpens')} closes={q.get('bellCloses')}"))
+                    elif (min(q.get("bellSize") or [0, 0]) < min(q.get("netSize") or [99, 99])
+                          or min(q.get("bellSize") or [0, 0]) < 18):
+                        problems.append((label, "no-noti-bell",
+                                         f"the bell is {q.get('bellSize')} against the relay icon's "
+                                         f"{q.get('netSize')} — the tray is one row of equal targets"))
+                    if q.get("clockHasBadge"):
+                        problems.append((label, "no-noti-bell",
+                                         "the unread count is still on the clock; it belongs on the bell"))
                     if q.get("wipePublished"):
                         problems.append((label, "layout-wipe",
                                          "a rearrangement was PUBLISHED after a read that never "

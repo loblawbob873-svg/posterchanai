@@ -221,7 +221,15 @@
             <!-- Calendar: this node's own CalDAV server, so the same calendar syncs to a phone. -->
             {% if not nostr_only %}<button class="nav-item" data-view="calendar"><svg class="ic"><use href="#i-clock"></use></svg><span>Calendar</span></button>{% endif %}
             {% if not nostr_only %}<button class="nav-item" data-view="contacts"><svg class="ic"><use href="#i-user"></use></svg><span>Contacts</span></button>{% endif %}
-            <button class="nav-item" data-view="messages"><svg class="ic"><use href="#i-mail"></use></svg><span>Messages<i id="dm-badge" class="badge hidden"></i></span></button>
+            <button class="nav-item" data-view="messages"><svg class="ic"><use href="#i-speech"></use></svg><span>Messages<i id="dm-badge" class="badge hidden"></i></span></button>
+            <!-- Email is its OWN view, directly under Messages, rather than a tab inside it. The two
+                 share nothing but a metaphor: one is NIP-17 DMs held on relays, the other is IMAP
+                 through this instance. As a tab it was invisible on a phone (the More sheet has no
+                 way to open a tab), it could not be a desktop-mode window of its own, and the tab
+                 bar sat above every DM thread costing a row of a phone screen to a feature the user
+                 was not in. Server-backed, so it is hidden with the rest of the instance features on
+                 a nostr-only node and gated by _viewNeedsInstance in a server-less build. -->
+            {% if not nostr_only %}<button class="nav-item" data-view="mail"><svg class="ic"><use href="#i-mail"></use></svg><span>Email<i id="mail-badge" class="badge hidden"></i></span></button>{% endif %}
             <button class="nav-item" data-view="bookmarks"><svg class="ic"><use href="#i-bookmark"></use></svg><span>Bookmarks</span></button>
             <button class="nav-item" data-view="calls"><svg class="ic"><use href="#i-phone"></use></svg><span>Calls</span></button>
             <!-- Go Live was reachable ONLY from inside Discover → Streams, three levels down a collapsed

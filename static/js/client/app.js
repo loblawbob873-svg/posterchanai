@@ -261,6 +261,9 @@
    * one. Anyone who wants the rest can name an instance in Settings and they all come back. */
   const INSTANCE_VIEWS = new Set(['ai', 'translate', 'markets', 'news', 'torrents', '4chan',
                                   'stats', 'meme', 'admin', 'websearch', 'calendar', 'contacts',
+                                  // Email is IMAP/SMTP through this instance's mail service — with no
+                                  // instance there is nothing behind the screen at all.
+                                  'mail',
                                   // folder sync stores its manifest through /client/sync-manifest,
                                   // whose collapse guard is the thing that stops an empty read
                                   // wiping a folder. No instance, no guard, no sync.
@@ -3740,7 +3743,6 @@
     // thread). The profile "message @user" action sets dmActive THEN calls switchView (from a non-messages
     // view), so this guard won't wipe it. Without it, fix for the mobile thread-overlay would auto-open.
     if(VIEW==='messages' && v!=='messages') dmActive=null;
-    if(v==='messages' && VIEW!=='messages') _msgTab='dm';   // clicking Messages defaults to DMs (not the last-used Email tab)
     // A keyboard selection belongs to the feed we are leaving; and if the cursor was parked in the nav
     // rail, opening a view is exactly the moment to hand it back to the content.
     try{ _selectNote(null); _vimPane='feed'; }catch(_){ }
@@ -3754,7 +3756,7 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', '4chan':'4chan', news:'News 🗞️', websearch:'Web Search 🔎', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', '4chan':'4chan', news:'News 🗞️', websearch:'Web Search 🔎', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
     { const tl = (v==='home'||v==='global'||v==='trending');   // the three views that carry the .tl-tabs header
@@ -3773,13 +3775,18 @@
     // reopen that exact conversation. Held open, the result arrives and just badges the AI nav.
     if(VIEW!=='ai' && _ai && _ai.ws && !_ai.awaiting){ try{ _ai.ws.onclose=null; _ai.ws.close(); }catch(_){} _ai.ws=null; }
     if(VIEW!=='translate') ltTeardown();   // leaving Live Translate mid-record → release the mic stream
+    // j/k/Enter belong to the mail list. Left bound, they act on a screen that is no longer there —
+    // this used to be released when the Email TAB lost focus, and the tab is gone.
+    if(VIEW!=='mail' && _mailKeysOff) _mailKeysOff();
     if(VIEW!=='channel' && _chatSub){ try{ Relay.close(_chatSub); }catch(_){} _chatSub=null; }   // leaving a chat room → drop its live sub
     if(VIEW!=='channel' && _chatReactPoll){ clearTimeout(_chatReactPoll); _chatReactPoll=null; }   // …and its reaction poll
     if(VIEW!=='group' && _groupPoll){ clearTimeout(_groupPoll); _groupPoll=null; }   // leaving a NIP-29 group → stop polling its relay
     if(VIEW!=='stream' && _streamChatSub){ _closeStreamChat(); }   // leaving a live stream → drop its 1311 chat sub (+ its buffers)
     feed.classList.toggle('feed-chat', VIEW==='channel' || VIEW==='group');   // never true here (both opened directly) → clears on leave
     if(VIEW!=='home' && VIEW!=='global') _hidePill();
-    feed.classList.toggle('feed-dm', VIEW==='messages');   // full-height messages layout (no :has needed)
+    // Full-height layout: the same one Messages uses. Email is a two-pane mail client with its
+    // own scrolling regions, so it must not sit inside the timeline's scroll container either.
+    feed.classList.toggle('feed-dm', VIEW==='messages' || VIEW==='mail');
     feed.classList.toggle('feed-ai', VIEW==='ai');         // full-height chat layout (msgs scroll inside)
     feed.classList.toggle('feed-translate', VIEW==='translate');   // full-height Live Translate layout
     feed.classList.toggle('feed-meme', VIEW==='meme');     // full-height Meme Builder (stage + one pane)
@@ -3794,6 +3801,7 @@
     if (VIEW==='trending') return renderTrending();
     if (VIEW==='notifications') return renderNotifications();
     if (VIEW==='messages') return renderMessages();
+    if (VIEW==='mail') return renderMailView();
     if (VIEW==='drafts'){ Drafts.pull(); return renderDrafts(); }   // re-sync from the relay on each entry
     if (VIEW==='bookmarks') return renderBookmarks();
     if (VIEW==='articles') return renderArticles();
@@ -12100,16 +12108,18 @@
   // mobile overflow sheet — holds the secondary views so the bottom bar stays uncluttered
   function moreMenu(){
     const dn=Drafts.live().length;   // per-item counts so the ☰ badge is explained once opened
-    const counts={drafts:dn};
+    const counts={drafts:dn, mail:(Number(Mail && Mail.unread)||0)};
     // Discover + Games each live in their OWN sub-sheet (one row here) so they don't crowd the More sheet.
     // Admin moved into User Settings (admins only), so it's no longer a top-level More-sheet item.
     // '__golive' opens the go-live sheet directly — the phone camera path is the one most people want,
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['ai','ai','PosterChan AI'],['websearch','search','Web Search'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['__music','music','Music'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__accounts','user','Switch account'],['settings','gear','Settings'],['logout','logout','Logout']]
+    const items=[['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['__music','music','Music'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__accounts','user','Switch account'],['settings','gear','Settings'],['logout','logout','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
                    && !(window.PC_NOSTR_ONLY && v==='websearch')   // the search runs on the instance, so it needs one
+                   && !(window.PC_NOSTR_ONLY && v==='mail')        // …and so does IMAP/SMTP
+                   && !(_viewNeedsInstance(v))                     // server-less bundle: nothing behind it
                    && !(v==='__golive' && CFG.stream_enabled===false));   // hide AI+Translate in Nostr-only; Go Live only where the node streams
     const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
     // Live streams / calls ALWAYS show (even 0) so the counts are visible on phone too — matches the
@@ -18253,54 +18263,39 @@
     return d.toLocaleDateString([], {day:'numeric', month:'long', year: d.getFullYear()===now.getFullYear()?undefined:'numeric'});
   }
 
-  // Messages has two tabs: encrypted Nostr DMs and the Nostr-mailbox Email client. Email lives here
-  // (not Discover) to keep Discover uncluttered; the toggle is the same surface as a phone's mail/chat.
-  let _msgTab = 'dm';
-  function _msgTabBar(){
-    return `<div class="msg-tabs"><button class="mtab${_msgTab==='dm'?' on':''}" data-mt="dm">💬 DMs</button>`
-      + `<button class="mtab${_msgTab==='email'?' on':''}" data-mt="email">📧 Email${Mail.unread?` <span class="mtab-badge">${Mail.unread}</span>`:''}</button></div>`;
+  /* EMAIL IS ITS OWN VIEW. It used to be the second TAB of Messages, and the two share nothing but
+   * a metaphor: DMs are NIP-17 events on relays that this client decrypts, mail is IMAP through the
+   * instance. As a tab it could not be opened from the phone's More sheet (that sheet switches
+   * VIEWS, and no view named the tab), it could not be a desktop-mode window of its own, and its tab
+   * bar cost a row of every phone screen to whichever half you were not looking at.
+   *
+   * The separation also removes a hazard rather than moving it: renderMessages() is reached from
+   * about a dozen places — an arriving DM, a notification landing, a profile resolving — and while
+   * the mail client lived inside it, each of those could tear the mail client down and start a fresh
+   * full IMAP sync. That render loop hammering /sync is the documented cause of the incident this
+   * feature was once removed for. A DM arriving now cannot touch the mail client at all.
+   *
+   * The mount guard is kept anyway, because it is the cheap half of that lesson.
+   */
+  function renderMailView(){
+    const feed=$('#feed');
+    // Opening Email is LOOKING at it, so the count goes to zero — the sidebar badge and the
+    // desktop's tray both read Mail.unread, and it only ever went up (sync adds; nothing subtracted).
+    Mail.unread=0; bumpMail();
+    const mounted=$('#mail-root', feed);
+    if(mounted && Mail.root===mounted) return;      // already up — never remount, never re-sync
+    feed.innerHTML='<div id="mail-root" class="mail-root"></div>';
+    return Mail.render($('#mail-root',feed));
   }
-  /* WHAT IS ON SCREEN, not what the variable says.
-   *
-   * `if(_msgTab===want) return;` assumed the two can never disagree, and in desktop mode they do.
-   * Park the Messages window on the Email tab, focus another window, come back: os.js MOVES the
-   * window's nodes back and deliberately SKIPS the repaint (w.restored), so the mail client is still
-   * on screen — but re-entering the view ran `_msgTab='dm'` (switchView defaults Messages to DMs).
-   * Now the variable says 'dm' and the screen says email, so pressing 💬 DMs matched the guard and
-   * did NOTHING. Pressing Email then DMs worked, which is exactly the reported "I have to click DMs
-   * many times".
-   *
-   * The DOM is the one source that cannot be stale: #mail-root means email is mounted, #dm-list
-   * means DMs are. Compare against that and a disagreement repairs itself on the first press. */
-  function _msgShowing(){ return document.getElementById('mail-root') ? 'email'
-                               : (document.getElementById('dm-list') ? 'dm' : ''); }
-  function _bindMsgTabs(root){ $$('.mtab',root).forEach(b=> b.onclick=()=>{
-    const want=b.dataset.mt;
-    if(_msgTab===want && _msgShowing()===want) return;
-    _msgTab=want; dmActive=null;
-    // The Email badge counts mail you have not LOOKED at, so opening the tab clears it. It is a
-    // running total that only ever went up (sync adds to it; nothing subtracted), so it sat on the
-    // tab after you had read everything — and, because the desktop's tray count reads the same
-    // number, it sat on the clock too.
-    if(_msgTab==='email') Mail.unread=0;
-    if(_msgTab!=='email' && _mailKeysOff) _mailKeysOff();   // don't hold j/k on the DM tab
-    renderMessages(); }); }
+  // Unread mail, on its own nav badge. It used to bump the DM badge, which said "you have messages"
+  // and took you to a screen with no new messages on it.
+  function bumpMail(){
+    const n=Number(Mail && Mail.unread)||0;
+    $$('#mail-badge').forEach(b=>{ if(n){ b.textContent=n>99?'99+':n; b.classList.remove('hidden'); }
+                                   else b.classList.add('hidden'); });
+  }
+
   function renderMessages(){
-    // …and clear it however Messages was ENTERED on the Email tab — the desktop's notification card
-    // and the sidebar both land here directly, without going through a tab click.
-    if(_msgTab==='email') Mail.unread=0;
-    if(_msgTab==='email'){
-      const feed=$('#feed');
-      // ALREADY MOUNTED → leave it alone. renderMessages() is reached from twelve places (an
-      // arriving DM, a notification landing, a profile resolving), and rebuilding #feed on each one
-      // tore the mail client down and started a fresh full IMAP sync. That is a render loop
-      // hammering /sync and /folders — the documented root cause of the incident this feature was
-      // removed for, and on the desktop app it showed up as Messages reloading without end.
-      const mounted=$('#mail-root', feed);
-      if(mounted && Mail.root===mounted) return;
-      feed.innerHTML=_msgTabBar()+'<div id="mail-root" class="mail-root"></div>';
-      _bindMsgTabs(feed); return Mail.render($('#mail-root',feed));
-    }
     _dmUnread=0; ClientSettings.set('dmSeen', Math.floor(Date.now()/1000)); bumpDm();   // mark DMs read (persistent)
     if(!_dmLoaded){ ensureDMs(); }   // lazy-load on first open
     ensureDmInboxList();   // first DM use → publish our kind-10050 DM-inbox list (once/session, merge-not-replace)
@@ -18309,8 +18304,7 @@
     // rebuilds the whole list, which would otherwise reset scroll to the TOP — yanking you up as you
     // try to scroll (and a jump-to-top is what makes the mobile browser re-reveal its toolbar).
     const _prevList=$('#dm-list'); const _listScroll=_prevList?_prevList.scrollTop:0;
-    feed.innerHTML=_msgTabBar()+`<div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">${_dmLoaded?'Select a conversation, or start one.':'Loading…'}</div></div></div>`;
-    _bindMsgTabs(feed);
+    feed.innerHTML=`<div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">${_dmLoaded?'Select a conversation, or start one.':'Loading…'}</div></div></div>`;
     const list=$('#dm-list');
     // Optional privacy: don't reveal message previews in the list until you open the conversation.
     const hidePrev = ClientSettings.get('hideDmPreview', false);
@@ -18987,8 +18981,14 @@
         if(total){ this.unread+=total;
           if(manual) toast(total+' new message'+(total>1?'s':''));
           else notifToast('📧 <b>'+total+' new email'+(total>1?'s':'')+'</b>', LOGO,
-                          () => { _msgTab='email'; switchView('messages'); });
-          if(_msgTab==='email') {} else bumpDm(); }
+                          () => switchView('mail'));
+          // The badge is Email's OWN now, and it is not raised while you are LOOKING at the mailbox.
+          if(VIEW==='mail') Mail.unread=0;
+          bumpMail();
+          // …and an OS notification, like a DM gets: mail that arrives while the app is behind
+          // another window is exactly the case a toast inside the app cannot reach.
+          if(VIEW!=='mail') osNotify('📧 New email', total+' new message'+(total>1?'s':''),
+                                     { tag:'pc-mail', icon:LOGO, onClick:()=>switchView('mail') }); }
         if(this.root && this.acct) this.loadList();
       }catch(_){ if(manual) toast('mail sync failed'); }
       this._syncing=false; const rb2=$('#mail-refresh',this.root); if(rb2){ rb2.textContent='🔄'; rb2.disabled=false; }
@@ -19044,8 +19044,11 @@
           // A NOTIFICATION, not a plain toast: this is the one moment the client learns mail has
           // arrived, and going through notifToast is what gives it the desktop card and the chime.
           notifToast('📧 <b>'+total+' new email'+(total>1?'s':'')+'</b>', LOGO,
-                     () => { _msgTab='email'; switchView('messages'); });
-          if(VIEW==='messages'){ try{ renderMessages(); }catch(_){} } }
+                     () => switchView('mail'));
+          if(VIEW==='mail'){ this.unread=0; try{ this.loadList(); }catch(_){} }
+          bumpMail();
+          if(VIEW!=='mail') osNotify('📧 New email', total+' new message'+(total>1?'s':''),
+                                     { tag:'pc-mail', icon:LOGO, onClick:()=>switchView('mail') }); }
       }catch(_){}
     },
   };

@@ -768,16 +768,85 @@
   }
 
   let iconSpan = 318;               // width the icon grid actually took; windows open clear of it
+  // Mirrors `.osw{min-width;min-height}` in the stylesheet. If they disagree the CSS wins and a
+  // window opens LARGER than the area place() clamped it into — i.e. off the edge.
+  const MIN_W = 420, MIN_H = 260;
 
-  function place(i){
-    // Cascade, then wrap, so opening several windows does not land exactly on top of one another
-    // (which reads as "only one opened") — and start to the RIGHT of the icon column, or the first
-    // window covers the icons you just clicked.
-    const vw = vwL(), vh = vhL() - TASKBAR;
-    const w = Math.min(1100, Math.round((vw - iconSpan) * 0.72));
-    const h = Math.min(760, Math.round(vh * 0.78));
-    const step = 38, n = i % 6;
-    return { x: iconSpan + 16 + n * step, y: Math.round(vh * 0.05) + n * step, w, h };
+  /* HOW BIG A WINDOW OPENS, and where.
+   *
+   * The old answer was one size for everything — 72% of the free width and 78% of the height,
+   * capped at a hardcoded 1100x760 — which is wrong at both ends of the range it has to serve. On a
+   * 2560px display every app opened as a small box in the corner of a large screen; on a 1024x600
+   * tablet the cascade (up to six steps of 38px) pushed the sixth window's bottom edge under the
+   * taskbar. Either way the first thing you did with a window was resize it.
+   *
+   * So: measure the free area, then pick a SHAPE for the app that is opening. What a window wants is
+   * a property of the app, not of the screen — a mail client and a message list are columns and get
+   * taller and narrower; the Meme Builder, the admin panel and Live Translate are workbenches and
+   * take the width; a game board is square and looks silly stretched. Everything else is a reading
+   * column, which is what a timeline is.
+   *
+   * The result is always CLAMPED into the free area, cascade included, so a window cannot open
+   * partly off-screen — the case that had people dragging a window back before they could use it.
+   */
+  const WIN_SHAPE = {
+    // Workbenches: as wide as they can get.
+    wide: ['meme', 'admin', 'translate', 'stats', 'ai', 'websearch', 'calendar', 'markets', 'sync'],
+    // Columns: a list beside a pane. Width past a point is empty space.
+    column: ['messages', 'mail', 'notifications', 'notes', 'drafts', 'bookmarks', 'vault', 'contacts',
+             'budget', 'news', 'articles'],
+    // Boards. A square-ish window, because the board is square.
+    square: ['chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem'],
+  };
+  function _shapeOf(view){
+    const v = String(view || '').replace(/^doc:/, '').split(':')[0];
+    for(const k in WIN_SHAPE) if(WIN_SHAPE[k].indexOf(v) >= 0) return k;
+    return 'default';
+  }
+
+  function place(i, view){
+    /* MEASURE the desktop, do not derive it. `vhL() - TASKBAR` assumes the taskbar is exactly the
+     * 48px constant, and it is not — measured at 1280x800, the real desk is 16 LAYOUT px shorter,
+     * so a window sized to "the whole area" opened 3px under the taskbar. One getBoundingClientRect
+     * per window OPEN is nothing (this is not a per-frame path), and it cannot drift when the bar's
+     * padding changes. */
+    const k = zf();
+    const dr = desk ? desk.getBoundingClientRect() : null;
+    const vw = dr && dr.width ? dr.width / k : vwL();
+    const vh = dr && dr.height ? dr.height / k : (vhL() - TASKBAR);
+    const GAP = 12;
+    // The free area: right of the icon column, above the taskbar. Everything below is inside it.
+    const ax = iconSpan + GAP, ay = Math.round(vh * 0.04);
+    const aw = Math.max(360, vw - ax - GAP), ah = Math.max(260, vh - ay - GAP);
+    const shape = _shapeOf(view);
+    let w, h;
+    if(aw < 900 || ah < 560){
+      // A small desktop (a laptop at 1024, a tablet in landscape) has no room to be clever: fill it,
+      // and let the user cascade from there. A "nicely sized" window here is just a smaller one.
+      w = aw; h = ah;
+    }else if(shape === 'wide'){
+      w = Math.round(aw * 0.92); h = Math.round(ah * 0.92);
+    }else if(shape === 'column'){
+      // Wide enough for a list AND its pane, and no wider: a mail client at 1800px is two columns
+      // of content and a field of empty panel.
+      w = Math.min(Math.round(aw * 0.78), 1080); h = Math.round(ah * 0.94);
+    }else if(shape === 'square'){
+      const side = Math.min(Math.round(aw * 0.62), Math.round(ah * 0.96), 900);
+      w = side; h = side;
+    }else{
+      // A reading column, scaled to the screen rather than pinned to a number: comfortable line
+      // length on a laptop, and on a big display it grows without becoming a billboard.
+      w = Math.min(Math.round(aw * 0.66), 1280); h = Math.round(ah * 0.9);
+    }
+    w = Math.max(MIN_W, Math.min(w, aw));
+    h = Math.max(MIN_H, Math.min(h, ah));
+    // Cascade — but never off the edge. The step shrinks to whatever room is actually left, and it
+    // wraps once there is none, so the sixth window is as usable as the first.
+    const step = 34, n = i % 6;
+    const roomX = Math.max(0, aw - w), roomY = Math.max(0, ah - h);
+    const x = ax + Math.min(n * step, roomX);
+    const y = ay + Math.min(n * step, roomY);
+    return { x, y, w, h };
   }
 
   function openApp(view, label, icon, render, noFeed){
@@ -785,7 +854,10 @@
       const f = layout().folders.find(x => 'folder:' + x.key === view);
       return f ? openFolder(f) : null;
     }
-    if(view === 'messages'){
+    // Opening EMAIL is what acknowledges unread mail on the tray clock — it used to be Messages,
+    // back when the mailbox was a tab inside it. Opening Messages now shows DMs and no mail at all,
+    // so acknowledging there would clear a count for something you had not looked at.
+    if(view === 'mail'){
       try{ mailAck = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){}
     }
     const extra = EXTRAS.find(x => x.view === view);
@@ -795,7 +867,7 @@
     const app = apps().find(a => a.view === view) || {};
     label = label || app.label || view;
     icon = icon || app.icon || '';
-    const r = place(wins.length);
+    const r = place(wins.length, view);
     const el = document.createElement('div');
     el.className = 'osw';
     el.style.cssText = `left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px;z-index:${++zTop}`;
@@ -1608,8 +1680,11 @@
                  title="${enc(NET_LABEL[netNow.level] + ' — ' + netSummary(netNow))}"
                  aria-label="${enc('Nostr connection: ' + netSummary(netNow))}">
            <svg class="ic" aria-hidden="true"><use href="#i-relay"></use></svg></button>
+         <button class="os-bell${notiOpen ? ' on' : ''}" id="os-bell"
+                 title="${enc(notiTitle())}" aria-label="${enc(notiTitle())}">
+           <svg class="ic" aria-hidden="true"><use href="#i-bell"></use></svg>${notiDot()}</button>
          <button class="os-clock${notiOpen ? ' on' : ''}" id="os-clock" title="Notifications">
-           <b>${enc(clock)}</b><span>${enc(date)}</span>${notiDot()}</button>
+           <b>${enc(clock)}</b><span>${enc(date)}</span></button>
        </div>`;
     $('#os-start', bar).onclick = (e) => { e.stopPropagation(); toggleStart(); };
     /* There is deliberately no New post button here. One was added when posting appeared impossible
@@ -1640,6 +1715,11 @@
           openDoc('search', 'Search', 'i-search', run);
         });
       } }
+    /* The BELL is the notification button; the clock still opens the same panel because it always
+     * has and people have learned it. A count sitting on a clock is not a notification indicator —
+     * it reads as part of the time, there is nothing to tell you it can be pressed, and every other
+     * desktop puts a bell there. The badge moved with it, so the clock is a clock again. */
+    { const bb = $('#os-bell', bar); if(bb) bb.onclick = (e) => { e.stopPropagation(); toggleNoti(); }; }
     { const cb = $('#os-clock', bar); if(cb) cb.onclick = (e) => { e.stopPropagation(); toggleNoti(); }; }
     { const nb = $('#os-net', bar); if(nb) nb.onclick = (e) => { e.stopPropagation(); toggleNet(); }; }
     $$('.os-task', bar).forEach(b => b.onclick = () => {
@@ -1660,6 +1740,19 @@
 
   function notiCount(){
     try{ return (PC().notifItems && PC().notifItems(60).length) || 0; }catch(_){ return 0; }
+  }
+
+  /* What the bell is for, in words — the tooltip and the screen-reader label. "Notifications" on a
+   * bell showing 3 says nothing the icon did not. */
+  function notiTitle(){
+    let n = 0, mail = 0;
+    try{ n = Math.max(0, notiCount() - notiSeen); }catch(_){}
+    try{ mail = Math.max(0, ((PC().mailUnread && PC().mailUnread()) || 0) - mailAck); }catch(_){}
+    if(!n && !mail) return 'Notifications';
+    const bits = [];
+    if(n) bits.push(n + ' new notification' + (n === 1 ? '' : 's'));
+    if(mail) bits.push(mail + ' new email' + (mail === 1 ? '' : 's'));
+    return bits.join(' · ');
   }
 
   function notiDot(){
@@ -1732,7 +1825,7 @@
         try{ await PC().askOsNotify(); }catch(_){}
         toggleNoti(true);                 // repaint: the row goes away once it is granted
       }; }
-    if(mail > 0) $('#os-noti-mail', panel).onclick = () => { hideNoti(); openApp('messages'); };
+    if(mail > 0) $('#os-noti-mail', panel).onclick = () => { hideNoti(); openApp('mail'); };
     mailAck = mail;                              // looking at the centre counts as looking
     $('#os-noti-all', panel).onclick = () => { hideNoti(); openApp('notifications'); };
     $('#os-noti-ding', panel).onclick = (e) => {
@@ -2083,7 +2176,7 @@
       try{ n = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){ return; }
       if(mailSeen === null){ mailSeen = n; mailAck = n; return; }   // baseline, not an arrival
       if(n > mailSeen) osToast(`✉ <b>${n - mailSeen} new email</b>`, '',
-                               () => { try{ openApp('messages'); }catch(_){} });
+                               () => { try{ openApp('mail'); }catch(_){} });
       if(n !== mailSeen){ mailSeen = n; drawBar(); }
     }, 20000);
   }

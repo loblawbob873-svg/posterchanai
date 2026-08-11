@@ -3928,10 +3928,6 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 
 /* ===== Messages: DM/Email tabs + Nostr-mailbox Email client (themed via vars; mobile-responsive) ===== */
 .feed.feed-dm{display:flex;flex-direction:column;min-height:0}
-.msg-tabs{flex:0 0 auto;display:flex;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--bg)}
-.msg-tabs .mtab{flex:0 0 auto;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:11px;padding:7px 14px;font-size:14px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
-.msg-tabs .mtab.on{background:linear-gradient(135deg,var(--neon),var(--neon2));color:#fff;border-color:transparent}
-.mtab-badge{background:var(--magenta,#ff2bd6);color:#fff;border-radius:9px;font-size:11px;padding:1px 6px;font-weight:700}
 .feed.feed-dm>.dm-wrap{flex:1 1 auto;min-height:0;height:auto}
 
 .mail-root{flex:1 1 auto;min-height:0;display:flex;overflow:hidden}
@@ -6483,6 +6479,17 @@ body.os-on #os-root{pointer-events:auto}
    to be distinguishable from a healthy one at a glance and at tray size. --neon is the theme's own
    accent (it means "working" everywhere else in this client), and the amber/red are hardcoded
    because they must not become unreadable under a light theme's palette swap. */
+/* The notification BELL — the tray's own button, beside the relay icon and the clock. It carries
+   the count (.os-dot), which used to sit on the clock: a number on a clock reads as part of the
+   time and nothing about it says it can be pressed. Same geometry as .os-net so the tray stays one
+   row of equal targets. */
+.os-bell{position:relative;display:flex;align-items:center;justify-content:center;width:34px;height:34px;
+  border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer;padding:0}
+.os-bell:hover,.os-bell.on{background:var(--panel2)}
+.os-bell .ic{width:18px;height:18px}
+/* Something is waiting: the bell itself takes the accent, so it reads at a glance and not only by
+   the badge — which is 15px and easy to miss on a wide screen. */
+.os-bell:has(.os-dot){color:var(--neon)}
 .os-net{position:relative;display:flex;align-items:center;justify-content:center;width:34px;height:34px;
   border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer;padding:0}
 .os-net:hover,.os-net.on{background:var(--panel2)}

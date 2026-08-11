@@ -4,7 +4,11 @@ An email client inside PosterChan. It speaks IMAP/SMTP to your real mail account
 mail into **encrypted Nostr events** on this node's relay — so the mailbox is offline-capable,
 searchable without an IMAP round trip, and synced across your devices.
 
-Messages → **📧 Email**.
+**Where it is.** Its own **Email** entry in the sidebar, directly under Messages; on a phone, ☰ More
+→ **Email**; in desktop mode, its own window from the launcher. (It used to be the second tab of
+Messages. The two share nothing but a metaphor — DMs are NIP-17 events on relays, mail is IMAP
+through this node — and as a tab it was unreachable from the phone's More sheet and could not be a
+desktop window of its own.)
 
 ## This is LOCAL to your node
 
@@ -62,7 +66,9 @@ composer took the half-written email with it when it closed — the address had 
 Two different problems, two different answers:
 
 * **The app is open** — the client syncs on login and on opening the screen, toasts what arrived and
-  badges the 📧 Email tab. Nothing to configure.
+  badges the sidebar's **Email** entry (and the ☰ More row on a phone). It also raises an OS
+  notification, since an in-app toast cannot reach a window that is behind another one. Nothing to
+  configure.
 * **The phone is locked** — needs the background poller: Admin → Tools → **Email notifications**.
   It polls each user's IMAP INBOX and pushes new mail through the same Web Push/UnifiedPush path
   that reminders and DMs use.
