@@ -6248,11 +6248,52 @@ body.os-on #os-root{pointer-events:auto}
    the desktop or a scrollbar nobody can see. */
 .os-icon{width:96px;height:80px;display:flex;flex-direction:column;align-items:center;
   justify-content:center;gap:5px;background:transparent;border:1px solid transparent;
-  border-radius:10px;color:var(--text);cursor:pointer;padding:6px 4px}
+  border-radius:10px;color:var(--text);cursor:pointer;padding:6px 4px;
+  user-select:none;-webkit-user-select:none}
+/* Dragging an icon with a FINGER has to beat the browser's own panning gesture, and only on the
+   desktop grid — a folder window's list scrolls, and taking touch-action off it would leave a full
+   folder unscrollable. (A finger arranges a folder through press-and-hold → Move to desktop.) */
+.os-icons .os-icon{touch-action:none}
 .os-icon:hover,.os-icon:focus-visible{background:rgba(255,255,255,.09);border-color:var(--line)}
 .os-icon .ic{width:26px;height:26px;color:var(--neon);flex:0 0 auto}
 .os-icon span{font-size:11px;line-height:1.15;text-align:center;max-width:90px;
   overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+
+/* A folder wears its first four apps, so it reads as a container without needing the label to say
+   so. The tile's own 26px icon rule would blow these up to full size — they are quarters of it. */
+.os-fold{display:grid;grid-template-columns:1fr 1fr;gap:2px;width:30px;height:30px;padding:2px;
+  border:1px solid var(--line);border-radius:7px;background:rgba(255,255,255,.06);flex:0 0 auto}
+.os-icon .os-fold .ic{width:100%;height:100%;min-width:0}
+
+/* Arranging the desktop. The tile being dragged stays in place at half strength — an icon that
+   disappears out of the grid reflows every icon after it, so the row you are aiming at moves while
+   you aim at it. What follows the pointer is a copy. */
+.os-icon.os-dragging{opacity:.35}
+.os-drag{position:absolute;width:96px;height:80px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:5px;padding:6px 4px;border-radius:10px;
+  background:var(--panel);border:1px solid var(--neon);color:var(--text);
+  pointer-events:none;opacity:.92;z-index:400;box-shadow:0 10px 26px rgba(0,0,0,.5)}
+.os-drag .ic{width:26px;height:26px;color:var(--neon)}
+.os-drag .os-fold .ic{width:100%;height:100%}
+.os-drag span{font-size:11px;line-height:1.15;text-align:center;max-width:90px;overflow:hidden;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+/* The two drops, told apart before the button is released: a ring means "into this", a caret means
+   "beside it". A drop that lands somewhere unannounced reads as a bug, which is the same reason the
+   window snap zones preview themselves. */
+.os-icon.os-into{background:color-mix(in srgb, var(--neon) 22%, transparent);
+  border-color:var(--neon);box-shadow:0 0 0 2px var(--neon) inset}
+.os-ins{position:absolute;width:2px;background:var(--neon);border-radius:2px;pointer-events:none;
+  z-index:400;box-shadow:0 0 8px var(--neon)}
+
+/* The right-click menu — on an icon, and on the desktop itself. */
+.os-ctx{position:absolute;z-index:420;min-width:184px;max-width:280px;max-height:60vh;overflow-y:auto;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:5px;
+  box-shadow:0 16px 40px rgba(0,0,0,.55)}
+.os-ctx hr{border:0;border-top:1px solid var(--line);margin:4px 2px}
+.os-ctx-b{display:block;width:100%;text-align:left;background:transparent;border:0;color:var(--text);
+  font-size:12.5px;padding:7px 9px;border-radius:7px;cursor:pointer;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.os-ctx-b:hover,.os-ctx-b:focus-visible{background:rgba(255,255,255,.09)}
 
 /* Windows */
 .osw{position:absolute;display:flex;flex-direction:column;min-width:420px;min-height:260px;

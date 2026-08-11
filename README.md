@@ -139,6 +139,11 @@ A companion **browser extension** (Firefox, and Chrome / Brave via MV3) makes yo
   instance logo. **Desktop only, deliberately**: below 1024px the logo does nothing and the ordinary
   client stays, because a draggable window on a phone screen is worse than the app it replaces. The
   windows are real DOM, not iframes — one app, one relay socket, however many windows are open.
+  **Arrange it however you like**: drag the icons into your own order, drop one on another to make a
+  named folder, right-click to rename a folder, take it apart, or hide an icon from the desktop
+  (it stays in the start menu). The arrangement follows your **account**, not the browser — it is
+  one encrypted Nostr event, so the desktop you arrange on the laptop is the desktop the tablet
+  draws, and nobody but you can read which apps you use.
 - **Calendar (CalDAV)**: a calendar server *inside* the app at `/caldav` — your phone and desktop
   calendar app sync with it like any other CalDAV server, no extra service to run. Events are
   encrypted Nostr events; the web client has a month grid, an event editor, `.ics` import/export and

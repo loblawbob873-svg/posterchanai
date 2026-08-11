@@ -2782,8 +2782,11 @@
   // documents that live ONLY on the relays, so a relay change that does not carry them leaves them
   // behind on a pool the client no longer queries — and on a second device, which never held them
   // locally, that is permanent.
+  // …and `pcai:desktop`, the arrangement of the desktop's icons. Small, but it is the one document
+  // here whose absence is INVISIBLE: left behind on the old pool, the desktop simply draws the
+  // default order, which looks like a layout that was never saved rather than one that was dropped.
   const _CARRY_D = [/^pcai:note:/, /^pcai:notefolder:/, /^pcai:pw:/, /^pcai:pwfolder:/,
-                    /^pcai:pwkey$/, /^pcai:budget$/, /^pcai:playlist:/];
+                    /^pcai:pwkey$/, /^pcai:budget$/, /^pcai:playlist:/, /^pcai:desktop$/];
   let _carrying = false;
 
   function _isCarryDoc(ev){
@@ -20627,9 +20630,9 @@
       const cpf=e.target.closest('.ai-copyfile'); if(cpf){ e.preventDefault(); copyFileUrl(cpf.dataset.url, cpf); return; }   // inline /api/files/ media → re-upload + copy public URL
       const rpf=e.target.closest('.ai-replyfile'); if(rpf){ e.preventDefault(); replyFileUrl(rpf.dataset.url, rpf); return; }
       const ppf=e.target.closest('.ai-postfile'); if(ppf){ e.preventDefault(); postFileUrl(ppf.dataset.url, ppf); return; }     // share generated media → new Nostr post
-      const svf=e.target.closest('.ai-savefile'); if(svf){ e.preventDefault(); saveFileToBlossom(svf.dataset.url, svf, svf.dataset.kind); return; }   // artifact → drive, or the music library
-      const ntf=e.target.closest('.ai-notefile'); if(ntf){ e.preventDefault(); notesFromFileUrl(ntf.dataset.url, ntf); return; }     // artifact → the private notebook
-      const dlf=e.target.closest('.ai-dlfile'); if(dlf){ e.preventDefault(); downloadFileUrl(dlf.dataset.url, dlf); return; }       // artifact → device
+      const svf=e.target.closest('.ai-savefile'); if(svf){ e.preventDefault(); saveFileToBlossom(svf.dataset.url, svf, svf.dataset.kind, svf.dataset.name); return; }   // artifact → drive, or the music library
+      const ntf=e.target.closest('.ai-notefile'); if(ntf){ e.preventDefault(); notesFromFileUrl(ntf.dataset.url, ntf, ntf.dataset.name); return; }     // artifact → the private notebook
+      const dlf=e.target.closest('.ai-dlfile'); if(dlf){ e.preventDefault(); downloadFileUrl(dlf.dataset.url, dlf, dlf.dataset.name); return; }       // artifact → device
       const m3f=e.target.closest('.ai-mp3file'); if(m3f){ e.preventDefault(); mp3FromFileUrl(m3f.dataset.url, m3f); return; }       // branded MP4 → MP3
       const mbf=e.target.closest('.ai-memefile'); if(mbf){ e.preventDefault(); memeBuildFile(mbf.dataset.url, mbf, mbf.dataset.kind); return; }   // keep editing the result in the Meme Builder
       const pfx=e.target.closest('.ai-post-fx'); if(pfx){ e.preventDefault(); postEffectMedia(pfx.dataset.mid, pfx); return; }   // share effect media → new Nostr post
@@ -21896,7 +21899,7 @@
     src=src.replace(/!audio\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><audio controls src="${enc(_absUrl(u))}"></audio></div>`+_aiFileActions(u,'audio',a)));
     // inline images from a command output (effects/stamps, compress/convert) → show with the same
     // copy-link / reply buttons; stash BEFORE mdToHtml so it doesn't render a plain <img>.
-    src=src.replace(/!\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><img src="${enc(_absUrl(u))}" data-full="${enc(_absUrl(u))}" onerror="window.__aiMediaRetry(this)"></div>`+_aiFileActions(u,'image')));
+    src=src.replace(/!\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><img src="${enc(_absUrl(u))}" data-full="${enc(_absUrl(u))}" onerror="window.__aiMediaRetry(this)"></div>`+_aiFileActions(u,'image',a)));
     // Torrent browse buttons: [Download](cmd:torrents download tv 1) → a command button; and
     // [Add](magnet:<url-encoded magnet>) → an add-torrent button. (cmd: hrefs contain spaces that
     // would break markdown link parsing, so stash them BEFORE mdToHtml runs.)
@@ -21912,15 +21915,49 @@
   // Inline command-output media (effects/compress/convert) lives at an authed /api/files/ artifact
   // URL (encrypted at rest) — NOT shareable. These fetch those bytes and RE-UPLOAD to PUBLIC Blossom
   // so the link works in a Nostr reply. Only for local (/) URLs; external media is already public.
+  /* THE NAME THE FILE CAME WITH, which the URL does not have.
+   *
+   * An /api/files/ artifact is stored content-addressed — `enc_<sha256>.mp3` — so every action that
+   * took its filename from the URL filed the bytes under that: a song downloaded with `ytdl` landed
+   * in the Music library titled `enc_c62e8fb4…`, and Download / Save to Notes wrote
+   * `posterchan-<timestamp>.mp3`. The real name is in the markdown label the server wrote
+   * (`!audio[Rick Astley - Never Gonna Give You Up.mp3](…)`), which is also the ONLY thing that
+   * survives a reload — the payload fields are long gone by then.
+   *
+   * Two labels are MARKERS, not names: `song` and `video`, which is how this row knows whether an
+   * MP4 has an audio track. A generated song has no filename to preserve, so they resolve to none
+   * rather than to a file called "song.mp4". */
+  const _AI_LABEL_MARKER = /^(song|video|image|audio|file|media)$/i;
+  function _artName(label, u){
+    let n = String(label || '').trim();
+    if(!n || _AI_LABEL_MARKER.test(n)) return '';
+    /* A label is prose from a server response: strip anything that could make it a path or an
+     * illegal Windows filename, and bound it, before it becomes a file on somebody's disk or a
+     * row in their drive. Hyphens and spaces STAY — "Artist - Title" is the shape of nearly every
+     * song yt-dlp hands back, and stripping them would rename all of them. */
+    n = n.replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+    // …and never lead with a dot: a leading-dot name is a HIDDEN file on unix, and a label of
+    // "../../etc/passwd" arrives here as ".. .. etc passwd" once the slashes are gone.
+    n = n.replace(/^[.\s]+/, '').trim();
+    if(!n) return '';
+    // Keep the extension the BYTES actually have. The drive picks its icon from it and a download
+    // picks the app that opens it, and a title like "Song (Official Video)" only looks like it has
+    // one. `srcExt` in the music library comes from here too.
+    const ext = ((String(u).split(/[?#]/)[0].split('.').pop()) || '').toLowerCase();
+    if(/^[a-z0-9]{1,5}$/.test(ext) && !new RegExp('\\.' + ext + '$', 'i').test(n)) n += '.' + ext;
+    return n;
+  }
   function _aiFileActions(u, kind, label){
     if(!/^\//.test(u)) return '';
+    const nm=enc(_artName(label, u));
     const copy=`<button class="btn btn-cyan small ai-copyfile" data-url="${enc(u)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy link</button>`;
     const post=`<button class="btn btn-neon small ai-postfile" data-url="${enc(u)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Post</button>`;
     // data-kind: the save handler routes AUDIO to the music library, and this row is rendered from
     // persisted markdown that carries nothing else to tell a song from a screenshot.
-    const save=`<button class="btn btn-cyan small ai-savefile" data-url="${enc(u)}" data-kind="${enc(kind||'')}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save to Blossom</button>`;
-    const dl=`<button class="btn btn-cyan small ai-dlfile" data-url="${enc(u)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</button>`;
-    const nt=`<button class="btn btn-cyan small ai-notefile" data-url="${enc(u)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-note"></use></svg>Save to Notes</button>`;
+    // data-name: …and nothing else to tell it what the song is CALLED (see _artName).
+    const save=`<button class="btn btn-cyan small ai-savefile" data-url="${enc(u)}" data-kind="${enc(kind||'')}" data-name="${nm}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save to Blossom</button>`;
+    const dl=`<button class="btn btn-cyan small ai-dlfile" data-url="${enc(u)}" data-name="${nm}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</button>`;
+    const nt=`<button class="btn btn-cyan small ai-notefile" data-url="${enc(u)}" data-name="${nm}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-note"></use></svg>Save to Notes</button>`;
     // 🎵 only where there IS an audio track. This row renders from the PERSISTED markdown, which
     // carries no payload fields — so the distinction rides in the label the server writes:
     // `!video[song]` for musicgeni/narrate, `!video[video]` for a silent videogeni clip.
@@ -21944,13 +21981,16 @@
     if(t) t.nodeValue=text; else btn.appendChild(document.createTextNode(text));
   }
   // Save an /api/files/ artifact to Blossom (the same re-upload Copy link does, minus the clipboard).
-  async function saveFileToBlossom(u, btn, kind){
+  async function saveFileToBlossom(u, btn, kind, name){
     if(btn){ btn.disabled=true; _btnText(btn,'saving…'); }
     try{
       /* An `ytdl` MP3 arrives here, not through the effect row — which is exactly why this goes
        * through the same _keepBytes as a generated song. Otherwise where a track ends up depends on
-       * which command produced it, and half your music is in a folder you cannot play from. */
-      const r = await _keepBytes(await _artifactFile(u), kind);
+       * which command produced it, and half your music is in a folder you cannot play from.
+       *
+       * …and it arrives with a NAME, which is what the library titles the track with: without it
+       * every downloaded song is called `enc_<sha256>` in a list you are meant to browse. */
+      const r = await _keepBytes(await _artifactFile(u, name), kind);
       if(r.url) _ai.pubUrl = Object.assign(_ai.pubUrl || {}, { [u]: r.url });   // a later share reuses this upload
       _keptToast(r);
       if(btn){ _btnText(btn, r.library ? '✓ in Music' : '✓ saved'); btn.disabled=false; }
@@ -21983,12 +22023,12 @@
     }
   }
   // An artifact lives behind the session cookie, so it has to be fetched before it can be a note.
-  async function notesFromFileUrl(u, btn){
+  async function notesFromFileUrl(u, btn, want){
     if(btn){ btn.disabled=true; _btnText(btn,'fetching…'); }
     try{
       const blob=await fetch(u, { credentials:'include' }).then(r=>{ if(!r.ok) throw new Error('fetch '+r.status); return r.blob(); });
       const ext=((u.split(/[?#]/)[0].split('.').pop())||'bin').toLowerCase();
-      const name='posterchan-'+Date.now()+'.'+ext;
+      const name=want||('posterchan-'+Date.now()+'.'+ext);
       await saveFileToNotes(new File([blob], name, { type: blob.type || 'application/octet-stream' }),
                             'PosterChan AI — '+name, btn);
     }catch(e){
@@ -22011,13 +22051,15 @@
       if(btn){ btn.disabled=false; _btnText(btn,'Save to Notes'); }
     }
   }
-  async function downloadFileUrl(u, btn){
+  async function downloadFileUrl(u, btn, name){
     if(btn){ btn.disabled=true; _btnText(btn,'downloading…'); }
     try{
       const blob=await fetch(u, { credentials:'include' }).then(r=>{ if(!r.ok) throw new Error('fetch '+r.status); return r.blob(); });
       const ext=((u.split(/[?#]/)[0].split('.').pop())||'bin').toLowerCase();
       const o=URL.createObjectURL(blob); const a=document.createElement('a');
-      a.href=o; a.download='posterchan-'+Date.now()+'.'+ext;
+      // The song's own name when the label carried one (see _artName) — a downloads folder full of
+      // `posterchan-1786…mp3` is a folder you have to play to identify.
+      a.href=o; a.download=name||('posterchan-'+Date.now()+'.'+ext);
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(()=>URL.revokeObjectURL(o), 10000);
       if(btn){ _btnText(btn,'✓ downloaded'); btn.disabled=false; }
@@ -22064,12 +22106,14 @@
    * The NAME is the point for anything going to the music library: a `ytdl` download arrives as
    * "Artist - Title.mp3" and that IS the track title. The old path renamed everything to `media.<ext>`,
    * which is harmless for a picture in a folder and would have made a library of files called media. */
-  async function _artifactFile(u){
+  // `want` is the name the file came with (_artName). Without it the name is the URL's last
+  // segment, which for an artifact is the content hash — see _artName for what that costs.
+  async function _artifactFile(u, want){
     const blob = await fetch(u, { credentials:'include' }).then(r=>{ if(!r.ok) throw new Error('fetch '+r.status); return r.blob(); });
     let name = '';
     try{ name = decodeURIComponent((u.split(/[?#]/)[0].split('/').pop()) || ''); }catch(_){}
     const ext = ((u.split(/[?#]/)[0].split('.').pop()) || 'bin').toLowerCase();
-    return new File([blob], name || ('media.' + ext), { type: blob.type || 'application/octet-stream' });
+    return new File([blob], want || name || ('media.' + ext), { type: blob.type || 'application/octet-stream' });
   }
   /* KEEP these bytes — the single answer to "where does a saved file go", shared by both action rows.
    *

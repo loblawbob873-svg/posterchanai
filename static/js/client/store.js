@@ -54,9 +54,14 @@
     // only its author can decrypt, so evicting one by the newest-N rule that is right for the
     // firehose means it is simply GONE from this device until a relay hands it back — and a phone
     // that reads the global feed for a few minutes would do that to a whole library.
+    // `pcai:desktop` (the desktop's own arrangement — order, folders, hidden icons) is here for the
+    // same reason: it is self-encrypted, and evicting it means the desktop draws the DEFAULT layout
+    // until a relay hands it back. That is not a blank screen, which is what makes it dangerous —
+    // it looks like the layout was lost rather than like a cache miss.
     for (const t of ev.tags || []) if (t && t[0] === 'd' && typeof t[1] === 'string' &&
         (t[1].startsWith('pcai:note') || t[1].startsWith('pcai:pw') ||
-         t[1].startsWith('pcai:playlist') || t[1] === 'pcai:budget')) return true;
+         t[1].startsWith('pcai:playlist') || t[1] === 'pcai:budget' ||
+         t[1] === 'pcai:desktop')) return true;
     return false;
   }
   /* ONE event with no `tags` used to take down every timeline in the app, permanently.

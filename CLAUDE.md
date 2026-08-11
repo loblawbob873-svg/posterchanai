@@ -534,6 +534,31 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   **Background sync cannot upload and that is not a bug**: every network step is signed by the user's
   Nostr key, which with Amber/NIP-46 is not on the device — so Android's WorkManager job notices
   changes and notifies, and opening the app is what syncs. See `docs/FOLDER_SYNC.md`.
+- **Desktop mode is ARRANGEABLE** (`static/js/client/os.js`; the windowed desktop, entered from the
+  instance logo ≥1024px): icons drag into your own order, one dropped on another makes a named
+  folder, right-click renames/takes a folder apart or hides an icon from the desktop (it stays in the
+  start menu, which is the way back). The arrangement is ONE kind-30078 doc `d=pcai:desktop`,
+  NIP-44-encrypted to the user's own key, so it follows the ACCOUNT across devices and the server
+  cannot read which apps you use.
+  **The document holds DECISIONS (order, folders, hidden), never the app list** — the list is still
+  read from the sidebar every draw, so a feature added to the nav appears on a year-old customised
+  desktop for free. The built-in `FOLDERS` (Nostr Games) are a DEFAULT applied only to views the
+  document has no opinion about: drag a game out and it stays out, while a game shipped later still
+  joins the rest — and merges into a folder the user RENAMED rather than making a second one beside
+  it. All of that is `computeLayout()`, kept DOM-free so `tests/test_desktop_layout.py` can run the
+  shipped code under node; the drag/drop/hydrate half is `scripts/check_os_desktop.py` (real pointer
+  events, a stub relay).
+  **Gotchas, each silent:** (1) the doc must be in **both** `_isPinned` (store.js) and `_CARRY_D`
+  (app.js) — every private doc here has missed one at least once, and the symptom is the DEFAULT
+  desktop drawing, which is indistinguishable from never having arranged one; (2) a write is only
+  allowed once a relay has ANSWERED (`_wr`), or an unreachable pool publishes the defaults over the
+  real layout (the replaceable-doc wipe); (3) a refused save is ROLLED BACK on screen and said out
+  loud, since an icon that moves and moves back on the next reload is worse than one that refuses;
+  (4) the in-flight read is shared **per pubkey** — a read that finds nothing retries for ~1.4s,
+  which is long enough for the account switcher to run inside it, and handing the new account that
+  read meant it finished, saw the pubkey had moved, discarded its result, and nothing read the
+  layout again for the whole session; (5) a folder left holding ONE app dissolves, and the survivor
+  takes the folder's own place in the order rather than being appended to the end.
 - **Notes** (`static/js/client/notes.js` + `joplin.js`; sidebar → Notes, ☰ More on mobile): private
   encrypted note taking, offline-first. **ONE kind-30078 event PER NOTE** (`d=pcai:note:<id>`,
   folders `pcai:notefolder:<id>`, both tagged `l=pcai-notes` so the library is one indexed

@@ -80,22 +80,449 @@
     { key: 'games', label: 'Nostr Games', icon: '#i-gamepad',
       views: ['chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem'] },
   ];
-  const folderOf = (view) => FOLDERS.find(f => f.views.includes(view));
 
-  /* What the desktop and start menu SHOW: the flat list with each folder's members collapsed into one
-   * entry. apps() itself stays flat on purpose — routeView, openApp and the window bookkeeping all key
-   * on real view names, and a folder is a presentation detail, not a place things live. So
-   * switchView('chess') still opens a Chess window, from anywhere, folder or no folder. */
-  function launcherItems(){
-    const out = [], placed = new Set();
-    for(const a of apps()){
-      const f = folderOf(a.view);
-      if(!f){ out.push(a); continue; }
-      if(placed.has(f.key)) continue;
-      placed.add(f.key);
-      out.push({ view: 'folder:' + f.key, label: f.label, icon: f.icon });
+  /* ---- YOUR layout -----------------------------------------------------------------------------
+   *
+   * Icons can be dragged into the order you want, dropped on one another to make a named folder, and
+   * hidden from the desktop without leaving the start menu — and that arrangement follows the
+   * ACCOUNT, not the browser. It is ONE kind-30078 document, `d = pcai:desktop`, NIP-44-encrypted to
+   * your own key: the server cannot read which apps you use, and a second device draws the desktop
+   * you arranged on the first.
+   *
+   * WHAT THE DOCUMENT SAYS, and what it deliberately does NOT. It stores your DECISIONS — the order
+   * you arranged, the folders you made, the icons you hid — never the app list itself. The list is
+   * still read from the sidebar at draw time, so a feature added to the nav (or hidden by
+   * nostr_only, or by _viewNeedsInstance) appears on a customised desktop for free, at the end,
+   * exactly as it does on an untouched one. A document that listed the apps would freeze the
+   * launcher at the moment you first dragged something.
+   *
+   * The built-in FOLDERS above are a DEFAULT, not a rule, and they apply only to views the document
+   * has no opinion about. So dragging Chess onto the desktop takes it out of Nostr Games for good,
+   * while a game added later still lands in the folder with the rest.
+   *
+   * THREE THINGS THAT SILENTLY LOSE A LAYOUT, each one already the cause of a real bug elsewhere in
+   * this client:
+   *
+   *  1. An empty READ and an unreachable relay are the same answer, and saving on the strength of
+   *     the second replaces a real layout with the defaults — the replaceable-doc wipe. So `_wr` is
+   *     set only once a relay has actually ANSWERED, and nothing is published before it is.
+   *  2. The client cache evicts newest-N by created_at, which is right for the firehose and fatal
+   *     for a document only its author can decrypt — minutes of reading the global feed would drop
+   *     it. `pcai:desktop` is exempted in store.js `_isPinned`.
+   *  3. Changing relays leaves the document behind on the pool you stopped using. It is carried over
+   *     with the rest of the private libraries by `_CARRY_D` in app.js.
+   *
+   * `Relay.publish` ALWAYS resolves an object, so a save is checked with `r && r.ok` — `!!r` reports
+   * a timeout as success. A save that did not land is ROLLED BACK on screen and said out loud: an
+   * icon that moves and then moves back on the next reload is worse than one that refused to move.
+   */
+  const LAY_KIND = 30078;
+  const D_LAY = 'pcai:desktop';
+  const BLANK = () => ({ v: 1, folders: [], order: [], hidden: [] });
+
+  let _doc = null;        // the layout as last read/written; null = nothing read yet (draw defaults)
+  let _docPk = '';        // …whose. An account switch must not paint the previous account's desktop.
+  let _docAt = 0;         // created_at of the newest version we have seen
+  let _wr = false;        // a relay ANSWERED, so a write cannot replace a layout we never read
+  let _layLoading = null, _layLoadingPk = '', _laySub = null, _layChain = Promise.resolve();
+
+  const Relay = () => window.Relay;
+  const StoreOf = () => window.Store;
+  const LFILTER = () => ({ authors: [me().pubkey], kinds: [LAY_KIND], '#d': [D_LAY], limit: 1 });
+  const _clone = o => JSON.parse(JSON.stringify(o));
+
+  /* Whatever came out of the relay, in the shape the rest of this file may assume. A document
+   * written by a newer client — or half-written — must not be able to throw while drawing the
+   * desktop, because then there is no desktop. The invariants are enforced HERE and nowhere else:
+   * a view lives in at most one folder, a folder is never inside another, a hidden view is not also
+   * placed, and an empty folder is dropped rather than kept as a tile with nothing in it. */
+  function _normDoc(o){
+    const out = BLANK();
+    const seenKey = new Set(), inFolder = new Set();
+    const str = (v, n) => String(v == null ? '' : v).slice(0, n);
+    for(const f of (Array.isArray(o && o.folders) ? o.folders : [])){
+      const key = str((f && f.key) || '', 40).replace(/[^A-Za-z0-9_-]/g, '');
+      if(!key || seenKey.has(key)) continue;
+      const views = [];
+      for(const v of (Array.isArray(f.views) ? f.views : [])){
+        const s = str(v, 120);
+        if(!s || s.indexOf('folder:') === 0 || inFolder.has(s)) continue;
+        inFolder.add(s); views.push(s);
+      }
+      if(!views.length) continue;               // an empty folder is not a folder
+      seenKey.add(key);
+      out.folders.push({ key, label: str(f.label, 60) || 'Folder',
+                         icon: str(f.icon, 60) || '#i-folder', views });
+    }
+    for(const v of (Array.isArray(o && o.hidden) ? o.hidden : [])){
+      const s = str(v, 120);
+      if(s && s.indexOf('folder:') !== 0 && !inFolder.has(s) && out.hidden.indexOf(s) < 0) out.hidden.push(s);
+    }
+    const seenOrd = new Set();
+    for(const v of (Array.isArray(o && o.order) ? o.order : [])){
+      const s = str(v, 120);
+      if(!s || seenOrd.has(s) || inFolder.has(s) || out.hidden.indexOf(s) >= 0) continue;
+      seenOrd.add(s); out.order.push(s);
     }
     return out;
+  }
+
+  /* The whole of the arrangement, as pure arithmetic over (the sidebar, the document). Kept free of
+   * the DOM so tests/test_desktop_layout.py can run the shipped code against a list of apps — the
+   * parts that can be wrong here are wrong in ways nothing on screen announces: an app that quietly
+   * stops appearing, a folder that eats an icon twice, a new feature that never shows up. */
+  function computeLayout(list, doc){
+    const byView = new Map((list || []).map(a => [a.view, a]));
+    const d = _normDoc(doc || {});
+    const hidden = new Set(d.hidden.filter(v => byView.has(v)));
+    const placed = new Set();          // views the DOCUMENT has an opinion about
+    const folders = [];
+    for(const f of d.folders){
+      const members = [];
+      for(const v of f.views){ placed.add(v); if(byView.has(v)) members.push(byView.get(v)); }
+      folders.push({ key: f.key, label: f.label, icon: f.icon, members, custom: true });
+    }
+    for(const v of d.order) placed.add(v);
+    for(const v of d.hidden) placed.add(v);
+    /* The built-in grouping, applied ONLY to what the document left alone. That is what makes a
+     * default a default: drag a game out and it stays out, and a game added to the sidebar next
+     * month still joins the folder the others are in — even a folder you have since renamed. */
+    for(const bf of FOLDERS){
+      const rest = bf.views.filter(v => !placed.has(v) && byView.has(v));
+      if(!rest.length) continue;
+      for(const v of rest) placed.add(v);
+      const own = folders.find(f => f.key === bf.key);
+      if(own){ for(const v of rest) own.members.push(byView.get(v)); continue; }
+      folders.push({ key: bf.key, label: bf.label, icon: bf.icon,
+                     members: rest.map(v => byView.get(v)), custom: false });
+    }
+    const item = f => ({ view: 'folder:' + f.key, label: f.label, icon: f.icon, folder: f });
+    const byKey = new Map(folders.map(f => ['folder:' + f.key, f]));
+    const items = [], used = new Set();
+    for(const key of d.order){
+      if(key.indexOf('folder:') === 0){
+        const f = byKey.get(key);
+        // A folder whose members have all gone is not drawn — same rule the built-in one has always
+        // had, so a deployment with the games off sees nothing rather than an empty tile.
+        if(f && f.members.length && !used.has(key)){ used.add(key); items.push(item(f)); }
+        continue;
+      }
+      if(used.has(key) || hidden.has(key) || !byView.has(key)) continue;
+      used.add(key); items.push(byView.get(key));
+    }
+    // Anything the order never mentioned, in sidebar order: this is the line that makes a new
+    // feature appear on a desktop somebody arranged a year ago.
+    for(const a of (list || [])){
+      if(used.has(a.view) || hidden.has(a.view)) continue;
+      const f = folders.find(x => x.members.indexOf(a) >= 0);
+      if(f){ const k = 'folder:' + f.key; if(!used.has(k)){ used.add(k); items.push(item(f)); } continue; }
+      used.add(a.view); items.push(a);
+    }
+    return { items, folders, hidden: [...hidden].map(v => byView.get(v)) };
+  }
+
+  let _lay = null;
+  function layout(){
+    // An account switch keeps the module alive; drawing the previous account's desktop (or worse,
+    // saving it back under the new key) is not a hypothetical — the switcher never reloads.
+    const pk = (me() || {}).pubkey || '';
+    if(pk !== _docPk){ _doc = null; _docAt = 0; _wr = false; _docPk = pk; unwatchLayout(); }
+    _lay = computeLayout(apps(), _doc);
+    return _lay;
+  }
+
+  /* What the desktop and start menu SHOW: the flat list with each folder's members collapsed into
+   * one entry. apps() itself stays flat on purpose — routeView, openApp and the window bookkeeping
+   * all key on real view names, and a folder is a presentation detail, not a place things live. So
+   * switchView('chess') still opens a Chess window, from anywhere, folder or no folder. */
+  function launcherItems(){ return layout().items; }
+
+  // ---- reading and writing the document ---------------------------------------------------------
+
+  async function _decode(ev){
+    if(!ev || !ev.content) return null;
+    try{ return _normDoc(JSON.parse(await PC().nip44dec(me().pubkey, ev.content))); }
+    catch(_){ return null; }   // not ours, or not decryptable here — never read as "no layout"
+  }
+
+  function loadLayout(){
+    if(!me() || !PC().nip44dec || !Relay()) return Promise.resolve(null);
+    const pk = me().pubkey;
+    /* Shared per IDENTITY, not globally. A read that finds nothing retries for over a second (a
+     * first REQ at a still-warming socket EOSEs empty, and treating that as "no layout" is the
+     * whole reason `_wr` exists), which is long enough for the account switcher to run inside it.
+     * Handing the new account that in-flight read means it finishes, sees the pubkey has moved,
+     * discards its result — and nothing ever reads the layout again for the rest of the session.
+     * The desktop then draws the default order for an account that has one, which is exactly the
+     * failure that looks like the layout was lost. */
+    if(_layLoading && _layLoadingPk === pk) return _layLoading;
+    _layLoadingPk = pk;
+    _layLoading = (async () => {
+      // The local cache first, so a desktop this device arranged draws right away rather than
+      // flashing the default order for as long as the network takes.
+      try{
+        const cached = (StoreOf() && StoreOf().query([LFILTER()])) || [];
+        const c = cached.sort((a, b) => (b.created_at || 0) - (a.created_at || 0))[0];
+        if(c && c.created_at > _docAt){
+          const d = await _decode(c);
+          if(d && pk === ((me() || {}).pubkey || '')){ _doc = d; _docPk = pk; _docAt = c.created_at; refreshIcons(); }
+        }
+      }catch(_){}
+      /* A query fired at a socket that is still CONNECTING is silently dropped, so waiting for the
+       * pool first is half of not mistaking "nobody answered" for "you have no layout". */
+      try{ if(Relay().ready) await Relay().ready(); }catch(_){}
+      let ev = null, answered = false;
+      for(let a = 0; a < 3 && !ev; a++){
+        if(a) await new Promise(r => setTimeout(r, 450 * a));
+        let got = [], threw = false;
+        try{ got = await Relay().query([LFILTER()]) || []; }catch(_){ threw = true; }
+        /* `complete`, NOT the absence of a throw — the other half, and the one that made the
+         * identical guard in vault.js DEAD CODE until it was found. Relay.query() has no reject
+         * path at all: when no relay EOSEs it RESOLVES with [] and marks the array
+         * `complete:false`. Catching an exception here proves nothing, so a zombie socket after a
+         * resume would read as "this account has never arranged its desktop", arm the writer, and
+         * the first icon dragged would publish the DEFAULTS over the real document — on every
+         * device, since the event is addressable. An empty array from the catch carries no
+         * `complete` marker, which is why the throw is tracked separately. */
+        if(!threw && got.complete !== false) answered = true;
+        ev = got.sort((x, y) => (y.created_at || 0) - (x.created_at || 0))[0] || null;
+      }
+      if(pk !== ((me() || {}).pubkey || '')) return _doc;      // signed out / switched mid-read
+      let unreadable = false;
+      if(ev && ev.created_at >= _docAt){
+        const d = await _decode(ev);
+        if(d){ _doc = d; _docAt = ev.created_at; }
+        // A document that ARRIVED and would not decrypt is the one case that must never reach the
+        // line below: an Amber/NIP-46 prompt that timed out or was dismissed leaves a perfectly
+        // good layout on the relay, and treating it as "no layout" would publish the defaults over
+        // it at the first drag. `_decode` says as much; this is what makes that true of the caller.
+        else unreadable = true;
+      }
+      // (1) Only a relay that ANSWERED makes this safe to write. Until then the desktop draws, and
+      // refuses to save — the alternative publishes the defaults over the layout it could not read.
+      if(answered && !unreadable){ _wr = true; if(!_doc){ _doc = BLANK(); _docPk = pk; } }
+      refreshIcons(); watchLayout(); arrangeHint();
+      return _doc;
+    })();
+    const p = _layLoading;
+    // Cleared when it settles, not awaited here: callers must be able to fire this and carry on
+    // drawing, and a second call while it is in flight has to share the one read.
+    p.catch(() => {}).then(() => { if(_layLoading === p) _layLoading = null; });
+    return p;
+  }
+
+  /* Said once, to people who have never arranged anything. A desktop that CAN be rearranged and
+   * never says so is a desktop nobody rearranges — dragging an icon is not something anyone tries on
+   * a web page unbidden. Deliberately the ordinary toast rather than the desktop's own notification
+   * card: this is a tip that disappears, not an event, and osToast plays the arrival sound. */
+  function arrangeHint(){
+    try{
+      if(!on || !_wr || !_doc) return;
+      if(_doc.order.length || _doc.folders.length || _doc.hidden.length) return;
+      if(settings().get('osArrangeHintSeen', false)) return;
+      settings().set('osArrangeHintSeen', true);
+      PC().toast && PC().toast('Drag the icons to arrange your desktop — drop one on another to '
+                             + 'make a folder. Right-click for the rest.');
+    }catch(_){}
+  }
+
+  // Live, so rearranging the desktop on the laptop rearranges it on the tablet without a reload.
+  // `since` only: the full filter would replay the document as the opening batch and decrypt it a
+  // second time straight after loadLayout has just done it.
+  function watchLayout(){
+    if(_laySub || !me() || !Relay() || !Relay().subscribe) return;
+    try{
+      const f = Object.assign(LFILTER(), { since: Math.floor(Date.now() / 1000) - 120 });
+      delete f.limit;
+      _laySub = Relay().subscribe([f], { live: true, onEvent: async (ev) => {
+        if(!ev || ev.created_at <= _docAt) return;
+        const d = await _decode(ev);
+        if(!d) return;
+        _doc = d; _docAt = ev.created_at;
+        refreshIcons();
+      }});
+    }catch(_){ _laySub = null; }
+  }
+  function unwatchLayout(){ if(_laySub){ try{ Relay().close(_laySub); }catch(_){} _laySub = null; } }
+
+  function saveLayout(next){
+    const prev = _doc, prevAt = _docAt;
+    // WHOSE layout this is, captured now. The publish runs at the back of a queue, and reading the
+    // identity again when it finally does would encrypt one account's arrangement to whoever is
+    // signed in by then — and write it to THEIR `pcai:desktop`, replacing theirs.
+    const pk = (me() || {}).pubkey || '';
+    _doc = next;                       // optimistic: the icon lands where it was dropped…
+    refreshIcons();
+    const done = _layChain.catch(() => {}).then(async () => {
+      if(!pk || pk !== ((me() || {}).pubkey || '')) throw new Error('the account changed');
+      const ct = await PC().nip44enc(pk,
+        JSON.stringify(Object.assign({}, next, { updated: Math.floor(Date.now() / 1000) })));
+      // noQueue: publish()'s Outbox refuses replaceable kinds on purpose (blind replay is what
+      // caused the follows wipe), and saying so here keeps this from depending on that.
+      const r = await PC().publish(LAY_KIND, ct, [['d', D_LAY]], { quiet: true, noQueue: true });
+      if(!(r && r.ok)) throw new Error('relay rejected the layout');
+      if(r.ev) _docAt = r.ev.created_at;
+    });
+    _layChain = done.catch(() => {});   // one failure must not poison every later write
+    done.catch(() => {                  // …and goes back if the write did not land, out loud.
+      /* Unless something newer has been applied since. A second drag builds its document FROM this
+       * one, so if that write landed the relay already holds this change — rolling back here would
+       * undo, on screen only, something the relay has. */
+      if(_doc !== next) return;
+      _doc = prev; _docAt = prevAt; refreshIcons();
+      try{ PC().toast('couldn’t save the desktop layout — that change is not stored'); }catch(_){}
+    });
+    return done;
+  }
+
+  // ---- the arrangement itself -------------------------------------------------------------------
+
+  // Every mutation is expressed against the layout ON SCREEN, so what gets written is what the user
+  // is looking at — the document is sparse (it holds decisions, not the app list), and a reorder has
+  // to materialise the visible order or it would be describing a desktop nobody has seen.
+  const _orderNow = lay => lay.items.map(a => a.view);
+  const _pluck = (doc, view) => { for(const f of doc.folders) f.views = f.views.filter(v => v !== view); };
+
+  // A built-in folder exists only as a default until you change it; the moment you do, it becomes a
+  // real entry in the document with the members it had on screen.
+  function _materialise(doc, lay, key){
+    let f = doc.folders.find(x => x.key === key);
+    if(f) return f;
+    const c = lay.folders.find(x => x.key === key);
+    if(!c) return null;
+    f = { key, label: c.label, icon: c.icon, views: c.members.map(m => m.view) };
+    doc.folders.push(f);
+    return f;
+  }
+
+  /* A folder holding one app is not a folder. The phone home screens this borrows its gestures from
+   * dissolve one, and the alternative here is a tile you have to open to reach a single icon. The
+   * survivor takes the folder's OWN place in the order rather than being appended — otherwise
+   * dragging the second-to-last app out of a folder flings the last one to the end of the desktop,
+   * which reads as an icon that moved on its own. */
+  function _collapse(doc){
+    for(const f of doc.folders.slice()){
+      if(f.views.length > 1) continue;
+      doc.folders = doc.folders.filter(x => x !== f);
+      const tag = 'folder:' + f.key;
+      const at = doc.order.indexOf(tag);
+      const rest = doc.order.filter(k => k !== tag);
+      if(f.views.length) rest.splice(at < 0 ? rest.length : at, 0, f.views[0]);
+      doc.order = rest;
+    }
+  }
+
+  function _apply(fn){
+    if(!me()) return Promise.resolve(false);
+    /* layout() FIRST, then the gate. It is layout() that notices the account has changed and drops
+     * the previous one's document — checking `_wr` before it means the write gate belongs to the
+     * account you have just switched away from, and the first drag after a switch would publish a
+     * defaults-derived layout over the NEW account's real one. */
+    const lay = layout();
+    if(!_wr){
+      // Not "it didn't work" — it has not been READ yet, and saying so is the difference between a
+      // desktop that looks broken and one that is still waking up.
+      try{ PC().toast('still loading your desktop layout — try that again in a moment'); }catch(_){}
+      loadLayout().catch(() => {});
+      return Promise.resolve(false);
+    }
+    const doc = _clone(_doc || BLANK());
+    if(fn(doc, lay) === false) return Promise.resolve(false);
+    _collapse(doc);
+    return saveLayout(_normDoc(doc)).then(() => true, () => false);
+  }
+
+  // Onto the desktop, at a position — which is also how a member LEAVES a folder.
+  function toDesk(dragKey, targetKey, after){
+    return _apply((doc, lay) => {
+      const order = _orderNow(lay).filter(k => k !== dragKey);
+      _pluck(doc, dragKey);
+      let i = targetKey ? order.indexOf(targetKey) : -1;
+      if(i < 0) order.push(dragKey);
+      else order.splice(after ? i + 1 : i, 0, dragKey);
+      doc.order = order;
+    });
+  }
+
+  // Into a folder, at a position — same-folder reordering and moving between folders are this.
+  function toFolder(destKey, dragKey, targetKey, after){
+    return _apply((doc, lay) => {
+      if(!dragKey || dragKey.indexOf('folder:') === 0) return false;   // no folders inside folders
+      const f = _materialise(doc, lay, destKey);
+      if(!f) return false;
+      _pluck(doc, dragKey);
+      const views = f.views;
+      const i = targetKey ? views.indexOf(targetKey) : -1;
+      if(i < 0) views.push(dragKey);
+      else views.splice(after ? i + 1 : i, 0, dragKey);
+      doc.order = _orderNow(lay).filter(k => k !== dragKey);
+    });
+  }
+
+  /* Dropped one icon on another: a new folder in the target's place, holding both. Returns the new
+   * folder's key so the caller can offer to name it — the folder is created FIRST, with a default
+   * name, because a drop that waits on a dialog is a drop that a cancelled dialog throws away. */
+  function mergeInto(dragKey, targetKey){
+    if(targetKey.indexOf('folder:') === 0) return toFolder(targetKey.slice(7), dragKey, null, false).then(() => '');
+    let made = '';
+    return _apply((doc, lay) => {
+      if(!dragKey || dragKey === targetKey || dragKey.indexOf('folder:') === 0) return false;
+      made = 'u' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
+      _pluck(doc, dragKey); _pluck(doc, targetKey);
+      doc.folders.push({ key: made, label: 'New folder', icon: '#i-folder', views: [targetKey, dragKey] });
+      const order = _orderNow(lay).filter(k => k !== dragKey);
+      const at = Math.max(0, order.indexOf(targetKey));
+      doc.order = order.filter(k => k !== targetKey);
+      doc.order.splice(at, 0, 'folder:' + made);
+    }).then(ok => ok ? made : '');
+  }
+
+  function renameFolder(key, label){
+    const name = String(label || '').trim();
+    if(!name) return Promise.resolve(false);
+    return _apply((doc, lay) => {
+      const f = _materialise(doc, lay, key);
+      if(!f) return false;
+      f.label = name.slice(0, 60);
+    });
+  }
+
+  // Take a folder apart: its members go back on the desktop where the folder was. They are listed
+  // EXPLICITLY, because a built-in folder would otherwise re-form from the same unplaced members.
+  function ungroup(key){
+    return _apply((doc, lay) => {
+      const f = lay.folders.find(x => x.key === key);
+      if(!f) return false;
+      const order = _orderNow(lay);
+      const at = order.indexOf('folder:' + key);
+      const views = f.members.map(m => m.view);
+      doc.folders = doc.folders.filter(x => x.key !== key);
+      const rest = order.filter(k => k !== 'folder:' + key);
+      rest.splice(at < 0 ? rest.length : at, 0, ...views);
+      doc.order = rest;
+    });
+  }
+
+  // Hidden from the DESKTOP, not from the app: it stays in the start menu, which is where every
+  // desktop puts the things that are not on the desktop, and is the way back.
+  function hideItem(view){
+    return _apply((doc, lay) => {
+      if(!view || view.indexOf('folder:') === 0) return false;
+      _pluck(doc, view);
+      doc.order = _orderNow(lay).filter(k => k !== view);
+      if(doc.hidden.indexOf(view) < 0) doc.hidden.push(view);
+    });
+  }
+  function showItem(view){
+    return _apply((doc, lay) => {
+      if(doc.hidden.indexOf(view) < 0) return false;
+      doc.hidden = doc.hidden.filter(v => v !== view);
+      doc.order = _orderNow(lay).concat([view]);
+    });
+  }
+
+  function resetLayout(){
+    return _apply((doc) => { doc.folders = []; doc.order = []; doc.hidden = []; });
   }
 
   // Who is signed in. NOT window.ME — the client keeps ME inside its IIFE, so window.ME is undefined
@@ -345,7 +772,7 @@
 
   function openApp(view, label, icon, render, noFeed){
     if(view && view.indexOf('folder:') === 0 && !_inFolder){
-      const f = FOLDERS.find(x => 'folder:' + x.key === view);
+      const f = layout().folders.find(x => 'folder:' + x.key === view);
       return f ? openFolder(f) : null;
     }
     if(view === 'messages'){
@@ -463,14 +890,25 @@
     try{ w = openApp(view, f.label, f.icon, () => {}, true); }
     finally{ _inFolder = false; }
     if(!w) return null;
-    const members = apps().filter(a => f.views.includes(a.view));
     w.slot.classList.add('os-folder');
-    w.slot.innerHTML = members.length
-      ? members.map(a => `<button class="os-icon" data-view="${enc(a.view)}">
-           ${iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`).join('')
-      : '<div class="empty">Nothing in here.</div>';
-    $$('.os-icon', w.slot).forEach(b => b.onclick = () => openApp(b.dataset.view));
+    paintFolder(w, f);
     return w;
+  }
+
+  /* The contents of a folder window, repainted from the layout — by openFolder when it opens, and
+   * by refreshIcons whenever the document changes, including from another device. The TITLE is
+   * repainted too: a folder renamed on the laptop that keeps its old name in the tablet's title bar
+   * and taskbar is the same document disagreeing with itself. */
+  function paintFolder(w, f){
+    if(w.title !== f.label){
+      w.title = f.label;
+      const t = $('.osw-title', w.el);
+      if(t) t.textContent = f.label;
+      drawBar();
+    }
+    w.slot.innerHTML = f.members.length ? f.members.map(iconHtml).join('')
+                                        : '<div class="empty">Nothing in here.</div>';
+    wireIcons(w.slot, f);
   }
 
   function closeWin(w){
@@ -749,24 +1187,300 @@
     return Math.max(1, Math.min(maxCols, Math.ceil(n / perCol)));
   }
 
+  /* A folder wears its contents, four at a time — the one glyph that says "there are apps in here"
+   * without a label having to. Its own <use> ids come from the sidebar, so they are always symbols
+   * that exist (the check harness fails on one that does not). */
+  const folderGlyph = f =>
+    `<span class="os-fold">${f.members.slice(0, 4).map(m => iconSvg(m.icon)).join('')}</span>`;
+
+  const iconHtml = a =>
+    `<button class="os-icon${a.folder ? ' is-folder' : ''}" data-view="${enc(a.view)}" title="${enc(a.label)}">
+       ${a.folder ? folderGlyph(a.folder) : iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`;
+
   function drawDesktop(){
     desk.querySelectorAll('.os-icons').forEach(n => n.remove());
+    const items = launcherItems();
     const grid = document.createElement('div');
     grid.className = 'os-icons';
-    grid.innerHTML = launcherItems().map(a =>
-      `<button class="os-icon" data-view="${enc(a.view)}" title="${enc(a.label)}">
-         ${iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`).join('');
-    const cols = iconCols(launcherItems().length);
+    grid.innerHTML = items.map(iconHtml).join('');
+    const cols = iconCols(items.length);
     grid.style.gridTemplateColumns = `repeat(${cols}, ${ICON_W}px)`;
     // Windows open clear of whatever the launcher actually takes, not a hardcoded guess.
     iconSpan = ICON_PAD * 2 + cols * ICON_W + (cols - 1) * ICON_GAP;
     desk.appendChild(grid);
-    $$('.os-icon', grid).forEach(b => {
+    wireIcons(grid, null);
+    /* The desktop's own menu is bound to the DESK, not to the icon grid: the grid is only as big as
+     * the icons in it, and "right-click the empty wallpaper" is where anyone would look for it.
+     * Everything with a menu of its own — an icon, a folder window, the menu itself — is left alone,
+     * and so is every ordinary window, where the BROWSER's menu (copy, open in new tab, spell
+     * check) is the right one and taking it away would be a regression in every feature at once. */
+    desk.oncontextmenu = (e) => {
+      const t = e.target;
+      if(!t || !t.closest || t.closest('.os-icon') || t.closest('.osw') || t.closest('.os-ctx')) return;
+      e.preventDefault();
+      deskMenu(e.clientX, e.clientY);
+    };
+  }
+
+  /* Redraw everything the layout decides — the desktop AND any folder window that is open, because
+   * they are two views of one document and a change made in either has to show in both. A folder
+   * whose last member was just dragged out has nothing left to show, so its window goes with it. */
+  function refreshIcons(){
+    if(!on || !desk) return;
+    drawDesktop();
+    for(const w of wins.slice()){
+      if(!w.view || w.view.indexOf('folder:') !== 0) continue;
+      const f = (_lay || layout()).folders.find(x => 'folder:' + x.key === w.view);
+      if(!f || !f.members.length){ closeWin(w); continue; }
+      paintFolder(w, f);
+    }
+  }
+
+  // ---- dragging icons ---------------------------------------------------------------------------
+
+  /* Where a drop would land, decided from the ELEMENT under the pointer rather than from arithmetic
+   * over the grid: the icons are laid out by CSS grid at a column count that changes with the
+   * window, and a folder window's own grid is a third one. elementFromPoint knows all of that for
+   * free, and it is the same call the modal hit-tests in the check harness use.
+   *
+   *   into   — the middle of another icon: make a folder of the two, or add to the folder that is
+   *            already there. The edges stay reorder, so the common gesture cannot be swallowed by
+   *            the rarer one (this is how a phone home screen splits the same drop).
+   *   before/after — beside that icon, in whichever container it lives in.
+   *   end    — empty space: the end of the desktop, or of the folder window it was dropped in. */
+  function hitTest(cx, cy, dragKey){
+    let el = null;
+    try{ el = document.elementFromPoint(cx, cy); }catch(_){ return null; }
+    if(!el || !el.closest) return null;
+    const t = el.closest('.os-icon');
+    const boxOf = n => {
+      const f = n && n.closest('.osw-slot.os-folder');
+      const w = f && wins.find(x => x.slot === f);
+      return (w && w.view && w.view.indexOf('folder:') === 0) ? w.view.slice(7) : null;
+    };
+    if(t && t.dataset.view !== dragKey){
+      const dest = boxOf(t);
+      const r = t.getBoundingClientRect();
+      const mid = cx > r.left + r.width * 0.3 && cx < r.right - r.width * 0.3;
+      // "Into" is a DESKTOP gesture. Inside a folder window every drop is a reorder — there is
+      // nothing sensible for a folder within a folder to mean.
+      if(!dest && mid && dragKey.indexOf('folder:') !== 0) return { mode: 'into', key: t.dataset.view, dest: null };
+      return { mode: cx < r.left + r.width / 2 ? 'before' : 'after', key: t.dataset.view, dest };
+    }
+    const box = el.closest('.osw-slot.os-folder');
+    if(box){ const dest = boxOf(box); return dest ? { mode: 'end', key: null, dest } : null; }
+    if(el === desk || el.classList.contains('os-icons')) return { mode: 'end', key: null, dest: null };
+    return null;
+  }
+
+  function paintDrop(hit){
+    desk.querySelectorAll('.os-into').forEach(n => n.classList.remove('os-into'));
+    let mark = desk.querySelector('.os-ins');
+    if(!hit || hit.mode === 'end'){ if(mark) mark.remove(); return; }
+    if(hit.mode === 'into'){
+      if(mark) mark.remove();
+      const t = [...desk.querySelectorAll('.os-icon')].find(n => n.dataset.view === hit.key);
+      if(t) t.classList.add('os-into');
+      return;
+    }
+    const t = [...desk.querySelectorAll('.os-icon')].find(n => n.dataset.view === hit.key);
+    if(!t){ if(mark) mark.remove(); return; }
+    if(!mark){ mark = document.createElement('div'); mark.className = 'os-ins'; desk.appendChild(mark); }
+    const r = t.getBoundingClientRect(), k = zf();
+    mark.style.left = ((hit.mode === 'before' ? r.left : r.right) / k - 1) + 'px';
+    mark.style.top = (r.top / k) + 'px';
+    mark.style.height = (r.height / k) + 'px';
+  }
+  function clearDrop(){
+    if(!desk) return;
+    desk.querySelectorAll('.os-into').forEach(n => n.classList.remove('os-into'));
+    desk.querySelectorAll('.os-ins').forEach(n => n.remove());
+  }
+
+  let _dragEnd = 0;             // a drag ends with a click on the icon it started from — see wireIcons
+
+  function startIconDrag(icon, ev, srcFolder){
+    if(!me()) return;                                   // nothing to save it to
+    if(ev.pointerType !== 'touch' && ev.button) return;  // left button (and any touch/pen) only
+    const key = icon.dataset.view;
+    const k = zf();
+    const sx = ev.clientX, sy = ev.clientY;
+    let moved = false, gh = null, hit = null, ended = false, longT = 0;
+    /* Touch has no right button, so a press-and-hold is the context menu. Cancelled by the first
+     * movement, which is a drag rather than a hold.
+     *
+     * `_dragEnd` is stamped BY HAND here, and it is load-bearing: up() only stamps it for a gesture
+     * that MOVED, and a long press by definition has not. Without it the finger lifting off fires an
+     * ordinary click, which opens the app on top of the menu that was just summoned — and on touch
+     * that menu is the only way to hide an icon or take one out of a folder, so the whole of it
+     * would be unreachable with a finger. */
+    if(ev.pointerType === 'touch'){
+      longT = setTimeout(() => {
+        if(moved) return;
+        up(true);
+        _dragEnd = Date.now();
+        iconMenu(icon, srcFolder, sx, sy);
+      }, 500);
+    }
+    const move = (e) => {
+      // A released mouse reports buttons === 0 on its next move. Same guard the window drag needs,
+      // for the same reason: the pointerup can be lost entirely.
+      if(e.pointerType !== 'touch' && (e.buttons || 0) === 0){ up(); return; }
+      if(!moved){
+        if(Math.abs(e.clientX - sx) < 6 && Math.abs(e.clientY - sy) < 6) return;
+        moved = true;
+        clearTimeout(longT);
+        icon.classList.add('os-dragging');
+        gh = document.createElement('div');
+        gh.className = 'os-drag';
+        gh.innerHTML = icon.innerHTML;
+        desk.appendChild(gh);
+      }
+      gh.style.left = (e.clientX / k - ICON_W / 2) + 'px';
+      gh.style.top = (e.clientY / k - ICON_H / 2) + 'px';
+      hit = hitTest(e.clientX, e.clientY, key);
+      paintDrop(hit);
+    };
+    function up(cancel){
+      if(ended) return;
+      ended = true;
+      clearTimeout(longT);
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', end);
+      document.removeEventListener('pointercancel', abort);
+      window.removeEventListener('blur', abort);
+      if(gh) gh.remove();
+      clearDrop();
+      icon.classList.remove('os-dragging');
+      if(!moved) return;
+      _dragEnd = Date.now();
+      if(cancel || !hit) return;
+      drop(key, srcFolder, hit);
+    }
+    /* A RELEASE commits the drop; a CANCELLED gesture must not. They were the same handler, and the
+     * difference is a rearrangement the user never asked for and that is then written to the relay:
+     * a folder window's list keeps its touch-action so it can scroll, so a finger scrolling one
+     * moves past the 6px threshold, the browser claims the gesture and fires pointercancel — and
+     * committing there files the icon wherever the finger happened to be. Alt-tabbing mid-drag is
+     * the same shape with a mouse. */
+    const end = () => up(false);
+    const abort = () => up(true);
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', end);
+    document.addEventListener('pointercancel', abort);
+    window.addEventListener('blur', abort);            // alt-tabbed away mid-drag
+  }
+
+  function drop(key, srcFolder, hit){
+    if(hit.mode === 'into'){
+      mergeInto(key, hit.key).then(made => {
+        if(!made) return;
+        // Named right away, because "New folder" is not a name and nothing else prompts for one.
+        // Cancelling keeps the folder — the drop already happened, and undoing it silently would be
+        // a second surprise.
+        const ask = PC().uiPrompt;
+        if(!ask) return;
+        ask('Name this folder', { value: 'New folder', placeholder: 'Folder name' })
+          .then(n => { if(n && n.trim()) renameFolder(made, n); })
+          .catch(() => {});
+      });
+      return;
+    }
+    const after = hit.mode === 'after';
+    if(hit.dest) toFolder(hit.dest, key, hit.key, after);
+    else toDesk(key, hit.key, after);
+    // srcFolder is not consulted: toDesk/toFolder both pluck the view out of whatever folder held
+    // it, so "out of a folder" and "between two folders" are the same write.
+  }
+
+  // ---- the right-click menus --------------------------------------------------------------------
+
+  function hideCtx(){
+    if(!root) return;
+    root.querySelectorAll('.os-ctx').forEach(n => n.remove());
+    document.removeEventListener('pointerdown', _ctxAway, true);
+  }
+  function _ctxAway(e){ if(!e.target.closest || !e.target.closest('.os-ctx')) hideCtx(); }
+
+  function showCtx(x, y, rows){
+    hideCtx();
+    if(!rows.length) return;
+    const m = document.createElement('div');
+    m.className = 'os-ctx';
+    m.innerHTML = rows.map((r, i) => r.sep ? '<hr>'
+      : `<button class="os-ctx-b" data-i="${i}">${enc(r.label)}</button>`).join('');
+    desk.appendChild(m);
+    const k = zf();
+    // Clamped so the menu is never opened off the edge it was summoned at — a right-click in the
+    // bottom-right corner is exactly where this happens.
+    const w = m.offsetWidth || 200, h = m.offsetHeight || 80;
+    m.style.left = Math.max(4, Math.min(vwL() - w - 4, x / k)) + 'px';
+    m.style.top = Math.max(4, Math.min(vhL() - TASKBAR - h - 4, y / k)) + 'px';
+    $$('.os-ctx-b', m).forEach(b => b.onclick = () => {
+      const r = rows[b.dataset.i | 0];
+      hideCtx();
+      if(r && r.run) try{ r.run(); }catch(_){}
+    });
+    document.addEventListener('pointerdown', _ctxAway, true);
+  }
+
+  function iconMenu(icon, srcFolder, x, y){
+    const key = icon.dataset.view;
+    const lay = layout();
+    const rows = [{ label: 'Open', run: () => openApp(key) }];
+    if(key.indexOf('folder:') === 0){
+      const fk = key.slice(7);
+      rows.push({ sep: true });
+      rows.push({ label: 'Rename folder…', run: () => {
+        const f = lay.folders.find(x => x.key === fk);
+        const ask = PC().uiPrompt;
+        if(!ask) return;
+        ask('Rename folder', { value: (f && f.label) || '' })
+          .then(n => { if(n && n.trim()) renameFolder(fk, n); }).catch(() => {});
+      } });
+      rows.push({ label: 'Take folder apart', run: () => ungroup(fk) });
+    }else{
+      rows.push({ sep: true });
+      if(srcFolder) rows.push({ label: 'Move to desktop', run: () => toDesk(key, null, false) });
+      else rows.push({ label: 'Hide from desktop', run: () => hideItem(key) });
+    }
+    showCtx(x, y, rows);
+  }
+
+  function deskMenu(x, y){
+    const lay = layout();
+    const rows = [];
+    for(const a of lay.hidden.slice(0, 12)) rows.push({ label: 'Show ' + a.label, run: () => showItem(a.view) });
+    if(rows.length) rows.push({ sep: true });
+    rows.push({ label: 'Restore the default layout', run: async () => {
+      const ask = PC().uiConfirm;
+      if(ask && !await ask('Put every icon back where it started? Your folders and hidden icons go with it.')) return;
+      resetLayout();
+    } });
+    showCtx(x, y, rows);
+  }
+
+  /* Click to open, drag to arrange, right-click (or press and hold) for the rest. Wired on the
+   * desktop grid AND on each folder window's grid, which is what lets an icon be dragged out of a
+   * folder, into another one, or back. */
+  function wireIcons(box, folder){
+    $$('.os-icon', box).forEach(b => {
       // Single click opens. A desktop double-click is the convention, but this is a web app people
       // arrive at from a single-click UI, and a double-click that does nothing the first time reads
-      // as broken.
-      b.onclick = () => openApp(b.dataset.view);
+      // as broken. A click that is the tail of a drag is not a click, and the ONE thing that must
+      // not happen is a rearranged icon also opening its app.
+      b.onclick = () => { if(Date.now() - _dragEnd < 250) return; openApp(b.dataset.view); };
+      b.oncontextmenu = (e) => { e.preventDefault(); e.stopPropagation(); iconMenu(b, folder, e.clientX, e.clientY); };
+      b.addEventListener('pointerdown', (e) => startIconDrag(b, e, folder));
     });
+    // Inside a folder WINDOW the gaps belong to the folder itself — its own rename / take-apart.
+    // (The desktop grid's gaps are handled on the desk, which is bigger than the grid.)
+    if(folder) box.oncontextmenu = (e) => {
+      if(e.target.closest && e.target.closest('.os-icon')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      iconMenu({ dataset: { view: 'folder:' + folder.key } }, null, e.clientX, e.clientY);
+    };
   }
 
   /* Your account, at the foot of the start menu — where Windows 11 puts it. The classic UI reaches
@@ -1339,8 +2053,12 @@
     const paint = (q) => {
       // Folded when idle; FLAT while searching, so typing "chess" finds Chess rather than requiring
       // you to know it lives in a folder.
+      /* Idle, the start menu is the DESKTOP plus whatever the desktop is hiding — that is what makes
+       * "Hide from desktop" safe to offer at all, and it is where every desktop keeps the apps that
+       * are not on its desktop. The right-click menu out there is the way to put one back. */
+      const lay = layout();
       const list = q ? apps().filter(a => a.label.toLowerCase().includes(q.toLowerCase()))
-                     : launcherItems();
+                     : lay.items.concat(lay.hidden);
       /* Typing here searches NOSTR — that row is FIRST, so it is what Enter runs, and it opens in
        * its own window like every other result on this desktop. The app list stays underneath
        * because the start menu is also how you find an app, and Windows puts both in one box. */
@@ -1448,6 +2166,9 @@
     window.addEventListener('offline', onNetChange);
     drawDesktop();
     drawBar();
+    // …and then YOUR arrangement of it, which lives on the relays. Drawn first from the defaults so
+    // the desktop is never blank while the network thinks, repainted by refreshIcons when it lands.
+    loadLayout().catch(() => {});
     /* No `!netOpen` here. The flyout lives on `root`, NOT inside `#os-bar`, so drawBar() cannot
      * disturb it — adding it to this guard protected nothing and only stopped the taskbar CLOCK
      * while the panel was open, which is the one thing on the bar that has to keep moving. */
@@ -1472,6 +2193,9 @@
     // against a torn-down taskbar for the rest of the session, and re-entering would add a second.
     clearInterval(_netT); _netT = null;
     clearTimeout(_netPaintT); _netPaintT = null;
+    // The layout subscription outlives the desktop otherwise — it would go on calling refreshIcons
+    // against a torn-down desk, and re-entering would add a second one.
+    unwatchLayout(); hideCtx();
     try{ _netOff && _netOff(); }catch(_){} _netOff = null;
     document.removeEventListener('pointerdown', _trayAway, true);
     window.removeEventListener('online', onNetChange);
@@ -1543,6 +2267,7 @@
      * before this ever runs, which is fine — the result is the same. Where it does reach us (the
      * desktop app, a kiosk WebView) it does the job. */
     if(e.key === 'F11'){ e.preventDefault(); toggleFull(); return; }
+    if(e.key === 'Escape' && root && root.querySelector('.os-ctx')){ e.stopPropagation(); hideCtx(); return; }
     if(e.key === 'Escape' && netOpen){ e.stopPropagation(); toggleNet(false); return; }
     if(e.key === 'Escape' && notiOpen){ e.stopPropagation(); toggleNoti(false); return; }
     if(e.key === 'Escape' && startOpen){ e.stopPropagation(); toggleStart(false); return; }
@@ -1589,6 +2314,10 @@
     if(!on) return;
     drawDesktop();
     drawBar();
+    // Signing in is also when the layout becomes readable at all — a remembered desktop opens during
+    // boot, before the identity resolves, and loadLayout returns nothing when there is nobody to
+    // decrypt for. Without this the account's own arrangement never appears for the whole session.
+    loadLayout().catch(() => {});
   }
 
   /* Step OUT of the desktop without FORGETTING it — the distinction exit() cannot make on its own,
@@ -1614,5 +2343,11 @@
 
   window.PCOS = { enter, exit, suspend, toggle, restore, refresh, isOn: () => on, openDoc, focusDoc, routeView, snapTo, osToast,
                   isRepainting: () => repainting > 0, parkedSlot, noteScroll,
-                  windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min })) };
+                  windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min })),
+                  /* The layout arithmetic, exposed so tests/test_desktop_layout.py can run the
+                   * SHIPPED code against a list of apps and a document. Everything it decides fails
+                   * silently on screen — an app that stops appearing, a folder that swallows an icon
+                   * twice, a feature added next month that never shows up — so it is tested directly
+                   * rather than inferred from a rendered desktop. */
+                  __layout: (list, doc) => computeLayout(list, doc), __normDoc: (d) => _normDoc(d) };
 })();

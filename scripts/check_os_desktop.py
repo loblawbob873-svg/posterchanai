@@ -53,6 +53,20 @@ Assertions, each a way a window manager breaks:
                        behind it. Hit-tested with elementFromPoint, not by reading the stylesheet.
   post-window-broken   Clicking a post does not open it in its own window (or opens a second one
                        when the post is already open).
+  layout-drag-dead     The desktop cannot be arranged: dragging an icon does not reorder it, dropping
+                       one on another does not make a folder, an icon cannot be taken back out of
+                       one, or "Hide from desktop" does not hide it.
+  layout-drag-opens    The click that ends a drag also opens the app that was dragged.
+  layout-not-saved     The arrangement never reached the relay — it is on screen and nowhere else.
+  layout-not-hydrated  A saved arrangement is not read back (or is read back for the wrong account).
+                       This is the one that reads as "my layout was lost": the DEFAULT desktop
+                       draws, which looks exactly like never having arranged one.
+  layout-no-rollback   A write the relay REFUSED still shows as applied, so the next reload silently
+                       undoes it.
+  layout-wipe          A read that never completed is taken as "this account has no layout", so the
+                       next drag publishes the DEFAULTS over the real document — on every device,
+                       since it is addressable. Relay.query() resolves [] (complete:false) rather
+                       than rejecting, which is what makes this look like a working empty desktop.
   stale-view           Refocusing a window leaves the client's VIEW naming the window you came from.
                        Every painter tests VIEW and then writes into `#feed` — which is the window
                        in front — so the timeline prepends its live posts, redraws on EOSE and
@@ -132,6 +146,44 @@ window.__PC = {
   },
 };
 window.ClientSettings = { _v:{}, get(k,d){ return k in this._v ? this._v[k] : d; }, set(k,v){ this._v[k]=v; } };
+
+/* Enough of a signer and a relay for the DESKTOP LAYOUT — the arrangement of the icons, which is
+ * one self-encrypted kind-30078 document. The stub is deliberately thin: it stores the event the
+ * client publishes and hands it back on the next query, which is all it takes to tell "the layout
+ * was saved and read again" from "the layout was applied to the screen and forgotten". The
+ * ciphertext is the plaintext, so the check can read what was written. */
+window.__me = { pubkey: 'aa'.repeat(32) };
+window.__relayDoc = null;        // the one stored event
+window.__pubOk = true;           // flip to false to make the relay refuse a write
+window.__published = [];
+window.__prompt = 'Stuff';
+Object.assign(window.__PC, {
+  me: () => window.__me,
+  nip44enc: (_pk, s) => Promise.resolve(s),
+  nip44dec: (_pk, s) => Promise.resolve(s),
+  uiPrompt: (_t, o) => Promise.resolve(window.__prompt === null ? null : window.__prompt),
+  uiConfirm: () => Promise.resolve(true),
+  publish: (kind, content, tags) => {
+    const ev = { id:'e'+(window.__published.length+1), kind, content, tags,
+                 pubkey: window.__me.pubkey,
+                 created_at: Math.floor(Date.now()/1000) + window.__published.length };
+    window.__published.push(ev);
+    if (window.__pubOk) window.__relayDoc = ev;
+    return Promise.resolve({ ok: window.__pubOk, ev });
+  },
+});
+window.Store = { query: () => [] };     // cold cache: the read has to come off the relay
+window.Relay = {
+  // Honours `authors`, because "does another account see this desktop" is one of the questions —
+  // a stub that answered every author with the one document could never fail that.
+  query: (fs) => {
+    const f = (fs || [])[0] || {}, d = window.__relayDoc;
+    const mine = d && (!f.authors || f.authors.indexOf(d.pubkey) >= 0);
+    return Promise.resolve(mine ? [d] : []);
+  },
+  subscribe: () => 1,
+  close: () => {},
+};
 </script>
 <script src="/static/js/client/os.js"></script>
 <script>window.__ready = true;</script>
@@ -469,6 +521,162 @@ DRIVE = r"""(async () => {
   return out;
 })()"""
 
+"""Arranging the desktop, driven with real pointer events against the real stylesheet.
+
+Every assertion here is something that LOOKS like it worked and did not:
+
+  layout-drag-dead    Dragging an icon onto another does not make a folder of the two.
+  layout-not-saved    The arrangement never reached the relay — it is on screen and nowhere else,
+                      so it is gone on the next reload and absent on every other device.
+  layout-not-hydrated A saved arrangement is not read back. This is the failure that reads as
+                      "my layout was lost": the default desktop draws, which is indistinguishable
+                      from never having arranged one.
+  layout-no-rollback  A write the relay REFUSED still shows as applied. The icon moves, the user
+                      believes it, and the next reload silently puts it back.
+  layout-drag-opens   The click that ends a drag also opens the app that was dragged.
+"""
+LAYOUT = r"""(async () => {
+  const sleep = ms => new Promise(r=>setTimeout(r,ms));
+  const out = {};
+  try{
+  window.__relayDoc = null; window.__published = []; window.__pubOk = true; window.__prompt = 'Stuff';
+  const icon = v => [...document.querySelectorAll('.os-icons .os-icon')].find(b => b.dataset.view === v);
+  const views = () => [...document.querySelectorAll('.os-icons .os-icon')].map(b => b.dataset.view);
+  const pev = (el, type, x, y) => el.dispatchEvent(new PointerEvent(type,
+      { bubbles:true, cancelable:true, clientX:x, clientY:y, pointerType:'mouse',
+        buttons: type === 'pointerup' ? 0 : 1, button:0, isPrimary:true }));
+  // A drag: press on `from`, cross the threshold, land on (x,y), release. The move events go to
+  // document, which is where the handler listens — a drag that only moved over the icon it started
+  // on would never leave it.
+  const drag = async (from, x, y) => {
+    const r = from.getBoundingClientRect();
+    pev(from, 'pointerdown', r.left + r.width/2, r.top + r.height/2);
+    pev(document, 'pointermove', r.left + r.width/2 + 12, r.top + r.height/2 + 12);
+    await sleep(20);
+    pev(document, 'pointermove', x, y);
+    await sleep(20);
+    pev(document, 'pointerup', x, y);
+    await sleep(160);
+  };
+  const mid = el => { const r = el.getBoundingClientRect(); return [r.left + r.width/2, r.top + r.height/2]; };
+
+  PCOS.enter(); await sleep(250);          // …which reads the (empty) layout off the stub relay
+  out.start = views();
+
+  // 1. Drop Notes on the MIDDLE of News: a folder holding both, in News's place.
+  window.__clicked_open = 0;
+  const before = views();
+  await drag(icon('notes'), ...mid(icon('news')));
+  await sleep(220);                        // the rename prompt resolves and saves a second time
+  out.afterMerge = views();
+  out.folderKey = (views().find(v => v.indexOf('folder:') === 0) || '');
+  // The LAST span: a folder tile leads with .os-fold (its members' glyphs), and the label follows.
+  out.folderLabel = (() => { const b = [...document.querySelectorAll('.os-icons .os-icon')]
+      .find(b => b.dataset.view.indexOf('folder:') === 0);
+    return b ? ([...b.querySelectorAll('span')].pop() || {}).textContent || '' : ''; })();
+  out.mergedAway = before.length - views().length;      // two icons became one
+  // The drag must not ALSO open the app it dragged.
+  out.openedWindows = document.querySelectorAll('.osw').length;
+  // …and it must have been written, not just drawn.
+  out.savedDoc = window.__relayDoc ? window.__relayDoc.content : '';
+
+  // 2. Open the folder window and check its members, then take an icon back out to the desktop.
+  const fb = [...document.querySelectorAll('.os-icons .os-icon')].find(b => b.dataset.view.indexOf('folder:') === 0);
+  if (fb) { fb.click(); await sleep(160); }
+  const slot = document.querySelector('.osw-slot.os-folder');
+  out.folderMembers = slot ? [...slot.querySelectorAll('.os-icon')].map(b => b.dataset.view) : null;
+  if (slot) {
+    const deskR = document.querySelector('#os-desk').getBoundingClientRect();
+    await drag(slot.querySelector('.os-icon[data-view="notes"]'),
+               deskR.right - 60, deskR.bottom - 120);   // empty desktop, clear of the icon column
+    await sleep(200);
+  }
+  out.afterOut = views();
+  // One member left is not a folder: it dissolves, its last app goes back on the desktop in the
+  // folder's place, and the window — which now has nothing to show — closes with it.
+  out.folderGone = !document.querySelector('.osw-slot.os-folder');
+  out.folderTileGone = !views().some(v => v.indexOf('folder:') === 0);
+
+  // 3. Reorder: drag Social to the left edge of whatever is first, which must put it first.
+  {
+    const first = icon(views()[0]), r = first.getBoundingClientRect();
+    await drag(icon('global'), r.left + 4, r.top + r.height/2);
+    out.afterReorder = views();
+  }
+
+  // 4. Hide an icon from the desktop. It must stay in the start menu, which is the way back.
+  {
+    const n = icon('news');
+    n.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true,
+                                                    clientX: n.getBoundingClientRect().left + 10,
+                                                    clientY: n.getBoundingClientRect().top + 10 }));
+    await sleep(60);
+    const row = [...document.querySelectorAll('.os-ctx-b')].find(b => /Hide/.test(b.textContent));
+    out.hasHideRow = !!row;
+    if (row) row.click();
+    await sleep(200);
+    out.afterHide = views();
+    document.querySelector('#os-start').click(); await sleep(120);
+    out.menuHasHidden = [...document.querySelectorAll('.os-app')].some(b => b.dataset.view === 'news');
+    document.querySelector('#os-start').click(); await sleep(80);
+  }
+
+  // 5. HYDRATION. Switch identity and back, which drops the in-memory copy exactly as a reload
+  //    does — then the desktop has to come back out of the relay or it was never really saved.
+  const want = views();
+  window.__me = { pubkey: 'bb'.repeat(32) };
+  // Generous: a read that finds NOTHING retries (a first REQ at a warming socket EOSEs empty), so
+  // an account with no layout of its own takes over a second to settle.
+  PCOS.refresh(); await sleep(1600);
+  out.otherAccount = views();
+  window.__me = { pubkey: 'aa'.repeat(32) };
+  PCOS.refresh(); await sleep(500);
+  out.hydrated = views();
+  out.wanted = want;
+
+  // 6. A write the relay REFUSES must not stay on screen.
+  window.__pubOk = false;
+  {
+    const beforeR = views();
+    const last = icon(beforeR[beforeR.length - 1]);
+    await drag(icon(beforeR[0]), ...mid(last));
+    await sleep(250);
+    out.refusedOrder = views();
+    out.refusedWanted = beforeR;
+    out.refusedToast = (window.__toasts || []).slice(-1)[0] || '';
+  }
+  window.__pubOk = true;
+
+  /* 7. THE WIPE. Relay.query() has NO reject path: when nothing EOSEs it RESOLVES with [] marked
+   *    `complete:false`. So a zombie socket answers exactly like an account that has never arranged
+   *    anything — and if that arms the writer, the first icon dragged publishes the DEFAULTS over a
+   *    real layout, on every device, because the event is addressable. This is the failure vault.js
+   *    documents (its own guard was dead code for the same reason), so it is driven here rather
+   *    than reasoned about: an incomplete read must publish NOTHING. */
+  {
+    const realQ = window.Relay.query;
+    window.Relay.query = () => { const a = []; a.complete = false; return Promise.resolve(a); };
+    window.__me = { pubkey: 'cc'.repeat(32) };      // a fresh identity forces a fresh read
+    // Long enough for all three attempts (0 + 450 + 900ms) to finish: the window where the read is
+    // still running is not the window this is about — a drag is refused then for a different and
+    // correct reason, and a shorter wait would pass with the guard removed.
+    PCOS.refresh(); await sleep(1900);
+    const n = window.__published.length;
+    const v = views();
+    await drag(icon(v[1]), ...mid(icon(v[0])));
+    await sleep(300);
+    out.wipePublished = window.__published.length - n;
+    out.wipeToast = (window.__toasts || []).slice(-1)[0] || '';
+    window.Relay.query = realQ;
+  }
+
+  // A half-run must report what it got to rather than evaluating to nothing — "the script did not
+  // run" is the least useful failure this harness can print.
+  }catch(err){ out.err = String(err && err.stack || err).slice(0, 300); }
+  try{ PCOS.exit(); }catch(_){}
+  return out;
+})()"""
+
 GATE = r"""(() => { PCOS.enter(); const on = PCOS.isOn(); if (on) PCOS.exit();
                    return { on, toasts: (window.__toasts||[]).length,
                             msg: (window.__toasts||[]).slice(-1)[0] || '' }; })()"""
@@ -741,6 +949,81 @@ async def drive(url):
                     problems.append((label, "window-controls", "minimise did nothing"))
                 if not r["closed"]:
                     problems.append((label, "window-controls", "close did not remove the window"))
+
+                # Arranging the desktop — its own pass, because it re-enters and rewrites the icons.
+                q = await js(LAYOUT, awaited=True)
+                if q is None or q.get("err"):
+                    problems.append((label, "layout-drag-dead",
+                                     "the layout script threw: " + ((q or {}).get("err") or "no result")))
+                if q:
+                    fold = q.get("folderKey") or ""
+                    if not fold or q.get("mergedAway") != 1:
+                        problems.append((label, "layout-drag-dead",
+                                         "dropping one icon on the middle of another did not make a "
+                                         f"folder of the two — {q.get('start')} became {q.get('afterMerge')}"))
+                    elif q.get("folderLabel") != "Stuff":
+                        problems.append((label, "layout-drag-dead",
+                                         "a new folder is not offered a name (or the name is not "
+                                         f"applied) — it is called {q.get('folderLabel')!r}"))
+                    if q.get("openedWindows"):
+                        problems.append((label, "layout-drag-opens",
+                                         f"{q['openedWindows']} window(s) opened during a drag — the "
+                                         "click that ends a drag must not also open the app"))
+                    if "notes" not in (q.get("savedDoc") or ""):
+                        problems.append((label, "layout-not-saved",
+                                         "the arrangement never reached the relay — it is on screen "
+                                         "and nowhere else, so it is gone on the next reload "
+                                         f"(stored: {(q.get('savedDoc') or '')[:80]!r})"))
+                    if q.get("folderMembers") is not None and sorted(q["folderMembers"]) != ["news", "notes"]:
+                        problems.append((label, "layout-drag-dead",
+                                         f"the folder window lists {q['folderMembers']}, want news+notes"))
+                    if "notes" not in (q.get("afterOut") or []):
+                        problems.append((label, "layout-drag-dead",
+                                         "dragging a member out of a folder onto the desktop did not "
+                                         f"put it there — {q.get('afterOut')}"))
+                    elif not (q.get("folderGone") and q.get("folderTileGone")
+                              and "news" in (q.get("afterOut") or [])):
+                        problems.append((label, "layout-drag-dead",
+                                         "a folder left holding ONE app is still a folder — a tile "
+                                         "you have to open to reach a single icon "
+                                         f"(tile-gone={q.get('folderTileGone')} "
+                                         f"window-gone={q.get('folderGone')} icons={q.get('afterOut')})"))
+                    if (q.get("afterReorder") or [None])[0] != "global":
+                        problems.append((label, "layout-drag-dead",
+                                         f"reordering did not move the icon — {q.get('afterReorder')}"))
+                    if not q.get("hasHideRow") or "news" in (q.get("afterHide") or []):
+                        problems.append((label, "layout-drag-dead",
+                                         "'Hide from desktop' did not remove the icon — "
+                                         f"menu-row={q.get('hasHideRow')} icons={q.get('afterHide')}"))
+                    elif not q.get("menuHasHidden"):
+                        problems.append((label, "layout-drag-dead",
+                                         "a hidden icon is not in the start menu either — that is a "
+                                         "deleted app, not a hidden one, and there is no way back"))
+                    if q.get("hydrated") != q.get("wanted"):
+                        problems.append((label, "layout-not-hydrated",
+                                         "the saved arrangement did not come back off the relay — "
+                                         f"{q.get('hydrated')} instead of {q.get('wanted')}. This is "
+                                         "the failure that reads as 'my layout was lost': the default "
+                                         "desktop draws, which looks the same as never having one."))
+                    if q.get("otherAccount") == q.get("wanted") and q.get("wanted"):
+                        problems.append((label, "layout-not-hydrated",
+                                         "another account sees the first account's desktop"))
+                    if q.get("wipePublished"):
+                        problems.append((label, "layout-wipe",
+                                         "a rearrangement was PUBLISHED after a read that never "
+                                         "completed — Relay.query() resolves [] with complete:false "
+                                         "when nothing EOSEs, so a zombie socket reads as 'this "
+                                         "account has no layout' and the first drag replaces the "
+                                         "real document with the defaults on every device"))
+                    if q.get("refusedOrder") != q.get("refusedWanted"):
+                        problems.append((label, "layout-no-rollback",
+                                         "a rearrangement the relay REFUSED is still on screen — it "
+                                         "is not stored, so the next reload silently puts it back "
+                                         f"({q.get('refusedOrder')} vs {q.get('refusedWanted')})"))
+                    elif "couldn" not in (q.get("refusedToast") or ""):
+                        problems.append((label, "layout-no-rollback",
+                                         "a refused rearrangement is rolled back without saying so — "
+                                         f"last toast was {q.get('refusedToast')!r}"))
 
                 if not r["exited"]:
                     problems.append((label, "no-desktop", "leaving did not tear the desktop down"))
