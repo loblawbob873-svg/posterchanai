@@ -110,7 +110,14 @@ jobs:
             echo "::warning title=Zapstore skipped::ZAPSTORE_SIGN_WITH is not set — the APK shipped to GitHub Releases but was NOT published to Zapstore."
             exit 0
           fi
-          curl -sSfLo /tmp/zsp https://github.com/zapstore/zsp/releases/download/v0.4.11/zsp-0.4.11-linux-amd64
+          # RETRIED, because this one download is the only part of the release that depends on a host
+          # nobody here controls — and it has already failed once for a reason that had nothing to do
+          # with the build: `curl: (60) SSL certificate problem: self-signed certificate`, a TLS blip
+          # on the way to GitHub's release CDN. The APK was built, signed and uploaded; the run went
+          # red at the last step and the release did not go out. `--retry-all-errors` is what makes
+          # curl retry a handshake failure (plain --retry only covers transient HTTP codes).
+          curl -sSfLo /tmp/zsp --retry 4 --retry-delay 5 --retry-all-errors --connect-timeout 20 \
+            https://github.com/zapstore/zsp/releases/download/v0.4.11/zsp-0.4.11-linux-amd64
           chmod +x /tmp/zsp
           # Prove the APK's signing certificate belongs to this npub (NIP-C1, kind 30509). Without it Zapstore
           # can't tie the app to a developer key and warns users it "cannot reach signer key" — and `publish -q`
