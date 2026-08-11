@@ -57,8 +57,11 @@ server {
     listen [::]:443 ssl;
     server_name xdc.poster.place;
 
-    ssl_certificate     /etc/letsencrypt/live/poster.place/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/poster.place/privkey.pem;
+    # This host has its OWN certificate (certbot --nginx -d xdc.poster.place), matching how every
+    # other subdomain here is done. Do NOT point these at poster.place's: overwriting this file with
+    # an older copy did exactly that once and took TLS down on the sandbox origin until it was spotted.
+    ssl_certificate     /etc/letsencrypt/live/xdc.poster.place/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/xdc.poster.place/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
 
@@ -88,8 +91,17 @@ server {
         add_header Cache-Control "no-store" always;
     }
 
-    # Everything else here does not exist. A mini app asking for one of its own files is answered by
-    # its service worker, never by this server, so a request that arrives here is either the first
-    # load (handled above) or something that has no business being served to untrusted code.
-    location / { return 404; }
+    # Everything else here is the APP's, and its service worker answers it from the archive the
+    # client unzipped. A request only reaches nginx when the worker is not yet CONTROLLING this
+    # origin — a real race: the loader registers the worker, the worker activates and claims, and the
+    # app frame can navigate in between. Chromium claims fast enough to hide it; Firefox does not,
+    # and the reader got this server's 404 page inside the game window.
+    #
+    # So the miss reloads itself, ONCE. By the second load the worker is controlling and serves the
+    # app. The `?r` guard is what stops a worker that never arrives from becoming a reload loop; it
+    # says what happened instead, which is the one thing a blank 404 could not.
+    location / {
+        default_type text/html;
+        return 200 '<!doctype html><meta charset="utf-8"><title>starting…</title><style>html,body{margin:0;height:100%;background:#000;color:#888;font:13px system-ui,sans-serif;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px}</style><div id=m>starting…</div><script>if(!location.search.includes("r=1")){location.replace(location.pathname+"?r=1"+location.hash);}else{document.getElementById("m").textContent="The app could not start: its service worker never took control of this page. Close the app and open it again.";}</script>';
+    }
 }

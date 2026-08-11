@@ -34,7 +34,7 @@
   function init(){
     const PC = window.__PC;
     if(!PC){ return setTimeout(init, 50); }
-    const { $, enc, toast, publish, sign } = PC;
+    const { $, enc, toast, publish } = PC;
     const Relay = window.Relay;
 
     const KIND_UPDATE = 4932;          // NIP-DC state update (regular event)
