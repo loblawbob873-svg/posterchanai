@@ -1679,11 +1679,35 @@
           const P = (PC().music && PC().music()) || null;
           try{
             if(b.dataset.m === 'open'){ openApp('__music'); return; }
-            if(!P) return;
-            if(b.dataset.m === 'prev') P.prev();
-            else if(b.dataset.m === 'next') P.next();
-            else P.toggle();
-          }catch(_){}
+            /* A MISSING BRIDGE MUST NOT LOOK LIKE A DEAD BUTTON.
+             *
+             * `if(!P) return` was silence, and silence is indistinguishable from a broken widget —
+             * which is precisely how it was reported ("music widget doing nothing"). The realistic
+             * cause is version skew, not a bug: the service worker serves app code
+             * stale-while-revalidate, so the first load after a deploy runs the PREVIOUS app.js while
+             * this file is already the new one, and `PC().music` does not exist yet. That resolves
+             * itself on the next load — but only if the widget says so instead of shrugging. */
+            if(!P){
+              const t = $('.wgt-mtitle', el);
+              if(t){ t.textContent = 'reload to finish updating'; t.classList.remove('wgt-dim'); }
+              return;
+            }
+            // Starting from cold pulls the drive index first — a network round trip and a decrypt.
+            // Say so, or the wait is indistinguishable from the dead button this used to be.
+            const t = $('.wgt-mtitle', el);
+            let slow = null;
+            if(b.dataset.m !== 'prev' && t && /nothing playing/i.test(t.textContent || ''))
+              slow = setTimeout(() => { t.textContent = 'loading your library…'; }, 350);
+            const done = () => { if(slow) clearTimeout(slow); _wgtRefreshOne(el.closest('.os-wgt')); };
+            let r;
+            if(b.dataset.m === 'prev') r = P.prev();
+            else if(b.dataset.m === 'next') r = P.next();
+            else r = P.toggle();
+            if(r && r.then) r.then(done, done); else done();
+          }catch(e){
+            const t = $('.wgt-mtitle', el);
+            if(t) t.textContent = 'that control failed — ' + ((e && e.message) || 'unknown');
+          }
         };
       },
       refresh(el){

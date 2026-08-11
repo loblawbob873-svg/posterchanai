@@ -27341,9 +27341,20 @@
        * nothing at all: no sound, no toast, no state change, nothing in the console. With nothing
        * loaded this now does what the Music app's own play button does — fill the queue and start
        * it — and only falls through to toggle when there is something to toggle. */
-      toggle: () => {
-        // Exactly what #ma-play does, so the widget and the app cannot disagree about what ▶ means.
+      /* Play has to LOAD THE LIBRARY, not just read whatever happens to be in memory.
+       *
+       * The drive index is pulled once per session by whichever screen needs it first — the Music app
+       * does it on entry (`FilesIdx._pullDone ? null : FilesIdx.pull()`), Files does it, and a widget
+       * on the desktop did neither. So pressing ▶ before ever opening either one read an EMPTY index
+       * and announced "no music yet — add some" to someone with thousands of tracks; you had to go and
+       * open the Blossom folder first to make the desktop's own play button work.
+       *
+       * Async, so the caller can show that something is happening: a library pull is a network round
+       * trip plus a decrypt, which is long enough to look like another dead button. */
+      toggle: async () => {
         if(MusicPlayer.cur) return MusicPlayer.toggle();
+        if(!FilesIdx._pullDone){ try{ await FilesIdx.pull(); }catch(_){} }
+        // Then exactly what #ma-play does, so the widget and the app cannot disagree about ▶.
         const q = musicTracks(null);
         if(!q.length){ toast('no music yet — add some'); return; }
         MusicPlayer.refreshQueue(); MusicPlayer.play(q[0].sha);

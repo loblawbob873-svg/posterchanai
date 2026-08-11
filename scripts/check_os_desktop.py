@@ -147,6 +147,15 @@ window.__rendered = [];
 window.__composed = 0;
 window.__PC = {
   toast: m => (window.__toasts = window.__toasts || []).push(m),
+  /* The player, as the Now-playing widget reaches it. Recording the calls is the whole point: the
+     widget's buttons doing NOTHING is a silent failure — no throw, no log, nothing on screen — and
+     it is exactly what a renamed or missing bridge method produces. */
+  music: () => ({
+    now: () => window.__musicNow || null,
+    toggle: () => { (window.__music = window.__music || []).push('toggle'); },
+    prev:   () => { (window.__music = window.__music || []).push('prev'); },
+    next:   () => { (window.__music = window.__music || []).push('next'); },
+  }),
   compose: () => { window.__composed++; },
   get VIEW(){ return window.__view || 'global'; },
   // `quiet` = adopt the view WITHOUT painting. The desktop asks for it every time it refocuses a
@@ -704,6 +713,24 @@ LAYOUT = r"""(async () => {
       if (crypto) { crypto.click(); await sleep(400); }
       const el = document.querySelector('.os-wgt');
       out.widgetDrawn = !!el;
+      // …and the Now-playing widget, whose buttons must actually reach the player.
+      const pick2 = (addRow.click(), await sleep(120), document.querySelector('.os-wgtpick'));
+      const mus = pick2 && pick2.querySelector('.os-wgt-pick[data-t="music"]');
+      if (mus) { mus.click(); await sleep(400); }
+      {
+        const mw = document.querySelector('.os-wgt[data-type="music"]');
+        out.musicWidget = !!mw;
+        if (mw) {
+          window.__music = [];
+          for (const k of ['prev','toggle','next']) {
+            const b = mw.querySelector('[data-m="' + k + '"]');
+            if (b) b.click();
+            await sleep(40);
+          }
+          out.musicCalls = window.__music.slice();
+          out.musicTitle = (mw.querySelector('.wgt-mtitle') || {}).textContent || '';
+        }
+      }
       if (el) {
         const dr = desk.getBoundingClientRect(), r = el.getBoundingClientRect();
         out.widgetInside = (r.right <= dr.right + 2) && (r.bottom <= dr.bottom + 2)
@@ -1265,6 +1292,15 @@ async def drive(url):
                             problems.append((label, "widget-not-draggable",
                                              "dragging a widget to the lower-left left it at "
                                              f"{q.get('widgetMoved')}px from the desk's left edge"))
+                    if q.get("musicWidget") is False:
+                        problems.append((label, "music-widget-missing",
+                                         "the Now-playing widget did not draw"))
+                    elif q.get("musicWidget") and (q.get("musicCalls") or []) != ["prev", "toggle", "next"]:
+                        problems.append((label, "music-widget-dead",
+                                         "the Now-playing widget's transport did not reach the "
+                                         f"player: {q.get('musicCalls')!r}. Buttons that do nothing "
+                                         "are the silent failure this widget has already had once "
+                                         "(a bridge method called by the wrong name)."))
                     if q.get("feedHiddenAfterClose"):
                         problems.append((label, "window-black-after-admin",
                                          "the window focused after another one closed inherited a "
