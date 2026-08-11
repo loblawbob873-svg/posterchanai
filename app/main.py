@@ -1300,7 +1300,14 @@ async def webxdc_sandbox_loader(request: Request):
         "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy":
-            "default-src 'self' 'unsafe-inline'; connect-src 'none'; "
+            # frame-src MUST allow blob:. Where a service worker is unavailable (Firefox refuses one
+            # in an embedded frame from another origin) the loader builds the app's page as a blob on
+            # THIS origin and frames it -- and frame-src falls back to default-src, so
+            # "default-src 'self'" forbade the loader from framing the page it had just built. The
+            # browser said so precisely and nothing else did: the app simply never appeared, which
+            # cost an evening of black screens.
+            "default-src 'self' 'unsafe-inline' blob:; frame-src 'self' blob:; "
+            "child-src 'self' blob:; img-src 'self' blob: data:; connect-src 'self' blob:; "
             "frame-ancestors " + " ".join(ancestors),
     })
 
