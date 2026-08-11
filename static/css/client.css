@@ -3310,6 +3310,13 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .set-head .muted.small{margin-top:6px;line-height:1.45;max-width:50ch;font-size:15px}
 .set-title{font-family:'Orbitron',sans-serif;font-size:24px;letter-spacing:.5px;color:var(--neon);text-shadow:0 0 8px rgba(var(--accent-rgb),.55),0 0 16px rgba(var(--accent-rgb),.3)}
 .set-body{margin-top:16px;transition:opacity .15s}
+/* The stay-connected opt-in. Set apart from the buttons above it because it is a DIFFERENT KIND of
+   choice — push is a capability you switch on, this is a trade you accept — and because the sentence
+   explaining the battery cost has to be read, not skimmed past as button chrome. */
+.set-stay{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);
+  display:flex;flex-direction:column;gap:5px}
+.set-stay label{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
+.set-stay input{flex:none}
 .set-body.disabled{opacity:.4;pointer-events:none;filter:grayscale(.4)}
 .set-body .muted.small{font-size:15px;line-height:1.45}
 .set-body code{color:var(--cyan);font-size:15px}

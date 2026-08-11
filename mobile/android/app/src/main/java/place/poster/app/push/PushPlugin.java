@@ -176,4 +176,64 @@ public class PushPlugin extends Plugin {
             call.reject("could not open settings: " + t.getMessage());
         }
     }
+
+    /**
+     * Raise a notification FROM THE WEB LAYER.
+     *
+     * Android's WebView does not implement the Notifications API — `new Notification(...)` in there is
+     * not an error, it is silence. So the client's one notification helper (osNotify) drew nothing in
+     * the APK: a DM that had already arrived on the open relay socket produced a toast if you were
+     * looking and nothing at all if you were not. Same shape as the media-controls gap, same fix.
+     *
+     * Goes through PushEventService.show — the SAME builder a real push uses — so a notification looks
+     * and behaves identically whether it came from the server or from a socket this app already had.
+     */
+    @PluginMethod
+    public void notify(PluginCall call) {
+        String title = call.getString("title", "PosterChan");
+        String body = call.getString("body", "");
+        String type = call.getString("type", "");
+        String tag = call.getString("tag", null);
+        try {
+            PushEventService.show(getContext(), title, body, type, tag);
+            call.resolve();
+        } catch (Throwable t) {
+            call.reject("could not show a notification: " + t.getMessage());
+        }
+    }
+
+    /**
+     * Turn the persistent "stay connected" foreground service on or off (see StayAwakeService).
+     *
+     * The START must come from the foreground — Android 12+ refuses a background foreground-service
+     * start — which is fine, because the only thing that calls this is a switch in Settings.
+     */
+    @PluginMethod
+    public void setStayConnected(PluginCall call) {
+        boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));
+        Intent i = new Intent(getContext(), StayAwakeService.class)
+                .setAction(on ? StayAwakeService.ACTION_START : StayAwakeService.ACTION_STOP);
+        try {
+            if (on && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) getContext().startForegroundService(i);
+            else getContext().startService(i);
+            JSObject out = new JSObject();
+            out.put("on", on);
+            call.resolve(out);
+        } catch (Throwable t) {
+            // Say so rather than resolving: silently not staying connected is the failure the whole
+            // switch exists to prevent.
+            StayAwakeService.setWanted(getContext(), false);
+            call.reject("could not change it: " + t.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void stayConnected(PluginCall call) {
+        JSObject out = new JSObject();
+        // The REMEMBERED preference, not `running`: Android may have killed the service, and a switch
+        // that flips itself off because of that would tell the user they turned something off.
+        out.put("on", StayAwakeService.wanted(getContext()));
+        out.put("running", StayAwakeService.running);
+        call.resolve(out);
+    }
 }

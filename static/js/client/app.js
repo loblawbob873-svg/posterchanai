@@ -22309,6 +22309,26 @@
    * the permission check, the click-to-focus and the icon cannot drift between callers — clicking a
    * system notification that does nothing is worse than not having sent it. */
   function osNotify(title, body, opts){
+    const clean = String(body||'').replace(/<[^>]+>/g,'')
+                    .replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim();
+    /* THE APK GOES NATIVE, because Android's WebView does not implement the Notifications API at all.
+     * `new Notification(...)` in there is not an error and not a refusal — it is silence, so every
+     * caller below has been drawing nothing on the packaged app since it shipped: a DM that had
+     * already arrived on the open relay socket produced an in-app toast if you happened to be looking
+     * and nothing whatsoever if you were not. Same shape as the media-controls gap (an API the
+     * WebView accepts and does nothing with), and the same fix.
+     *
+     * It routes through the SAME builder a real push uses (PushEventService.show), so a notification
+     * looks and behaves identically whether the server sent it or a socket this app already had
+     * produced it — including the call treatment, which is a different channel and a full-screen
+     * intent. */
+    const P = _capPlugin('PosterChanPush', 'notify');   // the same plugin _pushPlugin() resolves
+    if(P){
+      try{ const r = P.notify({ title:String(title||'PosterChan'), body:clean,
+                                type:(opts&&opts.type)||'', tag:(opts&&opts.tag)||'' });
+           if(r && r.catch) r.catch(()=>{}); }catch(_){}
+      return null;      // no handle to give back: the tap is wired natively, to MainActivity
+    }
     try{
       if(!window.Notification || Notification.permission!=='granted') return null;
       const n=new Notification(title, { body:String(body||'').replace(/<[^>]+>/g,'')
@@ -23047,6 +23067,38 @@
     for(let i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
     return arr;
   }
+  /* "Stay connected" — the persistent-notification fallback (StayAwakeService).
+   *
+   * ONLY OFFERED ON THE PACKAGED APP, because it is the only build that can do it: a browser cannot
+   * keep itself running and does not need to (a PWA's push goes through the browser's own service).
+   * Hidden rather than disabled elsewhere, since a permanently greyed switch reads as broken.
+   *
+   * The switch reflects the REMEMBERED preference, not whether the service happens to be running —
+   * Android may have killed it, and a switch that flips itself off because of that would tell the
+   * user they turned something off. */
+  async function _wireStayConnected(){
+    const row = $('#set-stay-row'), box = $('#set-stay');
+    if(!row || !box) return;
+    const P = _capPlugin('PosterChanPush', 'stayConnected');
+    if(!P) return;                                   // a browser: leave the row hidden
+    let cur = null;
+    try{ cur = await P.stayConnected(); }catch(_){ return; }   // an APK older than this feature
+    row.hidden = false;
+    box.checked = !!(cur && cur.on);
+    box.onchange = async () => {
+      const want = box.checked;
+      try{
+        await P.setStayConnected({ on: want });
+        toast(want ? 'staying connected — see the permanent notification'
+                   : 'stopped staying connected');
+      }catch(e){
+        // Put the switch back: it must never show a state the phone is not in.
+        box.checked = !want;
+        toast('could not change it: ' + ((e && (e.message || e.errorMessage)) || 'refused'));
+      }
+    };
+  }
+
   async function pushState(){   // 'unsupported' | 'denied' | 'off' | 'on'
     // Check the native plugin FIRST. A Capacitor WebView has no PushManager, so the browser test
     // below reports 'unsupported' and disables the button — on the one build that now has a working
@@ -23261,12 +23313,20 @@
           <button class="btn btn-neon small" id="set-push-toggle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bell"></use></svg>Enable push notifications</button>
           <button class="btn small" id="set-push-test" style="margin-left:6px">Test</button>
           <div class="muted small" id="set-push-status" style="margin-top:6px"></div>
+          <div id="set-stay-row" class="set-stay" hidden>
+            <label><input type="checkbox" id="set-stay"> Stay connected in the background</label>
+            <div class="muted small">Push needs a notification app (ntfy, Sunup) installed — without
+              one, a closed PosterChan receives nothing. This keeps the connection open instead, with
+              the permanent notification Android requires. <strong>It uses more battery</strong>, so
+              leave it off if push is working.</div>
+          </div>
         </div>
       </section>
       <div id="user-settings"></div>
     </div>`;
 
     _wirePushToggle();
+    _wireStayConnected();
     { const sq=$('#set-scan-qr'); if(sq) sq.onclick=()=>openQrScanner(); }
     { const ab=$('#set-admin'); if(ab) ab.onclick=()=>switchView('admin'); }
     { const da=$('#set-del-account'); if(da) da.onclick=async()=>{

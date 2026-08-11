@@ -241,3 +241,77 @@ def test_draining_twice_at_once_cannot_lose_a_queued_write():
         body = src[i:src.index("\n  }", read)]
         assert "_flushing = true;" in body, f"{name} checks a flag it never sets"
         assert "finally{ _flushing = false; }" in body, f"{name} can wedge its flush after a throw"
+
+
+# ---------------------------------------------------------------------------------------------
+# reaching a CLOSED app: the notification half
+
+
+PUSHSVC = _read(JAVA, "push", "PushEventService.java")
+PUSHPLUG = _read(JAVA, "push", "PushPlugin.java")
+STAY = _read(JAVA, "push", "StayAwakeService.java")
+
+
+def test_the_apk_can_raise_a_notification_at_all():
+    """Android's WebView does not implement the Notifications API. `new Notification(...)` in there is
+    not an error and not a refusal — it is SILENCE, so the client's one notification helper drew
+    nothing on the packaged app: a DM that had already arrived on the open relay socket produced an
+    in-app toast if you happened to be looking and nothing whatsoever if you were not. Same shape as
+    the media-controls gap (an API the WebView accepts and does nothing with)."""
+    i = APPJS.index("function osNotify(")
+    body = APPJS[i:i + 1600]
+    assert "_capPlugin('PosterChanPush', 'notify')" in body, (
+        "osNotify still relies on window.Notification, which does nothing in a WebView")
+    assert body.index("_capPlugin('PosterChanPush'") < body.index("window.Notification"), (
+        "the browser path is tried first, so the APK never reaches the native one")
+    assert "public void notify(PluginCall call)" in PUSHPLUG
+
+
+def test_a_push_and_a_locally_raised_notification_use_one_builder():
+    """Otherwise the same event looks different depending on whether the app happened to be running —
+    and the call treatment (its own channel, a full-screen intent) is the part that would differ."""
+    assert "public static void show(Context ctx" in PUSHSVC
+    assert "show(ctx, title, body, type, null);" in PUSHSVC, (
+        "onMessage builds its own notification again instead of going through show()")
+    assert "PushEventService.show(getContext()" in PUSHPLUG
+
+
+def test_stay_connected_is_off_by_default_and_says_what_it_costs():
+    """It is a FALLBACK for phones with no push distributor, not the plan — push reaches a closed app
+    for free. A permanent connection is real battery, so it is a trade the user makes knowingly."""
+    assert "getBoolean(PREF_ON, false)" in STAY, "stay-connected defaults to ON"
+    i = APPJS.index('id="set-stay-row"')
+    row = APPJS[i:i + 900]
+    assert "hidden" in row, "the switch is shown on builds that cannot do it"
+    assert "more battery" in row, "the switch does not say what it costs"
+
+
+def test_stay_connected_declares_specialUse_not_dataSync():
+    """Android 15 caps dataSync at six hours in any twenty-four — for a stay-connected service that
+    means it silently stops working for most of the day, which is worse than not having it."""
+    assert re.search(r'android:name="\.push\.StayAwakeService"', MANIFEST)
+    assert 'android:foregroundServiceType="specialUse"' in MANIFEST
+    assert "PROPERTY_SPECIAL_USE_FGS_SUBTYPE" in MANIFEST, (
+        "Android 14+ requires the subtype property beside a specialUse service")
+    assert "android.permission.FOREGROUND_SERVICE_SPECIAL_USE" in MANIFEST
+    assert 'foregroundServiceType="dataSync"' not in MANIFEST, (
+        "a service was moved to dataSync, which Android 15 caps at 6h/day")
+
+
+def test_the_switch_shows_the_remembered_choice_not_the_running_state():
+    """Android may kill the service. A switch that flips itself off because of that tells the user
+    they turned something off, which they did not."""
+    i = PUSHPLUG.index("public void stayConnected(")
+    body = PUSHPLUG[i:i + 500]
+    assert 'out.put("on", StayAwakeService.wanted(' in body, (
+        "the switch reads the live service instead of the stored preference")
+    assert "START_STICKY" in STAY, (
+        "the service does not come back after being killed, which is the whole point of asking for it")
+
+
+def test_a_refused_start_puts_the_switch_back():
+    """It must never show a state the phone is not in."""
+    i = APPJS.index("async function _wireStayConnected(")
+    body = APPJS[i:i + 1400]
+    assert "box.checked = !want;" in body, "a rejected change leaves the switch lying"
+    assert "P.setStayConnected(" in body

@@ -54,6 +54,20 @@ public class PushEventService extends PushService {
             // A payload we cannot parse is still a signal that SOMETHING happened; showing the
             // default beats swallowing it, which would look exactly like a delivery failure.
         }
+        show(ctx, title, body, type, null);
+    }
+
+    /**
+     * Draw one notification. THE ONLY BUILDER, and that is the point.
+     *
+     * A push and a notification raised by the WEB LAYER (see PushPlugin.notify) have to look and
+     * behave identically — same channels, same call treatment, same tap target — or a person gets two
+     * different notifications for the same event depending on whether the app happened to be running.
+     * The web layer needs its own route because Android's WebView does not implement the Notifications
+     * API at all: `new Notification(...)` in there is not an error, it is silence, which is why a
+     * backgrounded APK showed nothing for a DM that had already arrived on its open relay socket.
+     */
+    public static void show(Context ctx, String title, String body, String type, String tag) {
         boolean isCall = "call".equals(type);
         ensureChannels(ctx);
 
@@ -86,7 +100,10 @@ public class PushEventService extends PushService {
         if (nm != null) {
             // Collapse a repeat of the same kind rather than stacking: a call that re-notifies should
             // replace its own notification, not add a second one to the shade.
-            nm.notify(isCall ? 1001 : 1002, b.build());
+            // A TAG lets distinct conversations coexist; without one, everything of a kind
+            // collapses onto one id, which is right for "you have mail" and wrong for two people
+            // messaging you at once.
+            nm.notify(tag != null ? tag : (isCall ? "call" : "msg"), isCall ? 1001 : 1002, b.build());
         }
     }
 
@@ -115,7 +132,7 @@ public class PushEventService extends PushService {
         // which can explain the fix. A toast from a background receiver cannot.
     }
 
-    private void ensureChannels(Context ctx) {
+    static void ensureChannels(Context ctx) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
