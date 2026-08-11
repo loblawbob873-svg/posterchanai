@@ -302,3 +302,24 @@ def test_editing_the_same_event_twice_offline_sends_once():
     i = CALJS.index("async add(op){")
     body = CALJS[i:i + 600]
     assert "x.op + '|' + x.cal + '|' + x.uid" in body, "the queue grows one entry per keystroke-save"
+
+
+def test_a_write_the_server_later_refuses_is_not_dropped_in_silence():
+    """The person was told "saved on this device — it will sync when you are back online". Dropping
+    it quietly makes that a lie they find out about weeks later, when the appointment does not
+    happen."""
+    js = (ROOT / "static" / "js" / "client" / "calendar.js").read_text(encoding="utf-8")
+    i = js.index("async flush(){")
+    body = js[i:i + 2000]
+    assert "refused.push(op)" in body, "a refused write vanishes"
+    assert "refused by the server" in body, "nothing tells the person it was dropped"
+
+
+def test_the_pending_badge_is_right_on_a_return_visit():
+    """It is about the QUEUE, not the snapshot — so reading it after the "live data is already here"
+    early return means it is only ever right on the first entry of a session."""
+    js = (ROOT / "static" / "js" / "client" / "calendar.js").read_text(encoding="utf-8")
+    i = js.index("async function loadCached(){")
+    body = js[i:i + 900]
+    assert body.index("CalQueue.read()") < body.index("if(S.ready || S.cals.length) return false;"), (
+        "the queue depth is read after the early return")

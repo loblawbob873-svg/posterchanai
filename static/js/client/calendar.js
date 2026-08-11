@@ -384,7 +384,7 @@
       async flush(){
         const q = await this.read();
         if(!q.length) return 0;
-        const left = [];
+        const left = [], refused = [];
         let sent = 0;
         for(const op of q){
           try{
@@ -398,12 +398,20 @@
           }catch(err){
             // A 4xx is the server REFUSING it — replaying that for ever is a queue that never drains
             // and an error that is never seen. Only a transport failure is worth keeping.
-            if(err && err.status && err.status < 500) continue;
+            if(err && err.status && err.status < 500){ refused.push(op); continue; }
             left.push(op);
           }
         }
         await CalCache.saveQ(left);
         S.queued = left.length;
+        /* A REFUSED write has to be said out loud. The person was told "saved on this device — it
+         * will sync when you are back online", and dropping it quietly makes that a lie they find
+         * out about weeks later, when the appointment does not happen. */
+        if(refused.length){
+          toast(refused.length === 1
+            ? 'an event you made offline was refused by the server and has been dropped'
+            : refused.length + ' events you made offline were refused by the server and dropped');
+        }
         return sent;
       },
     };
@@ -411,8 +419,12 @@
     /* Paint from the cache BEFORE the network is asked. Returns whether anything was drawn, so a
      * failed load can say "showing your saved calendar" rather than "could not load". */
     async function loadCached(){
+      // BEFORE the early return: the badge is about the QUEUE, not about the snapshot, and on a
+      // return visit (when the live data is already in memory) the early return would skip it. Within
+      // one session `add`/`flush` keep it current; this is what makes it right on the first paint
+      // after a reload, which is exactly when there is something queued to tell someone about.
+      try{ S.queued = ((await CalQueue.read()) || []).length; }catch(_){}
       if(S.ready || S.cals.length) return false;          // the live data is already here
-      try{ S.queued = (await CalQueue.read()).length; }catch(_){}
       const snap = await CalCache.read();
       if(!snap || !Array.isArray(snap.cals) || !snap.cals.length) return false;
       S.cals = snap.cals;
