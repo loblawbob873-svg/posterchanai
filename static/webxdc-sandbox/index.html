@@ -167,7 +167,23 @@
       }, 25000);
       post({ jsonrpc:'2.0', method:'sandbox.running' });
     }).catch(function(e){
-      fail('Could not start the sandbox: ' + ((e && e.message) || e));
+      /* "The operation is insecure" is Firefox's SecurityError, and on this path it means one thing:
+       * the browser refuses to register a service worker in a cross-origin frame. Firefox's Enhanced
+       * Tracking Protection partitions (and for workers, blocks) storage for an embedded document on
+       * a different origin — and a mini app is exactly that by design, because a different origin is
+       * what keeps it away from the client's keys.
+       *
+       * Nothing in this file can work around it: the whole architecture rests on a worker serving the
+       * app's files. So it says what happened and what to do, rather than repeating the browser's
+       * four-word verdict at somebody staring at a black rectangle. */
+      var m = String((e && (e.name + ': ' + e.message)) || e);
+      var insecure = /SecurityError|insecure|not allowed/i.test(m);
+      fail(insecure
+        ? 'Firefox is blocking this: it will not run a service worker inside an embedded frame from '
+          + 'another origin, which is how mini apps are sandboxed. Click the SHIELD in the address '
+          + 'bar and turn Enhanced Tracking Protection off for this site, or open it in Chrome, '
+          + 'Edge or Brave — where it works as-is.'
+        : 'Could not start the sandbox: ' + m);
     });
   }
 

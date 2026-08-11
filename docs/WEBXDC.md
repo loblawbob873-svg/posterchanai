@@ -132,6 +132,12 @@ localStorage and get an origin per app, which closes that gap too.
     - So sending is **newest-wins and never queued**: a movement packet is worthless once a newer one
       exists. A remote-signer player simply moves less smoothly and still *sees* everyone else
       perfectly, because receiving costs no signature at all.
+- **Firefox will not run mini apps as things stand.** It refuses to register a service worker inside
+  a cross-origin frame under Enhanced Tracking Protection, and a mini app is a cross-origin frame by
+  design — that separation is what keeps a stranger's game away from the client's keys. It fails as
+  `SecurityError: The operation is insecure`, which the sandbox now explains on screen: turn ETP off
+  for the site via the shield in the address bar, or use a Chromium browser. A real fix means serving
+  the app without a worker (blob URLs, rewriting every internal reference) and is not done.
 - **`sendToChat` and `importFiles` are not implemented** — same reason, same detection.
 - **`selfAddr` is your npub and proves nothing.** Nothing inside a mini app is signed, so any player
   can claim to be anyone within the app. The NIP says so too; apps must not use it for trust.
