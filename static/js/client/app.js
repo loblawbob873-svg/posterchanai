@@ -260,7 +260,7 @@
    * standalone install is not a degraded PosterChan, it is a Nostr client, and it should read like
    * one. Anyone who wants the rest can name an instance in Settings and they all come back. */
   const INSTANCE_VIEWS = new Set(['ai', 'translate', 'markets', 'news', 'torrents', '4chan',
-                                  'stats', 'meme', 'admin', 'websearch', 'calendar', 'contacts',
+                                  'stats', 'meme', 'admin', 'websearch', 'terminal', 'calendar', 'contacts',
                                   // Email is IMAP/SMTP through this instance's mail service — with no
                                   // instance there is nothing behind the screen at all.
                                   'mail',
@@ -1431,7 +1431,7 @@
       compose({ text: lines.join('\n\n') });
       return true;
     }
-    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','translate','news','websearch','calendar','contacts']);
+    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','translate','news','websearch','terminal','calendar','contacts']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
   }
@@ -3826,6 +3826,13 @@
     feed.classList.toggle('feed-translate', VIEW==='translate');   // full-height Live Translate layout
     feed.classList.toggle('feed-meme', VIEW==='meme');     // full-height Meme Builder (stage + one pane)
     feed.classList.toggle('feed-admin', VIEW==='admin');   // full-height admin iframe
+    feed.classList.toggle('feed-term', VIEW==='terminal');  // full-height terminal
+    /* LEAVING THE TERMINAL CLOSES IT. Nothing else in this app has to be told it is being replaced —
+     * a view is just markup in #feed — but a terminal is a live PTY on a remote host and a socket
+     * holding it open. Without this, walking away leaves a login open on someone else's machine
+     * until the server's own timeout, and coming back re-renders around an xterm bound to a node
+     * that no longer exists. */
+    if(VIEW!=='terminal'){ try{ if(window.PCTerm && PCTerm.isOpen()) PCTerm.unmount(); }catch(_){} }
     // Admin uses a PERSISTENT iframe (loaded once, kept alive) so revisiting it doesn't reload
     // /admin every time — that reload was the flicker / "not loading". Hide it + restore #feed for
     // every other view; renderAdmin shows it for admin.
@@ -3851,6 +3858,7 @@
     if (VIEW==='4chan') return render4chan();
     if (VIEW==='news'){ if(window.PCNews) return window.PCNews.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='websearch'){ if(window.PCWebSearch) return window.PCWebSearch.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
+    if (VIEW==='terminal'){ if(window.PCTerm) return window.PCTerm.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='calendar'){ if(window.PCCalendar) return window.PCCalendar.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='contacts'){ if(window.PCContacts) return window.PCContacts.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='markets'){ if(window.PCMarkets) return window.PCMarkets.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
@@ -24749,11 +24757,15 @@
   }
   function uiPrompt(message, opts={}){
     const ok=opts.ok||'OK', cancel=opts.cancel||'Cancel', def=opts.value||'', ph=opts.placeholder||'';
+    // `password: true` masks the field. Added for the SSH terminal, which asks for a login password:
+    // a credential typed into a type="text" box is on screen, in the accessibility tree, and offered
+    // to every password manager as a username.
+    const typ = opts.password ? 'password' : 'text';
     return new Promise(resolve=>{
       const ov=document.createElement('div'); ov.className='uiconfirm-bg';
       ov.innerHTML=`<div class="uiconfirm glass neon-border" role="dialog" aria-modal="true">
         <div class="uiconfirm-msg">${enc(String(message||''))}</div>
-        <input class="input uiprompt-in" type="text" value="${enc(def)}" placeholder="${enc(ph)}" style="width:100%;margin-bottom:14px">
+        <input class="input uiprompt-in" type="${typ}" value="${enc(def)}" placeholder="${enc(ph)}" autocomplete="${opts.password?'current-password':'off'}" style="width:100%;margin-bottom:14px">
         <div class="uiconfirm-btns">
           <button class="btn btn-ghost small" data-uc="0">${enc(cancel)}</button>
           <button class="btn btn-neon small" data-uc="1">${enc(ok)}</button>

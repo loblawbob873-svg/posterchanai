@@ -921,7 +921,10 @@
    */
   const WIN_SHAPE = {
     // Workbenches: as wide as they can get.
-    wide: ['meme', 'admin', 'translate', 'stats', 'ai', 'websearch', 'calendar', 'markets', 'sync'],
+    // 'terminal' is here because COLUMNS are what a shell needs: 80 of them is the width every
+    // piece of unix output was laid out for, and a narrow window wraps `ls -l` and every log line.
+    wide: ['meme', 'admin', 'translate', 'stats', 'ai', 'websearch', 'calendar', 'markets', 'sync',
+           'terminal'],
     // Columns: a list beside a pane. Width past a point is empty space.
     column: ['messages', 'mail', 'notifications', 'notes', 'drafts', 'bookmarks', 'vault', 'contacts',
              'budget', 'news', 'articles'],

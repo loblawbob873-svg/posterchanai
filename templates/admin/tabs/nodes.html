@@ -20,6 +20,27 @@
     </fieldset>
 
     <fieldset>
+        <legend>SSH Terminal</legend>
+        <div class="form-group">
+            <small>A real interactive shell in the client (sidebar → <strong>Terminal</strong>, and its own window in desktop mode). This is a <strong>second</strong> remote-execution path and a wider one than node management below: that reaches nodes you registered, over Nostr; this reaches any host you list here.</small>
+            <label for="ssh_terminal_enabled">
+                <input type="checkbox" id="ssh_terminal_enabled" name="ssh_terminal_enabled"> Enable the SSH Terminal
+            </label>
+            <small>⚠️ A full PTY on the hosts below, running as whatever user you configure. Off by default — only enable on a deployment you trust.</small>
+        </div>
+        <div class="form-group">
+            <label for="ssh_hosts">Hosts</label>
+            <textarea id="ssh_hosts" name="ssh_hosts" rows="3" placeholder="build  deploy@10.0.0.9  key=/home/pc/.ssh/id_ed25519&#10;nas    admin@nas.lan:2222"></textarea>
+            <small>One per line: <code>name&nbsp;&nbsp;user@host[:port]&nbsp;&nbsp;[key=/path/to/private_key]</code>. This is an <strong>allowlist</strong> — the client picks a <em>name</em> and can never name an address of its own, so the terminal cannot be used to reach machines you did not list. <strong>No password is ever stored:</strong> a host either names a private key file that already exists on this server, or the person types a password that is used for that session and then forgotten.</small>
+        </div>
+        <div class="form-group">
+            <label for="ssh_terminal_users">Allowed Users (npubs)</label>
+            <textarea id="ssh_terminal_users" name="ssh_terminal_users" rows="2" placeholder="npub1…&#10;npub1…"></textarea>
+            <small>Who may open a terminal, one per line or comma-separated. Admins are always allowed. Leave empty to keep it admin-only.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>Agentic Node Management</legend>
         <div class="form-group">
             <small>Run OS commands and <strong>agentic tasks</strong> (LLM-driven, multi-step goals) on SSH-reachable nodes or <code>local</code> — from chat, Telegram, or the health report.</small>

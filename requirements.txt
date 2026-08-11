@@ -192,3 +192,7 @@ pyflakes>=3.0.0  # sync.sh pre-push gate: catches undefined names that py_compil
 # single-worker deployment needs (inline it would block every other request for the call).
 radicale>=3.3,<4
 a2wsgi>=1.10
+
+# SSH terminal (the client's Terminal app). Optional at runtime: ssh_service.available()
+# reports its absence rather than 500ing, because sync.sh deploys code and not packages.
+paramiko>=3.4

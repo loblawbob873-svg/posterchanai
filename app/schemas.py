@@ -403,6 +403,14 @@ class SettingsResponse(BaseModel):
     google_login_enabled: str = "false"
     google_client_id: str = ""
     google_client_secret: str = ""
+    # SSH terminal (the client's Terminal app). A SECOND remote-execution path, and a wider one than
+    # node management below: that reaches nodes you registered, over Nostr; this reaches any host you
+    # can log into. Off by default, admin + allowlist gated, and `ssh_hosts` is an ALLOWLIST — the
+    # client names a host, never an address. No credential is stored: a host either names a private
+    # key file already on this server, or the user types a password for that session only.
+    ssh_terminal_enabled: str = "false"
+    ssh_terminal_users: str = ""   # npubs allowed, comma/newline-separated (admins always allowed)
+    ssh_hosts: str = ""            # one per line:  name  user@host[:port]  [key=/path/to/private_key]
     # Node management (Nostr-only transport: remote nodes are npub workers; `local` runs on this host)
     node_exec_enabled: str = "false"
     node_exec_users: str = ""  # comma/newline-separated npubs allowed (first user/admin always allowed)
