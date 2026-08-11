@@ -6438,11 +6438,16 @@ body.os-on #os-root{pointer-events:auto}
 .wgt-notest{height:14px;padding-top:2px;color:rgba(90,70,0,.6)}
 .os-wgt[data-type="note"] .wgt-dim{color:rgba(90,70,0,.6)}
 
-/* Search. */
-.wgt-search{display:flex;gap:6px;align-items:center}
-.wgt-sgo{flex:none;width:32px;height:32px;border-radius:9px;border:1px solid var(--neon);
+/* Search — a BAR: wide, one line tall, the input filling it. The hint sits on the same row rather
+   than under it, because a second line is most of the height of a widget this shape. */
+.os-wgt[data-type="search"] .os-wgt-body{display:flex;align-items:center;padding:6px 10px}
+.wgt-search{display:flex;gap:7px;align-items:center;width:100%}
+.wgt-sinput{flex:1;min-width:0}
+.wgt-sgo{flex:none;width:34px;height:34px;border-radius:9px;border:1px solid var(--neon);
   background:rgba(var(--accent-rgb),.14);color:var(--neon);cursor:pointer;font-size:13px}
 .wgt-sgo:hover{background:var(--neon);color:#04121a}
+/* No room for it in a bar, and it says nothing the placeholder does not. */
+.os-wgt[data-type="search"] .wgt-shint{display:none}
 .wgt-shint{padding-top:6px}
 
 /* The picker — the wallpaper panel's frame, a list rather than a grid of thumbnails. */

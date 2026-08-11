@@ -17098,11 +17098,20 @@
    * ever touched lost its icon permanently, which is why the list looked like two different designs
    * once you had played something. The stylesheet swaps the glyph. */
   function _updateMusicListBtns(root){
-    const scope = root || document.querySelector('.music-list');
-    if(!scope) return;
+    /* EVERY list, when no particular one is named.
+     *
+     * There can be two on screen at once — `#ma-lib` in the Music app and `#bl-grid` when Files is
+     * showing the Music folder — and in desktop mode both can be open in their own windows. The
+     * un-rooted callers (MusicPlayer._render, _musicAppNow) mean "wherever this is drawn", so a
+     * `querySelector` fallback picks whichever comes first in the document and leaves the other one
+     * stuck: its rows never gain the marker, and a row that was playing keeps it forever. */
+    const scopes = root ? [root] : $$('.music-list');
     const playing = _audioEl && !_audioEl.paused;
-    $$('.track-play', scope).forEach(b =>
-      b.classList.toggle('playing', playing && b.dataset.sha === MusicPlayer.cur));
+    for(const scope of scopes){
+      if(!scope) continue;
+      $$('.track-play', scope).forEach(b =>
+        b.classList.toggle('playing', playing && b.dataset.sha === MusicPlayer.cur));
+    }
   }
   // The floating cyberpunk player — a persistent widget appended to <body> (NOT #feed), so it hovers over
   // EVERY view and keeps playing as you navigate. Minimizable to a mini bar; draggable anywhere.
@@ -27325,7 +27334,20 @@
         const m = FilesIdx.meta(MusicPlayer.cur) || {};
         return { title: m.name || 'track', playing: !!(_audioEl && !_audioEl.paused) };
       },
-      toggle: () => MusicPlayer.toggle(),
+      /* Play must be able to START something.
+       *
+       * `MusicPlayer.toggle()` is `if(_audioEl){…}`, and `_audioEl` only exists once `ensure()` has
+       * run — which `play()` does and `toggle()` does not. So on a fresh session the widget's ▶ did
+       * nothing at all: no sound, no toast, no state change, nothing in the console. With nothing
+       * loaded this now does what the Music app's own play button does — fill the queue and start
+       * it — and only falls through to toggle when there is something to toggle. */
+      toggle: () => {
+        // Exactly what #ma-play does, so the widget and the app cannot disagree about what ▶ means.
+        if(MusicPlayer.cur) return MusicPlayer.toggle();
+        const q = musicTracks(null);
+        if(!q.length){ toast('no music yet — add some'); return; }
+        MusicPlayer.refreshQueue(); MusicPlayer.play(q[0].sha);
+      },
       prev: () => MusicPlayer.prev(),
       next: () => MusicPlayer.next(),
     }),

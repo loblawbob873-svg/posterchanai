@@ -29,23 +29,37 @@ _CACHE_MAX = 400             # bounded — this is a public endpoint and the key
 
 _forecast: dict = {}         # (lat,lon) -> (at, payload)
 _geocode: dict = {}          # query -> (at, payload)
-_lock: asyncio.Lock = None
+_locks: dict = {}            # (lat,lon) -> Lock; see _lock_get, trimmed with the cache
 
 
 def _trim(cache: dict):
     """Oldest-first eviction. Bounded because the key is caller-supplied: without this, walking a
-    coordinate grid would grow this dict without limit on a public endpoint."""
+    coordinate grid would grow this dict without limit on a public endpoint. The per-coordinate locks
+    are dropped with their entry for the same reason — they are keyed on the same caller input."""
     if len(cache) <= _CACHE_MAX:
         return
     for k in sorted(cache, key=lambda k: cache[k][0])[: len(cache) - _CACHE_MAX]:
         cache.pop(k, None)
+        lk = _locks.get(k)
+        if lk is not None and not lk.locked():
+            _locks.pop(k, None)
 
 
-async def _lock_get() -> asyncio.Lock:
-    global _lock
-    if _lock is None:
-        _lock = asyncio.Lock()
-    return _lock
+async def _lock_get(key) -> asyncio.Lock:
+    """A lock PER COORDINATE, not one for the module.
+
+    The point of the lock is to stop ten clients asking for the SAME place from making ten upstream
+    requests. A single global lock does that and also serialises every other place behind it: on a
+    public endpoint, ten users first-loading ten different cities would queue, and the tenth waits up
+    to 10 x _TIMEOUT — 150 seconds — before it even issues its request, long past any browser timeout.
+    Its widget then says "weather unavailable" for a service that is working perfectly.
+
+    The locks are cleaned up with their cache entry (_trim), so this cannot grow unbounded on a public
+    endpoint any more than the cache can."""
+    lk = _locks.get(key)
+    if lk is None:
+        lk = _locks[key] = asyncio.Lock()
+    return lk
 
 
 async def _get_json(url: str, params: dict):
@@ -69,7 +83,7 @@ async def forecast(lat: float, lon: float) -> dict:
     hit = _forecast.get(key)
     if hit and (now - hit[0]) < _FORECAST_TTL:
         return hit[1]
-    async with await _lock_get():
+    async with await _lock_get(key):
         hit = _forecast.get(key)
         if hit and (time.time() - hit[0]) < _FORECAST_TTL:
             return hit[1]

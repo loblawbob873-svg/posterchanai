@@ -63,11 +63,20 @@ class WidgetDocument(unittest.TestCase):
         self.assertEqual(d["widgets"], [{"id": "w1", "type": "crypto", "x": 0.5, "y": 0.25,
                                          "size": "l", "cfg": {"place": "Home"}}])
 
-    def test_an_unknown_type_is_dropped(self):
-        """A document written by a newer client must not draw a frame this one cannot fill."""
+    def test_an_unknown_type_is_KEPT_not_dropped(self):
+        """This sanitiser runs on read AND on every write, so dropping a row here does not hide a
+        widget — it PUBLISHES the deletion to every device. Arrange widgets on an up-to-date desktop,
+        then let a cached PWA or an older APK move one icon, and that client's save would wipe them
+        for everyone with nothing said. `order` and `hidden` already keep keys they do not recognise;
+        this is the same problem. drawWidgets skips what it cannot draw."""
         d = norm({"widgets": [{"id": "a", "type": "stockmarket3000"},
                               {"id": "b", "type": "weather"}]})
-        self.assertEqual([w["type"] for w in d["widgets"]], ["weather"])
+        self.assertEqual([w["type"] for w in d["widgets"]], ["stockmarket3000", "weather"])
+
+    def test_a_typeless_row_is_still_dropped(self):
+        """"Unknown" is a type this client has not heard of; a row with no type at all is junk."""
+        d = norm({"widgets": [{"id": "a"}, {"id": "b", "type": "!!!"}, {"id": "c", "type": "crypto"}]})
+        self.assertEqual([w["type"] for w in d["widgets"]], ["crypto"])
 
     def test_positions_are_fractions_and_are_clamped(self):
         """Off-scale values are the ones that put a panel where it cannot be reached — and 1.0 has to
@@ -105,8 +114,8 @@ class WidgetDocument(unittest.TestCase):
 
     def test_cfg_is_bounded_in_both_directions(self):
         """It is read on every draw of the desktop, and it is caller-written."""
-        big = {f"k{i}": i for i in range(40)}
-        big["text"] = "x" * 5000
+        big = {"text": "x" * 9000}
+        big.update({f"k{i}": i for i in range(40)})
         big["nested"] = {"no": "objects"}
         big["arr"] = [1, 2, 3]
         d = norm({"widgets": [{"id": "a", "type": "note", "cfg": big}]})
@@ -114,8 +123,10 @@ class WidgetDocument(unittest.TestCase):
         self.assertLessEqual(len(cfg), 12)
         for v in cfg.values():
             self.assertIn(type(v), (str, int, float, bool), f"cfg kept a {type(v)}")
-        if "text" in cfg:
-            self.assertLessEqual(len(cfg["text"]), 400)
+        # The note's own copy: 400 was chosen for a city name and silently ate a sticky note on the
+        # NEXT load, which is the worst place to discover it. Bounded, but generously.
+        self.assertIn("text", cfg)
+        self.assertEqual(len(cfg["text"]), 4000)
 
     def test_a_document_with_no_widgets_key_is_fine(self):
         """Every desktop arranged before this feature existed has exactly that shape."""
@@ -142,8 +153,20 @@ class WidgetDocument(unittest.TestCase):
 class WidgetSizing(unittest.TestCase):
     """`wgtBox` is what makes a widget fit the screen it is on rather than the one it was placed on."""
 
-    def box(self, size, w, h):
-        return _node(f"console.log(JSON.stringify(PCOS.__wgtBox({json.dumps(size)}, {w}, {h})))")
+    def box(self, size, w, h, defn=None):
+        return _node(f"console.log(JSON.stringify(PCOS.__wgtBox({json.dumps(size)}, {w}, {h}, "
+                     f"{json.dumps(defn)})))")
+
+    def test_a_bar_widget_is_wide_and_one_line_tall(self):
+        """A search box wants width, not a panel's worth of dead space around one input."""
+        bar = self.box("m", 1600, 900, {"bar": True})
+        panel = self.box("m", 1600, 900)
+        self.assertGreater(bar["w"], panel["w"])
+        self.assertLess(bar["h"], panel["h"])
+
+    def test_a_bar_still_fits_a_small_desk(self):
+        bar = self.box("l", 700, 420, {"bar": True})
+        self.assertLessEqual(bar["w"], 700)
 
     def test_a_big_desktop_gets_the_full_size(self):
         self.assertEqual(self.box("l", 2560, 1400), {"w": 380, "h": 250})

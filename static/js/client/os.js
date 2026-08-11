@@ -206,7 +206,15 @@
       if(out.widgets.length >= WGT_MAX) break;
       if(!w || typeof w !== 'object') continue;
       const type = str(w.type, 24).replace(/[^a-z0-9_-]/gi, '');
-      if(!WIDGETS[type]) continue;
+      /* A type THIS client does not know is KEPT, not dropped.
+       *
+       * This sanitiser runs on read AND again on every write (`saveLayout(_normDoc(doc))`), so
+       * dropping the row here does not merely hide the widget — it publishes a document with the
+       * widget deleted, to every device. Arrange widgets on an up-to-date desktop, then let a cached
+       * PWA or an older APK move a single icon, and that client's save wipes them for everyone with
+       * nothing said. `order` and `hidden` already keep keys they do not recognise for exactly this
+       * reason; widgets are the same problem. drawWidgets skips what it cannot draw. */
+      if(!type) continue;
       const id = str(w.id, 40).replace(/[^A-Za-z0-9_-]/g, '') || (type + '-' + out.widgets.length);
       if(seenId.has(id)) continue;
       seenId.add(id);
@@ -221,7 +229,7 @@
         if(!key) continue;
         if(typeof v === 'number' && isFinite(v)) cfg[key] = v;
         else if(typeof v === 'boolean') cfg[key] = v;
-        else if(typeof v === 'string') cfg[key] = v.slice(0, 400);
+        else if(typeof v === 'string') cfg[key] = v.slice(0, WGT_TEXT_MAX);
       }
       out.widgets.push({ id, type,
                          x: num(w.x, 0), y: num(w.y, 0),
@@ -1513,6 +1521,13 @@
    * ============================================================================================= */
 
   const WGT_MAX = 12;
+  /* How much text a widget may keep in the LAYOUT document. 400 was chosen for a city name and
+   * silently truncated the sticky note to a sentence and a half — on the next load, not on the
+   * screen you typed it on, which is the worst place to find out. 4000 is generous for the copy
+   * that fills the paper in before Notes has loaded, while leaving the whole document well inside
+   * NIP-44's 65535-byte ceiling with a dozen widgets and a full icon arrangement beside it. The
+   * authoritative text is in Notes, which has no such bound. */
+  const WGT_TEXT_MAX = 4000;
   // Named sizes in layout px, and the FLOOR they collapse to on a small desk. A widget must never be
   // wider than the desktop it is on: this is the whole of "it should resize going from a tablet to a
   // desktop and back".
@@ -1525,7 +1540,15 @@
 
   // What a widget of this size actually gets, on THIS desk. Never more than 46% of the width or 40%
   // of the height, so a phone-sized desktop cannot be covered by one panel.
-  function wgtBox(size, deskW, deskH){
+  function wgtBox(size, deskW, deskH, def){
+    /* A BAR is a shape, not a size. A search box wants to be wide and one line tall — the height of
+     * a panel is dead space around a single input, and the width is what makes it usable. So the size
+     * name still chooses how wide, and the height comes from the shape. Same clamp: never wider than
+     * the desk. */
+    if(def && def.bar){
+      const wide = { s: 300, m: 420, l: 560 }[size] || 420;
+      return { w: Math.max(200, Math.min(wide, Math.round(deskW * 0.72))), h: 96 };
+    }
     const s = WGT_SIZES[size] || WGT_SIZES.m;
     return { w: Math.max(150, Math.min(s.w, Math.round(deskW * 0.46))),
              h: Math.max(96,  Math.min(s.h, Math.round(deskH * 0.40))) };
@@ -1688,12 +1711,31 @@
           t = null;
           const text = ta.value;
           if(text === (w.cfg.text || '')) return;
-          w.cfg.text = text.slice(0, 400);
           st.textContent = 'saving…';
-          const id = await _noteSync(w, text);
-          if(id) w.cfg.noteId = id;
-          try{ await save(w); st.textContent = 'saved to Notes'; }
-          catch(_){ st.textContent = 'not saved'; }
+          /* Notes FIRST, and its answer decides what this says.
+           *
+           * The desktop document keeps a copy so the paper is filled in before Notes has loaded
+           * anything, but Notes is where the note actually lives — it is the copy that reaches your
+           * phone and the one that is not bounded by what fits in a layout document. So a failure
+           * here is reported rather than swallowed: "saved to Notes" over a note that is not in
+           * Notes is the exact thing that made this feature look like it worked. */
+          let r = null;
+          try{ r = await _noteSync(w.cfg.noteId || '', text); }
+          catch(e){ r = { id: w.cfg.noteId || '', ok: false, why: (e && e.message) || 'write failed' }; }
+          // save() takes a MUTATOR, not a copy of the row — this closure is created once at mount and
+          // the row beneath it is replaced on every save, so writing a captured object back would
+          // undo whatever another device changed in the meantime.
+          try{
+            await save((row) => {
+              row.cfg = Object.assign({}, row.cfg, { text: text.slice(0, WGT_TEXT_MAX) });
+              if(r && r.id) row.cfg.noteId = r.id;
+            });
+            st.textContent = r && r.ok ? (r.queued ? 'saved — will sync' : 'saved to Notes')
+                                       : ('kept here only — ' + ((r && r.why) || 'Notes did not take it'));
+          }catch(_){ st.textContent = 'not saved'; }
+          // The paper holds a copy, and a copy has to fit in the layout document. Say so rather than
+          // letting the tail vanish on the next load — Notes has the whole thing.
+          if(text.length > WGT_TEXT_MAX && r && r.ok) st.textContent = 'saved to Notes (long notes live there)';
         };
         ta.oninput = () => { st.textContent = ''; if(t) clearTimeout(t); t = setTimeout(flush, 1200); };
         ta.onblur = () => { if(t){ clearTimeout(t); flush(); } };
@@ -1705,6 +1747,7 @@
 
     search: {
       label: 'Web search', icon: '#i-search', blurb: 'Search from the desktop',
+      bar: true,                     // wide and one line tall — see wgtBox
       mount(el){
         el.innerHTML = `<form class="wgt-search"><input class="wgt-sinput" type="search"
             placeholder="Search the web…" aria-label="Search the web" spellcheck="false">
@@ -1730,12 +1773,28 @@
    * the text (it has to draw before Notes has loaded anything); Notes owns the storage. If the Notes
    * module is not present the text still persists in the desktop document, which is a worse note but
    * not a lost one. */
-  async function _noteSync(w, text){
-    try{
-      const N = window.PCNotes;
-      if(!N || !N.saveExternal) return w.cfg.noteId || '';
-      return await N.saveExternal({ id: w.cfg.noteId || '', title: 'Desktop note', body: text });
-    }catch(_){ return w.cfg.noteId || ''; }
+  /* `PCNotes.save`, and it has to be called by its REAL name.
+   *
+   * The first version of this called `PCNotes.saveExternal`, which does not exist. Nothing threw and
+   * nothing was logged: the guard right above it — `if(!N || !N.saveExternal) return` — read a
+   * missing function as "Notes is not loaded here", took the graceful path, and the note went
+   * nowhere. That is the same mistake as the mail sender card that called three functions that were
+   * not there, and it fails the same way: silently, as "why isn't this saving".
+   *
+   * So the guard now names what it actually needs, and a Notes module that is present but wrong is a
+   * REPORTED failure rather than a quiet no-op — the text is safe either way (it is in the desktop
+   * document), but "saved to Notes" must not appear over a note that is not in Notes.
+   *
+   * Returns the note id; `save` answers `{id, queued}`, and queued is a success — the offline
+   * notebook publishes it on reconnect, which is the whole point of having one. */
+  async function _noteSync(noteId, text){
+    const N = window.PCNotes;
+    if(!N || typeof N.save !== 'function') return { id: noteId, ok: false, why: 'Notes is not loaded' };
+    const r = await N.save({ id: noteId, title: 'Desktop note', body: text });
+    // `save` answers {id, queued} — an OBJECT, not an id. Storing it whole would put an object into
+    // cfg, which _normDoc drops (strings, numbers and booleans only), so every session would lose the
+    // link and start a fresh note beside the last one.
+    return { id: (r && r.id) || noteId, ok: true, queued: !!(r && r.queued) };
   }
 
   function _wxPickerHtml(){
@@ -1765,10 +1824,11 @@
           const b = ev.target.closest && ev.target.closest('.wgt-wxhit'); if(!b) return;
           ev.stopPropagation();
           const r = rows[+b.dataset.i]; if(!r) return;
-          w.cfg.lat = r.lat; w.cfg.lon = r.lon;
-          w.cfg.place = [r.name, r.country].filter(Boolean).join(', ');
+          const place = [r.name, r.country].filter(Boolean).join(', ');
+          w.cfg.lat = r.lat; w.cfg.lon = r.lon; w.cfg.place = place;   // so this paint has it
           el.innerHTML = '<div class="wgt-wx"><div class="wgt-dim">loading…</div></div>';
-          await save(w);
+          await save((row) => { row.cfg = Object.assign({}, row.cfg,
+                                  { lat: r.lat, lon: r.lon, place }); });
           _wgtRefreshOne(el.closest('.os-wgt'));
         };
       }, 350);
@@ -1853,7 +1913,7 @@
     const deskW = dr.width / k, deskH = dr.height / k;
     for(const w of list){
       const def = WIDGETS[w.type]; if(!def) continue;
-      const box = wgtBox(w.size, deskW, deskH);
+      const box = wgtBox(w.size, deskW, deskH, def);
       const prev = desk.querySelector('.os-wgt[data-id="' + (window.CSS && CSS.escape ? CSS.escape(w.id) : w.id) + '"]');
       if(prev && prev.dataset.type === w.type && prev.dataset.size === w.size){
         const m = _mounted.get(prev);
@@ -1883,10 +1943,16 @@
         <div class="os-wgt-body"></div>`;
       desk.appendChild(el);
       const body = el.querySelector('.os-wgt-body');
-      const save = (nw) => _apply((doc) => {
-        const row = (doc.widgets || []).find(x => x.id === nw.id);
+      /* save(mutator) — the widget describes the CHANGE, never hands back a copy of its row.
+       *
+       * A mount closure is created once and lives as long as the element, while `drawWidgets` replaces
+       * the row object beneath it on every save (and on every layout that arrives from another
+       * device). Writing a captured object back would therefore undo whatever changed in between —
+       * including a `noteId` another device had just set, which orphans the note being edited. */
+      const save = (mut) => _apply((doc) => {
+        const row = (doc.widgets || []).find(x => x.id === w.id);
         if(!row) return false;
-        row.cfg = nw.cfg; row.x = nw.x; row.y = nw.y; row.size = nw.size;
+        if(mut(row) === false) return false;
       });
       try{ def.mount(body, w, save); }
       catch(e){ body.innerHTML = '<div class="wgt-dim">this widget failed to start</div>'; console.warn('widget', w.type, e); }
@@ -1936,13 +2002,13 @@
    * left and when the tab is hidden — a widget must cost nothing in a background tab, which is where
    * a page spends most of its life. */
   function _wgtStart(){
-    if(_wgtTimer || !_mounted.size) return;
-    if(typeof document !== 'undefined' && document.hidden) return;
-    _wgtTimer = setInterval(() => {
-      if(!on || !_mounted.size){ _wgtStop(); return; }
-      if(typeof document !== 'undefined' && document.hidden){ _wgtStop(); return; }
-      _wgtRefreshDue(false);
-    }, 15000);
+    /* The visibility listener is installed FIRST, before either early return.
+     *
+     * It used to sit after them, so a desktop that mounted in a HIDDEN tab — a restored session, a
+     * cmd-clicked link — bailed on `document.hidden` having attached nothing, and there was then no
+     * event that could ever start the timer. Switching to that tab left the ticker and the weather
+     * frozen for the life of the page: the one case the hidden-tab guard exists for is the one it
+     * broke. */
     if(!_wgtVis && typeof document !== 'undefined'){
       _wgtVis = true;
       document.addEventListener('visibilitychange', () => {
@@ -1952,6 +2018,13 @@
         _wgtStart();
       });
     }
+    if(_wgtTimer || !_mounted.size) return;
+    if(typeof document !== 'undefined' && document.hidden) return;
+    _wgtTimer = setInterval(() => {
+      if(!on || !_mounted.size){ _wgtStop(); return; }
+      if(typeof document !== 'undefined' && document.hidden){ _wgtStop(); return; }
+      _wgtRefreshDue(false);
+    }, 15000);
   }
   function _wgtStop(){ if(_wgtTimer){ clearInterval(_wgtTimer); _wgtTimer = null; } }
 
@@ -1977,8 +2050,9 @@
     const paint = () => { raf = 0; el.style.transform = `translate(${cx - ox}px, ${cy - oy}px)`; };
     const move = (e) => {
       if(e.pointerType !== 'touch' && (e.buttons || 0) === 0){ up(); return; }
-      cx = Math.max(0, Math.min(maxX, ox + (e.clientX - sx) / k));
-      cy = Math.max(0, Math.min(maxY, oy + (e.clientY - sy) / k));
+      // Clamped in DRAWN coordinates (which carry the half-gap), matching where the widget can sit.
+      cx = Math.max(WGT_GAP / 2, Math.min(maxX + WGT_GAP / 2, ox + (e.clientX - sx) / k));
+      cy = Math.max(WGT_GAP / 2, Math.min(maxY + WGT_GAP / 2, oy + (e.clientY - sy) / k));
       if(Math.abs(cx - ox) > 3 || Math.abs(cy - oy) > 3) moved = true;
       if(!raf) raf = requestAnimationFrame(paint);
     };
@@ -1999,7 +2073,12 @@
       // Back to fractions — that is what the document stores, so the panel keeps this edge on every
       // other screen. Guard the divisions: a desk smaller than the widget has no room to be a
       // fraction OF, and 0/0 would write NaN into the document.
-      const fx = maxX > 0 ? cx / maxX : 0, fy = maxY > 0 ? cy / maxY : 0;
+      /* The fraction must be expressed in the space drawWidgets READS it in. That maps x to
+       * `maxX * x + WGT_GAP/2`, so the committed value has to have the half-gap taken back off —
+       * otherwise every drop re-drew the widget 5px right and 5px down of where it was released, and
+       * because the next drag starts from that shifted position the error COMPOUNDS: ten small
+       * adjustments walk a panel 50px and eventually pin it against the edge. */
+      const fx = maxX > 0 ? (cx - WGT_GAP / 2) / maxX : 0, fy = maxY > 0 ? (cy - WGT_GAP / 2) / maxY : 0;
       _apply((doc) => {
         const row = (doc.widgets || []).find(x => x.id === w.id);
         if(!row) return false;
@@ -3209,6 +3288,15 @@
     // The layout subscription outlives the desktop otherwise — it would go on calling refreshIcons
     // against a torn-down desk, and re-entering would add a second one.
     unwatchLayout(); hideCtx();
+    /* The widgets go with the desktop, and their BOOKKEEPING has to go too.
+     *
+     * `root.remove()` below detaches the elements but leaves `_mounted` pointing at every one of
+     * them. The interval only notices on its next 15s tick, and re-entering reconciles against the
+     * NEW desk — which never finds the previous cycle's detached nodes, so they are never evicted.
+     * A few toggles of desktop mode and `_mounted.size` is permanently non-zero: the map grows, the
+     * "nothing runs when nothing is watching" guard stops being true, and every tick walks widgets
+     * that are not on screen. */
+    _wgtStop(); _mounted.clear();
     // The wallpaper is an object URL for THIS session's decrypt; drop it so re-entering (or another
     // account) re-derives it rather than painting the previous one.
     _bgSha = ''; _bgUrl = '';
@@ -3375,5 +3463,5 @@
                   // The size arithmetic, for the same reason: 'a widget fits the screen it is on'
                   // is the whole of the tablet↔desktop requirement and nothing on screen says
                   // when it is wrong — the panel is just too big, or too small to read.
-                  __wgtBox: (size, w, h) => wgtBox(size, w, h) };
+                  __wgtBox: (size, w, h, def) => wgtBox(size, w, h, def) };
 })();
