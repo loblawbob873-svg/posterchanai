@@ -391,9 +391,9 @@
       this.frame = null;
     };
 
-    Session.prototype.post = function(m){
+    Session.prototype.post = function(m, transfer){
       if(!this.frame || !this.frame.contentWindow || !this.origin) return;
-      try{ this.frame.contentWindow.postMessage(m, this.origin); }catch(_){}
+      try{ this.frame.contentWindow.postMessage(m, this.origin, transfer || []); }catch(_){}
     };
 
     /* Resolve one request from the archive. `/` is index.html; the bridge is a virtual file that is
@@ -591,9 +591,9 @@
       host.appendChild(f);
     };
 
-    Session.prototype.reply = function(id, result){
+    Session.prototype.reply = function(id, result, transfer){
       if(id === undefined) return;
-      this.post({ jsonrpc:'2.0', id:id, result:result });
+      this.post({ jsonrpc:'2.0', id:id, result:result }, transfer);
     };
     Session.prototype.fail = function(id, message){
       if(id === undefined) return;
@@ -613,18 +613,26 @@
       if(d.method === 'fetch'){
         let path = '/';
         try{ path = new URL(d.params.request.url).pathname; }catch(_){}
-        this.resolve(path).then((r) => this.reply(id, {
-          status: r.status,
-          statusText: '',
-          headers: {
-            'content-type': r.contentType,
-            'content-security-policy': CSP,
-            'cache-control': 'no-store',
-            // The sandbox origin is not ours to be framed from anywhere: only this client may.
-            'x-content-type-options': 'nosniff',
-          },
-          body: b64(r.body),
-        }), () => this.fail(id, 'could not read that file from the app'));
+        /* THE BYTES ARE TRANSFERRED, NOT COPIED, and not base64. A published mini app can hold a
+         * 75 MB archive (Half-Life ships three), and base64 turns that into a ~100 MB string that is
+         * built, structured-cloned across two frames, and decoded again — hundreds of megabytes of
+         * copying per file, which on a phone is the difference between a game that starts and a black
+         * screen. An ArrayBuffer in the transfer list is a pointer move. Every entry is freshly
+         * inflated per request, so giving the buffer away costs the parent nothing. */
+        this.resolve(path).then((r) => {
+          const buf = (r.body && r.body.buffer) ? r.body.buffer : null;
+          this.reply(id, {
+            status: r.status,
+            statusText: '',
+            headers: {
+              'content-type': r.contentType,
+              'content-security-policy': CSP,
+              'cache-control': 'no-store',
+              'x-content-type-options': 'nosniff',
+            },
+            bytes: buf,
+          }, buf ? [buf] : []);
+        }, () => this.fail(id, 'could not read that file from the app'));
         return;
       }
       if(d.method === 'webxdc.sendUpdate'){

@@ -36,6 +36,7 @@
   var pending = {};                   // rpc id -> resolve
   var nextId = 1;
   var started = false;
+  var firstFetch = null;          // set once the app frame exists, to narrate the first loads
 
   function say(t){ if(msg) msg.textContent = t; }
   function fail(t){ say(t); try{ post({ jsonrpc:'2.0', method:'sandbox.error', params:{ message:t } }); }catch(_){} }
@@ -100,8 +101,14 @@
   function onWorkerMessage(ev){
     var d = ev.data, port = ev.ports && ev.ports[0];
     if(!d || d.t !== 'fetch' || !port) return;
+    // Narrate what the app is fetching while it is still behind the status line — a mini app that
+    // pulls tens of megabytes should say so rather than look hung.
+    if(firstFetch){ try{ firstFetch(new URL(d.request.url).pathname.replace(/^\//, '') || 'the app'); }catch(_){} }
     rpc('fetch', { request: d.request }).then(function(res){
-      port.postMessage({ ok:true, res:res });
+      // Hand the buffer ON rather than copying it: at 75MB an extra copy per hop is the difference
+      // between a game that starts and one that sits on a black screen.
+      var t = (res && res.bytes) ? [res.bytes] : [];
+      port.postMessage({ ok:true, res:res }, t);
     }, function(err){
       port.postMessage({ ok:false, message:(err && err.message) || 'failed' });
     });
@@ -141,7 +148,23 @@
       f.setAttribute('allow', 'autoplay; fullscreen; gamepad');
       f.src = '/' + (params && params.entry ? String(params.entry).replace(/^\/+/, '') : '');
       document.body.appendChild(f);
-      if(msg) msg.remove();
+      /* THE STATUS LINE STAYS UNTIL THE APP HAS ACTUALLY ASKED FOR SOMETHING.
+       *
+       * It used to be removed the instant the frame was appended, which meant every failure after
+       * that point — a worker that never took control, a file the parent could not read, an app
+       * still fetching 75 MB — looked identical: a black rectangle with nothing in it and nothing to
+       * say. Reported exactly that way ("i see black window"). The frame is transparent over this
+       * message, so the app covers it as soon as it paints; if it never does, the reason is on
+       * screen instead of the dark. */
+      say('starting the app…');
+      var settled = false;
+      firstFetch = function(what){ if(msg) say('loading ' + what + '…'); };
+      f.addEventListener('load', function(){ settled = true; if(msg) msg.remove(); });
+      setTimeout(function(){
+        if(settled || !msg) return;
+        say('The app has not started. Its files are served by PosterChan over postMessage — if this '
+          + 'persists, close and reopen it.');
+      }, 25000);
       post({ jsonrpc:'2.0', method:'sandbox.running' });
     }).catch(function(e){
       fail('Could not start the sandbox: ' + ((e && e.message) || e));

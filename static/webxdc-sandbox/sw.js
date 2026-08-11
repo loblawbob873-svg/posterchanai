@@ -15,7 +15,10 @@
 'use strict';
 
 const RESERVED = /^\/(sw\.js$|__sandbox__\/)/;      // the loader and this file — never the app's
-const RPC_TIMEOUT = 15000;
+/* 90s. The parent has to inflate the entry before it can answer, and a mini app's largest file can
+ * be tens of megabytes — Half-Life's campaign archives are 29-75 MB each. A 15s ceiling turned a slow
+ * phone into "the app took too long to answer", which reads as a broken app rather than a big one. */
+const RPC_TIMEOUT = 90000;
 
 self.addEventListener('install', (e) => { self.skipWaiting(); });
 self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); });
@@ -96,7 +99,12 @@ self.addEventListener('fetch', (event) => {
       const res = await askClient(req);
       const headers = new Headers();
       for (const k in (res.headers || {})) headers.set(k, res.headers[k]);
-      const body = res.body ? unb64(res.body) : null;
+      /* BYTES, not base64, whenever the parent sends them. A mini app can be very large — the
+       * published Half-Life is 178 MB and holds three campaign archives of 29-75 MB each — and
+       * base64 costs a third more on the wire plus a string encode and decode of that size at every
+       * hop. The parent transfers the ArrayBuffer instead, which is a pointer move rather than a
+       * copy. `body` stays supported so a stale cached loader still works. */
+      const body = res.bytes ? new Uint8Array(res.bytes) : (res.body ? unb64(res.body) : null);
       // 204/304 must not carry a body — constructing a Response with one throws, which would surface
       // as a broken app rather than as an empty response.
       const empty = res.status === 204 || res.status === 304;
