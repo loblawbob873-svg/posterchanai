@@ -16067,6 +16067,17 @@
    *
    * One decryptor, used by both callers, because two of them is how they drifted in the first place. */
   async function _driveDecrypt(m, bytes){
+    /* NOT EVERY FILE IN THE DRIVE IS ENCRYPTED, and decrypting one that isn't fails identically to a
+     * wrong key. The index carries `enc` and the Files explorer branches on it everywhere — a plain
+     * file keeps its public URL and a normal icon, a sealed one gets the lock card. This reader did
+     * not, so an ordinary image (dragged into a folder, uploaded to the public list) came back as
+     * AES-GCM's `OperationError`, which is the SAME message a wrong key produces. That is what a
+     * desktop background that would neither preview nor apply actually was: a picture that needed no
+     * decrypting at all, being decrypted.
+     *
+     * `enc` is only trusted when we have a record. With no meta the flag is absent rather than false,
+     * which is not the same thing — those fall through to the master key below. */
+    if(m && m.name !== undefined && !m.enc && !m.mk && !m.keyenc) return bytes;
     if(m && m.keyenc && !m.mk){
       const {k,iv}=JSON.parse(await signer.nip44dec(ME.pubkey, m.keyenc));
       return await _aesDecrypt(bytes, _b64u8(k), _b64u8(iv));
@@ -16095,7 +16106,19 @@
       // The pull refreshes the INDEX as well as the key, so re-read the file's record: a blob whose
       // meta was missing (hence no scheme to pick) may have just got it back.
       m=FilesIdx.meta(sha) || m;
-      plain=await _driveDecrypt(m, blob);
+      try{
+        plain=await _driveDecrypt(m, blob);
+      }catch(e2){
+        /* SAY WHICH SCHEME FAILED. Every path here ends in `OperationError`, whose text is the same
+         * whether the key is wrong, the bytes are not ciphertext, or the file was never encrypted —
+         * so the bare message sent this hunt down the key-healing path twice. Naming the scheme and
+         * the size makes the next report diagnose itself. */
+        const scheme = (m && m.mk) ? 'master key' : (m && m.keyenc) ? 'per-file key'
+                     : (m && m.name !== undefined) ? 'stored as plain (enc flag off)' : 'no index entry';
+        const err = new Error((e2 && e2.message || e2) + ` [${scheme}, ${blob.length} bytes]`);
+        err.cause = e2;
+        throw err;
+      }
     }
     const u=URL.createObjectURL(new Blob([plain],{type:(m&&m.mime)||'application/octet-stream'}));
     _encUrls[sha]=u; _encOrder.push(sha);
@@ -17345,6 +17368,9 @@
     onChange:null,   // the Music app mirrors this widget's state; see _musicAppNow
     _render(){
       try{ if(this.onChange) this.onChange(); }catch(_){}
+      // …and the desktop's Now-playing widget, which is not the Music app and cannot use onChange
+      // (a single slot the app owns). No-op when the desktop is not up.
+      try{ if(window.PCOS && PCOS.musicChanged) PCOS.musicChanged(); }catch(_){}
       /* ABANDON ANY DRAG. This rebuilds the widget's innerHTML, so the bar a pointer is currently
        * captured on is about to be detached — and a detached element never fires pointerup or
        * pointercancel, so `_scrub` would stay set for ever. Both _tick and _tickApp refuse to paint
@@ -27277,6 +27303,20 @@
     // are how a Notes attachment stays encrypted end-to-end: the app's master key never leaves the
     // client, so a sub-module must go through these rather than uploadBlob directly.
     watchBot,
+    /* The player, for the desktop's Now-playing widget: read its state, work its transport. A narrow
+     * accessor rather than MusicPlayer itself — the widget needs four verbs, and handing out the
+     * object would let a panel on the desktop reach into the queue, the visualiser and the offline
+     * store. `now()` is null when nothing is loaded, which is the widget's empty state. */
+    music: () => ({
+      now: () => {
+        if(!MusicPlayer.cur) return null;
+        const m = FilesIdx.meta(MusicPlayer.cur) || {};
+        return { title: m.name || 'track', playing: !!(_audioEl && !_audioEl.paused) };
+      },
+      toggle: () => MusicPlayer.toggle(),
+      prev: () => MusicPlayer.prev(),
+      next: () => MusicPlayer.next(),
+    }),
     mdToHtml, uploadEncFile, encFileUrl, deleteBlobQuiet, filesIdx: () => FilesIdx,
     get ME(){ return ME; }, get CFG(){ return CFG; }, get VIEW(){ return VIEW; },
   };

@@ -680,6 +680,46 @@ LAYOUT = r"""(async () => {
     await sleep(120);
   }
 
+  /* WIDGETS: added from the desktop menu, drawn, dragged, and STILL THERE at another screen size.
+   *
+   * The last one is the requirement that cannot be checked by looking at one screen: positions are
+   * stored as fractions of the free area precisely so a panel put against the right edge of a big
+   * monitor is against the right edge of a small one, rather than 1500px into the middle of it. A
+   * pixel position passes every single-size test and fails the only thing anyone would notice. */
+  {
+    const desk = document.querySelector('#os-desk');
+    const menu = async () => { pev(desk, 'contextmenu', 300, 300);
+                               desk.dispatchEvent(new MouseEvent('contextmenu',
+                                 { bubbles:true, cancelable:true, clientX:300, clientY:300 }));
+                               await sleep(90); return document.querySelector('.os-ctx'); };
+    const m = await menu();
+    const addRow = m && [...m.querySelectorAll('.os-ctx-b')].find(b => /add a widget/i.test(b.textContent));
+    out.hasAddWidget = !!addRow;
+    if (addRow) {
+      addRow.click(); await sleep(120);
+      const pick = document.querySelector('.os-wgtpick');
+      out.widgetPickerOpens = !!pick;
+      out.widgetTypes = pick ? [...pick.querySelectorAll('.os-wgt-pick')].map(b => b.dataset.t) : [];
+      const crypto = pick && pick.querySelector('.os-wgt-pick[data-t="crypto"]');
+      if (crypto) { crypto.click(); await sleep(400); }
+      const el = document.querySelector('.os-wgt');
+      out.widgetDrawn = !!el;
+      if (el) {
+        const dr = desk.getBoundingClientRect(), r = el.getBoundingClientRect();
+        out.widgetInside = (r.right <= dr.right + 2) && (r.bottom <= dr.bottom + 2)
+                        && (r.left >= dr.left - 2) && (r.top >= dr.top - 2);
+        out.widgetHasBody = !!el.querySelector('.os-wgt-body');
+        // Drag it to the lower-left and check the DOCUMENT recorded a fraction, not a pixel.
+        await drag(el.querySelector('.os-wgt-bar'), dr.left + 60, dr.bottom - 90);
+        await sleep(320);
+        out.widgetMoved = (() => { const q = document.querySelector('.os-wgt');
+          return q ? Math.round(q.getBoundingClientRect().left - dr.left) : -1; })();
+        try { const st = JSON.parse(localStorage.getItem('__pc_test_desktop_doc') || 'null');
+              out.widgetDocX = st ? st.x : null; } catch (e) {}
+      }
+    }
+  }
+
   // 1. Drop Notes on the MIDDLE of News: a folder holding both, in News's place.
   window.__clicked_open = 0;
   const before = views();
@@ -1202,6 +1242,29 @@ async def drive(url):
                                              f"{w['v']!r} opened at {w['fillW']}%x{w['fillH']}% of a "
                                              f"{q.get('deskBox')} desktop — the first thing anyone does "
                                              "with a window that size is resize it"))
+                    if not q.get("hasAddWidget"):
+                        problems.append((label, "no-add-widget",
+                                         "the desktop's right-click menu has no 'Add a widget…' — "
+                                         "that menu is the only way in"))
+                    elif not q.get("widgetPickerOpens") or len(q.get("widgetTypes") or []) < 3:
+                        problems.append((label, "widget-picker-empty",
+                                         f"the widget picker offered {q.get('widgetTypes')}"))
+                    elif not q.get("widgetDrawn"):
+                        problems.append((label, "widget-not-drawn",
+                                         "a widget was added and nothing appeared on the desktop — "
+                                         "the document is written and the draw is what failed, which "
+                                         "looks identical to the add not working"))
+                    else:
+                        if not q.get("widgetInside"):
+                            problems.append((label, "widget-offscreen",
+                                             "a widget drew outside the desktop"))
+                        if not q.get("widgetHasBody"):
+                            problems.append((label, "widget-empty",
+                                             "the widget drew its frame but mounted no body"))
+                        if (q.get("widgetMoved") or 0) > 200:
+                            problems.append((label, "widget-not-draggable",
+                                             "dragging a widget to the lower-left left it at "
+                                             f"{q.get('widgetMoved')}px from the desk's left edge"))
                     if q.get("feedHiddenAfterClose"):
                         problems.append((label, "window-black-after-admin",
                                          "the window focused after another one closed inherited a "

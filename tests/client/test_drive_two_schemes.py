@@ -144,6 +144,31 @@ def test_no_meta_at_all_falls_back_to_the_master_key():
     assert r["text"] == "unflagged"
 
 
+def test_a_file_that_was_never_encrypted_is_returned_as_is():
+    """The drive holds plain files too — the index carries `enc` and the Files explorer branches on it
+    everywhere (public URL and a normal icon, versus the lock card). Decrypting one fails with the very
+    same OperationError a wrong key gives, which is what a desktop background that would neither
+    preview nor apply actually was: a picture that needed no decrypting, being decrypted."""
+    r = _run("""
+        const bytes = new TextEncoder().encode('plain PNG bytes');
+        const plain = await _driveDecrypt({ name:'wall.png', mime:'image/png', enc:false }, bytes);
+        out({ text: new TextDecoder().decode(plain) });
+    """)
+    assert r["text"] == "plain PNG bytes"
+
+
+def test_a_missing_flag_is_not_a_false_one():
+    """With no record at all `enc` is absent, which is not the same as known-plaintext — an index entry
+    that was never flushed still needs the master key, and handing back ciphertext would be silent."""
+    r = _run("""
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const blob = await encrypt(MK, iv, 'still sealed', true);
+        const plain = await _driveDecrypt(null, blob);            // no meta → master key, not passthrough
+        out({ text: new TextDecoder().decode(plain) });
+    """)
+    assert r["text"] == "still sealed"
+
+
 def test_both_readers_go_through_the_one_decryptor():
     """Two of these is how they drifted the first time: trackUrl branched, _encFileUrl did not."""
     src = open(APP, encoding="utf-8").read()

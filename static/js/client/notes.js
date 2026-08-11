@@ -79,9 +79,19 @@
        * "saved" over a note that is not there is worse than an error. */
       async save(o){
         await load();
-        const n = blankNote('');
+        /* `id` UPDATES that note instead of writing a new one.
+         *
+         * Without it every caller can only ever CREATE, which is right for "save this post to my
+         * notes" and wrong for anything that edits: the desktop's sticky note would have written a
+         * fresh note per keystroke-pause and buried the notebook in near-duplicates within a minute.
+         * An id we do not hold falls through to a new note rather than failing — the note may have
+         * been deleted on another device, and losing what is being typed is the worse outcome. */
+        const existing = (o && o.id && _lib) ? _lib.notes.get(o.id) : null;
+        const n = existing || blankNote('');
         n.title = (o && o.title || 'Saved').slice(0, 200);
         n.tags = (o && o.tags || []).slice(0, 8);
+        // An update REPLACES the body; attachments below still append to it. A note being edited must
+        // not inherit the previous revision's text under the new one.
         let body = (o && o.body) || '';
         for(const f of ((o && o.files) || [])){
           await _ensureNotesFolder();

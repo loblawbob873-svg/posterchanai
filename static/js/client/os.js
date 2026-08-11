@@ -123,7 +123,16 @@
    * `bg`  — the wallpaper: the sha of a picture in the drive's `Backgrounds` folder. The sha, not a
    *         URL: the bytes are encrypted and only this client can decrypt them, so the URL is an
    *         object URL that exists for one session on one device. */
-  const BLANK = () => ({ v: 1, folders: [], order: [], hidden: [], pos: {}, bg: '' });
+  /* `widgets` — the panels sitting ON the desktop (a ticker, the weather, the player, a note, a
+   * search box), as `{id, type, x, y, size, cfg}`.
+   *
+   * x/y are FRACTIONS of the free area, not pixels, and the size is a NAME rather than a width. Icons
+   * store pixels and clamp, which keeps them on screen but not where you put them: a widget placed
+   * against the right edge of a 2560px monitor belongs against the right edge of the laptop that
+   * opens the same account, not 1500px into the middle of it. Fractions reflow; a name lets the
+   * actual size come from the screen, so a panel that is comfortable on a desktop does not cover a
+   * tablet. Both are properties of the ARRANGEMENT, which is what this document holds. */
+  const BLANK = () => ({ v: 1, folders: [], order: [], hidden: [], pos: {}, bg: '', widgets: [] });
 
   let _doc = null;        // the layout as last read/written; null = nothing read yet (draw defaults)
   let _docPk = '';        // …whose. An account switch must not paint the previous account's desktop.
@@ -187,6 +196,38 @@
       out.pos[key] = [Math.max(0, Math.min(20000, x)), Math.max(0, Math.min(20000, y))];
     }
     out.bg = /^[0-9a-f]{64}$/i.test(String((o && o.bg) || '')) ? String(o.bg).toLowerCase() : '';
+    /* Widgets. Bounded in every direction, because this document is the one thing here that a future
+     * client version — or a half-finished write — could put anything in, and it is read on every draw
+     * of the desktop. An unknown TYPE is dropped rather than kept: it would draw an empty frame that
+     * nothing can fill and nothing explains. `cfg` is a small flat bag of strings/numbers, capped, so
+     * a widget can remember its city without this becoming a place to store documents. */
+    const seenId = new Set();
+    for(const w of (Array.isArray(o && o.widgets) ? o.widgets : [])){
+      if(out.widgets.length >= WGT_MAX) break;
+      if(!w || typeof w !== 'object') continue;
+      const type = str(w.type, 24).replace(/[^a-z0-9_-]/gi, '');
+      if(!WIDGETS[type]) continue;
+      const id = str(w.id, 40).replace(/[^A-Za-z0-9_-]/g, '') || (type + '-' + out.widgets.length);
+      if(seenId.has(id)) continue;
+      seenId.add(id);
+      const num = (v, d) => { const n = Number(v); return isFinite(n) ? Math.max(0, Math.min(1, n)) : d; };
+      const cfg = {};
+      const cin = (w.cfg && typeof w.cfg === 'object' && !Array.isArray(w.cfg)) ? w.cfg : {};
+      let n = 0;
+      for(const k in cin){
+        if(++n > 12) break;
+        const key = str(k, 24).replace(/[^A-Za-z0-9_-]/g, '');
+        const v = cin[k];
+        if(!key) continue;
+        if(typeof v === 'number' && isFinite(v)) cfg[key] = v;
+        else if(typeof v === 'boolean') cfg[key] = v;
+        else if(typeof v === 'string') cfg[key] = v.slice(0, 400);
+      }
+      out.widgets.push({ id, type,
+                         x: num(w.x, 0), y: num(w.y, 0),
+                         size: WGT_SIZES[str(w.size, 4)] ? str(w.size, 4) : 'm',
+                         cfg });
+    }
     const seenOrd = new Set();
     for(const v of (Array.isArray(o && o.order) ? o.order : [])){
       const s = str(v, 120);
@@ -251,7 +292,8 @@
     // retired view would otherwise keep a place in the arithmetic that decides where windows open.
     const pos = {};
     for(const it of items) if(d.pos[it.view]) pos[it.view] = d.pos[it.view];
-    return { items, folders, hidden: [...hidden].map(v => byView.get(v)), pos, bg: d.bg };
+    return { items, folders, hidden: [...hidden].map(v => byView.get(v)), pos, bg: d.bg,
+             widgets: Array.isArray(d.widgets) ? d.widgets : [] };
   }
 
   let _lay = null;
@@ -1398,6 +1440,7 @@
     }
     desk.appendChild(grid);
     applyWallpaper(lay.bg);
+    drawWidgets();
     wireIcons(grid, null);
     /* The desktop's own menu is bound to the DESK, not to the icon grid: the grid is only as big as
      * the icons in it, and "right-click the empty wallpaper" is where anyone would look for it.
@@ -1440,6 +1483,296 @@
                              Math.max(0, Math.round((r.top - gr.top) / k))];
     }
     return out;
+  }
+
+  /* ===== DESKTOP WIDGETS =========================================================================
+   *
+   * Panels that live ON the desktop rather than in a window. Right-click → Add a widget.
+   *
+   * PERFORMANCE IS THE DESIGN CONSTRAINT, not a polish pass. Everything on this desktop shares one
+   * document with a live timeline in it, and this file has now paid for that lesson three times: the
+   * icon drag forcing three layouts per pointer move, the music visualiser measuring `clientWidth`
+   * sixty times a second, and a Music library putting 17,000 nodes on screen. A widget is a thing
+   * that updates FOREVER, so it is the easiest way yet to reintroduce all three. Hence:
+   *
+   *   ONE timer for every widget, not one each. `_wgtTick` walks the mounted set and refreshes only
+   *   what is due; a desktop with five widgets has one interval, not five.
+   *
+   *   NOTHING RUNS WHEN NOTHING IS WATCHING. The timer stops when the desktop is left and when the
+   *   tab is hidden, and catches up on return. A background tab must cost zero.
+   *
+   *   ONE FETCH PER SOURCE, shared. Two ticker widgets are one request; `_wgtFeed` holds the
+   *   in-flight promise as well as the value, so a burst on wake does not become a burst of requests.
+   *
+   *   NO LAYOUT READS IN A TICK. Sizes come from the size NAME and the desk rect measured once per
+   *   draw, never from `clientWidth` per frame. Updates write text into existing nodes; only a
+   *   config change rebuilds a widget's body.
+   *
+   * The DOCUMENT holds decisions (which widgets, where, what size, their settings) and never their
+   * data — the same rule the icon layout follows. A ticker's prices are not part of your desktop.
+   * ============================================================================================= */
+
+  const WGT_MAX = 12;
+  // Named sizes in layout px, and the FLOOR they collapse to on a small desk. A widget must never be
+  // wider than the desktop it is on: this is the whole of "it should resize going from a tablet to a
+  // desktop and back".
+  const WGT_SIZES = {
+    s: { w: 210, h: 118 },
+    m: { w: 290, h: 176 },
+    l: { w: 380, h: 250 },
+  };
+  const WGT_GAP = 10;
+
+  // What a widget of this size actually gets, on THIS desk. Never more than 46% of the width or 40%
+  // of the height, so a phone-sized desktop cannot be covered by one panel.
+  function wgtBox(size, deskW, deskH){
+    const s = WGT_SIZES[size] || WGT_SIZES.m;
+    return { w: Math.max(150, Math.min(s.w, Math.round(deskW * 0.46))),
+             h: Math.max(96,  Math.min(s.h, Math.round(deskH * 0.40))) };
+  }
+
+  /* A shared, cached read. `ttl` is how long a value stays good; while a fetch is in flight every
+   * caller gets THAT promise rather than starting another. Errors are cached briefly too — a
+   * failing endpoint must not be retried once per widget per tick. */
+  const _wgtFeeds = new Map();
+  function _wgtFeed(key, ttl, fetcher){
+    const now = Date.now();
+    let f = _wgtFeeds.get(key);
+    if(f && f.p) return f.p;
+    if(f && (now - f.at) < ttl) return Promise.resolve(f.val);
+    const p = Promise.resolve().then(fetcher).then(
+      val => { _wgtFeeds.set(key, { at: Date.now(), val, p: null }); return val; },
+      err => { _wgtFeeds.set(key, { at: Date.now() - Math.max(0, ttl - 15000), val: null, p: null });
+               throw err; });
+    _wgtFeeds.set(key, { at: (f && f.at) || 0, val: (f && f.val) || null, p });
+    return p;
+  }
+
+  const _api = (p) => { try{ return (PC().apiBase ? PC().apiBase() : '') + p; }catch(_){ return p; } };
+  async function _wgtJson(path){
+    const r = await fetch(_api(path));
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  }
+
+  const _wgtNum = (n, d) => (typeof n === 'number' && isFinite(n)) ? n.toFixed(d) : '–';
+
+  /* WMO weather codes → a glyph and a word. Open-Meteo reports the code; everything human about it
+   * is ours. Grouped rather than enumerated: the distinctions between "slight" and "moderate" drizzle
+   * do not survive being drawn at 13px. */
+  function _wxDesc(code, day){
+    const c = Number(code);
+    if(c === 0) return [day ? '☀️' : '🌙', 'Clear'];
+    if(c <= 2) return [day ? '🌤️' : '☁️', 'Mostly clear'];
+    if(c === 3) return ['☁️', 'Overcast'];
+    if(c <= 48) return ['🌫️', 'Fog'];
+    if(c <= 57) return ['🌦️', 'Drizzle'];
+    if(c <= 67) return ['🌧️', 'Rain'];
+    if(c <= 77) return ['🌨️', 'Snow'];
+    if(c <= 82) return ['🌧️', 'Showers'];
+    if(c <= 86) return ['🌨️', 'Snow showers'];
+    return ['⛈️', 'Thunderstorm'];
+  }
+
+  /* THE REGISTRY. Each widget is `{label, icon, blurb, every, mount(el, w), refresh(el, w)}`:
+   *   mount   — build the body ONCE (and wire its controls).
+   *   refresh — update it in place. Called on mount and every `every` ms while the desktop is up.
+   *             No `every` means it never polls: the music panel is driven by the player's own
+   *             events, and a search box has nothing to poll for.
+   * `w` is the stored widget (`cfg` included); `save(w)` persists a cfg change. */
+  const WIDGETS = {
+    crypto: {
+      label: 'Crypto ticker', icon: '#i-chart', blurb: 'Live prices for the coins Markets follows',
+      every: 90000,
+      mount(el){ el.innerHTML = '<div class="wgt-rows"><div class="wgt-dim">loading…</div></div>'; },
+      async refresh(el){
+        const box = $('.wgt-rows', el); if(!box) return;
+        let d = null;
+        try{ d = await _wgtFeed('prices', 75000, () => _wgtJson('/api/markets/prices')); }
+        catch(_){ if(!box.dataset.filled) box.innerHTML = '<div class="wgt-dim">prices unavailable</div>'; return; }
+        const prices = (d && d.prices) || {};
+        const syms = Object.keys(prices);
+        if(!syms.length){ box.innerHTML = '<div class="wgt-dim">no prices yet</div>'; return; }
+        box.dataset.filled = '1';
+        box.innerHTML = syms.map(s => {
+          const p = prices[s] || {}, chg = Number(p.chg24h) || 0;
+          const usd = Number(p.usd) || 0;
+          const shown = usd >= 1 ? usd.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                                 : String(usd.toFixed(6)).replace(/0+$/, '').replace(/\.$/, '');
+          return `<div class="wgt-row"><span class="wgt-sym">${enc(s)}</span>
+            <span class="wgt-val">$${enc(shown)}</span>
+            <span class="wgt-chg ${chg >= 0 ? 'up' : 'down'}">${chg >= 0 ? '▲' : '▼'}${enc(Math.abs(chg).toFixed(2))}%</span></div>`;
+        }).join('') + (d && d.stale ? '<div class="wgt-dim">last known — upstream is not answering</div>' : '');
+      },
+    },
+
+    weather: {
+      label: 'Weather', icon: '#i-globe', blurb: 'Conditions where you are, refreshed every 10 minutes',
+      every: 600000,
+      mount(el, w){ el.innerHTML = (w.cfg && w.cfg.lat != null)
+        ? '<div class="wgt-wx"><div class="wgt-dim">loading…</div></div>'
+        : _wxPickerHtml(); },
+      async refresh(el, w, save){
+        if(w.cfg.lat == null){ if(!$('.wgt-wxpick', el)) el.innerHTML = _wxPickerHtml(); _wxWire(el, w, save); return; }
+        const box = $('.wgt-wx', el); if(!box) return;
+        let d = null;
+        try{ d = await _wgtFeed('wx:' + w.cfg.lat + ',' + w.cfg.lon, 540000,
+                                () => _wgtJson('/api/weather?lat=' + encodeURIComponent(w.cfg.lat)
+                                                       + '&lon=' + encodeURIComponent(w.cfg.lon))); }
+        catch(_){ if(!box.dataset.filled) box.innerHTML = '<div class="wgt-dim">weather unavailable</div>'; return; }
+        if(!d || !d.ok || !d.now){ box.innerHTML = '<div class="wgt-dim">no reading</div>'; return; }
+        box.dataset.filled = '1';
+        const u = (d.units && d.units.temp) || '°C';
+        const [g, word] = _wxDesc(d.now.code, d.now.day);
+        const days = (d.days || []).slice(1, 3).map(x => {
+          const [dg] = _wxDesc(x.code, true);
+          let nm = '';
+          try{ nm = new Date(x.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short' }); }catch(_){ nm = ''; }
+          return `<span class="wgt-wxday">${enc(nm)} ${dg} ${enc(_wgtNum(x.max, 0))}°</span>`;
+        }).join('');
+        box.innerHTML = `<div class="wgt-wxnow"><span class="wgt-wxglyph">${g}</span>
+            <span class="wgt-wxt">${enc(_wgtNum(d.now.temp, 0))}<sup>${enc(u)}</sup></span></div>
+          <div class="wgt-wxwhere">${enc(w.cfg.place || '')}</div>
+          <div class="wgt-dim">${enc(word)} · feels ${enc(_wgtNum(d.now.feels, 0))}° · ${enc(_wgtNum(d.now.wind, 0))} ${enc((d.units && d.units.wind) || '')}</div>
+          <div class="wgt-wxdays">${days}</div>`;
+      },
+    },
+
+    music: {
+      label: 'Now playing', icon: '#i-music', blurb: 'What the player is on, with the transport',
+      // No `every`: the player tells us. A widget that polls an element it could have listened to is
+      // the same mistake the games made.
+      mount(el){
+        el.innerHTML = `<div class="wgt-music"><div class="wgt-mtitle wgt-dim">Nothing playing</div>
+          <div class="wgt-mctl">
+            <button class="wgt-b" data-m="prev" aria-label="Previous">⏮</button>
+            <button class="wgt-b wgt-bmain" data-m="toggle" aria-label="Play or pause">▶</button>
+            <button class="wgt-b" data-m="next" aria-label="Next">⏭</button>
+            <button class="wgt-b" data-m="open" aria-label="Open Music">☰</button>
+          </div></div>`;
+        el.onclick = (ev) => {
+          const b = ev.target.closest && ev.target.closest('[data-m]'); if(!b) return;
+          ev.stopPropagation();
+          const P = (PC().music && PC().music()) || null;
+          try{
+            if(b.dataset.m === 'open'){ openApp('__music'); return; }
+            if(!P) return;
+            if(b.dataset.m === 'prev') P.prev();
+            else if(b.dataset.m === 'next') P.next();
+            else P.toggle();
+          }catch(_){}
+        };
+      },
+      refresh(el){
+        const P = (PC().music && PC().music()) || null;
+        const t = $('.wgt-mtitle', el), main = $('[data-m="toggle"]', el);
+        if(!t) return;
+        const now = P && P.now ? P.now() : null;
+        t.textContent = (now && now.title) || 'Nothing playing';
+        t.classList.toggle('wgt-dim', !(now && now.title));
+        if(main) main.textContent = (now && now.playing) ? '⏸' : '▶';
+      },
+    },
+
+    note: {
+      label: 'Sticky note', icon: '#i-note', blurb: 'A note on the desktop — saved in your Notes',
+      mount(el, w, save){
+        el.innerHTML = `<textarea class="wgt-note" placeholder="Write something…" spellcheck="false"></textarea>
+                        <div class="wgt-notest wgt-dim"></div>`;
+        const ta = $('.wgt-note', el), st = $('.wgt-notest', el);
+        ta.value = w.cfg.text || '';
+        // Typing must not publish. The note is written after a pause, and again on blur, so closing
+        // the lid mid-sentence does not lose the sentence.
+        let t = null;
+        const flush = async () => {
+          t = null;
+          const text = ta.value;
+          if(text === (w.cfg.text || '')) return;
+          w.cfg.text = text.slice(0, 400);
+          st.textContent = 'saving…';
+          const id = await _noteSync(w, text);
+          if(id) w.cfg.noteId = id;
+          try{ await save(w); st.textContent = 'saved to Notes'; }
+          catch(_){ st.textContent = 'not saved'; }
+        };
+        ta.oninput = () => { st.textContent = ''; if(t) clearTimeout(t); t = setTimeout(flush, 1200); };
+        ta.onblur = () => { if(t){ clearTimeout(t); flush(); } };
+        // A textarea inside a draggable panel: the pointer belongs to the text, not to the drag.
+        ta.onpointerdown = (ev) => ev.stopPropagation();
+      },
+      refresh(){},
+    },
+
+    search: {
+      label: 'Web search', icon: '#i-search', blurb: 'Search from the desktop',
+      mount(el){
+        el.innerHTML = `<form class="wgt-search"><input class="wgt-sinput" type="search"
+            placeholder="Search the web…" aria-label="Search the web" spellcheck="false">
+          <button class="wgt-sgo" type="submit" aria-label="Search">➜</button></form>
+          <div class="wgt-dim wgt-shint">Results open in Web Search</div>`;
+        const f = $('.wgt-search', el), i = $('.wgt-sinput', el);
+        i.onpointerdown = (ev) => ev.stopPropagation();
+        f.onsubmit = (ev) => {
+          ev.preventDefault();
+          const q = String(i.value || '').trim(); if(!q) return;
+          try{
+            if(window.PCWebSearch && PCWebSearch.search){ openApp('websearch'); PCWebSearch.search(q); }
+            else openApp('websearch');
+          }catch(_){}
+        };
+      },
+      refresh(){},
+    },
+  };
+
+  /* The sticky note is a NOTE — the same encrypted per-note document the Notes app owns, so what you
+   * jot on the desktop is there on your phone. The widget stores the note's id and its own copy of
+   * the text (it has to draw before Notes has loaded anything); Notes owns the storage. If the Notes
+   * module is not present the text still persists in the desktop document, which is a worse note but
+   * not a lost one. */
+  async function _noteSync(w, text){
+    try{
+      const N = window.PCNotes;
+      if(!N || !N.saveExternal) return w.cfg.noteId || '';
+      return await N.saveExternal({ id: w.cfg.noteId || '', title: 'Desktop note', body: text });
+    }catch(_){ return w.cfg.noteId || ''; }
+  }
+
+  function _wxPickerHtml(){
+    return `<div class="wgt-wxpick"><input class="wgt-wxq" type="search" placeholder="Your town or city…"
+        aria-label="Search for a place" spellcheck="false"><div class="wgt-wxres"></div></div>`;
+  }
+  function _wxWire(el, w, save){
+    const q = $('.wgt-wxq', el), res = $('.wgt-wxres', el);
+    if(!q || q.dataset.wired) return;
+    q.dataset.wired = '1';
+    q.onpointerdown = (ev) => ev.stopPropagation();
+    let t = null;
+    q.oninput = () => {
+      if(t) clearTimeout(t);
+      const term = String(q.value || '').trim();
+      if(term.length < 2){ res.innerHTML = ''; return; }
+      // Typed a character at a time, so this is debounced AND the server caches geocodes for a day.
+      t = setTimeout(async () => {
+        let d = null;
+        try{ d = await _wgtJson('/api/weather/geocode?q=' + encodeURIComponent(term)); }catch(_){}
+        const rows = (d && d.results) || [];
+        res.innerHTML = rows.length
+          ? rows.map((r, i) => `<button class="wgt-wxhit" data-i="${i}">${enc(r.name)}<span class="wgt-dim">${
+              enc([r.admin, r.country].filter(Boolean).join(', '))}</span></button>`).join('')
+          : '<div class="wgt-dim">no match</div>';
+        res.onclick = async (ev) => {
+          const b = ev.target.closest && ev.target.closest('.wgt-wxhit'); if(!b) return;
+          ev.stopPropagation();
+          const r = rows[+b.dataset.i]; if(!r) return;
+          w.cfg.lat = r.lat; w.cfg.lon = r.lon;
+          w.cfg.place = [r.name, r.country].filter(Boolean).join(', ');
+          el.innerHTML = '<div class="wgt-wx"><div class="wgt-dim">loading…</div></div>';
+          await save(w);
+          _wgtRefreshOne(el.closest('.os-wgt'));
+        };
+      }, 350);
+    };
   }
 
   // ---- the wallpaper ----------------------------------------------------------------------------
@@ -1493,6 +1826,261 @@
     if(!desk) return;
     desk.classList.toggle('has-bg', !!_bgUrl);
     desk.style.backgroundImage = _bgUrl ? `url("${_bgUrl}")` : '';
+  }
+
+  // ---- drawing, scheduling and moving widgets ---------------------------------------------------
+
+  const _mounted = new Map();          // element -> { w, def, due }
+  let _wgtTimer = null, _wgtVis = false;
+
+  /* RECONCILE, never rebuild wholesale.
+   *
+   * This runs on every desktop redraw, and a redraw happens on every SAVE — `_apply` updates the
+   * document optimistically and calls refreshIcons. So tearing the widgets down and remounting them
+   * would destroy the textarea you are typing in 1.2 seconds after you stop typing, and again on
+   * blur: the sticky note would eat your cursor, your selection and your scroll position, and the
+   * weather picker would drop the search you were halfway through. A widget is only rebuilt when
+   * something STRUCTURAL changed (it is new, its type changed, its size changed); otherwise it is
+   * repositioned and left alone, which is also far less work on a desktop that redraws often. */
+  function drawWidgets(){
+    if(!desk) return;
+    const lay = layout();
+    const list = (lay.widgets || []);
+    const keep = new Set();
+    // ONE measurement for the whole pass — see the header. Every position below is arithmetic on it.
+    const k = zf();
+    const dr = desk.getBoundingClientRect();
+    const deskW = dr.width / k, deskH = dr.height / k;
+    for(const w of list){
+      const def = WIDGETS[w.type]; if(!def) continue;
+      const box = wgtBox(w.size, deskW, deskH);
+      const prev = desk.querySelector('.os-wgt[data-id="' + (window.CSS && CSS.escape ? CSS.escape(w.id) : w.id) + '"]');
+      if(prev && prev.dataset.type === w.type && prev.dataset.size === w.size){
+        const m = _mounted.get(prev);
+        if(m) m.w = w;                       // the row is a fresh object on every save
+        prev.style.width = box.w + 'px';
+        prev.style.height = box.h + 'px';
+        prev.style.left = Math.round(Math.max(0, (deskW - box.w - WGT_GAP)) * w.x + WGT_GAP / 2) + 'px';
+        prev.style.top  = Math.round(Math.max(0, (deskH - box.h - WGT_GAP)) * w.y + WGT_GAP / 2) + 'px';
+        keep.add(prev);
+        continue;
+      }
+      if(prev){ _mounted.delete(prev); prev.remove(); }
+      const el = document.createElement('section');
+      el.className = 'os-wgt';
+      el.dataset.id = w.id;
+      el.dataset.type = w.type;
+      el.dataset.size = w.size;
+      el.style.width = box.w + 'px';
+      el.style.height = box.h + 'px';
+      // A fraction of the FREE space, so the widget stays inside the desk at any size and keeps the
+      // edge it was put against. Clamped for the case the desk is smaller than the widget.
+      el.style.left = Math.round(Math.max(0, (deskW - box.w - WGT_GAP)) * w.x + WGT_GAP / 2) + 'px';
+      el.style.top  = Math.round(Math.max(0, (deskH - box.h - WGT_GAP)) * w.y + WGT_GAP / 2) + 'px';
+      el.innerHTML = `<header class="os-wgt-bar"><svg class="ic" aria-hidden="true"><use href="${enc(def.icon)}"></use></svg>
+          <span class="os-wgt-t">${enc(def.label)}</span>
+          <button class="os-wgt-x" aria-label="Remove this widget">✕</button></header>
+        <div class="os-wgt-body"></div>`;
+      desk.appendChild(el);
+      const body = el.querySelector('.os-wgt-body');
+      const save = (nw) => _apply((doc) => {
+        const row = (doc.widgets || []).find(x => x.id === nw.id);
+        if(!row) return false;
+        row.cfg = nw.cfg; row.x = nw.x; row.y = nw.y; row.size = nw.size;
+      });
+      try{ def.mount(body, w, save); }
+      catch(e){ body.innerHTML = '<div class="wgt-dim">this widget failed to start</div>'; console.warn('widget', w.type, e); }
+      _mounted.set(el, { w, def, body, due: 0, save, fresh: true });
+      keep.add(el);
+      /* The handlers read the CURRENT row out of _mounted rather than closing over `w`.
+       * A kept element keeps its listeners while the document object beneath it is replaced on every
+       * save, so a captured `w` goes stale: the weather widget's own menu decides whether to offer
+       * "Change the place…" from `cfg.lat`, and with a stale copy it would still think no place had
+       * been chosen — the one entry that only exists once you have chosen one. */
+      const cur = () => (_mounted.get(el) || {}).w || w;
+      el.querySelector('.os-wgt-x').onclick = (ev) => { ev.stopPropagation(); removeWidget(cur().id); };
+      el.oncontextmenu = (ev) => { ev.preventDefault(); ev.stopPropagation(); wgtMenu(cur(), ev.clientX, ev.clientY); };
+      el.addEventListener('pointerdown', (ev) => {
+        if(ev.button !== 0) return;
+        if(ev.target.closest('button, input, textarea, a, select')) return;
+        startWgtDrag(el, cur(), ev);
+      });
+    }
+    // Anything left over is a widget that was removed, or one whose type this client cannot draw.
+    for(const n of desk.querySelectorAll('.os-wgt')) if(!keep.has(n)){ _mounted.delete(n); n.remove(); }
+    if(!_mounted.size){ _wgtStop(); return; }
+    // Only the NEW ones paint now. A redraw happens on every save, and refreshing everything here
+    // would turn a keystroke's worth of note-saving into a round of every widget's work — and reset
+    // their schedules, so a 10-minute forecast would refetch whenever anything else was touched.
+    for(const [el, m] of _mounted) if(m.fresh){ m.fresh = false; _wgtRefreshOne(el); }
+    _wgtStart();
+  }
+
+  function _wgtRefreshOne(el){
+    const m = _mounted.get(el); if(!m) return;
+    m.due = Date.now() + (m.def.every || 0);
+    try{ const r = m.def.refresh(m.body, m.w, m.save); if(r && r.catch) r.catch(()=>{}); }
+    catch(e){ console.warn('widget refresh', m.w.type, e); }
+  }
+  function _wgtRefreshDue(all){
+    const now = Date.now();
+    for(const [el, m] of _mounted){
+      if(!all && !(m.def.every && now >= m.due)) continue;
+      _wgtRefreshOne(el);
+    }
+  }
+  /* ONE interval for every widget, and none at all when nothing is watching.
+   *
+   * It ticks at 15s and each widget refreshes only when ITS interval is due, so a ticker on 90s and
+   * the weather on 10 minutes share one timer and neither runs early. Stopped when the desktop is
+   * left and when the tab is hidden — a widget must cost nothing in a background tab, which is where
+   * a page spends most of its life. */
+  function _wgtStart(){
+    if(_wgtTimer || !_mounted.size) return;
+    if(typeof document !== 'undefined' && document.hidden) return;
+    _wgtTimer = setInterval(() => {
+      if(!on || !_mounted.size){ _wgtStop(); return; }
+      if(typeof document !== 'undefined' && document.hidden){ _wgtStop(); return; }
+      _wgtRefreshDue(false);
+    }, 15000);
+    if(!_wgtVis && typeof document !== 'undefined'){
+      _wgtVis = true;
+      document.addEventListener('visibilitychange', () => {
+        if(document.hidden){ _wgtStop(); return; }
+        if(!on || !_mounted.size) return;
+        _wgtRefreshDue(false);      // catch up on what fell due while we were away
+        _wgtStart();
+      });
+    }
+  }
+  function _wgtStop(){ if(_wgtTimer){ clearInterval(_wgtTimer); _wgtTimer = null; } }
+
+  // The player has no event to subscribe to, so app.js calls this when its state changes — the same
+  // shape as `syncPlayer`. Cheap: it touches two nodes of one widget.
+  function musicChanged(){
+    for(const [el, m] of _mounted) if(m.w.type === 'music') _wgtRefreshOne(el);
+  }
+
+  /* Dragging a widget. Transform while moving, committed once on release — the same discipline as
+   * windows and icons, and for the same reason: this desktop can hold a live timeline, so writing
+   * left/top per pointer move lays the whole document out at pointer rate. */
+  function startWgtDrag(el, w, ev){
+    const k = zf();
+    const dr = desk.getBoundingClientRect();
+    const deskW = dr.width / k, deskH = dr.height / k;
+    const ox = parseInt(el.style.left, 10) || 0, oy = parseInt(el.style.top, 10) || 0;
+    const bw = el.offsetWidth, bh = el.offsetHeight;
+    const maxX = Math.max(0, deskW - bw - WGT_GAP), maxY = Math.max(0, deskH - bh - WGT_GAP);
+    let sx = ev.clientX, sy = ev.clientY, cx = ox, cy = oy, raf = 0, moved = false;
+    try{ ev.preventDefault(); }catch(_){}
+    el.classList.add('dragging');
+    const paint = () => { raf = 0; el.style.transform = `translate(${cx - ox}px, ${cy - oy}px)`; };
+    const move = (e) => {
+      if(e.pointerType !== 'touch' && (e.buttons || 0) === 0){ up(); return; }
+      cx = Math.max(0, Math.min(maxX, ox + (e.clientX - sx) / k));
+      cy = Math.max(0, Math.min(maxY, oy + (e.clientY - sy) / k));
+      if(Math.abs(cx - ox) > 3 || Math.abs(cy - oy) > 3) moved = true;
+      if(!raf) raf = requestAnimationFrame(paint);
+    };
+    let ended = false;
+    const up = () => {
+      if(ended) return;
+      ended = true;
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+      document.removeEventListener('pointercancel', up);
+      window.removeEventListener('blur', up);
+      if(raf) cancelAnimationFrame(raf);
+      el.classList.remove('dragging');
+      el.style.transform = '';
+      el.style.left = Math.round(cx) + 'px';
+      el.style.top = Math.round(cy) + 'px';
+      if(!moved) return;
+      // Back to fractions — that is what the document stores, so the panel keeps this edge on every
+      // other screen. Guard the divisions: a desk smaller than the widget has no room to be a
+      // fraction OF, and 0/0 would write NaN into the document.
+      const fx = maxX > 0 ? cx / maxX : 0, fy = maxY > 0 ? cy / maxY : 0;
+      _apply((doc) => {
+        const row = (doc.widgets || []).find(x => x.id === w.id);
+        if(!row) return false;
+        row.x = Math.max(0, Math.min(1, fx)); row.y = Math.max(0, Math.min(1, fy));
+      }).then(ok => { if(ok){ w.x = fx; w.y = fy; } });
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', up);
+    window.addEventListener('blur', up);
+  }
+
+  function addWidget(type){
+    if(!WIDGETS[type]) return Promise.resolve(false);
+    return _apply((doc) => {
+      if(!Array.isArray(doc.widgets)) doc.widgets = [];
+      if(doc.widgets.length >= WGT_MAX){
+        try{ PC().toast('that is as many widgets as the desktop takes'); }catch(_){}
+        return false;
+      }
+      // Down the right-hand side, out of the icons' way, stepping so a second widget does not land
+      // exactly on the first.
+      const n = doc.widgets.length;
+      doc.widgets.push({ id: type + '-' + Math.random().toString(36).slice(2, 8), type,
+                         x: 1, y: Math.min(1, n * 0.22), size: 'm', cfg: {} });
+    }).then(ok => { if(ok) drawWidgets(); return ok; });
+  }
+  function removeWidget(id){
+    return _apply((doc) => { doc.widgets = (doc.widgets || []).filter(x => x.id !== id); })
+      .then(ok => { if(ok) drawWidgets(); return ok; });
+  }
+  function sizeWidget(id, size){
+    if(!WGT_SIZES[size]) return Promise.resolve(false);
+    return _apply((doc) => {
+      const row = (doc.widgets || []).find(x => x.id === id);
+      if(!row || row.size === size) return false;
+      row.size = size;
+    }).then(ok => { if(ok) drawWidgets(); return ok; });
+  }
+
+  function wgtMenu(w, x, y){
+    const rows = [];
+    for(const s of ['s', 'm', 'l']){
+      rows.push({ label: (w.size === s ? '• ' : '') + { s: 'Small', m: 'Medium', l: 'Large' }[s],
+                  run: () => sizeWidget(w.id, s) });
+    }
+    if(w.type === 'weather' && w.cfg.lat != null){
+      rows.push({ sep: true });
+      rows.push({ label: 'Change the place…', run: () => _apply((doc) => {
+        const row = (doc.widgets || []).find(x => x.id === w.id);
+        if(!row) return false;
+        row.cfg = {};
+      }).then(ok => { if(ok) drawWidgets(); }) });
+    }
+    rows.push({ sep: true });
+    rows.push({ label: 'Remove this widget', run: () => removeWidget(w.id) });
+    showCtx(x, y, rows);
+  }
+
+  /* The picker. Its own panel, like the wallpaper one — this is desktop chrome and the client's modal
+   * belongs to the app underneath. Everything already on the desktop is marked rather than hidden: a
+   * second ticker or a second note is a reasonable thing to want. */
+  function widgetPicker(){
+    hideCtx();
+    if(!root) return;
+    root.querySelectorAll('.os-wgtpick').forEach(n => n.remove());
+    const have = new Set((layout().widgets || []).map(w => w.type));
+    const m = document.createElement('div');
+    m.className = 'os-bgpick os-wgtpick';
+    m.innerHTML = `<div class="os-bg-head"><b>Add a widget</b>
+        <button class="os-bg-x" id="os-wgt-x" aria-label="Close">✕</button></div>
+      <div class="os-wgt-grid">${Object.keys(WIDGETS).map(k => {
+        const d = WIDGETS[k];
+        return `<button class="os-wgt-pick" data-t="${enc(k)}">
+          <svg class="ic" aria-hidden="true"><use href="${enc(d.icon)}"></use></svg>
+          <span class="os-wgt-pl">${enc(d.label)}${have.has(k) ? ' <i>· on the desktop</i>' : ''}</span>
+          <span class="os-wgt-pb">${enc(d.blurb)}</span></button>`;
+      }).join('')}</div>`;
+    root.appendChild(m);
+    { const x = $('#os-wgt-x', m); if(x) x.onclick = () => m.remove(); }
+    $$('.os-wgt-pick', m).forEach(b => b.onclick = () => { m.remove(); addWidget(b.dataset.t); });
   }
 
   // ---- dragging icons ---------------------------------------------------------------------------
@@ -1853,6 +2441,7 @@
     if(rows.length) rows.push({ sep: true });
     if(Object.keys(lay.pos || {}).length)
       rows.push({ label: 'Line the icons up', run: () => lineUp() });
+    rows.push({ label: 'Add a widget…', run: () => widgetPicker() });
     rows.push({ label: 'Change background…', run: () => wallpaperPicker() });
     rows.push({ sep: true });
     rows.push({ label: 'Restore the default layout', run: async () => {
@@ -2771,6 +3360,10 @@
   }
 
   window.PCOS = { enter, exit, suspend, toggle, restore, refresh, isOn: () => on, openDoc, focusDoc, routeView, snapTo, osToast,
+                  // app.js calls this when the player's state changes — the Now-playing widget has
+                  // nothing to subscribe to, and polling an element we could be told about is the
+                  // mistake the games were just fixed for.
+                  musicChanged,
                   isRepainting: () => repainting > 0, parkedSlot, noteScroll,
                   windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min })),
                   /* The layout arithmetic, exposed so tests/test_desktop_layout.py can run the
@@ -2778,5 +3371,9 @@
                    * silently on screen — an app that stops appearing, a folder that swallows an icon
                    * twice, a feature added next month that never shows up — so it is tested directly
                    * rather than inferred from a rendered desktop. */
-                  __layout: (list, doc) => computeLayout(list, doc), __normDoc: (d) => _normDoc(d) };
+                  __layout: (list, doc) => computeLayout(list, doc), __normDoc: (d) => _normDoc(d),
+                  // The size arithmetic, for the same reason: 'a widget fits the screen it is on'
+                  // is the whole of the tablet↔desktop requirement and nothing on screen says
+                  // when it is wrong — the panel is just too big, or too small to read.
+                  __wgtBox: (size, w, h) => wgtBox(size, w, h) };
 })();

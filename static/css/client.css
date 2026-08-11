@@ -6349,6 +6349,92 @@ body.os-on #os-root{pointer-events:auto}
 .os-bg-empty{padding:16px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
 .os-bg-empty p{margin:0}
 
+/* ---- desktop widgets -------------------------------------------------------------------------
+   Panels that sit ON the desktop. They are ABOVE the wallpaper and BELOW the windows (.osw is 200+),
+   because a widget you can lose behind a window is one you would stop putting things on — and one
+   that floats over your work is worse. `contain: layout style` keeps a widget's own repaints from
+   invalidating the desktop around it: these things update forever, which is exactly the load this
+   file has had to remove three times already. */
+.os-wgt{position:absolute;z-index:6;display:flex;flex-direction:column;border-radius:14px;
+  background:linear-gradient(160deg,rgba(20,12,44,.86),rgba(10,4,24,.9));
+  border:1px solid var(--line);box-shadow:0 10px 30px rgba(0,0,0,.45);overflow:hidden;
+  contain:layout style;-webkit-user-select:none;user-select:none;cursor:grab}
+.os-wgt.dragging{cursor:grabbing;will-change:transform;box-shadow:0 18px 44px rgba(0,0,0,.6);
+  border-color:var(--neon)}
+.os-wgt-bar{flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:7px 8px 5px 10px;
+  border-bottom:1px solid var(--line);background:rgba(255,255,255,.03)}
+.os-wgt-bar .ic{width:13px;height:13px;color:var(--neon);flex:none}
+.os-wgt-t{flex:1;min-width:0;font-size:11.5px;font-weight:600;color:var(--muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:.02em}
+.os-wgt-x{flex:none;width:20px;height:20px;border:0;background:none;color:var(--muted);
+  cursor:pointer;border-radius:6px;font-size:11px;line-height:1}
+.os-wgt-x:hover{background:#e81123;color:#fff}
+.os-wgt-body{flex:1;min-height:0;overflow:auto;padding:8px 10px 10px;font-size:12.5px;color:var(--text)}
+.wgt-dim{color:var(--muted);font-size:11.5px}
+
+/* Ticker. A monospaced numeral column so the prices line up as they change — proportional digits
+   make a live list twitch sideways on every update. */
+.wgt-rows{display:flex;flex-direction:column;gap:3px}
+.wgt-row{display:flex;align-items:baseline;gap:8px;font-variant-numeric:tabular-nums}
+.wgt-sym{flex:none;width:3.4em;font-weight:700;color:var(--neon);font-size:11.5px;letter-spacing:.04em}
+.wgt-val{flex:1;min-width:0;text-align:right;overflow:hidden;text-overflow:ellipsis}
+.wgt-chg{flex:none;width:5.2em;text-align:right;font-size:11px}
+.wgt-chg.up{color:#5dffb0}
+.wgt-chg.down{color:#ff6b8b}
+
+/* Weather. The temperature is the thing you actually look at, so it gets the size and everything
+   else is subordinate to it. */
+.wgt-wx{display:flex;flex-direction:column;gap:2px;height:100%}
+.wgt-wxnow{display:flex;align-items:center;gap:9px}
+.wgt-wxglyph{font-size:26px;line-height:1}
+.wgt-wxt{font-size:27px;font-weight:700;line-height:1;color:#eaf0ff}
+.wgt-wxt sup{font-size:12px;font-weight:600;color:var(--muted);vertical-align:super}
+.wgt-wxwhere{font-size:12px;color:#eaf0ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wgt-wxdays{margin-top:auto;display:flex;gap:10px;flex-wrap:wrap;padding-top:6px;
+  font-size:11.5px;color:var(--muted)}
+.wgt-wxpick{display:flex;flex-direction:column;gap:6px}
+.wgt-wxq,.wgt-note,.wgt-sinput{width:100%;box-sizing:border-box;background:rgba(0,0,0,.28);
+  border:1px solid var(--line);border-radius:9px;color:var(--text);padding:7px 9px;font:inherit;
+  font-size:12.5px;outline:none}
+.wgt-wxq:focus,.wgt-note:focus,.wgt-sinput:focus{border-color:var(--cyan,#0ff)}
+.wgt-wxres{display:flex;flex-direction:column;gap:2px;max-height:118px;overflow:auto}
+.wgt-wxhit{display:flex;flex-direction:column;align-items:flex-start;gap:1px;text-align:left;
+  background:none;border:0;color:var(--text);padding:5px 7px;border-radius:7px;cursor:pointer;
+  font-size:12px}
+.wgt-wxhit:hover{background:rgba(255,255,255,.07)}
+
+/* Now playing. */
+.wgt-music{display:flex;flex-direction:column;gap:8px;height:100%}
+.wgt-mtitle{font-size:12.5px;color:#eaf0ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wgt-mctl{margin-top:auto;display:flex;align-items:center;justify-content:center;gap:6px}
+.wgt-b{background:none;border:1px solid var(--line);border-radius:50%;width:30px;height:30px;
+  color:var(--muted);cursor:pointer;font-size:12px;line-height:1;display:inline-flex;
+  align-items:center;justify-content:center}
+.wgt-b:hover{color:var(--cyan,#0ff);border-color:var(--cyan,#0ff)}
+.wgt-bmain{width:36px;height:36px;font-size:14px;color:var(--neon);border-color:var(--neon)}
+
+/* Sticky note. The textarea IS the widget — no padding games, so the writing area is the whole panel. */
+.wgt-note{flex:1;min-height:60px;height:calc(100% - 16px);resize:none;line-height:1.45}
+.wgt-notest{height:14px;padding-top:2px}
+
+/* Search. */
+.wgt-search{display:flex;gap:6px;align-items:center}
+.wgt-sgo{flex:none;width:32px;height:32px;border-radius:9px;border:1px solid var(--neon);
+  background:rgba(var(--accent-rgb),.14);color:var(--neon);cursor:pointer;font-size:13px}
+.wgt-sgo:hover{background:var(--neon);color:#04121a}
+.wgt-shint{padding-top:6px}
+
+/* The picker — the wallpaper panel's frame, a list rather than a grid of thumbnails. */
+.os-wgt-grid{display:flex;flex-direction:column;gap:6px;padding:10px;max-height:56vh;overflow:auto}
+.os-wgt-pick{display:grid;grid-template-columns:22px 1fr;gap:3px 10px;align-items:center;
+  text-align:left;padding:9px 11px;border-radius:10px;border:1px solid var(--line);
+  background:var(--panel2);color:var(--text);cursor:pointer}
+.os-wgt-pick:hover{border-color:var(--neon)}
+.os-wgt-pick .ic{width:18px;height:18px;color:var(--neon);grid-row:span 2}
+.os-wgt-pl{font-weight:600;font-size:13px}
+.os-wgt-pl i{font-style:normal;color:var(--muted);font-weight:400;font-size:11.5px}
+.os-wgt-pb{font-size:11.5px;color:var(--muted)}
+
 /* The right-click menu — on an icon, and on the desktop itself. */
 .os-ctx{position:absolute;z-index:420;min-width:184px;max-width:280px;max-height:60vh;overflow-y:auto;
   background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:5px;
