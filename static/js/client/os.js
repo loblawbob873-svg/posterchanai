@@ -1987,6 +1987,52 @@
       refresh(){},
     },
 
+    mempool: {
+      label: 'Bitcoin blocks', icon: '#i-chart',
+      blurb: 'Pending and confirmed blocks, from mempool.space',
+      // A block is ten minutes. 30s is frequent enough that a new one appears while you are looking,
+      // and the node's own cache means several of these cost one upstream request.
+      every: 30000,
+      mount(el){ el.innerHTML = '<div class="wgt-mp"><div class="wgt-dim">loading…</div></div>'; },
+      async refresh(el){
+        const box = $('.wgt-mp', el); if(!box) return;
+        let d = null;
+        try{ d = await _wgtFeed('mempool', 25000, () => _wgtJson('/api/mempool/blocks')); }
+        catch(_){ if(!box.dataset.filled) box.innerHTML = '<div class="wgt-dim">blocks unavailable</div>'; return; }
+        if(!d || !d.ok){ if(!box.dataset.filled) box.innerHTML = '<div class="wgt-dim">blocks unavailable</div>'; return; }
+        box.dataset.filled = '1';
+        /* HOW MANY FIT, measured — not a fixed three and three. A widget is resizable and lives at
+         * four named sizes, and a row that is always clipped at the right edge looks broken rather
+         * than scrollable. 71px is a tile plus its gap; 18px is the seam and its margins. The tip is
+         * the interesting end, so an odd number of slots goes to the confirmed side. */
+        const w = Math.max(120, box.clientWidth || el.clientWidth || 300);
+        const slots = Math.max(2, Math.min(6, Math.floor((w - 18) / 71)));
+        const nConf = Math.min(3, Math.ceil(slots / 2));
+        const nPend = Math.min(3, slots - nConf);
+        const pend = (d.pending || []).slice(0, nPend);
+        const conf = (d.blocks || []).slice(0, nConf);
+        /* PENDING ON THE LEFT, CONFIRMED ON THE RIGHT, meeting in the middle at the chain tip — the
+         * arrangement mempool.space uses, and it is not decoration: it is what makes "my transaction
+         * is two blocks away" readable at a glance. The pending stack is drawn newest-furthest so it
+         * reads outward from the tip, which is why it is reversed here. */
+        const tile = (o, kind) => `<div class="mp-b ${kind}" style="--mp-h:${_mpHue(o.median)}">
+            <div class="mp-b-top">${kind === 'p' ? '~' + _mpFee(o.median) : '#' + enc(String(o.height))}</div>
+            <div class="mp-b-mid">${kind === 'p' ? enc(_mpFee(o.lo) + '–' + _mpFee(o.hi))
+                                                 : '~' + _mpFee(o.median) + ' sat/vB'}</div>
+            <div class="mp-b-bot">${kind === 'p' ? enc(_mpCount(o.tx)) + ' tx'
+                                                 : enc(_mpAgo(o.ts))}</div>
+          </div>`;
+        box.innerHTML = `<div class="mp-row">
+            <div class="mp-side pending">${pend.slice().reverse().map(o => tile(o, 'p')).join('')}</div>
+            <div class="mp-tip" aria-hidden="true"></div>
+            <div class="mp-side done">${conf.map(o => tile(o, 'c')).join('')}</div>
+          </div>
+          <div class="mp-foot">${pend.length ? enc(_mpFee(pend[0].median)) + ' sat/vB next block' : 'mempool empty'}${
+            d.stale ? ' · last known' : ''}</div>`;
+        box.onclick = (ev) => { if(ev.target.closest('.mp-b, .mp-foot')) openExternal('https://mempool.space'); };
+      },
+    },
+
     calendar: {
       label: 'Today', icon: '#i-clock', blurb: "What is on today, from your encrypted calendars",
       // Five minutes. A calendar changes on human timescales, and the read is N+1 requests.
@@ -2049,6 +2095,28 @@
       },
     },
   };
+
+  /* Fee → hue, the way an explorer colours a block: cheap is green, busy is amber, a fee spike is
+   * red. Bucketed rather than a continuous ramp, because the point is "is it cheap right now" and a
+   * gradient answers that less clearly than four steps do. */
+  function _mpHue(fee){
+    const f = Number(fee) || 0;
+    if(f < 3) return '150 70% 55%';
+    if(f < 10) return '95 65% 55%';
+    if(f < 30) return '45 90% 58%';
+    if(f < 100) return '25 90% 58%';
+    return '355 80% 62%';
+  }
+  // Fees are quoted to one decimal below ten and rounded above it: "1.5" matters, "127.4" does not.
+  const _mpFee = (n) => { const f = Number(n) || 0; return f < 10 ? String(Math.round(f * 10) / 10) : String(Math.round(f)); };
+  const _mpCount = (n) => { n = Number(n) || 0; return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n); };
+  function _mpAgo(ts){
+    const s = Math.max(0, Math.floor(Date.now() / 1000) - (Number(ts) || 0));
+    if(s < 90) return 'just now';
+    if(s < 5400) return Math.round(s / 60) + 'm ago';
+    if(s < 172800) return Math.round(s / 3600) + 'h ago';
+    return Math.round(s / 86400) + 'd ago';
+  }
 
   /* A stable colour per calendar, from its id. The real palette lives in calendar.js keyed on the
    * calendar LIST's order, which this widget deliberately does not fetch a second time — and a hue

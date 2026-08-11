@@ -6493,6 +6493,46 @@ body.os-on #os-root{pointer-events:auto}
 .os-wgt-body{flex:1;min-height:0;overflow:auto;padding:10px 12px;font-size:12.5px;color:var(--text)}
 .wgt-dim{color:var(--muted);font-size:11.5px}
 
+/* Bitcoin blocks. Pending stacked on the left, confirmed on the right, meeting at the chain tip —
+   the arrangement mempool.space uses, and not decoration: it is what makes "my transaction is two
+   blocks away" readable at a glance.
+
+   Each tile is tinted by its fee through --mp-h (a hue triplet set inline), so the whole row reads as
+   a temperature before a single number is read. The faces are two gradients rather than a border,
+   which is what gives the blocks their weight without a single image. */
+.wgt-mp{display:flex;flex-direction:column;height:100%;min-height:0;gap:8px;cursor:pointer}
+.mp-row{flex:1;min-height:0;display:flex;align-items:center;gap:0;overflow-x:auto;overflow-y:hidden;
+  padding:2px 0;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.mp-row::-webkit-scrollbar{display:none}
+.mp-side{display:flex;align-items:center;gap:5px;flex:none}
+/* The chain tip: a thin seam the two sides meet at. */
+.mp-tip{flex:none;width:3px;align-self:stretch;margin:7px 6px;border-radius:3px;
+  background:linear-gradient(180deg,transparent,var(--neon) 20%,var(--neon) 80%,transparent);
+  opacity:.55;box-shadow:0 0 8px rgba(0,240,255,.35)}
+/* 66px is measured, not chosen: a six-digit block height at 11.5px bold is ~44px, and four tiles
+   plus the seam have to fit the default widget width. Wider clipped the heights; narrower and the
+   fee range wraps. */
+.mp-b{flex:none;width:66px;min-height:58px;border-radius:8px;padding:6px 7px;box-sizing:border-box;
+  display:flex;flex-direction:column;justify-content:center;gap:2px;
+  background:linear-gradient(150deg,hsl(var(--mp-h)/.30),hsl(var(--mp-h)/.10) 62%,transparent),
+             var(--panel);
+  border:1px solid hsl(var(--mp-h)/.42);
+  box-shadow:inset 0 1px 0 hsl(var(--mp-h)/.35), 0 2px 8px rgba(0,0,0,.28);
+  transition:transform .12s ease}
+.mp-b:hover{transform:translateY(-2px)}
+/* A projected block is not real yet, and should not look like one. */
+.mp-b.p{border-style:dashed;opacity:.86}
+/* The next block out is the one anybody waiting on a confirmation is looking at. */
+.mp-side.pending .mp-b:last-child{opacity:1;box-shadow:inset 0 1px 0 hsl(var(--mp-h)/.45),
+  0 0 0 1px hsl(var(--mp-h)/.30), 0 3px 12px rgba(0,0,0,.34)}
+.mp-b-top{font-size:11.5px;font-weight:700;line-height:1.2;color:hsl(var(--mp-h)/.98);
+  font-variant-numeric:tabular-nums;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mp-b-mid{font-size:9.5px;color:var(--text);opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mp-b-bot{font-size:9.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mp-foot{flex:none;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+
 /* Today. The date is the anchor and the list is what you actually read, so the numeral is large and
    everything else is quiet. Times are tabular for the same reason the ticker's are: a column of
    09:00 / 11:30 / 14:05 that does not line up is harder to scan than one that does. */

@@ -188,3 +188,38 @@ def test_the_cache_holds_only_what_the_server_can_already_read():
     for f in ("notes.js", "vault.js"):
         src = _read(ROOT, "static", "js", "client", f)
         assert "CalCache" not in src
+
+
+def test_the_widget_is_fed_without_opening_the_calendar_screen():
+    """pushWidget runs at the end of load(), and load() only runs when the Calendar is RENDERED — so
+    somebody who adds events on a laptop and only ever glances at the phone's widget would see one
+    that was never filled at all."""
+    assert "async function widgetTick(" in CALJS
+    assert "widgetTick" in APPJS, "nothing calls it outside the Calendar screen"
+    i = APPJS.index("PCCalendar.widgetTick()")
+    assert "setTimeout" in APPJS[max(0, i - 200):i], (
+        "it runs during the first paint, which is the one moment nothing is waiting for it")
+
+
+def test_it_spends_disk_before_it_spends_the_network():
+    """The snapshot is already there. A widget filled from a four-hour-old copy beats an empty one
+    while a request is in flight, and beats it entirely if the request fails."""
+    i = CALJS.index("async function widgetTick(")
+    body = CALJS[i:i + 1800]
+    assert body.index("CalCache.read()") < body.index("await load()")
+    assert body.index("pushWidget()") < body.index("await load()"), (
+        "the widget waits for the network before drawing anything")
+    assert "age >= (maxAgeH == null ? 6 : maxAgeH)" in body, (
+        "it fetches on every call rather than when the snapshot is actually stale")
+
+
+def test_a_resume_does_not_become_a_request():
+    """Resuming is frequent. The staleness window there is deliberately wider than at startup."""
+    i = APPJS.index("PCCalendar.widgetTick(12)")
+    assert "st.isActive" in APPJS[max(0, i - 600):i]
+
+
+def test_it_is_a_no_op_off_the_packaged_app():
+    i = CALJS.index("async function widgetTick(")
+    body = CALJS[i:i + 400]
+    assert "PC.capPlugin('CalendarWidget', 'push')" in body and "return;" in body

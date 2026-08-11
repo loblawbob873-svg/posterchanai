@@ -2357,6 +2357,10 @@
       // platform with no watcher (Android's SAF has none worth having) this is a no-op and sync
       // happens when the app is opened or the button is pressed.
       setTimeout(()=>{ try{ if(window.PCSync) window.PCSync.startAll(); }catch(_){} }, 5000);
+      /* Feed the home-screen calendar widget without anybody opening Calendar. Costs an IndexedDB
+       * read in the common case; it spends the network only when its snapshot is hours old. Delayed
+       * past the first paint because nothing on screen is waiting for it. See PCCalendar.widgetTick. */
+      setTimeout(()=>{ try{ if(window.PCCalendar) PCCalendar.widgetTick(); }catch(_){} }, 8000);
       setTimeout(()=>ensureDMs(), 3000);   // subscribe to INCOMING DMs (read). Our kind-10050 DM-inbox list
       setTimeout(()=>{ try{ Mail.loginSync(); }catch(_){} }, 4500);   // fetch mail on login (background)
       Mail.startPolling();   // …and keep checking, so mail arriving later is noticed too
@@ -2450,7 +2454,10 @@
         const _App=_capPlugin('App');
         if(_App && _App.addListener){ try{ _App.addListener('resume', ()=>{ _reShare(); _reMusic(); _reCal(); _nativeResume(); });
           _App.addListener('appStateChange', st=>{
-            if(st && st.isActive){ _reShare(); _reMusic(); _reCal(); _nativeResume(); }
+            if(st && st.isActive){ _reShare(); _reMusic(); _reCal(); _nativeResume();
+              // Only if the snapshot is genuinely old: a resume is frequent and this must not become
+              // a request every time the app is looked at.
+              try{ if(window.PCCalendar) PCCalendar.widgetTick(12); }catch(_){} }
             /* The PAUSE half is what makes the gate above mean anything. A frozen WebView can
              * deliver its `visibilitychange` late or not at all, so _hiddenAt was the one number in
              * this decision that the least reliable signal owned — and with "stay connected" on,

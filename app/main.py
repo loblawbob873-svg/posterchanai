@@ -22,7 +22,7 @@ from app.auth import get_current_user_optional, get_current_user, create_access_
 from app.models import User, VerificationToken
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api, voice_api, effects_api
 from app.auth import NATIVE_APP_ORIGINS as _NATIVE_ORIGINS
-from app.routers import fourchan, youtube_thumb, bots, push, calls, streams, rss, markets, websearch, weather, ssh_term
+from app.routers import fourchan, youtube_thumb, bots, push, calls, streams, rss, markets, websearch, weather, ssh_term, mempool
 from app.routers import admin_emoji
 from app.routers import git as git_router
 from app.routers.telegram import router as telegram_router
@@ -242,6 +242,7 @@ app.include_router(fourchan.router)
 app.include_router(rss.router)
 app.include_router(markets.router)
 app.include_router(weather.router)
+app.include_router(mempool.router)
 app.include_router(ssh_term.router)
 app.include_router(ssh_term.ws_router)   # /ws/ssh — the PTY socket
 app.include_router(youtube_thumb.router)

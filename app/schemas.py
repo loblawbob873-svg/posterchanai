@@ -422,6 +422,10 @@ class SettingsResponse(BaseModel):
     # thing that survives a reboot of THIS node; it degrades to a plain login shell when neither is
     # there, which is what the keeper process is for.
     ssh_terminal_multiplex: str = "true"
+    # The desktop's mempool widget asks THIS node, which asks upstream once and shares the answer —
+    # so a reader's IP never reaches a block explorer. Point it at your own mempool instance if you
+    # run one; blank uses the public site.
+    mempool_api_base: str = ""
     # Node management (Nostr-only transport: remote nodes are npub workers; `local` runs on this host)
     node_exec_enabled: str = "false"
     node_exec_users: str = ""  # comma/newline-separated npubs allowed (first user/admin always allowed)

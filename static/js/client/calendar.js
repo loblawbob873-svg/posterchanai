@@ -967,7 +967,37 @@
       loadCached().catch(()=>{}).then(()=> load());
     }
 
-    window.PCCalendar = { render, reload: load };
+    /* KEEP THE HOME-SCREEN WIDGET FED WITHOUT OPENING THIS SCREEN.
+     *
+     * pushWidget runs at the end of `load()`, and `load()` only runs when the Calendar is rendered —
+     * so somebody who adds events on a laptop and only ever glances at the phone's widget would see
+     * a widget that was never filled at all. It has to be reachable from app start.
+     *
+     * CHEAP BY CONSTRUCTION, which is the whole point of doing it here rather than in a WorkManager
+     * job: the snapshot is already on disk, so the common case is one IndexedDB read and a push of a
+     * few KB — no network, no parse of anything that was not already parsed, and nothing that needs
+     * the app to be running at a particular moment. The network is only spent when the snapshot has
+     * aged past `maxAgeH`, which on a calendar is the right timescale: these change on human
+     * schedules, and the widget already holds a MONTH, so being a few hours behind costs nothing.
+     *
+     * (A native background fetch was the obvious alternative and is the wrong one: it would mean a
+     * second iCalendar parser and a second recurrence expander in Java — the thing that makes the
+     * widget and the app disagree about what day something is on.) */
+    async function widgetTick(maxAgeH){
+      if(!PC.capPlugin || !PC.capPlugin('CalendarWidget', 'push')) return;   // not the packaged app
+      let snap = null;
+      try{ snap = await CalCache.read(); }catch(_){}
+      if(snap && Array.isArray(snap.cals) && snap.cals.length && !S.cals.length){
+        S.cals = snap.cals; S.items = snap.items || {}; S.rev++; S.cached = true;
+      }
+      // Draw from what is already here FIRST — a widget filled from a four-hour-old snapshot beats an
+      // empty one while a request is in flight, and beats it entirely if the request fails.
+      if(S.cals.length) await pushWidget();
+      const age = snap && snap.at ? (Date.now() - snap.at) / 3600000 : Infinity;
+      if(age >= (maxAgeH == null ? 6 : maxAgeH)) await load();   // load() pushes again at its end
+    }
+
+    window.PCCalendar = { render, reload: load, widgetTick };
   }
   init();
 })();
