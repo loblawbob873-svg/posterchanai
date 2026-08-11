@@ -138,7 +138,7 @@
       return true;
     }
 
-    let _fitT = null;
+    let _fitT = null, _sentSize = '';
     function _fit(){
       if(_fitT) clearTimeout(_fitT);
       // Coalesced: an on-screen keyboard opening fires a burst of resizes, and each one is a reflow
@@ -148,7 +148,22 @@
         if(!term) return;
         try{ term.options.fontSize = fontSize(); }catch(_){}
         try{ if(fit) fit.fit(); }catch(_){}
-        _send({ t: 'size', cols: term.cols, rows: term.rows });
+        /* A ZERO-SIZED BOX IS NOT A SIZE. In desktop mode the Terminal's window is PARKED when
+         * another window takes focus — its nodes are moved aside, which fires the ResizeObserver
+         * against an element with no layout. FitAddon declines to compute anything then, so
+         * `term.cols` still holds the last good value and this is only a wasted frame — but a
+         * genuinely small transient (a window animating open) would be sent, and the remote app
+         * would redraw itself at that width. Neither is worth a resize_pty on the far end. */
+        const c = term.cols | 0, r = term.rows | 0;
+        if(c < 2 || r < 2) return;
+        /* AND ONLY WHEN IT CHANGED. Dragging a desktop window's edge produces a resize every frame;
+         * coalescing turns that into one frame per 80ms of settling, which is still a SIGWINCH storm
+         * at the far end — and a full-screen program redraws its entire display on each one. The
+         * common case of _fit (a reconnect, a repaint, a focus) is that nothing moved at all. */
+        const sig = c + 'x' + r;
+        if(sig === _sentSize) return;
+        _sentSize = sig;
+        _send({ t: 'size', cols: c, rows: r });
       }, 80);
     }
 
@@ -190,6 +205,11 @@
 
     function _open(frame){
       want = true;
+      /* The cache above is per-SOCKET, not per-terminal. A reattach opens a PTY that knows nothing
+       * about what this client last sent — and on the cross-device path (start on the laptop, pick it
+       * up on the phone) the size it is about to be told is the one thing that must not be skipped as
+       * "unchanged". The open frame carries cols/rows, and the `ready` handler re-fits behind it. */
+      _sentSize = '';
       // TEAR DOWN ANY EXISTING SOCKET FIRST. Attaching to another session from the strip is reachable
       // while one is already connected, and leaving the old socket alive means its `onclose` fires
       // into the NEW session's state a moment later — reported as a terminal that connects and then

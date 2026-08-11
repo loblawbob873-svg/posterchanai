@@ -116,6 +116,9 @@ async def keeper(monkeypatch=None):
         if h.host == "nope":
             raise OSError("no route to host")
         self.chan = FakeChan()
+        # The real connect passes cols/rows to get_pty/invoke_shell, so the PTY is born at that size;
+        # a fake that skipped it would make the resize test pass for the wrong reason.
+        self.chan.size = (cols, rows)
         ssh_service._sessions[self.sid] = self
         self._reader = asyncio.get_event_loop().create_task(self._drain())
 
@@ -405,6 +408,61 @@ def test_typing_reaches_the_shell_through_the_keeper():
             w.close()
 
     _run(_bodytest_typing_reaches_the_shell_through_the_keeper)
+
+
+def test_reattaching_from_a_DIFFERENT_SIZED_DEVICE_resizes_the_pty():
+    """"will the terminal resize properly going from desktop to phone and back?"
+
+    A session outlives the device it was opened on, so the PTY's size belongs to whoever is looking at
+    it NOW. Start on a 200x50 desktop, pick it up on a 40x12 phone, put the phone down and come back
+    to the desktop: each attach has to carry its own geometry through to `resize_pty`, or the phone
+    reads a shell wrapping at 200 columns (every line broken in the wrong place, every full-screen
+    program drawing off the edge) and the desktop gets a 40-column shell in a full-width window.
+
+    The attach frame is the ONLY chance to say so — nothing else changes size on its own — which is
+    why it is asserted here rather than left to the client's resize observer to notice later."""
+    async def _body():
+        async with keeper() as sock:
+            r, w = await _op(sock, {"op": "open", "user_id": 1, "cols": 200, "rows": 50,
+                                    "host": {"name": "build", "user": "u", "host": "h", "port": 22}})
+            sid = (await _line(r))["sid"]
+            sess = ssh_service._sessions[sid]
+            assert sess.chan.size == (200, 50), "the opening size never reached the PTY"
+
+            w.close()                                     # the laptop is closed
+            await asyncio.sleep(0.05)
+            r2, w2 = await _op(sock, {"op": "attach", "user_id": 1, "sid": sid,
+                                      "cursor": 0, "cols": 40, "rows": 12})
+            assert (await _line(r2))["t"] == "ready"
+            assert sess.chan.size == (40, 12), (
+                "the phone reattached and the shell is still wrapping at the laptop's width")
+
+            w2.close()
+            await asyncio.sleep(0.05)
+            r3, w3 = await _op(sock, {"op": "attach", "user_id": 1, "sid": sid,
+                                      "cursor": 0, "cols": 200, "rows": 50})
+            assert (await _line(r3))["t"] == "ready"
+            assert sess.chan.size == (200, 50), (
+                "back at the desktop and the shell is still the phone's 40 columns")
+            w3.close()
+
+    _run(_body)
+
+
+def test_a_nonsense_size_cannot_reach_the_remote_shell():
+    """cols/rows come from a client, and a 100000 is a resize_pty the far end refuses. A MISSING size
+    (0/null — a client that has not laid out yet) is not clamped to the 20x5 floor but defaulted to
+    80x24, because a 20-column shell is a worse answer to "I don't know yet" than a standard one."""
+    async def _body():
+        s = _fake_session()
+        await s.resize(0, 0)
+        assert s.chan.size == (80, 24), "a missing size should default, not collapse"
+        await s.resize(999999, 999999)
+        assert s.chan.size == (500, 200), "an absurd size reached resize_pty"
+        await s.resize(1, 1)
+        assert s.chan.size == (20, 5), "a real but tiny size is not clamped to the floor"
+
+    _run(_body)
 
 
 def test_attaching_to_a_session_that_is_gone_says_so():
