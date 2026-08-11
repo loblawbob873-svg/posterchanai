@@ -17416,7 +17416,16 @@
       // …and tell the OS once a second, so a car's elapsed/remaining time tracks the audio. timeupdate
       // fires ~4x a second; the media session does not need that and every call is a cross-process hop.
       { const sec=Math.floor((_audioEl&&_audioEl.currentTime)||0);
-        if(sec!==this._msSec){ this._msSec=sec; this._media(); } } },
+        if(sec!==this._msSec){ this._msSec=sec; this._media();
+          /* …and the desktop's Now-playing widget, so its progress bar moves.
+           *
+           * Deliberately HERE and not in the timeupdate body: this branch already throttles itself to
+           * once a SECOND (it exists so the media session's elapsed time does not cross a process
+           * boundary four times a second), and reusing it means the widget costs no new timer and
+           * cannot tick while nothing is playing. A per-frame repaint is what this file has had to
+           * remove three times; a per-second text-and-width update on one small panel is not that. */
+          try{ if(window.PCOS && PCOS.musicChanged) PCOS.musicChanged(); }catch(_){}
+        } } },
     onChange:null,   // the Music app mirrors this widget's state; see _musicAppNow
     _render(){
       try{ if(this.onChange) this.onChange(); }catch(_){}
@@ -27383,8 +27392,10 @@
         const q = MusicPlayer.queue || [];
         const i = q.indexOf(MusicPlayer.cur);
         const nxt = (i >= 0 && i + 1 < q.length) ? (FilesIdx.meta(q[i + 1]) || {}).name : '';
+        const d = (_audioEl && isFinite(_audioEl.duration)) ? _audioEl.duration : 0;
         return { title: m.name || 'track', playing: !!(_audioEl && !_audioEl.paused),
-                 next: nxt || '', pos: i >= 0 ? i + 1 : 0, total: q.length };
+                 next: nxt || '', pos: i >= 0 ? i + 1 : 0, total: q.length,
+                 t: (_audioEl && _audioEl.currentTime) || 0, d: d > 0 ? d : 0 };
       },
       /* Play must be able to START something.
        *
@@ -27429,6 +27440,9 @@
         MusicPlayer.play(pick, { force: true });
       },
       shuffling: () => !!MusicPlayer.shuffle,
+      // Seek by FRACTION: the widget knows where along its bar you pressed, not how long the track is.
+      seek: (frac) => { if(_audioEl && isFinite(_audioEl.duration) && _audioEl.duration > 0)
+                          _audioEl.currentTime = Math.max(0, Math.min(1, frac)) * _audioEl.duration; },
     }),
     mdToHtml, uploadEncFile, encFileUrl, deleteBlobQuiet, filesIdx: () => FilesIdx,
     get ME(){ return ME; }, get CFG(){ return CFG; }, get VIEW(){ return VIEW; },

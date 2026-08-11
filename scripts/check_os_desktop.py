@@ -784,6 +784,19 @@ LAYOUT = r"""(async () => {
           }
           out.musicCalls = window.__music.slice();
           out.musicTitle = (mw.querySelector('.wgt-mtitle') || {}).textContent || '';
+          /* NO DEAD SPACE. The panel used to pin its transport to the bottom and leave a hole in the
+           * middle; what fills it is the seek row. Measured as the largest vertical gap between the
+           * widget's own rows, against the body's height — a screenshot at one size cannot catch this
+           * coming back, and "mostly wasted space in the centre" is how it was reported. */
+          const body = mw.querySelector('.os-wgt-body');
+          const rows = [...mw.querySelectorAll('.wgt-mtop,.wgt-mseek,.wgt-mtimes,.wgt-mctl')]
+                        .map(n => n.getBoundingClientRect()).filter(r => r.height > 0)
+                        .sort((a, b) => a.top - b.top);
+          let gap = 0;
+          for (let i = 1; i < rows.length; i++) gap = Math.max(gap, rows[i].top - rows[i-1].bottom);
+          const bh = body ? body.getBoundingClientRect().height : 0;
+          out.musicGap = bh > 0 ? Math.round(gap / bh * 100) : 0;
+          out.musicHasSeek = !!mw.querySelector('.wgt-mseek');
         }
       }
       if (el) {
@@ -1368,6 +1381,15 @@ async def drive(url):
                                          f"the Connect 4 icon is named {q.get('connect4Label')!r} — "
                                          "stripping trailing digits to remove a badge eats a name "
                                          "that legitimately ends in one"))
+                    if q.get("musicWidget") and not q.get("musicHasSeek"):
+                        problems.append((label, "music-widget-no-seek",
+                                         "the Now-playing widget has no seek row — that is the piece "
+                                         "that fills the middle of the panel"))
+                    if (q.get("musicGap") or 0) > 30:
+                        problems.append((label, "music-widget-hollow",
+                                         f"the widest gap between the Now-playing widget's rows is "
+                                         f"{q.get('musicGap')}% of its body — the panel is mostly "
+                                         "empty space in the middle again"))
                     if q.get("adminBlack"):
                         problems.append((label, "admin-window-black-after-move",
                                          "moving the Admin window left BOTH halves hidden — the feed "

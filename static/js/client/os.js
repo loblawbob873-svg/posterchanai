@@ -1669,6 +1669,8 @@
   }
 
   const _wgtNum = (n, d) => (typeof n === 'number' && isFinite(n)) ? n.toFixed(d) : '–';
+  const _mmss = (s) => { s = Math.max(0, Math.floor(s || 0));
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 
   /* WMO weather codes → a glyph and a word. Open-Meteo reports the code; everything human about it
    * is ours. Grouped rather than enumerated: the distinctions between "slight" and "moderate" drizzle
@@ -1776,6 +1778,10 @@
               <div class="wgt-mnext wgt-dim"></div>
             </div>
           </div>
+          <div class="wgt-mseek" data-seek role="slider" tabindex="0" aria-label="Seek">
+            <div class="wgt-mseekfill"></div>
+          </div>
+          <div class="wgt-mtimes"><span class="wgt-mt0">0:00</span><span class="wgt-mt1">0:00</span></div>
           <div class="wgt-mctl">
             <button class="wgt-b wgt-bsh" data-m="shuffle" aria-label="Shuffle everything"
                     title="Shuffle your whole library">
@@ -1785,6 +1791,25 @@
             <button class="wgt-b" data-m="next" aria-label="Next">⏭</button>
             <button class="wgt-b" data-m="open" aria-label="Open Music">☰</button>
           </div></div>`;
+        // Press anywhere on the bar to move: the widget reports a FRACTION, since it knows where you
+        // pressed and not how long the track is.
+        const bar = $('[data-seek]', el);
+        if(bar){
+          bar.onpointerdown = (ev) => {
+            ev.stopPropagation();                       // the panel is draggable; the bar is not a grip
+            const P = (PC().music && PC().music()) || null; if(!P || !P.seek) return;
+            const r = bar.getBoundingClientRect();
+            if(r.width) P.seek((ev.clientX - r.left) / r.width);
+          };
+          bar.onkeydown = (ev) => {
+            const P = (PC().music && PC().music()) || null; if(!P || !P.seek || !P.now) return;
+            const n = P.now(); if(!n || !n.d) return;
+            const step = ev.key === 'ArrowRight' ? 5 : ev.key === 'ArrowLeft' ? -5 : 0;
+            if(!step) return;
+            ev.preventDefault();
+            P.seek(Math.max(0, Math.min(1, (n.t + step) / n.d)));
+          };
+        }
         el.onclick = (ev) => {
           const b = ev.target.closest && ev.target.closest('[data-m]'); if(!b) return;
           ev.stopPropagation();
@@ -1838,6 +1863,15 @@
                               : (now && now.total > 1 ? (now.pos + ' of ' + now.total) : '');
         const art = $('.wgt-mart', el);
         if(art) art.classList.toggle('spin', !!(now && now.playing));
+        /* THE MIDDLE OF THE PANEL, which was a hole between the title and the transport. A player's
+         * missing piece is where you ARE in the track — and it is what makes the space earn itself.
+         * Updated from the player's existing once-a-second hook, so there is no new timer and nothing
+         * ticks while nothing plays. */
+        const fill = $('.wgt-mseekfill', el), t0 = $('.wgt-mt0', el), t1 = $('.wgt-mt1', el);
+        const dur = (now && now.d) || 0, at = (now && now.t) || 0;
+        if(fill) fill.style.width = (dur > 0 ? Math.max(0, Math.min(100, at / dur * 100)) : 0) + '%';
+        if(t0) t0.textContent = _mmss(at);
+        if(t1) t1.textContent = dur > 0 ? _mmss(dur) : '--:--';
         if(main) main.textContent = (now && now.playing) ? '⏸' : '▶';
         // Shuffle is a MODE, not an action — show whether it is on, or pressing it twice looks like
         // nothing happened the second time.

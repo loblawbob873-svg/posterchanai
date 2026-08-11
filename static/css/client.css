@@ -6485,11 +6485,14 @@ body.os-on #os-root{pointer-events:auto}
 
 /* Now playing. The panel used to be a title, a row of buttons, and a hole between them; the art and
    what-is-coming fill it with the two things a now-playing panel is for. */
-.wgt-music{display:flex;flex-direction:column;gap:10px;height:100%}
+/* The panel DISTRIBUTES rather than pinning the transport to the bottom and leaving a hole. The seek
+   row takes the middle, which is the piece a player was missing, and the art grows into whatever is
+   left on a large widget instead of floating in space. */
+.wgt-music{display:flex;flex-direction:column;gap:8px;height:100%;justify-content:space-between}
 .wgt-mtop{display:flex;align-items:center;gap:11px;min-width:0}
 /* A record, not a placeholder square: the disc turns while it is playing and stops when it stops,
    which is the state the transport button also carries and the one you read from across a room. */
-.wgt-mart{flex:none;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;
+.wgt-mart{flex:none;width:clamp(42px,22%,64px);aspect-ratio:1;height:auto;border-radius:50%;display:flex;align-items:center;
   justify-content:center;background:radial-gradient(circle at 50% 50%,rgba(var(--accent-rgb),.35) 0 22%,
   #150a2c 23% 100%);border:1px solid var(--line);box-shadow:inset 0 0 12px rgba(0,0,0,.55)}
 .wgt-mart .ic{width:17px;height:17px;color:var(--neon)}
@@ -6499,7 +6502,17 @@ body.os-on #os-root{pointer-events:auto}
 .wgt-mmeta{min-width:0;flex:1}
 .wgt-mnext{font-size:11px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wgt-mtitle{font-size:12.5px;color:#eaf0ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wgt-mctl{margin-top:auto;display:flex;align-items:center;justify-content:center;gap:6px}
+.wgt-mctl{display:flex;align-items:center;justify-content:center;gap:6px}
+/* Seek. A real control, so it is tall enough to hit with a thumb (the hit area is padded well past
+   the 4px groove) and it takes focus for keyboard seeking. */
+.wgt-mseek{position:relative;height:14px;display:flex;align-items:center;cursor:pointer;flex:none}
+.wgt-mseek::before{content:'';position:absolute;left:0;right:0;height:4px;border-radius:3px;
+  background:rgba(255,255,255,.10)}
+.wgt-mseekfill{position:relative;height:4px;border-radius:3px;width:0;
+  background:linear-gradient(90deg,var(--cyan,#0bb6cf),var(--neon));box-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
+.wgt-mseek:focus-visible{outline:1px solid var(--neon);outline-offset:3px;border-radius:3px}
+.wgt-mtimes{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);
+  font-variant-numeric:tabular-nums;margin-top:-4px;flex:none}
 .wgt-b{background:none;border:1px solid var(--line);border-radius:50%;width:30px;height:30px;
   color:var(--muted);cursor:pointer;font-size:12px;line-height:1;display:inline-flex;
   align-items:center;justify-content:center;transition:transform .12s ease,color .12s,border-color .12s,
