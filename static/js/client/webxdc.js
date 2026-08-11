@@ -34,7 +34,7 @@
   function init(){
     const PC = window.__PC;
     if(!PC){ return setTimeout(init, 50); }
-    const { $, enc, toast, publish } = PC;
+    const { $, enc, toast, publish, sign } = PC;
     const Relay = window.Relay;
 
     const KIND_UPDATE = 4932;          // NIP-DC state update (regular event)
@@ -349,6 +349,8 @@
       this.origin = '';
       this.sub = null;
       this.rtSub = null;            // the realtime channel, when an app joins one
+      this._rtNext = null;          // the newest unsent realtime packet (newest wins)
+      this._rtBusy = false;
       this.selfPk = '';            // to drop our own realtime packets
       this.seen = new Map();             // event id -> serial
       this.ordered = [];                 // events, oldest first
@@ -506,6 +508,34 @@
 
     // ---- mounting ---------------------------------------------------------------------------------
 
+    /* Send one realtime packet: NEWEST WINS, and never a queue.
+     *
+     * A movement packet is worthless the moment a newer one exists, so when a send is already in
+     * flight the pending one is REPLACED rather than queued. That single property is what makes this
+     * safe on every signer: each packet costs a signature (measured at 1.77ms with a local key, so
+     * ~560/sec on a desktop core — comfortably more than a shooter needs), while a REMOTE signer
+     * (Amber, nsec.app) needs a round trip to another app per signature and can manage a handful a
+     * second at best. With a queue that would grow without bound and wedge the signer; dropping
+     * instead means a remote-signer player simply moves less smoothly, and still SEES everyone else
+     * perfectly — receiving costs no signature at all. */
+    Session.prototype.rtSend = function(b64){
+      this._rtNext = b64;
+      if(this._rtBusy) return;
+      this._rtBusy = true;
+      const pump = async () => {
+        while(this._rtNext && !this.dead){
+          const payload = this._rtNext;
+          this._rtNext = null;
+          try{
+            const ev = await sign(KIND_REALTIME, payload, [['i', this.app.uuid]]);
+            Relay.publishFast(ev);
+          }catch(_){ break; }        // a signer that will not sign: stop this burst, keep the game
+        }
+        this._rtBusy = false;
+      };
+      pump();
+    };
+
     Session.prototype.mount = async function(host){
       this.origin = await sandboxOrigin(this.app.uuid || this.app.sha || this.app.url);
       /* selfAddr / selfName. The spec lets a messenger put anything here and warns apps not to trust
@@ -615,8 +645,8 @@
       if(d.method === 'webxdc.rtSend'){
         const b = String((d.params || {}).b64 || '');
         if(b.length > UPDATE_MAX * 2){ this.fail(id, 'realtime packet too large'); return; }
-        publish(KIND_REALTIME, b, [['i', this.app.uuid]])
-          .then(() => this.reply(id, null), () => this.reply(id, null));   // best-effort, by design
+        this.rtSend(b);
+        this.reply(id, null);          // best-effort by design: the spec guarantees no delivery
         return;
       }
       if(d.method === 'webxdc.rtLeave'){

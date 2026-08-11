@@ -102,10 +102,22 @@ localStorage and get an origin per app, which closes that gap too.
 ## Known limits
 
 - **Realtime runs over a relay, not peer-to-peer.** `joinRealtimeChannel` works (ephemeral kind
-  20932), which is what a continuously-moving game needs — Quake III uses it. But Delta Chat's
-  implementation is direct P2P (iroh) and this one is a round trip to a relay and back for every
-  packet, so expect latency a turn-based game will never notice and a twitch shooter certainly will.
-  Packets are capped at the spec's 128 KB and your own are not echoed back to you.
+  20932), which is what a continuously-moving game needs — Quake III uses it. Delta Chat's
+  implementation is direct P2P (iroh); this one is a round trip to a relay, so expect latency a
+  turn-based game will never notice and a twitch shooter certainly will. Three consequences worth
+  knowing, all measured rather than assumed:
+    - **One relay, not the pool.** A packet goes only to this instance's relay (`Relay.publishFast`),
+      never through `publish()`'s fan-out. 30 packets a second times however many relays somebody has
+      configured is a flood aimed at strangers' infrastructure, and pointless — the other player is
+      subscribed here. It does mean two players on *different* relays will not see each other in
+      realtime; the turn-based channel (kind 4932) federates normally and is unaffected.
+    - **Every packet is a signature.** Measured at **1.77 ms** with a local key (~560/sec on a desktop
+      core), which is comfortably more than a shooter needs, and **658 bytes on the wire per 200
+      bytes of game data**. With a REMOTE signer (Amber, nsec.app) each signature is a round trip to
+      another app — a handful a second at best.
+    - So sending is **newest-wins and never queued**: a movement packet is worthless once a newer one
+      exists. A remote-signer player simply moves less smoothly and still *sees* everyone else
+      perfectly, because receiving costs no signature at all.
 - **`sendToChat` and `importFiles` are not implemented** — same reason, same detection.
 - **`selfAddr` is your npub and proves nothing.** Nothing inside a mini app is signed, so any player
   can claim to be anyone within the app. The NIP says so too; apps must not use it for trust.

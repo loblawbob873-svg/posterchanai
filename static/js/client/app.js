@@ -27639,6 +27639,10 @@
     // uiPrompt for the same reason (meme.js: naming a saved project) — window.prompt wedges focus
     // exactly like window.confirm, and it is the ONLY way a sub-module can ask for a line of text.
     uploadBlob, selfProof, uiConfirm, uiPrompt,
+    /* Sign an event WITHOUT publishing it. The webxdc realtime channel needs this: its packets go to
+     * one relay by hand (Relay.publishFast) rather than through publish()'s fan-out, because a game
+     * sends tens a second and federating those is a flood with no recipient. */
+    sign,
     /* Record what an uploaded URL IS, so the composer's imeta tags carry it. The map is what
      * imetaTagsFor reads, and a mini app needs two properties an image does not: its mime type and
      * the `webxdc` identifier that makes two people the same game. */

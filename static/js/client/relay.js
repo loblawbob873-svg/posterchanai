@@ -473,6 +473,23 @@
         this._send(['EVENT', event]);
       });
     },
+    /* Fire-and-forget publish to ONE relay. For the webxdc realtime channel (ephemeral kind 20932),
+     * which is the only thing here that sends tens of events a SECOND.
+     *
+     * NOT THE POOL, deliberately. publish() fans out to every configured relay, so a game running at
+     * 30 packets a second would be 30 × however many relays somebody has — a flood aimed at strangers'
+     * infrastructure, which will get the user rate-limited or banned, to no purpose: the peers are on
+     * this instance's relay, which is where the other player is subscribed. Federating a packet whose
+     * whole meaning expires in 50ms is the definition of waste.
+     *
+     * And no OK waiter: an acknowledgement that arrives after the packet is stale tells nobody
+     * anything, and one waiter per packet is a Map that grows at 30 entries a second. */
+    publishFast(event, url){
+      const c = this._conns.get(url || this.url) || [...this._conns.values()][0];
+      if (!c || !c.ws || c.ws.readyState !== 1) return false;
+      c._send(['EVENT', event]);
+      return true;
+    },
     // One-shot publish to EXTERNAL relays NOT in the pool — e.g. a DM recipient's NIP-17 inbox relays
     // (their kind-10050) so gift-wrapped DMs reach clients like 0xchat/Amethyst that don't read our
     // relay. Opens a short-lived socket per URL, sends the EVENT, waits for its OK, then closes — no
