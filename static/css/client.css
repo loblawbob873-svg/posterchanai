@@ -4552,6 +4552,18 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .stream-layout{display:flex;flex-direction:column;gap:14px;align-items:stretch}
 .stream-layout.chat-hidden .stream-chat{display:none}
 .stream-main{min-width:0}
+/* Your own live stream, on your own stream page. Takes the PLAYER's place — it is the same shape and
+   the same weight, so landing here after Go Live does not look like a page that failed to load a
+   video. See the note beside `selfLive` in app.js for why there is no player here at all. */
+.st-self{border:1px solid var(--line);border-radius:14px;padding:16px 16px 14px;
+  background:linear-gradient(180deg,rgba(255,0,80,.10),transparent 70%);
+  display:flex;flex-direction:column;gap:10px}
+/* .live-badge is position:absolute for the stream CARD's thumbnail (top:9px/left:9px). Dropped into
+   flow it would fly to the nearest positioned ancestor — the same correction .av-title and
+   .streams-top each had to make. */
+.st-selfhd{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:700}
+.st-selfhd .live-badge{position:static;font-size:12px;display:inline-flex;align-items:center;
+  -webkit-text-fill-color:#fff}
 .stream-chat{width:100%;flex:none;display:flex;flex-direction:column;border:1px solid var(--line,#2a2a3a);border-radius:12px;overflow:hidden;height:44vh}
 .st-chat-hd{padding:10px 12px;font-weight:700;border-bottom:1px solid var(--line,#2a2a3a);background:rgba(255,255,255,.03)}
 .scm-list{flex:1;overflow-y:auto;padding:8px 10px;display:flex;flex-direction:column;gap:8px}

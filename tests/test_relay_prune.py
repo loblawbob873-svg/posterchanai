@@ -287,8 +287,9 @@ def test_default_chunk_is_bounded():
 
 
 def test_calendars_and_contacts_survive_every_cleaner(store_factory):
-    """A calendar and an addressbook are kind 30078 (`pcai:cal:*`, `pcai:calmeta:*`), and they are
-    written by the app itself, so they land with `origin = 'direct'`.
+    """EVERY app document — calendars, contacts, notes, the vault, the budget, the desktop
+    arrangement, this node's own settings — is kind 30078 written by the app itself, so it lands
+    with `origin = 'direct'`.
 
     That combination is the one worth pinning by name. Everything a person publishes normally is
     protected by the kind allowlist, but PAY-TO-STAY's tiered rules are the only rules in this file
@@ -314,8 +315,23 @@ def test_calendars_and_contacts_survive_every_cleaner(store_factory):
         # DISTINCT `d` tags. Kind 30078 is parameterized-replaceable, so events sharing one
         # (pubkey, kind, d) coordinate collapse to the newest — seven tagless events would prove
         # nothing except that replacement works.
-        dtags = [f"pcai:cal:main:uid-{i}" for i in range(1, 6)] + \
-                ["pcai:calmeta:main", "pcai:cal:contacts:card-1"]
+        # EVERY app document, by name. The kind allowlist protects all of kind 30078 at once, so any
+        # ONE of these would prove the rule — but the test is also the list of what is being
+        # protected, and a name that is not on it is a thing nobody checks for. The desktop
+        # arrangement is the worked example: it is the only document here whose loss looks like
+        # SUCCESS, because a desktop that cannot read it silently draws the DEFAULT layout, which is
+        # indistinguishable from never having arranged one. Nobody files that as data loss.
+        dtags = [f"pcai:cal:main:uid-{i}" for i in range(1, 6)] + [
+            "pcai:calmeta:main", "pcai:cal:contacts:card-1",
+            "pcai:desktop",                    # icon order, folders, hidden icons, WIDGETS
+            "pcai:note:abc", "pcai:notefolder:xyz",
+            "pcai:budget",
+            "pcai:pw:1", "pcai:pwfolder:1", "pcai:pwkey",
+            "pcai:playlist:mix",
+            "pcai:setting:ssh_hosts",          # the node's own settings live here too
+            "pcai:files-index", "pcai:sync:Documents",
+            "pcai:kv:uptime", "pcai:kv:paid_retention",
+        ]
         cal = []
         for i, d in enumerate(dtags, start=1):          # events, their metadata, and a vCard
             ev = _ev(i, kind=30078, age_days=400, expiration=soon, pubkey=stranger)
@@ -332,11 +348,14 @@ def test_calendars_and_contacts_survive_every_cleaner(store_factory):
         for _ in range(4):
             await store.prune(chunk=3)
 
-        left = await store.query([{"kinds": [30078], "limit": 50}])
-        assert len(left) == 7, (
-            "a calendar/addressbook was pruned — appointments and contacts are gone and there is no "
-            "second copy. Keep 30078 out of _PRUNABLE_KINDS and in _NEVER_EXPIRE_KINDS; never relax "
-            "this test")
+        left = await store.query([{"kinds": [30078], "limit": 60}])
+        kept = {(e["tags"][0][1]) for e in left if e.get("tags")}
+        missing = sorted(set(dtags) - kept)
+        assert not missing, (
+            f"an app document was pruned: {missing}. There is no second copy of any of these — a "
+            "calendar, a phone book, a notebook, a password vault, a desktop arrangement. Keep 30078 "
+            "out of _PRUNABLE_KINDS and in _NEVER_EXPIRE_KINDS; never relax this test")
+        assert len(left) == len(dtags)
 
     _run(go)
 

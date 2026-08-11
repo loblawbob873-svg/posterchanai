@@ -7139,6 +7139,12 @@
   }
   function openStream(e){
     VIEW='stream'; _clearNav(); $('#view-title').textContent='Stream';
+    /* The desktop has to be TOLD, because this navigates in place: openStream is reached by tapping a
+     * card inside the Streams window (and now by going live), and it sets VIEW directly rather than
+     * going through renderView, which is where noteView normally runs. Without this the window still
+     * believes it is holding the streams LIST, so a drag — anything that repaints it — throws the
+     * stream away and puts the list back. */
+    try{ if(window.PCOS && PCOS.noteView) PCOS.noteView('stream'); }catch(_){}
     const feed=$('#feed'); const hpk=streamHost(e); const p=profOf(hpk); needProfile(hpk);
     const _tag=(n)=>(e.tags.find(t=>t[0]===n)||[])[1]||'';
     const title=_tag('title')||'(untitled stream)';
@@ -7162,13 +7168,33 @@
     // fixed list can't know where an unfamiliar client put the room.
     const sRelays=(e.tags.filter(t=>t[0]==='relays')[0]||[]).slice(1).filter(u=>/^wss?:\/\//i.test(u));
     const isMine = !!(ME && e.pubkey===ME.pubkey);
+    /* YOU ARE BROADCASTING THIS, FROM THIS DEVICE.
+     *
+     * Landing here after Go Live (see _afterGoLive) means the streamer now opens their own live
+     * stream routinely, and playing it back is actively harmful: the audio arrives ~10 seconds late
+     * through the speakers into the mic that is broadcasting it, and the browser downloads the exact
+     * video this machine is uploading — on a laptop tethered to a phone that is the upload budget
+     * gone. What is worth being on this page for is the chat, the headcount and the link. */
+    const selfLive = isMine && st==='live' && !!(_liveStream || _phoneStream);
+    let watchLink='';
+    if(selfLive){ try{ watchLink=_webLink(NT().nip19.naddrEncode({ identifier:dtag, pubkey:e.pubkey,
+                         kind:30311, relays:[CFG && CFG.relay_url].filter(Boolean) })); }catch(_){} }
     feed.innerHTML=`<div class="stream-view">
       <div class="row" style="justify-content:space-between"><button class="btn btn-ghost small" id="st-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Streams</button><span style="display:flex;gap:6px">${isMine?'':`<button class="btn btn-neon small" id="st-tip"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Tip</button>`}<button class="btn btn-cyan small" id="st-chat-toggle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chat"></use></svg>Chat</button>${isDesktop()?`<button class="btn btn-cyan small" id="st-window" title="Open this stream and its live chat in a separate window you can drag to another monitor">🗔 Window</button>`:''}${isMine?`<button class="btn btn-ghost small" id="st-del" style="color:var(--danger,#e0245e)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}</span></div>
       <h1 class="av-title">${enc(title)}${st==='live'?' <span class="live-badge">● LIVE</span>':''}</h1>
       <div class="av-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${st?`<span class="muted small">· ${enc(st)}</span>`:''}<span class="muted small" id="st-viewers">${_viewersTag(e)?` · 👁 ${enc(_viewersTag(e))} watching`:''}</span></div>
       <div class="stream-layout${ClientSettings.get('streamChatHidden',false)?' chat-hidden':''}">
         <div class="stream-main">
-          ${(url||st==='ended')?`<video class="stream-player" id="st-video" controls playsinline></video>
+          ${selfLive?`<div class="st-self">
+            <div class="st-selfhd"><span class="live-badge">● LIVE</span> You’re broadcasting</div>
+            <div class="muted small">The player is off on purpose — you are streaming from this
+              device, so playing it back would echo your own mic and re-download the video you are
+              uploading. Your chat and headcount are live${isDesktop()?' beside this':' below'}.</div>
+            <div class="row" style="gap:8px;flex-wrap:wrap">
+              ${watchLink?`<button class="btn btn-neon small" id="st-selflink"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy watch link</button>`:''}
+              <button class="btn btn-ghost small" id="st-selfprev"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg>Preview it anyway (muted)</button>
+            </div></div>`:''}
+          ${(url||st==='ended')?`<video class="stream-player" id="st-video" controls playsinline${selfLive?' hidden':''}></video>
             <div class="muted small" id="st-note"></div>
             <div class="row">${isDesktop()&&url?`<button class="btn btn-ghost small" id="st-pop">⧉ Pop out player</button>`:''}${url?`<a class="btn btn-ghost small" href="${enc(url)}" target="_blank" rel="noopener"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg>Open stream URL</a>`:''}</div>`:'<div class="empty">No stream URL provided.</div>'}
           ${summary?`<div class="about">${linkify(summary)}</div>`:''}
@@ -7226,7 +7252,23 @@
         attachStream(playUrl);
         if(vurl) _backfillRecordingTag(e, vurl);
       })();
-    } else if(url){ attachStream(url); }
+    } else if(url && !selfLive){ attachStream(url); }
+    /* Preview is OPT-IN and starts MUTED — the echo is the reason the player is off, so the way back
+     * in must not be able to cause it with one click. Headphones or a muted mic make this fine, and
+     * "is my encoder actually sending frames" is a real question, so it is one button away. */
+    { const pv=$('#st-selfprev'); if(pv) pv.onclick=()=>{
+        const v=$('#st-video'); if(!v || !url) return;
+        v.hidden=false; v.muted=true; v.volume=0;
+        attachStream(url);
+        pv.remove();
+        _streamNote('Preview is muted. Unmuting it while your mic is open will echo.');
+      }; }
+    // _copyFallback, not a bare catch: navigator.clipboard is REFUSED outright in a few of the
+    // places this runs (an insecure origin, a WebView without permission), and this is the one
+    // string a streamer has to be able to get out of the app.
+    { const cl=$('#st-selflink'); if(cl) cl.onclick=async()=>{
+        try{ await navigator.clipboard.writeText(watchLink); toast('watch link copied'); }
+        catch(_){ _copyFallback('Your watch link:', watchLink); } }; }
     { const pb=$('#st-pop'); if(pb) pb.onclick=()=>popOutStream(e); }
     { const wb=$('#st-window'); if(wb) wb.onclick=()=>openStreamWindow(e); }
     if(!ClientSettings.get('streamChatHidden',false)) _streamChat(saddr, haddr, sRelays);   // don't start the sub if chat is hidden
@@ -7744,7 +7786,8 @@
     top.after(b);
     feed.querySelector('#ib-go').onclick=async(ev)=>{ const btn=ev.currentTarget; btn.disabled=true;
       const t=(feed.querySelector('#ib-title').value||'').trim()||'Live stream';
-      try{ await _publishLive(info, t); _startLiveHb(); toast('🔴 you’re live — announced on Nostr'); switchView('streams'); }
+      try{ const ev=await _publishLive(info, t); _startLiveHb();
+        toast('🔴 you’re live — announced on Nostr'); _afterGoLive(ev, false); }
       catch(_){ btn.disabled=false; toast('couldn’t announce the stream'); } };
   }
   async function _goLive(){
@@ -7885,9 +7928,9 @@
         const t=title(), a=announce(), c=cover(), s=src()||'obs';
         if(s==='cam'){ const f=facing(); closeModal(); return _phoneGoLive(info, t, a, c, { facing:f }); }
         if(s==='screen'){ closeModal(); return _screenGoLive(info, t, a, c); }
-        try{ await _publishLive(info, t, c); _startLiveHb();   // OBS path: HLS heartbeat detects OBS stopping
+        try{ const ev=await _publishLive(info, t, c); _startLiveHb();   // OBS path: HLS heartbeat detects OBS stopping
           if(a) await _announceStreamPost(info, t);
-          closeModal(); toast('🔴 you’re live — announced on Nostr'); switchView('streams');
+          closeModal(); toast('🔴 you’re live — announced on Nostr'); _afterGoLive(ev, false);
         }catch(_){ toast('couldn’t announce the stream'); }
       };
     });
@@ -8006,6 +8049,33 @@
     if(!(r && r.ok)) throw new Error('stream announce not stored');
     _mirrorStream(r);          // …and to the relays every OTHER client reads, or nobody can find it
     _parkEndSentinel(_liveStream);
+    return r.ev;               // the event itself, so the caller can land you on your own stream
+  }
+
+  /* WHERE YOU LAND AFTER GOING LIVE.
+   *
+   * Going live used to leave you either on the Streams LIST (the OBS path) or staring at a
+   * full-screen preview of your own face with nothing else reachable (the camera/screen paths) — so
+   * the chat, the headcount and the share link, which are the entire reason to have a stream page,
+   * were somewhere you had to go and find. Now the broadcast shrinks to its thumbnail and the app
+   * opens YOUR stream.
+   *
+   * DESKTOP ONLY, deliberately. On a phone the full-screen overlay IS the interface — Stop, Mute,
+   * Flip and Chat are its buttons, and shrinking it to a corner thumbnail to make room for a page
+   * you did not ask for takes the controls away at the one moment you are most likely to need them.
+   * Mobile keeps exactly what it had.
+   *
+   * `fromOverlay` distinguishes the two go-live routes: the camera/screen paths are holding a
+   * full-screen self-view that has to be minimised first, the OBS path has no overlay at all (and
+   * already navigated to the list on every platform, which is what mobile keeps doing). */
+  function _afterGoLive(ev, fromOverlay){
+    if(!isDesktop()){
+      if(!fromOverlay) switchView('streams');
+      return;
+    }
+    if(fromOverlay) _setMiniLive(true);
+    switchView('streams');          // creates/focuses the Streams window in desktop mode
+    if(ev) openStream(ev);          // …then land on the stream itself, not the list
   }
   // Ghost-LIVE guard. Our 30311 can only be signed HERE (the key never leaves the browser), so if this tab
   // dies mid-stream — closed, crashed, phone asleep — nothing would ever mark the stream ended and it would
@@ -8125,11 +8195,13 @@
     // during the WebRTC→HLS remux warm-up and would falsely kill a healthy stream). End if the pc drops.
     pc.onconnectionstatechange=()=>{ if(_phoneStream && _phoneStream.pc===pc && (pc.connectionState==='failed'||pc.connectionState==='closed')) _endLive(); };
     _goingLive=false;
-    try{ await _publishLive(info, title, cover); }catch(_){ toast('live — but couldn’t announce on Nostr yet'); }
+    let _ev=null;
+    try{ _ev=await _publishLive(info, title, cover); }catch(_){ toast('live — but couldn’t announce on Nostr yet'); }
     if(doAnnounce){ try{ await _announceStreamPost(info, title); }catch(_){} }
     _phoneLiveOverlay();
     toast(wantScreen ? '🔴 you’re live — sharing your screen'
                      : (isDesktop() ? '🔴 you’re live from your webcam' : '🔴 you’re live from your phone'));
+    _afterGoLive(_ev, true);
   }
   function _phoneLiveOverlay(){
     let el=document.getElementById('phone-live'); if(el) el.remove();
@@ -8505,9 +8577,11 @@
     catch(e){ _goingLive=false; if(_phoneStream===ps){ toast((e&&e.message)||'the screen stream didn’t connect'); _endLive(); } return; }
     if(_phoneStream!==ps){ _goingLive=false; return; }   // they hit Stop while it was connecting
     _goingLive=false;
-    try{ await _publishLive(info, title, cover); }catch(_){ toast('live — but couldn’t announce on Nostr yet'); }
+    let _ev=null;
+    try{ _ev=await _publishLive(info, title, cover); }catch(_){ toast('live — but couldn’t announce on Nostr yet'); }
     if(doAnnounce){ try{ await _announceStreamPost(info, title); }catch(_){} }
     toast('🔴 you’re live — sharing your screen');
+    _afterGoLive(_ev, true);
   }
   // Hand a running camera stream over to the screen, keeping the same token (so the kind-30311 — and every
   // viewer's open player — survives the switch). MediaMTX allows ONE publisher per path, so the camera has to
