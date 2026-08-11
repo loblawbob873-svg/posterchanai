@@ -178,6 +178,33 @@
        * four-word verdict at somebody staring at a black rectangle. */
       var m = String((e && (e.name + ': ' + e.message)) || e);
       var insecure = /SecurityError|insecure|not allowed/i.test(m);
+      /* THE STANDARD REMEDY, TRIED BEFORE GIVING UP. Firefox blocks this because the frame is
+       * cross-origin and therefore third-party storage; the Storage Access API is precisely the
+       * mechanism for a frame to ask for its own storage back, and it requires a USER GESTURE inside
+       * the frame — which is why this is a button rather than an automatic retry. If the grant comes
+       * through, registration is attempted again; if it still refuses, the honest message below is
+       * what is left. */
+      if(insecure && document.requestStorageAccess){
+        say('');
+        var b = document.createElement('button');
+        b.textContent = 'Allow this app to run';
+        b.style.cssText = 'padding:10px 18px;border-radius:10px;border:1px solid #555;background:#111;'
+                        + 'color:#ddd;font:inherit;cursor:pointer';
+        msg.appendChild(b);
+        b.onclick = function(){
+          say('asking your browser for permission…');
+          document.requestStorageAccess().then(function(){
+            started = false;            // let boot() run again now that storage is ours
+            boot(params);
+          }, function(){
+            fail('Firefox refused: it will not run a service worker inside an embedded frame from '
+               + 'another origin, which is how mini apps are sandboxed. Click the SHIELD in the '
+               + 'address bar and turn Enhanced Tracking Protection off for this site, or open it in '
+               + 'Chrome, Edge or Brave — where it works as-is.');
+          });
+        };
+        return;
+      }
       fail(insecure
         ? 'Firefox is blocking this: it will not run a service worker inside an embedded frame from '
           + 'another origin, which is how mini apps are sandboxed. Click the SHIELD in the address '
