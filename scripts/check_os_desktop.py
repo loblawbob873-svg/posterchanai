@@ -649,7 +649,34 @@ LAYOUT = r"""(async () => {
                fillH: Math.round(r.height / desk.height * 100) };
     });
     out.deskBox = [Math.round(desk.width), Math.round(desk.height)];
-    for (const w of wins) { const x = w.querySelector('.osw-x'); if (x) x.click(); }
+
+    /* CLOSING THE ADMIN PANEL MUST NOT BLACK OUT THE NEXT WINDOW.
+     *
+     * Admin does not render into #feed — it HIDES it (display:none) and shows an iframe host beside
+     * it. There is one #feed and every window borrows it in turn, so that inline style travels: the
+     * window focused after Admin closes inherits a hidden feed, and a window restored from its park
+     * skips the repaint by design, so nothing ever puts it back. Reported as "closing Admin Panel
+     * makes the Social window black" — and then "it makes ANY open window black".
+     *
+     * Reproduced without the real panel (it is a cross-origin iframe and an auth session): what the
+     * panel actually does to the shared element is the one line below. */
+    const feed = document.querySelector('#feed');
+    if (feed && wins.length >= 2) {
+      feed.style.display = 'none';                       // ← what _adminFrame does
+      const x = wins[wins.length - 1].querySelector('.osw-x');
+      if (x) x.click();
+      await sleep(160);
+      out.feedHiddenAfterClose = getComputedStyle(feed).display === 'none';
+      out.feedBlankWin = (() => {                        // …and is anything actually showing?
+        const w = document.querySelector('.osw');
+        if (!w) return false;
+        const body = w.querySelector('.osw-body');
+        return !!body && body.getBoundingClientRect().height > 40 && !body.offsetParent === false
+               && getComputedStyle(feed).display === 'none' && feed.parentElement === body;
+      })();
+      feed.style.display = '';
+    }
+    for (const w of [...document.querySelectorAll('.osw')]) { const x = w.querySelector('.osw-x'); if (x) x.click(); }
     await sleep(120);
   }
 
@@ -1175,6 +1202,16 @@ async def drive(url):
                                              f"{w['v']!r} opened at {w['fillW']}%x{w['fillH']}% of a "
                                              f"{q.get('deskBox')} desktop — the first thing anyone does "
                                              "with a window that size is resize it"))
+                    if q.get("feedHiddenAfterClose"):
+                        problems.append((label, "window-black-after-admin",
+                                         "the window focused after another one closed inherited a "
+                                         "HIDDEN #feed and nothing put it back — its content is live "
+                                         "and unreachable, which on screen is a black window. The "
+                                         "admin panel hides the shared feed to show its iframe; "
+                                         "whoever takes the feed next has to decide whether it is "
+                                         "visible (os.js _feedVisibleFor), because a window restored "
+                                         "from its park deliberately skips the repaint that used to "
+                                         "be the only thing clearing it."))
                     if not q.get("hasBell") or not q.get("bellReachable"):
                         problems.append((label, "no-noti-bell",
                                          "the taskbar has no clickable notification bell — "

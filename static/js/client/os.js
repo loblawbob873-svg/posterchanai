@@ -733,11 +733,32 @@
     put();
   }
 
+  /* WHOEVER TAKES THE FEED DECIDES WHETHER IT IS VISIBLE.
+   *
+   * The admin panel does not render INTO the feed — it hides it (`feed.style.display='none'` in
+   * app.js's _adminFrame) and shows a persistent iframe host beside it. That inline style lives on
+   * the element, and on the desktop there is exactly ONE #feed that every window borrows in turn.
+   * app.js clears it only when it RENDERS a non-admin view, and a window restored from its park
+   * deliberately skips the repaint (its nodes are still live — that is the whole point of parking).
+   *
+   * So closing the Admin window handed the next window a display:none feed full of its own restored
+   * content and never drew it: "closing Admin Panel makes the Social window black". Nothing was lost
+   * and nothing threw — the element was simply invisible. Decide it here, at the one place the feed
+   * changes hands, rather than relying on a repaint that is allowed not to happen. */
+  function _feedVisibleFor(view){
+    if(!realFeed) return;
+    const admin = (view === 'admin');
+    realFeed.style.display = admin ? 'none' : '';
+    const ah = document.getElementById('admin-host');
+    if(ah && !admin) ah.style.display = 'none';
+  }
+
   function claimFeed(w){
-    if(!realFeed || realFeed.parentElement === w.body) return;
+    if(!realFeed || realFeed.parentElement === w.body){ _feedVisibleFor(w.appView || w.view); return; }
     const holder = wins.find(x => realFeed.parentElement === x.body);
     if(holder) snapshot(holder);
     w.body.appendChild(realFeed);
+    _feedVisibleFor(w.appView || w.view);
     if(w.parked && w.slot){
       // Move this window's own nodes back into the live feed, exactly as they were.
       realFeed.innerHTML = '';
@@ -761,6 +782,9 @@
     const holder = wins.find(x => realFeed.parentElement === x.body);
     if(holder && park) snapshot(holder);
     realHome.appendChild(realFeed);
+    // …and the same for the way back to classic: the feed can arrive there hidden by the admin panel
+    // (see _feedVisibleFor), which would be a blank main column with nothing to explain it.
+    try{ _feedVisibleFor(PC().VIEW); }catch(_){ _feedVisibleFor(''); }
     try{ PC().syncPlayer && PC().syncPlayer(); }catch(_){}   // the music app may have just been unmounted
     // The admin panel's iframe host is a sibling of the feed and follows it (see _adminFrame). Send
     // it home too, or leaving the desktop strands it in a window that is about to be destroyed —
