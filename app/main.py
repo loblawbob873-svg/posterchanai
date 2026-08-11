@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 from urllib.parse import quote
 import os
+import re
 import logging
 import threading
 
@@ -1211,15 +1212,73 @@ async def admin_page(
     return resp
 
 
+"""The webxdc sandbox label: 40+ characters of base36 as the FIRST DNS label.
+
+The client derives it as an HMAC of a per-device secret and the app's id (see webxdc.js), so it is
+50 characters of [0-9a-z] and cannot collide with a real subdomain like `news` or `ai`. Matching on
+it is what lets this app serve two different things at `/sw.js` depending on which host asked."""
+_XDC_HOST = re.compile(r"^[a-z0-9]{40,63}\.")
+
+
+def _is_sandbox_host(request: Request) -> bool:
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    return bool(_XDC_HOST.match(host))
+
+
 @app.get("/sw.js")
-async def service_worker():
-    """Serve service worker from root for proper PWA scope"""
+async def service_worker(request: Request):
+    """Serve service worker from root for proper PWA scope.
+
+    TWO different workers live at this path, and which one is right depends on the HOST.
+
+    On the instance's own hostname it is the PWA/APK worker (offline shell, media cache). On a webxdc
+    sandbox subdomain it is the worker that serves a mini app's files out of the .xdc the client
+    unzipped — a completely different job, on a deliberately different origin, and it has to be at
+    the ROOT because a service worker cannot control paths above the one it is served from.
+
+    Serving both from here rather than from a separate nginx root means a wildcard vhost is a plain
+    proxy_pass like every other one, and a Docker deployment needs no extra file serving at all.
+    """
+    if _is_sandbox_host(request):
+        sb = os.path.join(os.path.dirname(__file__), "..", "static", "webxdc-sandbox", "sw.js")
+        return FileResponse(
+            sb,
+            media_type="text/javascript",
+            headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-store"},
+        )
     sw_path = os.path.join(os.path.dirname(__file__), "..", "static", "sw.js")
     return FileResponse(
         sw_path,
         media_type="application/javascript",
         headers={"Service-Worker-Allowed": "/"}
     )
+
+
+@app.get("/__sandbox__/")
+@app.get("/__sandbox__/index.html")
+async def webxdc_sandbox_loader(request: Request):
+    """The webxdc sandbox loader — the outer document of a running mini app.
+
+    Only ever served on a sandbox subdomain: on the instance's own hostname this path is nothing, and
+    answering it there would put a page whose whole purpose is to run untrusted code on the origin
+    that holds the user's session. `frame-ancestors` is the other half — this document is meant to be
+    framed by the client and by nobody else.
+    """
+    if not _is_sandbox_host(request):
+        raise StarletteHTTPException(status_code=404, detail="not found")
+    path = os.path.join(os.path.dirname(__file__), "..", "static", "webxdc-sandbox", "index.html")
+    # frame-ancestors is the INSTANCE — the sandbox host is `<label>.<instance>`, so dropping the
+    # label gives the one origin allowed to embed this. Naming it rather than `*` means a page
+    # somewhere else cannot frame a mini app and talk to it as if it were the client.
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    parent = host.split(".", 1)[1] if "." in host else host
+    return FileResponse(path, media_type="text/html", headers={
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy":
+            "default-src 'self' 'unsafe-inline'; connect-src 'none'; "
+            f"frame-ancestors https://{parent}",
+    })
 
 
 @app.get("/search", response_class=HTMLResponse)

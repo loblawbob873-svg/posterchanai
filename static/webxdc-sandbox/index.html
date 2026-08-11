@@ -1,0 +1,155 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>webxdc sandbox</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;color:#888;
+    font:13px system-ui,-apple-system,"Segoe UI",sans-serif}
+  #f{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;background:#000}
+  #m{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;
+    padding:20px}
+</style>
+<div id="m">starting…</div>
+<script>
+/* THE OUTER FRAME of the webxdc sandbox. It is served from a WILDCARD subdomain — a label derived
+ * per app instance — and its whole job is to be a different origin from the client, so that a game
+ * somebody posted cannot read the localStorage and IndexedDB the client keeps its keys and its
+ * account in. That is the reason this file exists at all; everything below is plumbing for it.
+ *
+ * WHY THERE ARE TWO FRAMES. The service worker serves the app's files, and it gets them by asking a
+ * page for them — but a navigation request has no client yet to ask (`clientId` is empty, the
+ * document does not exist until the response arrives), so a worker cannot serve the very page it
+ * would need to talk to. So the app runs in a NESTED iframe, same origin, and this outer document
+ * stays alive as the client the worker asks. It also owns the one link that crosses origins: the
+ * postMessage channel to the PosterChan tab that holds the .xdc.
+ *
+ * NOTHING IS FETCHED FROM ANYWHERE. This file and sw.js are the only two things this origin serves;
+ * every byte of the app comes back over postMessage from the parent, which unzipped it. That is what
+ * makes "MUST deny all forms of Internet access" (the webxdc spec's one hard requirement) true by
+ * construction rather than by a promise.
+ */
+(function(){
+  'use strict';
+  var VERSION = 1;
+  var msg = document.getElementById('m');
+  var parentOrigin = null;            // learned from the first message; never assumed
+  var pending = {};                   // rpc id -> resolve
+  var nextId = 1;
+  var started = false;
+
+  function say(t){ if(msg) msg.textContent = t; }
+  function fail(t){ say(t); try{ post({ jsonrpc:'2.0', method:'sandbox.error', params:{ message:t } }); }catch(_){} }
+
+  function post(m, transfer){
+    if(!parentOrigin) return;
+    try{ parent.postMessage(m, parentOrigin, transfer || []); }catch(_){}
+  }
+
+  /* A request to the parent, which is the only place file bytes can come from. */
+  function rpc(method, params){
+    var id = nextId++;
+    return new Promise(function(resolve, reject){
+      pending[id] = { resolve: resolve, reject: reject };
+      post({ jsonrpc:'2.0', id:id, method:method, params:params });
+    });
+  }
+
+  window.addEventListener('message', function(ev){
+    var d = ev.data;
+    if(!d || typeof d !== 'object' || d.jsonrpc !== '2.0') return;
+    /* THE FIRST MESSAGE FIXES THE PARENT'S ORIGIN, and everything after it must match.
+     * `ev.source !== parent` is the real check — any page can postMessage into a frame, and a
+     * sandbox that accepted file bytes from an arbitrary sender would let a third party feed a
+     * different app to a reader who thinks they are running the one that was posted. */
+    if(ev.source !== parent) return;
+    if(parentOrigin === null){
+      if(d.method !== 'init') return;                 // the handshake is the only way in
+      parentOrigin = ev.origin;
+    }else if(ev.origin !== parentOrigin) return;
+
+    if(d.method === 'init'){ boot(d.params || {}); return; }
+    if(d.id !== undefined && d.method === undefined){
+      var p = pending[d.id];
+      if(!p) return;
+      delete pending[d.id];
+      if(d.error) p.reject(new Error(d.error.message || 'rpc error'));
+      else p.resolve(d.result);
+      return;
+    }
+    // Anything else is for the app: hand it down untouched (webxdc update pushes, key events…).
+    var f = document.getElementById('f');
+    if(f && f.contentWindow) try{ f.contentWindow.postMessage(d, location.origin); }catch(_){}
+  });
+
+  /* The app's own frame talks to the parent THROUGH here. It is same-origin with this document, so
+   * its messages are trusted; the parent is not, so nothing from the parent is executed here — it is
+   * only ever forwarded, or turned into a Response by the worker. */
+  window.addEventListener('message', function(ev){
+    if(ev.source === parent) return;
+    var f = document.getElementById('f');
+    if(!f || ev.source !== f.contentWindow) return;
+    if(ev.origin !== location.origin && ev.origin !== 'null') return;
+    var d = ev.data;
+    if(!d || typeof d !== 'object' || d.jsonrpc !== '2.0') return;
+    post(d);                                           // straight up to the parent
+  });
+
+  /* The worker asks THIS page for every file the app requests, over a MessageChannel it creates per
+   * request — so there is no connection to keep alive and nothing to re-establish when this document
+   * is replaced. We forward to the parent and answer on the port. */
+  function onWorkerMessage(ev){
+    var d = ev.data, port = ev.ports && ev.ports[0];
+    if(!d || d.t !== 'fetch' || !port) return;
+    rpc('fetch', { request: d.request }).then(function(res){
+      port.postMessage({ ok:true, res:res });
+    }, function(err){
+      port.postMessage({ ok:false, message:(err && err.message) || 'failed' });
+    });
+  }
+
+  function boot(params){
+    if(started) return;
+    started = true;
+    if(!('serviceWorker' in navigator)){
+      fail('This browser cannot run mini apps here (no service worker).');
+      return;
+    }
+    navigator.serviceWorker.addEventListener('message', onWorkerMessage);
+    say('loading…');
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(function(){
+      return navigator.serviceWorker.ready;
+    }).then(function(){
+      /* The worker must be CONTROLLING before the app frame is created, or that frame's own
+       * navigation goes to the network — where there is nothing but this bootstrap, so the app would
+       * silently load a copy of the loader instead of itself. A fresh registration does not control
+       * anything until it claims, so wait for the controller to appear. */
+      if(navigator.serviceWorker.controller) return;
+      return new Promise(function(resolve){
+        var t = setTimeout(resolve, 4000);             // claimed already, or never will
+        navigator.serviceWorker.addEventListener('controllerchange', function(){
+          clearTimeout(t); resolve();
+        }, { once:true });
+      });
+    }).then(function(){
+      /* THE APP GETS THE ORIGIN ROOT, and this loader lives at a reserved path instead. An app is
+       * allowed to write `/style.css` and `<a href="/">`, and serving it from under a prefix would
+       * break exactly those — silently, as a missing stylesheet. So the worker owns `/` and leaves
+       * `/__sandbox__/` and `/sw.js` alone, which is what keeps this document reachable after the
+       * worker has taken over everything else. */
+      var f = document.createElement('iframe');
+      f.id = 'f';
+      f.setAttribute('allow', 'autoplay; fullscreen; gamepad');
+      f.src = '/' + (params && params.entry ? String(params.entry).replace(/^\/+/, '') : '');
+      document.body.appendChild(f);
+      if(msg) msg.remove();
+      post({ jsonrpc:'2.0', method:'sandbox.running' });
+    }).catch(function(e){
+      fail('Could not start the sandbox: ' + ((e && e.message) || e));
+    });
+  }
+
+  // Announce readiness. The parent answers with `init`, which is also what tells us its origin.
+  try{ parent.postMessage({ jsonrpc:'2.0', method:'ready', params:{ version:VERSION } }, '*'); }
+  catch(_){ say('This page has to be opened by PosterChan.'); }
+})();
+</script>

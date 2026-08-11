@@ -1,0 +1,87 @@
+# ---------------------------------------------------------------------------------------------
+# The webxdc sandbox origin.
+#
+# Mini apps (.xdc files — games, polls, shared editors) are code written by whoever posted them.
+# They run in an iframe, and the ONLY thing standing between that code and this client's
+# localStorage — which is where the user's Nostr key and session live — is the browser's
+# same-origin policy. So every app gets its own ORIGIN, on a wildcard subdomain of this instance.
+#
+# This vhost serves exactly two files: static/webxdc-sandbox/index.html (the loader) and
+# static/webxdc-sandbox/sw.js (the service worker that answers the app's requests). The app's own
+# bytes never touch this server — they come from the .xdc the CLIENT downloaded and unzipped, over
+# postMessage. That is what makes "no network access" (the webxdc spec's one hard requirement) true
+# by construction: there is nothing here to fetch.
+#
+# ---------------------------------------------------------------------------------------------
+# WHAT YOU HAVE TO ADD, once:
+#
+#   1. DNS:  *.poster.place   A/AAAA/CNAME  ->  this server (or the CDN in front of it)
+#   2. TLS:  a certificate covering *.poster.place. Cloudflare's universal certificate already
+#            covers exactly one level of subdomain, which is what this uses; a Let's Encrypt
+#            wildcard needs the DNS-01 challenge.
+#   3. This vhost.
+#
+# THE SERVER_NAME IS A REGEX ON PURPOSE, and it must stay one. A plain `*.poster.place` would
+# capture news.poster.place, ai.poster.place and every other subdomain that has its own vhost.
+# The label the client generates is 50 characters of base36 (an HMAC of a per-device secret and
+# the app's id), so requiring 40+ characters cannot collide with a real hostname. nginx prefers
+# exact server_name matches over regex ones regardless of file order, but the length bound means
+# this vhost cannot shadow a subdomain added later either.
+# ---------------------------------------------------------------------------------------------
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+
+    server_name ~^[a-z0-9]{40,63}\.poster\.place$;
+
+    ssl_certificate     /etc/letsencrypt/live/poster.place/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/poster.place/privkey.pem;
+
+    # router.lan serves the client from its OWN clone of this repo (see docs/) — the same path the
+    # main vhost uses for /static.
+    root /srv/posterchanai/static/webxdc-sandbox;
+
+    access_log off;
+
+    # The loader. It is a fixed path so the service worker can leave it alone: the worker owns "/"
+    # (that is where the app is served) and must not intercept the document that answers its
+    # questions.
+    location /__sandbox__/ {
+        try_files /index.html =404;
+        add_header Cache-Control "no-store" always;
+        # This page is MEANT to be framed, by the client and by nothing else. X-Frame-Options is
+        # deliberately absent (it would block the iframe outright); frame-ancestors is the modern
+        # form and can name the one origin allowed to embed it.
+        add_header Content-Security-Policy "default-src 'self' 'unsafe-inline'; connect-src 'none'; frame-ancestors https://poster.place" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+
+    # The worker. Served from the root so its scope can be "/" — a worker cannot control paths above
+    # the one it is served from, and it has to control every path the app might ask for.
+    location = /sw.js {
+        try_files /sw.js =404;
+        add_header Cache-Control "no-store" always;
+        add_header Service-Worker-Allowed "/" always;
+        add_header Content-Type "text/javascript" always;
+    }
+
+    # Everything else is the app's, and the service worker answers it from the archive. Requests
+    # only reach nginx before the worker is installed (the very first load) or if it was evicted —
+    # in both cases the right answer is the loader, which installs it and starts over. Never a 404:
+    # that would leave a blank frame with nothing to explain it.
+    location / {
+        try_files /index.html =404;
+        add_header Cache-Control "no-store" always;
+    }
+}
+
+# Plain HTTP for the same wildcard: redirect, never serve. A service worker needs a secure context,
+# so an app reached over http:// would fail at registration with an error nobody can act on.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ~^[a-z0-9]{40,63}\.poster\.place$;
+    return 301 https://$host$request_uri;
+}

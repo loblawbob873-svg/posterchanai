@@ -360,6 +360,46 @@ def test_calendars_and_contacts_survive_every_cleaner(store_factory):
     _run(go)
 
 
+def test_a_webxdc_game_keeps_its_whole_history(store_factory):
+    """Kind 4932 is a webxdc mini app's state — every move of every game, as an append-only log.
+
+    Unlike the documents above there is no single event holding the answer: the app's state IS the
+    sequence, so losing the oldest ones does not lose "some history", it makes the game unreadable
+    from the start (a chess app replays moves from move one). It is also the first kind here that is
+    a REGULAR event rather than a 30078 document, so the protection it relies on is different: not
+    the parameterized-replaceable path, just absence from _PRUNABLE_KINDS.
+
+    Run against every cleaner at once with pay-to-stay on and the author a non-subscribing stranger,
+    which is the case the tiered rules exist for and the one that could delete a direct write.
+    """
+    async def go(loop):
+        store = store_factory(loop, retention_days=0, max_events=1)
+        store.free_retention_days = 1
+        store.paid_retention_days = 30
+        store.set_subscribers([], ledger_ok=True)
+        stranger = "d" * 64
+        uuid = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        moves = []
+        for i in range(1, 13):
+            ev = _ev(500 + i, kind=4932, age_days=400, pubkey=stranger)
+            ev["tags"] = [["i", uuid], ["alt", "Webxdc update"]] + ev["tags"]
+            moves.append(ev)
+        noise = [_ev(i, kind=1, age_days=400, pubkey=stranger) for i in range(600, 620)]
+        await store.add_events_bulk(moves, origin="direct")
+        await store.add_events_bulk(noise, origin="direct")
+
+        for _ in range(4):
+            await store.prune(chunk=3)
+
+        left = await store.query([{"kinds": [4932], "limit": 60}])
+        assert len(left) == len(moves), (
+            f"a webxdc game lost {len(moves) - len(left)} of its {len(moves)} updates. The state of "
+            "a mini app is the whole sequence — dropping the oldest does not shorten the history, it "
+            "makes the game unreplayable. Keep 4932 out of _PRUNABLE_KINDS.")
+
+    _run(go)
+
+
 def test_the_tiered_rules_only_ever_touch_feed_kinds(store_factory):
     """The qualifier above, asserted directly rather than through its effect.
 

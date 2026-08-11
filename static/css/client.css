@@ -1857,6 +1857,36 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .repost-tag .rt-ico{filter:drop-shadow(0 0 5px rgba(57,255,139,.45))}
 .act.rt .rt-ico{transition:filter .12s;width:22px;height:22px}   /* flat: no drop-shadow glow on hover/active */
 .quoted{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:8px;background:rgba(8,5,18,.4)}
+/* ---- webxdc mini apps ------------------------------------------------------------------------
+   A CARTRIDGE, not an auto-running frame: an app is code somebody else wrote, and it starts when the
+   reader presses Play. Everything here is theme tokens — a card in the timeline has to sit on nine
+   different palettes, which the desktop widgets learned the hard way. */
+.xdc-card{display:flex;align-items:center;gap:11px;margin-top:8px;padding:10px 12px;max-width:520px;
+  border:1px solid var(--line);border-radius:12px;background:var(--panel2);cursor:pointer;
+  transition:border-color .15s,transform .12s}
+.xdc-card:hover{border-color:var(--neon);transform:translateY(-1px)}
+.xdc-ico{flex:none;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;
+  justify-content:center;background:rgba(var(--accent-rgb),.14)}
+.xdc-ico .ic{width:20px;height:20px;color:var(--neon)}
+.xdc-meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.xdc-meta b{font-size:13.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.xdc-meta span{font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.xdc-play{flex:none}
+/* The app itself. It fills whatever it is given — a desktop window's body, or a full-screen sheet on
+   a phone — and the frame is the only thing in it, because everything else is the app's own chrome. */
+.xdc-host{position:relative;width:100%;height:100%;min-height:220px;background:#000}
+.xdc-frame{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;background:#000}
+.xdc-sheet{position:fixed;inset:0;z-index:1200;display:flex;flex-direction:column;background:var(--bg)}
+.xdc-bar{flex:none;display:flex;align-items:center;gap:10px;padding:8px 10px;
+  padding-top:calc(8px + env(safe-area-inset-top));border-bottom:1px solid var(--line);
+  background:var(--panel2)}
+.xdc-name{flex:1;min-width:0;font-size:13px;font-weight:600;color:var(--text);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.xdc-x{flex:none;width:30px;height:30px;border-radius:50%;border:1px solid var(--line);
+  background:transparent;color:var(--muted);cursor:pointer;font-size:12px}
+.xdc-x:hover{color:var(--neon);border-color:var(--neon)}
+.xdc-body{flex:1;min-height:0;position:relative}
+
 .link-card{display:block;border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-top:8px;background:rgba(8,5,18,.45);cursor:pointer;max-width:520px;transition:.15s}
 .link-card:hover{border-color:var(--cyan)}
 .link-card:empty{display:none}

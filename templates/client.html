@@ -400,6 +400,10 @@
 <script src="/static/js/client/markets.js?v={{ ver }}"></script>
 <script src="/static/js/client/budget.js?v={{ ver }}"></script>
 <script src="/static/js/client/joplin.js?v={{ ver }}"></script>
+<!-- webxdc mini apps: zip.js reads the .xdc, webxdc.js runs it in the sandbox origin. Loaded before
+     app.js needs them only in the sense that noteCard calls PCWebxdc lazily — both guard for absence. -->
+<script src="/static/js/client/zip.js?v={{ ver }}"></script>
+<script src="/static/js/client/webxdc.js?v={{ ver }}"></script>
 <script src="/static/js/client/fs-android.js?v={{ ver }}"></script>
 <script src="/static/js/client/foldersync.js?v={{ ver }}"></script>
 <script src="/static/js/client/syncrun.js?v={{ ver }}"></script>

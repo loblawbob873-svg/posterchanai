@@ -162,6 +162,7 @@
   let _docPk = '';        // …whose. An account switch must not paint the previous account's desktop.
   let _docAt = 0;         // created_at of the newest version we have seen
   let _wr = false;        // a relay ANSWERED, so a write cannot replace a layout we never read
+  let _layWhy = '';       // why not, when not: 'relay' (nobody EOSEd) | 'signer' (would not decrypt)
   let _layLoading = null, _layLoadingPk = '', _laySub = null, _layChain = Promise.resolve();
 
   /* NEVER name a local binding `Relay` (or `Store`) in this file.
@@ -407,6 +408,14 @@
       }
       // (1) Only a relay that ANSWERED makes this safe to write. Until then the desktop draws, and
       // refuses to save — the alternative publishes the defaults over the layout it could not read.
+      /* WHY it is not writable, kept for the message. All three of these arrive as "still loading
+       * your desktop layout", for ever, and they are three different problems with three different
+       * answers: a relay that never EOSEs is a connection, a document that will not decrypt is the
+       * SIGNER (an Amber prompt that timed out is the common one, and it is not going to fix itself
+       * by waiting), and no key at all is a guest. Reported from a tablet that sat on the first
+       * message indefinitely while the same account arranged itself fine on two other devices —
+       * which is a fact about that device, and the message has to be able to say which one. */
+      _layWhy = !answered ? 'relay' : unreadable ? 'signer' : '';
       if(answered && !unreadable){ _wr = true; if(!_doc){ _doc = BLANK(); _docPk = pk; } }
       refreshIcons(); watchLayout(); arrangeHint();
       return _doc;
@@ -527,9 +536,19 @@
      * defaults-derived layout over the NEW account's real one. */
     const lay = layout();
     if(!_wr){
-      // Not "it didn't work" — it has not been READ yet, and saying so is the difference between a
-      // desktop that looks broken and one that is still waking up.
-      try{ PC().toast('still loading your desktop layout — try that again in a moment'); }catch(_){}
+      /* Not "it didn't work" — the layout has not been READ yet, and saying so is the difference
+       * between a desktop that looks broken and one that is still waking up. But "in a moment" is a
+       * promise, and two of the three reasons never come good on their own: name them, so somebody
+       * on the device it is happening to can act instead of waiting. */
+      try{
+        PC().toast(_layWhy === 'signer'
+          ? 'your desktop layout is on the relay but this device could not decrypt it — approve the '
+            + 'request in your signer (Amber/nsec.app), then try again'
+          : _layWhy === 'relay'
+            ? 'no relay has answered with your desktop layout yet — check Settings → Relays; nothing '
+              + 'will be saved until one does'
+            : 'still loading your desktop layout — try that again in a moment');
+      }catch(_){}
       loadLayout().catch(() => {});
       return Promise.resolve(false);
     }
@@ -1220,6 +1239,11 @@
     // Closing the Terminal window is what ends its SSH session — renderView deliberately does not,
     // because on the desktop a background window is parked and still running (see the note there).
     if(w.view === 'terminal'){ try{ if(window.PCTerm) PCTerm.unmount(); }catch(_){} }
+    /* A window may own something that has to be let go of — a sandboxed mini app holds an iframe and
+     * a live relay subscription, and closing the window is the only thing that ends them. Generic on
+     * purpose: the Terminal above is the same need answered by name, and a second hardcoded view
+     * would make it a pattern of exceptions rather than a hook. */
+    if(typeof w.onClose === 'function'){ try{ w.onClose(); }catch(e){ console.warn('window onClose', e); } }
     if(realFeed && realFeed.parentElement === w.body) releaseFeed();
     w.el.remove();
     if(wasMusic){

@@ -1,0 +1,601 @@
+/* #webxdc — mini apps (games, polls, shared editors) from a `.xdc` file, run in a sandbox and kept
+ * in step over Nostr.
+ *
+ * A `.xdc` is a zip with an index.html in it. The webxdc spec gives such an app exactly one thing —
+ * `sendUpdate()` / `setUpdateListener()`, a shared append-only log scoped to the message it was
+ * posted in — and takes away everything else: no network, no origin of its own to escape into. Every
+ * game and poll is built on that one primitive, which is why the whole ecosystem works in any
+ * messenger that implements it.
+ *
+ * THE TRANSPORT IS NOSTR, per Ditto's NOSTR_WEBXDC draft (NIP-DC), so a game started in Ditto is
+ * playable here and vice versa:
+ *   • the app is an attachment — an `imeta` tag (NIP-92) with `m application/x-webxdc`, or a kind
+ *     1063 file-metadata event, carrying `url`, `x` (sha256) and a `webxdc` identifier;
+ *   • `sendUpdate()` publishes kind 4932 with that identifier in an `i` tag and the payload as
+ *     content;
+ *   • the identifier — NOT the event id — is what makes two people the same game. Copying the app
+ *     into a new post with a new identifier starts a fresh one, which is exactly what a "new game"
+ *     button should do.
+ *
+ * SERIALS ARE OURS. The spec has them ordered and increasing with gaps allowed, and says nothing
+ * about them being the same for everyone — so they are assigned locally, by (created_at, id) over
+ * what this device has seen. That is what lets an append-only log ride a network with no global
+ * ordering: two devices can disagree about the numbers and still agree about the SET, which is all
+ * `setUpdateListener(cb, lastSerial)` actually needs.
+ *
+ * WHERE IT RUNS is the security of the whole feature and is not negotiable: a different ORIGIN per
+ * app, on a wildcard subdomain, because same-origin means the game can read the localStorage and
+ * IndexedDB this client keeps your key and your session in. See static/webxdc-sandbox/ for the two
+ * files that origin serves and docs/WEBXDC.md for the DNS it needs.
+ */
+(function(){
+  function init(){
+    const PC = window.__PC;
+    if(!PC){ return setTimeout(init, 50); }
+    const { $, enc, toast, publish } = PC;
+    const Relay = window.Relay;
+
+    const KIND_UPDATE = 4932;          // NIP-DC state update (regular event)
+    const MIME = 'application/x-webxdc';
+    const MAX_XDC = 24 * 1024 * 1024;  // a zip of HTML and sprites; past this something is wrong
+    const UPDATE_MAX = 128000;         // the spec's sendUpdateMaxSize default
+    const UPDATE_INTERVAL = 1000;      // we are not an email network; a move should land immediately
+
+    // ---- the sandbox origin ---------------------------------------------------------------------
+
+    /* A per-device secret, so the subdomain an app runs on cannot be guessed.
+     *
+     * The label is derived rather than random so that reopening the same game returns to the same
+     * origin — and therefore to the same localStorage, which is where an app keeps whatever it did
+     * not send as an update. Deriving it from a DEVICE-LOCAL secret is what stops a second app (or a
+     * page anywhere else) computing another app's origin and reading its storage. */
+    function seed(){
+      try{
+        let s = localStorage.getItem('pc_sandbox_seed');
+        if(!s){
+          s = [...crypto.getRandomValues(new Uint8Array(32))].map(b => b.toString(16).padStart(2, '0')).join('');
+          localStorage.setItem('pc_sandbox_seed', s);
+        }
+        return s;
+      }catch(_){ return 'pc-fallback-seed'; }          // private mode: still isolated per app
+    }
+    const _hex = (b) => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
+    // 32 bytes as base36 — 50-odd characters, inside the 63-byte limit on one DNS label, and no
+    // characters a hostname cannot carry (which rules out base64 and hex is too long at 64).
+    function toBase36(bytes){
+      let n = 0n;
+      for(const b of new Uint8Array(bytes)) n = (n << 8n) | BigInt(b);
+      let s = n.toString(36);
+      while(s.length < 50) s = '0' + s;
+      return s.slice(0, 50);
+    }
+    async function subdomain(id){
+      const enc2 = new TextEncoder();
+      const key = await crypto.subtle.importKey('raw', enc2.encode(seed()),
+                                                { name:'HMAC', hash:'SHA-256' }, false, ['sign']);
+      const mac = await crypto.subtle.sign('HMAC', key, enc2.encode('webxdc|' + id));
+      return toBase36(mac);
+    }
+    /* The host the sandbox lives on: a sibling of the INSTANCE, not of the page. In the packaged
+     * apps the page's own origin is app://posterchan or a WebView's, which has no subdomains and no
+     * certificate — so the wildcard has to hang off the instance the client is talking to. */
+    function sandboxHost(){
+      let base = '';
+      try{ base = (PC.apiBase && PC.apiBase()) || ''; }catch(_){}
+      try{ return new URL(base || location.href).hostname; }catch(_){ return location.hostname; }
+    }
+
+    // ---- reading the app ------------------------------------------------------------------------
+
+    const _cache = new Map();          // sha/url -> Promise<Map(name → bytes)>
+
+    async function sha256Hex(bytes){
+      return _hex(await crypto.subtle.digest('SHA-256', bytes));
+    }
+
+    /* Fetch the .xdc and unzip it, once per app per session.
+     *
+     * The `x` tag is VERIFIED when present. The URL is somebody else's server and the file is code
+     * we are about to run: without the check, whoever hosts it can swap the app after it was posted,
+     * for one reader or for everybody, and nothing about the post would change. A mismatch is fatal
+     * and says so — silently running it anyway would make the check decorative. */
+    async function load(app){
+      const key = app.sha || app.url;
+      if(_cache.has(key)) return _cache.get(key);
+      const p = (async () => {
+        const r = await fetch(app.url, { credentials:'omit', referrerPolicy:'no-referrer' });
+        if(!r.ok) throw new Error('could not download the app (HTTP ' + r.status + ')');
+        const len = Number(r.headers.get('content-length') || 0);
+        if(len > MAX_XDC) throw new Error('that app is too large to open here');
+        const bytes = new Uint8Array(await r.arrayBuffer());
+        if(bytes.length > MAX_XDC) throw new Error('that app is too large to open here');
+        if(app.sha){
+          const got = await sha256Hex(bytes);
+          if(got.toLowerCase() !== String(app.sha).toLowerCase()){
+            throw new Error('this app does not match the one that was posted — refusing to run it');
+          }
+        }
+        const files = await window.PCZip.readAll(bytes);
+        if(!files.has('index.html')) throw new Error('that .xdc has no index.html in it');
+        return files;
+      })();
+      _cache.set(key, p);
+      p.catch(() => _cache.delete(key));               // a failed load must not be cached for ever
+      return p;
+    }
+
+    /* The app's name and icon, for the card — read from the archive rather than trusted from the
+     * post, because the post is written by whoever shared it and the manifest by whoever wrote the
+     * app. A tiny hand-rolled TOML read: the spec defines exactly two keys and pulling in a TOML
+     * parser for `name = "…"` would be the third dependency this feature does not need. */
+    function manifestName(files){
+      const b = files.get('manifest.toml');
+      if(!b) return '';
+      let text = '';
+      try{ text = new TextDecoder().decode(b); }catch(_){ return ''; }
+      const m = /^\s*name\s*=\s*(?:"([^"]*)"|'([^']*)')/m.exec(text);
+      return (m && (m[1] || m[2]) || '').slice(0, 80);
+    }
+    function iconBlobUrl(files){
+      const b = files.get('icon.png') || files.get('icon.jpg');
+      if(!b) return '';
+      try{ return URL.createObjectURL(new Blob([b], { type: files.has('icon.png') ? 'image/png' : 'image/jpeg' })); }
+      catch(_){ return ''; }
+    }
+
+    // ---- serving the app into the sandbox --------------------------------------------------------
+
+    const MIMES = {
+      html:'text/html', htm:'text/html', js:'text/javascript', mjs:'text/javascript',
+      css:'text/css', json:'application/json', svg:'image/svg+xml', png:'image/png',
+      jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif', webp:'image/webp', avif:'image/avif',
+      ico:'image/x-icon', wasm:'application/wasm', woff:'font/woff', woff2:'font/woff2',
+      ttf:'font/ttf', otf:'font/otf', mp3:'audio/mpeg', ogg:'audio/ogg', oga:'audio/ogg',
+      wav:'audio/wav', m4a:'audio/mp4', mp4:'video/mp4', webm:'video/webm', txt:'text/plain',
+      xml:'application/xml', map:'application/json', toml:'text/plain',
+    };
+    const mimeOf = (name) => MIMES[(name.split('.').pop() || '').toLowerCase()] || 'application/octet-stream';
+
+    /* THE CONTENT-SECURITY-POLICY, on every response, and it is the second of the two independent
+     * answers to "can this app reach the network" (the first is the service worker refusing every
+     * cross-origin request). 'unsafe-inline' and 'unsafe-eval' are deliberate: mini apps are written
+     * as single files with inline scripts and several ship a small interpreter. What matters is that
+     * there is no host in this policy at all — 'self' is an origin serving nothing but this app. */
+    const CSP = [
+      "default-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' data: blob:",
+      "connect-src 'self' data: blob:",
+      "base-uri 'self'",
+      "form-action 'none'",
+    ].join('; ');
+
+    const BRIDGE_PATH = '/__webxdc__.js';
+
+    // Injected into every HTML response, as a <script src> rather than inline so it works even in an
+    // app that ships its own restrictive CSP meta tag.
+    function injectBridge(html){
+      const tag = '<script src="' + BRIDGE_PATH + '"></script>';
+      if(/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + tag);
+      if(/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => m + tag);
+      return tag + html;
+    }
+
+    const _enc = new TextEncoder(), _dec = new TextDecoder();
+    const b64 = (bytes) => { let s = ''; const b = new Uint8Array(bytes);
+      for(let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+      return btoa(s); };
+
+    // ---- the bridge that runs inside the app -----------------------------------------------------
+
+    /* `window.webxdc`, as the app sees it. A string because it is served INTO the sandbox — it runs
+     * on the app's origin, not ours, and can therefore be reached by the app (which is fine: it can
+     * only ask for what the API already offers) but reaches nothing of ours.
+     *
+     * It speaks JSON-RPC to `parent` — the sandbox loader — which forwards to this document. */
+    const BRIDGE = `(function(){
+  var nextId = 1, pending = {}, listener = null, ready = null;
+  function send(m){ try{ parent.postMessage(m, '*'); }catch(e){} }
+  function rpc(method, params){
+    var id = nextId++;
+    return new Promise(function(res, rej){
+      pending[id] = { res: res, rej: rej };
+      send({ jsonrpc:'2.0', id:id, method:method, params:params });
+    });
+  }
+  window.addEventListener('message', function(ev){
+    var d = ev.data;
+    if(!d || typeof d !== 'object' || d.jsonrpc !== '2.0') return;
+    if(d.id !== undefined && d.method === undefined){
+      var p = pending[d.id]; if(!p) return;
+      delete pending[d.id];
+      if(d.error) p.rej(new Error(d.error.message || 'error')); else p.res(d.result);
+      return;
+    }
+    if(d.method === 'webxdc.update' && listener){
+      try{ listener(d.params); }catch(e){}
+    }
+  });
+  window.webxdc = {
+    selfAddr: ${JSON.stringify('')},
+    selfName: ${JSON.stringify('')},
+    sendUpdateInterval: ${UPDATE_INTERVAL},
+    sendUpdateMaxSize: ${UPDATE_MAX},
+    sendUpdate: function(update, descr){ return rpc('webxdc.sendUpdate', { update: update, descr: descr }); },
+    setUpdateListener: function(cb, serial){
+      /* "Calling setUpdateListener() multiple times is undefined behaviour" — so the LAST one wins
+         and the promise is shared, rather than stacking listeners that each replay the history. */
+      listener = cb;
+      ready = rpc('webxdc.setUpdateListener', { serial: serial || 0 });
+      return ready;
+    },
+  };
+  send({ jsonrpc:'2.0', method:'webxdc.hello' });
+})();`;
+
+    // ---- one running app -------------------------------------------------------------------------
+
+    /* Everything about one open mini app: its files, its frame, its subscription and the serial
+     * counter it hands out. One instance per window — two people can have the same game open in two
+     * windows, and they must not share a listener. */
+    function Session(app, files){
+      this.app = app;                    // {url, sha, uuid, name}
+      this.files = files;
+      this.frame = null;
+      this.origin = '';
+      this.sub = null;
+      this.seen = new Map();             // event id -> serial
+      this.ordered = [];                 // events, oldest first
+      this.listening = false;
+      this.wantSerial = 0;
+      this.self = { addr: '', name: '' };
+      this.dead = false;
+    }
+
+    Session.prototype.destroy = function(){
+      this.dead = true;
+      // Relay.subscribe hands back an ID, and Relay.close takes it — a live REQ left open for a game
+      // nobody has on screen is the cost the Notes subscription audit was about.
+      try{ if(this.sub) Relay.close(this.sub); }catch(_){}
+      this.sub = null;
+      if(this._onMsg) window.removeEventListener('message', this._onMsg);
+      this._onMsg = null;
+      if(this.frame && this.frame.parentElement) this.frame.remove();
+      this.frame = null;
+    };
+
+    Session.prototype.post = function(m){
+      if(!this.frame || !this.frame.contentWindow || !this.origin) return;
+      try{ this.frame.contentWindow.postMessage(m, this.origin); }catch(_){}
+    };
+
+    /* Resolve one request from the archive. `/` is index.html; the bridge is a virtual file that is
+     * not in the zip; anything else is looked up by path. A miss is a 404 rather than an error,
+     * because apps probe for optional files (favicon, a manifest) and a thrown error would surface
+     * as a broken sandbox rather than as a missing icon. */
+    Session.prototype.resolve = function(pathname){
+      if(pathname === BRIDGE_PATH){
+        const src = BRIDGE.replace('selfAddr: ""', 'selfAddr: ' + JSON.stringify(this.self.addr))
+                          .replace('selfName: ""', 'selfName: ' + JSON.stringify(this.self.name));
+        return { status:200, contentType:'text/javascript', body:_enc.encode(src) };
+      }
+      let name = decodeURIComponent(String(pathname || '/')).replace(/^\/+/, '');
+      if(!name || name.charAt(name.length - 1) === '/') name += 'index.html';
+      name = window.PCZip.normalise(name);
+      let bytes = this.files.get(name);
+      if(!bytes && name !== 'index.html' && this.files.has(name + '/index.html')){
+        bytes = this.files.get(name + '/index.html');
+        name = name + '/index.html';
+      }
+      if(!bytes) return { status:404, contentType:'text/plain', body:_enc.encode('not in this app') };
+      const type = mimeOf(name);
+      if(type === 'text/html'){
+        let html = '';
+        try{ html = _dec.decode(bytes); }catch(_){ html = ''; }
+        return { status:200, contentType:'text/html; charset=utf-8', body:_enc.encode(injectBridge(html)) };
+      }
+      return { status:200, contentType:type, body:bytes };
+    };
+
+    // ---- the Nostr half ---------------------------------------------------------------------------
+
+    /* Deliver everything past `serial`, oldest first, then keep delivering as events arrive.
+     *
+     * `max_serial` is the highest we hold, which is how an app knows it has caught up (the spec:
+     * "when max_serial equals serial, this update is the last one"). Both are LOCAL numbers — see
+     * the header — so they are assigned here, in (created_at, id) order, and stay stable for this
+     * device because the ordering is total and the list only grows. */
+    Session.prototype.deliverFrom = function(serial){
+      const max = this.ordered.length;
+      for(let i = serial; i < this.ordered.length; i++){
+        const ev = this.ordered[i];
+        let payload = null;
+        try{ payload = JSON.parse(ev.content || 'null'); }catch(_){ payload = null; }
+        const tag = (n) => { const t = (ev.tags || []).find(x => x[0] === n); return t && t[1]; };
+        this.post({ jsonrpc:'2.0', method:'webxdc.update', params:{
+          payload: payload,
+          serial: i + 1,
+          max_serial: max,
+          info: tag('info') || undefined,
+          document: tag('document') || undefined,
+          summary: tag('summary') || undefined,
+        } });
+      }
+    };
+
+    Session.prototype.absorb = function(evs){
+      let added = false;
+      for(const ev of (evs || [])){
+        if(!ev || ev.kind !== KIND_UPDATE || this.seen.has(ev.id)) continue;
+        this.seen.set(ev.id, 0);
+        this.ordered.push(ev);
+        added = true;
+      }
+      if(!added) return false;
+      // Total order, and STABLE: two updates in the same second are broken by id, so every device
+      // that holds both puts them in the same order. Sorting the whole list rather than inserting is
+      // fine — a game's history is hundreds of events, not millions.
+      this.ordered.sort((a, b) => (a.created_at - b.created_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      return true;
+    };
+
+    Session.prototype.start = async function(fromSerial){
+      this.listening = true;
+      this.wantSerial = Math.max(0, Number(fromSerial) || 0);
+      const filter = { kinds:[KIND_UPDATE], '#i':[this.app.uuid], limit: 1000 };
+      let evs = [];
+      try{ evs = await Relay.query([filter]); }catch(_){ evs = []; }
+      try{ (window.Store.query([filter]) || []).forEach(e => evs.push(e)); }catch(_){}
+      this.absorb(evs);
+      if(this.dead) return;
+      this.deliverFrom(this.wantSerial);
+      // Live from here. A game is two people taking turns; without this the second player's move
+      // arrives only if something else happens to re-query.
+      try{
+        this.sub = Relay.subscribe([filter], { onEvent: (ev) => {
+          if(this.dead) return;
+          const before = this.ordered.length;
+          if(this.absorb([ev])) this.deliverFrom(before);
+        } });
+      }catch(_){}
+    };
+
+    /* sendUpdate → one kind-4932 event.
+     *
+     * The payload is the app's own JSON and is published as content. `alt` is required by the NIP
+     * (NIP-31) so that a client which cannot run the app still shows something human; `info`,
+     * `document` and `summary` are the optional fields of the same name in the spec. */
+    Session.prototype.sendUpdate = async function(update, descr){
+      const u = (update && typeof update === 'object') ? update : {};
+      const content = JSON.stringify(u.payload === undefined ? null : u.payload);
+      if(content.length > UPDATE_MAX) throw new Error('that update is too big to send');
+      const tags = [['i', this.app.uuid],
+                    ['alt', (this.app.name ? this.app.name + ': ' : '') + 'webxdc update']];
+      const str = (v, n) => String(v == null ? '' : v).slice(0, n);
+      if(u.info) tags.push(['info', str(u.info, 200)]);
+      if(u.document) tags.push(['document', str(u.document, 200)]);
+      if(u.summary) tags.push(['summary', str(u.summary, 200)]);
+      // publish() answers {ev, ok, …} — the SIGNED EVENT is on `.ev`, and it is there even when the
+      // relay refused it (the outbox may have queued it), which is what makes the echo below right.
+      const r = await publish(KIND_UPDATE, content, tags);
+      const ev = r && r.ev;
+      /* Feed it back to ourselves rather than waiting for the relay to echo it. The spec is explicit
+       * that the sender receives its own updates, and a game whose own move does not appear until a
+       * round trip completes feels broken on a slow connection — and never appears at all if the
+       * relay drops the echo. */
+      if(ev && ev.id && !this.seen.has(ev.id)){
+        const before = this.ordered.length;
+        if(this.absorb([ev])) this.deliverFrom(before);
+      }
+      return true;
+    };
+
+    // ---- mounting ---------------------------------------------------------------------------------
+
+    Session.prototype.mount = async function(host){
+      const label = await subdomain(this.app.uuid || this.app.sha || this.app.url);
+      this.origin = 'https://' + label + '.' + sandboxHost();
+      /* selfAddr / selfName. The spec lets a messenger put anything here and warns apps not to trust
+       * them — nothing in the sandbox is signed, so any player can claim to be anyone WITHIN the app.
+       * The npub is still the useful answer: it is what the app shows next to a move, and it matches
+       * what every other player's client will show for the same person. A guest gets neither, which
+       * is honest — there is no key to name. */
+      try{
+        const me = (PC.me && PC.me()) || null;
+        this.self.addr = (me && (me.npub || me.pubkey)) || '';
+        const prof = (me && me.pubkey && PC.profOf) ? (PC.profOf(me.pubkey) || {}) : {};
+        this.self.name = String(prof.display_name || prof.name || '').slice(0, 60);
+      }catch(_){}
+
+      const f = document.createElement('iframe');
+      f.className = 'xdc-frame';
+      /* allow-same-origin is REQUIRED — the spec has apps using localStorage and IndexedDB, which an
+       * opaque origin cannot — and it is safe here only because the frame is on a different origin
+       * to begin with. That is the whole reason for the wildcard subdomain; without it this attribute
+       * would hand the app our storage. allow-top-navigation is deliberately absent: an app must not
+       * be able to navigate the tab it is running in. */
+      f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads allow-pointer-lock');
+      f.setAttribute('allow', 'autoplay; fullscreen; gamepad');
+      f.setAttribute('referrerpolicy', 'no-referrer');
+      f.src = this.origin + '/__sandbox__/';
+      this.frame = f;
+
+      this._onMsg = (ev) => {
+        if(this.dead || !this.frame) return;
+        if(ev.source !== this.frame.contentWindow) return;
+        if(ev.origin !== this.origin) return;          // only ever this app's own sandbox
+        const d = ev.data;
+        if(!d || typeof d !== 'object' || d.jsonrpc !== '2.0') return;
+        this.onRpc(d);
+      };
+      window.addEventListener('message', this._onMsg);
+      host.appendChild(f);
+    };
+
+    Session.prototype.reply = function(id, result){
+      if(id === undefined) return;
+      this.post({ jsonrpc:'2.0', id:id, result:result });
+    };
+    Session.prototype.fail = function(id, message){
+      if(id === undefined) return;
+      this.post({ jsonrpc:'2.0', id:id, error:{ code:-32000, message:String(message || 'error') } });
+    };
+
+    Session.prototype.onRpc = function(d){
+      const id = d.id;
+      if(d.method === 'ready'){
+        this.post({ jsonrpc:'2.0', method:'init', params:{ version:1 } });
+        return;
+      }
+      if(d.method === 'sandbox.error'){
+        toast((d.params && d.params.message) || 'the sandbox failed to start');
+        return;
+      }
+      if(d.method === 'fetch'){
+        let path = '/';
+        try{ path = new URL(d.params.request.url).pathname; }catch(_){}
+        const r = this.resolve(path);
+        this.reply(id, {
+          status: r.status,
+          statusText: '',
+          headers: {
+            'content-type': r.contentType,
+            'content-security-policy': CSP,
+            'cache-control': 'no-store',
+            // The sandbox origin is not ours to be framed from anywhere: only this client may.
+            'x-content-type-options': 'nosniff',
+          },
+          body: b64(r.body),
+        });
+        return;
+      }
+      if(d.method === 'webxdc.sendUpdate'){
+        this.sendUpdate((d.params || {}).update, (d.params || {}).descr)
+          .then(() => this.reply(id, null), (e) => this.fail(id, (e && e.message) || 'could not send'));
+        return;
+      }
+      if(d.method === 'webxdc.setUpdateListener'){
+        const from = Number((d.params || {}).serial) || 0;
+        if(this.listening){
+          // A second call is undefined behaviour per the spec; replaying from the given serial is the
+          // least surprising thing to do with it.
+          this.deliverFrom(from);
+          this.reply(id, null);
+          return;
+        }
+        this.start(from).then(() => this.reply(id, null), () => this.reply(id, null));
+        return;
+      }
+    };
+
+    // ---- opening ------------------------------------------------------------------------------------
+
+    let _openSeq = 0;
+
+    /* Open an app. On the DESKTOP it gets a real window — movable, resizable, and able to sit beside
+     * the timeline, which is what a game wants; everywhere else it is a full-screen sheet, because a
+     * phone has no room for anything else. */
+    async function open(app){
+      if(!app || !app.url){ toast('that post has no app in it'); return; }
+      const id = ++_openSeq;
+      let files;
+      try{
+        toast('opening ' + (app.name || 'the app') + '…');
+        files = await load(app);
+      }catch(e){ toast((e && e.message) || 'could not open that app'); return; }
+      if(id !== _openSeq) return;                      // superseded by another launch
+
+      const name = app.name || manifestName(files) || 'Mini app';
+      const session = new Session(Object.assign({}, app, { name }), files);
+
+      const mountInto = (el) => {
+        el.classList.add('xdc-host');
+        session.mount(el).catch((e) => { toast((e && e.message) || 'could not start the sandbox'); });
+      };
+
+      let osWin = null;
+      try{ osWin = window.PCOS && PCOS.isOn && PCOS.isOn(); }catch(_){ osWin = false; }
+      if(osWin){
+        const w = PCOS.openDoc('webxdc:' + (session.app.uuid || session.app.sha || String(id)),
+                               name, '#i-gamepad', (body) => {
+          body.innerHTML = '';
+          mountInto(body);
+        });
+        /* The window owns the session: closing it must stop the subscription and drop the frame, or
+         * a closed game keeps a REQ open for the rest of the session — the exact cost the Notes
+         * subscription audit was about. */
+        if(w) w.onClose = () => session.destroy();
+        return session;
+      }
+
+      const sheet = document.createElement('div');
+      sheet.className = 'xdc-sheet';
+      sheet.innerHTML = `<div class="xdc-bar">
+          <span class="xdc-name">${enc(name)}</span>
+          <button class="xdc-x" aria-label="Close">✕</button>
+        </div><div class="xdc-body"></div>`;
+      document.body.appendChild(sheet);
+      $('.xdc-x', sheet).onclick = () => { session.destroy(); sheet.remove(); };
+      mountInto($('.xdc-body', sheet));
+      return session;
+    }
+
+    // ---- reading an app off an event -----------------------------------------------------------------
+
+    /* Is this event carrying a mini app, and where? Both shapes from the NIP: an `imeta` tag on any
+     * event (NIP-92), and a kind-1063 file-metadata event whose tags are flat. Returns null for
+     * everything else, which is almost every event, so it is kept cheap. */
+    function appOf(ev){
+      if(!ev || !Array.isArray(ev.tags)) return null;
+      if(ev.kind === 1063){
+        const get = (n) => { const t = ev.tags.find(x => x[0] === n); return (t && t[1]) || ''; };
+        if((get('m') || '').toLowerCase() !== MIME) return null;
+        const url = get('url');
+        if(!/^https?:\/\//i.test(url)) return null;
+        return { url, sha:get('x'), uuid:get('webxdc'), name:(get('alt') || '').replace(/^Webxdc app:\s*/i, '') };
+      }
+      for(const t of ev.tags){
+        if(t[0] !== 'imeta') continue;
+        const f = {};
+        for(let i = 1; i < t.length; i++){
+          const s = String(t[i] || ''), sp = s.indexOf(' ');
+          if(sp > 0) f[s.slice(0, sp)] = s.slice(sp + 1);
+        }
+        if((f.m || '').toLowerCase() !== MIME) continue;
+        if(!/^https?:\/\//i.test(f.url || '')) continue;
+        return { url:f.url, sha:f.x || '', uuid:f.webxdc || '', name:(f.summary || '').slice(0, 80) };
+      }
+      return null;
+    }
+
+    /* The card that appears in the timeline in place of a link to a zip file. Deliberately a
+     * CARTRIDGE rather than an auto-running frame: an app is code somebody else wrote, and it starts
+     * when the reader says so. */
+    function cardHtml(app){
+      const label = app.name || 'Mini app';
+      return `<div class="xdc-card" data-xdc="${enc(JSON.stringify(app))}">
+          <div class="xdc-ico"><svg class="ic" aria-hidden="true"><use href="#i-gamepad"></use></svg></div>
+          <div class="xdc-meta">
+            <b>${enc(label)}</b>
+            <span>Mini app · runs in a sandbox with no network</span>
+          </div>
+          <button class="btn btn-neon small xdc-play">Play</button>
+        </div>`;
+    }
+
+    /* ONE delegated handler for every card, ever, rather than a bind pass each render path has to
+     * remember to call. The timeline, a thread, a profile, a DM bubble and the desktop's own windows
+     * all paint notes through different code, and the last feature that needed a per-card binding
+     * ended up with three copies and a surface where it silently did nothing. A click is a click. */
+    document.addEventListener('click', (e) => {
+      const card = e.target.closest && e.target.closest('.xdc-card');
+      if(!card) return;
+      if(e.target.closest('a')) return;                // a link inside the card is still a link
+      e.preventDefault(); e.stopPropagation();
+      let app = null;
+      try{ app = JSON.parse(card.dataset.xdc || 'null'); }catch(_){}
+      if(app) open(app);
+    }, true);
+
+    window.PCWebxdc = { open, appOf, cardHtml, MIME, KIND_UPDATE };
+  }
+  init();
+})();

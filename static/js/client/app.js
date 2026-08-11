@@ -10447,6 +10447,7 @@
         ${xmrTipBadge(ev)}
         ${mp.mediaFirst?'':mp.gallery}
         ${linkCardHtml(mp.text)}
+        ${webxdcCardHtml(ev)}
         ${quoteHtml(ev)}
         ${cw?`</div></div>`:''}
         <div class="acts">
@@ -24771,6 +24772,19 @@
       + `${d.title?`<div class="lc-title">${enc(d.title)}</div>`:''}`
       + `${d.description?`<div class="lc-desc">${enc(d.description.slice(0,160))}</div>`:''}</div>`;
   }
+  /* A webxdc mini app attached to a post — a game, a poll, a shared editor — as a card you press to
+   * play. The detection and the card both live in webxdc.js; this is only the seam, and it is written
+   * to survive that module being absent (an older cached bundle, a standalone build that does not
+   * ship it) by rendering nothing rather than throwing inside noteCard, where one exception replaces
+   * EVERY post with "couldn't render this post". */
+  function webxdcCardHtml(ev){
+    try{
+      if(!window.PCWebxdc) return '';
+      const app = PCWebxdc.appOf(ev);
+      return app ? PCWebxdc.cardHtml(app) : '';
+    }catch(_){ return ''; }
+  }
+
   function linkCardHtml(content){
     if(NO_IMAGES) return '';   // data saver: no preview fetch/image, link stays clickable
     const u=firstLink(content); if(!u) return '';
