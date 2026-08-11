@@ -256,7 +256,9 @@ def _publish(gameid, parent_id, players, body, png, federate=True):
     url = info.get("url")
     if not url:
         raise RuntimeError("image upload failed")
-    content = f"{body}\n{url}\n\n{_footer()}"
+    # Real mentions, not bare @handles: a p-tag notifies but renders as plain text, so a result
+    # post read "@npub1mq3s439… wins" — unrendered AND truncated. See _nk.mentionify.
+    content = _nk.mentionify(f"{body}\n{url}\n\n{_footer()}", players, _name)
     tags = [["e", gameid, "", "root"]]
     if parent_id and parent_id != gameid:
         tags.append(["e", parent_id, "", "reply"])

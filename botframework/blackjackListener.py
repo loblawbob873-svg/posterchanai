@@ -258,14 +258,19 @@ def _footer():
 def _do_publish(gameid, parent_id, players, body, png):
     """Public kind-1: builds the event with e-root (real games), p-tags, hashtags + the table image.
     Pass gameid=None for a standalone post (solo games have a synthetic id with no real start note)."""
-    content = body
+    # Real mentions, not bare @handles: a p-tag notifies but renders as plain text, so a result post
+    # read "@npub1mq3s439… wins" — unrendered AND truncated. See _nk.mentionify.
+    content = _nk.mentionify(body, players, _name)
     imeta = None
     if png:
         try:
             info = _nk._run(_nk._svc.media.upload(_nk._MEDIA_CFG, _nk._SECKEY, png, "image/png")) or {}
             url = info.get("url")
             if url:
-                content = f"{body}\n{url}"
+                # `content`, not `body`: rebuilding from the original string would discard the
+                # mention rewrite above, which is exactly how hold'em shipped bare @handles on
+                # every post that carried a board image — i.e. on every result.
+                content = f"{content}\n{url}"
                 imeta = _ev.imeta_tag(url, "image/png", info.get("sha256", ""), info.get("dim", ""))
         except Exception as e:
             print(f"[blackjack] board upload failed: {e}", flush=True)

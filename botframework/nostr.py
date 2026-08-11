@@ -473,6 +473,33 @@ _QUOTE_RE = re.compile(r"(?:nostr:)?((?:nevent1|note1)[023456789acdefghjklmnpqrs
 _MENTION_RE = re.compile(r"(?:nostr:)?\b((?:npub1|nprofile1)[023456789acdefghjklmnpqrstuvwxyz]+)", re.IGNORECASE)
 
 
+def mentionify(content: str, pubkeys, name_of) -> str:
+    """Turn the `@name`s a game bot writes into REAL mentions: `nostr:npub1…`.
+
+    A bare `@handle` in a kind-1 notifies the person (the p-tag does that) and renders as plain text
+    everywhere — no name resolution, no link to the profile. NIP-27 wants the npub in the CONTENT, and
+    the p-tag alongside it. Reported as "games not tagging users right": a result post read
+    `@npub1mq3s439… wins 80`, which is not only unrendered but TRUNCATED, so nothing could resolve it
+    even by hand.
+
+    It was written twice (hold'em and blackjack) and missing from the other four, and both copies threw
+    their own work away — see the note at each call site. One helper, six callers.
+
+    Longest name first, so a name that is a prefix of another is not half-replaced. Names that are
+    already a `nostr:` reference are left alone.
+    """
+    for pk in sorted([p for p in (pubkeys or []) if p], key=lambda p: -len(str(name_of(p) or ""))):
+        try:
+            nm = name_of(pk)
+            ref = "nostr:" + _svc.npub_of(pk)
+            if not nm or ref in content:
+                continue
+            content = content.replace(nm, ref)
+        except Exception:
+            pass
+    return content
+
+
 def _inline_mention_pubkeys(content: str) -> list:
     """Ordered list of pubkey hexes explicitly @-mentioned (nostr:npub/nprofile) in the text."""
     out = []

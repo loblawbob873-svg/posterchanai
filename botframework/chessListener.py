@@ -231,7 +231,9 @@ def _publish(gameid, parent_id, white, black, body, png, federate=True):
     if not url:
         raise RuntimeError("board image upload failed")
     # The invite + #chesstr go in the post TEXT (below the image), not on the board image itself.
-    content = f"{body}\n{url}\n\n{_footer()}"
+    # Real mentions, not bare @handles: a p-tag notifies but renders as plain text, so a result
+    # post read "@npub1mq3s439… wins" — unrendered AND truncated. See _nk.mentionify.
+    content = _nk.mentionify(f"{body}\n{url}\n\n{_footer()}", [white, black], _name)
     tags = [["e", gameid, "", "root"]]
     if parent_id and parent_id != gameid:
         tags.append(["e", parent_id, "", "reply"])

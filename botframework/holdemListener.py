@@ -270,18 +270,17 @@ def _do_publish(gameid, parent_id, players, body, png):
     # a `nostr:npub…` ref that matches its p-tag (a bare @handle notifies via the p-tag but doesn't render
     # as a mention / link to the profile). Longest names first so a name that's a prefix of another isn't
     # half-replaced.
-    for pk in sorted([p for p in (players or []) if p], key=lambda p: -len(_name(p) or "")):
-        try:
-            content = content.replace(_name(pk), "nostr:" + _nk._svc.npub_of(pk))
-        except Exception:
-            pass
+    content = _nk.mentionify(content, players, _name)
     imeta = None
     if png:
         try:
             info = _nk._run(_nk._svc.media.upload(_nk._MEDIA_CFG, _nk._SECKEY, png, "image/png")) or {}
             url = info.get("url")
             if url:
-                content = f"{body}\n{url}"
+                # `content`, not `body` — this rebuilt from the ORIGINAL string and silently
+                # discarded the mention rewrite above, so every post carrying a board image
+                # (i.e. every result) shipped the bare @handle text.
+                content = f"{content}\n{url}"
                 imeta = _ev.imeta_tag(url, "image/png", info.get("sha256", ""), info.get("dim", ""))
         except Exception as e:
             print(f"[holdem] board upload failed: {e}", flush=True)
