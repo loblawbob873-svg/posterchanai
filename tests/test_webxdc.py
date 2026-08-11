@@ -309,5 +309,108 @@ class TheLoaderWaitsForItsWorker(unittest.TestCase):
                         "nothing took over: the reader gets a dead status line, not the app")
 
 
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class TheWorkerServesTheRIGHTApp(unittest.TestCase):
+    """ONE ORIGIN MEANS ONE SERVICE WORKER FOR EVERY MINI APP, so the worker has to decide which open
+    game each request belongs to. It used to take the first client whose path looked like a loader —
+    and with Half-Life still open, pressing Play on Quake III started Half-Life. That is one app's
+    bytes delivered into another app's frame, so it is a leak as well as a mix-up.
+
+    The rule is: answer only the loader holding this instance's token, and REFUSE when it cannot be
+    told. These run the shipped worker under node with stubbed clients, because the wrong answer is
+    a perfectly successful response — nothing throws, nothing logs, the wrong game just starts.
+    """
+
+    def route(self, clients, url, client_id="", resulting="", referrer=""):
+        """Returns which loader (by id) the worker asked, or the refusal it produced instead."""
+        harness = """
+        const vm = require('vm'), fs = require('fs');
+        const SRC = fs.readFileSync(%s, 'utf8');
+        const asked = [];
+        const CLIENTS = %s.map(c => Object.assign({}, c, {
+          postMessage(msg, transfer){
+            asked.push(c.id);
+            // Answer on the port so the response completes, exactly as the loader does.
+            transfer[0].postMessage({ ok: true, res: { status: 200, headers: {}, body: btoa('bytes') } });
+          },
+        }));
+        const handlers = {};
+        Object.defineProperty(global, 'self', { configurable: true, value: {
+          addEventListener(t, fn){ handlers[t] = fn; },
+          location: { origin: 'https://xdc.example' },
+          skipWaiting(){}, registration: {},
+          clients: {
+            matchAll: async () => CLIENTS,
+            get: async (id) => CLIENTS.find(c => c.id === id),
+            claim: async () => {},
+          },
+        } });
+        vm.runInThisContext(SRC);
+        const request = { url: %s, method: 'GET', headers: new Headers(), referrer: %s };
+        let answer = null;
+        handlers.fetch({ request, clientId: %s, resultingClientId: %s,
+                         respondWith(p){ answer = p; } });
+        (async () => {
+          const res = answer ? await answer : null;
+          console.log(JSON.stringify({ asked, status: res ? res.status : null,
+                                       body: res ? await res.text() : null }));
+          // An open MessagePort keeps node's event loop alive for ever — the worker holds one per
+          // request by design, so the run has to end itself rather than wait to be timed out.
+          process.exit(0);
+        })();
+        """ % (json.dumps(str(ROOT / "static" / "webxdc-sandbox" / "sw.js")),
+               json.dumps(clients), json.dumps(url), json.dumps(referrer),
+               json.dumps(client_id), json.dumps(resulting))
+        return _node(harness)
+
+    HALFLIFE = {"id": "loader-hl", "url": "https://xdc.example/__sandbox__/?__xdc=tok-hl"}
+    QUAKE = {"id": "loader-q3", "url": "https://xdc.example/__sandbox__/?__xdc=tok-q3"}
+
+    def test_a_second_game_is_not_served_by_the_first_ones_loader(self):
+        """The reported bug, exactly: Half-Life open, Quake III pressed, Half-Life starts."""
+        clients = [self.HALFLIFE, self.QUAKE,
+                   {"id": "app-q3", "url": "https://xdc.example/?__xdc=tok-q3"}]
+        out = self.route(clients, "https://xdc.example/ioquake3.wasm", client_id="app-q3")
+        self.assertEqual(out["asked"], ["loader-q3"],
+                         "the worker asked the wrong game for this app's files")
+
+    def test_a_navigation_is_routed_by_the_token_in_its_url(self):
+        """A navigation has no client id at all — the token in the URL is the only thing there is."""
+        out = self.route([self.HALFLIFE, self.QUAKE], "https://xdc.example/?__xdc=tok-hl",
+                         client_id="", resulting="app-hl")
+        self.assertEqual(out["asked"], ["loader-hl"])
+
+    def test_an_in_app_link_is_routed_by_its_referrer(self):
+        """An app that navigates to its own second page (Quake III has a main menu) inherits no
+        query — but the page it came from is the referrer, and that carries the token."""
+        out = self.route([self.HALFLIFE, self.QUAKE], "https://xdc.example/main-menu.html",
+                         referrer="https://xdc.example/?__xdc=tok-q3")
+        self.assertEqual(out["asked"], ["loader-q3"])
+
+    def test_an_unattributable_request_is_refused_rather_than_guessed(self):
+        out = self.route([self.HALFLIFE, self.QUAKE], "https://xdc.example/game.js")
+        self.assertEqual(out["asked"], [], "it guessed — which is the whole bug")
+        self.assertEqual(out["status"], 502)
+
+    def test_one_open_game_still_needs_no_token(self):
+        """A client too old to mint one is not ambiguous when it is the only game open, and must
+        keep working — the worker updates the moment it is fetched, the client may be cached."""
+        out = self.route([self.HALFLIFE], "https://xdc.example/game.js")
+        self.assertEqual(out["asked"], ["loader-hl"])
+
+    def test_a_closed_game_is_not_answered_by_whoever_is_left(self):
+        out = self.route([self.HALFLIFE], "https://xdc.example/game.js",
+                         referrer="https://xdc.example/?__xdc=tok-q3")
+        self.assertEqual(out["asked"], [])
+        self.assertEqual(out["status"], 502)
+
+    def test_the_app_still_cannot_reach_the_network(self):
+        """The property the whole feature rests on, asserted beside the routing that now precedes
+        it: an off-origin request is refused here as well as by the CSP."""
+        out = self.route([self.HALFLIFE], "https://example.com/tracker.gif")
+        self.assertEqual(out["asked"], [])
+        self.assertEqual(out["status"], 403)
+
+
 if __name__ == "__main__":
     unittest.main()

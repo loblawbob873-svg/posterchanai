@@ -194,10 +194,22 @@
        * break exactly those — silently, as a missing stylesheet. So the worker owns `/` and leaves
        * `/__sandbox__/` and `/sw.js` alone, which is what keeps this document reachable after the
        * worker has taken over everything else. */
+      /* THE APP'S FRAME CARRIES THIS INSTANCE'S TOKEN, and it is not decoration: every mini app on
+       * this instance shares one origin and therefore one service worker, which has to decide which
+       * open game a request belongs to. It used to take the first loader it found — so opening Quake
+       * III served Half-Life, whose loader was still alive. The token comes from our own URL (the
+       * client minted it) and rides in the query, because a fragment never reaches a worker and a
+       * navigation has no client id to look anything up by. See sw.js.
+       *
+       * The app can read it, and that is fine: it is its own. It cannot read another app's, which is
+       * why it is a uuid rather than a counter. */
       var f = document.createElement('iframe');
       f.id = 'f';
       f.setAttribute('allow', 'autoplay; fullscreen; gamepad');
-      f.src = '/' + (params && params.entry ? String(params.entry).replace(/^\/+/, '') : '');
+      var tok = '';
+      try{ tok = new URLSearchParams(location.search).get('__xdc') || ''; }catch(_){}
+      f.src = '/' + (params && params.entry ? String(params.entry).replace(/^\/+/, '') : '')
+            + (tok ? '?__xdc=' + encodeURIComponent(tok) : '');
       document.body.appendChild(f);
       /* THE STATUS LINE STAYS UNTIL THE APP HAS ACTUALLY ASKED FOR SOMETHING.
        *

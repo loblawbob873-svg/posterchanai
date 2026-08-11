@@ -429,6 +429,16 @@
       this.files = files;
       this.frame = null;
       this.origin = '';
+      /* THIS RUN'S TOKEN, and it is what stops one game serving another one's files.
+       *
+       * Every mini app on this instance runs on ONE sandbox origin, so they share ONE service worker.
+       * That worker used to answer a request from whichever loader came first out of `matchAll()` —
+       * so with Half-Life still open, pressing Play on Quake III started Half-Life. It is handed to
+       * the sandbox in the frame's URL, travels to the app's own frame from there, and the worker
+       * answers only the loader holding the same one (sw.js). A uuid rather than a counter because
+       * an app can read its own URL and must not be able to guess anybody else's. */
+      this.token = (crypto.randomUUID ? crypto.randomUUID()
+                                      : _hex(crypto.getRandomValues(new Uint8Array(16))));
       this.sub = null;
       this.rtSub = null;            // the realtime channel, when an app joins one
       this._rtNext = null;          // the newest unsent realtime packet (newest wins)
@@ -685,7 +695,7 @@
        * Firefox at all — noted in docs/WEBXDC.md rather than discovered later. */
       f.setAttribute('referrerpolicy', 'no-referrer');
       f.setAttribute('allow', 'autoplay; fullscreen; gamepad');
-      f.src = this.origin + '/__sandbox__/';
+      f.src = this.origin + '/__sandbox__/?__xdc=' + encodeURIComponent(this.token);
       this.frame = f;
 
       this._onMsg = (ev) => {
