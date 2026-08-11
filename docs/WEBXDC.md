@@ -103,7 +103,34 @@ Both look right, and both are recorded so nobody spends the afternoon again:
   vhost and the sandbox is never reached — proven with a marker header, present on a direct request
   and absent through the CDN. Do not re-attempt it.
 
-### The trade this leaves
+#### One origin means one worker, so every run carries a token
+
+Because every app shares `xdc.<instance>`, every app shares **one service worker**, and that worker
+has to decide which open game each request belongs to. It used to answer from the first client whose
+path looked like a loader — so with Half-Life open, pressing Play on Quake III **started Half-Life**.
+That is not a mix-up but a leak: one app's bytes delivered into another app's frame.
+
+Each session now mints a token (a uuid), passed to the loader in its URL and on to the app's frame
+from there; the worker answers only the loader holding the same one. It rides in the **query**, not
+the fragment, because a fragment never reaches a worker (`request.url` is serialised without it) and a
+**navigation** — which has no client id to look anything up by — is exactly the case with nothing else
+to go on. Four ways to learn it, in order of certainty: the remembered client id (survives an app
+rewriting its own URL, which Quake III does on boot), the request URL, the requesting client's URL,
+then the referrer (an in-app link to a second page inherits no query). No token and exactly one loader
+open is unambiguous and still answered — that is also what keeps an older cached client working. No
+token and two loaders is a guess, and it is **refused**, because guessing is the whole bug.
+
+### Reading an app's own error message
+
+Half-Life's *"Failed to start multiplayer game. Make sure this app is running inside a
+WebXDC-compatible messenger"* is a **catch-all `alert()`** around its whole multiplayer start, not a
+feature detection — it blames the messenger for any failure, including its own downloads. The line
+before it, `console.error("Failed to start multiplayer game:", e)`, is the real diagnostic. Its
+genuine API check is in `electHost()` and says something else entirely
+(*"webxdc.joinRealtimeChannel is not available"*), as does Quake III's, which prints into the page
+body. Worth knowing before taking an app's word for what is wrong with the host.
+
+## The trade this leaves
 
 Every app shares one origin, so **an app can read another app's leftovers in `localStorage`**. Keys
 are namespaced per app in the injected bridge, which is a collision guard, not a security boundary.
@@ -190,7 +217,10 @@ localStorage and get an origin per app, which closes that gap too.
   relative specifiers resolve before any map is consulted. It is a last resort, not a second design.
 - **`sendToChat` and `importFiles` are not implemented** — same reason, same detection.
 - **`selfAddr` is your npub and proves nothing.** Nothing inside a mini app is signed, so any player
-  can claim to be anyone within the app. The NIP says so too; apps must not use it for trust.
+  can claim to be anyone within the app. The NIP says so too; apps must not use it for trust. Signed
+  out it is the realtime channel's ephemeral key instead of an empty string — the spec asks for an
+  identifier unique in the chat, and Half-Life hashes `selfAddr` into the fake IP it routes
+  multiplayer packets by, so two blank ones would collide on a single address and see nobody.
 - **IndexedDB is not namespaced** the way localStorage is, so two apps on the shared origin can see
   each other's databases.
 

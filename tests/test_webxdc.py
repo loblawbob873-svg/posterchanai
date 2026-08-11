@@ -218,6 +218,38 @@ class HandAssembledJavaScript(unittest.TestCase):
         body = re.sub(r"\$\{[^}]*\}", "0", body).replace("\\`", "`")
         self.check("var __XDC = { addr:'', name:'', ns:'x' };\n" + body, "the injected webxdc bridge")
 
+    def test_the_bridge_offers_exactly_the_api_apps_look_for(self):
+        """`window.webxdc` IS the contract with every app in the ecosystem, and apps feature-detect it
+        rather than trusting it: Quake III refuses to start when `joinRealtimeChannel` is undefined,
+        and Half-Life throws its own error from `electHost` for the same reason — surfaced to the
+        reader as "make sure this app is running inside a WebXDC-compatible messenger", which names
+        the messenger and not the missing method. A property dropped from the hand-assembled string
+        should fail here instead."""
+        src = WEBXDC_JS.read_text()
+        m = re.search(r"const BRIDGE = `((?:[^`\\]|\\.)*)`;", src, re.S)
+        body = re.sub(r"\$\{[^}]*\}", "1000", m.group(1)).replace("\\`", "`")
+        out = _node("""
+        const vm = require('vm');
+        global.window = { addEventListener(){} };
+        global.parent = { postMessage(){} };
+        global.document = { createElement: () => ({ getContext: () => ({}) }) };
+        vm.runInThisContext(%s);
+        const w = window.webxdc, ch = w.joinRealtimeChannel();
+        let threw = false;
+        try { ch.send([1, 2, 3]); } catch (e) { threw = true; }
+        console.log(JSON.stringify({ keys: Object.keys(w).sort(), channel: Object.keys(ch).sort(),
+          addr: w.selfAddr, name: w.selfName, max: typeof w.sendUpdateMaxSize,
+          every: typeof w.sendUpdateInterval, rejectsPlainArrays: threw }));
+        """ % json.dumps('var __XDC = { addr:"npub1abc", name:"Ann", ns:"game" };\n' + body))
+        self.assertEqual(out["keys"], ["joinRealtimeChannel", "selfAddr", "selfName", "sendUpdate",
+                                       "sendUpdateInterval", "sendUpdateMaxSize", "setUpdateListener"])
+        self.assertEqual(out["channel"], ["leave", "send", "setListener"])
+        self.assertEqual(out["addr"], "npub1abc")
+        self.assertEqual(out["name"], "Ann")
+        self.assertEqual(out["max"], "number")
+        self.assertEqual(out["every"], "number")
+        self.assertTrue(out["rejectsPlainArrays"], "realtime data must be a Uint8Array, per the spec")
+
     def test_the_blob_fallback_shim_parses(self):
         """It is an ARRAY OF STRINGS joined with newlines, so a missing comma or an unbalanced quote
         is a runtime surprise inside somebody else's app rather than a build error here."""

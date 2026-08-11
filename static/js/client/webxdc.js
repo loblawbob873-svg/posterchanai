@@ -674,6 +674,14 @@
         const prof = (me && me.pubkey && PC.profOf) ? (PC.profOf(me.pubkey) || {}) : {};
         this.self.name = String(prof.display_name || prof.name || '').slice(0, 60);
       }catch(_){}
+      /* A GUEST STILL HAS TO BE SOMEBODY — to the app, not to the network. The spec asks for an
+       * identifier "unique in this chat", and an empty string is not unique: Half-Life hashes
+       * `selfAddr` into the fake IP it routes multiplayer packets by, so two signed-out players would
+       * land on one address and neither would ever see the other. The realtime channel's own
+       * ephemeral key is the honest answer — it is what this session actually signs with, it is
+       * unique, and it lasts exactly as long as the game does. (Signing out no longer bars multiplayer
+       * at all, now that movement is not signed by the account.) */
+      if(!this.self.addr){ try{ this.rtKey(); this.self.addr = this.rtPk; }catch(_){} }
 
       const f = document.createElement('iframe');
       f.className = 'xdc-frame';
