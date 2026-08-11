@@ -144,6 +144,23 @@
             android:exported="false"
             android:foregroundServiceType="microphone|camera" />
 
+        <!-- Start at boot. NOT launching the app — Android has refused to allow that from the
+             background for years and it is what people uninstall an app for. It restarts the ONE
+             thing that was running before the reboot: the "stay connected" service, and only if the
+             user turned it on (off by default, so on a normal install this receiver does nothing).
+             BOOT_COMPLETED is an explicit exemption to Android 12's ban on background
+             foreground-service starts, so it is allowed here and nowhere else. -->
+        <receiver
+            android:name=".push.BootReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
         <!-- Today's events on the home screen. Same split as the music widget: the LAUNCHER draws it
              and has no key, no session and no business having either, so the WebView pushes what it
              has already decrypted and this renders it. ACTION_DATE_CHANGED is registered because
@@ -267,6 +284,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <!-- The "stay connected" service (off by default) — see StayAwakeService for why specialUse. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Start at boot (see BootReceiver): restarts the stay-connected service the user opted into,
+         and redraws the home-screen calendar the launcher rebuilt from scratch. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />

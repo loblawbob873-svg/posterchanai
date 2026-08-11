@@ -299,6 +299,73 @@
     }
 
     // ---- load --------------------------------------------------------------------------------
+    /* THE OFFLINE CACHE.
+     *
+     * Calendar items come from `/api/calendar/*`, so with no network the screen was a spinner and
+     * then an error — on the app that keeps Notes, Passwords and the timeline working offline. It is
+     * also the difference between a month grid that appears instantly on open and one that appears
+     * after two round trips.
+     *
+     * IndexedDB, not localStorage: a real calendar is hundreds of KB of raw iCalendar, localStorage
+     * is a shared ~5 MB quota for the whole origin, and a quota error there is thrown at whatever
+     * happens to write next — which would be somebody's note.
+     *
+     * WHAT IS STORED IS ALREADY-DECRYPTED ICS, which is a real trade and worth stating: the events
+     * are readable to anything that can read this device's IndexedDB. The same is true of the CalDAV
+     * copy on the phone's own calendar app, and of everything else this screen shows — the calendar
+     * is explicitly the one part of this app the SERVER can read too (see docs/CALENDAR.md), so a
+     * device-local cache is not a new exposure. Notes and the vault, which the server CANNOT read,
+     * are not cached this way and must not be. */
+    const CalCache = {
+      DB: 'pccal', VER: 1, STORE: 'cal', _db: null,
+      _open(){
+        if(this._db) return Promise.resolve(this._db);
+        return new Promise((res, rej) => {
+          let rq; try{ rq = indexedDB.open(this.DB, this.VER); }catch(e){ return rej(e); }
+          rq.onupgradeneeded = () => { const db = rq.result;
+            if(!db.objectStoreNames.contains(this.STORE)) db.createObjectStore(this.STORE); };
+          rq.onsuccess = () => { this._db = rq.result; res(this._db); };
+          rq.onerror = () => rej(rq.error || new Error('indexeddb unavailable'));
+        });
+      },
+      async _tx(mode, fn){
+        const db = await this._open();
+        return new Promise((res, rej) => {
+          const tx = db.transaction(this.STORE, mode), st = tx.objectStore(this.STORE);
+          let out; try{ out = fn(st); }catch(e){ return rej(e); }
+          // `'result' in out`, not `out.result !== undefined` — a MISS gives a request whose result
+          // is undefined, and unwrapping on that hands back the REQUEST OBJECT. Spelled the way the
+          // music cache and folder sync spell it, because that trap has been paid for twice.
+          tx.oncomplete = () => res(out && typeof out === 'object' && ('result' in out) ? out.result : out);
+          tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error);
+        });
+      },
+      async save(cals, items){
+        try{ await this._tx('readwrite', st => st.put({ cals, items, at: Date.now() }, 'snapshot')); }
+        catch(_){ /* a full or unavailable IDB must never fail a load that worked */ }
+      },
+      async read(){
+        try{ return await this._tx('readonly', st => st.get('snapshot')); }
+        catch(_){ return null; }
+      },
+      async clear(){ try{ await this._tx('readwrite', st => st.delete('snapshot')); }catch(_){} },
+    };
+
+    /* Paint from the cache BEFORE the network is asked. Returns whether anything was drawn, so a
+     * failed load can say "showing your saved calendar" rather than "could not load". */
+    async function loadCached(){
+      if(S.ready || S.cals.length) return false;          // the live data is already here
+      const snap = await CalCache.read();
+      if(!snap || !Array.isArray(snap.cals) || !snap.cals.length) return false;
+      S.cals = snap.cals;
+      S.items = snap.items || {};
+      if(!S.cal || !S.cals.some(c => c.id === S.cal)) S.cal = (S.cals[0] || {}).id || '';
+      S.rev++;                       // invalidates the occurrence index
+      S.cached = true;
+      paint();
+      return true;
+    }
+
     async function load(){
       S.loading = true; S.error = '';
       paint();
@@ -316,10 +383,16 @@
         }
         S.items = items;
         S.rev++;                        // invalidates the occurrence index
+        S.cached = false;
+        CalCache.save(S.cals, items);   // fire and forget: a cache write must not slow a load down
       }catch(e){
         // 404 is the server being off, which is a state to explain rather than an error to report.
         S.enabled = /off on this node/i.test((e && e.message) || '') ? false : S.enabled;
-        if(S.enabled !== false) S.error = (e && e.message) || 'could not load your calendars';
+        // A failure WITH a cache behind it is not a failure worth a red box: the month you are
+        // looking at is real, it is just not fresh. Say which, and let it be read.
+        if(S.enabled !== false) S.error = S.cals.length
+          ? 'showing your saved calendar — could not reach the server'
+          : ((e && e.message) || 'could not load your calendars');
       }finally{
         S.loading = false; S.ready = true; paint();
         // After the data, never before: pushWidget reads S.items, and pushing an empty set would
@@ -648,8 +721,12 @@
     async function pushWidget(){
       const P = PC.capPlugin ? PC.capPlugin('CalendarWidget', 'push') : null;
       if(!P) return;                                    // not the packaged app
+      /* ASK the widget how far ahead it reads. A second constant here is how the app ends up
+       * pushing five days into a widget that draws seven and shows nothing for two of them. The
+       * fallback only matters for an APK older than `window()`, which drew a week. */
       let span = 7;
       try{ span = Number(((await P.window()) || {}).days) || 7; }catch(_){}
+      span = Math.max(1, Math.min(62, span));
       const I = window.PCIcal;
       if(!I) return;
       const now = new Date();
@@ -778,8 +855,10 @@
       if(!S.month) S.month = firstOf(new Date());
       if(!S.sel) S.sel = todayKey();
       paint();
-      // Repaint from state first (instant on a return trip), then refresh in the background.
-      load();
+      /* The CACHE first — instant on open and correct with no network at all — then the network.
+       * loadCached no-ops once the live data is in memory, so a return trip still repaints from
+       * state rather than re-reading IndexedDB. */
+      loadCached().catch(()=>{}).then(()=> load());
     }
 
     window.PCCalendar = { render, reload: load };

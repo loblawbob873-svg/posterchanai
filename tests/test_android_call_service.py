@@ -362,3 +362,33 @@ def test_the_mail_poll_has_the_same_exemption():
     i = APPJS.index("startPolling(){")
     body = APPJS[i:i + 900]
     assert "document.visibilityState === 'hidden' && !_isDesktopApp()" in body
+
+
+BOOT = _read(JAVA, "push", "BootReceiver.java")
+
+
+def test_start_at_boot_restarts_the_service_and_not_the_app():
+    """"PosterChan should have a start at boot option for android like apps do too" — and what apps
+    actually do is restart the part that was RUNNING, not put themselves on screen. Android has
+    refused to allow the latter from the background for years, and it is what people uninstall an app
+    for."""
+    assert "android.permission.RECEIVE_BOOT_COMPLETED" in MANIFEST
+    assert re.search(r'android:name="\.push\.BootReceiver"', MANIFEST)
+    assert "android.intent.action.BOOT_COMPLETED" in MANIFEST
+    assert "MainActivity" not in BOOT, "the receiver launches the app at boot"
+    assert "StayAwakeService.wanted(ctx)" in BOOT, (
+        "it starts the service whether or not the user asked for it")
+    i = BOOT.index("StayAwakeService.wanted(ctx)")
+    assert "return;" in BOOT[i:i + 60], "an opted-out install still starts a service at boot"
+
+
+def test_it_also_survives_an_app_update():
+    """MY_PACKAGE_REPLACED: an update stops every service the app was running, and without this the
+    switch stays on while nothing is running behind it until the app is next opened."""
+    assert "MY_PACKAGE_REPLACED" in MANIFEST and "MY_PACKAGE_REPLACED" in BOOT
+
+
+def test_the_home_screen_calendar_is_redrawn_after_a_reboot():
+    """The data survives (it is on disk) but the LAUNCHER rebuilds its widgets from scratch — so the
+    first thing seen after a restart would be a widget that has not decided what day it is."""
+    assert "CalendarWidget.refresh(ctx)" in BOOT

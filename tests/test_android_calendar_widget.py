@@ -142,3 +142,49 @@ def test_the_widget_never_polls():
     redraw the same list. Everything that changes the display arrives as a broadcast."""
     info = _read(ANDROID, "src", "main", "res", "xml", "calendar_widget_info.xml")
     assert 'android:updatePeriodMillis="0"' in info
+
+
+def test_the_widget_survives_the_app_not_being_opened_for_weeks():
+    """The push is one pass over data the client already decrypted and a few KB of preferences. The
+    cost of the window running out is a widget that goes blank on a phone whose owner has not opened
+    the app since the holidays."""
+    assert "WINDOW_DAYS = 31;" in WIDGET, "the widget only caches a week"
+    i = CALJS.index("async function pushWidget()")
+    body = CALJS[i:i + 2400]
+    assert "Math.min(62, span)" in body, (
+        "an unbounded window from the plugin would expand recurrence over an arbitrary range")
+
+
+def test_the_calendar_screen_works_with_no_network():
+    """Calendar items come from /api/calendar/*, so with no server the screen was a spinner and then
+    an error — on the app that keeps Notes, Passwords and the timeline working offline."""
+    assert "const CalCache = {" in CALJS
+    assert "indexedDB.open(this.DB" in CALJS, (
+        "the cache is not in IndexedDB — localStorage is a shared ~5MB quota for the whole origin, "
+        "and a real calendar is hundreds of KB of raw iCalendar")
+    i = CALJS.index("function render(){")
+    body = CALJS[i:i + 900]
+    assert "loadCached()" in body and body.index("loadCached()") < body.index("load()", body.index("loadCached()")), (
+        "the cache is not painted before the network is asked")
+
+
+def test_a_stale_calendar_says_so_instead_of_reporting_a_failure():
+    """The month you are looking at is real, it is just not fresh."""
+    assert "showing your saved calendar" in CALJS
+    i = CALJS.index("S.enabled = /off on this node/i")
+    assert "S.cals.length" in CALJS[i:i + 500], (
+        "an error is reported the same way whether or not there is a cache behind it")
+
+
+def test_the_cache_holds_only_what_the_server_can_already_read():
+    """A real trade, and worth stating: cached items are readable to anything that can read this
+    device's IndexedDB. The calendar is explicitly the one part of this app the SERVER can read too
+    (a CalDAV client sends plaintext), so a device-local copy is not a new exposure — which is
+    precisely why Notes and the vault, which the server CANNOT read, are not cached this way."""
+    i = CALJS.index("const CalCache = {")
+    head = CALJS[max(0, i - 1400):i]
+    assert "docs/CALENDAR.md" in head or "SERVER can read" in head, (
+        "the cache does not say what it exposes")
+    for f in ("notes.js", "vault.js"):
+        src = _read(ROOT, "static", "js", "client", f)
+        assert "CalCache" not in src

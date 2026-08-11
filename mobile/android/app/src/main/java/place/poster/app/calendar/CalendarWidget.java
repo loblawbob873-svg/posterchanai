@@ -45,8 +45,12 @@ public class CalendarWidget extends AppWidgetProvider {
   static final String KEY_AT = "at";
 
   private static final int[] ROWS = { R.id.cw_1, R.id.cw_2, R.id.cw_3, R.id.cw_4 };
-  /** How far ahead the widget will look to fill its rows. The app pushes at least this many days. */
-  static final int WINDOW_DAYS = 7;
+  /** How far ahead the widget looks to fill its rows, and therefore how long it keeps telling the
+   *  truth with the app never opened. A MONTH, not a week: the push is one pass over data the client
+   *  has already decrypted and a few KB of preferences, while the cost of it running out is a widget
+   *  that goes blank on a phone whose owner has not opened the app since the holidays. The app asks
+   *  for this number rather than carrying its own copy (CalendarPlugin.window). */
+  static final int WINDOW_DAYS = 31;
 
   @Override
   public void onUpdate(Context ctx, AppWidgetManager mgr, int[] ids) {
@@ -138,7 +142,7 @@ public class CalendarWidget extends AppWidgetProvider {
     // identical if both draw an empty box — and the second one is the one a person should act on.
     if (shown == 0) {
       v.setTextViewText(R.id.cw_empty,
-          known ? "Nothing in the next " + WINDOW_DAYS + " days."
+          known ? "Nothing coming up."
                 : "Open PosterChan to load your calendar.");
       v.setViewVisibility(R.id.cw_empty, View.VISIBLE);
     } else {

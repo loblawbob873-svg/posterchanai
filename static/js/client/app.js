@@ -10501,13 +10501,46 @@
     const inner = nm ? emojiName(pk,nm) : (npubOf(pk).slice(0,12)+'…');
     return `<div class="reply-ctx"><span class="reply-ctx-lbl">↩ replying to <span class="name" data-prof="${pk}">${inner}</span></span></div>`;
   }
-  const _evQ=new Set(); let _evT=null;
+  const _evQ=new Set(); let _evT=null; const _evTries=new Map();
   function needEvent(id){ if(id&&/^[0-9a-f]{64}$/i.test(id)&&!Store.get(id)){ _evQ.add(id); if(!_evT)_evT=setTimeout(flushEvents,150);} }
+  /* Fetch the events other cards REFER to — a repost's original, a reply's parent, a quote.
+   *
+   * IT RETRIES WHAT DID NOT COME BACK, and that is the whole of this function's difficulty. A card
+   * whose referenced event never arrives renders as its own shell: the "↩ replying to …" header
+   * (which is built from the reply's OWN tags and therefore always works) above a body that stays
+   * "loading post…". That is exactly the reported symptom — "no posts are shown but you see REPLYING
+   * TO" — and it is what one lost query does, because nothing ever asked again.
+   *
+   * The query is lost for entirely ordinary reasons: a socket the OS froze while the app was in the
+   * background, a relay that answered nothing before the timeout, a reconnect landing mid-flight. On
+   * a desktop something usually repaints and re-queues; on a tablet left on one screen, nothing does,
+   * so the feed sits there half-drawn until it is scrolled or reloaded — "it eventually fixes
+   * itself", which is what a missing retry looks like from the outside.
+   *
+   * BOUNDED, because "not on any relay we are connected to" is a real and common answer: a few
+   * attempts with a widening gap, then that id is left alone. `_evTries` is cleared for anything that
+   * lands and capped, so a long session of scrolling a busy feed cannot grow it without limit. */
+  const _EV_TRIES_MAX = 4;
   async function flushEvents(){
     _evT=null; const ids=[..._evQ]; _evQ.clear(); if(!ids.length) return;
-    const evs=await Relay.query([{ids}]);
-    for(const e of evs){ Store.saveEvent(e); needProfile(e.pubkey); patchLoaded(e); }
+    let evs=[];
+    // `query` can reject (no relay is up at all) — unhandled, that killed the whole flush and left
+    // every id in this batch unasked AND unqueued.
+    try{ evs=await Relay.query([{ids}]); }catch(_){ evs=[]; }
+    const got=new Set();
+    for(const e of evs){ got.add(e.id); _evTries.delete(e.id); Store.saveEvent(e); needProfile(e.pubkey); patchLoaded(e); }
     decorateProfiles();
+    const missing=ids.filter(id=>!got.has(id) && !Store.get(id));
+    if(!missing.length) return;
+    let worst=0;
+    for(const id of missing){
+      const n=(_evTries.get(id)||0)+1;
+      if(n>_EV_TRIES_MAX) continue;         // it is probably on no relay we hold; stop asking
+      _evTries.set(id,n); _evQ.add(id); if(n>worst) worst=n;
+    }
+    if(_evTries.size>2000) _evTries.clear();
+    // Widening gap, so a feed full of unreachable references does not become a query loop.
+    if(_evQ.size && !_evT) _evT=setTimeout(flushEvents, Math.min(15000, 900*Math.pow(2, worst-1)));
   }
   // Patch repost/quote placeholders in place when their referenced event loads — NO full feed
   // re-render (that flashed the whole screen on the busy global feed).
@@ -23337,8 +23370,9 @@
             <label><input type="checkbox" id="set-stay"> Stay connected in the background</label>
             <div class="muted small">Push needs a notification app (ntfy, Sunup) installed — without
               one, a closed PosterChan receives nothing. This keeps the connection open instead, with
-              the permanent notification Android requires. <strong>It uses more battery</strong>, so
-              leave it off if push is working.</div>
+              the permanent notification Android requires, and <strong>starts again by itself after a
+              reboot</strong>. <strong>It uses more battery</strong>, so leave it off if push is
+              working.</div>
           </div>
         </div>
       </section>
