@@ -38,6 +38,7 @@
     const Relay = window.Relay;
 
     const KIND_UPDATE = 4932;          // NIP-DC state update (regular event)
+    const KIND_REALTIME = 20932;       // NIP-DC realtime data (EPHEMERAL: relays forward, store nothing)
     const MIME = 'application/x-webxdc';
     const MAX_XDC = 24 * 1024 * 1024;  // a zip of HTML and sprites; past this something is wrong
     const UPDATE_MAX = 128000;         // the spec's sendUpdateMaxSize default
@@ -228,7 +229,7 @@
      *
      * It speaks JSON-RPC to `parent` — the sandbox loader — which forwards to this document. */
     const BRIDGE = `(function(){
-  var nextId = 1, pending = {}, listener = null, ready = null;
+  var nextId = 1, pending = {}, listener = null, ready = null, rtListener = null;
   /* SHARED-ORIGIN STORAGE, NAMESPACED. Every app on this instance runs on one sandbox origin (see
      sandboxOrigin), so two games that both keep their save under "state" would overwrite each
      other. Keys are prefixed per app. This is a COLLISION guard, not a security boundary — the real
@@ -286,7 +287,20 @@
     if(d.method === 'webxdc.update' && listener){
       try{ listener(d.params); }catch(e){}
     }
+    if(d.method === 'webxdc.realtime' && rtListener){
+      try{ rtListener(unb64(d.params && d.params.b64)); }catch(e){}
+    }
   });
+  function b64(bytes){
+    var s = '', b = bytes;
+    for(var i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+    return btoa(s);
+  }
+  function unb64(s){
+    var bin = atob(s || ''), out = new Uint8Array(bin.length);
+    for(var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
   window.webxdc = {
     selfAddr: __XDC.addr,
     selfName: __XDC.name,
@@ -299,6 +313,25 @@
       listener = cb;
       ready = rpc('webxdc.setUpdateListener', { serial: serial || 0 });
       return ready;
+    },
+    /* The realtime channel: ephemeral, unordered, delivered only to whoever is connected NOW. It is
+       what a game with continuous motion needs — Quake III uses it, and sendUpdate cannot serve that
+       purpose because every packet would be kept for ever by everyone. Optional in the spec, so an
+       app that wants it feature-detects joinRealtimeChannel !== undefined; defining it is a promise
+       that it works. Base64 over the wire rather than a transferred Uint8Array: structured clone of a
+       typed array through two frames behaves differently across WebViews, and this is the one path
+       that carries a packet every frame. */
+    joinRealtimeChannel: function(){
+      rpc('webxdc.rtJoin', {});
+      return {
+        setListener: function(cb){ rtListener = cb; },
+        send: function(data){
+          if(!(data instanceof Uint8Array)) throw new Error('realtime data must be a Uint8Array');
+          if(data.length > ${UPDATE_MAX}) throw new Error('realtime packet too large');
+          rpc('webxdc.rtSend', { b64: b64(data) });
+        },
+        leave: function(){ rtListener = null; rpc('webxdc.rtLeave', {}); },
+      };
     },
   };
   send({ jsonrpc:'2.0', method:'webxdc.hello' });
@@ -315,6 +348,8 @@
       this.frame = null;
       this.origin = '';
       this.sub = null;
+      this.rtSub = null;            // the realtime channel, when an app joins one
+      this.selfPk = '';            // to drop our own realtime packets
       this.seen = new Map();             // event id -> serial
       this.ordered = [];                 // events, oldest first
       this.listening = false;
@@ -329,6 +364,8 @@
       // nobody has on screen is the cost the Notes subscription audit was about.
       try{ if(this.sub) Relay.close(this.sub); }catch(_){}
       this.sub = null;
+      try{ if(this.rtSub) Relay.close(this.rtSub); }catch(_){}
+      this.rtSub = null;
       if(this._onMsg) window.removeEventListener('message', this._onMsg);
       this._onMsg = null;
       if(this.frame && this.frame.parentElement) this.frame.remove();
@@ -479,6 +516,7 @@
       try{
         const me = (PC.me && PC.me()) || null;
         this.self.addr = (me && (me.npub || me.pubkey)) || '';
+        this.selfPk = (me && me.pubkey) || '';
         const prof = (me && me.pubkey && PC.profOf) ? (PC.profOf(me.pubkey) || {}) : {};
         this.self.name = String(prof.display_name || prof.name || '').slice(0, 60);
       }catch(_){}
@@ -548,6 +586,43 @@
       if(d.method === 'webxdc.sendUpdate'){
         this.sendUpdate((d.params || {}).update, (d.params || {}).descr)
           .then(() => this.reply(id, null), (e) => this.fail(id, (e && e.message) || 'could not send'));
+        return;
+      }
+      /* ---- the realtime channel: ephemeral kind 20932 -------------------------------------------
+       * Nostr's ephemeral range (20000-29999) is exactly this semantic — relays forward to current
+       * subscribers and store nothing — so "only peers connected right now receive it" is the
+       * transport's own behaviour rather than something enforced on top of it. `since` is now: a
+       * relay that does keep a few is not going to replay a minute of somebody else's movement into
+       * a game that just started. */
+      if(d.method === 'webxdc.rtJoin'){
+        if(!this.rtSub){
+          try{
+            this.rtSub = Relay.subscribe([{ kinds:[KIND_REALTIME], '#i':[this.app.uuid],
+                                            since: Math.floor(Date.now() / 1000) }], {
+              onEvent: (ev) => {
+                if(this.dead || !ev || ev.kind !== KIND_REALTIME) return;
+                // Not our own packets: the sender already has them, and an app that echoes its own
+                // movement back into its state sees every player twice.
+                if(ev.pubkey && ev.pubkey === this.selfPk) return;
+                this.post({ jsonrpc:'2.0', method:'webxdc.realtime', params:{ b64: ev.content || '' } });
+              },
+            });
+          }catch(_){}
+        }
+        this.reply(id, null);
+        return;
+      }
+      if(d.method === 'webxdc.rtSend'){
+        const b = String((d.params || {}).b64 || '');
+        if(b.length > UPDATE_MAX * 2){ this.fail(id, 'realtime packet too large'); return; }
+        publish(KIND_REALTIME, b, [['i', this.app.uuid]])
+          .then(() => this.reply(id, null), () => this.reply(id, null));   // best-effort, by design
+        return;
+      }
+      if(d.method === 'webxdc.rtLeave'){
+        try{ if(this.rtSub) Relay.close(this.rtSub); }catch(_){}
+        this.rtSub = null;
+        this.reply(id, null);
         return;
       }
       if(d.method === 'webxdc.setUpdateListener'){

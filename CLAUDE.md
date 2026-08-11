@@ -581,7 +581,10 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   `.xdc` (a zip with an `index.html`) attached to a post renders as a Play cartridge — games, polls,
   shared editors — with state synced over Nostr. Ditto's `NOSTR_WEBXDC` draft VERBATIM, so a game
   started in Ditto is playable here: `imeta`/kind-1063 attachment with `m application/x-webxdc` and a
-  `webxdc` identifier, moves as kind **4932** (`i` tag = that identifier). The identifier, not the
+  `webxdc` identifier, moves as kind **4932** (`i` tag = that identifier), and a realtime channel as EPHEMERAL kind
+  **20932** (`joinRealtimeChannel`, which is what a continuously-moving game like the Quake III port
+  needs — relays forward and store nothing, which is exactly the channel's semantic; it is a relay
+  round trip per packet, where Delta Chat's is direct P2P). The identifier, not the
   file or the event, is what makes two people the same game. **Serials are LOCAL** — assigned by
   `(created_at, id)` — which is what lets an append-only log ride a network with no global ordering.
   Kind 4932 must stay out of `_PRUNABLE_KINDS`: a mini app's state IS the sequence, so losing the

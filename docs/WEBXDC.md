@@ -30,7 +30,7 @@ Ditto's `NOSTR_WEBXDC` draft (NIP-DC), implemented verbatim so games are portabl
 |---|---|
 | The app | An `imeta` tag (NIP-92) with `m application/x-webxdc`, `url`, `x` (sha256) and a `webxdc` identifier — or a kind **1063** file-metadata event with the same as flat tags |
 | A move | Kind **4932**, the identifier in an `i` tag, the `sendUpdate()` payload as content, `alt` per NIP-31 |
-| Realtime | Kind **20932** (ephemeral) — *not implemented here yet; apps feature-detect it* |
+| Realtime | Kind **20932**, ephemeral — relays forward to current subscribers and store nothing, which IS the channel's semantic |
 
 **The identifier, not the event, is what makes two people the same game.** Posting the same file
 again mints a new one and starts a fresh game. It is generated per post.
@@ -62,14 +62,18 @@ There are **two frames**, which is not an accident: a service worker serves file
 them, and a navigation has no page yet to ask — so the app runs in a nested frame while the loader
 stays alive as the client the worker talks to.
 
-### Setup, once
+### Setup, once — already done for poster.place
 
 1. **DNS** — `xdc.poster.place` pointing where `poster.place` points (a CNAME is fine, proxied is
    fine).
-2. **TLS** — `sudo certbot --nginx --expand -d poster.place -d xdc.poster.place`.
+2. **TLS** — `sudo certbot --nginx -d xdc.poster.place`, which issues a certificate of its OWN and
+   registers its renewal. That matches how every other subdomain here is done (`ai.`, `adguard.`
+   each have their own) and, unlike `--expand`, never touches the production `poster.place`
+   certificate.
 
 No wildcard and no DNS API token. The vhost is `nginx/webxdc-sandbox.conf.example`, deployed on
-router.lan as `/etc/nginx/sites-enabled/webxdc.conf`.
+router.lan as `/etc/nginx/sites-enabled/webxdc.conf` (certbot rewrote its `ssl_certificate` lines
+when it installed the new cert).
 
 ### Two designs that were tried first
 
@@ -97,8 +101,11 @@ localStorage and get an origin per app, which closes that gap too.
 
 ## Known limits
 
-- **No realtime channel yet** (kind 20932). `joinRealtimeChannel` is deliberately undefined, which is
-  how the spec tells apps to feature-detect it.
+- **Realtime runs over a relay, not peer-to-peer.** `joinRealtimeChannel` works (ephemeral kind
+  20932), which is what a continuously-moving game needs — Quake III uses it. But Delta Chat's
+  implementation is direct P2P (iroh) and this one is a round trip to a relay and back for every
+  packet, so expect latency a turn-based game will never notice and a twitch shooter certainly will.
+  Packets are capped at the spec's 128 KB and your own are not echoed back to you.
 - **`sendToChat` and `importFiles` are not implemented** — same reason, same detection.
 - **`selfAddr` is your npub and proves nothing.** Nothing inside a mini app is signed, so any player
   can claim to be anyone within the app. The NIP says so too; apps must not use it for trust.
