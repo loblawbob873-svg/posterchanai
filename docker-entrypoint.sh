@@ -103,10 +103,40 @@ if [ "${SOURCE_ONEAPI:-0}" = "1" ] && [ -f /opt/intel/oneapi/setvars.sh ]; then
     source /opt/intel/oneapi/setvars.sh >/dev/null 2>&1 || true
 fi
 
+# ---------------------------------------------------------------------------------------------
+# DOES THIS NODE WANT MODEL WEIGHTS AT ALL?
+#
+# The DOWNLOAD_* defaults below are ENV in the shared final image stage, so they are 1 in EVERY
+# image — including the nostr-only one, whose whole pitch is "a relay + client + Blossom, no AI
+# stack". That image installs requirements-nostr.txt: no llama-cpp, no onnxruntime, no rembg. So a
+# plain `docker compose --profile nostr up -d` started pulling ~5.9 GB of weights (a 5.6 GB GGUF, a
+# 94 MB depth model, a 176 MB u2net) that NOTHING in the container can load — in the background,
+# onto the data volume, on the deployment least likely to have the disk or the bandwidth for it.
+#
+# Two independent signals, because they answer different questions and either one alone leaves a
+# hole:
+#   PC_ACCEL=nostr             — a BUILD fact baked into the image: it has no AI libraries. True
+#                                even for `docker run` without the compose environment.
+#   POSTERCHANAI_NOSTR_ONLY=1  — the OPERATOR asking for a Nostr-only node. An AI-capable image can
+#                                be run this way, and the AI surfaces are hidden, so pre-fetching a
+#                                chat model nothing exposes is still 5.6 GB of nothing.
+# Said out loud rather than skipped quietly: "no model appeared" and "the download failed" look
+# identical in a log that says neither.
+PC_WANT_MODELS=1
+if [ "${PC_ACCEL:-}" = "nostr" ] || \
+   [ "$(echo "${POSTERCHANAI_NOSTR_ONLY:-0}" | tr 'A-Z' 'a-z')" = "1" ] || \
+   [ "$(echo "${POSTERCHANAI_NOSTR_ONLY:-0}" | tr 'A-Z' 'a-z')" = "true" ] || \
+   [ "$(echo "${POSTERCHANAI_NOSTR_ONLY:-0}" | tr 'A-Z' 'a-z')" = "yes" ] || \
+   [ "$(echo "${POSTERCHANAI_NOSTR_ONLY:-0}" | tr 'A-Z' 'a-z')" = "on" ]; then
+    PC_WANT_MODELS=0
+    echo "[entrypoint] Nostr-only node — skipping every model pre-fetch (chat / depth / u2net):" \
+         "this build has no AI stack to load them with. Nothing is downloaded."
+fi
+
 # Chat model: NOT auto-downloaded (saves bandwidth). The admin pulls it on demand from
 # Admin → LLM → "Download chat model" (shows progress + ✓/✗). Opt back into the
 # turnkey background pull with DOWNLOAD_MODEL=1 (needs POSTERCHANAI_MODEL_URL + _LLM_MODEL_PATH).
-if [ "${DOWNLOAD_MODEL:-0}" = "1" ] && [ -n "${POSTERCHANAI_MODEL_URL:-}" ] && \
+if [ "$PC_WANT_MODELS" = "1" ] && [ "${DOWNLOAD_MODEL:-0}" = "1" ] && [ -n "${POSTERCHANAI_MODEL_URL:-}" ] && \
    [ -n "${POSTERCHANAI_LLM_MODEL_PATH:-}" ] && [ ! -f "$POSTERCHANAI_LLM_MODEL_PATH" ]; then
     (
         tmp="${POSTERCHANAI_LLM_MODEL_PATH}.part"
@@ -123,7 +153,7 @@ fi
 # Depth model for the `alive` 3D-parallax effect (~94 MB, gitignored so not baked into
 # the image). Fetched on first run into the data volume, in the BACKGROUND so startup
 # isn't blocked; the effect lights up once it lands. Skip with DOWNLOAD_DEPTH_MODEL=0.
-if [ "${DOWNLOAD_DEPTH_MODEL:-0}" = "1" ] && [ -n "${DEPTH_MODEL_URL:-}" ] && \
+if [ "$PC_WANT_MODELS" = "1" ] && [ "${DOWNLOAD_DEPTH_MODEL:-0}" = "1" ] && [ -n "${DEPTH_MODEL_URL:-}" ] && \
    [ -n "${DEPTH_MODEL_PATH:-}" ] && [ ! -f "$DEPTH_MODEL_PATH" ]; then
     (
         tmp="${DEPTH_MODEL_PATH}.part"
@@ -141,7 +171,7 @@ fi
 # data volume (rembg's U2NET_HOME) in the BACKGROUND. rembg would otherwise fetch it lazily on
 # the first removebackground; pre-fetching means the first call doesn't stall. Skip with
 # DOWNLOAD_U2NET_MODEL=0.
-if [ "${DOWNLOAD_U2NET_MODEL:-0}" = "1" ] && [ -n "${U2NET_MODEL_URL:-}" ] && \
+if [ "$PC_WANT_MODELS" = "1" ] && [ "${DOWNLOAD_U2NET_MODEL:-0}" = "1" ] && [ -n "${U2NET_MODEL_URL:-}" ] && \
    [ -n "${U2NET_HOME:-}" ] && [ ! -f "$U2NET_HOME/u2net.onnx" ]; then
     (
         mkdir -p "$U2NET_HOME"

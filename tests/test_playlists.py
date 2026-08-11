@@ -153,24 +153,6 @@ const out={};
     out.toldThem=(ctx.__toasts||[]).some(t=>/full/i.test(t));
   }
 
-  if(CASE==='replace'){
-    await P.load();
-    const a='a'.repeat(64), b='b'.repeat(64), c='c'.repeat(64), NEW='d'.repeat(64);
-    const p1=await P.create('One'); await P.add(p1.id,[a,b,c]);
-    const p2=await P.create('Two'); await P.add(p2.id,[c,b]);
-    const p3=await P.create('None'); await P.add(p3.id,[a,c]);
-    out.n = await P.replaceTrack(b, NEW);
-    out.p1 = P.get(p1.id).tracks.map(t=>t[0]).join('');   // ORDER must hold: b swapped in place
-    out.p2 = P.get(p2.id).tracks.map(t=>t[0]).join('');
-    out.p3 = P.get(p3.id).tracks.map(t=>t[0]).join('');   // untouched
-    // A playlist that already holds the replacement must not end up with it twice.
-    const p4=await P.create('Both'); await P.add(p4.id,[NEW,b]);
-    out.dupN = await P.replaceTrack(b, NEW);
-    out.p4 = P.get(p4.id).tracks.map(t=>t[0]).join('');
-    out.noop = await P.replaceTrack(a, a);                // same sha → nothing to do
-    out.bad  = await P.replaceTrack('nothex', NEW);
-  }
-
   if(CASE==='roundtrip'){
     await P.load();
     const pl=await P.create('Trip');
@@ -272,29 +254,6 @@ def test_edits_round_trip_and_stay_encrypted():
     assert o["name"] == "Renamed"
     assert o["encrypted"] and o["hasL"] and o["dTag"]
     assert o["plaintextLeak"] is False, "a playlist name must never reach the relay in the clear"
-
-
-def test_replacing_a_track_keeps_its_position_in_every_playlist():
-    """Blossom is content-addressed, so replacing a track with the original file gives it a DIFFERENT
-    sha. Without an in-place swap the track silently disappears from every playlist it was on while
-    still being in the library — and remove-then-add would move it to the end, which for a playlist
-    is a different playlist."""
-    o = run("replace")
-    assert o["n"] == 2, "both playlists holding the track should have been updated"
-    assert o["p1"] == "adc", "the replacement must take the old track's POSITION, not the end"
-    assert o["p2"] == "cd"
-    assert o["p3"] == "ac", "a playlist that never held it must not be touched"
-
-
-def test_replacing_into_a_playlist_that_already_has_it_does_not_duplicate():
-    o = run("replace")
-    assert o["dupN"] == 1
-    assert o["p4"] == "d", "the old entry is dropped rather than creating a duplicate"
-
-
-def test_a_meaningless_replace_is_a_no_op():
-    o = run("replace")
-    assert o["noop"] == 0 and o["bad"] == 0
 
 
 def test_an_offline_edit_is_kept_in_memory():

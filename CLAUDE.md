@@ -534,6 +534,24 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   **Background sync cannot upload and that is not a bug**: every network step is signed by the user's
   Nostr key, which with Amber/NIP-46 is not on the device — so Android's WorkManager job notices
   changes and notifies, and opening the app is what syncs. See `docs/FOLDER_SYNC.md`.
+- **The nostr-only Docker image downloads NO model weights.** `DOWNLOAD_MODEL` /
+  `DOWNLOAD_DEPTH_MODEL` / `DOWNLOAD_U2NET_MODEL` are `ENV …=1` in the Dockerfile's **shared** final
+  stage, so they are on in EVERY image — including `GPU=nostr`, which installs
+  `requirements-nostr.txt` and therefore has no llama-cpp, torch, onnxruntime or rembg. A plain
+  `docker compose --profile nostr up -d` was starting a background pull of ~**5.9 GB** (5.6 GB GGUF
+  + 94 MB depth + 176 MB u2net) that nothing in the container can load. `docker-entrypoint.sh`
+  computes **`PC_WANT_MODELS`** once and every pre-fetch is gated on it; it is 0 when `PC_ACCEL=nostr`
+  (a BUILD fact, so it holds under a bare `docker run` with none of the compose env) **or** when
+  `POSTERCHANAI_NOSTR_ONLY` is on (an AI-capable image deliberately run as a Nostr node — the AI
+  surfaces are hidden, so the weights would reach nothing). It says so in the log rather than
+  skipping silently. The **admin panel is NOT gated by nostr-only mode**, so its "Download chat
+  model" button is still there on such a build: `model_download_service._no_ai_build()` refuses with
+  a sentence instead of fetching. The bare-metal `install.sh` nostr path was always clean (it never
+  calls `download_model`/`download_depth_model`/`download_u2net_model`).
+  `tests/test_docker_nostr_no_models.py` RUNS the entrypoint's download section under bash with a
+  stubbed `curl` — a grep-for-the-variable test would pass against a gate wired into two of the
+  three blocks — and asserts an AI build still pre-fetches, which is how this guard would otherwise
+  "pass" while quietly disabling the turnkey pull for everybody.
 - **Desktop mode is ARRANGEABLE** (`static/js/client/os.js`; the windowed desktop, entered from the
   instance logo ≥1024px): icons drag into your own order, one dropped on another makes a named
   folder, right-click renames/takes a folder apart or hides an icon from the desktop (it stays in the

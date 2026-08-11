@@ -189,6 +189,13 @@ services:
   # (no torch/llama/diffusers) — a small, fast image for people who don't care about AI. The relay
   # + nostr-only UI are turned ON by default here. Just:
   #   docker compose --profile nostr up -d --build
+  #
+  # NO MODEL WEIGHTS ARE FETCHED, and that is enforced in the ENTRYPOINT rather than here. The
+  # DOWNLOAD_MODEL / DOWNLOAD_DEPTH_MODEL / DOWNLOAD_U2NET_MODEL defaults are ENV in the shared
+  # final image stage, so they are on in EVERY image — this profile used to start pulling ~5.9 GB of
+  # weights nothing in the container can load. docker-entrypoint.sh skips all of them when
+  # PC_ACCEL=nostr (a build fact, so it holds under a bare `docker run` too) or when
+  # POSTERCHANAI_NOSTR_ONLY is on. Guarded by tests/test_docker_nostr_no_models.py.
   nostr:
     <<: *common
     profiles: ["nostr"]

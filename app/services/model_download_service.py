@@ -229,10 +229,36 @@ _FNS = {"chat": _download_chat, "tools": _download_tools, "image": _download_ima
         "music": _download_music, "voice": _download_voice}
 
 
+def _no_ai_build() -> str:
+    """Why this node must not fetch weights, or "" when it may.
+
+    The nostr-only image installs requirements-nostr.txt — no llama-cpp, no torch, no diffusers, no
+    onnxruntime. Every download here would therefore land several GB on the data volume that nothing
+    in the container can load, and the admin panel is NOT gated by nostr-only mode, so its
+    "Download chat model" button is right there on a build whose entire point is not having one.
+
+    `PC_ACCEL=nostr` is a BUILD fact baked into the image (true even under a bare `docker run`);
+    `POSTERCHANAI_NOSTR_ONLY` is the operator asking for a Nostr-only node. Refused with a sentence
+    rather than silently — a button that does nothing is worse than one that says why. The same two
+    signals gate the entrypoint's pre-fetches (docker-entrypoint.sh, PC_WANT_MODELS).
+    """
+    if (os.getenv("PC_ACCEL", "") or "").strip().lower() == "nostr":
+        return ("This is a Nostr-only build — it ships no AI stack (no llama-cpp/torch/diffusers), "
+                "so the weights could not be loaded. Use an AI image (cpu/cuda/rocm/intel) instead.")
+    if (os.getenv("POSTERCHANAI_NOSTR_ONLY", "0") or "").strip().lower() in ("1", "true", "yes", "on"):
+        return ("This node runs in Nostr-only mode, where the AI features are switched off — "
+                "downloading model weights here would use the disk and reach nothing.")
+    return ""
+
+
 def start(kind: str, db_factory) -> bool:
     """Kick off (or no-op if already running) the download for `kind`. db_factory = SessionLocal."""
     if kind not in _FNS:
         _set(kind, "error", "unknown model kind")
+        return False
+    _blocked = _no_ai_build()
+    if _blocked:
+        _set(kind, "error", _blocked)
         return False
     if status(kind).get("state") == "running":
         return True
