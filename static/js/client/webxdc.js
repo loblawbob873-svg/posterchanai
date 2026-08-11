@@ -815,11 +815,23 @@
       let osWin = null;
       try{ osWin = window.PCOS && PCOS.isOn && PCOS.isOn(); }catch(_){ osWin = false; }
       if(osWin){
+        /* A WINDOW'S `render` TAKES NO ARGUMENTS. It is called on repaint and is expected to paint
+         * into the shared #feed — that is what every other caller does (Music calls renderMusicApp,
+         * which draws into the feed). Passing a callback that expected the window's body meant it
+         * threw on `undefined` INSIDE os.js's `try{ w.render() }catch{}`, silently, and the iframe
+         * was never created at all: a black window that never asked for a single file, which is
+         * exactly how it was reported twice.
+         *
+         * So the game is mounted by hand into the window's own SLOT — a dedicated node that is not
+         * the timeline — and `render` is a no-op, present only so the repaint path does not fall
+         * through to switchView() and drag the feed in on top of the game. */
         const w = PCOS.openDoc('webxdc:' + (session.app.uuid || session.app.sha || String(id)),
-                               name, '#i-gamepad', (body) => {
-          body.innerHTML = '';
-          mountInto(body);
-        });
+                               name, '#i-gamepad', () => {});
+        const host = w && (w.slot || w.body);
+        if(!host){ toast('could not open a window for that app'); return session; }
+        host.classList.add('xdc-slot');
+        host.innerHTML = '';
+        mountInto(host);
         /* The window owns the session: closing it must stop the subscription and drop the frame, or
          * a closed game keeps a REQ open for the rest of the session — the exact cost the Notes
          * subscription audit was about. */
