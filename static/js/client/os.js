@@ -1949,7 +1949,73 @@
       },
       refresh(){},
     },
+
+    calendar: {
+      label: 'Today', icon: '#i-clock', blurb: "What is on today, from your encrypted calendars",
+      // Five minutes. A calendar changes on human timescales, and the read is N+1 requests.
+      every: 300000,
+      mount(el){ el.innerHTML = '<div class="wgt-cal"><div class="wgt-dim">loading…</div></div>'; },
+      async refresh(el){
+        const box = $('.wgt-cal', el); if(!box) return;
+        let d = null;
+        try{ d = await _calFeed(); }
+        catch(_){
+          // dataset.filled: keep the last good list rather than replacing a real day with an error.
+          // A calendar that failed to refresh at 09:04 still tells you what is on at 09:00.
+          if(!box.dataset.filled) box.innerHTML = '<div class="wgt-dim">calendar unavailable</div>';
+          return;
+        }
+        if(d && d.off){ box.innerHTML = '<div class="wgt-dim">Calendar is off on this node</div>'; return; }
+
+        const now = new Date();
+        const day0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        // Fourteen days, not one: an empty day is the COMMON case, and "nothing today" alone is less
+        // use than the thing that is actually coming. The extra window costs one expansion, not one
+        // request — the items are already here.
+        const soon = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 14);
+        const all = _calOccurrences(d.items, day0, soon);
+        box.dataset.filled = '1';
+
+        const { today, later } = _calSplit(all, now);
+        const head = `<div class="wgt-calhead"><b>${enc(String(now.getDate()))}</b>
+          <span>${enc(now.toLocaleDateString(undefined, { weekday: 'long', month: 'long' }))}</span></div>`;
+
+        const row = (o) => {
+          return `<div class="wgt-calrow${o.gone ? ' gone' : ''}">
+            <span class="wgt-calt">${enc(_calTime(o))}</span>
+            <span class="wgt-calx" style="background:${enc(_calHue(o.cal))}"></span>
+            <span class="wgt-caln">${enc(o.title || '(no title)')}</span></div>`;
+        };
+
+        let body;
+        if(today.length){
+          body = today.map(o => row(o, false)).join('');
+        }else if(later.length){
+          body = '<div class="wgt-dim">Nothing today.</div>'
+            + later.map(o => `<div class="wgt-calrow">
+                <span class="wgt-calt">${enc(o.start.toLocaleDateString(undefined, { weekday: 'short' }))}</span>
+                <span class="wgt-calx" style="background:${enc(_calHue(o.cal))}"></span>
+                <span class="wgt-caln">${enc(o.title || '(no title)')}</span></div>`).join('');
+        }else{
+          body = '<div class="wgt-dim">Nothing today, and nothing in the next two weeks.</div>';
+        }
+        box.innerHTML = head + '<div class="wgt-calrows">' + body + '</div>';
+        // The whole panel opens the Calendar. `pointerdown` is what DRAGS a widget, so the click is
+        // taken on the row and the drag is left alone.
+        box.onclick = (ev) => { if(ev.target.closest('.wgt-calrow, .wgt-calhead')) openApp('calendar'); };
+      },
+    },
   };
+
+  /* A stable colour per calendar, from its id. The real palette lives in calendar.js keyed on the
+   * calendar LIST's order, which this widget deliberately does not fetch a second time — and a hue
+   * that changes when a calendar is added would be worse than one that merely differs from the
+   * Calendar screen's. */
+  function _calHue(cal){
+    let h = 0;
+    for(const ch of String(cal || '')) h = (h * 31 + ch.charCodeAt(0)) % 360;
+    return `hsl(${h} 70% 60%)`;
+  }
 
   /* The sticky note is a NOTE — the same encrypted per-note document the Notes app owns, so what you
    * jot on the desktop is there on your phone. The widget stores the note's id and its own copy of
@@ -1978,6 +2044,82 @@
     // cfg, which _normDoc drops (strings, numbers and booleans only), so every session would lose the
     // link and start a fresh note beside the last one.
     return { id: (r && r.id) || noteId, ok: true, queued: !!(r && r.queued) };
+  }
+
+  /* TODAY'S EVENTS, read the way the Calendar screen reads them and expanded the same way.
+   *
+   * The widget does its OWN fetching rather than borrowing calendar.js's module state, for two
+   * reasons: that state only exists once the screen has been opened (a desktop is often the first
+   * thing you see), and its `load()` ends in `paint()`, which writes into #feed — the element every
+   * other view is drawn into. A widget must never repaint somebody else's screen.
+   *
+   * `authFetch`, not the plain `_wgtJson` the ticker and the weather use: those endpoints are open
+   * and these are not, and the bundled apps authenticate with a BEARER rather than a cookie, so a
+   * bare fetch is a 401 on exactly the clients that have no other way in.
+   *
+   * ONE read for every calendar widget on the desk, cached for five minutes (`_wgtFeed`), because
+   * this is N+1 requests by construction — one for the calendar list and one per calendar.
+   */
+  async function _calFeed(){
+    return _wgtFeed('cal:items', 300000, async () => {
+      const A = PC().authFetch;
+      const get = async (path) => {
+        const r = await A(_api(path));
+        if(!r.ok) throw new Error('HTTP ' + r.status);
+        return await r.json();
+      };
+      const cfg = await get('/api/calendar/config');
+      if(!cfg || !cfg.enabled) return { off: true, items: [] };
+      const cals = ((await get('/api/calendar/calendars')) || {}).calendars || [];
+      const out = [];
+      for(const c of cals){
+        // A calendar that will not load must not blank the ones that will.
+        try{
+          const r = await get('/api/calendar/items?cal=' + encodeURIComponent(c.id));
+          for(const rec of (r.items || [])) out.push(Object.assign({ cal: c.id }, rec));
+        }catch(_){}
+      }
+      return { off: false, items: out };
+    });
+  }
+
+  /* Occurrences between two dates, sorted. Recurrence is PCIcal's job — the same DOM-free module the
+   * Calendar screen uses and `tests/test_ical_recurrence.py` runs under node — because a widget that
+   * only placed DTSTART would show an empty day to somebody whose every appointment repeats, which
+   * is precisely the bug the month grid had. */
+  function _calOccurrences(items, from, to){
+    const I = window.PCIcal;
+    if(!I) return [];
+    const out = [];
+    for(const rec of items || []){
+      // One malformed item must not empty the whole widget.
+      try{ out.push(...I.occurrences(I.parseResource(rec), from, to)); }catch(_){}
+    }
+    out.sort((a, b) => (a.start - b.start) || String(a.title || '').localeCompare(String(b.title || '')));
+    return out;
+  }
+
+  const _calTime = (o) => o.allDay ? 'all day'
+    : `${String(o.start.getHours()).padStart(2, '0')}:${String(o.start.getMinutes()).padStart(2, '0')}`;
+
+  /* WHAT THE PANEL SHOWS, decided away from the DOM so tests/test_desktop_widgets.py can run it under
+   * node against real recurring events.
+   *
+   * `today` is everything in the calendar day `now` falls in — which is NOT "the next 24 hours", and
+   * the difference is the whole point of a day view: at 23:50 you want tomorrow's 09:00 under
+   * "later", not mixed into today. `later` is the next two things after that, because an empty day
+   * is the common case and "nothing today" on its own is less use than the thing actually coming.
+   * `gone` marks a finished appointment, which is DIMMED rather than dropped — a day whose entries
+   * disappear as it goes on reads as a calendar losing things. An all-day item is never gone. */
+  function _calSplit(occ, now){
+    const day1 = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const today = [], later = [];
+    for(const o of occ || []){
+      if(!o || !o.start) continue;
+      if(o.start < day1) today.push(Object.assign({}, o, { gone: !o.allDay && o.start < now }));
+      else if(later.length < 2) later.push(o);
+    }
+    return { today, later };
   }
 
   /* WHICH UNITS, defaulted from the BROWSER rather than from the server.
@@ -3725,5 +3867,7 @@
                   // when it is wrong — the panel is just too big, or too small to read.
                   __wgtBox: (size, w, h, def) => wgtBox(size, w, h, def),
                   __wxUnits: (w) => _wxUnits(w),
+                  __calSplit: (occ, now) => _calSplit(occ, now),
+                  __calOccurrences: (items, a, b) => _calOccurrences(items, a, b),
                   __placeWidgets: (l, w, h) => placeWidgets(l, w, h) };
 })();

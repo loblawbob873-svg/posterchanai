@@ -297,3 +297,70 @@ class WidgetPlacement(unittest.TestCase):
         for p in r:
             self.assertGreaterEqual(p["x"], 0)
             self.assertGreaterEqual(p["y"], 0)
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class TodayWidget(unittest.TestCase):
+    """The "Today" widget's DECISION — which occurrences it shows and how it marks them.
+
+    Asked for as "new widget: calendar that shows you events for the day". Two things about that are
+    easy to get wrong and invisible when you do:
+
+      * "the day" is the CALENDAR DAY `now` falls in, not "the next 24 hours". At 23:50 the second
+        reading puts tomorrow morning's 09:00 under *today*, which is exactly the hour you are most
+        likely to be looking at a desktop clock and least likely to notice.
+      * a repeating event has to be EXPANDED. The month grid shipped once placing only DTSTART, and
+        59 of one real 707-event calendar — every weekly delivery, every birthday — drew exactly
+        once. A widget with the same bug shows an empty day to somebody whose whole week repeats.
+
+    So this runs the shipped `_calSplit` and `_calOccurrences` under node, against real iCalendar.
+    """
+
+    def split(self, occ, now_iso):
+        return _node(
+            "const occ = %s.map(o => Object.assign({}, o, {start: new Date(o.start)}));\n"
+            "const r = PCOS.__calSplit(occ, new Date(%s));\n"
+            "console.log(JSON.stringify({today: r.today.map(x => [x.title, !!x.gone]),\n"
+            "                            later: r.later.map(x => x.title)}));"
+            % (json.dumps(occ), json.dumps(now_iso)))
+
+    def test_the_day_is_a_calendar_day_not_the_next_24_hours(self):
+        occ = [{"title": "late tonight", "start": "2026-03-04T23:55:00"},
+               {"title": "tomorrow 9am", "start": "2026-03-05T09:00:00"}]
+        r = self.split(occ, "2026-03-04T23:50:00")
+        self.assertEqual([t for t, _ in r["today"]], ["late tonight"])
+        self.assertEqual(r["later"], ["tomorrow 9am"])
+
+    def test_a_finished_appointment_is_dimmed_and_not_dropped(self):
+        occ = [{"title": "standup", "start": "2026-03-04T09:00:00"},
+               {"title": "review", "start": "2026-03-04T16:00:00"}]
+        r = self.split(occ, "2026-03-04T11:00:00")
+        self.assertEqual(r["today"], [["standup", True], ["review", False]])
+
+    def test_an_all_day_item_is_never_past(self):
+        """It is true for the whole day; dimming it at 00:01 would be wrong all day."""
+        occ = [{"title": "Alice's birthday", "start": "2026-03-04T00:00:00", "allDay": True}]
+        r = self.split(occ, "2026-03-04T18:00:00")
+        self.assertEqual(r["today"], [["Alice's birthday", False]])
+
+    def test_only_two_later_items_are_offered(self):
+        occ = [{"title": f"e{i}", "start": f"2026-03-0{i}T09:00:00"} for i in range(5, 9)]
+        r = self.split(occ, "2026-03-04T09:00:00")
+        self.assertEqual(r["today"], [])
+        self.assertEqual(r["later"], ["e5", "e6"])
+
+    def test_a_repeating_event_is_expanded_not_placed_once(self):
+        """The bug the month grid had. `occurrences` is PCIcal's, but the widget has to CALL it —
+        a widget that read DTSTART would show an empty day to anybody whose week repeats."""
+        ics = ("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:x1\r\n"
+               "DTSTART:20260302T090000\r\nSUMMARY:standup\r\n"
+               "RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+        # ical.js registers on globalThis; the browser's `window` IS globalThis and this harness's is
+        # not, so the alias is the harness catching up with the page rather than a shim for it.
+        out = _node(
+            "require(%s); window.PCIcal = global.PCIcal;\n"
+            "const occ = PCOS.__calOccurrences([{uid:'x1', cal:'c', ics: %s}],\n"
+            "  new Date(2026, 2, 4), new Date(2026, 2, 5));\n"
+            "console.log(JSON.stringify(occ.map(o => o.title)));"
+            % (json.dumps(str(ROOT / "static" / "js" / "client" / "ical.js")), json.dumps(ics)))
+        self.assertEqual(out, ["standup"], "a weekly event did not appear on a later week")

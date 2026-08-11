@@ -1343,6 +1343,12 @@ async def drive(url):
                         problems.append((label, "no-add-widget",
                                          "the desktop's right-click menu has no 'Add a widget…' — "
                                          "that menu is the only way in"))
+                    elif "calendar" not in (q.get("widgetTypes") or []):
+                        problems.append((w, "widget-picker",
+                                         "the Today (calendar) widget is not offered — a widget "
+                                         "missing from the picker cannot be added at all, and the "
+                                         "picker is generated from the registry, so this means the "
+                                         f"registry entry is gone: {q.get('widgetTypes')}"))
                     elif not q.get("widgetPickerOpens") or len(q.get("widgetTypes") or []) < 3:
                         problems.append((label, "widget-picker-empty",
                                          f"the widget picker offered {q.get('widgetTypes')}"))
