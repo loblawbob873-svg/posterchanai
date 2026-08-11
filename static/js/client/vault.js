@@ -425,9 +425,16 @@
   /* Same rule as Notes: a queued replaceable event is DISCARDED if the vault already holds a newer
    * version of that item, because publishing it would resurrect an old password over a new one —
    * which for a password manager means logging you out of a site you just rotated. */
+  let _flushing = false;
   async function flushPending(){
+    // NOT RE-ENTRANT — same reason as Notes'. It reads the queue, awaits a publish per item, then
+    // writes the survivors back, so two overlapping runs can have the second's write clobber the
+    // first's. Every relay reconnect drains this now, and a flaky link reconnects repeatedly.
+    if(_flushing) return 0;
     const list = pending();
     if(!list.length) return 0;
+    _flushing = true;
+    try{
     const left = [], sentOk = [];
     for(const ev of list){
       const d = _dOf(ev);
@@ -444,6 +451,7 @@
     setPending(left);
     if(sentOk.length && PC.VIEW === 'vault' && !_dirty) _paint();
     return sentOk.length;
+    }finally{ _flushing = false; }
   }
 
   // ---------------------------------------------------------------- writes

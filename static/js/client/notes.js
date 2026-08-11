@@ -278,9 +278,18 @@
   }
   const _dOf = ev => ((ev.tags||[]).find(t=>t[0]==='d')||[])[1] || '';
 
+  let _flushing = false;
   async function flushPending(){
+    // NOT RE-ENTRANT. It reads the queue, awaits a publish per item, then writes the survivors back —
+    // so two overlapping runs can have the second's write clobber the first's. That was theoretical
+    // while the only triggers were `online` and a 45s interval; it is not now that every relay
+    // reconnect drains this, and a flaky link reconnects several times a minute.
+    if(_flushing) return 0;
     const list = pending();
     if(!list.length) return 0;
+    _flushing = true;
+    try{
+    
     const left = [];
     let sent = 0;
     for(const ev of list){
@@ -305,6 +314,7 @@
       if(PC.VIEW==='notes' && !_dirty) _paint();
     }
     return sent;
+    }finally{ _flushing = false; }
   }
 
   /* Write one note/folder. Returns {ok, queued}. NEVER throws on a dead relay: offline, the note is

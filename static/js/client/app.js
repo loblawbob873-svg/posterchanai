@@ -2109,6 +2109,30 @@
   }
 
   // ---------- app start ----------
+  /* Reconnect the relay on resume. Debounced (4s) because a mobile resume fires several of these
+   * signals close together — visibilitychange, `online`, `pageshow`, and (in the APK) Capacitor's own
+   * `resume`/`appStateChange`. wake() reopens every socket; onReconnect re-runs the per-user
+   * hydration and re-renders the feed (see Relay.onReconnect in startApp).
+   *
+   * MODULE SCOPE, because two different functions need it: bindGlobalsOnce owns the DOM listeners and
+   * startApp owns the native ones. It was a `const` inside the former, which the latter cannot see —
+   * a ReferenceError at the exact moment the app comes back, i.e. never on this machine and always on
+   * a phone. */
+  let _hiddenAt = 0, _lastWake = 0;
+  function _resumeRelay(){
+    if(Date.now() - _lastWake < 4000) return;
+    _lastWake = Date.now();
+    try{ Relay.wake(); }catch(_){}
+  }
+  /* Resume from the NATIVE signal, but only if we were away long enough for the sockets to be worth
+   * doubting. `wake()` tears down and reopens every relay connection — on a five-relay pool that is
+   * five TLS handshakes and five re-subscriptions, which is real radio time and real battery. A
+   * glance at the notification shade must not cost that, and an app-switch loop must not cost it
+   * repeatedly. Six seconds is the same threshold the visibilitychange path already used; below it
+   * a socket has not been frozen, and above it the zombie-socket recovery (Relay.reviveStale, on the
+   * first failed query) is the backstop anyway. */
+  function _nativeResume(){ if(Date.now() - _hiddenAt > 6000) _resumeRelay(); }
+
   function startApp(){
     GUEST = !signer;   // a real login always has a signer; the guest sentinel does not
     /* Opened by "🗔 Open in a window": the same client, drawn without the sidebar, nav and rightbar
@@ -2395,8 +2419,32 @@
         window.addEventListener('sendIntentReceived', _reShare);
         document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ _reShare(); _reMusic(); } });
         const _App=_capPlugin('App');
-        if(_App && _App.addListener){ try{ _App.addListener('resume', ()=>{ _reShare(); _reMusic(); });
-          _App.addListener('appStateChange', st=>{ if(st && st.isActive){ _reShare(); _reMusic(); } }); }catch(_){} }
+        if(_App && _App.addListener){ try{ _App.addListener('resume', ()=>{ _reShare(); _reMusic(); _nativeResume(); });
+          _App.addListener('appStateChange', st=>{
+            if(st && st.isActive){ _reShare(); _reMusic(); _nativeResume(); }
+            // The PAUSE half is what makes the gate above mean anything. A frozen WebView can deliver
+            // its `visibilitychange` late or not at all, so _hiddenAt was the one number in this
+            // decision that the least reliable signal owned.
+            else _hiddenAt = Date.now();
+          }); }catch(_){} }
+        /* RECONNECT ON THE NATIVE RESUME SIGNAL, not only on visibilitychange.
+         *
+         * Reported as "when I open the window back up, says reconnecting". Android freezes a cached
+         * process, and a thawed WebView delivers its queued `visibilitychange` late — sometimes
+         * seconds late, sometimes coalesced away entirely — so the socket teardown-and-reopen that
+         * makes the feed come back was waiting on the least reliable of the three signals available.
+         * Capacitor's `resume`/`appStateChange` is fired by the ACTIVITY, from native code that was
+         * never frozen, which is the earliest moment the app can know it is back. _resumeRelay is
+         * debounced (4s), so wiring all three costs one reconnect, not three. */
+        { const _CallP=_capPlugin('CallControls');
+          if(_CallP && _CallP.addListener){ try{
+            // Hang up from the ONGOING-CALL NOTIFICATION. The service deliberately tears nothing
+            // down itself — JS owns the call, so it has to send `bye`, stop the tracks and close the
+            // PeerConnection. Doing it natively would drop the notification while the call carried
+            // on inside the WebView.
+            _CallP.addListener('callAction', a=>{ if(!a || a.action!=='hangup') return;
+              if(_room) _roomLeave(); else _hangup(false); });
+          }catch(_){} } }
         // Android hardware BACK button → behave like a native app (close the topmost thing, walk the view
         // stack, and only exit from the home screen after a confirming double-tap). Without this, Back exits
         // the app outright — the biggest "this is just a webview" tell. No-op in the PWA (no App plugin).
@@ -2438,11 +2486,6 @@
     bindMobileGestures();   // pull-to-refresh + swipe between primary tabs (mobile/PWA)
     // Perf/battery: pause ALL CSS animations (cyberpunk city parallax, glows) when the tab/PWA is
     // backgrounded — the GPU idles when you're not looking (laptop heat + mobile battery).
-    let _hiddenAt = 0, _lastWake = 0;
-    // Reconnect the relay + refetch the feed on resume. Debounced (4s) because a mobile resume fires
-    // several of these signals close together. wake() reopens every socket; onReconnect re-runs the
-    // per-user hydration + re-renders the feed view (see Relay.onReconnect in startApp).
-    const _resumeRelay = ()=>{ if(Date.now() - _lastWake < 4000) return; _lastWake = Date.now(); try{ Relay.wake(); }catch(_){} };
     document.addEventListener('visibilitychange', ()=>{ document.body.classList.toggle('anim-off', document.hidden);
       if(document.hidden){
         _hiddenAt = Date.now();
@@ -2701,11 +2744,34 @@
     if (list.length) Relay.configure({ urls: list, verify: true });
   }
 
+  /* DRAIN THE PRIVATE QUEUES ON RECONNECT — notes and the password vault.
+   *
+   * The generic Outbox refuses replaceable kinds on purpose (blind replay is what wiped a follows
+   * list), so Notes and the Vault each carry their own queue of SIGNED, ENCRYPTED events with their
+   * own discard rules. Both exposed a `flush` for this moment and both were left holding two weaker
+   * triggers instead: `window.online`, and a 45-second interval.
+   *
+   * Neither survives what a phone actually does. `online` fires when the RADIO changes, and coming
+   * back to a frozen app is not a radio change — the network never went away, the process did, so the
+   * event simply never fires. The interval is worse: a frozen process runs no timers, and a killed
+   * one runs none until 45 seconds after it is next opened. So a note or a password written on a
+   * train stayed on the device, correctly saved and correctly queued, until something unrelated
+   * happened to jog it.
+   *
+   * The relay reaching 'ok' is the right signal and the one the comment in notes.js always named: it
+   * fires on a cold start, on a reconnect, and on the resume path above — the three ways a phone
+   * comes back. Cheap: each flush returns immediately when its queue is empty. */
+  function _flushPrivateQueues(){
+    for(const m of ['PCNotes', 'PCVault']){
+      try{ const M = window[m]; if(M && M.flush) M.flush(); }catch(_){}
+    }
+  }
+
   function renderConn(s){
     const map = { ok:['ok','online'], connecting:['','connecting…'], off:['off','reconnecting…'], init:['','…'] };
     const [cls,txt] = map[s]||['',''];
     updateOfflineBar(s);
-    if(s === 'ok'){ _flushOutbox(); _carryIfRelaysChanged(); }
+    if(s === 'ok'){ _flushOutbox(); _carryIfRelaysChanged(); _flushPrivateQueues(); }
     const el = $('#conn-status'); if(!el) return; el.className = 'conn ' + cls; el.querySelector('span').textContent = txt;
   }
   // ---------- offline state ----------
@@ -26753,7 +26819,7 @@
     try{ clearTimeout(_call.timeout); }catch(_){}
     try{ if(_call.pc) _call.pc.close(); }catch(_){}
     try{ if(_call.local) _call.local.getTracks().forEach(t=>t.stop()); }catch(_){}
-    _call = null; _callUI();
+    _call = null; _callService(false); _callUI();
   }
   function _onCallEvent(ev){
     if(!ev || _callSeen.has(ev.id)) return; _callSeen.add(ev.id);
@@ -26932,10 +26998,62 @@
       window.addEventListener('orientationchange', re);
     }
   }
+  /* THE NATIVE IN-CALL SERVICE (the APK only).
+   *
+   * Since Android 11 an app in the BACKGROUND may not capture the microphone or camera at all unless
+   * a foreground service of the matching type is running. Without one, pressing Home mid-call
+   * silences your mic instantly: the other party hears nothing, this UI looks perfect, and nothing is
+   * logged anywhere. The service also keeps the process off the cached-process freezer, which is what
+   * lets the PeerConnection survive a locked screen. See CallService.java.
+   *
+   * CHEAP BY CONSTRUCTION, because this is called from _callUI/_roomUI — i.e. on every repaint, every
+   * ICE state change, every mute. The signature guard turns all but the genuine TRANSITIONS into a
+   * string compare, so a call costs about four Intents in total rather than one per frame. Putting it
+   * on the repaint path rather than on hand-picked transitions is deliberate: a missed start is a
+   * dead microphone, and there are six places a call's state can move.
+   *
+   * The service holds NO wake lock. The foreground status is what stops the process being frozen;
+   * a PARTIAL_WAKE_LOCK on top would additionally stop the CPU idling between audio packets, which
+   * is battery spent to change nothing. */
+  let _callSvcSig = '', _callSvcWarned = false;
+  function _callService(on, opts){
+    const P = _capPlugin('CallControls');
+    if(!P) return;                                   // a browser or the desktop app: nothing to do
+    if(!on){
+      if(!_callSvcSig) return;                       // never started: no Intent to stop it with
+      _callSvcSig = '';
+      try{ P.stop(); }catch(_){}
+      return;
+    }
+    const o = opts || {};
+    const sig = (o.video?'1':'0') + '|' + (o.state||'') + '|' + (o.name||'');
+    if(sig === _callSvcSig) return;
+    _callSvcSig = sig;
+    try{
+      const r = P.start(o);
+      /* A REFUSED start is the exact failure this exists to prevent, and it is invisible otherwise —
+       * so say it once, in the words that describe the consequence rather than the API.
+       *
+       * ONCE PER SESSION, not once per call. An APK built before this service existed answers every
+       * start with "no implementation" (Capacitor's registerPlugin hands back a proxy either way, so
+       * there is no way to ask first), and that is a real warning for exactly one reading — after
+       * which it is just noise on top of a working call. */
+      if(r && r.catch) r.catch(()=>{
+        if(_callSvcWarned) return;
+        _callSvcWarned = true;
+        toast('heads up: leaving the app may mute this call — update the app to fix it');
+      });
+    }catch(_){}
+  }
+  function _callSvcName(hex){
+    try{ const p = profOf(hex)||{}; return p.name || p.display_name || 'Call'; }catch(_){ return 'Call'; }
+  }
+
   function _callUI(){
     let el=document.getElementById('call-overlay');
-    if(!_call){ if(el) el.remove(); _ringtone(false); _callWake(false); return; }
+    if(!_call){ if(el) el.remove(); _ringtone(false); _callWake(false); _callService(false); return; }
     _callWake(true);
+    _callService(true, { video:!!_call.video, state:_call.state||'', name:_callSvcName(_call.peer) });
     if(_call.state!=='ringing') _ringtone(false);
     if(!el){
       el=document.createElement('div'); el.id='call-overlay';
@@ -27114,7 +27232,7 @@
     for(const hex of r.peers.keys()) _roomSend(hex,{v:1,room:r.id,t:'rbye'});
     for(const p of r.peers.values()){ try{ p.pc&&p.pc.close(); }catch(_){} }
     try{ r.local&&r.local.getTracks().forEach(t=>t.stop()); }catch(_){} try{ clearTimeout(r.timeout); }catch(_){}
-    _callWake(false); _ringtone(false); _roomUI();
+    _callWake(false); _ringtone(false); _callService(false); _roomUI();
   }
   async function startGroupCall(memberHexes, video){
     if(GUEST){ _guestPrompt(); return; }
@@ -27164,7 +27282,10 @@
   }
   function _roomUI(){
     let el=document.getElementById('room-overlay');
-    if(!_room){ if(el) el.remove(); return; }
+    if(!_room){ if(el) el.remove(); _callService(false); return; }
+    // A group call is the same platform rule and the same service — see _callService. The signature
+    // guard means the extra call sites cost a string compare, not an Intent.
+    _callService(true, { video:!!_room.video, state:_room.ringing?'ringing':'connected', name:'Group call' });
     if(!el){ el=document.createElement('div'); el.id='room-overlay'; el.className='call-overlay room'; document.body.appendChild(el);
       el.onclick=e=>{ if(el.classList.contains('call-mini') && !e.target.closest('button')) _setOverlayMini('room-overlay', false); }; }
     const ringingIn=_room.ringing;

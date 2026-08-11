@@ -113,6 +113,19 @@
             </intent-filter>
         </service>
 
+        <!-- Voice/video calls. NOT the same reason as the music service above: since Android 11 an app
+             in the BACKGROUND may not capture the microphone or camera at all unless a foreground
+             service of the matching type is running. Without this, pressing Home mid-call silences
+             your microphone instantly and silently — the other party hears nothing, the UI looks
+             perfect, and nothing is logged. It also keeps the process off the cached-process freezer,
+             which is what lets the WebRTC connection survive a locked screen.
+             Both types are declared because a video call needs both; the service asks for camera only
+             when the call actually has video. -->
+        <service
+            android:name=".call.CallService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|camera" />
+
         <!-- Headset / steering-wheel buttons on Android versions that deliver them as a broadcast.
              MediaSessionCompat looks this receiver up BY NAME at construction and warns (then routes
              nothing) when it is absent — it is what forwards the button to the service above. -->
@@ -212,6 +225,9 @@
          car, widget). Android 14+ refuses to START a service whose declared type it has no permission
          for, so this is not optional decoration — without it the controls never appear. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- A video call's foreground service declares `camera` as well as `microphone`, and Android 14+
+         refuses to START a service whose declared type it has no permission for. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
