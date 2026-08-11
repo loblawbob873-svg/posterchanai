@@ -382,6 +382,41 @@ async def mail_archive(request: Request, db: Session = Depends(get_db), current_
     return {"ok": True}
 
 
+@router.post("/move")
+async def mail_move(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Move a message to a folder the user picked (the Move control, which Archive is one entry of).
+
+    Reuses `mail_service.move_message`, which already existed for "delete → Trash rather than
+    expunge" — COPY, then \\Deleted, then EXPUNGE, in that order, so a failed copy cannot lose the
+    message. Archive keeps its OWN endpoint because it may CREATE its destination, which is what
+    makes one press work on an account that has never had an Archive folder — and is exactly what a
+    user-chosen destination must not do.
+
+    The local encrypted mirror of the SOURCE is dropped either way: the message is not there any
+    more, and leaving it would show a copy no server has.
+    """
+    d = await request.json()
+    acc = _resolve_account(db, current_user, d.get("account", ""))
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    folder, uid, dest = d.get("folder", "INBOX"), d.get("uid"), (d.get("dest") or "").strip()
+    if not uid or not dest:
+        raise HTTPException(status_code=400, detail="uid and dest are required")
+    if dest == folder:
+        return {"ok": True, "moved": False}
+    ok = False
+    try:
+        ok = await _asyncio.to_thread(move_message, current_user.id, db, acc.email, uid, folder, dest)
+    except Exception as e:
+        logger.debug("[mail] IMAP move failed (%s -> %s): %s", uid, dest, e)
+    if not ok:
+        # Said out loud rather than swallowed: a move that silently did nothing leaves the message
+        # where it was while the list has already removed it.
+        raise HTTPException(status_code=502, detail="the server would not move that message")
+    await mail_store.delete_message(_seckey(db, current_user), acc.email, folder, uid)
+    return {"ok": True, "moved": True}
+
+
 def _decode_attachments(items) -> list:
     """Compose attachments arrive as [{name,type,b64}] → (filename, bytes, content_type) for SMTP."""
     out = []

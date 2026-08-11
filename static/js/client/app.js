@@ -18888,7 +18888,7 @@
                    srcdoc="${enc('<base target="_blank"><meta name="referrer" content="no-referrer">' + m.body_html)}"></iframe>`
         : `<div class="mail-text">${this._linkify(enc(m.body_text||'')).replace(/\n/g,'<br>')}</div>`;
       return `<div class="mail-msg${expanded?' open':''}">
-        <div class="mail-msg-hd"><div class="mm-who"><b>${enc(m.from||'')}</b><div class="muted small">To: ${enc((m.to||'').slice(0,90))}</div></div><span class="muted small mm-date">${enc(_mailDate(m.ts))}</span></div>
+        <div class="mail-msg-hd"><div class="mm-who"><b class="mm-sender" data-from="${enc(m.from_email||m.from||'')}" data-name="${enc(m.from||'')}" title="Who sent this">${enc(m.from||'')}</b><div class="muted small">To: ${enc((m.to||'').slice(0,90))}</div></div><span class="muted small mm-date">${enc(_mailDate(m.ts))}</span></div>
         <div class="mail-msg-body">${atts?`<div class="mail-atts">${atts}</div>`:''}<div class="mail-body">${body}</div></div>
       </div>`;
     },
@@ -18904,19 +18904,101 @@
           <button class="btn small" data-act="replyall">↩↩ Reply all</button>
           <button class="btn small" data-act="forward">↪ Forward</button>
           <button class="btn small" data-act="unread">● Unread</button>
-          <button class="btn small" data-act="archive">🗄 Archive</button>
+          <button class="btn small" data-act="move">🗄 Move ▾</button>
           <button class="btn btn-red small" data-act="delete">🗑 Delete</button>
         </div>
         <div class="mail-thread">${thread.map((m,i)=>this._msgBlock(m, folder, acct, i===thread.length-1 || String(m.uid)===String(seedUid))).join('')}</div>`;
       $('#mail-back',pane).onclick=()=>{ pane.classList.remove('has-open'); this.openUid=null; this.drawList(); };
-      $$('.mail-msg .mail-msg-hd',pane).forEach(hd=> hd.onclick=()=> hd.parentElement.classList.toggle('open'));   // collapse/expand
+      $$('.mail-msg .mail-msg-hd',pane).forEach(hd=> hd.onclick=(e)=>{
+        // The sender's name is a button inside the header, and the header collapses the message.
+        // Without this, asking who sent it also folds away what they wrote.
+        if(e.target.closest('.mm-sender')) return;
+        hd.parentElement.classList.toggle('open');
+      });
+      $$('.mm-sender',pane).forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); this.senderCard(b.dataset.from, b.dataset.name); });
       $$('[data-act]',pane).forEach(b=> b.onclick=()=>this.action(b.dataset.act, target, target.folder||folder, target.account||acct));
 
+    },
+    /* WHO SENT THIS. A mail header is `Some Name <someone@example.com>` rendered as one string, and
+     * the address — the part that says who it actually is — was only visible when the display name
+     * happened to be missing. Clicking the sender opens what is actually known about them.
+     *
+     * Deliberately NOT a Nostr profile: this is an email address, and the only honest identity for
+     * it is the address itself. Every action goes through machinery that already exists — the
+     * composer, and the mailbox search this screen is already driven by — rather than a second path
+     * that can disagree with the first.
+     */
+    senderCard(email, name){
+      const addr = String(email || '').trim();
+      const disp = String(name || '').replace(/\s*<[^>]*>\s*$/, '').trim();
+      const rows = [];
+      if(disp && disp !== addr) rows.push(['Name', disp]);
+      rows.push(['Email', addr || '(no address)']);
+      const self = this;
+      modal(`<h3>${enc(disp || addr || 'Sender')}</h3>
+        <div class="mail-sender-card">
+          ${rows.map(([k, v]) => `<div class="msc-row"><span class="muted small">${enc(k)}</span><b>${enc(v)}</b></div>`).join('')}
+        </div>
+        <div class="modal-actions">
+          ${addr ? '<button class="btn btn-cyan small" id="msc-write">✉ Write to them</button>' : ''}
+          ${addr ? '<button class="btn small" id="msc-find">🔎 Their messages</button>' : ''}
+          ${addr ? '<button class="btn small" id="msc-copy">Copy address</button>' : ''}
+        </div>`, root => {
+        const b = id => root.querySelector('#' + id);
+        if(b('msc-write')) b('msc-write').onclick = () => { closeModal(); self.compose({ to: addr }); };
+        /* Their messages: the mailbox search this screen already runs, driven the way the search box
+         * drives it. A second, separately-filtered list is a second answer to the same question. */
+        if(b('msc-find')) b('msc-find').onclick = () => {
+          closeModal();
+          self.q = addr;
+          const box = self.root && self.root.querySelector('#mail-search');
+          if(box) box.value = addr;                    // …and SAY what is being listed
+          const pane = self.root && self.root.querySelector('#mail-read');
+          if(pane){ pane.classList.remove('has-open'); pane.innerHTML = '<div class="empty">Select a message to read</div>'; }
+          self.openUid = null;
+          self.loadList();
+        };
+        if(b('msc-copy')) b('msc-copy').onclick = async () => {
+          try{ await navigator.clipboard.writeText(addr); toast('address copied'); }
+          catch(_){ toast(addr); }
+        };
+      });
     },
     async action(act, msg, folder, acct){
       acct=acct||this.acct; const uid=msg.uid;
       if(act==='reply'||act==='replyall'||act==='forward') return this.compose({mode:act, msg, folder, acct});
       if(act==='unread'){ try{ await this.api('/mark-read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:acct,folder,uid,read:false})}); }catch(_){}; toast('marked unread'); this.loadList(); return; }
+      /* MOVE — the folder picker Archive is one entry of.
+       *
+       * Archive was a button of its own and "move this to the folder I keep receipts in" was not
+       * possible at all, so the two are one control: Archive first (it is the common one, and it is
+       * the only entry that may CREATE its destination), then every folder this account actually
+       * has. The list comes from /folders — the same call the sidebar uses — so it cannot offer a
+       * mailbox the server does not have.
+       */
+      if(act==='move'){
+        let fs = { folders: [], labels: {} };
+        try{ fs = await this.api('/folders?account=' + encodeURIComponent(acct)) || fs; }catch(_){}
+        const rows = [{ v:'__archive', l:'🗄 Archive' }].concat(
+          (fs.folders || [])
+            .filter(f => f !== folder && f !== 'Drafts')     // where it already is, and the local one
+            .map(f => ({ v:f, l:(fs.labels || {})[f] || f })));
+        const dest = await _pickOne('Move to…', rows);
+        if(!dest) return;
+        try{
+          if(dest === '__archive'){
+            await this.api('/archive', {method:'POST', headers:{'Content-Type':'application/json'},
+                                        body:JSON.stringify({account:acct, folder, uid})});
+          }else{
+            await this.api('/move', {method:'POST', headers:{'Content-Type':'application/json'},
+                                     body:JSON.stringify({account:acct, folder, uid, dest})});
+          }
+        }catch(e){ toast('could not move that message'); return; }
+        toast(dest === '__archive' ? 'archived'
+                                   : 'moved to ' + ((fs.labels || {})[dest] || dest).replace(/^\S+\s/, ''));
+        const pane=$('#mail-read',this.root); if(pane){ pane.classList.remove('has-open'); pane.innerHTML='<div class="empty">Select a message to read</div>'; }
+        this.openUid=null; this.loadList(); return;
+      }
       if(act==='archive'||act==='delete'){
         if(act==='delete' && !await uiConfirm('Delete this message?', { ok:'Delete', danger:true })) return;
         try{ await this.api('/'+act,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:acct,folder,uid})}); }catch(_){ toast(act+' failed'); return; }
@@ -18929,6 +19011,7 @@
       opts=opts||{}; const m=opts.msg; let to='', cc='', subj='', body='', draftUid=null;
       const self=this, atts=[];
       if(opts.mode==='reply'||opts.mode==='replyall'){ subj=/^re:/i.test(m.subject||'')?m.subject:('Re: '+(m.subject||'')); to=m.from_email||m.from||''; if(opts.mode==='replyall'&&m.to) cc=m.to; }
+      else if(opts.to) to=String(opts.to);      // "Write to them", from the sender card
       else if(opts.mode==='forward'){ subj=/^fwd:/i.test(m.subject||'')?m.subject:('Fwd: '+(m.subject||'')); body=`\n\n---------- Forwarded ----------\nFrom: ${m.from||''}\nSubject: ${m.subject||''}\n\n${m.body_text||''}`; }
       else if(opts.mode==='draft'){ const dr=opts.draft||{}; to=dr.to||''; cc=dr.cc||''; subj=(dr.subject==='(no subject)'?'':(dr.subject||'')); body=dr.body_text||''; draftUid=dr.uid||null;
         (dr.attachments||[]).forEach(a=>{ if(a&&a.b64) atts.push({name:a.name,type:a.type||'application/octet-stream',b64:a.b64}); }); }
@@ -24372,6 +24455,33 @@
   }
   // In-app prompt — themed replacement for native window.prompt() (which wedges Electron focus, see
   // uiConfirm). Resolves to the entered string, or null on Cancel/Escape (same shape as native prompt()).
+  /* Pick one of a list — the same overlay uiConfirm/uiPrompt use, so it inherits their z-index
+   * (which is what keeps it above the desktop shell), their Escape handling and their look. Written
+   * for "Move to…", which is a question with N answers rather than the two those two ask.
+   * Resolves the chosen value, or null if it was dismissed. */
+  function _pickOne(message, rows, opts={}){
+    return new Promise(resolve=>{
+      const list = (rows||[]).filter(r => r && r.v);
+      const ov=document.createElement('div'); ov.className='uiconfirm-bg';
+      ov.innerHTML=`<div class="uiconfirm glass neon-border" role="dialog" aria-modal="true">
+        <div class="uiconfirm-msg">${enc(String(message||''))}</div>
+        <div class="uipick-list">${list.length
+          ? list.map(r=>`<button class="uipick" data-v="${enc(r.v)}">${enc(r.l||r.v)}</button>`).join('')
+          : '<div class="muted small">Nothing to choose from.</div>'}</div>
+        <div class="uiconfirm-btns">
+          <button class="btn btn-ghost small" data-uc="0">${enc(opts.cancel||'Cancel')}</button>
+        </div></div>`;
+      const done=v=>{ try{ document.removeEventListener('keydown',onKey,true); }catch(_){} ov.remove(); resolve(v); };
+      const onKey=e=>{ if(e.key==='Escape'){ e.preventDefault(); done(null); } };
+      ov.addEventListener('click',e=>{
+        if(e.target===ov){ done(null); return; }
+        const pick=e.target.closest('.uipick'); if(pick){ done(pick.dataset.v); return; }
+        if(e.target.closest('[data-uc]')) done(null);
+      });
+      document.addEventListener('keydown',onKey,true);
+      document.body.appendChild(ov);
+    });
+  }
   function uiPrompt(message, opts={}){
     const ok=opts.ok||'OK', cancel=opts.cancel||'Cancel', def=opts.value||'', ph=opts.placeholder||'';
     return new Promise(resolve=>{

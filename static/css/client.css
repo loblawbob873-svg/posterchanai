@@ -6283,6 +6283,23 @@ body.os-on #os-root{pointer-events:auto}
 .os-ins{position:absolute;width:2px;background:var(--neon);border-radius:2px;pointer-events:none;
   z-index:400;box-shadow:0 0 8px var(--neon)}
 
+/* The sender card: who actually sent this, from a header that renders as one string. */
+.mail-sender-card{display:flex;flex-direction:column;gap:6px;margin:6px 0 14px;text-align:left}
+.msc-row{display:flex;flex-direction:column;gap:1px;background:var(--panel2);border:1px solid var(--line);
+  border-radius:9px;padding:7px 11px}
+.msc-row b{font-size:13.5px;word-break:break-all}
+/* The sender's name in a message header is a button; the header itself collapses the message. */
+.mm-sender{cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px}
+.mm-sender:hover{color:var(--neon)}
+
+/* uiPickOne's list — a question with N answers, in the same overlay as uiConfirm/uiPrompt. */
+.uipick-list{display:flex;flex-direction:column;gap:4px;max-height:min(46vh,340px);overflow-y:auto;
+  margin-bottom:14px;text-align:left}
+.uipick{display:block;width:100%;text-align:left;background:var(--panel2);border:1px solid var(--line);
+  color:var(--text);border-radius:9px;padding:9px 12px;font-size:13.5px;cursor:pointer;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.uipick:hover,.uipick:focus-visible{border-color:var(--neon);background:var(--panel)}
+
 /* FREE PLACEMENT. Once an icon has been moved the grid steps aside and every icon carries its own
    left/top (set by os.js in layout px). Kept as one rule so the two layouts cannot both apply. */
 .os-icons.os-free{display:block;position:absolute;left:0;top:0;right:0;bottom:0}
