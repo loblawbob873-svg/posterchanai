@@ -22121,7 +22121,18 @@
   // conversation, but the user has usually navigated away — so surface a longer-lived, CLICKABLE toast
   // that jumps to that chat, and if they're already on it, reload so the persisted result renders.
   function _agentDoneNotify(ok, conv){
-    if(VIEW==='ai' && _ai.convId===conv){ try{ aiOpenConversation(conv); }catch(_){} }
+    /* Repaint if the chat is ON SCREEN, which is not the same as being the current VIEW.
+     *
+     * This used to ask `VIEW==='ai'`, and on the desktop that is false whenever another WINDOW has
+     * focus — the AI chat is sitting right there in its own window, fully visible, while VIEW names
+     * whatever you clicked last. So a run you watched finish left its own conversation unchanged and
+     * you had to leave and come back to see the result, which is exactly how it was reported.
+     *
+     * The DOM is the honest question: `#ai-msgs` exists only while the chat is mounted. Same reason
+     * the desktop had to stop trusting `w.view` for what a window is showing. */
+    if(document.getElementById('ai-msgs') && _ai.convId===conv){
+      try{ aiOpenConversation(conv); }catch(_){}
+    }
     const t=document.createElement('div'); t.className='toast'; t.style.cursor='pointer';
     t.textContent=(ok?'✅ Agent run finished':'⚠️ Agent run finished with problems')+' — tap to open';
     t.onclick=()=>{ try{ t.remove(); }catch(_){} switchView('ai'); if(conv) aiOpenConversation(conv); };
