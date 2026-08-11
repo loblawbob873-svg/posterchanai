@@ -8,6 +8,7 @@
     if(!PC){ return setTimeout(init, 50); }
     const { $, $$, enc, publish, safePk, nip05Resolve, profOf, niceNip05, LOGO, toast, ensureProfile, NT } = PC;
     const Relay = window.Relay, Store = window.Store;
+    let _botWatch=null;
     let _timer = null, _seatPicks = [];
     const SUIT = { S:'♠', H:'♥', D:'♦', C:'♣' };
 
@@ -71,7 +72,13 @@
       }
       _load();
       clearInterval(_timer);
-      _timer = setInterval(()=>{ if(PC.VIEW==='blackjack'){ _load(); } else clearInterval(_timer); }, 6000);
+      _timer = setInterval(()=>{ if(PC.VIEW==='blackjack'){ _load(); } else clearInterval(_timer); }, 30000);
+      /* The board repaints when the BOT PUBLISHES, not when a timer next comes round. The interval
+       * above is only a backstop now (a missed event, a socket that dropped and came back), which is
+       * why it went from 6s to 30. See PC.watchBot. */
+      if(_botWatch){ _botWatch(); _botWatch=null; }
+      const _bpk = safePk(PC.CFG.blackjack_bot_npub);   // botNpub is the npub; the pool filters on hex
+      if(_bpk && PC.watchBot) _botWatch = PC.watchBot(_bpk, ()=>{ if(PC.VIEW==='blackjack') _load(); else { _botWatch && _botWatch(); _botWatch=null; } });
     }
     function _drawSeats(){
       const box=$('#bj-seats'), deal=$('#bj-deal'); if(!box) return;

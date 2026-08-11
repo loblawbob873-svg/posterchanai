@@ -8,6 +8,7 @@
     if(!PC){ return setTimeout(init, 50); }   // app.js not ready yet — retry
     const { $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast, ensureProfile, NT } = PC;
     const Relay = window.Relay, Store = window.Store;
+    let _botWatch=null;
     let _chessTimer = null;
 
     // Locally-hidden games (resigned/quit or just cleared from "Your games"). Persisted per browser.
@@ -56,7 +57,17 @@
       _loadMyChessGames();
       // poll for new games / opponent moves while the Chess view is open (turn-based, so gentle)
       clearInterval(_chessTimer);
-      _chessTimer = setInterval(()=>{ if(PC.VIEW==='chess'){ if(!document.querySelector('.csq.sel')) _loadMyChessGames(); } else clearInterval(_chessTimer); }, 12000);
+      _chessTimer = setInterval(()=>{ if(PC.VIEW==='chess'){ if(!document.querySelector('.csq.sel')) _loadMyChessGames(); } else clearInterval(_chessTimer); }, 30000);
+      /* Repaint when the BOT PUBLISHES rather than when a timer next comes round — the interval is a
+       * backstop now (a missed event, a socket that dropped and came back), hence 12s → 30. The
+       * mid-move guard is kept: reloading under a selected square would drop the selection.
+       * See PC.watchBot. */
+      if(_botWatch){ _botWatch(); _botWatch=null; }
+      const _bpk = safePk(PC.CFG.chess_bot_npub);
+      if(_bpk && PC.watchBot) _botWatch = PC.watchBot(_bpk, ()=>{
+        if(PC.VIEW!=='chess'){ _botWatch && _botWatch(); _botWatch=null; return; }
+        if(!document.querySelector('.csq.sel')) _loadMyChessGames();
+      });
     }
     async function startBotGame(){
       const botPk=safePk(PC.CFG.chess_bot_npub); if(!botPk){ toast('no chess bot configured'); return; }

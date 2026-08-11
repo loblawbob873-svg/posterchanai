@@ -8,6 +8,7 @@
     if(!PC){ return setTimeout(init, 50); }
     const { $, $$, enc, sendDm, safePk, nip05Resolve, profOf, niceNip05, LOGO, toast, ensureProfile, NT } = PC;
     const Relay = window.Relay, Store = window.Store;
+    let _botWatch=null;
     let _timer = null, _seatPicks = [], _holeCache = {}, _announced = {}, _raiseDraft = {};
 
     // Big, deliberate win/loss announcement that holds for a few seconds so the result of a hand is
@@ -62,7 +63,13 @@
       if(botNpub){ const sb=$('#hm-solo'); if(sb) sb.onclick=()=>startTable([]); _bindInvite(); }
       _load();
       clearInterval(_timer);
-      _timer = setInterval(()=>{ if(PC.VIEW==='holdem'){ _load(); } else clearInterval(_timer); }, 6000);
+      _timer = setInterval(()=>{ if(PC.VIEW==='holdem'){ _load(); } else clearInterval(_timer); }, 30000);
+      /* The board repaints when the BOT PUBLISHES, not when a timer next comes round. The interval
+       * above is only a backstop now (a missed event, a socket that dropped and came back), which is
+       * why it went from 6s to 30. See PC.watchBot. */
+      if(_botWatch){ _botWatch(); _botWatch=null; }
+      const _bpk = safePk(PC.CFG.holdem_bot_npub);   // botNpub is the npub; the pool filters on hex
+      if(_bpk && PC.watchBot) _botWatch = PC.watchBot(_bpk, ()=>{ if(PC.VIEW==='holdem') _load(); else { _botWatch && _botWatch(); _botWatch=null; } });
     }
     function _drawSeats(){
       const box=$('#hm-seats'), deal=$('#hm-deal'); if(!box) return;

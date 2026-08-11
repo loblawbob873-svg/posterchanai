@@ -17523,6 +17523,41 @@
       };
       v.raf=requestAnimationFrame(loop); },
   };
+  /* WATCH A GAME BOT'S BOARDS, LIVE.
+   *
+   * Every game here (tic-tac-toe, hold'em, chess, connect 4, hangman, blackjack) read the bot's state
+   * the same way: `Relay.query` for up to 500 of its kind-30078 docs on a 6-12 second setInterval,
+   * plus a blind `setTimeout(…, 4500)` after your own move "to give the bot time". There was no live
+   * subscription anywhere, so the board could only change on a timer — a move landed on screen
+   * somewhere between 4.5 and 16 seconds after it was played.
+   *
+   * That is the whole of "I make a move, then the player makes a move, comes back to me, major lag
+   * before it shows both moves". It is also why hold'em looked STUCK: at up to 12 seconds stale the
+   * client can be showing the bot's turn while the bot has long since moved and is waiting on you —
+   * so the board says "Waiting on texasholdem…" and the bot, correctly, says "not my turn".
+   *
+   * The relay already pushes these events; nothing needed polling. `since` is now, because the poll
+   * below still does the backfill on entry and a live sub replaying the bot's whole history would
+   * re-run every board through the caller on arrival.
+   *
+   * Coalesced: one board update is one repaint, and a bot that publishes a table and its seats in
+   * the same breath must not cost six. Returns an unsubscribe; the caller owns the lifetime, because
+   * only it knows when its view has gone. */
+  function watchBot(botPk, onChange, wait){
+    if(!/^[0-9a-f]{64}$/i.test(String(botPk||'')) || typeof onChange !== 'function') return () => {};
+    let t = null, sub = null, dead = false;
+    const fire = () => { t = null; if(!dead) try{ onChange(); }catch(e){ console.warn('watchBot', e); } };
+    try{
+      sub = Relay.subscribe([{ authors:[botPk], kinds:[30078], since: Math.floor(Date.now()/1000) }], {
+        live: true,
+        onEvent: ev => { try{ Store.saveEvent(ev); }catch(_){}
+                         if(!t) t = setTimeout(fire, wait == null ? 250 : wait); },
+      });
+    }catch(_){ return () => {}; }
+    return () => { dead = true; if(t) clearTimeout(t); t = null;
+                   if(sub){ try{ Relay.close(sub); }catch(_){} sub = null; } };
+  }
+
   // AI Chat tab — uploads + generated images, stored encrypted under the storage key (separate from
   // the public Blossom list); shown via the decrypting /client/file route. Renders into `pane`.
   // /client/file serves DECRYPTED AI-chat artifacts, so it demands proof of ownership (the sha256 in
@@ -27241,6 +27276,7 @@
     // moment one is imported from a file), and the encrypted-drive pair. uploadEncFile/encFileUrl
     // are how a Notes attachment stays encrypted end-to-end: the app's master key never leaves the
     // client, so a sub-module must go through these rather than uploadBlob directly.
+    watchBot,
     mdToHtml, uploadEncFile, encFileUrl, deleteBlobQuiet, filesIdx: () => FilesIdx,
     get ME(){ return ME; }, get CFG(){ return CFG; }, get VIEW(){ return VIEW; },
   };
