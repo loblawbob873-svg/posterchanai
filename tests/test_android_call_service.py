@@ -170,7 +170,12 @@ def test_a_glance_at_the_shade_does_not_reopen_every_socket():
     that repeatedly."""
     i = APPJS.index("function _nativeResume(){")
     assert "_hiddenAt > 6000" in APPJS[i:i + 200], "the native resume reconnects unconditionally"
-    assert re.search(r"else _hiddenAt = Date\.now\(\);", APPJS), (
+    # The native PAUSE branch has to record the timestamp — the gate above reads a number that was
+    # otherwise only ever written by the least reliable signal. (It also drops the timeline there; see
+    # tests/test_timeline_background_pause.py.)
+    i = APPJS.index("addListener('appStateChange'")
+    pause = APPJS[i:i + 800]
+    assert re.search(r"else \{[^}]*_hiddenAt = Date\.now\(\);", pause), (
         "nothing records when the app was BACKGROUNDED natively, so the gate above reads a number "
         "only the unreliable signal ever wrote")
 

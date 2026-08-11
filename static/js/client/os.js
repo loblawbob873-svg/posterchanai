@@ -2024,15 +2024,21 @@
             <span class="wgt-caln">${enc(o.title || '(no title)')}</span></div>`;
         };
 
+        /* TODAY AND WHAT IS COMING, always — not "today, or the next thing if today happens to be
+         * empty". Asked for as "Desktop widget only showing today, can it show today and tomorrow
+         * events?", and it is the more useful shape anyway: what you want from a glance at a calendar
+         * is whether the next thing is in an hour or on Thursday. A later row carries its DAY so it
+         * can never be read as one of today's, and the list scrolls, so a busy week does not push the
+         * panel out of shape. */
+        const laterRows = later.map(o => `<div class="wgt-calrow">
+            <span class="wgt-calt">${enc(_calDayLabel(o.start, now))}</span>
+            <span class="wgt-calx" style="background:${enc(_calHue(o.cal))}"></span>
+            <span class="wgt-caln">${enc(o.title || '(no title)')}</span></div>`).join('');
         let body;
-        if(today.length){
-          body = today.map(o => row(o, false)).join('');
-        }else if(later.length){
-          body = '<div class="wgt-dim">Nothing today.</div>'
-            + later.map(o => `<div class="wgt-calrow">
-                <span class="wgt-calt">${enc(o.start.toLocaleDateString(undefined, { weekday: 'short' }))}</span>
-                <span class="wgt-calx" style="background:${enc(_calHue(o.cal))}"></span>
-                <span class="wgt-caln">${enc(o.title || '(no title)')}</span></div>`).join('');
+        if(today.length || later.length){
+          body = (today.length ? today.map(row).join('')
+                               : '<div class="wgt-dim">Nothing today.</div>')
+               + (later.length ? '<div class="wgt-calnext">Coming up</div>' + laterRows : '');
         }else{
           body = '<div class="wgt-dim">Nothing today, and nothing in the next two weeks.</div>';
         }
@@ -2136,6 +2142,17 @@
     return out;
   }
 
+  /* "Tomorrow" beats "Thu" for the day everybody actually asks about, and a weekday beats a date
+   * inside the week you can picture. Past that a weekday alone is ambiguous ("Thu" — this one or the
+   * next?), so it becomes a date. */
+  function _calDayLabel(d, now){
+    const day0 = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+    const n = Math.round((day0(d) - day0(now)) / 86400000);
+    if(n <= 1) return 'Tomorrow';
+    if(n < 7) return d.toLocaleDateString(undefined, { weekday: 'short' });
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
   const _calTime = (o) => o.allDay ? 'all day'
     : `${String(o.start.getHours()).padStart(2, '0')}:${String(o.start.getMinutes()).padStart(2, '0')}`;
 
@@ -2148,13 +2165,14 @@
    * is the common case and "nothing today" on its own is less use than the thing actually coming.
    * `gone` marks a finished appointment, which is DIMMED rather than dropped — a day whose entries
    * disappear as it goes on reads as a calendar losing things. An all-day item is never gone. */
+  const _CAL_LATER_MAX = 6;
   function _calSplit(occ, now){
     const day1 = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
     const today = [], later = [];
     for(const o of occ || []){
       if(!o || !o.start) continue;
       if(o.start < day1) today.push(Object.assign({}, o, { gone: !o.allDay && o.start < now }));
-      else if(later.length < 2) later.push(o);
+      else if(later.length < _CAL_LATER_MAX) later.push(o);
     }
     return { today, later };
   }
@@ -3905,6 +3923,7 @@
                   __wgtBox: (size, w, h, def) => wgtBox(size, w, h, def),
                   __wxUnits: (w) => _wxUnits(w),
                   __calSplit: (occ, now) => _calSplit(occ, now),
+                  __calDayLabel: (d, now) => _calDayLabel(d, now),
                   __calOccurrences: (items, a, b) => _calOccurrences(items, a, b),
                   __placeWidgets: (l, w, h) => placeWidgets(l, w, h) };
 })();

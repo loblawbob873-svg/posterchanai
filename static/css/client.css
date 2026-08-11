@@ -6501,6 +6501,10 @@ body.os-on #os-root{pointer-events:auto}
 .wgt-calhead b{font-size:26px;line-height:1;font-weight:700;color:var(--neon)}
 .wgt-calhead span{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* "Coming up" — a divider, not a heading: it separates today from what follows without competing
+   with the date, which is the only thing in this panel meant to be read at a glance. */
+.wgt-calnext{margin:6px 0 3px;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);border-top:1px solid var(--line);padding-top:6px}
 .wgt-calrows{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:4px}
 .wgt-calrow{display:flex;align-items:baseline;gap:7px;font-variant-numeric:tabular-nums}
 /* A finished appointment is DIMMED, never removed — a day whose entries disappear as it goes on

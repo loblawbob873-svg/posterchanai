@@ -343,11 +343,21 @@ class TodayWidget(unittest.TestCase):
         r = self.split(occ, "2026-03-04T18:00:00")
         self.assertEqual(r["today"], [["Alice's birthday", False]])
 
-    def test_only_two_later_items_are_offered(self):
-        occ = [{"title": f"e{i}", "start": f"2026-03-0{i}T09:00:00"} for i in range(5, 9)]
+    def test_what_is_coming_is_offered_alongside_today(self):
+        """"Desktop widget only showing today, can it show today and tomorrow events?" — and it is
+        the more useful shape anyway: what you want from a glance is whether the next thing is in an
+        hour or on Thursday. Bounded, because the panel is a glance and not an agenda."""
+        occ = ([{"title": "standup", "start": "2026-03-04T09:00:00"}]
+               + [{"title": f"e{i}", "start": f"2026-03-0{i}T09:00:00"} for i in range(5, 9)])
+        r = self.split(occ, "2026-03-04T08:00:00")
+        self.assertEqual([t for t, _ in r["today"]], ["standup"])
+        self.assertEqual(r["later"], ["e5", "e6", "e7", "e8"],
+                         "today's events no longer suppress what is coming")
+
+    def test_the_upcoming_list_is_bounded(self):
+        occ = [{"title": f"e{i}", "start": "2026-03-%02dT09:00:00" % i} for i in range(5, 20)]
         r = self.split(occ, "2026-03-04T09:00:00")
-        self.assertEqual(r["today"], [])
-        self.assertEqual(r["later"], ["e5", "e6"])
+        self.assertLessEqual(len(r["later"]), 6, "a busy fortnight would fill the whole desktop")
 
     def test_a_repeating_event_is_expanded_not_placed_once(self):
         """The bug the month grid had. `occurrences` is PCIcal's, but the widget has to CALL it —
@@ -416,3 +426,21 @@ class StickyNoteRefresh(unittest.TestCase):
         # …and the flag has to be SET while a write is pending, or the guard is decorative.
         self.assertIn("ta.dataset.typing = '1'", self.os_js)
         self.assertIn("delete ta.dataset.typing;", self.os_js)
+
+    def test_a_later_row_is_labelled_with_its_day(self):
+        """Sitting under today's rows, an unlabelled one reads as today's."""
+        src = OS_JS.read_text(encoding="utf-8")
+        i = src.index("const laterRows = later.map")
+        assert "_calDayLabel(o.start, now)" in src[i:i + 400]
+
+    def test_tomorrow_is_called_tomorrow(self):
+        """"Thu" is ambiguous the moment it is more than a week out, and useless for the day
+        everybody actually asks about."""
+        out = _node("""
+        const now = new Date(2026, 2, 4, 9, 0);
+        const d = (n, h) => new Date(2026, 2, 4 + n, h || 9);
+        console.log(JSON.stringify([0, 1, 3, 9].map(n => PCOS.__calDayLabel(d(n), now))));""")
+        self.assertEqual(out[0], "Tomorrow", "today's own label should not appear, but must not throw")
+        self.assertEqual(out[1], "Tomorrow")
+        self.assertNotIn(out[2], ("Tomorrow",))
+        self.assertNotEqual(out[3], out[2], "a date nine days out reads as a weekday")
