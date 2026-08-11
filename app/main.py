@@ -1280,17 +1280,28 @@ async def webxdc_sandbox_loader(request: Request):
     if not _is_sandbox_host(request):
         raise StarletteHTTPException(status_code=404, detail="not found")
     path = os.path.join(os.path.dirname(__file__), "..", "static", "webxdc-sandbox", "index.html")
-    # frame-ancestors is the INSTANCE — the sandbox host is `<label>.<instance>`, so dropping the
-    # label gives the one origin allowed to embed this. Naming it rather than `*` means a page
-    # somewhere else cannot frame a mini app and talk to it as if it were the client.
+    # frame-ancestors: EVERY origin this client legitimately runs from, not just the bare domain.
+    #
+    # Naming one origin was wrong in a way that fails completely and silently: the browser refuses to
+    # render the frame, no script in it runs, nothing reports anything, and the reader gets a black
+    # rectangle. It was `https://poster.place` only -- so the packaged Android and desktop apps
+    # (app://posterchan, capacitor://localhost), a `www.` host, and any LAN or alternate hostname the
+    # instance answers on were all blocked from opening a single mini app, with no error anywhere.
+    #
+    # Still a list rather than `*`: a page elsewhere must not be able to frame a mini app and talk to
+    # it as if it were the client. The sandbox host is `<label>.<instance>`, so dropping the first
+    # label gives the instance, and its subdomains are allowed because that is where this client is
+    # served from in every deployment shape here.
     host = (request.headers.get("host") or "").split(":")[0].lower()
     parent = host.split(".", 1)[1] if "." in host else host
+    ancestors = [f"https://{parent}", f"https://*.{parent}", f"http://{parent}", f"http://*.{parent}"]
+    ancestors += list(_NATIVE_ORIGINS)          # the packaged apps: app://posterchan et al
     return FileResponse(path, media_type="text/html", headers={
         "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy":
             "default-src 'self' 'unsafe-inline'; connect-src 'none'; "
-            f"frame-ancestors https://{parent}",
+            "frame-ancestors " + " ".join(ancestors),
     })
 
 
