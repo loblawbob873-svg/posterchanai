@@ -1936,9 +1936,12 @@
     const t=$('#conn-relays');
     // Seeded from the saved list when there is one, else the same defaults Settings offers — an empty
     // box would ask someone to already know which relays exist.
-    if(t && !t.value){ const cur=userRelays(); t.value=(cur.length?cur:defaultRelays().filter(Boolean)).join('\n'); }
+    if(t && !t.value){ const cur=userRelays(); t.value=(cur.length?cur:defaultRelays().filter(Boolean)).join('\n'); _authRelaySeed=t.value; }
     const s=$('#conn-note'); if(s) s.textContent='';
   }
+  // What WE typed into the relay box. _persistAuthRelays compares against this, not against the saved
+  // list — see there.
+  let _authRelaySeed='';
   // The relay URLs currently typed into the box, normalised and deduped.
   function _authRelayUrls(){
     const t=$('#conn-relays'); if(!t) return [];
@@ -1962,10 +1965,20 @@
    * they must not throw away relay edits made just above them: the two settings are independent, which
    * means neither may quietly discard the other's unsaved work. No-op when the box is empty or unchanged,
    * so pressing Connect never rewrites a relay list the user did not touch. */
+  /* CONNECTING TO A SERVER MUST NOT DECIDE YOUR RELAYS FOR YOU.
+   *
+   * This compared the box against the SAVED list, which is empty for anyone who has never chosen
+   * relays — so a box the app pre-filled itself always looked like an edit, and pressing Connect on
+   * the server field quietly wrote `relaysEnabled = true` plus our six suggested defaults. Nobody
+   * chose them; the app suggested them and then took the suggestion as the answer. That is how a
+   * tablet ended up on a relay list its owner never picked, one member of which was unreachable —
+   * and an unreachable relay in the pool is what emptied every timeline (see _eoseDone in relay.js).
+   * Compare against the SEED instead: only a box that differs from what we put in it is a choice. */
   function _persistAuthRelays(){
     const urls=_authRelayUrls();
     if(!urls.length) return false;
     if(JSON.stringify(urls)===JSON.stringify(userRelays())) return false;
+    if(_authRelaySeed && $('#conn-relays') && String($('#conn-relays').value||'').trim()===String(_authRelaySeed).trim()) return false;
     ClientSettings.set('relays', urls); ClientSettings.set('relaysEnabled', true);
     return true;
   }
@@ -4985,7 +4998,7 @@
     const until=_tl.oldest;
     const filt = view==='home' ? [{ kinds:[1,6,1068,30023,34550,40], authors:[...FOLLOWS], until:until-1, limit:_flim(50) }]
                                : [{ kinds:[1,6,1068,30023,34550,40], until:until-1, limit:_flim(60) }];
-    let evs=[]; try{ evs=await Relay.query(filt); }catch(_){}
+    let evs=[], complete=false; try{ evs=await Relay.query(filt); complete=(evs.complete!==false); }catch(_){}
     clearSentinel(feed);
     if(VIEW!==view){ _tl.loading=false; return; }   // user navigated away mid-fetch
     evs.sort((a,b)=>b.created_at-a.created_at);
@@ -5007,7 +5020,12 @@
     else if(frag.childElementCount){ const box=_tlNotes(feed); box.appendChild(frag); _capFeedDom(feed, box); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); hydratePolls(feed); observeProfiles(feed); }
     _tl.pages++;
     if(minTs<_tl.oldest) _tl.oldest=minTs;
-    if(!evs.length || minTs>=until) _tl.done=true;   // relay returned nothing older → end of feed
+    // "The relay returned nothing older" and "we gave up waiting" are different answers, and only the
+    // first one means the feed has ended. query() carries `complete` for exactly this: false means it
+    // resolved on its 6s timer with whatever had arrived, which is what an unreachable relay in the
+    // pool produced on EVERY page. Latching _tl.done on that killed the timeline for the whole session
+    // — no spinner, no error, just a feed that stops and looks finished. A throw is incomplete too.
+    if(complete && (!evs.length || minTs>=until)) _tl.done=true;
     _tl.loading=false;
   }
   let _redrawT=null;
@@ -16951,7 +16969,7 @@
   // EVERY view and keeps playing as you navigate. Minimizable to a mini bar; draggable anywhere.
   let _audioEl=null;
   const MusicPlayer = {
-    el:null, min:false, cur:null, queue:[], shuffle:false, _loading:false, _history:[], _search:'', _viz:{an:null,raf:0,failed:false},
+    el:null, min:false, cur:null, queue:[], shuffle:false, _loading:false, _history:[], _search:'', _viz:{an:null,raf:0,failed:false,ro:null},
     ensure(){
       if(this.el) return this.el;
       // append to <html> NOT <body>: body has zoom:.85 on desktop, which throws off a fixed body child's
@@ -17326,18 +17344,79 @@
         v.ctx=new AC(); v.src=v.ctx.createMediaElementSource(_audioEl); v.an=v.ctx.createAnalyser();
         v.an.fftSize=128; v.an.smoothingTimeConstant=0.82; v.src.connect(v.an); v.an.connect(v.ctx.destination); return true;
       }catch(e){ v.failed=true; return false; } },
+    /* THE SPECTRUM BARS, AND WHY THIS LOOP IS WRITTEN SO CAREFULLY.
+     *
+     * It ran three expensive things on EVERY animation frame, and the third one is the one that
+     * reached outside the widget: `cv.clientWidth` is a layout READ, and in desktop mode the page it
+     * measures against holds live windows and a full timeline — thousands of nodes — so this forced a
+     * style+layout flush of the whole document 60 times a second, interleaved with whatever the user
+     * was dragging. That is the same thrash the icon drag was fixed for one commit earlier
+     * ("three synchronous layouts of a live timeline per move"); playing a song reintroduced it as a
+     * permanent background load, which is why the desktop went smooth again the moment Music closed.
+     *
+     * Also per frame, and cheaper to see but not to run: assigning `cv.width`/`cv.height` REALLOCATES
+     * and clears the canvas backing store even when the number is identical, and the bar loop built 42
+     * fresh linear gradients (~2500 a second) each used for exactly one shadowed fillRect.
+     *
+     * Now: the size is measured only when it CHANGES (ResizeObserver where there is one, a 500ms
+     * re-measure where there is not), the gradient is rebuilt only then, and the loop paints at ~30fps
+     * — a 42-bar spectrum with 0.82 smoothing is indistinguishable at 60, and the analyser's own
+     * smoothing means we are not sampling anything the eye was getting. Everything the frame does is
+     * now confined to the canvas. */
     _drawViz(){ const v=this._viz; if(!v.an) return; if(v.raf) cancelAnimationFrame(v.raf);
       const dpr=Math.min(2,window.devicePixelRatio||1), data=new Uint8Array(v.an.frequencyBinCount);
-      const loop=()=>{ const cv=this.el&&this.el.querySelector('.mp-viz');
-        if(!cv || this.el.classList.contains('hidden') || this.min || !_audioEl || _audioEl.paused){ v.raf=0; return; }
-        const W=cv.width=Math.floor(cv.clientWidth*dpr), H=cv.height=Math.floor(cv.clientHeight*dpr);
-        if(!W||!H){ v.raf=requestAnimationFrame(loop); return; }
-        const cx=cv.getContext('2d'); v.an.getByteFrequencyData(data); cx.clearRect(0,0,W,H);
-        const n=Math.min(data.length,42), bw=W/n;
-        for(let i=0;i<n;i++){ const h=Math.max(2*dpr,(data[i]/255)*H), x=i*bw;
-          const g=cx.createLinearGradient(0,H,0,H-h); g.addColorStop(0,'#00f0ff'); g.addColorStop(.5,'#7df0ff'); g.addColorStop(1,'#ff2bd6');
-          cx.fillStyle=g; cx.shadowColor='#00f0ff'; cx.shadowBlur=7*dpr; cx.fillRect(x+dpr,H-h,Math.max(1,bw-2*dpr),h); }
-        v.raf=requestAnimationFrame(loop); };
+      const BUCKETS=24;                          // gradient granularity — see below
+      let W=0, H=0, cx=null, canvas=null, grads=null, stale=true, lastMeasure=0;
+      /* A bar's gradient runs over ITS OWN height, so a quiet bar shows the same cyan→pink ramp as a
+       * loud one — that is the look, and a single canvas-height gradient would have thrown it away
+       * (short bars all cyan). Keeping it costs nothing once the ramps are cut into height buckets and
+       * built with the canvas instead of with every bar of every frame: 24 is finer than the eye can
+       * follow on a 40px-tall widget. */
+      const measure=(cv)=>{
+        const w=Math.floor(cv.clientWidth*dpr), h=Math.floor(cv.clientHeight*dpr);
+        if(w===W && h===H && cx) return;
+        W=w; H=h; cx=null; grads=null;
+        if(!W||!H) return;
+        cv.width=W; cv.height=H;                 // only on a real change — this clears the canvas
+        cx=cv.getContext('2d');
+        cx.shadowColor='#00f0ff'; cx.shadowBlur=7*dpr;
+        grads=[];
+        for(let b=0;b<BUCKETS;b++){
+          const bh=Math.max(2*dpr, H*(b+1)/BUCKETS);
+          const g=cx.createLinearGradient(0,H,0,H-bh);
+          g.addColorStop(0,'#00f0ff'); g.addColorStop(.5,'#7df0ff'); g.addColorStop(1,'#ff2bd6');
+          grads.push(g);
+        }
+      };
+      // The observer is what lets the loop stop measuring at all. Without one (an older WebView) fall
+      // back to a re-measure twice a second, which is still 30x less often than every frame.
+      const watch=(cv)=>{
+        if(canvas===cv) return;
+        canvas=cv; stale=true;
+        if(v.ro){ try{ v.ro.disconnect(); }catch(_){} v.ro=null; }
+        if(typeof ResizeObserver!=='undefined'){
+          try{ v.ro=new ResizeObserver(()=>{ stale=true; }); v.ro.observe(cv); }catch(_){ v.ro=null; }
+        }
+      };
+      const stop=()=>{ v.raf=0; canvas=null; if(v.ro){ try{ v.ro.disconnect(); }catch(_){} v.ro=null; } };
+      let last=-1e9;
+      const loop=(ts)=>{ const cv=this.el&&this.el.querySelector('.mp-viz');
+        if(!cv || this.el.classList.contains('hidden') || this.min || !_audioEl || _audioEl.paused) return stop();
+        v.raf=requestAnimationFrame(loop);
+        const now=ts||0;
+        if(now-last < 32) return;                 // ~30fps
+        last=now;
+        watch(cv);
+        if(stale || (!v.ro && now-lastMeasure > 500)){ stale=false; lastMeasure=now; measure(cv); }
+        if(!cx || !grads) return;
+        v.an.getByteFrequencyData(data); cx.clearRect(0,0,W,H);
+        const n=Math.min(data.length,42), bw=W/n, minH=2*dpr, bar=Math.max(1,bw-2*dpr);
+        for(let i=0;i<n;i++){
+          const h=Math.max(minH,(data[i]/255)*H);
+          cx.fillStyle=grads[Math.min(BUCKETS-1, Math.max(0, Math.round(h/H*BUCKETS)-1))];
+          cx.fillRect(i*bw+dpr,H-h,bar,h);
+        }
+      };
       v.raf=requestAnimationFrame(loop); },
   };
   // AI Chat tab — uploads + generated images, stored encrypted under the storage key (separate from

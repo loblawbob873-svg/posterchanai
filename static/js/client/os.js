@@ -1442,18 +1442,28 @@
     }catch(_){}
     return out.sort((a, b) => a.name.localeCompare(b.name));
   }
+  /* Returns '' on success, else why it failed.
+   *
+   * Silence is right on HYDRATE — a wallpaper that cannot be fetched should leave a desktop, not an
+   * error where a picture should be — and wrong when someone just PRESSED the picture: a click that
+   * does nothing, next to a thumbnail that never appeared, is unactionable by the only person who can
+   * see it. Same lesson as the note card that prints the reason on itself. The caller decides which
+   * of the two it is; this only reports. */
   async function applyWallpaper(sha){
-    if(!desk) return;
+    if(!desk) return 'the desktop is not up';
     const want = /^[0-9a-f]{64}$/i.test(String(sha || '')) ? String(sha).toLowerCase() : '';
-    if(want === _bgSha && (!want || _bgUrl)){ _paintWallpaper(); return; }
+    if(want === _bgSha && (!want || _bgUrl)){ _paintWallpaper(); return ''; }
     _bgSha = want;
-    if(!want){ _bgUrl = ''; _paintWallpaper(); return; }
+    if(!want){ _bgUrl = ''; _paintWallpaper(); return ''; }
+    let why = '';
     try{
       const u = await PC().encFileUrl(want);
-      if(_bgSha !== want) return;              // changed again while this was decrypting
+      if(_bgSha !== want) return '';           // changed again while this was decrypting
       _bgUrl = u || '';
-    }catch(_){ _bgUrl = ''; }
+      if(!_bgUrl) why = 'that picture decrypted to nothing';
+    }catch(e){ _bgUrl = ''; why = (e && (e.message || e.name)) ? String(e.message || e.name).slice(0, 120) : 'could not read it'; }
     _paintWallpaper();
+    return why;
   }
   function _paintWallpaper(){
     if(!desk) return;
@@ -1778,19 +1788,38 @@
     { const f = $('#os-bg-files', m); if(f) f.onclick = () => { m.remove(); openApp('blossom'); }; }
     // Thumbnails are decrypted one at a time, after the panel is up: a folder of 4K wallpapers is
     // tens of megabytes, and doing it before showing anything is a picker that takes ten seconds to
-    // appear. Each failure leaves that tile blank rather than taking the panel down.
+    // appear. A tile that fails SAYS SO — it used to leave the <img> blank, which is indistinguishable
+    // from one still decrypting and from a picker that simply doesn't work, and the same fetch is what
+    // the choice below runs, so a blank grid is a preview of a click that will also do nothing.
     (async () => {
       for(const img of $$('img[data-lazy]', m)){
         if(!img.isConnected) return;
-        try{ img.src = await PC().encFileUrl(img.dataset.lazy); }catch(_){}
+        try{
+          const u = await PC().encFileUrl(img.dataset.lazy);
+          if(!img.isConnected) return;
+          if(u) img.src = u; else _bgTileFailed(img, 'decrypted to nothing');
+        }catch(e){ _bgTileFailed(img, (e && (e.message || e.name)) || 'could not read it'); }
       }
     })();
-    $$('.os-bg-item', m).forEach(b => b.onclick = () => {
+    $$('.os-bg-item', m).forEach(b => b.onclick = async () => {
       const sha = b.dataset.sha || '';
       m.remove();
-      applyWallpaper(sha);            // instant, so the choice is visible before the relay answers
+      const why = await applyWallpaper(sha);   // instant, so the choice is visible before the relay answers
+      // A refused picture must not be written to the document as the one in force: every other device
+      // would then try to paint a wallpaper this one already knows it cannot read.
+      if(why){ try{ PC().toast && PC().toast('couldn’t use that picture — ' + why); }catch(_){} return; }
       setWallpaper(sha);
     });
+  }
+
+  // Put the reason ON the tile. `title` too, because the grid cell is 84px and a decrypt error is not.
+  function _bgTileFailed(img, why){
+    const b = img.closest('.os-bg-item'); if(!b) return;
+    const n = document.createElement('span');
+    n.className = 'os-bg-none os-bg-err';
+    n.textContent = '⚠ ' + String(why).slice(0, 60);
+    b.title = (b.title ? b.title + ' — ' : '') + String(why).slice(0, 160);
+    img.replaceWith(n);
   }
 
   function deskMenu(x, y){

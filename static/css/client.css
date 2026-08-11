@@ -6329,6 +6329,10 @@ body.os-on #os-root{pointer-events:auto}
 .os-bg-item span{font-size:11px;padding:4px 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .os-bg-item.on{border-color:var(--neon);box-shadow:0 0 0 1px var(--neon) inset}
 .os-bg-none{display:flex;align-items:center;justify-content:center;height:84px;font-size:12px;color:var(--muted)}
+/* A tile whose picture would not decrypt. It has to be readable at 150px, so it wraps and shrinks
+   rather than ellipsing into "⚠ Ope…" — the wording IS the diagnosis. */
+.os-bg-err{padding:4px 6px;font-size:10px;line-height:1.25;text-align:center;white-space:normal;
+  color:var(--warn,#f3b34a)}
 .os-bg-empty{padding:16px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
 .os-bg-empty p{margin:0}
 

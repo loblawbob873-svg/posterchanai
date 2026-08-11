@@ -34,12 +34,20 @@
         this._backoff = 600;                       // reset reconnect backoff on a good connection
         this._lastRx = Date.now();
         this._setStatus('ok');
-        // re-arm only LIVE subscriptions; one-shot query() subs (live:false) must not be re-REQ'd.
-        for (const [id, s] of this.pool._subs) if (s.live) this._send(['REQ', id, ...s.filters]);
+        // Re-arm LIVE subscriptions, and give any sub this socket has never been ASKED its first REQ
+        // — including a one-shot query(). Those two are different things: re-REQ'ing a one-shot sub
+        // after a drop would re-deliver its backlog, but a socket that was still CONNECTING when the
+        // REQ went out was never sent it at all (_send drops on readyState !== 1), so it can only sit
+        // there contributing nothing and then be waited on by the EOSE gate below. That is the cold
+        // start — open the app, the first queries fire before the sockets finish connecting, and every
+        // one of them returns empty at its 6s timeout.
+        for (const [id, s] of this.pool._subs){
+          if (s.live || !s.sent.has(this.url)){ this._send(['REQ', id, ...s.filters]); s.sent.add(this.url); }
+        }
         this.pool._connReady(this);
         this._startHeartbeat();
       };
-      this.ws.onclose = () => { this._stopHeartbeat(); this._setStatus('off'); this._retry(); };
+      this.ws.onclose = () => { this._stopHeartbeat(); this._setStatus('off'); this.pool._connGone(this); this._retry(); };
       this.ws.onerror = () => { try{ this.ws.close(); }catch(_){} };
       this.ws.onmessage = (e) => { this._lastRx = Date.now(); this.pool._onMessage(this, e.data); };
     }
@@ -100,7 +108,7 @@
                               // can't re-arm (live subs auto-re-arm; query() subs are dropped on a drop)
     url: null,                // primary relay (first configured) — used as the display/zap relay
     _conns: new Map(),        // url -> Conn
-    _subs: new Map(),         // subId -> {filters, onEvent, onEose, live, seen:Set, eosed:Set}
+    _subs: new Map(),         // subId -> {filters, onEvent, onEose, live, seen:Set, eosed:Set, sent:Set}
     _okWaiters: new Map(),    // eventId -> { settle(fn) }
     _countWaiters: new Map(), // countId -> resolve(n)  (NIP-45 COUNT)
     _negWaiters: new Map(),   // negId -> { onMsg(hex), onErr(reason) }  (NIP-77 negentropy)
@@ -115,7 +123,7 @@
       this._verify = !!verify;
       this.url = urls[0] || null;
       // drop connections no longer wanted
-      for (const [u, c] of this._conns){ if (!urls.includes(u)){ c.destroy(); this._conns.delete(u); } }
+      for (const [u, c] of this._conns){ if (!urls.includes(u)){ c.destroy(); this._conns.delete(u); this._connGone(c); } }
       // open the new ones (trusted = NOT verify mode)
       for (const u of urls){ if (!this._conns.has(u)) this._conns.set(u, new Conn(u, this, !this._verify)); }
       if (!this._conns.size) this._setStatus('off');
@@ -218,6 +226,36 @@
       else if (this.onReconnect){ try { this.onReconnect(); } catch(e){ console.warn(e); } }   // reconnect: re-hydrate one-shot data
     },
 
+    /* Has every relay we ACTUALLY ASKED answered?
+     *
+     * This used to be `sub.eosed.size >= this._conns.size`, and the denominator was wrong in the one
+     * case that matters: a relay that is down stays in `_conns` for the whole session (it is in a
+     * reconnect backoff, which is what makes it come back), and a REQ is silently dropped for any
+     * socket that is not OPEN (Conn._send). So one unreachable relay in the user's list made this
+     * threshold UNREACHABLE — `query()` then ran to its full 6s timeout on every single fetch, for as
+     * long as that relay stayed down. Measured with `wss://offchain.pub/` (one of our own suggested
+     * defaults) unreachable: every deferred fill in the app — repost originals, notification previews,
+     * quoted notes, thread parents, older timeline pages — cost 6 seconds, and an older page that came
+     * back empty on the timer latched the feed as finished. Live subs hid it behind their 12s backstop;
+     * one-shot queries have no backstop, only the timeout.
+     *
+     * `sent` is the honest denominator: the sockets this sub's REQ was really written to. Empty means
+     * nothing was asked (every socket still connecting) — the timer has to settle that one, and the
+     * onopen path above sends the REQ when a socket arrives so it can still answer in time. */
+    _eoseDone(sub){
+      if (!sub.sent || !sub.sent.size) return false;
+      for (const u of sub.sent) if (!sub.eosed.has(u)) return false;
+      return true;
+    },
+    // A socket that dropped cannot answer a REQ it was sent, so it must leave the denominator or every
+    // pending sub waits out its timeout for it. Re-check the gate after: this may be the last one.
+    _connGone(conn){
+      for (const sub of this._subs.values()){
+        if (!sub.sent || !sub.sent.delete(conn.url)) continue;
+        if (sub.onEose && this._eoseDone(sub)) this._fireEose(sub);
+      }
+    },
+
     _send(arr){ for (const c of this._conns.values()) c._send(arr); },
 
     /* `tags` is REQUIRED by NIP-01, so this rewrites nothing well-formed — but a relay is untrusted
@@ -252,7 +290,7 @@
       } else if (typ === 'EOSE' || typ === 'CLOSED'){
         const sub = this._subs.get(m[1]); if (!sub) return;
         sub.eosed.add(conn.url);
-        if (sub.onEose && sub.eosed.size >= this._conns.size){
+        if (sub.onEose && this._eoseDone(sub)){
           // for untrusted relays, drain pending verifications so the last events aren't lost
           const fire = () => this._fireEose(sub);
           this._vq.length ? this._flush().then(fire) : fire();
@@ -290,15 +328,16 @@
     // filters: array of filter objects. Returns subId. live=true keeps it open for new events.
     subscribe(filters, { onEvent, onEose, live=true } = {}){
       const id = 'sub' + Math.random().toString(36).slice(2,9);
-      const sub = { filters, onEvent, onEose, live, seen: new Set(), eosed: new Set() };
+      const sub = { filters, onEvent, onEose, live, seen: new Set(), eosed: new Set(), sent: new Set() };
       this._subs.set(id, sub);
-      this._send(['REQ', id, ...filters]);
-      // EOSE BACKSTOP. Below, onEose fires only once EVERY connection has EOSE'd — but a relay in the
-      // user's list that is down or DNS-dead is still in _conns and never answers, so that threshold
-      // could never be reached and onEose NEVER fired. Callers use it as the backlog→live boundary
-      // (`_dmLive`, `_notifReady`, `_followReady`), so one dead relay silently froze them in "this is
-      // all history" mode forever — which is how the Messages counter died. Fire it late rather than
-      // never. Live subs only: query() has its own timeout and needs `complete` to stay honest.
+      // Record WHICH sockets took the REQ, not merely that we tried — see _eoseDone.
+      for (const c of this._conns.values()){ if (c.ws && c.ws.readyState === 1){ c._send(['REQ', id, ...filters]); sub.sent.add(c.url); } }
+      // EOSE BACKSTOP. Below, onEose fires once every relay we ASKED has EOSE'd (_eoseDone), and a
+      // relay that goes down leaves that count — but one that is UP and simply never answers this
+      // filter does not, and callers use EOSE as the backlog→live boundary (`_dmLive`, `_notifReady`,
+      // `_followReady`), where never firing freezes them in "this is all history" mode forever — which
+      // is how the Messages counter died. Fire it late rather than never. Live subs only: query() has
+      // its own timeout and needs `complete` to stay honest.
       if (live && onEose) sub._eoseTimer = setTimeout(()=>{ this._fireEose(sub); }, 12000);
       return id;
     },
