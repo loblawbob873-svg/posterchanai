@@ -282,3 +282,31 @@ class TestSyncedFolderThumbnails(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_the_more_sheet_offers_every_view_the_sidebar_does():
+    """On a phone the sidebar is hidden, so the ☰ More sheet is the ONLY way into a non-primary view.
+    A view present in the sidebar and missing from that hardcoded list has no door at all — which is
+    how Email shipped unreachable on mobile, and how the SSH Terminal (the one screen built FOR a
+    phone, with its ctrl/esc/arrows key bar) very nearly did too."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    shell = (root / "templates" / "client.html").read_text(encoding="utf-8")
+    app = (root / "static" / "js" / "client" / "app.js").read_text(encoding="utf-8")
+
+    # Sidebar entries (the desktop nav), minus the ones the phone's bottom bar already carries.
+    sidebar = set(re.findall(r'class="nav-item"\s+data-view="([a-z0-9_-]+)"', shell))
+    bottom = {"home", "global", "notifications", "messages"}
+    # Anchor on moreMenu itself: app.js has several `const items=[` (the compose menu, the post ☰),
+    # and searching the whole file finds whichever comes first.
+    i = app.index("function moreMenu(")
+    m = re.search(r"const items=\[(.*?)\n\s*\.filter\(", app[i:], re.S)
+    assert m, "the More sheet's item list moved — re-point this test"
+    sheet = set(re.findall(r"\['([a-z0-9_]+)'", m.group(1)))
+
+    missing = sorted(v for v in sidebar - bottom - sheet if not v.startswith("__"))
+    assert not missing, (
+        f"these views are in the sidebar but not in the ☰ More sheet, so they cannot be opened on a "
+        f"phone: {missing}")
