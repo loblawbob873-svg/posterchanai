@@ -54,6 +54,31 @@
    * are taken from it at open time — including each item's own icon. A feature added to the nav
    * (or hidden by nostr_only, or by _viewNeedsInstance) appears or disappears here for free, and
    * there is no second list to forget to update. */
+  /* The app's NAME, without its unread count.
+   *
+   * The count is an `<i class="badge">` INSIDE the label span —
+   * `<span>Messages<i id="dm-badge">99+</i></span>` — so `span.textContent` reads "Messages99+" and
+   * that is what the desktop icon and its window title said.
+   *
+   * It used to be stripped with `.replace(/\d+$/, '')`, which fails on the badge it was written for
+   * (the count is capped at the string "99+", which does not end in a digit) and mangles a name that
+   * legitimately ends in one: CONNECT 4 was already showing on the desktop as "Connect".
+   *
+   * So take only the span's own TEXT nodes and let any element inside it — badge or otherwise — be
+   * exactly as irrelevant as it is. The clone is the fallback for a label wrapped in some tag. */
+  function _navLabel(btn){
+    const span = btn.querySelector('span');
+    if(!span) return '';
+    let t = [...span.childNodes].filter(n => n.nodeType === 3)
+                                .map(n => n.textContent).join('').trim();
+    if(!t){
+      const c = span.cloneNode(true);
+      c.querySelectorAll('.badge, .pill, i').forEach(n => n.remove());
+      t = (c.textContent || '').trim();
+    }
+    return t;
+  }
+
   function apps(){
     const seen = new Set();
     return $$('.sidebar .nav .nav-item[data-view]').map(btn => {
@@ -61,8 +86,7 @@
       if(!view || seen.has(view)) return null;
       seen.add(view);
       const use = btn.querySelector('svg use');
-      const label = (btn.querySelector('span') || {}).textContent || view;
-      return { view, label: String(label).replace(/\d+$/, '').trim(),
+      return { view, label: _navLabel(btn) || view,
                icon: use ? (use.getAttribute('href') || use.getAttribute('xlink:href') || '') : '' };
     }).filter(Boolean).concat(EXTRAS.filter(x => x.when()));
   }

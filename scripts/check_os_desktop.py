@@ -723,6 +723,25 @@ LAYOUT = r"""(async () => {
     await sleep(120);
   }
 
+  /* AN APP'S NAME IS NOT ITS UNREAD COUNT. The badge is an <i> INSIDE the label span, so a naive
+   * textContent read gives "Messages99+" on the icon and in the window title. The old guard stripped
+   * trailing DIGITS, which misses the capped "99+" and eats the 4 off "Connect 4". */
+  {
+    const btn = document.querySelector('.sidebar .nav .nav-item[data-view="messages"]');
+    if (btn) {
+      const sp = btn.querySelector('span');
+      if (sp && !sp.querySelector('.badge')) {
+        const b = document.createElement('i'); b.className = 'badge'; b.textContent = '99+';
+        sp.appendChild(b);
+      }
+      PCOS.refresh(); await sleep(160);
+      const ic = document.querySelector('.os-icon[data-view="messages"]');
+      out.messagesLabel = ic ? ([...ic.querySelectorAll('span')].pop() || {}).textContent || '' : '';
+      const c4 = document.querySelector('.os-icon[data-view="connect4"]');
+      out.connect4Label = c4 ? ([...c4.querySelectorAll('span')].pop() || {}).textContent || '' : '';
+    }
+  }
+
   /* WIDGETS: added from the desktop menu, drawn, dragged, and STILL THERE at another screen size.
    *
    * The last one is the requirement that cannot be checked by looking at one screen: positions are
@@ -1335,6 +1354,16 @@ async def drive(url):
                                          f"player: {q.get('musicCalls')!r}. Buttons that do nothing "
                                          "are the silent failure this widget has already had once "
                                          "(a bridge method called by the wrong name)."))
+                    if q.get("messagesLabel") and q.get("messagesLabel") != "Messages":
+                        problems.append((label, "icon-label-carries-badge",
+                                         f"the Messages icon is named {q.get('messagesLabel')!r} — "
+                                         "the unread badge is an <i> inside the label span, so the "
+                                         "count is being read as part of the app's name"))
+                    if q.get("connect4Label") and q.get("connect4Label") != "Connect 4":
+                        problems.append((label, "icon-label-truncated",
+                                         f"the Connect 4 icon is named {q.get('connect4Label')!r} — "
+                                         "stripping trailing digits to remove a badge eats a name "
+                                         "that legitimately ends in one"))
                     if q.get("adminBlack"):
                         problems.append((label, "admin-window-black-after-move",
                                          "moving the Admin window left BOTH halves hidden — the feed "
