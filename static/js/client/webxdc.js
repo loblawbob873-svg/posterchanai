@@ -397,6 +397,22 @@
     send({ jsonrpc:'2.0', method:'webxdc.crash', params:{
       message: (r && (r.message || String(r))) || 'unhandled rejection', where: '' } });
   });
+  /* CAN THIS FRAME DRAW AT ALL? A game that renders through WebGL and cannot get a context paints
+     nothing and often says nothing — a black rectangle, which is indistinguishable from "still
+     loading" and from "crashed". The app runs nested inside a sandboxed cross-origin iframe, which
+     is an unusual place to ask for a GPU context, so the answer is worth having rather than
+     assuming. One scratch canvas, once, reported only when it FAILS. */
+  try{
+    var _c = document.createElement('canvas');
+    var _gl = _c.getContext('webgl2') || _c.getContext('webgl');
+    if(!_gl){
+      send({ jsonrpc:'2.0', method:'webxdc.crash', params:{
+        message: 'no WebGL context in the sandbox frame — a 3D app cannot draw here', where:'probe' } });
+    }
+  }catch(e){
+    send({ jsonrpc:'2.0', method:'webxdc.crash', params:{
+      message: 'WebGL probe threw: ' + ((e && e.message) || e), where:'probe' } });
+  }
   send({ jsonrpc:'2.0', method:'webxdc.hello' });
 })();`;
 
