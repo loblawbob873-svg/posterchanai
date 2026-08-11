@@ -633,14 +633,24 @@
 
       const f = document.createElement('iframe');
       f.className = 'xdc-frame';
-      /* allow-same-origin is REQUIRED — the spec has apps using localStorage and IndexedDB, which an
-       * opaque origin cannot — and it is safe here only because the frame is on a different origin
-       * to begin with. That is the whole reason for the wildcard subdomain; without it this attribute
-       * would hand the app our storage. allow-top-navigation is deliberately absent: an app must not
-       * be able to navigate the tab it is running in. */
-      f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads allow-pointer-lock');
-      f.setAttribute('allow', 'autoplay; fullscreen; gamepad');
+      /* NO `sandbox` ATTRIBUTE, and that is a decision rather than an omission.
+       *
+       * It was there as defence in depth — allow-scripts + allow-same-origin, with top-navigation
+       * withheld. FIREFOX WILL NOT REGISTER A SERVICE WORKER IN A SANDBOXED FRAME, whatever flags are
+       * set: `SecurityError: The operation is insecure`, which is fatal here because the worker is
+       * what serves the app its files. Confirmed the hard way — it fails with Enhanced Tracking
+       * Protection turned OFF, so it is the attribute and not the privacy setting.
+       *
+       * The security of this feature never rested on that attribute. It rests on the app being on a
+       * DIFFERENT ORIGIN (xdc.<instance>), which is what keeps it away from the client's localStorage
+       * and IndexedDB where the key and session live, and on it having no network: the worker refuses
+       * every cross-origin request and the CSP on every response names no host. Both still hold.
+       *
+       * What is given up: with no sandbox attribute a frame may navigate the top-level page after a
+       * user activation. That is a phishing surface, and it is the price of the feature working in
+       * Firefox at all — noted in docs/WEBXDC.md rather than discovered later. */
       f.setAttribute('referrerpolicy', 'no-referrer');
+      f.setAttribute('allow', 'autoplay; fullscreen; gamepad');
       f.src = this.origin + '/__sandbox__/';
       this.frame = f;
 
