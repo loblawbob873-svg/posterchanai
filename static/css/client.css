@@ -6479,8 +6479,18 @@ body.os-on #os-root{pointer-events:auto}
    that floats over your work is worse. `contain: layout style` keeps a widget's own repaints from
    invalidating the desktop around it: these things update forever, which is exactly the load this
    file has had to remove three times already. */
+/* EVERY SURFACE HERE IS A TOKEN, and that is a rule rather than a preference.
+   These panels were written in cyberpunk's own colours — a violet glass gradient, near-white text,
+   black input fills, white-on-glass hovers — none of which go through the theme. On the eight other
+   palettes that is a dark purple card sitting on a light desktop with dark text on it, which is
+   exactly how it was reported: "it looks terrible and dark if you change themes". It is wrong on the
+   other DARK themes too (violet glass in the middle of Monero's browns), so this is not a light-theme
+   patch: the base is themed, and cyberpunk's flourishes are restored explicitly at the end of this
+   section under :root:not([data-theme]). A NEW widget that uses only tokens is correct in all nine
+   themes for free; one that hardcodes a colour is broken in eight of them and looks fine to whoever
+   wrote it. */
 .os-wgt{position:absolute;z-index:6;display:flex;flex-direction:column;border-radius:14px;
-  background:linear-gradient(160deg,rgba(20,12,44,.86),rgba(10,4,24,.9));
+  background:linear-gradient(160deg,rgba(var(--accent-rgb),.07),transparent 62%),var(--panel2);
   border:1px solid var(--line);box-shadow:0 10px 30px rgba(0,0,0,.45);overflow:hidden;
   contain:layout style;-webkit-user-select:none;user-select:none;cursor:grab}
 .os-wgt.dragging{cursor:grabbing;will-change:transform;box-shadow:0 18px 44px rgba(0,0,0,.6);
@@ -6489,11 +6499,16 @@ body.os-on #os-root{pointer-events:auto}
    has no title bar to hang it from, and a ✕ sitting on a panel permanently is the chrome this design
    is getting rid of. It stays reachable without a pointer (focus-visible) and on touch, where nothing
    hovers, the right-click/long-press menu carries the same action. */
+/* `pointer-events:none` while it is invisible, and that is a correctness rule rather than a tidy-up:
+   opacity:0 hides a button from the EYE and from nothing else. It sat armed over the top-right corner
+   of every widget, and the moment the search bar came down to 54px that corner became its own submit
+   button — a click on ➜ deleted the widget (and, since the layout is published, deleted it on every
+   device) instead of searching. It takes clicks exactly when it can be seen. */
 .os-wgt-x{position:absolute;top:6px;right:6px;z-index:2;width:20px;height:20px;border:0;
-  background:rgba(8,4,20,.72);color:var(--muted);cursor:pointer;border-radius:50%;font-size:10px;
-  line-height:1;opacity:0;transition:opacity .12s,background .12s,color .12s;
+  background:var(--bg2);color:var(--muted);cursor:pointer;border-radius:50%;font-size:10px;
+  line-height:1;opacity:0;pointer-events:none;transition:opacity .12s,background .12s,color .12s;
   display:flex;align-items:center;justify-content:center}
-.os-wgt:hover .os-wgt-x,.os-wgt-x:focus-visible{opacity:1}
+.os-wgt:hover .os-wgt-x,.os-wgt-x:focus-visible{opacity:1;pointer-events:auto}
 .os-wgt-x:hover{background:#e81123;color:#fff}
 .os-wgt-body{flex:1;min-height:0;overflow:auto;padding:10px 12px;font-size:12.5px;color:var(--text)}
 .wgt-dim{color:var(--muted);font-size:11.5px}
@@ -6513,7 +6528,7 @@ body.os-on #os-root{pointer-events:auto}
 /* The chain tip: a thin seam the two sides meet at. */
 .mp-tip{flex:none;width:3px;align-self:stretch;margin:7px 6px;border-radius:3px;
   background:linear-gradient(180deg,transparent,var(--neon) 20%,var(--neon) 80%,transparent);
-  opacity:.55;box-shadow:0 0 8px rgba(0,240,255,.35)}
+  opacity:.55;box-shadow:0 0 8px rgba(var(--accent-rgb),.35)}
 /* 66px is measured, not chosen: a six-digit block height at 11.5px bold is ~44px, and four tiles
    plus the seam have to fit the default widget width. Wider clipped the heights; narrower and the
    fee range wraps. */
@@ -6566,17 +6581,20 @@ body.os-on #os-root{pointer-events:auto}
 .wgt-sym{flex:none;width:3.4em;font-weight:700;color:var(--neon);font-size:11.5px;letter-spacing:.04em}
 .wgt-val{flex:1;min-width:0;text-align:right;overflow:hidden;text-overflow:ellipsis}
 .wgt-chg{flex:none;width:5.2em;text-align:right;font-size:11px}
-.wgt-chg.up{color:#5dffb0}
-.wgt-chg.down{color:#ff6b8b}
+/* --green/--danger, not a fixed pair: on the light themes a neon mint reads as decoration rather than
+   as "up", and win98's palette has its own green. --danger is not declared on bare :root, so the
+   fallback IS cyberpunk's original pink. */
+.wgt-chg.up{color:var(--green)}
+.wgt-chg.down{color:var(--danger,#ff6b8b)}
 
 /* Weather. The temperature is the thing you actually look at, so it gets the size and everything
    else is subordinate to it. */
 .wgt-wx{display:flex;flex-direction:column;gap:2px;height:100%}
 .wgt-wxnow{display:flex;align-items:center;gap:9px}
 .wgt-wxglyph{font-size:26px;line-height:1}
-.wgt-wxt{font-size:27px;font-weight:700;line-height:1;color:#eaf0ff}
+.wgt-wxt{font-size:27px;font-weight:700;line-height:1;color:var(--text)}
 .wgt-wxt sup{font-size:12px;font-weight:600;color:var(--muted);vertical-align:super}
-.wgt-wxwhere{font-size:12px;color:#eaf0ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wgt-wxwhere{font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* The unit toggle. Small, quiet and up beside the number it changes — it is a preference you set once,
    so it must be findable without competing with the reading itself. */
 .wgt-wxu{margin-left:auto;align-self:flex-start;flex:none;background:none;cursor:pointer;
@@ -6586,7 +6604,7 @@ body.os-on #os-root{pointer-events:auto}
 .wgt-wxdays{margin-top:auto;display:flex;gap:10px;flex-wrap:wrap;padding-top:6px;
   font-size:11.5px;color:var(--muted)}
 .wgt-wxpick{display:flex;flex-direction:column;gap:6px}
-.wgt-wxq,.wgt-note,.wgt-sinput{width:100%;box-sizing:border-box;background:rgba(0,0,0,.28);
+.wgt-wxq,.wgt-note,.wgt-sinput{width:100%;box-sizing:border-box;background:var(--bg2);
   border:1px solid var(--line);border-radius:9px;color:var(--text);padding:7px 9px;font:inherit;
   font-size:12.5px;outline:none}
 .wgt-wxq:focus,.wgt-note:focus,.wgt-sinput:focus{border-color:var(--cyan,#0ff)}
@@ -6594,7 +6612,7 @@ body.os-on #os-root{pointer-events:auto}
 .wgt-wxhit{display:flex;flex-direction:column;align-items:flex-start;gap:1px;text-align:left;
   background:none;border:0;color:var(--text);padding:5px 7px;border-radius:7px;cursor:pointer;
   font-size:12px}
-.wgt-wxhit:hover{background:rgba(255,255,255,.07)}
+.wgt-wxhit:hover{background:rgba(var(--accent-rgb),.14)}
 
 /* Now playing. The panel used to be a title, a row of buttons, and a hole between them; the art and
    what-is-coming fill it with the two things a now-playing panel is for. */
@@ -6607,20 +6625,20 @@ body.os-on #os-root{pointer-events:auto}
    which is the state the transport button also carries and the one you read from across a room. */
 .wgt-mart{flex:none;width:clamp(42px,22%,64px);aspect-ratio:1;height:auto;border-radius:50%;display:flex;align-items:center;
   justify-content:center;background:radial-gradient(circle at 50% 50%,rgba(var(--accent-rgb),.35) 0 22%,
-  #150a2c 23% 100%);border:1px solid var(--line);box-shadow:inset 0 0 12px rgba(0,0,0,.55)}
+  var(--bg2) 23% 100%);border:1px solid var(--line);box-shadow:inset 0 0 12px rgba(0,0,0,.55)}
 .wgt-mart .ic{width:17px;height:17px;color:var(--neon)}
 .wgt-mart.spin{animation:wgtspin 4s linear infinite}
 @keyframes wgtspin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){ .wgt-mart.spin{animation:none} }
 .wgt-mmeta{min-width:0;flex:1}
 .wgt-mnext{font-size:11px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wgt-mtitle{font-size:12.5px;color:#eaf0ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wgt-mtitle{font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wgt-mctl{display:flex;align-items:center;justify-content:center;gap:6px}
 /* Seek. A real control, so it is tall enough to hit with a thumb (the hit area is padded well past
    the 4px groove) and it takes focus for keyboard seeking. */
 .wgt-mseek{position:relative;height:14px;display:flex;align-items:center;cursor:pointer;flex:none}
 .wgt-mseek::before{content:'';position:absolute;left:0;right:0;height:4px;border-radius:3px;
-  background:rgba(255,255,255,.10)}
+  background:var(--line)}
 .wgt-mseekfill{position:relative;height:4px;border-radius:3px;width:0;
   background:linear-gradient(90deg,var(--cyan,#0bb6cf),var(--neon));box-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .wgt-mseek:focus-visible{outline:1px solid var(--neon);outline-offset:3px;border-radius:3px}
@@ -6638,9 +6656,12 @@ body.os-on #os-root{pointer-events:auto}
    The 12px icon keeps it visually lighter than the transport it sits beside — shuffle is a setting
    you touch once, not a control you aim for while a track is playing. */
 .wgt-bsh .ic{width:13px;height:13px;display:block}
-.wgt-bsh.on{color:#04121a;background:var(--neon);border-color:var(--neon);
+/* var(--bg), not a fixed near-black: --neon is a DARK navy on win98 and a dark blue on professional,
+   where dark-on-dark makes the "shuffle is on" state unreadable — the same trap .btn-cyan and the
+   active settings tab were already fixed for. The theme's own background reads on its own accent. */
+.wgt-bsh.on{color:var(--bg);background:var(--neon);border-color:var(--neon);
   box-shadow:0 0 12px rgba(var(--accent-rgb),.55)}
-.wgt-bsh.on:hover{color:#04121a}
+.wgt-bsh.on:hover{color:var(--bg)}
 @media(prefers-reduced-motion:reduce){ .wgt-b{transition:none} .wgt-b:active{transform:none} }
 
 /* Sticky note — an actual yellow sticky, not a dark panel like the rest.
@@ -6665,20 +6686,143 @@ body.os-on #os-root{pointer-events:auto}
   font-family:'Segoe Print','Bradley Hand','Comic Sans MS',ui-rounded,system-ui,sans-serif;font-size:13px}
 .wgt-note:focus{border:0;outline:none}
 .wgt-note::placeholder{color:rgba(90,70,0,.45)}
+/* THE PAPER IS THE TEXTAREA, and on every theme but cyberpunk it stopped being: the readability
+   layer's `:root[data-theme] textarea{background:var(--panel2);color:var(--text)}` is (0,2,1) and
+   beats `.wgt-note` (0,1,0), so a white (or silver, or pink) box was painted across the middle of the
+   yellow note with the theme's dark text in it — reported as "the text box on the sticky notes widget
+   is really bad on the different themes". Same collision, and the same fix, as `.tl-cmp-ta` up in the
+   layer itself. The ink stays hardcoded for the reason the paper does: this note is yellow in all
+   nine themes, so a token that goes pale in a dark theme would write in white on it. */
+:root[data-theme] .wgt-note{ background:transparent; color:#2c2200; }
+:root[data-theme] .wgt-note::placeholder{ color:rgba(90,70,0,.45); }
 .wgt-notest{height:14px;padding-top:2px;color:rgba(90,70,0,.6)}
 .os-wgt[data-type="note"] .wgt-dim{color:rgba(90,70,0,.6)}
 
 /* Search — a BAR: wide, one line tall, the input filling it. The hint sits on the same row rather
    than under it, because a second line is most of the height of a widget this shape. */
-.os-wgt[data-type="search"] .os-wgt-body{display:flex;align-items:center;padding:8px 10px}
-.wgt-search{display:flex;gap:7px;align-items:center;width:100%}
+/* LEAN. The frame around the input is not decoration, it is dead space: a one-line control had a
+   96px panel around it and 8px of body padding inside that, so the widget read as a box that happens
+   to contain a search box rather than as a search box. The height comes down in wgtBox (see `bar`)
+   and the padding here, and the input keeps a 1px border — asked for as "reduce the border width
+   around the text input so it's thinner and leaner". */
+/* The right padding is the ✕'s column, not decoration. At 54px tall the remove button and the ➜
+   button want the same corner, and hovering the widget arms the ✕ — so the form ends before it. */
+.os-wgt[data-type="search"] .os-wgt-body{display:flex;align-items:center;padding:5px 28px 5px 7px}
+.wgt-search{display:flex;gap:6px;align-items:center;width:100%}
 .wgt-sinput{flex:1;min-width:0}
-.wgt-sgo{flex:none;width:34px;height:34px;border-radius:9px;border:1px solid var(--neon);
+.os-wgt[data-type="search"] .wgt-sinput{padding:5px 9px;border-radius:8px}
+.wgt-sgo{flex:none;width:30px;height:30px;border-radius:8px;border:1px solid var(--neon);
   background:rgba(var(--accent-rgb),.14);color:var(--neon);cursor:pointer;font-size:13px}
-.wgt-sgo:hover{background:var(--neon);color:#04121a}
+.wgt-sgo:hover{background:var(--neon);color:var(--bg)}
 /* No room for it in a bar, and it says nothing the placeholder does not. */
 .os-wgt[data-type="search"] .wgt-shint{display:none}
 .wgt-shint{padding-top:6px}
+
+/* Clock. The NUMERAL is the widget: the taskbar already carries HH:MM in 11px, so a second copy of
+   that would be pointless — this one exists to be read from across the room, with the date under it
+   and the cities you follow under that. Tabular figures, or the panel twitches sideways every time a
+   1 becomes a 7. The size follows the widget's own size name rather than a container query: the four
+   sizes are the vocabulary the rest of this file already speaks. */
+.wgt-clk{display:flex;flex-direction:column;gap:2px;height:100%;min-height:0}
+.wgt-clkt{flex:none;display:flex;align-items:baseline;gap:6px;font-variant-numeric:tabular-nums}
+.wgt-clkh{font-size:34px;font-weight:700;line-height:1.05;color:var(--text)}
+.os-wgt[data-size="s"] .wgt-clkh{font-size:27px}
+.os-wgt[data-size="l"] .wgt-clkh{font-size:42px}
+.wgt-clkap{font-style:normal;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase}
+/* Aligned to the BOTTOM of the numeral's row, deliberately: the widget's own ✕ lives at top-right and
+   fades in on hover, and two round buttons in one corner is a target you hit by accident. */
+.wgt-clkadd{margin-left:auto;align-self:flex-end;flex:none;width:20px;height:20px;border-radius:50%;
+  border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer;font-size:11px;
+  line-height:1;display:flex;align-items:center;justify-content:center;opacity:.5;
+  transition:opacity .12s,color .12s,border-color .12s}
+.os-wgt:hover .wgt-clkadd,.wgt-clkadd:focus-visible{opacity:1}
+.wgt-clkadd:hover{color:var(--neon);border-color:var(--neon)}
+.wgt-clkd{flex:none;font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wgt-clkz{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:3px;margin-top:5px}
+.wgt-clkrow{display:flex;align-items:baseline;gap:8px;font-size:12px;cursor:pointer;
+  font-variant-numeric:tabular-nums;border-radius:5px}
+.wgt-clkrow:hover{background:rgba(var(--accent-rgb),.10)}
+.wgt-clkzn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.wgt-clkzt{flex:none;color:var(--muted)}
+/* A zone this browser cannot resolve says so rather than showing the local time under another city's
+   name — which is a clock that is confidently, silently wrong. */
+.wgt-clkrow.bad .wgt-clkzt{color:var(--danger,#ff6b8b)}
+.wgt-clkpick{display:flex;flex-direction:column;gap:6px}
+/* The ✕ is the touch answer to "I changed my mind": clicking outside dismisses the picker too, but
+   that is not a gesture anybody tries on a phone. */
+.wgt-clkprow{display:flex;align-items:center;gap:6px}
+.wgt-clkprow .wgt-clkq{flex:1;min-width:0}
+.wgt-clkx{flex:none;width:24px;height:24px;border-radius:7px;border:1px solid var(--line);
+  background:transparent;color:var(--muted);cursor:pointer;font-size:11px;line-height:1;
+  display:flex;align-items:center;justify-content:center}
+.wgt-clkx:hover{color:var(--neon);border-color:var(--neon)}
+
+/* Headlines. One row is a title and its source; the panel holds as many as fit and rotates by one.
+   Each repaint replaces the rows, so the animation runs on arrival for free — and is dropped whole
+   for anyone who has asked for less motion, where a ticker is exactly the thing they meant. */
+.wgt-news{display:flex;flex-direction:column;gap:5px;height:100%;min-height:0;overflow:hidden}
+.wgt-nrow{display:block;flex:none;text-decoration:none;color:inherit;border-radius:6px;
+  animation:wgtnews .42s ease}
+.wgt-nt{display:block;font-size:12.5px;line-height:1.25;color:var(--text);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wgt-nm{display:block;font-size:10.5px;color:var(--muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wgt-nrow:hover .wgt-nt{color:var(--neon)}
+/* An item whose feed gave no usable link is still worth reading — it just is not a link, and must
+   not pretend to be one by lighting up under the pointer. */
+.wgt-nrow.nolink{cursor:default}
+.wgt-nrow.nolink:hover .wgt-nt{color:var(--text)}
+@keyframes wgtnews{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){ .wgt-nrow{animation:none} }
+
+/* Community. The same five counters the tray panel shows, at a size you can read without opening
+   anything — and all five ALWAYS, including the zeroes (see _statCells: a cell that vanishes at zero
+   reads as a missing feature). auto-fit rather than a fixed column count, because this panel is
+   resizable and five cells across a small widget is five unreadable cells. */
+.wgt-st{display:grid;grid-template-columns:repeat(auto-fit,minmax(78px,1fr));gap:8px 10px;
+  align-content:start;cursor:pointer}
+.wgt-stc{display:grid;grid-template-columns:15px 1fr;grid-template-rows:auto auto;gap:0 6px;
+  align-items:center}
+.wgt-stc .ic{width:15px;height:15px;color:var(--muted);grid-row:span 2}
+.wgt-stc b{font-size:16px;font-weight:700;color:var(--text);line-height:1.1;
+  font-variant-numeric:tabular-nums}
+.wgt-stc i{font-style:normal;font-size:10.5px;color:var(--muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Something is actually live: the icon lights and breathes. Only ever for a NON-ZERO counter — this
+   is the one cell whose value changes what the panel is for. */
+.wgt-stc.live .ic{color:var(--neon);animation:wgtpulse 2.2s ease-in-out infinite}
+@keyframes wgtpulse{0%,100%{opacity:1}50%{opacity:.45}}
+@media(prefers-reduced-motion:reduce){ .wgt-stc.live .ic{animation:none} }
+
+/* ---- cyberpunk's own flourishes ---------------------------------------------------------------
+   Everything above is themed now, which costs the flagship theme the two surfaces that were genuinely
+   ITS look rather than an accident: the violet glass panel and the dark record label. They are given
+   back here for the bare :root only — cyberpunk is the one theme that sets no data-theme attribute —
+   which is the same shape the auth gate's neon decor already uses. Nothing else needs restoring: the
+   tokens the rules now read ARE cyberpunk's old values (--text is #edeefa where the panels hardcoded
+   #eaf0ff, --line is the same groove the seek bar drew by hand). The sticky note is excluded from
+   both: its paper is yellow in every theme, including this one. */
+/* `background-image`, not the `background` shorthand: the shorthand resets background-COLOR to
+   transparent, which leaves the panel with nothing but a translucent gradient over the wallpaper —
+   it looks nearly right and there is no solid surface under the text. (It is also unmeasurable, which
+   is how check_os_desktop's theme check found it: a computed backgroundColor of rgba(0,0,0,0) tells
+   you nothing about what the reader sees.) Keeping the layer separate puts cyberpunk's violet over
+   the same --panel2 every other theme gets. */
+:root:not([data-theme]) .os-wgt:not([data-type="note"]){
+  background-image:linear-gradient(160deg,rgba(20,12,44,.86),rgba(10,4,24,.9))}
+:root:not([data-theme]) .os-wgt:not([data-type="note"]) .os-wgt-x{background:rgba(8,4,20,.72)}
+:root:not([data-theme]) .wgt-mart{background:radial-gradient(circle at 50% 50%,
+  rgba(var(--accent-rgb),.35) 0 22%,#150a2c 23% 100%)}
+
+/* A block tile carries its fee as a HUE, and that hue is a mid-lightness colour picked against a dark
+   tile — 55-62% lightness, which reads as a bright green or amber on violet glass and as a pale smear
+   on white. The TINT stays on the light themes (it is what makes the row readable as a temperature at
+   a glance); the number on top goes back to the theme's text colour. Same five slugs as the
+   color-scheme:light group near the top of this file — they are the light palettes. */
+:root[data-theme="cherryblossom"] .mp-b-top,:root[data-theme="professional"] .mp-b-top,
+:root[data-theme="win98"] .mp-b-top,:root[data-theme="winxp"] .mp-b-top,
+:root[data-theme="animegirl"] .mp-b-top{color:var(--text)}
 
 /* The picker — the wallpaper panel's frame, a list rather than a grid of thumbnails. */
 .os-wgt-grid{display:flex;flex-direction:column;gap:6px;padding:10px;max-height:56vh;overflow:auto}

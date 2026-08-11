@@ -1637,7 +1637,11 @@
      * the desk. */
     if(def && def.bar){
       const wide = { s: 300, m: 420, l: 560 }[size] || 420;
-      return { w: Math.max(200, Math.min(wide, Math.round(deskW * 0.72))), h: 96 };
+      /* 54, not the 96 the panels floor at: the control inside is 30px and the body padding is 5px,
+       * so anything more is a frame of empty widget around one input — which is what it looked like
+       * ("reduce the border width around the text input so it's thinner and leaner"). The height of a
+       * bar is the height of what it holds. */
+      return { w: Math.max(200, Math.min(wide, Math.round(deskW * 0.72))), h: 54 };
     }
     const s = WGT_SIZES[size] || WGT_SIZES.m;
     return { w: Math.max(150, Math.min(s.w, Math.round(deskW * 0.46))),
@@ -2094,7 +2098,364 @@
         box.onclick = (ev) => { if(ev.target.closest('.wgt-calrow, .wgt-calhead')) openApp('calendar'); };
       },
     },
+
+    clock: {
+      label: 'Clock', icon: '#i-clock', blurb: 'The time here, and in the cities you follow',
+      /* ONE SECOND, and the shared timer takes the fastest widget on the desk as its period (see
+       * _wgtPeriod). A clock is the one panel whose whole job is to be right: at the 15s tick a
+       * minute flips up to fifteen seconds late, which is exactly the error someone notices when
+       * they look from this to their phone. It stays one timer, it still stops when the desktop is
+       * left or the tab is hidden, and a tick writes text into nodes that already exist. */
+      every: 1000,
+      mount(el){
+        el.innerHTML = `<div class="wgt-clk">
+            <div class="wgt-clkt"><b class="wgt-clkh"></b><i class="wgt-clkap"></i>
+              <button class="wgt-clkadd" type="button" title="Add a city" aria-label="Add a city">＋</button></div>
+            <div class="wgt-clkd"></div>
+            <div class="wgt-clkz"></div>
+          </div>`;
+      },
+      refresh(el, w, save){
+        const box = $('.wgt-clk', el); if(!box) return;
+        const cfg = w.cfg || {};
+        const now = new Date();
+        const main = _clockFace(now, cfg.tz || '', cfg);
+        // textContent, and only when it CHANGED: this runs every second for the life of the desktop.
+        const t = $('.wgt-clkh', box), ap = $('.wgt-clkap', box), d = $('.wgt-clkd', box);
+        if(t && t.textContent !== main.time) t.textContent = main.time;
+        if(ap && ap.textContent !== main.ampm) ap.textContent = main.ampm;
+        if(d && d.textContent !== main.date) d.textContent = main.date;
+
+        const zbox = $('.wgt-clkz', box); if(!zbox) return;
+        { const b = $('.wgt-clkadd', box);
+          if(b && !b.dataset.wired){ b.dataset.wired = '1';
+            b.onpointerdown = (ev) => ev.stopPropagation();     // the panel is the drag handle
+            b.onclick = (ev) => { ev.stopPropagation(); _clockPicker(el, w, save); }; } }
+        // The city search is open and being typed in — leave the list alone until it closes.
+        if(zbox.dataset.pick) return;
+        const zones = _clockZones(cfg);
+        /* Rebuild the ROWS only when the list of cities changes; a tick updates their times. Rebuilding
+         * three rows of innerHTML every second is not a layout read, but it is a second of DOM churn
+         * every second, for ever, on a panel nobody is interacting with. */
+        const sig = zones.join('|');
+        if(zbox.dataset.sig !== sig){
+          zbox.dataset.sig = sig;
+          zbox.innerHTML = zones.map(z => `<div class="wgt-clkrow" data-z="${enc(z)}">
+              <span class="wgt-clkzn">${enc(_clockCity(z))}</span>
+              <span class="wgt-clkzt"></span></div>`).join('');
+          zbox.onclick = (ev) => {
+            const row = ev.target.closest('.wgt-clkrow'); if(!row) return;
+            ev.stopPropagation();
+            _clockZoneMenu(row.dataset.z, ev.clientX, ev.clientY, w, save);
+          };
+        }
+        for(const row of zbox.querySelectorAll('.wgt-clkrow')){
+          const f = _clockFace(now, row.dataset.z, cfg);
+          const txt = f.time + (f.ampm ? ' ' + f.ampm : '') + (f.dayNote ? ' · ' + f.dayNote : '');
+          const n = row.querySelector('.wgt-clkzt');
+          if(n && n.textContent !== txt) n.textContent = txt;
+          if(row.classList.contains('bad') !== !f.ok) row.classList.toggle('bad', !f.ok);
+        }
+      },
+    },
+
+    news: {
+      label: 'Headlines', icon: '#i-news', blurb: 'The latest from your News feeds, one after another',
+      /* The ROTATION interval, not a fetch interval — this widget never fetches. News already keeps a
+       * background snapshot of every feed for its unread badge (one shared read of the server's own
+       * cache, ten-minutely); the panel reads that. Two of these on a desk are still zero requests. */
+      every: 7000,
+      mount(el){
+        el.innerHTML = '<div class="wgt-news"><div class="wgt-dim">loading…</div></div>';
+        /* PAUSE WHILE IT IS BEING READ. A headline that slides away mid-sentence is the reason
+         * scrolling tickers are turned off, and the pointer is a perfectly good statement of intent. */
+        const box = $('.wgt-news', el);
+        el.addEventListener('pointerenter', () => { if(box) box.dataset.hold = '1'; });
+        el.addEventListener('pointerleave', () => { if(box) delete box.dataset.hold; });
+      },
+      refresh(el){
+        const box = $('.wgt-news', el); if(!box) return;
+        const N = window.PCNews;
+        if(!N || !N.latest){ box.innerHTML = '<div class="wgt-dim">News is not available here</div>'; return; }
+        let items = [];
+        try{ items = N.latest(80) || []; }catch(_){ items = []; }
+        if(!items.length){
+          /* THREE different answers, and only one of them is actionable. "No feeds yet" is a
+           * statement about the ACCOUNT, so it must not be made on a device that has simply never
+           * opened News and does not know yet — feedCount() returns -1 for that, and saying "no
+           * feeds" there was a confident lie to somebody who has plenty. */
+          let has = -1; try{ has = N.feedCount ? N.feedCount() : -1; }catch(_){ has = -1; }
+          box.innerHTML = has < 0 ? '<div class="wgt-dim">loading…</div>'
+                        : has     ? '<div class="wgt-dim">No headlines yet.</div>'
+                                  : '<div class="wgt-dim">No feeds yet — add them in News.</div>';
+          box.onclick = () => openApp('news');
+          delete box.dataset.filled;
+          return;
+        }
+        /* HOLD MEANS HOLD. Freezing the offset was not enough: the rebuild below replaced the rows
+         * with identical ones every 7 seconds, which replays the slide-in animation under the
+         * pointer the hold exists to stop — and a rebuild landing between mousedown and mouseup
+         * throws away the <a> being clicked, so the article never opens. */
+        if(box.dataset.hold && box.dataset.filled) return;
+        // How many fit, measured — same discipline as the block tiles. 33px is a title line and its
+        // source/age line at 12.5px; 4px is the gap.
+        const h = Math.max(40, box.clientHeight || el.clientHeight || 120);
+        const rows = Math.max(1, Math.min(6, Math.floor(h / 33)));
+        let off = Number(box.dataset.off) || 0;
+        if(box.dataset.filled) off = (off + 1) % items.length;
+        box.dataset.off = String(off);
+        box.dataset.filled = '1';
+        box.onclick = null;      // the empty state binds one; a populated panel must not carry it
+        const shown = _newsWindow(items, off, rows);
+        box.innerHTML = shown.map(it => {
+          const meta = `<span class="wgt-nt">${enc(it.title || '(untitled)')}</span>
+            <span class="wgt-nm">${enc(it.feedName || '')}${it.ts ? ' · ' + enc(_wgtAgo(it.ts)) : ''}</span>`;
+          /* NO LINK, NO ANCHOR. A feed item without a usable http(s) link used to render
+           * `href="#" target="_blank"`, which resolves to the CURRENT document — so clicking it
+           * opened a second full copy of the client in a new tab, with its own relay sockets and
+           * subscriptions. A row that cannot go anywhere is a row, not a link. */
+          const href = _safeHttp(it.link);
+          return href ? `<a class="wgt-nrow" href="${enc(href)}" target="_blank"
+                            rel="noopener noreferrer">${meta}</a>`
+                      : `<div class="wgt-nrow nolink">${meta}</div>`;
+        }).join('');
+        // A link is a link — but the drag handle is the whole panel, so the row must not start one.
+        for(const a of box.querySelectorAll('a.wgt-nrow')) a.onpointerdown = (ev) => ev.stopPropagation();
+      },
+    },
+
+    stats: {
+      label: 'Community', icon: '#i-wot', blurb: 'Web of trust, who is online, live streams and calls',
+      // The app polls /client/stats once every 15s for the sidebar; this reads what that already
+      // fetched, so it matches the tick it depends on and costs nothing of its own.
+      every: 15000,
+      mount(el){ el.innerHTML = '<div class="wgt-st"></div>'; },
+      refresh(el){
+        const box = $('.wgt-st', el); if(!box) return;
+        let st = null;
+        try{ st = (PC().communityStats && PC().communityStats()) || null; }catch(_){ st = null; }
+        /* `fetched`, not truthiness. communityStats() is defined unconditionally and answers with a
+         * zeroed object, so a standalone build with no instance to ask would render five
+         * authoritative-looking zeroes — "0 WoT, 0 online" reads as a dead network rather than as no
+         * server. The desktop's tray panel learned this the same way. */
+        if(!st || !st.fetched){
+          box.innerHTML = '<div class="wgt-dim">No instance to ask — this client is running on its own.</div>';
+          return;
+        }
+        box.innerHTML = _statCells(st).map(c => `<span class="wgt-stc${c.live ? ' live' : ''}">
+            ${iconSvg(c.icon)}<b>${enc(_wgtCount(c.n))}</b><i>${enc(c.label)}</i></span>`).join('');
+        box.onclick = (ev) => { if(ev.target.closest('.wgt-stc')) openApp('stats'); };
+      },
+    },
   };
+
+  /* ---- the clock ------------------------------------------------------------------------------
+   *
+   * The taskbar already carries HH:MM, so this panel is not "the time" — it is the time READ AT A
+   * GLANCE (a numeral you can see from across the room, with the date under it) and the cities you
+   * keep track of. The whole of it is Intl: no offset table, no DST rules, no list of cities to go
+   * stale, and "is it tomorrow there yet" comes out of the same formatter as the time.
+   *
+   * DateTimeFormat objects are CACHED. Constructing one is the expensive half of Intl — this runs
+   * once a second times (one + a city per row), for the life of the desktop, and building four
+   * formatters a second to print four times was the obvious way to make a clock cost real CPU. */
+  const _dtfs = new Map();
+  function _dtf(opts){
+    const key = JSON.stringify(opts);
+    let f = _dtfs.get(key);
+    if(f === undefined){
+      try{ f = new Intl.DateTimeFormat(opts.locale || undefined, opts.o); }
+      catch(_){ f = null; }                     // an unknown zone throws — remembered as "cannot"
+      if(_dtfs.size > 60) _dtfs.clear();        // bounded; the key space is cfg × zones, both small
+      _dtfs.set(key, f);
+    }
+    return f;
+  }
+  const _clockCity = (tz) => String(tz || '').split('/').pop().replace(/_/g, ' ');
+  /* Is this clock showing 12 hours? A stored choice, else whatever the reader's own locale does —
+   * asking Intl rather than guessing from the language, because en-GB is 24-hour and en-US is not. */
+  function _clockIs12(cfg){
+    const c = cfg || {};
+    if(c.h12 === 1 || c.h12 === true) return true;
+    if(c.h12 === 0 || c.h12 === false) return false;
+    try{ return !!_dtf({ o: { hour: 'numeric' } }).resolvedOptions().hour12; }catch(_){ return false; }
+  }
+  /* The stored list, bounded. Four is what fits a large panel; it is also the point past which a
+   * "world clock" is a timezone table, which is a screen and not a widget. */
+  function _clockZones(cfg){
+    return String((cfg && cfg.zones) || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 4);
+  }
+  // The calendar day in a zone, as YYYY-MM-DD. 'en-CA' is not a display choice — it is the one common
+  // locale that formats ISO-order, so two of these can be COMPARED. Never shown to anybody.
+  function _clockDay(now, tz){
+    const f = _dtf({ locale: 'en-CA', o: Object.assign({ year: 'numeric', month: '2-digit', day: '2-digit' },
+                                                       tz ? { timeZone: tz } : {}) });
+    try{ return f ? f.format(now) : ''; }catch(_){ return ''; }
+  }
+  /* What the panel draws for one zone (or for here, with tz='') — kept DOM-free so
+   * tests/test_desktop_widgets.py can run the shipped code against real zones and real DST dates.
+   * Nothing on screen says when a clock is wrong; it just says the wrong time, confidently. */
+  function _clockFace(now, tz, cfg){
+    const c = cfg || {};
+    const o = { hour: '2-digit', minute: '2-digit' };
+    if(c.sec) o.second = '2-digit';
+    // Unset follows the reader's locale, which is right far more often than either fixed answer. A
+    // stored choice is a choice and wins for ever — the same rule the weather's units follow.
+    if(c.h12 === 1 || c.h12 === true) o.hour12 = true;
+    else if(c.h12 === 0 || c.h12 === false) o.hour12 = false;
+    if(tz) o.timeZone = tz;
+    const f = _dtf({ o });
+    if(!f) return { time: '--:--', ampm: '', date: '', dayNote: '', ok: false };
+    let parts;
+    try{ parts = f.formatToParts(now); }
+    catch(_){ return { time: '--:--', ampm: '', date: '', dayNote: '', ok: false }; }
+    /* The am/pm marker is SPLIT OUT rather than formatted into the string: it is set small beside a
+     * 34px numeral, and "10:45 PM" all at one size is a clock that reads as text. Everything that is
+     * not the marker (including the separators) is the time, so this holds for locales that place it
+     * first or use their own words for it. */
+    let time = '', ampm = '';
+    for(const p of parts){
+      if(p.type === 'dayPeriod') ampm = String(p.value || '');
+      else if(p.type !== 'literal' || time) time += p.value;   // drop a leading separator/space
+    }
+    time = time.trim().replace(/[\s  ]+$/, '');
+    const df = _dtf({ o: Object.assign({ weekday: 'long', day: 'numeric', month: 'long' },
+                                       tz ? { timeZone: tz } : {}) });
+    let date = '';
+    try{ date = df ? df.format(now) : ''; }catch(_){ date = ''; }
+    /* "It is 07:10 there" is half an answer — the useful half is that it is 07:10 TOMORROW. Computed
+     * by comparing calendar days rather than by arithmetic on offsets, which is what makes it right
+     * across DST, the date line, and the half-hour zones. */
+    let dayNote = '';
+    if(tz){
+      const here = _clockDay(now, ''), there = _clockDay(now, tz);
+      if(here && there && here !== there) dayNote = there > here ? 'tomorrow' : 'yesterday';
+    }
+    return { time, ampm, date, dayNote, ok: true };
+  }
+  /* Cities offered before anything is typed. A search box with nothing in it is a search box you have
+   * to already know the answer for — and "what is Europe/Kyiv called in the tz database" is exactly
+   * the thing somebody adding a clock does not know. */
+  const _TZ_COMMON = ['America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York',
+                      'America/Sao_Paulo', 'Europe/London', 'Europe/Berlin', 'Europe/Kyiv',
+                      'Africa/Johannesburg', 'Asia/Dubai', 'Asia/Kolkata', 'Asia/Shanghai',
+                      'Asia/Tokyo', 'Australia/Sydney'];
+  function _tzList(){
+    try{
+      if(typeof Intl.supportedValuesOf === 'function'){
+        const v = Intl.supportedValuesOf('timeZone');
+        if(v && v.length) return v;
+      }
+    }catch(_){}
+    return _TZ_COMMON;                 // older Safari/WebView: the shortlist is still a working picker
+  }
+  /* The city search, drawn INTO the clock's own zone list. `pick` on that node is what stops the
+   * one-second refresh from repainting the list out from under the search you are halfway through —
+   * the same guard the weather picker needs, for the same reason. */
+  function _clockPicker(el, w, save){
+    const zbox = $('.wgt-clkz', el); if(!zbox) return;
+    zbox.dataset.pick = '1';
+    zbox.innerHTML = `<div class="wgt-clkpick">
+        <div class="wgt-clkprow">
+          <input class="wgt-wxq wgt-clkq" type="search" placeholder="City or time zone…"
+                 aria-label="Find a city" spellcheck="false" autocomplete="off">
+          <button class="wgt-clkx" type="button" title="Cancel" aria-label="Cancel">✕</button>
+        </div>
+        <div class="wgt-wxres wgt-clkres"></div></div>`;
+    const q = $('.wgt-clkq', zbox), res = $('.wgt-clkres', zbox);
+    /* `delete`, not `sig = ''`: an empty city list HAS the signature '', so assigning it left the
+     * rebuild guard seeing no change — on a clock with no cities yet, which is every clock somebody
+     * opens this picker on for the first time. A missing attribute differs from every signature. */
+    let closed = false;
+    const close = () => {
+      if(closed) return;
+      closed = true;
+      delete zbox.dataset.pick;
+      delete zbox.dataset.sig;                      // next tick rebuilds the rows
+      document.removeEventListener('pointerdown', away, true);
+    };
+    /* AND IT MUST BE DISMISSABLE BY GIVING UP. Escape only reaches a focused input, and picking a
+     * city is the one other way out — so clicking ＋ and changing your mind replaced the world
+     * clocks with an empty search box for the rest of the session. Outside-click closes it, and
+     * there is a ✕ for touch, where "click outside" is not something anyone thinks to try. */
+    function away(ev){ if(!zbox.contains(ev.target)) close(); }
+    document.addEventListener('pointerdown', away, true);
+    if(!q || !res) return close();
+    { const x = $('.wgt-clkx', zbox);
+      if(x){ x.onpointerdown = (ev) => ev.stopPropagation();
+             x.onclick = (ev) => { ev.stopPropagation(); close(); }; } }
+    q.onpointerdown = (ev) => ev.stopPropagation();
+    q.onkeydown = (ev) => { if(ev.key === 'Escape'){ ev.stopPropagation(); close(); } };
+    const all = _tzList();
+    const paint = () => {
+      const s = String(q.value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      const hits = (s ? all.filter(z => z.toLowerCase().replace(/_/g, ' ').indexOf(s) >= 0)
+                      : _TZ_COMMON.filter(z => all.indexOf(z) >= 0 || all === _TZ_COMMON)).slice(0, 14);
+      res.innerHTML = hits.length
+        ? hits.map(z => `<button class="wgt-wxhit" data-z="${enc(z)}"><b>${enc(_clockCity(z))}</b>
+            <span class="wgt-dim">${enc(z)}</span></button>`).join('')
+        : '<div class="wgt-dim">No zone by that name.</div>';
+      for(const b of res.querySelectorAll('.wgt-wxhit')) b.onclick = (ev) => {
+        ev.stopPropagation();
+        const z = b.dataset.z;
+        close();
+        save((row) => {
+          const cur = _clockZones(row.cfg || {});
+          if(cur.indexOf(z) >= 0) return false;                       // already there — no write
+          if(cur.length >= 4){ try{ PC().toast('four cities is as many as the clock takes'); }catch(_){} return false; }
+          row.cfg = Object.assign({}, row.cfg, { zones: cur.concat([z]).join(',') });
+        });
+      };
+    };
+    q.oninput = paint;
+    paint();
+    try{ q.focus(); }catch(_){}
+  }
+  function _clockZoneMenu(z, x, y, w, save){
+    showCtx(x, y, [{ label: 'Remove ' + _clockCity(z), run: () => save((row) => {
+      const cur = _clockZones(row.cfg || {}).filter(v => v !== z);
+      row.cfg = Object.assign({}, row.cfg, { zones: cur.join(',') });
+    }) }]);
+  }
+
+  /* ---- headlines ------------------------------------------------------------------------------
+   * The window of items on screen, wrapping — kept pure so the rotation can be tested without a
+   * clock and without a DOM. Wrapping is the whole of it: a ticker that runs off the end of a short
+   * feed and shows nothing is how one with three headlines behaves. */
+  function _newsWindow(items, off, n){
+    const out = [], L = (items || []).length;
+    if(!L) return out;
+    const start = ((Number(off) || 0) % L + L) % L;
+    for(let i = 0; i < Math.min(Math.max(1, n | 0), L); i++) out.push(items[(start + i) % L]);
+    return out;
+  }
+  // '' for anything that is not a real http(s) link — never '#', which in a target=_blank anchor
+  // resolves to the current document and opens a second copy of the whole client.
+  const _safeHttp = (u) => /^https?:\/\//i.test(String(u || '')) ? String(u) : '';
+  function _wgtAgo(ts){
+    const s = Math.max(0, Math.floor(Date.now() / 1000) - (Number(ts) || 0));
+    if(s < 90) return 'just now';
+    if(s < 3600) return Math.round(s / 60) + 'm';
+    if(s < 86400) return Math.round(s / 3600) + 'h';
+    return Math.round(s / 86400) + 'd';
+  }
+
+  /* ---- the community counters -------------------------------------------------------------------
+   * ALL FIVE, ALWAYS, INCLUDING THE ZEROES. "0 live" is an answer; a cell that disappears when it is
+   * zero reads as a feature that is missing, which is what happened the last time these were made
+   * conditional (see netStatsHtml, which shows the same five for the same reason). Pure, so the
+   * decision can be tested without a relay. */
+  function _statCells(st){
+    const n = (v) => Math.max(0, Number(v) || 0);
+    const live = n(st && st.streams);
+    return [{ icon: 'i-wot',       n: n(st && st.users),  label: 'WoT' },
+            { icon: 'i-livedot',   n: n(st && st.online), label: 'online' },
+            { icon: 'i-relay-dot', n: n(st && st.relay),  label: 'on relay' },
+            { icon: 'i-stream',    n: live,               label: 'live', live: live > 0 },
+            { icon: 'i-call',      n: n(st && st.calls),  label: 'in call' }];
+  }
+  const _wgtCount = (n) => { const v = Math.max(0, Number(n) || 0);
+    try{ return v.toLocaleString(); }catch(_){ return String(v); } };
 
   /* Fee → hue, the way an explorer colours a block: cheap is green, busy is amber, a fee spike is
    * red. Bucketed rather than a continuous ramp, because the point is "is it cheap right now" and a
@@ -2359,7 +2720,7 @@
   // ---- drawing, scheduling and moving widgets ---------------------------------------------------
 
   const _mounted = new Map();          // element -> { w, def, due }
-  let _wgtTimer = null, _wgtVis = false;
+  let _wgtTimer = null, _wgtVis = false, _wgtMs = 0;   // _wgtMs: the period the live timer is running at
 
   /* WHERE EACH WIDGET ACTUALLY GOES — fractions in, pixels out, and NOTHING OVERLAPPING.
    *
@@ -2507,9 +2868,20 @@
     _wgtStart();
   }
 
-  function _wgtRefreshOne(el){
+  /* THE DEADLINE IS SET SHORT, and that is what makes a widget whose `every` EQUALS the timer's
+   * period refresh on every tick instead of on every other one.
+   *
+   * setInterval fires at ideal+jitter, and the deadline was `Date.now() + every` read at the moment
+   * of the refresh — i.e. that same jitter baked in. The next tick then had to be later by more
+   * jitter than the last one, which is a coin flip: the clock skipped roughly every other second
+   * (…:01 → :03, a minute rollover up to two seconds late), and the Community panel refreshed every
+   * ~30s against its declared 15. Subtracting a slack smaller than the tick absorbs the jitter
+   * without letting a slow widget run early — a 90s ticker still fires on the tick after 90s. */
+  const _wgtSlack = (every) => Math.min(250, Math.max(40, Math.round(every / 8)));
+  function _wgtRefreshOne(el, now){
     const m = _mounted.get(el); if(!m) return;
-    m.due = Date.now() + (m.def.every || 0);
+    const every = m.def.every || 0;
+    m.due = (now || Date.now()) + (every ? every - _wgtSlack(every) : 0);
     try{ const r = m.def.refresh(m.body, m.w, m.save); if(r && r.catch) r.catch(()=>{}); }
     catch(e){ console.warn('widget refresh', m.w.type, e); }
   }
@@ -2517,15 +2889,35 @@
     const now = Date.now();
     for(const [el, m] of _mounted){
       if(!all && !(m.def.every && now >= m.due)) continue;
-      _wgtRefreshOne(el);
+      _wgtRefreshOne(el, now);
     }
+  }
+  /* How often the ONE timer fires: the fastest thing mounted, never below a second and never above
+   * fifteen. It used to be a flat 15s, which is right for everything that reads a network — and
+   * makes a CLOCK wrong, by up to fifteen seconds, on the one panel whose entire job is to be right.
+   * Taking the minimum keeps the property that matters (one timer for the whole desktop, stopped
+   * when nothing is watching) and pays the 1s cost only on a desk that actually has a clock on it. */
+  function _wgtPeriodOf(everies){
+    let ms = 15000;
+    for(const v of (everies || [])){
+      const e = Number(v) || 0;
+      if(e > 0 && e < ms) ms = e;
+    }
+    // Never below a second. `every` is a widget's own declaration and a typo in one (100, 10) would
+    // otherwise become the whole desktop's timer for as long as it is on screen.
+    return Math.max(1000, ms);
+  }
+  function _wgtPeriod(){
+    const out = [];
+    for(const [, m] of _mounted) out.push(m.def && m.def.every);
+    return _wgtPeriodOf(out);
   }
   /* ONE interval for every widget, and none at all when nothing is watching.
    *
-   * It ticks at 15s and each widget refreshes only when ITS interval is due, so a ticker on 90s and
-   * the weather on 10 minutes share one timer and neither runs early. Stopped when the desktop is
-   * left and when the tab is hidden — a widget must cost nothing in a background tab, which is where
-   * a page spends most of its life. */
+   * Each widget refreshes only when ITS interval is due, so a ticker on 90s and the weather on 10
+   * minutes share one timer and neither runs early. Stopped when the desktop is left and when the tab
+   * is hidden — a widget must cost nothing in a background tab, which is where a page spends most of
+   * its life. */
   function _wgtStart(){
     /* The visibility listener is installed FIRST, before either early return.
      *
@@ -2543,15 +2935,21 @@
         _wgtStart();
       });
     }
-    if(_wgtTimer || !_mounted.size) return;
+    if(!_mounted.size) return;
     if(typeof document !== 'undefined' && document.hidden) return;
+    const ms = _wgtPeriod();
+    // A running timer at the WRONG period is not "already started": adding a clock to a desk that
+    // held only a ticker must speed the timer up, and removing it must let it slow back down.
+    if(_wgtTimer && _wgtMs === ms) return;
+    _wgtStop();
+    _wgtMs = ms;
     _wgtTimer = setInterval(() => {
       if(!on || !_mounted.size){ _wgtStop(); return; }
       if(typeof document !== 'undefined' && document.hidden){ _wgtStop(); return; }
       _wgtRefreshDue(false);
-    }, 15000);
+    }, ms);
   }
-  function _wgtStop(){ if(_wgtTimer){ clearInterval(_wgtTimer); _wgtTimer = null; } }
+  function _wgtStop(){ if(_wgtTimer){ clearInterval(_wgtTimer); _wgtTimer = null; } _wgtMs = 0; }
 
   // The player has no event to subscribe to, so app.js calls this when its state changes — the same
   // shape as `syncPlayer`. Cheap: it touches two nodes of one widget.
@@ -2595,6 +2993,17 @@
       el.style.left = Math.round(cx) + 'px';
       el.style.top = Math.round(cy) + 'px';
       if(!moved) return;
+      /* SWALLOW THE CLICK THIS DRAG IS ABOUT TO PRODUCE. preventDefault on pointerdown does not stop
+       * it: the browser still synthesises a click on release, and every panel whose body opens
+       * something (Today → Calendar, the blocks → mempool.space, Community → Server Stats) took it.
+       * So dragging the Community widget across the desktop ended by opening the Stats window on top
+       * of the desktop being arranged. Capture phase, once, and only after a real move — a drag that
+       * never left the 3px threshold is a click and must stay one. */
+      const eat = (e) => { e.stopPropagation(); e.preventDefault(); };
+      el.addEventListener('click', eat, { capture: true, once: true });
+      // …and take it back off if no click follows. A drag ended by pointercancel or by the window
+      // losing focus produces none, and a listener left armed would eat the NEXT real one instead.
+      setTimeout(() => el.removeEventListener('click', eat, { capture: true }), 350);
       // Back to fractions — that is what the document stores, so the panel keeps this edge on every
       // other screen. Guard the divisions: a desk smaller than the widget has no room to be a
       // fraction OF, and 0/0 would write NaN into the document.
@@ -2635,6 +3044,26 @@
     return _apply((doc) => { doc.widgets = (doc.widgets || []).filter(x => x.id !== id); })
       .then(ok => { if(ok) drawWidgets(); return ok; });
   }
+  // The mounted element for a widget row, for the few menu entries that need to reach INTO a panel
+  // (the clock's city search draws in its own zone list rather than in a modal).
+  function _wgtEl(id){
+    if(!desk) return null;
+    return desk.querySelector('.os-wgt[data-id="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+  }
+  /* A cfg change, applied to the row in the DOCUMENT and never to a captured copy — the same rule
+   * the mount closures' `save` follows, and for the same reason: the row object is replaced on every
+   * save and on every layout that arrives from another device, so writing one back would undo
+   * whatever changed in between. No drawWidgets(): a cfg change is not structural, and rebuilding
+   * would throw away the widget's own state (a half-typed search, the note you are in). */
+  function _wgtCfg(id, mut){
+    return _apply((doc) => {
+      const row = (doc.widgets || []).find(x => x.id === id);
+      if(!row) return false;
+      const cfg = Object.assign({}, row.cfg || {});
+      if(mut(cfg) === false) return false;
+      row.cfg = cfg;
+    });
+  }
   function sizeWidget(id, size){
     if(!WGT_SIZES[size]) return Promise.resolve(false);
     return _apply((doc) => {
@@ -2657,6 +3086,22 @@
         if(!row) return false;
         row.cfg = {};
       }).then(ok => { if(ok) drawWidgets(); }) });
+    }
+    /* The clock's preferences. They live on the menu rather than as controls in the panel because a
+     * clock is read from across the room: every pixel spent on a switch is a pixel off the numeral,
+     * and these are each set once. `＋` is the exception — adding a city is a thing somebody sets out
+     * to do, so it also has a button where they will look for it. */
+    if(w.type === 'clock'){
+      rows.push({ sep: true });
+      rows.push({ label: 'Add a city…', run: () => {
+        const el = _wgtEl(w.id), m = el && _mounted.get(el);
+        if(m) _clockPicker(el, m.w, m.save);
+      } });
+      rows.push({ label: w.cfg.sec ? 'Hide seconds' : 'Show seconds',
+                  run: () => _wgtCfg(w.id, (cfg) => { cfg.sec = w.cfg.sec ? 0 : 1; }) });
+      const h12 = _clockIs12(w.cfg);
+      rows.push({ label: h12 ? 'Use a 24-hour clock' : 'Use a 12-hour clock',
+                  run: () => _wgtCfg(w.id, (cfg) => { cfg.h12 = h12 ? 0 : 1; }) });
     }
     rows.push({ sep: true });
     rows.push({ label: 'Remove this widget', run: () => removeWidget(w.id) });
@@ -3452,12 +3897,13 @@
      * standalone desktop rendered five authoritative-looking zeroes: "0 WoT, 0 online" reads as a
      * dead network rather than as no server to ask. */
     if(!st || !st.fetched) return '';
-    const cell = (icon, n, label) =>
-      `<span class="os-stat${(n > 0) ? ' on' : ''}" title="${enc(label)}">${iconSvg(icon)}<b>${enc(String(n || 0))}</b><i>${enc(label)}</i></span>`;
-    return `<div class="os-stats os-net-stats">
-              ${cell('i-wot', st.users, 'WoT')}${cell('i-livedot', st.online, 'online')}
-              ${cell('i-relay-dot', st.relay, 'on relay')}${cell('i-stream', st.streams, 'live')}
-              ${cell('i-call', st.calls, 'in call')}</div>`;
+    /* The CELLS come from _statCells — the same list the desktop's Community widget draws. They were
+     * written out twice, in the same order with the same icons and labels and the same "all five,
+     * always" rule stated in both comments, which is two places to rename a counter and one place to
+     * forget. Only the markup differs: a tray row is a line of text, the widget is a grid of tiles. */
+    return `<div class="os-stats os-net-stats">${_statCells(st).map(c =>
+              `<span class="os-stat${c.n > 0 ? ' on' : ''}" title="${enc(c.label)}">${iconSvg(c.icon)}<b>${
+                enc(String(c.n || 0))}</b><i>${enc(c.label)}</i></span>`).join('')}</div>`;
   }
 
   function hideNet(){
@@ -3993,5 +4439,19 @@
                   __calSplit: (occ, now) => _calSplit(occ, now),
                   __calDayLabel: (d, now) => _calDayLabel(d, now),
                   __calOccurrences: (items, a, b) => _calOccurrences(items, a, b),
-                  __placeWidgets: (l, w, h) => placeWidgets(l, w, h) };
+                  __placeWidgets: (l, w, h) => placeWidgets(l, w, h),
+                  /* The three newest panels' decisions, DOM-free for the same reason as the rest: a
+                   * clock that is an hour out in a zone with a half-hour offset, a ticker that runs
+                   * off the end of a three-item feed, a counter row that drops a zero — each one is
+                   * wrong on screen in a way that looks deliberate. */
+                  __clockFace: (d, tz, cfg) => _clockFace(d, tz, cfg),
+                  __clockZones: (cfg) => _clockZones(cfg),
+                  __newsWindow: (items, off, n) => _newsWindow(items, off, n),
+                  __statCells: (st) => _statCells(st),
+                  __wgtPeriodOf: (everies) => _wgtPeriodOf(everies),
+                  // How long after a refresh a widget becomes due again. Shorter than `every` on
+                  // purpose — see _wgtRefreshOne. Exported because "the clock skips a second" is the
+                  // kind of wrongness people notice and nothing reports.
+                  __wgtDueIn: (every) => every - _wgtSlack(every),
+                  __safeHttp: (u) => _safeHttp(u) };
 })();

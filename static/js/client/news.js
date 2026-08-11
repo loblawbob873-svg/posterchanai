@@ -459,7 +459,49 @@
     }
     function closeNews(){ if(_nMod){ _nMod.remove(); _nMod=null; } }
 
-    window.PCNews = { render: renderNews, updateBadge };
+    /* ---- what the desktop's Headlines widget reads ------------------------------------------------
+     *
+     * NOT A FETCH, deliberately. News already keeps a snapshot of every subscribed feed for its
+     * unread badge — one read of the server's SHARED cache, at most every ten minutes, whether or not
+     * News is open — so a panel on the desktop costs nothing, and two of them still cost nothing. A
+     * widget that polled /api/rss/feeds on its own timer would be a second refresh loop over the same
+     * data, on a surface that is open all day.
+     *
+     * It does ASK for a refresh when that snapshot has gone stale, through the same _bgTick as
+     * everything else (reentrancy-guarded, skipped for an account with no feeds and for a logged-out
+     * one). The return is what is already in hand, so a cold desktop paints from the persisted
+     * snapshot immediately rather than showing "loading…" until a fetch lands.
+     *
+     * Items whose feed is no longer subscribed are dropped — the same rule the badge follows, or a
+     * feed you removed goes on scrolling past on the desktop. */
+    function latest(n){
+      if(!_lastAll.length){ const snap = _loadSnap(); if(snap && snap.length) _lastAll = snap; }
+      /* NOT gated on _usesNews(). That flag means "this BROWSER has opened News before" — it is set
+       * by loadState()/updateBadge, both of which only run once the News screen has rendered — so on
+       * a second device it is false for an account with a full feed list, and gating here meant the
+       * widget never fetched, never hydrated, and stated "No feeds yet" for ever. Having put the
+       * Headlines panel on the desktop IS the statement of intent that flag stands in for elsewhere.
+       * _bgTick does the rest safely: it hydrates the feed doc through ensureState(), refuses to run
+       * without a pubkey, is reentrancy-guarded, and returns immediately for an account with none. */
+      try{ if(!_feeds || Date.now() - _bgLast > 600000) _bgTick(); }catch(_){}
+      const urls = new Set((_feeds || []).map(f => f.url));
+      const items = urls.size ? _lastAll.filter(it => !it.feed || urls.has(it.feed)) : _lastAll;
+      return items.slice(0, Math.max(1, Number(n) || 40));      // already newest-first
+    }
+    /* How many feeds this account has — or -1 for "this device does not know yet".
+     *
+     * The widget uses it to tell "you have no feeds" (actionable) from "nothing has arrived yet"
+     * (not), and it is asked on a desktop that may never have opened News, where `_feeds` is still
+     * null and the localStorage cache is empty because it is written per-BROWSER. Answering 0 there
+     * put "No feeds yet — add them in News" in front of people who have twenty. */
+    function feedCount(){
+      if(_feeds) return _feeds.length;
+      const c = _feedsLocal();
+      if(c) return c.length;
+      return -1;
+    }
+
+    window.PCNews = { render: renderNews, updateBadge, latest, feedCount };
     // One-time migration: the old badge counted scroll-unread (stuck at 99+). If there's no "seen" baseline
     // yet, clear that stale count so the new "new since last visit" model starts clean.
     try{

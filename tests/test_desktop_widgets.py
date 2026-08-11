@@ -44,8 +44,15 @@ const PCOS = window.PCOS;
 """ % json.dumps(str(OS_JS))
 
 
-def _node(script: str):
-    out = subprocess.run(["node", "-e", BOOT + script], capture_output=True, timeout=60)
+def _node(script: str, tz: str = ""):
+    """Run the shipped file under node. `tz` pins the RUNNER's own zone, which the clock reads as
+    "here" — without it, "is it tomorrow in Tokyo" is answered against whatever zone the machine
+    running the tests is in, and the same assertion passes in London and fails in Denver."""
+    import os
+    env = dict(os.environ)
+    if tz:
+        env["TZ"] = tz
+    out = subprocess.run(["node", "-e", BOOT + script], capture_output=True, timeout=60, env=env)
     if out.returncode != 0:
         raise AssertionError(out.stderr.decode()[-2000:])
     return json.loads(out.stdout.decode() or "null")
@@ -183,6 +190,228 @@ class WidgetSizing(unittest.TestCase):
         b = self.box("l", 240, 200)
         self.assertLessEqual(b["w"], 240)
         self.assertLessEqual(b["h"], 200)
+
+
+def _ms(y, mo, d, h, mi=0):
+    """A fixed instant, in epoch ms. Every clock assertion below is against a KNOWN moment: a test
+    that formats `now` proves nothing twice a year."""
+    from datetime import datetime, timezone
+    return int(datetime(y, mo, d, h, mi, tzinfo=timezone.utc).timestamp() * 1000)
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class Clock(unittest.TestCase):
+    """The clock, as it decides what to print — the shipped `_clockFace` under node.
+
+    The taskbar already carries HH:MM, so this widget earns its place on the cities: what it is asked
+    is "what time is it in Tokyo, and is it tomorrow there". Every way that can be wrong is silent —
+    a clock does not fail, it shows a different time — and the three that actually bite are all
+    offset arithmetic somebody was tempted to do by hand: a half-hour zone, a zone whose DST is not
+    ours, and the date line. None of them are done by hand here (it is all Intl, against the tz
+    database the browser ships), and these pin that it stays that way.
+
+    Times are asserted with h12 forced off, because the runner's own locale decides the rest.
+    """
+
+    def face(self, ms, tz, cfg=None):
+        cfg = dict(cfg or {})
+        cfg.setdefault("h12", 0)
+        # TZ=UTC: "tomorrow" is relative to the READER's day, so the runner's own zone is part of the
+        # question being asked. Pinned, or this suite means something different in every timezone.
+        return _node("console.log(JSON.stringify(PCOS.__clockFace(new Date(%d), %s, %s)))"
+                     % (ms, json.dumps(tz), json.dumps(cfg)), tz="UTC")
+
+    def test_a_city_reads_its_own_time(self):
+        # 16:00 UTC is 01:00 the NEXT day in Tokyo (+9).
+        f = self.face(_ms(2026, 1, 15, 16), "Asia/Tokyo")
+        self.assertTrue(f["ok"])
+        self.assertEqual(f["time"], "01:00")
+
+    def test_a_day_ahead_says_tomorrow(self):
+        """"01:00" under a city's name is half an answer; the useful half is WHICH day."""
+        f = self.face(_ms(2026, 1, 15, 16), "Asia/Tokyo")
+        self.assertEqual(f["dayNote"], "tomorrow")
+
+    def test_a_day_behind_says_yesterday(self):
+        f = self.face(_ms(2026, 1, 15, 2), "America/Los_Angeles")
+        self.assertEqual(f["time"], "18:00")
+        self.assertEqual(f["dayNote"], "yesterday")
+
+    def test_a_half_hour_zone_is_not_rounded_to_an_hour(self):
+        """India is +5:30. Anything that reasons in whole hours is 30 minutes wrong here, all year."""
+        f = self.face(_ms(2026, 1, 15, 4), "Asia/Kolkata")
+        self.assertEqual(f["time"], "09:30")
+
+    def test_a_zone_follows_its_own_summer_time_not_ours(self):
+        """Same city, same clock, six months apart: London is +0 in January and +1 in July. A stored
+        offset (the obvious way to keep a city) is right for half the year."""
+        self.assertEqual(self.face(_ms(2026, 1, 15, 12), "Europe/London")["time"], "12:00")
+        self.assertEqual(self.face(_ms(2026, 7, 15, 12), "Europe/London")["time"], "13:00")
+
+    def test_the_local_face_never_claims_another_day(self):
+        f = self.face(_ms(2026, 1, 15, 12), "")
+        self.assertTrue(f["ok"])
+        self.assertEqual(f["dayNote"], "")
+        self.assertTrue(f["date"], "the date under the numeral is the other half of the widget")
+
+    def test_a_zone_this_browser_cannot_resolve_says_so(self):
+        """The dangerous failure is not an error, it is THIS one falling back to local time under
+        another city's name — a clock that is confidently, silently wrong for whoever added it."""
+        f = self.face(_ms(2026, 1, 15, 12), "Mars/Olympus")
+        self.assertFalse(f["ok"])
+        self.assertEqual(f["time"], "--:--")
+
+    def test_seconds_are_off_until_they_are_asked_for(self):
+        self.assertRegex(self.face(_ms(2026, 1, 15, 12, 34), "")["time"], r"^\d{1,2}:\d{2}$")
+        self.assertRegex(self.face(_ms(2026, 1, 15, 12, 34), "", {"sec": 1})["time"],
+                         r"^\d{1,2}:\d{2}:\d{2}$")
+
+    def test_the_am_pm_marker_is_kept_out_of_the_numeral(self):
+        """It is drawn small beside a 34px figure. Formatted INTO the string, "10:45 PM" is one size
+        and the panel reads as a line of text rather than as a clock."""
+        f = self.face(_ms(2026, 1, 15, 22, 45), "", {"h12": 1})
+        self.assertTrue(f["ampm"], "a 12-hour clock with no marker cannot say which 10:45 it is")
+        self.assertNotIn(f["ampm"].lower(), f["time"].lower())
+        self.assertEqual(self.face(_ms(2026, 1, 15, 22, 45), "", {"h12": 0})["ampm"], "")
+
+    def zones(self, cfg):
+        return _node("console.log(JSON.stringify(PCOS.__clockZones(%s)))" % json.dumps(cfg))
+
+    def test_the_city_list_is_bounded_and_tolerant(self):
+        self.assertEqual(self.zones({"zones": " America/Denver ,Asia/Tokyo,, "}),
+                         ["America/Denver", "Asia/Tokyo"])
+        self.assertEqual(len(self.zones({"zones": ",".join(["Asia/Tokyo"] * 9)})), 4)
+        self.assertEqual(self.zones({}), [])
+        self.assertEqual(self.zones(None), [])
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class Headlines(unittest.TestCase):
+    """The rotation. It wraps, because a feed is not always longer than the panel."""
+
+    def window(self, n_items, off, rows):
+        items = [{"title": "t%d" % i} for i in range(n_items)]
+        return _node("console.log(JSON.stringify(PCOS.__newsWindow(%s, %d, %d).map(x => x.title)))"
+                     % (json.dumps(items), off, rows))
+
+    def test_it_wraps_round_the_end(self):
+        self.assertEqual(self.window(5, 3, 3), ["t3", "t4", "t0"])
+
+    def test_a_short_feed_never_repeats_itself(self):
+        """Three headlines in a panel with room for five is three headlines, not "t0 t1 t2 t0 t1"."""
+        self.assertEqual(self.window(3, 0, 5), ["t0", "t1", "t2"])
+
+    def test_an_offset_past_the_end_still_lands_inside(self):
+        self.assertEqual(self.window(4, 9, 2), ["t1", "t2"])
+        self.assertEqual(self.window(4, -1, 2), ["t3", "t0"])
+
+    def test_no_items_is_not_an_error(self):
+        self.assertEqual(_node("console.log(JSON.stringify(PCOS.__newsWindow([], 2, 3)))"), [])
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class CommunityCounters(unittest.TestCase):
+    """All five, always, including the zeroes — the decision netStatsHtml already made and had to
+    make twice: a cell that disappears when it is zero reads as a feature that is missing, not as a
+    quiet network."""
+
+    def cells(self, st):
+        return _node("console.log(JSON.stringify(PCOS.__statCells(%s)))" % json.dumps(st))
+
+    def test_a_silent_network_still_shows_five_counters(self):
+        c = self.cells({"users": 0, "online": 0, "relay": 0, "streams": 0, "calls": 0})
+        self.assertEqual(len(c), 5)
+        self.assertEqual([x["label"] for x in c],
+                         ["WoT", "online", "on relay", "live", "in call"])
+        self.assertEqual([x["n"] for x in c], [0, 0, 0, 0, 0])
+
+    def test_the_live_cell_only_lights_when_something_is_live(self):
+        self.assertFalse(any(x.get("live") for x in
+                             self.cells({"users": 9, "online": 3, "relay": 2, "streams": 0, "calls": 1})))
+        lit = [x for x in self.cells({"streams": 2}) if x.get("live")]
+        self.assertEqual([x["label"] for x in lit], ["live"])
+
+    def test_junk_counts_as_none_rather_than_NaN(self):
+        c = self.cells({"users": "many", "online": -4, "relay": None, "streams": 1.7, "calls": 3})
+        self.assertEqual([x["n"] for x in c], [0, 0, 0, 1.7, 3])
+
+    def test_a_missing_payload_does_not_throw(self):
+        self.assertEqual(len(self.cells(None)), 5)
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class TheSharedTimer(unittest.TestCase):
+    """ONE interval for every widget, at the rate of the fastest one mounted.
+
+    It was a flat 15s, which is right for everything that reads a network and makes a CLOCK wrong by
+    up to fifteen seconds — on the one panel whose whole job is to be right, and in the way somebody
+    notices immediately (this against their phone). The property being kept is that there is still
+    exactly one timer, and that it is stopped when nothing is watching; the period is what moves.
+    """
+
+    def period(self, everies):
+        return _node("console.log(JSON.stringify(PCOS.__wgtPeriodOf(%s)))" % json.dumps(everies))
+
+    def test_a_deskful_of_slow_panels_keeps_the_slow_tick(self):
+        self.assertEqual(self.period([90000, 600000, 300000]), 15000)
+        self.assertEqual(self.period([]), 15000)
+        self.assertEqual(self.period([None, 0, False]), 15000)
+
+    def test_a_clock_speeds_the_whole_timer_up(self):
+        self.assertEqual(self.period([90000, 1000, 600000]), 1000)
+
+    def due_in(self, every):
+        return _node("console.log(JSON.stringify(PCOS.__wgtDueIn(%d)))" % every)
+
+    def test_a_widget_whose_interval_IS_the_tick_fires_on_every_tick(self):
+        """The deadline was `Date.now() + every` read at refresh time — i.e. with that tick's jitter
+        baked in — so the next tick had to be later by more jitter than the last one. A coin flip:
+        the clock skipped roughly every other second (:01 → :03) and the Community panel refreshed
+        every ~30s against its declared 15. The deadline is set SHORT to absorb that."""
+        self.assertLess(self.due_in(1000), 1000)
+        self.assertLess(self.due_in(15000), 15000)
+
+    def test_but_a_slow_widget_still_does_not_run_early(self):
+        """The slack has to be small against the interval, or a 90s ticker becomes an 80s one."""
+        self.assertGreater(self.due_in(90000), 89000)
+        self.assertGreater(self.due_in(600000), 599000)
+
+    def test_and_nothing_can_take_it_below_a_second(self):
+        """`every` is a widget's own declaration; a typo in one would otherwise become the desktop's
+        timer for as long as it is on screen."""
+        self.assertEqual(self.period([50]), 1000)
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class HeadlineLinks(unittest.TestCase):
+    """A row that cannot go anywhere must not be a link.
+
+    `'#'` in an anchor with `target="_blank"` resolves to the CURRENT document, so a feed item with
+    no link opened a second full copy of the client in a new tab — own relay sockets, own
+    subscriptions — instead of an article."""
+
+    def safe(self, u):
+        return _node("console.log(JSON.stringify(PCOS.__safeHttp(%s)))" % json.dumps(u))
+
+    def test_a_real_link_survives(self):
+        self.assertEqual(self.safe("https://example.com/a?b=c#d"), "https://example.com/a?b=c#d")
+        self.assertEqual(self.safe("HTTP://example.com/"), "HTTP://example.com/")
+
+    def test_everything_else_becomes_nothing_at_all_not_a_hash(self):
+        for bad in ("", None, "#", "mailto:a@b.c", "/relative", "javascript:alert(1)", "ftp://x/y"):
+            self.assertEqual(self.safe(bad), "", f"{bad!r} still renders as a link")
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class TheSearchBarIsLean(unittest.TestCase):
+    """"Reduce the border width around the text input so it's thinner and leaner" — the frame around
+    a one-line control was a 96px panel, which is not a border, it is a widget with a search box
+    somewhere inside it."""
+
+    def test_a_bar_is_the_height_of_what_it_holds(self):
+        h = _node("console.log(JSON.stringify(PCOS.__wgtBox('m', 1600, 900, {bar:true}).h))")
+        self.assertLessEqual(h, 60, "the bar is a panel with an input in it again")
+        self.assertGreaterEqual(h, 44, "…and now there is no room for the input")
 
 
 if __name__ == "__main__":

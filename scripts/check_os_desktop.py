@@ -814,6 +814,108 @@ LAYOUT = r"""(async () => {
         try { const st = JSON.parse(localStorage.getItem('__pc_test_desktop_doc') || 'null');
               out.widgetDocX = st ? st.x : null; } catch (e) {}
       }
+
+      /* ---- A DRAG MUST NOT ALSO BE A CLICK --------------------------------------------------------
+       * preventDefault on pointerdown does not stop the click the browser synthesises on release, and
+       * every panel whose body opens something (Today → Calendar, the blocks → mempool.space,
+       * Community → Server Stats) was taking it: dragging the widget across the desktop ended by
+       * opening a window on top of the desktop being arranged.
+       *
+       * `drag()` sends pointer events only — no browser click follows a synthetic pointerup — so the
+       * click is dispatched by hand, at a DESCENDANT, which is where a real one lands (the handlers
+       * are bound on the widget's body, not on the frame). The second click, with no drag before it,
+       * is the other half: the suppressor must be one-shot, or the panel stops working. */
+      {
+        const w2 = document.querySelector('.os-wgt');
+        const b2 = w2 && w2.querySelector('.os-wgt-body');
+        if (b2) {
+          let hits = 0;
+          const probe = () => { hits++; };
+          b2.addEventListener('click', probe);
+          const dr2 = desk.getBoundingClientRect();
+          await drag(w2, dr2.left + 220, dr2.bottom - 200);
+          await sleep(60);
+          b2.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+          out.clickAfterDrag = hits;                    // must be 0
+          await sleep(400);                             // past the un-arm timeout
+          b2.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+          out.clickAfterTap = hits;                     // must be 1
+          b2.removeEventListener('click', probe);
+        }
+      }
+
+      /* ---- THE CLOCK'S CITY PICKER MUST BE DISMISSABLE --------------------------------------------
+       * It replaces the world-clock rows in place and latches a flag that stops the 1s refresh from
+       * repainting them. Escape only reaches a focused input and picking a city is the only other way
+       * out — so clicking ＋ and changing your mind left an empty search box where the clocks were,
+       * for the rest of the session. Two independent bugs did this (no outside-click dismissal, and a
+       * close() whose forced rebuild was a no-op for a clock with no cities), so it is checked through
+       * the UI rather than at either seam. */
+      {
+        const pick4 = (addRow.click(), await sleep(120), document.querySelector('.os-wgtpick'));
+        const cb = pick4 && pick4.querySelector('.os-wgt-pick[data-t="clock"]');
+        if (cb) { cb.click(); await sleep(400); }
+        const cw = document.querySelector('.os-wgt[data-type="clock"]');
+        out.clockDrawn = !!cw;
+        if (cw) {
+          out.clockTime = ((cw.querySelector('.wgt-clkh') || {}).textContent || '').trim();
+          const add = cw.querySelector('.wgt-clkadd');
+          if (add) { add.click(); await sleep(140); }
+          out.clockPickerOpens = !!cw.querySelector('.wgt-clkq');
+          pev(desk, 'pointerdown', 420, 420);          // give up: press the desktop
+          await sleep(1400);                            // the clock's own 1s tick redraws the rows
+          out.clockPickerCloses = !cw.querySelector('.wgt-clkq');
+        }
+      }
+
+      /* ---- THE PANELS FOLLOW THE THEME ----------------------------------------------------------
+       * The widget chrome was written in cyberpunk's own colours and hardcoded them, so on the eight
+       * other palettes it was a dark violet card with the theme's dark text on it: "it looks terrible
+       * and dark if you change themes". Nothing in a unit test can see that — it is one selector's
+       * resolved colour against another's — and a screenshot cannot say WHY it is wrong.
+       *
+       * So: switch themes for real and measure the luminance of the panel against the ink drawn on
+       * it. The assertion is the one that matters (they must be on opposite sides, in every theme),
+       * plus the panel tracking its palette rather than staying dark. `backgroundColor` is the
+       * resolved token even though the rule is a gradient over it — the gradient is backgroundImage.
+       * The sticky note is measured separately and INVERTED: its paper is yellow in every theme, so
+       * what is checked there is that the readability layer's `textarea{background:var(--panel2)}`
+       * has not painted a panel across the middle of it again. */
+      {
+        const lum = (c) => { const m = /rgba?\(([^)]+)\)/.exec(c || ''); if (!m) return null;
+          const p = m[1].split(',').map(s => parseFloat(s));
+          if (p.length > 3 && p[3] === 0) return null;       // transparent measures nothing
+          return (0.2126*p[0] + 0.7152*p[1] + 0.0722*p[2]) / 255; };
+        /* A panel painted ONLY by a gradient reports backgroundColor rgba(0,0,0,0), which would make
+         * the hardcoded-violet bug come back as "cannot measure" rather than as what it is. Fall back
+         * to the gradient's first colour stop — the top of the panel, where its first line of text
+         * sits. */
+        const surface = (el) => { const cs = getComputedStyle(el);
+          const c = lum(cs.backgroundColor);
+          if (c !== null) return c;
+          const g = /rgba?\([^)]+\)/.exec(cs.backgroundImage || '');
+          return g ? lum(g[0]) : null; };
+        // A sticky note to measure, alongside the ticker already on the desk.
+        const pick3 = (addRow.click(), await sleep(120), document.querySelector('.os-wgtpick'));
+        const nb = pick3 && pick3.querySelector('.os-wgt-pick[data-t="note"]');
+        if (nb) { nb.click(); await sleep(300); }
+        const seen = {};
+        // '' LAST: it restores the page to the default theme for every check that follows.
+        for (const t of ['professional', 'win98', 'cherryblossom', 'monero', '']) {
+          if (t) document.documentElement.dataset.theme = t;
+          else delete document.documentElement.dataset.theme;
+          await sleep(60);
+          const w = document.querySelector('.os-wgt:not([data-type="note"])');
+          const body = w && w.querySelector('.os-wgt-body');
+          const ta = document.querySelector('.os-wgt[data-type="note"] .wgt-note');
+          seen[t || 'cyberpunk'] = {
+            panel: w ? surface(w) : null,
+            ink:   body ? lum(getComputedStyle(body).color) : null,
+            note:  ta ? lum(getComputedStyle(ta).backgroundColor) : null,   // null = transparent = right
+          };
+        }
+        out.widgetTheme = seen;
+      }
     }
   }
 
@@ -1391,6 +1493,63 @@ async def drive(url):
                         problems.append((label, "music-widget-no-seek",
                                          "the Now-playing widget has no seek row — that is the piece "
                                          "that fills the middle of the panel"))
+                    if q.get("clickAfterDrag"):
+                        problems.append((label, "drag-is-also-a-click",
+                                         "dragging a widget still fires the click its body listens "
+                                         "for — repositioning the Community panel opens Server "
+                                         "Stats, Today opens the Calendar, the blocks open "
+                                         "mempool.space"))
+                    elif q.get("clickAfterTap") != 1:
+                        problems.append((label, "widget-swallows-every-click",
+                                         "the post-drag click suppressor is not one-shot: the panel "
+                                         f"took {q.get('clickAfterTap')} of the clicks that follow, "
+                                         "so the widget stops responding after it is moved"))
+                    if q.get("clockDrawn") is False:
+                        problems.append((label, "clock-widget-missing", "the Clock widget did not draw"))
+                    elif q.get("clockDrawn"):
+                        import re as _re
+                        if not _re.match(r"^\d{1,2}[:.]\d{2}", q.get("clockTime") or ""):
+                            problems.append((label, "clock-shows-no-time",
+                                             f"the Clock drew {q.get('clockTime')!r} instead of a time"))
+                        if not q.get("clockPickerOpens"):
+                            problems.append((label, "clock-picker-wont-open",
+                                             "＋ on the Clock opened no city search"))
+                        elif not q.get("clockPickerCloses"):
+                            problems.append((label, "clock-picker-wont-close",
+                                             "the Clock's city search survived a press on the "
+                                             "desktop — an abandoned picker hides the world clocks "
+                                             "for the rest of the session"))
+                    # The panels have to follow the palette. Reported as "widgets should take into
+                    # consideration the theme, it looks terrible and dark if you change themes" —
+                    # a violet card with the theme's dark text on it, on eight of the nine themes.
+                    for _t, _m in sorted((q.get("widgetTheme") or {}).items()):
+                        _panel, _ink, _note = _m.get("panel"), _m.get("ink"), _m.get("note")
+                        _light = _t in ("professional", "win98", "cherryblossom")
+                        if _panel is None or _ink is None:
+                            problems.append((label, "widget-theme-unmeasured",
+                                             f"the {_t} widget panel or its text has no colour to "
+                                             "measure — the check is blind, not passing"))
+                            continue
+                        if abs(_panel - _ink) < 0.35:
+                            problems.append((label, "widget-unreadable-on-theme",
+                                             f"on {_t} the widget panel ({_panel:.2f}) and the text "
+                                             f"on it ({_ink:.2f}) are the same brightness — that is "
+                                             "the dark-card-with-dark-text bug"))
+                        elif _light and _panel < 0.55:
+                            problems.append((label, "widget-dark-on-light-theme",
+                                             f"{_t} is a light theme and the widget panel is "
+                                             f"{_panel:.2f} — it is still painting cyberpunk's dark "
+                                             "glass on someone else's desktop"))
+                        elif not _light and _panel > 0.5:
+                            problems.append((label, "widget-light-on-dark-theme",
+                                             f"{_t} is a dark theme and the widget panel is {_panel:.2f}"))
+                        # The sticky note's textarea must stay the PAPER: transparent (None), never a
+                        # panel painted across the middle of it by the readability layer.
+                        if _note is not None:
+                            problems.append((label, "sticky-note-has-a-textbox",
+                                             f"on {_t} the sticky note's textarea is painting its own "
+                                             f"background ({_note:.2f}) over the yellow paper — "
+                                             "`:root[data-theme] textarea` beats `.wgt-note` again"))
                     if (q.get("musicGap") or 0) > 30:
                         problems.append((label, "music-widget-hollow",
                                          f"the widest gap between the Now-playing widget's rows is "
