@@ -214,11 +214,60 @@ def test_the_idle_clock_does_not_run_while_detached():
 def test_kill_is_what_ends_a_session():
     async def _bodytest_kill_is_what_ends_a_session():
         s = _fake_session(user_id=7)
-        assert ssh_service.kill(s.sid, 7) is True
+        assert await ssh_service.kill(s.sid, 7) is True
         assert s.closed()
         assert ssh_service.get_session(s.sid, 7) is None
 
     _run(_bodytest_kill_is_what_ends_a_session)
+
+
+def test_kill_also_ends_the_multiplexer_session_on_the_far_end():
+    """`close()` only drops OUR connection, which — when the shell runs inside tmux/screen — is
+    exactly what DETACHING does. Without this, Kill left the remote session running with everything
+    in it while the UI said "anything running in it is stopped", and the next Connect silently
+    reattached to the shell you thought you had ended."""
+    class FakeClient:
+        def __init__(self):
+            self.ran = []
+
+        def exec_command(self, cmd, timeout=None):
+            self.ran.append(cmd)
+
+        def close(self):
+            pass
+
+    async def _body():
+        s = _fake_session(user_id=3)
+        cli = s.client = FakeClient()
+        s.mux_name = "pcai-3-main"
+        assert await ssh_service.kill(s.sid, 3) is True
+        joined = " ".join(cli.ran)          # close() drops the reference, so hold our own
+        assert "tmux kill-session -t pcai-3-main" in joined
+        assert "screen -S pcai-3-main -X quit" in joined, (
+            "only one multiplexer is cleaned up — the HOST decided which one is in use, not us")
+
+    _run(_body)
+
+
+def test_detaching_does_NOT_touch_the_far_end():
+    """The other half of the same distinction: detaching must leave everything running."""
+    class FakeClient:
+        def __init__(self):
+            self.ran = []
+
+        def exec_command(self, cmd, timeout=None):
+            self.ran.append(cmd)
+
+    async def _body():
+        s = _fake_session(user_id=3)
+        s.client = FakeClient()
+        s.mux_name = "pcai-3-main"
+        s.attach()
+        s.detach()
+        assert s.client.ran == [], "detaching ran a command on the remote host"
+        assert not s.closed()
+
+    _run(_body)
 
 
 def test_a_session_id_is_not_enough_on_its_own():
@@ -228,7 +277,7 @@ def test_a_session_id_is_not_enough_on_its_own():
         shell on somebody else's servers."""
         s = _fake_session(user_id=1)
         assert ssh_service.get_session(s.sid, 2) is None
-        assert ssh_service.kill(s.sid, 2) is False
+        assert await ssh_service.kill(s.sid, 2) is False
         assert ssh_service.get_session(s.sid, 1) is s
 
     _run(_bodytest_a_session_id_is_not_enough_on_its_own)

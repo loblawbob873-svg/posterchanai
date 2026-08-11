@@ -169,7 +169,7 @@ async def kill_session(body: dict, db: Session = Depends(get_db), user=Depends(g
     uid = getattr(user, "id", None)
     if ssh_keeper.is_up():
         return {"ok": await ssh_keeper.kill(sid, uid)}
-    return {"ok": ssh_service.kill(sid, uid)}
+    return {"ok": await ssh_service.kill(sid, uid)}
 
 
 async def _via_keeper(websocket: WebSocket, uid, who: str, first: dict, cols: int, rows: int) -> None:
@@ -428,8 +428,9 @@ async def websocket_ssh(websocket: WebSocket):
             elif t == "close":
                 # KILL. The only thing that ends a session, since nothing expires — which is why the
                 # UI keeps this and "detach" as two visibly different buttons rather than one X whose
-                # meaning you have to guess.
-                sess.close()
+                # meaning you have to guess. `terminate`, not `close`: with tmux/screen on the far
+                # end, closing our connection is what DETACHING does.
+                await sess.terminate()
                 break
     except WebSocketDisconnect:
         pass

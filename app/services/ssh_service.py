@@ -271,6 +271,7 @@ class SshSession:
         self.closed_reason = ""
         self.killed = False
         self.mux = False
+        self.mux_name = ""
         self._idle, self._max, self._grace = limits()
 
     # ---- lifetime ------------------------------------------------------------------------------
@@ -339,7 +340,8 @@ class SshSession:
                       label: str = "main") -> None:
         import paramiko
 
-        mux = _mux_command(_mux_name(self.user_id, label)) if multiplex_enabled() else ""
+        self.mux_name = _mux_name(self.user_id, label) if multiplex_enabled() else ""
+        mux = _mux_command(self.mux_name) if self.mux_name else ""
         self.mux = bool(mux)
 
         def _open():
@@ -413,6 +415,33 @@ class SshSession:
             return bytes(self.buf)
         return bytes(self.buf[cursor - have:])
 
+    async def terminate(self) -> None:
+        """END IT FOR REAL, including the multiplexer session on the far end.
+
+        `close()` only drops OUR connection — which, when the shell is running inside tmux/screen, is
+        exactly what DETACHING from it does. So without this, "Kill" left the remote session running
+        with everything in it, the UI said "anything running in it is stopped", and the next Connect
+        silently reattached to the shell you thought you had ended. That is the same class of bug as
+        a delete that does not delete.
+
+        Both spellings are sent because the host decided which multiplexer to use, not us, and
+        neither failing matters: this is best-effort cleanup on the way out, and the connection is
+        closed either way."""
+        cli, name = self.client, self.mux_name
+        if cli and name:
+            def _quit():
+                for cmd in (f"tmux kill-session -t {shlex.quote(name)} 2>/dev/null",
+                            f"screen -S {shlex.quote(name)} -X quit 2>/dev/null"):
+                    try:
+                        cli.exec_command(cmd, timeout=5)
+                    except Exception:
+                        pass
+            try:
+                await asyncio.wait_for(asyncio.to_thread(_quit), timeout=10)
+            except Exception as e:
+                logger.warning("[ssh] could not end %s's multiplexer session: %s", self.sid, e)
+        self.close()
+
     def close(self) -> None:
         for obj in (self.chan, self.client):
             try:
@@ -424,7 +453,7 @@ class SshSession:
         _sessions.pop(self.sid, None)
 
 
-def kill(sid: str, user_id) -> bool:
+async def kill(sid: str, user_id) -> bool:
     """End a session outright — the counterpart to detaching, and the only thing that ends one now
     that they do not expire. Ownership-checked for the same reason `get_session` is."""
     s = get_session(sid, user_id)
@@ -432,7 +461,7 @@ def kill(sid: str, user_id) -> bool:
         return False
     s.killed = True
     s.closed_reason = "killed"
-    s.close()
+    await s.terminate()
     s.wake.set()                 # let the reader (and any attached socket) notice immediately
     return True
 

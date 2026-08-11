@@ -127,7 +127,7 @@ async def _client(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
         if op == "list":
             return await _send(w, {"ok": True, "sessions": ssh_service.sessions_for(uid)})
         if op == "kill":
-            return await _send(w, {"ok": ssh_service.kill(str(req.get("sid") or ""), uid)})
+            return await _send(w, {"ok": await ssh_service.kill(str(req.get("sid") or ""), uid)})
 
         cols, rows = int(req.get("cols") or 80), int(req.get("rows") or 24)
 
@@ -186,7 +186,7 @@ async def _client(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
             elif t == "detach":
                 break
             elif t == "close":
-                sess.close()
+                await sess.terminate()
                 break
     except (asyncio.IncompleteReadError, ConnectionResetError, asyncio.TimeoutError):
         pass
