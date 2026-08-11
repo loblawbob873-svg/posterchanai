@@ -1,80 +1,91 @@
 # ---------------------------------------------------------------------------------------------
-# The webxdc sandbox origin — one throwaway subdomain per running mini app.
+# xdc.poster.place — the webxdc sandbox origin, where mini apps (.xdc games, polls, shared
+# editors) actually run.
 #
-# A .xdc app is code written by whoever posted it. It runs in an iframe, and the only thing between
+# An app is code written by whoever posted it. It runs in an iframe, and the only thing between
 # that code and the client's localStorage — where the user's Nostr key and session live — is the
-# same-origin policy. So every app gets its OWN origin here.
+# same-origin policy. So it must not run on the instance's own origin. A separate hostname is a
+# separate origin, and that is the whole requirement.
 #
-# This vhost serves TWO things, both from the app itself (which is why it is a plain proxy_pass like
-# every other one): the sandbox loader at /__sandbox__/ and the service worker at /sw.js. The app's
-# own bytes never reach this server — the client downloads the .xdc, unzips it in the browser, and
-# hands the files to that worker over postMessage. Nothing here to fetch is what makes "no network
-# access" (the webxdc spec's one hard rule) true by construction.
+# TWO OTHER DESIGNS WERE TRIED FIRST, and both are recorded because both look right:
 #
-# THE SERVER_NAME IS A LENGTH-BOUNDED REGEX, deliberately. A bare wildcard would swallow every other
-# subdomain that has its own vhost. The client's label is 50 characters of base36 (an HMAC of a
-# per-device secret and the app's id), so 40-63 cannot collide with a real hostname like `news` or
-# `ai` — and cannot shadow one added later either.
+#   * A SUBDOMAIN PER APP (what Ditto does, via iframe.diy) also isolates apps from each other.
+#     It needs a WILDCARD certificate, which certbot cannot issue over HTTP-01 — that means
+#     DNS-01, which means a DNS provider API token living on this web server.
+#   * A PORT (https://poster.place:8443) is a distinct origin needing no new certificate at all,
+#     which made it the obvious answer. MEASURED, it does not survive Cloudflare: CF accepts 8443
+#     from the browser and then connects to the ORIGIN on 443, so the request lands on the main
+#     vhost and the sandbox is never reached. Proven with a marker header — present on a direct
+#     request, absent through the CDN. Do not re-attempt it.
 #
-# WHAT STILL HAS TO BE ADDED BY HAND, once, and only you can do it:
+# So: one ordinary hostname, one extra -d on the certificate certbot already renews.
 #
-#   1. PUBLIC DNS. `*.poster.place` does not exist (checked: NXDOMAIN, while the apex resolves to
-#      Cloudflare). Add a wildcard A/CNAME for `*` in Cloudflare pointing where poster.place points.
-#      Until then nothing outside the LAN can reach a sandbox at all.
-#   2. THE ORIGIN CERTIFICATE. The Let's Encrypt cert here covers `poster.place` and nothing else.
-#      Cloudflare's universal certificate covers one level of subdomain, so the PUBLIC side is fine
-#      the moment the record exists — but if this zone is on SSL mode "Full (strict)", Cloudflare
-#      validates the ORIGIN certificate against the hostname too, and a wildcard host would fail.
-#      Either use a Cloudflare Origin CA certificate here, or reissue with a DNS-01 wildcard.
+# ---------------------------------------------------------------------------------------------
+# WHAT THIS NEEDS, once:
+#   1. DNS:  xdc.poster.place  ->  wherever poster.place points (a CNAME to poster.place is fine;
+#            proxied through Cloudflare is fine).
+#   2. TLS:  sudo certbot --nginx --expand -d poster.place -d xdc.poster.place
+#            (HTTP-01, no wildcard, no API token. Renewal keeps working as it does today.)
+# Until both exist this vhost answers only over the LAN, with a certificate warning.
+# ---------------------------------------------------------------------------------------------
 #
-# This file is the vhost as DEPLOYED on router.lan (/etc/nginx/sites-enabled/webxdc.conf).
+# What it serves is TWO files, both from the app itself (hence a plain proxy_pass): the sandbox
+# loader at /__sandbox__/ and the service worker at /sw.js. The app's own bytes never reach this
+# server — the client downloads the .xdc, unzips it in the browser, and hands the files to that
+# worker over postMessage. Having nothing here to fetch is what makes "no network access" (the
+# webxdc spec's one hard rule) true by construction rather than by promise.
+#
+# Nothing else is exposed. This is not a second front door to the instance: every other path is
+# refused, so a bug in an unrelated route cannot be reached from an origin untrusted code runs on.
+#
 # Reload: sudo nginx -t && sudo systemctl reload nginx
-#
-# NB: the regex is QUOTED. nginx reads a bare { as the start of a block, so an unquoted {40,63}
-# fails the config test with "server_name is not terminated by ;" — which is a syntax error about
-# a line that is syntactically fine, and reads as nonsense until you know why.
 # ---------------------------------------------------------------------------------------------
 
 server {
     listen 80;
-    server_name "~^[a-z0-9]{40,63}\.poster\.place$";
+    listen [::]:80;
+    server_name xdc.poster.place;
     # A service worker needs a secure context, so an app reached over http:// would die at
-    # registration with an error nobody can act on. Redirect, never serve.
-    return 301 https://$host$request_uri;
+    # registration with an error nobody can act on. Redirect — except the ACME challenge, which is
+    # how this hostname gets onto the certificate in the first place.
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://$host$request_uri; }
 }
 
 server {
     listen 443 ssl;
-    server_name "~^[a-z0-9]{40,63}\.poster\.place$";
+    listen [::]:443 ssl;
+    server_name xdc.poster.place;
 
-    # The apex certificate. Cloudflare terminates TLS for the public with its own universal
-    # certificate (which covers one level of subdomain); this is what CF connects to behind it.
     ssl_certificate     /etc/letsencrypt/live/poster.place/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/poster.place/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
 
-    # Mini apps are small and self-contained; nothing is uploaded to this origin at all.
     client_max_body_size 1M;
     access_log off;
 
-    # Host is load-bearing rather than boilerplate: the app decides WHICH service worker to serve at
-    # /sw.js from the hostname — the PWA's on poster.place, the sandbox's on one of these labels —
-    # and refuses /__sandbox__/ anywhere but here. Rewriting Host would serve the wrong one.
-    location / {
+    location = /sw.js {
         proxy_pass http://192.168.0.2:3051;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 60s;
+        add_header Cache-Control "no-store" always;
+        add_header Service-Worker-Allowed "/" always;
+    }
 
-        # Never cached, anywhere. The loader and the worker are tiny, and a stale worker on an
-        # origin that is meant to be disposable is a mini app that cannot start with no way to say
-        # why. (The app's own files are not served from here at all, so there is nothing else to
-        # cache.)
-        proxy_no_cache 1;
-        proxy_cache_bypass 1;
+    location /__sandbox__ {
+        proxy_pass http://192.168.0.2:3051;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         add_header Cache-Control "no-store" always;
     }
+
+    # Everything else here does not exist. A mini app asking for one of its own files is answered by
+    # its service worker, never by this server, so a request that arrives here is either the first
+    # load (handled above) or something that has no business being served to untrusted code.
+    location / { return 404; }
 }

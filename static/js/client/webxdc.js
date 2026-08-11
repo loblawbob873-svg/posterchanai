@@ -23,10 +23,12 @@
  * ordering: two devices can disagree about the numbers and still agree about the SET, which is all
  * `setUpdateListener(cb, lastSerial)` actually needs.
  *
- * WHERE IT RUNS is the security of the whole feature and is not negotiable: a different ORIGIN per
- * app, on a wildcard subdomain, because same-origin means the game can read the localStorage and
- * IndexedDB this client keeps your key and your session in. See static/webxdc-sandbox/ for the two
- * files that origin serves and docs/WEBXDC.md for the DNS it needs.
+ * WHERE IT RUNS is the security of the whole feature: a different ORIGIN, because same-origin means
+ * the game can read the localStorage and IndexedDB this client keeps your key and your session in.
+ * One dedicated hostname (`xdc.<instance>`) is enough for that, and it is one extra name on the
+ * certificate certbot already renews — no wildcard, no DNS API token. See `sandboxOrigin` for the
+ * two designs that were tried and measured first, static/webxdc-sandbox/ for the two files that
+ * origin serves, and docs/WEBXDC.md.
  */
 (function(){
   function init(){
@@ -76,13 +78,47 @@
       const mac = await crypto.subtle.sign('HMAC', key, enc2.encode('webxdc|' + id));
       return toBase36(mac);
     }
-    /* The host the sandbox lives on: a sibling of the INSTANCE, not of the page. In the packaged
-     * apps the page's own origin is app://posterchan or a WebView's, which has no subdomains and no
-     * certificate — so the wildcard has to hang off the instance the client is talking to. */
-    function sandboxHost(){
+    /* WHERE THE SANDBOX LIVES — one dedicated HOSTNAME, `xdc.<instance>`.
+     *
+     * A different host is a different origin, which is the whole requirement: separate localStorage,
+     * separate IndexedDB, separate cookies, no DOM access to the page that framed it. The client's
+     * key and session live on the instance's origin and nothing here can reach them.
+     *
+     * Two designs were tried first and both are worth recording, because both look right:
+     *
+     *   A SUBDOMAIN PER APP (what Ditto does, via iframe.diy) is better still — it isolates apps
+     *   from EACH OTHER as well as from the client. It needs a WILDCARD certificate, and certbot
+     *   cannot issue one over HTTP-01: that means DNS-01, which means a DNS provider API token
+     *   sitting on the web server. Too much standing credential for a game feature.
+     *
+     *   A PORT (https://host:8443) is also a distinct origin and needs no new certificate at all,
+     *   which made it the obvious answer. MEASURED: it does not survive Cloudflare. CF accepts 8443
+     *   from the browser and then connects to the ORIGIN on 443, so the request lands on the main
+     *   vhost and the sandbox is never reached — proven with a marker header that appears on a
+     *   direct request and is absent through the CDN. Do not re-attempt it.
+     *
+     * So: one ordinary hostname, one extra `-d` on the certificate certbot already renews. Every app
+     * shares it, so an app can read another app's leftovers in localStorage (keys are namespaced in
+     * the bridge, which is a collision guard, not a boundary). A node that HAS a wildcard can turn
+     * on `pc_webxdc_wildcard` and get an origin per app. docs/WEBXDC.md says all of this out loud. */
+    const SANDBOX_LABEL = 'xdc';
+    function instanceHost(){
       let base = '';
       try{ base = (PC.apiBase && PC.apiBase()) || ''; }catch(_){}
       try{ return new URL(base || location.href).hostname; }catch(_){ return location.hostname; }
+    }
+    /* An instance that HAS a wildcard certificate can turn this on and get an origin per app. A
+     * localStorage switch rather than a server setting, deliberately: it is a property of the
+     * CERTIFICATE in front of whichever instance this client is pointed at, the packaged apps can be
+     * pointed anywhere, and a dead server field nobody can reach would be worse than an honest
+     * manual one. */
+    function sandboxWildcard(){
+      try{ return localStorage.getItem('pc_webxdc_wildcard') === '1'; }catch(_){ return false; }
+    }
+    async function sandboxOrigin(appId){
+      const host = instanceHost();
+      if(sandboxWildcard()) return 'https://' + (await subdomain(appId)) + '.' + host;
+      return 'https://' + SANDBOX_LABEL + '.' + host;
     }
 
     // ---- reading the app ------------------------------------------------------------------------
@@ -193,6 +229,43 @@
      * It speaks JSON-RPC to `parent` — the sandbox loader — which forwards to this document. */
     const BRIDGE = `(function(){
   var nextId = 1, pending = {}, listener = null, ready = null;
+  /* SHARED-ORIGIN STORAGE, NAMESPACED. Every app on this instance runs on one sandbox origin (see
+     sandboxOrigin), so two games that both keep their save under "state" would overwrite each
+     other. Keys are prefixed per app. This is a COLLISION guard, not a security boundary — the real
+     store is still reachable by anything that looks for it — and it is unnecessary on a node with a
+     wildcard, where each app has an origin of its own. A Proxy rather than a plain object because
+     apps write \`localStorage.foo = 1\` as often as they call setItem, and an object shim silently
+     drops those. */
+  (function(ns){
+    if(!ns) return;
+    try{
+      var real = window.localStorage, pre = '__xdc_' + ns + '_';
+      var mine = function(k){ return k.indexOf(pre) === 0; };
+      var api = {
+        getItem: function(k){ return real.getItem(pre + k); },
+        setItem: function(k, v){ real.setItem(pre + k, v); },
+        removeItem: function(k){ real.removeItem(pre + k); },
+        clear: function(){ Object.keys(real).filter(mine).forEach(function(k){ real.removeItem(k); }); },
+        key: function(i){ var ks = Object.keys(real).filter(mine); return i < ks.length ? ks[i].slice(pre.length) : null; },
+      };
+      var shim = new Proxy(api, {
+        get: function(t, p){
+          if(p === 'length') return Object.keys(real).filter(mine).length;
+          if(typeof p === 'string' && t[p] === undefined) return real.getItem(pre + p);
+          return t[p];
+        },
+        set: function(t, p, v){ if(typeof p === 'string' && t[p] === undefined) real.setItem(pre + p, String(v)); return true; },
+        deleteProperty: function(t, p){ real.removeItem(pre + p); return true; },
+        has: function(t, p){ return t[p] !== undefined || real.getItem(pre + p) !== null; },
+        ownKeys: function(){ return Object.keys(real).filter(mine).map(function(k){ return k.slice(pre.length); }); },
+        getOwnPropertyDescriptor: function(t, p){
+          var v = real.getItem(pre + p);
+          return v === null ? undefined : { value: v, writable: true, enumerable: true, configurable: true };
+        },
+      });
+      Object.defineProperty(window, 'localStorage', { value: shim, configurable: true });
+    }catch(e){}
+  })(__XDC.ns);
   function send(m){ try{ parent.postMessage(m, '*'); }catch(e){} }
   function rpc(method, params){
     var id = nextId++;
@@ -215,8 +288,8 @@
     }
   });
   window.webxdc = {
-    selfAddr: ${JSON.stringify('')},
-    selfName: ${JSON.stringify('')},
+    selfAddr: __XDC.addr,
+    selfName: __XDC.name,
     sendUpdateInterval: ${UPDATE_INTERVAL},
     sendUpdateMaxSize: ${UPDATE_MAX},
     sendUpdate: function(update, descr){ return rpc('webxdc.sendUpdate', { update: update, descr: descr }); },
@@ -273,9 +346,15 @@
      * as a broken sandbox rather than as a missing icon. */
     Session.prototype.resolve = function(pathname){
       if(pathname === BRIDGE_PATH){
-        const src = BRIDGE.replace('selfAddr: ""', 'selfAddr: ' + JSON.stringify(this.self.addr))
-                          .replace('selfName: ""', 'selfName: ' + JSON.stringify(this.self.name));
-        return { status:200, contentType:'text/javascript', body:_enc.encode(src) };
+        /* The per-session values are handed to the bridge as ONE object it reads, rather than
+         * patched into its source with string replacement. Substituting into code that also
+         * contains the literals being searched for is how a bridge ends up with somebody's display
+         * name spliced into a function body. */
+        const head = 'var __XDC = ' + JSON.stringify({
+          addr: this.self.addr, name: this.self.name,
+          ns: String(this.app.uuid || this.app.sha || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64),
+        }) + ';\n';
+        return { status:200, contentType:'text/javascript', body:_enc.encode(head + BRIDGE) };
       }
       let name = decodeURIComponent(String(pathname || '/')).replace(/^\/+/, '');
       if(!name || name.charAt(name.length - 1) === '/') name += 'index.html';
@@ -391,8 +470,7 @@
     // ---- mounting ---------------------------------------------------------------------------------
 
     Session.prototype.mount = async function(host){
-      const label = await subdomain(this.app.uuid || this.app.sha || this.app.url);
-      this.origin = 'https://' + label + '.' + sandboxHost();
+      this.origin = await sandboxOrigin(this.app.uuid || this.app.sha || this.app.url);
       /* selfAddr / selfName. The spec lets a messenger put anything here and warns apps not to trust
        * them — nothing in the sandbox is signed, so any player can claim to be anyone WITHIN the app.
        * The npub is still the useful answer: it is what the app shows next to a move, and it matches
@@ -595,7 +673,63 @@
       if(app) open(app);
     }, true);
 
-    window.PCWebxdc = { open, appOf, cardHtml, MIME, KIND_UPDATE };
+    /* ---- posting one ------------------------------------------------------------------------------
+     *
+     * Attach a `.xdc` to a post, which is all "publishing a game" is: the file goes to Blossom like
+     * any other upload, and the post carries an `imeta` tag saying what it is plus a fresh identifier.
+     *
+     * THE IDENTIFIER IS MINTED HERE, PER POST, and that is the whole model. It — not the file, not
+     * the event — is what makes two people the same game: everyone whose client sees this post plays
+     * against each other, and posting the same file again starts a fresh game that shares nothing
+     * with this one. It is what a "new game" button would do, and it costs one uuid.
+     *
+     * The archive is CHECKED before it is uploaded. A zip with no index.html is not a mini app, and
+     * finding that out at upload time is a sentence; finding out when somebody presses Play is a
+     * broken post that cannot be fixed without deleting it. */
+    function attach(ta){
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = '.xdc,application/x-webxdc,application/zip';
+      inp.style.display = 'none';
+      document.body.appendChild(inp);
+      inp.onchange = async () => {
+        const file = inp.files && inp.files[0];
+        inp.remove();
+        if(!file) return;
+        try{
+          if(file.size > MAX_XDC) throw new Error('that file is too big for a mini app');
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          let files;
+          try{ files = await window.PCZip.readAll(bytes); }
+          catch(e){ throw new Error('that is not a .xdc archive (' + ((e && e.message) || 'unreadable') + ')'); }
+          if(!files.has('index.html')) throw new Error('that .xdc has no index.html in it — it will not run');
+          const name = manifestName(files) || (file.name || '').replace(/\.xdc$/i, '');
+          const sha = await sha256Hex(bytes);
+          toast('uploading ' + (name || 'the app') + '…');
+          /* Uploaded under its real name and type. A Blossom server keys on the hash, so the same
+           * game posted twice is stored once — which also means the identifier below, not the URL,
+           * has to be what separates two games. */
+          const up = new File([bytes], (name || 'app').replace(/[^A-Za-z0-9._-]/g, '_') + '.xdc',
+                              { type: MIME });
+          const url = await PC.uploadBlob(up);
+          if(!url) throw new Error('the upload did not come back with a URL');
+          const uuid = (crypto.randomUUID ? crypto.randomUUID()
+                                          : _hex(crypto.getRandomValues(new Uint8Array(16))));
+          if(PC.mediaMeta) PC.mediaMeta(url, { m: MIME, x: sha, webxdc: uuid, summary: name || '' });
+          // Into the post, where the composer's own imeta pass will pick the URL up.
+          if(ta){
+            const cur = String(ta.value || '');
+            ta.value = (cur ? cur.replace(/\s*$/, '') + '\n' : '') + url + '\n';
+            try{ ta.dispatchEvent(new Event('input', { bubbles:true })); }catch(_){}
+            try{ ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }catch(_){}
+          }
+          toast(name ? ('attached ' + name) : 'mini app attached');
+        }catch(e){ toast((e && e.message) || 'could not attach that app'); }
+      };
+      inp.click();
+    }
+
+    window.PCWebxdc = { open, appOf, cardHtml, attach, MIME, KIND_UPDATE };
   }
   init();
 })();

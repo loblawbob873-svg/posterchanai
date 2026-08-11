@@ -12966,10 +12966,15 @@
       $('#cmp-attach',root).onclick=()=>{
         const opts = window.Capacitor ? [['camera','📷 Camera'],['local','🖼️ Photos / files'],['blossom','🌸 Blossom']]
                                        : [['local','💻 Local'],['blossom','🌸 Blossom']];
+        // 🎮 A webxdc mini app — a game, a poll, a shared editor — attached as a playable card.
+        // Its own entry rather than a file among files: a .xdc is a zip, so picking it from "Local"
+        // would upload it as an anonymous archive with no way to know it can be played.
+        if(window.PCWebxdc && PCWebxdc.attach) opts.push(['webxdc','🎮 Mini app (.xdc)']);
         openMenuPopover($('#cmp-attach',root), opts, a=>{
           if(a==='camera') _captureCamera(ta, root);
           else if(a==='local') $('#cmp-file',root).click();
-          else if(a==='blossom') blossomPicker(ta); });
+          else if(a==='blossom') blossomPicker(ta);
+          else if(a==='webxdc') PCWebxdc.attach(ta); });
       };
       attachEmojiAutocomplete(ta);   // `:shortcode` autocomplete, same as every other composer
       // 😀 React → insert an Emoji or a GIF
@@ -13893,6 +13898,10 @@
       if(seen.has(u)) continue; seen.add(u);
       const m=_MEDIA_META.get(u); if(!m) continue;
       const parts=['url '+u]; if(m.m) parts.push('m '+m.m); if(m.dim) parts.push('dim '+m.dim); if(m.x) parts.push('x '+m.x);
+      // A webxdc mini app carries one more property: the identifier that makes two people the same
+      // GAME. Without it the app still runs and its state goes nowhere — see NOSTR_WEBXDC.
+      if(m.webxdc) parts.push('webxdc '+m.webxdc);
+      if(m.summary) parts.push('summary '+m.summary);
       out.push(['imeta', ...parts]);
     }
     return out;
@@ -16185,6 +16194,11 @@
       const box=`<input type="checkbox" class="selbox" data-sha="${b.sha256}"${_filesSel.has(b.sha256)?' checked':''} title="Select">`;
       const del=`<button class="del" data-sha="${b.sha256}" aria-label="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>`;
       const move=`<button class="movebtn" data-sha="${b.sha256}" title="Move to folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg></button>`;
+      /* Rename. The name lives in the FILES INDEX, not in the blob — a Blossom server keys on the
+       * hash and knows nothing about what the file is called — so this is an index edit, and the
+       * bytes are never touched or re-uploaded. That is also why it works for a file somebody else
+       * uploaded and why it costs nothing for a 4GB video. */
+      const ren=`<button class="renbtn" data-sha="${b.sha256}" data-name="${enc(nm||dlName)}" title="Rename"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg></button>`;
       const dl=m.enc
         ? `<button class="dlbtn dlenc" data-sha="${b.sha256}" data-name="${enc(dlName)}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`
         : `<button class="dlbtn" data-url="${enc(b.url)}" data-name="${enc(dlName)}" title="Download ${enc(dlName)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`;
@@ -16193,17 +16207,17 @@
         href: m.enc ? '#' : b.url, encOpen: !!m.enc, mime: m.enc ? undefined : (b.type||''),
         icon: m.enc ? '🔒' : _fxIcon(ext, b.type), name: nm || (m.enc ? 'encrypted' : dlName), title: nm || dlName,
         size:_fxBytes(b.size), type:(m.enc?'🔒 ':'')+_fxType(ext), when:_fxWhen(b.uploaded),
-        acts: (m.enc ? '' : `<button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>`) + dl + move + del,
+        acts: (m.enc ? '' : `<button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>`) + dl + ren + move + del,
       });
       if(m.enc){   // encrypted file — lock card; opening decrypts in-browser (never exposes the ciphertext URL)
         return `<div class="file-card enc${sel}" draggable="true" data-sha="${b.sha256}"><a href="#" class="enc-open" data-sha="${b.sha256}"><div class="file-icon">🔒<span>${enc(ext||'enc')}</span></div></a>
           ${box}${del}
-          <div class="meta"><span class="fname" title="${enc(nm)}">${nm?enc(fileLabel(nm,ext,b.size)):'encrypted'}</span><span class="fc-acts">${dl}${move}</span></div></div>`;
+          <div class="meta"><span class="fname" title="${enc(nm)}">${nm?enc(fileLabel(nm,ext,b.size)):'encrypted'}</span><span class="fc-acts">${dl}${ren}${move}</span></div></div>`;
       }
       return `<div class="file-card${sel}" draggable="true" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b, ext)}</a>
         ${box}
         <button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>${del}
-        <div class="meta"><span class="fname" title="${enc(nm||dlName)}">${enc(fileLabel(nm,ext,b.size))}</span><span class="fc-acts">${dl}${move}</span></div></div>`;
+        <div class="meta"><span class="fname" title="${enc(nm||dlName)}">${enc(fileLabel(nm,ext,b.size))}</span><span class="fc-acts">${dl}${ren}${move}</span></div></div>`;
     }).join('') + (_more>0 ? `<button class="btn btn-ghost bl-more" data-id="bl-more" style="grid-column:1/-1;justify-self:center;margin:10px 0"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-down"></use></svg>Load ${Math.min(_more,_FILES_PAGE)} more · ${_more} left</button>` : '')) : (_filesQ.trim()
         ? '<div class="empty">Nothing'+(_filesFolder?(' in '+enc(_filesFolder)):' on your drive')
           +' matches “'+enc(_filesQ.trim())+'”.</div>'
@@ -16220,6 +16234,7 @@
     // :not(.dlenc) — encrypted files have their own handler below (decrypt first, never fetch the URL)
     $$('.dlbtn:not(.dlenc)',grid).forEach(b=> b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); downloadBlobFile(b.dataset.url, b.dataset.name); });
     $$('.movebtn',grid).forEach(b=> b.onclick=(e)=>_moveMenu(e.currentTarget, b.dataset.sha));
+    $$('.renbtn',grid).forEach(b=> b.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); renameBlob(b.dataset.sha, b.dataset.name); });
     $$('.file-card',grid).forEach(card=> card.ondragstart=e=>{ if(e.dataTransfer) e.dataTransfer.setData('text/sha', card.dataset.sha); });
     // Checkbox toggles selection without opening the file (the card's <a> would otherwise swallow it).
     $$('.selbox',grid).forEach(cb=> cb.onclick=e=>{ e.stopPropagation();
@@ -17200,6 +17215,7 @@
         ${t.missing ? '' : `<button class="track-keep${t.offline?' on':''}" data-sha="${t.sha}" title="${t.offline?'Kept on this device — tap to remove the offline copy':'Keep on this device (plays with no network)'}" aria-label="${t.offline?'Remove offline copy':'Keep offline'}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-${t.offline?'check':'download'}"></use></svg></button>`}
         ${t.missing ? '' : `<button class="track-add" data-sha="${t.sha}" title="Add to a playlist" aria-label="Add to a playlist"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg></button>`}
         ${t.missing ? '' : `<button class="track-dl" data-sha="${t.sha}" data-name="${enc((t.m.name||'track')+'.'+_musicExt(t.m))}" title="Save a copy to your files (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg></button>`}
+        ${t.missing ? '' : `<button class="track-ren" data-sha="${t.sha}" data-name="${enc(t.m.name||'')}" title="Rename" aria-label="Rename"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg></button>`}
         <button class="track-del" data-sha="${t.sha}" title="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>`);
     const first = rows.slice(0, MUS_PAGE);
@@ -17262,7 +17278,7 @@
      * cannot leave a second handler behind the way addEventListener would. */
     grid.onclick = async (ev) => {
       const b = ev.target && ev.target.closest && ev.target.closest(
-        '.track-play,.track-keep,.track-add,.track-dl,.track-del,.mus-more');
+        '.track-play,.track-keep,.track-add,.track-dl,.track-ren,.track-del,.mus-more');
       if(!b || !grid.contains(b)) return;
       if(b.classList.contains('mus-more')){ _musMore(grid, b); return; }
       const sha = b.dataset.sha;
@@ -17275,6 +17291,7 @@
       }
       if(b.classList.contains('track-dl')){ saveEncrypted(sha, b.dataset.name); return; }
       if(b.classList.contains('track-add')){ _addToPlaylist(sha); return; }
+      if(b.classList.contains('track-ren')){ renameBlob(sha, b.dataset.name); return; }
       if(b.classList.contains('track-del')){ delBlob(sha); return; }
       /* KEEP ON THIS DEVICE. Toggling one track, and the whole library at once.
        *
@@ -17985,6 +18002,44 @@
     }catch(_){ }
     return false;
   }
+  /* Rename a file on the drive.
+   *
+   * THE NAME IS NOT IN THE FILE. A Blossom server keys on the sha256 and has no idea what anything is
+   * called — every name you see in Files comes from the encrypted index this client owns. So a rename
+   * is an index edit: nothing is re-uploaded, nothing is re-encrypted, the hash does not change, and
+   * it costs the same for a 4GB video as for a text file. It also works on a blob somebody else
+   * uploaded, because naming it was always ours to do.
+   *
+   * Asked for the MUSIC folder in particular, where generated songs land with machine-made names —
+   * and the player reads its titles from the same index, so a track renamed here is renamed there.
+   *
+   * The verdict comes from endBatch rather than from having called setFile: the index save is what
+   * can fail (a relay that will not take the write, the collapse guard refusing a shrink), and
+   * reporting "renamed" on the strength of a local mutation is how a rename comes back on the next
+   * load with nothing said. */
+  async function renameBlob(sha, current){
+    if(!sha) return;
+    const cur = String(current || '');
+    const asked = await uiPrompt('Rename', cur, cur);
+    if(asked === null || asked === undefined) return;
+    // Slashes would read as folders in a path and the index is flat; a name is a name.
+    const name = String(asked).trim().replace(/[\/\\]+/g, '-').slice(0, 200);
+    if(!name || name === cur) return;
+    try{
+      FilesIdx.beginBatch();
+      FilesIdx.setFile(sha, { name });
+      const saved = await FilesIdx.endBatch();
+      if(!saved){ toast('not saved — your drive index is unchanged'); return; }
+      toast('renamed');
+      // Repaint through the view's own entry point, not the grid builder: a Music folder drawn by
+      // _renderFilesGrid is a different screen, not a filtered one (see the note there).
+      try{ if(VIEW === 'blossom') renderBlossom(); }catch(_){}
+      try{ if(VIEW === 'music') renderMusicApp(); }catch(_){}
+      // The desktop's Now-playing widget shows the track TITLE, which is the thing that just changed.
+      try{ if(window.PCOS && PCOS.musicChanged) PCOS.musicChanged(); }catch(_){}
+    }catch(e){ toast('could not rename that: ' + ((e && e.message) || '')); }
+  }
+
   async function delBlob(sha){
     if(!await uiConfirm('Delete this blob?'))return; const server=mediaServer();
     const auth=await sign(24242,'Delete blob',[['t','delete'],['x',sha],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
@@ -27584,6 +27639,10 @@
     // uiPrompt for the same reason (meme.js: naming a saved project) — window.prompt wedges focus
     // exactly like window.confirm, and it is the ONLY way a sub-module can ask for a line of text.
     uploadBlob, selfProof, uiConfirm, uiPrompt,
+    /* Record what an uploaded URL IS, so the composer's imeta tags carry it. The map is what
+     * imetaTagsFor reads, and a mini app needs two properties an image does not: its mime type and
+     * the `webxdc` identifier that makes two people the same game. */
+    mediaMeta: (url, meta) => { try{ _MEDIA_META.set(url, Object.assign({}, _MEDIA_META.get(url) || {}, meta || {})); }catch(_){} },
     /* Does the encrypted drive work AT ALL on this device, right now? Seals a few bytes, uploads
      * them, reads them back and compares. It answers the one question that matters when a stored
      * file will not open: is this device's key broken, or is it the wrong key FOR THAT FILE? The

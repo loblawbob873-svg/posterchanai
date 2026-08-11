@@ -1212,17 +1212,29 @@ async def admin_page(
     return resp
 
 
-"""The webxdc sandbox label: 40+ characters of base36 as the FIRST DNS label.
+"""Is this request addressed to the webxdc SANDBOX rather than to the instance?
 
-The client derives it as an HMAC of a per-device secret and the app's id (see webxdc.js), so it is
-50 characters of [0-9a-z] and cannot collide with a real subdomain like `news` or `ai`. Matching on
-it is what lets this app serve two different things at `/sw.js` depending on which host asked."""
-_XDC_HOST = re.compile(r"^[a-z0-9]{40,63}\.")
+Mini apps are untrusted code, so they run on a different ORIGIN — otherwise they share the
+localStorage this client keeps the user's key and session in. Two shapes (see `sandboxOrigin` in
+webxdc.js):
+
+  * `xdc.<instance>` — the default. One ordinary hostname, one extra name on the certificate certbot
+    already renews. A PORT was tried first and does not survive Cloudflare, which accepts the port
+    from the browser and then connects to the origin on 443; a wildcard was tried before that and
+    needs DNS-01, i.e. a DNS provider API token living on the web server.
+  * A 40+ character base36 label — for an instance that DOES have a wildcard and wants an origin per
+    app. The client derives it as an HMAC of a per-device secret and the app's id, so it cannot
+    collide with a real subdomain like `news` or `ai`.
+
+This is what lets the app serve two different things at `/sw.js` depending on who asked: the PWA's
+service worker on the instance, and the sandbox's on the sandbox origin."""
+_XDC_WILDCARD_HOST = re.compile(r"^[a-z0-9]{40,63}\.")
+WEBXDC_SANDBOX_LABEL = "xdc"
 
 
 def _is_sandbox_host(request: Request) -> bool:
-    host = (request.headers.get("host") or "").split(":")[0].lower()
-    return bool(_XDC_HOST.match(host))
+    name = (request.headers.get("host") or "").split(":")[0].lower()
+    return name.startswith(WEBXDC_SANDBOX_LABEL + ".") or bool(_XDC_WILDCARD_HOST.match(name))
 
 
 @app.get("/sw.js")
