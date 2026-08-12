@@ -134,6 +134,38 @@ jobs:
             echo "tor (arm64): $BIN2"
           fi
 
+      # The real cure for the throttled downloads: once these are warm nothing is fetched from
+      # GitHub's release CDN at all, so a throttle there cannot fail the job.
+      #
+      # THE POSITION OF THIS STEP IS THE FEATURE, and it has been wrong twice — once in each
+      # direction, so both are written down here.
+      #
+      # It must sit ABOVE `Install deps`, because the Electron zip is downloaded TWICE by two
+      # different things. Placed below, `npm ci` died in the electron package's own postinstall
+      # (`node install.js` → @electron/get → `RequestError: socket hang up`), three retries deep,
+      # before the cache step it needed had even run. Both writers share this ONE root:
+      # ~/.cache/electron holds @electron/get's `<sha256-of-url>/` directory AND app-builder's flat
+      # `electron-v33.4.11-<platform>.zip` — confirmed by inspecting a real build's cache, not
+      # inferred. So a single warm restore kills both downloads.
+      #
+      # And it must sit ABOVE `Version from run number`, because that step is `npm version`, which
+      # REWRITES package-lock.json — with the run number, i.e. differently on every single run. Keyed
+      # after it, `hashFiles` never matched twice: every build missed the exact key, fell through to
+      # `restore-keys`, and then saved a whole fresh copy. Measured, that was ~724 MB of new cache per
+      # run against a 10 GB repo budget that evicts by LRU — the caches would have started evicting
+      # each other (and every other workflow's) within a dozen pushes, at which point this quietly
+      # stops working. Above it, the lockfile is the committed one and the key is stable, so a run
+      # that changes nothing re-saves nothing.
+      #
+      # `restore-keys` still matters for the run that DOES bump electron: it starts from the previous
+      # cache, since the builder deps in the second directory are version-independent.
+      - name: Cache electron + electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.caches }}
+          key: ebcache-${{ matrix.name }}-${{ hashFiles('desktop/package-lock.json') }}
+          restore-keys: ebcache-${{ matrix.name }}-
+
       # Version == the run number, like the APK's versionCode. electron-updater compares this against
       # the feed's `version`, so it MUST increase on every build or no client ever sees an update.
       - name: Version from run number
@@ -154,26 +186,6 @@ jobs:
       # "RequestError: self-signed certificate", failing the mac build in ~25s while the same commit
       # builds cleanly on the next push. Three attempts turns a random red into a self-healing one;
       # a real breakage still fails all three and still fails the job.
-      # The real cure for the throttled downloads: once these are warm nothing is fetched from
-      # GitHub's release CDN at all, so a throttle there cannot fail the job.
-      #
-      # ABOVE `Install deps`, and that placement is the whole point. The Electron zip is downloaded
-      # TWICE by two different things, and this used to sit below the first one — so `npm ci` died in
-      # the electron package's own postinstall (`node install.js` → @electron/get → `RequestError:
-      # socket hang up`), three retries deep, before the cache step it needed had even run. Both
-      # writers share this one root: ~/.cache/electron holds @electron/get's `<sha256-of-url>/` dir
-      # AND app-builder's flat `electron-v33.4.11-<platform>.zip`, confirmed by inspecting a real
-      # build's cache. One warm restore therefore kills both downloads.
-      #
-      # Keyed on the lockfile so an electron bump re-downloads exactly once; `restore-keys` lets such
-      # a build still start from the previous cache, since the builder deps in the second directory
-      # (winCodeSign, NSIS, nsis-resources) are version-independent.
-      - name: Cache electron + electron-builder downloads
-        uses: actions/cache@v4
-        with:
-          path: ${{ matrix.caches }}
-          key: ebcache-${{ matrix.name }}-${{ hashFiles('desktop/package-lock.json') }}
-          restore-keys: ebcache-${{ matrix.name }}-
 
       - name: Install deps
         working-directory: desktop
