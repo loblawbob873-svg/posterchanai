@@ -52,9 +52,12 @@ public class MusicWidget extends AppWidgetProvider {
       // In-process and direct. NOT startService(): from a widget the app is by definition in the
       // background, where Android 8+ refuses a service start — and the service we want is already
       // running, so asking the platform to start it again is both illegal and pointless.
-      if (MusicService.ACTION_TOGGLE.equals(action)) MusicService.emit(svc.isPlaying() ? "pause" : "play", 0);
-      else if (MusicService.ACTION_NEXT.equals(action)) MusicService.emit("next", 0);
-      else MusicService.emit("prev", 0);
+      //
+      // Through fromWidget(), NOT emit(): a widget is pressed with the app closed more often than
+      // any other surface here, which makes it the one most likely to be pressed at a WebView that
+      // Android has taken away — and a bare emit into that reports success and does nothing. It gets
+      // the same receipt check the notification and the car's buttons now go through.
+      svc.fromWidget(action);
       return;
     }
     /* The widget was showing a live player and the process has since been KILLED (killed, not closed —
@@ -73,6 +76,7 @@ public class MusicWidget extends AppWidgetProvider {
     return new Intent(ctx, MainActivity.class)
         .setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         .putExtra(MusicPlugin.EXTRA_LAUNCH_ACTION, what)
+        .putExtra(MusicPlugin.EXTRA_LAUNCH_AT, System.currentTimeMillis())
         .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
   }
 

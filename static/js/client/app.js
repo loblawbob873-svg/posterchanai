@@ -2675,6 +2675,17 @@
       // Same shape for the music widget: it can launch the app cold OR foreground it via onNewIntent,
       // and either way the press arrives as an Intent extra rather than a JS event. Consumed natively,
       // so re-checking on every resume can't replay it.
+      /* ARM THE TRANSPORT LISTENER NOW, not when something first plays.
+       *
+       * _nativeInit used to run only from MusicPlayer.ensure(), i.e. the first time this page played
+       * something — and the service, its media session and its notification all OUTLIVE the page.
+       * When Android kills the WebView's render process (MainActivity.recreate) or destroys the
+       * backgrounded Activity, what comes back is a fresh page that has never played anything, so
+       * nothing was subscribed to `musicTransport` and every press on the lock screen, the car and
+       * the shade went into a listener with no handler behind it. Nothing to see: the notification is
+       * still there, still showing the last track, and its buttons simply do nothing until the app is
+       * opened and something is played. Subscribing on startup is what closes that window. */
+      try{ MusicPlayer._nativeInit(); }catch(_){}
       const _reMusic=()=>{ try{ MusicPlayer.consumeLaunch(); }catch(_){} };
       _reMusic();
       /* The CALENDAR WIDGET can launch the app cold OR foreground it through onNewIntent, and either
@@ -14997,7 +15008,7 @@
      * Music".) Every other non-timeline screen does exactly this; leaving VIEW alone was the bug. */
     VIEW='music'; _hidePill(); _clearNav();
     { const t=$('#view-title'); if(t) t.textContent='Music'; }
-    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate','feed-meme');
+    _feedScrollable(feed);
     feed.innerHTML=`<div class="music-app">
       <div class="ma-now">
         <div class="ma-art"><svg class="ic" aria-hidden="true"><use href="#i-music"></use></svg></div>
@@ -15020,6 +15031,7 @@
         </div>
       </div>
       <div id="ma-plbar"></div>
+      <div class="ma-car hidden" id="ma-car"></div>
       <input class="input ma-q" id="ma-q" type="search" autocomplete="off"
              placeholder="Search your library" aria-label="Search your library">
       <div class="music-list" id="ma-lib"><div class="spinner"></div></div></div>`;
@@ -15084,6 +15096,7 @@
      * applied to old libraries — and re-adding the files is the same repair with nothing that
      * deletes a blob. Its helpers (_musicBySrcName / _musicReplaceOriginals) and
      * PCPlaylists.replaceTrack went with it rather than being left as dead code. */
+    _bindMusicCar($('#ma-car',feed));
     // The same scrubber the floating widget uses — one implementation, so the two cannot drift.
     MusicPlayer.bindSeek($('#ma-seek',feed));
     MusicPlayer._tickApp();   // paint the position immediately: entering mid-track must not read 0:00
@@ -15094,6 +15107,48 @@
           const sel = _musicPl && window.PCPlaylists && PCPlaylists.get(_musicPl);
           _renderMusicList(lib, null, _musicQ, sel ? _plTracks(_musicPl) : null); _musicAppNow(); }; } }
     MusicPlayer.onChange=_musicAppNow;   // the floating player is the single source of truth
+  }
+  /* THE CAR ROW: the Bluetooth autoplay switch, and what the phone MEASURED.
+   *
+   * Drawn in the APK only — it is the only build with a native media session, and both halves of the
+   * row are about a service the others do not have. The diagnostic is here for the same reason the
+   * contacts sweep prints one: there is no device on this side of the work, and this feature fails by
+   * reporting success from every direction at once (the notification is up, the emit returned, no
+   * sound comes out). One line saying how long ago the player last answered the service, how many
+   * presses went unanswered and what the last Bluetooth connection did is the difference between a
+   * fix and a fourth guess.
+   */
+  function _bindMusicCar(row){
+    if(!row) return;
+    if(!_capPlugin('MusicControls','setOptions')) return;   // browser / desktop: nothing to configure
+    row.classList.remove('hidden');
+    row.innerHTML=`<label class="ma-car-sw"><input type="checkbox" id="ma-autobt"${MusicPlayer.autoplayBT()?' checked':''}>
+        <span>Start playing when a Bluetooth device connects</span></label>
+      <button class="btn btn-ghost small" id="ma-cardiag" title="What the phone measured">Details</button>
+      <div class="muted small ma-car-note" id="ma-carnote"></div>`;
+    const cb=$('#ma-autobt',row);
+    if(cb) cb.onchange=()=>{ MusicPlayer.setAutoplayBT(cb.checked);
+      // Said out loud, because the limitation is not guessable: the service only exists while the
+      // player does, so a phone with music CLOSED has nothing to resume when the car connects.
+      toast(cb.checked ? 'Bluetooth autoplay on — the player has to be open (paused is fine)'
+                       : 'Bluetooth autoplay off'); };
+    const out=$('#ma-carnote',row), d=$('#ma-cardiag',row);
+    if(d) d.onclick=()=>{
+      const S=_capPlugin('MusicControls','status');
+      if(!S || !out){ if(out) out.textContent='this build has no native media controls'; return; }
+      out.textContent='reading…';
+      Promise.resolve(S.status()).then(s=>{
+        s=s||{};
+        if(!s.running){ out.textContent='media controls: not running — nothing has played yet this session'; return; }
+        const sil=s.webSilenceMs;
+        out.textContent='media controls: running · '+(s.playing?'playing':'paused')
+          + ' · player last answered '+(sil==null||sil<0 ? 'never' : Math.round(sil/1000)+'s ago')
+          + (s.webGone ? ' · NOT RESPONDING' : '')
+          + ' · bluetooth '+(s.btConnects||0)+' connect/s, '+(s.btAutoplays||0)+' autoplay/s'
+          + ' · '+(s.unanswered||0)+' press/es unanswered, '+(s.revived||0)+' wake-up/s'
+          + (s.note ? ' · last: '+s.note : '');
+      }).catch(e=>{ out.textContent='could not read the media controls: '+((e&&e.message)||e); });
+    };
   }
   // Mirror the player's state into the app's header. Cheap, and it no-ops when the app isn't mounted
   // (the window may be closed while music keeps playing — that is the point of a floating player).
@@ -18168,16 +18223,115 @@
       this._nativeWired=true;
       try{ P.addListener('musicTransport', e=>{
         const a=(e&&e.action)||'', v=Number((e&&e.value)||0);
-        if(a==='play'){ if(_audioEl) _audioEl.play(); }
+        /* THE ACK IS FIRST AND UNCONDITIONAL. It is the service's only proof that anybody received
+         * the press, and it must not depend on the press being PERFORMABLE: a page that has just
+         * reloaded holds no track, so `_nativePush` (below, and rightly) refuses to send state for a
+         * player that has nothing to state — which would make a live, healthy client look exactly
+         * like a dead one. The service would then wake an app that is already awake and write "the
+         * player stopped responding" across a notification the user is looking at. */
+        this._nativeAck();
+        if(a==='play'){ this._resumeOrPlay(); }
         else if(a==='pause'){ if(_audioEl) _audioEl.pause(); }
-        else if(a==='next') this.next();
-        else if(a==='prev') this.prev();
+        // …and a skip on a page holding nothing is a RESUME, not a skip: next() there walks an empty
+        // queue (or `indexOf(null)` → track one of the library, which is not what ⏭ means to anyone).
+        else if(a==='next'){ if(this.cur) this.next(); else this._resumeOrPlay(); }
+        else if(a==='prev'){ if(this.cur) this.prev(); else this._resumeOrPlay(); }
         else if(a==='stop') this.close();
         else if(a==='seekTo'){ if(_audioEl && _audioEl.duration) _audioEl.currentTime=Math.max(0,Math.min(v,_audioEl.duration)); }
         else if(a==='seekBy'){ if(_audioEl){ const d=_audioEl.duration||0;
           _audioEl.currentTime=Math.max(0, d ? Math.min(d,(_audioEl.currentTime||0)+v) : (_audioEl.currentTime||0)+v); } }
+        /* …and this is also the RECEIPT. The service cannot tell a press that was performed from one
+         * that landed in a dead page — emit() succeeds either way — so it treats the state push this
+         * makes as proof somebody was here, and wakes the app when it does not arrive. Synchronous
+         * on purpose: a `next` that has to fetch and decrypt a track would otherwise take longer to
+         * answer than the check waits, and the app would be dragged to the foreground mid-song. */
         this._media();   // the OS believes what it was last told — tell it what the press actually did
-      }); }catch(_){ this._nativeWired=false; }
+      }); }catch(_){ this._nativeWired=false; return; }
+      /* The service outlives this page, so it is told the options again on every load — a renderer
+       * that died and came back has no memory of them, and the service may have been up throughout. */
+      try{ const O=_capPlugin('MusicControls','setOptions');
+        if(O){ const r=O.setOptions({autoplayBluetooth:this.autoplayBT()}); if(r&&r.catch) r.catch(()=>{}); }
+      }catch(_){}
+      /* And say hello immediately. A page that came back after a renderer death arrives with the
+       * service possibly already latched "not responding" from the press that failed a moment ago —
+       * this clears it as soon as there is somebody home, rather than at the end of whatever slow
+       * cold path (relay, key, decrypt) eventually produces the first real state push. */
+      this._nativeAck();
+      this._nativeBeat();
+    },
+    /* "I am here" — no state, so it can be sent when there is nothing playing, which is exactly when
+     * it matters. Never starts the service (the native side no-ops without one), so this cannot put a
+     * notification on screen for a player that has never played. */
+    _nativeAck(){
+      const P=_capPlugin('MusicControls','ack'); if(!P) return;
+      try{ const r=P.ack(); if(r&&r.catch) r.catch(()=>{}); }catch(_){}
+    },
+    /* A HEARTBEAT, BECAUSE PAUSED IS THE STATE THIS BREAKS IN. Nothing used to be pushed while the
+     * player sat paused — _media() runs on play/pause and once a second WHILE PLAYING — so from the
+     * service's side a player paused in a pocket and a player whose WebView Android has since thrown
+     * away look identical for as long as the pause lasts, which in a car is the whole drive. This is
+     * what makes those two distinguishable, and it is what MusicPlugin.status() reports as
+     * `webSilenceMs`. Backgrounded timers are throttled to about once a minute after five minutes
+     * hidden — deliberately not relied on for any decision, which is why an unanswered PRESS (not a
+     * silent heartbeat) is what triggers a wake-up. */
+    _nativeBeat(){
+      if(this._beat) return;
+      this._beat=setInterval(()=>{
+        if(this._nativeOff) return;
+        if(_audioEl && !_audioEl.paused) return;    // playing already pushes once a second
+        // With a track, the full state; without one — a reloaded page, the case this exists for —
+        // the bare ack, which is the only thing there is to say and the only thing that is needed.
+        if(this.cur && this._nativeUp) this._nativePush(); else this._nativeAck();
+      }, 15000);
+    },
+    /* PLAY, ASKED FOR BY SOMETHING THAT CANNOT SEE THIS PAGE — a car button, the lock screen, a
+     * Bluetooth connection, the widget. None of them know whether the player still holds a track,
+     * and after the WebView is reloaded it does not: the renderer dying takes MainActivity through
+     * recreate(), which is a fresh page with an empty queue and a blank <audio>, while the service,
+     * its media session and its notification all carry on untouched. `_audioEl.play()` against no
+     * src resolves against nothing, so the press was silently lost — that is what "the controls
+     * stop working until I open the app" looks like from in here. Falling back to the last track
+     * this device played is what makes the press work anyway, with the app still in the background. */
+    _resumeOrPlay(){
+      this.ensure();
+      if(_audioEl && _audioEl.src){ const r=_audioEl.play(); if(r&&r.catch) r.catch(()=>{}); return true; }
+      /* The library, before asking it anything. Nothing else on a freshly-loaded page has hydrated
+       * the files index yet — renderMusicApp is what normally does it, and the whole point of this
+       * path is that nobody has opened a screen. Synchronous (localStorage), so it costs a read. */
+      try{ FilesIdx.loadLocal(); }catch(_){}
+      const last=this._lastTrack();
+      if(last && musicTracks(null).some(t=>t.sha===last.sha)){ this.play(last.sha,{force:true, at:last.pos||0}); return true; }
+      const q=musicTracks(null);
+      if(q.length){ this.play(q[0].sha,{force:true}); return true; }
+      return false;
+    },
+    _lastTrack(){ try{ const j=JSON.parse(localStorage.getItem('pc_music_last')||'null');
+      return (j && j.sha) ? j : null; }catch(_){ return null; } },
+    /* Where we were, for the resume above. Throttled to once every 5s per track: this is called from
+     * the same once-a-second block that feeds the media session, and a localStorage write a second
+     * for the length of an album is a synchronous disk write a second for nothing. */
+    _rememberLast(){
+      if(!this.cur) return;
+      /* NOT WHILE A TRACK IS LOADING. play() sets `cur` to the new sha synchronously and only assigns
+       * `_audioEl.src` after awaiting the decrypted URL — and `ontimeupdate` keeps firing on the OLD
+       * source across that gap. Writing there files the previous track's position under the new
+       * track's id, so the car-button resume starts the right song three minutes in, or at the end. */
+      if(this._loading) return;
+      const now=Date.now();
+      if(this.cur===this._lastSaveSha && now-(this._lastSaveAt||0)<5000) return;
+      this._lastSaveSha=this.cur; this._lastSaveAt=now;
+      try{ localStorage.setItem('pc_music_last', JSON.stringify({
+        sha:this.cur, pos:Math.floor((_audioEl&&_audioEl.currentTime)||0) })); }catch(_){}
+    },
+    /* "Start playing when a Bluetooth device connects" — per DEVICE (localStorage), not per account:
+     * it is a fact about the phone that rides in the car, and the desktop that shares the account has
+     * no Bluetooth stack to speak of. OFF by default; a phone that starts playing music by itself in
+     * someone else's car is what people uninstall an app over. */
+    autoplayBT(){ try{ return localStorage.getItem('pc_music_autoplay_bt')==='1'; }catch(_){ return false; } },
+    setAutoplayBT(on){
+      try{ localStorage.setItem('pc_music_autoplay_bt', on?'1':'0'); }catch(_){}
+      const P=_capPlugin('MusicControls','setOptions'); if(!P) return;
+      try{ const r=P.setOptions({autoplayBluetooth:!!on}); if(r&&r.catch) r.catch(()=>{}); }catch(_){}
     },
     _nativePush(){
       /* Only once something is playing, and never after the player was closed. update() starts a
@@ -18193,19 +18347,40 @@
           playing:!!(_audioEl && !_audioEl.paused),
           position:(_audioEl&&_audioEl.currentTime)||0,
           duration:(isFinite(d)&&d>0)?d:0 });
-        // A refused service start rejects, and an unhandled rejection is a console error every second.
-        if(r&&r.catch) r.catch(()=>{});
+        /* A refused service start rejects, and an unhandled rejection is a console error every
+         * second. It is also the one thing that tells the heartbeat whether there is a service on
+         * the other end at all: without it a player whose notification was taken down some other way
+         * would keep trying a background foreground-service start every 15s, for ever, and every one
+         * of those is refused. */
+        if(r&&r.then) r.then(()=>{ this._nativeUp=true; }, ()=>{ this._nativeUp=false; });
+        else this._nativeUp=true;
       }catch(_){}
     },
-    /* Launched by the widget. Consumed (never re-read) on the native side, so a later resume can't
-     * replay the press and restart music the user has since paused. */
+    /* Launched by the widget — OR by the service, when a press went unanswered and it woke the app to
+     * get it performed (MusicService.revive). Both put the same extra on the same launch intent, so
+     * there is one mechanism here rather than two that could disagree about what a press means.
+     * Consumed (never re-read) on the native side, so a later resume can't replay the press and
+     * restart music the user has since paused. */
     consumeLaunch(){
       const P=_capPlugin('MusicControls','consumeLaunchAction'); if(!P) return;
       Promise.resolve(P.consumeLaunchAction()).then(r=>{
         const a=r&&r.action; if(!a) return;
-        if(a==='play'){
-          if(_audioEl && _audioEl.src && _audioEl.paused){ _audioEl.play(); this._render(); return; }
-          if(!this.cur){ const q=musicTracks(null); if(q.length){ this.play(q[0].sha, {force:true}); return; } }
+        if(a==='pause'){ if(_audioEl) _audioEl.pause(); return; }
+        /* play / next / prev all end in "make some sound". On a page that still holds a track the
+         * verb means what it says; on one that does not — which is the whole reason the service had
+         * to wake us — every one of them is a resume, and _resumeOrPlay is what knows how.
+         *
+         * The FALLTHROUGH is the point of the shape: a press that could not be performed opens the
+         * Music screen rather than dropping silently, because the launch extra is consumed natively
+         * and there is no second chance at it. The app has already been dragged to the foreground;
+         * landing the user somewhere they can press play themselves is the least it can do. */
+        if(a==='play' || a==='next' || a==='prev'){
+          this.ensure();
+          let done=false;
+          if(this.cur && a==='next'){ this.next(); done=true; }
+          else if(this.cur && a==='prev'){ this.prev(); done=true; }
+          else done=this._resumeOrPlay();
+          if(done){ this._render(); return; }
         }
         renderMusicApp();
       }).catch(()=>{});
@@ -18266,7 +18441,14 @@
       try{ const u=await trackUrl(sha);
         if(this.cur!==sha) return;   // a newer ⏭/⏮ superseded this load while we awaited the URL —
                                      // don't clobber _audioEl.src (that's the "skip plays the wrong song" bug)
-        this._loading=false; _audioEl.src=u; await _audioEl.play(); }
+        this._loading=false; _audioEl.src=u; await _audioEl.play();
+        /* …and pick up where this device left off, for a resume that nobody is looking at (a car
+         * button, a Bluetooth connection). AFTER play(), because currentTime is only settable once
+         * the track is seekable and a value set before that is silently dropped. */
+        // Clamped like every other seek in this object: a stored position from a track that has since
+        // been replaced (same sha, re-uploaded shorter) is past the end, which throws or lands at 0.
+        if(opts && opts.at>0){ try{ const d=_audioEl.duration;
+          _audioEl.currentTime=(isFinite(d)&&d>0) ? Math.min(opts.at, Math.max(0,d-1)) : opts.at; }catch(_){} } }
       catch(e){ if(this.cur===sha){ this._loading=false; toast('play failed: '+(e.message||e)); } }
       if(this.cur===sha) this._render();
     },
@@ -18365,6 +18547,11 @@
       const P=_capPlugin('MusicControls','stop');
       if(P){ try{ const r=P.stop(); if(r&&r.catch) r.catch(()=>{}); }catch(_){} } },
     _tick(){
+      /* Where we are, for a resume nobody is watching. FIRST, above every early return below: the
+       * widget is hidden while the Music app is mounted and the position block further down never
+       * runs then — which is the screen most people press play from. It throttles itself to one
+       * write per 5s per track, so being called on every timeupdate costs nothing. */
+      this._rememberLast();
       /* The app can vanish without telling us — its window is closed, or the shared #feed moved to
        * another window. The widget was hidden BECAUSE the app was mounted, so if the app has gone and
        * something is still playing, hand the transport back. Without this, closing the Music window
@@ -20930,7 +21117,7 @@
     // modifier class on #feed (full-height inner-scroll layout). Those are only toggled in the timeline
     // render path, so opening a profile straight from AI chat inherited feed-ai → the page couldn't
     // scroll ("stuck"). Clear them here so #feed scrolls again.
-    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate','feed-meme');
+    _feedScrollable(feed);
     feed.innerHTML='<div class="spinner"></div>';
     // Opening a profile COLD — a pasted poster.place/<npub> link, a mention tap, a fresh launch — fired both
     // reads below at a still-CONNECTING socket, which silently drops them (relay.js `_send`): the header
@@ -25401,16 +25588,28 @@
     if(NO_IMAGES){ slot.innerHTML=''; return; }   // data saver: skip the per-profile /client/nip05 round trip (show cached only)
     verifyNip05(pubkey, nip05).then(ok => { if(ok && document.contains(slot)) slot.innerHTML = VCHECK; });
   }
-  /* Hand the feed back to a SCROLLABLE view. .feed-ai/.feed-chat/.feed-dm/.feed-translate/.feed-meme
-   * each set `overflow:hidden` (they own their own inner scrollers), and the class survives on #feed
-   * until something clears it — so a normal list rendered straight after one of those paints fine and
-   * cannot be scrolled. renderThread had cleared these by hand for exactly that reason; search did
-   * not, which is what made "search from the taskbar" unscrollable whenever the last thing in that
-   * window was AI, Chat or Messages. One helper so the next scrollable view cannot forget. */
-  const _FEED_FIXED = ['feed-ai','feed-chat','feed-dm','feed-translate','feed-meme'];
+  /* Hand the feed back to a SCROLLABLE view.
+   *
+   * #feed is ONE element shared by every screen, and SEVEN views put a full-height modifier on it:
+   * feed-chat, feed-dm, feed-ai, feed-translate, feed-meme, feed-admin, feed-term. Every one of them
+   * is `overflow:hidden` in the stylesheet, because those screens own their own inner scroller — and
+   * the class survives on #feed until something clears it, so a normal list painted straight after
+   * one of them renders perfectly and cannot be scrolled. renderView() toggles all seven off the
+   * current VIEW, so anything routed through switchView() is fine; the views that paint into #feed
+   * directly are the ones that have to clear it themselves.
+   *
+   * THE LIST USED TO BE WRITTEN OUT, AND IT LISTED FIVE. feed-admin and feed-term were in none of the
+   * four copies of it, so opening a profile from the Admin panel or the terminal left overflow:hidden
+   * on the container the profile scrolls in: the header and the first post drew, everything below was
+   * clipped at the fold, and the page would not move. Every tab looked identical, because the
+   * clipping is the CONTAINER and has nothing to do with what is in it — reported as "loaded my
+   * profile, see 1 post, then can't scroll down to see anything else; all profile tabs show a little
+   * bit". This had already been fixed twice by adding names to a list (feed-ai, then search's copy),
+   * which is the shape of fix that comes back the next time a view is added. Asking the class list
+   * what is actually on the element cannot miss one. */
   function _feedScrollable(feed){
     const f = feed || $('#feed');
-    if(f) f.classList.remove(..._FEED_FIXED);
+    if(f && f.classList) Array.from(f.classList).forEach(c=>{ if(c.indexOf('feed-')===0) f.classList.remove(c); });
     return f;
   }
   async function runSearch(q){
@@ -27368,7 +27567,7 @@
     VIEW='hashtag'; _hidePill(); _clearNav(); $('#view-title').textContent='#'+tag;
     cleanupInlineStream();
     const feed=$('#feed');
-    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate','feed-meme');   // scrollable view — clear chat/AI overflow:hidden
+    _feedScrollable(feed);   // a normal scrolling view — clear every full-height modifier
     feed.innerHTML='<div class="spinner"></div>';
     // The relay's #t filter is case-SENSITIVE, but trending lowercases tags AND counts inline #hashtags —
     // so a post tagged "LillyPhillips" (or one that only writes #LillyPhillips in its text) trended yet the
@@ -27564,7 +27763,7 @@
   }
   function renderTrending(){
     const feed=$('#feed'); if(!feed) return;
-    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate','feed-meme');   // scrollable list view
+    _feedScrollable(feed);   // a normal scrolling list view
     _tr.gen++;   // invalidate any in-flight page from the previous entry / the other tab
     _tr.win=TR_WIN0; _tr.done=false; _tr.exhausted=false; _tr.unreachable=false; _tr.shown=new Set(); _tr.queue=[]; _tr.loading=true;
     // Same header as Home/Nostrverse (composer + tabs) and the same #tl-notes box, so the inline

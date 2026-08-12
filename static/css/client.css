@@ -7375,6 +7375,13 @@ body.os-on #os-root{pointer-events:auto}
  * phone: without it the browser claims the gesture as a page scroll and the pointermove events that
  * drag the handle simply stop arriving mid-drag. */
 .ma-seek-row{flex:1 1 100%;display:flex;align-items:center;gap:10px;margin-top:2px}
+/* The car row (APK only — see _bindMusicCar). Wraps, because the diagnostic line under it is a
+ * sentence and not a chip: on a phone it is several lines of measured counters, and clipping the
+ * end of it would remove the one part that says WHICH failure the phone saw. */
+.ma-car{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0 2px}
+.ma-car-sw{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);cursor:pointer}
+.ma-car-sw input{accent-color:var(--neon);width:16px;height:16px;flex:none}
+.ma-car-note{flex:1 1 100%;word-break:break-word;line-height:1.5}
 /* The playlist bar. A horizontally SCROLLING strip, never a wrapping block: a library with a dozen
  * playlists would otherwise push the track list off a phone screen entirely, and the list is what
  * the screen is for. Same shape the folder chips use in Files for the same reason. */

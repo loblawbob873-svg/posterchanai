@@ -365,6 +365,49 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   the same app can steal it from the first, at which point Chromium pauses the element the fix exists
   to keep playing. That needs one measurement on a device; `ACTION_AUDIO_BECOMING_NOISY` (pause on
   unplug) is handled, since it cannot break playback either way.
+  **A PRESS IS NOT PLAYBACK, and the service is the only thing that can tell them apart.** Every
+  button ends in `emit()` — a call into the WebView — and the WebView is the half Android takes away:
+  the renderer is killed under memory pressure (`MainActivity.recreate` → a fresh page with an EMPTY
+  player) and a backgrounded Activity is destroyed outright, while this foreground service keeps the
+  session and the notification exactly as they were. Reported as *"after a while in the car the
+  multimedia controls no longer work until I open the app again"*, with nothing in any log, because
+  from the service's side the emit SUCCEEDED. Three things now stand between that and a dead button:
+  (1) `_nativeInit` is armed **at startup**, not from `ensure()` — it used to run only the first time
+  THIS page played something, so a page that came back after a renderer death had nothing subscribed
+  to `musicTransport` at all; (2) a press that should make sound goes through **`press()`** (NOT
+  `command()` — that name is the notification's PendingIntent builder, and Java ignores return types
+  when comparing signatures, so the duplicate stopped the whole module compiling while every regex
+  test here stayed green; `tests/…::test_no_two_methods_in_a_file_share_a_signature` now parses the
+  declarations), which waits for a RECEIPT and wakes the app with the press attached when none
+  arrives — measuring the wake-up too, since a background activity start is **refused silently** from
+  Android 10 on; (3) `_resumeOrPlay` falls back to the last track this device played, so a car button
+  works on a page holding nothing, with the app still in the background.
+  **The receipt is a bare `ack()`, not the state push**, and that distinction is the whole thing: a
+  reloaded page holds no track, so `_nativePush` (rightly) sends nothing — used as the receipt it made
+  a LIVE client identical to a dead one, waking an app that was already awake and then writing "the
+  player stopped responding" over a notification the user was looking at. **Pause is receipt-checked
+  too, via `hush()`** — `playing` is only ever written by the client, so a WebView that vanished
+  mid-track leaves the service believing a track plays forever, and the notification's one transport
+  button then stays a ⏸ whose every press takes the same dead branch. `hush` never `revive()`s (a car
+  stereo must not open an app to stop silence) but does `markGone()`, which frees the toggle. The
+  widget goes through `fromWidget()` for the same check — it is the surface most often pressed with
+  the app closed. The client also heartbeats **while paused** (the state the failure happens in, and
+  the one state nothing was ever pushed in). Nothing DECIDES on heartbeat silence — backgrounded
+  timers are throttled to ~1/min — only an unanswered press does.
+  **Bluetooth autoplay** (`autoplayBluetooth`, opt-in, per device) rides the same path:
+  `registerAudioDeviceCallback`, **never** a `BluetoothDevice` broadcast (`ACL_CONNECTED` and the A2DP
+  state broadcast both need the `BLUETOOTH_CONNECT` runtime permission on 12+, for a device TYPE that
+  is free without it). Gotchas: the callback fires IMMEDIATELY with everything already connected, which
+  is the service starting and not a car door (`firstDeviceSweep`); one connection reports several
+  devices; and it only works while the player is up, since with it closed there is no session and
+  nothing decrypted. A media button arriving cold is started by `MediaButtonReceiver` with
+  `startForegroundService`, so that path must `startForeground` or `stopSelf` within ~5s — and its
+  KeyEvent is read rather than assumed, because a press arrives as DOWN *and* UP (two wake-ups) and ⏭
+  is a media button too. `MusicPlugin.status()` reports what the phone measured (silence, unanswered
+  presses, wake-ups, BT connects); Music → "Details" is where it is read. **Those counters are
+  `static`**, because the case they exist to explain is the cold one and that path ends in
+  `stopSelf()` — read off the instance, the panel answered "nothing has played this session" about
+  the very press being investigated.
   `tests/test_android_music_controls.py` guards the wiring (the Gradle build only runs in CI).
 - **Video generation** (`videogeni` command; `app/services/video_service.py` + `video_factory.py` +
   `app/routers/video_api.py`): text-to-video, **NATIVE in-process diffusers** (unlike music — LTX/Wan/

@@ -32,8 +32,15 @@ import com.getcapacitor.annotation.PermissionCallback;
 )
 public class MusicPlugin extends Plugin {
 
-  /** Set on the launch Intent by the widget; read once by JS (see consumeLaunchAction). */
+  /** Set on the launch Intent by the widget — and by MusicService when a press went unanswered and
+   *  it had to wake the app to get it performed; read once by JS (see consumeLaunchAction). */
   public static final String EXTRA_LAUNCH_ACTION = "pc_music_action";
+  /** When that press was made. An intent delivered to an app that is ALREADY on screen fires
+   *  onNewIntent and then sits there — nothing re-reads it until the next resume — so without this a
+   *  press could be performed minutes later, starting music over somebody who had since paused it. */
+  public static final String EXTRA_LAUNCH_AT = "pc_music_action_at";
+  /** How old a parked press may be before it is dropped rather than performed. */
+  private static final long LAUNCH_MAX_AGE_MS = 60_000;
 
   private boolean askedForNotifications = false;
 
@@ -123,6 +130,61 @@ public class MusicPlugin extends Plugin {
   }
 
   /**
+   * The client's options. Persisted natively (see MusicService.setAutoplayBluetooth) because the
+   * service outlives the page that set them, and a reloaded WebView pushes them again on the way up.
+   */
+  @PluginMethod
+  public void setOptions(PluginCall call) {
+    if (call.hasOption("autoplayBluetooth")) {
+      MusicService.setAutoplayBluetooth(getContext(),
+          Boolean.TRUE.equals(call.getBoolean("autoplayBluetooth", false)));
+    }
+    call.resolve();
+  }
+
+  /**
+   * WHAT THE PHONE ACTUALLY MEASURED. This feature fails by reporting success from every side — the
+   * notification is up, the emit returned, and no sound comes out — and there is no device here to
+   * watch it happen on. So the counters the service keeps are readable from the app: whether the
+   * service is running at all, how long since the client last answered it, how many presses went
+   * unanswered, how many times the app had to be woken, and what the last Bluetooth connection did.
+   */
+  @PluginMethod
+  public void status(PluginCall call) {
+    JSObject r = new JSObject();
+    MusicService svc = MusicService.INSTANCE;
+    r.put("running", svc != null);
+    r.put("autoplayBluetooth", MusicService.autoplayBluetooth(getContext()));
+    /* The counters are STATIC, and read whether or not a service is alive right now. The case this
+     * panel exists to explain is the cold one — a press made in the car with the app closed — and
+     * that path deliberately ends in stopSelf(), so reading them off the instance answered "not
+     * running, nothing has played this session" about the very press being investigated. */
+    r.put("btConnects", MusicService.btConnects);
+    r.put("btAutoplays", MusicService.btAutoplays);
+    r.put("unanswered", MusicService.unanswered);
+    r.put("revived", MusicService.revived);
+    r.put("note", MusicService.note);
+    if (svc != null) {
+      r.put("playing", svc.isPlaying());
+      r.put("webSilenceMs", svc.webSilenceMs());
+      r.put("webGone", svc.webGone());
+    }
+    call.resolve(r);
+  }
+
+  /**
+   * "I am still here." The client's answer to a transport event — see MusicService.ack for why this
+   * is not just another update(): a page that has reloaded holds no track, so it has no state to
+   * push, and a client that cannot push is not a client that is gone.
+   */
+  @PluginMethod
+  public void ack(PluginCall call) {
+    MusicService svc = MusicService.INSTANCE;
+    if (svc != null) svc.ack();
+    call.resolve();
+  }
+
+  /**
    * What the widget was tapped with, if the app was launched by it. CONSUMED — returned once and
    * cleared, or a later resume would re-fire the same press and restart the music under someone who
    * had paused it.
@@ -135,7 +197,10 @@ public class MusicPlugin extends Plugin {
       Intent i = getActivity() == null ? null : getActivity().getIntent();
       if (i != null) {
         action = i.getStringExtra(EXTRA_LAUNCH_ACTION);
-        if (action != null) i.removeExtra(EXTRA_LAUNCH_ACTION);
+        long at = i.getLongExtra(EXTRA_LAUNCH_AT, 0);
+        if (action != null) { i.removeExtra(EXTRA_LAUNCH_ACTION); i.removeExtra(EXTRA_LAUNCH_AT); }
+        // Stale = never performed. A press parked in an intent is a press the user has moved on from.
+        if (action != null && at > 0 && System.currentTimeMillis() - at > LAUNCH_MAX_AGE_MS) action = null;
       }
     } catch (Exception ignored) {}
     ret.put("action", action == null ? "" : action);
