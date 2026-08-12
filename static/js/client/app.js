@@ -14534,12 +14534,16 @@
   }
   // Card label that KEEPS the extension visible: a plain name.slice(0,18) cut it off the end of every
   // longish filename, so the drive showed no file types at all. Truncate the stem, never the suffix.
+  /* The tile's caption. The card gives the name a full row and TWO lines (see .file-card .meta),
+   * so the budget is about two lines' worth of characters — it was 20, from when the name shared one
+   * line with the buttons, and 20 characters is "Quarterly report ….pdf" for every document anybody
+   * actually has. The extension is always kept: it is the half that says what the file IS. */
   function fileLabel(nm, ext, size){
     if(!nm) return (ext?ext.toUpperCase()+' · ':'')+(((size||0)/1024|0)+'KB');
     const dot=nm.lastIndexOf('.'), hasExt = dot>0 && /^[A-Za-z0-9]{1,8}$/.test(nm.slice(dot+1));
     const stem = hasExt ? nm.slice(0,dot) : nm;
     const suf  = hasExt ? nm.slice(dot+1) : ext;      // name carries no extension → show the derived one
-    const room = suf ? Math.max(6, 20-suf.length) : 20;
+    const room = suf ? Math.max(12, 46-suf.length) : 46;
     return (stem.length>room ? stem.slice(0,room)+'…' : stem) + (suf?'.'+suf:'');
   }
   /* Turn a tile whose preview did not load into the icon it would have been.
@@ -25431,6 +25435,15 @@
     // Posts via NIP-50 FTS, and the Discover kinds (articles/streams/communities) fetched + filtered
     // client-side (FTS doesn't index them) — run in parallel.
     const ql=q.toLowerCase();
+    /* WAIT FOR A SOCKET THAT CAN ANSWER FIRST. A REQ written to a socket that is not OPEN is dropped
+     * (relay.js `_send`), and a ZOMBIE — one the proxy idle-closed while the browser still reports it
+     * OPEN — accepts the REQ and answers nothing at all. Either way `query` resolves empty on its 6s
+     * timer, and this screen then says "No matching posts" about a search the relay would have
+     * answered: reported as "0 results for half-life, then closing it and redoing it a few times
+     * showed results". Measured against this relay while fixing it: 39 matching notes, every time,
+     * once a live socket exists. renderProfileView and flushEvents already wait like this. */
+    try{ if(Relay.ready) await Relay.ready(4000); }catch(_){}
+    if(VIEW!=='search') return;
     const [postEvs, addrEvs, profEvs] = await Promise.all([
       Relay.query([{ kinds:[1], search:q, limit:40 }]).catch(()=>[]),
       Relay.query([{ kinds:[30023,30311,34550,2003,30617], limit:240 }]).catch(()=>[]),
@@ -25458,8 +25471,17 @@
     if(repos.length){ html+='<div class="search-section-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-git"></use></svg>Git Repos</div><div class="repo-grid">'+repos.map(repoCard).join('')+'</div>'; }
     const posts=postEvs.sort((a,b)=>b.created_at-a.created_at);
     html+='<div class="search-section-title">Posts</div>';
-    html+= posts.length ? `<div id="search-posts">${posts.map(feedNoteHtml).join('')}</div>` : '<div class="empty">No matching posts.</div>';
+    /* AN UNANSWERED SEARCH IS NOT AN EMPTY ONE. `complete` is false when the relays never EOSE'd —
+     * a timeout, a socket still connecting, nothing live to ask — and telling somebody who typed a
+     * word that there is nothing to find is the one answer that sends them away. Offer the retry
+     * instead; it is what they were doing by hand. */
+    const answered = postEvs.complete !== false;
+    html+= posts.length ? `<div id="search-posts">${posts.map(feedNoteHtml).join('')}</div>`
+         : (answered ? '<div class="empty">No matching posts.</div>'
+                     : `<div class="empty">Your relays didn’t answer in time — this is not "nothing found".<br>
+                          <button class="btn btn-cyan small" id="search-retry" style="margin-top:10px">Search again</button></div>`);
     feed.innerHTML=html; hydrate(feed);
+    { const rb=$('#search-retry',feed); if(rb) rb.onclick=()=>runSearch(q); }
     $$('[data-prof]',feed).forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
     // Discover result cards → open the right view (community vs stream share .stream-card → split by kind).
     $$('.article-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const a=Store.get(c.dataset.id); if(a) openArticle(a); });
@@ -25478,7 +25500,9 @@
     const cont=$('#search-posts'); if(!cont){ _search.done=true; return; }
     _search.loading=true; const q=_search.q; const feed=$('#feed'); loadSentinel(feed);
     const until=_search.oldest;
-    let evs=[]; try{ evs=await Relay.query([{ kinds:[1], search:q, until:until-1, limit:30 }]); }catch(_){}
+    let evs=[], answered=true;
+    try{ evs=await Relay.query([{ kinds:[1], search:q, until:until-1, limit:30 }]); answered = evs.complete !== false; }
+    catch(_){ evs=[]; answered=false; }
     clearSentinel(feed);
     if(VIEW!=='search' || _search.q!==q){ _search.loading=false; return; }
     evs.sort((a,b)=>b.created_at-a.created_at);
@@ -25492,7 +25516,10 @@
     invalidateCounts();
     if(frag.childElementCount){ cont.appendChild(frag); _capFeedDom(feed, cont); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); }
     if(minTs<_search.oldest) _search.oldest=minTs;
-    if(!evs.length || minTs>=until) _search.done=true;
+    // Only an ANSWERED page can end the results. A timeout latching `done` is how a search stops
+    // paging for the rest of its life on one slow moment — the same rule the timeline's `complete`
+    // check exists for.
+    if(answered && (!evs.length || minTs>=until)) _search.done=true;
     _search.loading=false;
   }
 

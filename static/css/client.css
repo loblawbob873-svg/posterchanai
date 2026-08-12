@@ -2292,10 +2292,20 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    pointer on the whole card instead of the link's "this will open" affordance. */
 .files-grid.selmode .file-card a{cursor:pointer}
 .file-card img,.file-card video{width:100%;height:140px;object-fit:cover;display:block;background:#120c24}
-.file-card .meta{padding:8px;font-size:11px;color:var(--muted);display:flex;justify-content:space-between;align-items:center;gap:6px}
-/* filename: one line, ellipsised — the label now carries the extension, so it must never wrap the card */
-.file-card .meta .fname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.file-card .meta .fc-acts{flex:none;display:flex;align-items:center;gap:2px}
+/* THE NAME GETS ITS OWN LINE. Exactly the music-row bug (see .track below): one flex line held the
+   filename and a row of flex:none icon buttons, so the NAME absorbed the entire squeeze. Measured on
+   a synced folder at every width: a 150px tile, ~110px of buttons, and 10-25px left for the name —
+   one character and an ellipsis ("B…"), which is not a file manager.
+
+   So the meta block wraps: the name takes a full row of the tile and up to two lines, the actions sit
+   underneath it, right-aligned. `flex-basis:100%` is what forces the break — the buttons cannot fit
+   beside a full-width item, so they start line two on their own. */
+.file-card .meta{padding:8px;font-size:11px;color:var(--muted);display:flex;flex-wrap:wrap;
+  justify-content:space-between;align-items:center;gap:4px 6px}
+.file-card .meta .fname{flex:1 1 100%;min-width:0;overflow:hidden;line-height:1.35;
+  white-space:normal;overflow-wrap:anywhere;word-break:break-word;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.file-card .meta .fc-acts{flex:none;margin-left:auto;display:flex;align-items:center;gap:2px}
 .file-card .meta .dlbtn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:4px 6px;line-height:1}
 .file-card .meta .dlbtn:hover{color:var(--cyan,#5ff)}
 .file-icon{display:flex;flex-direction:column;align-items:center;justify-content:center;height:140px;gap:6px;font-size:42px;background:#120c24}

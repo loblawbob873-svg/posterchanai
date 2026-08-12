@@ -222,16 +222,13 @@ def _kfmt(v) -> str:
 def _draw_panel(base, reg, xlabels, posts, dau, post_color, dau_color, post_mode, title, fonts):
     """Draw one chart into region `reg`=(x0,y0,x1,y1). post_mode 'bars' or 'lines'.
 
-    TWO SERIES, TWO AXES, AND BOTH AXES ARE DRAWN. Posts and active users differ by roughly a factor
-    of six here, so one scale would flatten the smaller series into the x-axis — which is why the
-    active-users line was normalised to its own maximum. But only the POSTS axis was ever labelled,
-    so on the 30-day and 6-month panels (where per-point labels are too dense to print) the line sat
-    near the top of a scale that reads in posts, and 1.4k active users read as ~9k. That is the
-    "active users looks way higher on Last 30 days" report: the same ~1,400 people, drawn at three
-    different heights on three panels, against numbers belonging to something else.
+    ONE SCALE, ON THE LEFT, FOR BOTH SERIES — so the line sits where its numbers put it, about a sixth
+    of the way up, because there are about a sixth as many people as posts.
 
-    So the right-hand axis is the active-users scale, in that series' own colour, and both maxima are
-    rounded (`_nice_max`) so the five shared gridlines are readable on both sides.
+    It was normalised to its OWN maximum at 92% of the panel height while the only axis drawn was the
+    posts one, so ~1,400 people read as ~9k and the same measurement appeared at three different
+    heights on three panels. A second axis would fix the reading and invent a different lie: two
+    series that share an axis can be compared, two that do not cannot.
 
     Glow is composited per-panel — the glow layer is black outside this panel's shapes, so screen()
     only blooms here."""
@@ -250,21 +247,19 @@ def _draw_panel(base, reg, xlabels, posts, dau, post_color, dau_color, post_mode
     d.line([(lx + 95, y0 - 19), (lx + 111, y0 - 19)], fill=dau_color, width=3)
     d.text((lx + 117, y0 - 27), "Active users", font=f_sm, fill=_TEXT, anchor="la")
 
-    # The right margin is the active-users axis now, so the plot stops short of the panel edge.
-    L, R, T, B = x0 + 52, x1 - 56, y0 + 6, y1 - 40
+    L, R, T, B = x0 + 52, x1, y0 + 6, y1 - 40
     pw, ph = R - L, B - T
     n = len(posts)
-    pmax = _nice_max(max(posts))
-    dmax = _nice_max(max(dau))
-    for g in range(5):                       # grid + BOTH y-scales, each in its series' colour
+    # ONE maximum, covering both series, rounded so the ticks are numbers a reader can hold.
+    smax = _nice_max(max(max(posts), max(dau)))
+    for g in range(5):
         y = B - ph * g / 4
         d.line([(L, y), (R, y)], fill=_GRID)
-        d.text((L - 10, y - 8), _kfmt(pmax * g / 4), font=f_sm, fill=post_color, anchor="ra")
-        d.text((R + 10, y - 8), _kfmt(dmax * g / 4), font=f_sm, fill=dau_color, anchor="la")
+        d.text((L - 10, y - 8), _kfmt(smax * g / 4), font=f_sm, fill=_MUTED, anchor="ra")
     slot = pw / n
     xs = [L + slot * i + slot / 2 for i in range(n)]
-    post_pts = [(xs[i], B - ph * posts[i] / pmax) for i in range(n)]
-    dau_pts = [(xs[i], B - ph * dau[i] / dmax) for i in range(n)]
+    post_pts = [(xs[i], B - ph * posts[i] / smax) for i in range(n)]
+    dau_pts = [(xs[i], B - ph * dau[i] / smax) for i in range(n)]
     bw = slot * 0.5
     bars = [(xs[i] - bw / 2, post_pts[i][1], xs[i] + bw / 2, B) for i in range(n)]
 
@@ -298,10 +293,8 @@ def _draw_panel(base, reg, xlabels, posts, dau, post_color, dau_color, post_mode
     for i in range(n):
         if i % step == 0 or i == n - 1:
             d.text((xs[i], B + 8), xlabels[i], font=f_sm, fill=_MUTED, anchor="ma")
-    # ONLY THE POSTS SERIES IS LABELLED PER POINT, now that the active-users axis exists. Both were
-    # labelled, and on a bars panel the two collided head-on — "9.3k" printed over "1.5k", which is a
-    # worse way to read a number than not printing it. The line's own axis is on the right, in its
-    # own colour, and the exact totals are in the post text.
+    # Both series are labelled where there is room. On a shared scale the line sits well below the bar
+    # tops, so the labels no longer collide the way they did when it was blown up to its own scale.
     if n <= 10:
         for i in range(n):
             if posts[i]:
@@ -317,6 +310,8 @@ def _draw_panel(base, reg, xlabels, posts, dau, post_color, dau_color, post_mode
                 else:
                     d.text((xs[i], post_pts[i][1] - 7), _kfmt(posts[i]), font=f_sm, fill=post_color,
                            anchor="mb", stroke_width=2, stroke_fill=_BG)
+            d.text((dau_pts[i][0], dau_pts[i][1] - 8), _kfmt(dau[i]), font=f_sm, fill=dau_color,
+                   anchor="mb", stroke_width=2, stroke_fill=_BG)
 
 
 def _render_chart(stats: dict, title: str) -> bytes:
@@ -350,9 +345,7 @@ def _render_chart(stats: dict, title: str) -> bytes:
                     _VIOLET, _ORANGE, "bars", f"Last {len(m_labels)} months", fonts)
 
     d = ImageDraw.Draw(base)
-    # The footer has to say which axis is which, because the two series are now on different scales:
-    # a reader who takes the line off the left-hand numbers is the bug this chart just had.
-    foot = (f"Posts (left axis) = kind-1 notes · Active users (right axis) = distinct authors, "
+    foot = (f"One scale: posts and active users are both read off the left axis · kind-1 notes, "
             f"complete UTC days · NIP-05 profiles only · {stats['nip05_total']:,} known")
     d.text((70, H - 38), foot, font=f_sm, fill=_MUTED, anchor="la")
 
@@ -387,20 +380,15 @@ def _summary_text(stats: dict) -> str:
     name = _instance_name()
     relays = _relay_count()
     src = f"{relays} relays" if relays else "its connected relays"
-    # "Active users" on two windows reads as one number that moved. It is two different questions,
-    # and the answer to the comparable one — how many posted on an average DAY — goes beside them.
+    # The per-day average is the figure that means the same thing in both windows — a distinct-user
+    # count over 30 days is bigger than one over 7 for no reason but the length of the window.
     return (
         f"📊 Nostr activity on {name}\n\n"
-        f"Past 7 days:\n"
-        f"• {stats['posts_week']:,} posts · {stats['active_week']:,} people posted "
+        f"Past 7 days: {stats['posts_week']:,} posts · {stats['active_week']:,} people "
         f"(~{stats.get('dau_avg_week', 0):,}/day)\n"
-        f"Past 30 days:\n"
-        f"• {stats['posts_month']:,} posts · {stats['active_month']:,} people posted "
+        f"Past 30 days: {stats['posts_month']:,} posts · {stats['active_month']:,} people "
         f"(~{stats.get('dau_avg_month', 0):,}/day)\n\n"
-        f"How it's counted: complete UTC days, users with a NIP-05 address in their profile, from "
-        f"this relay's view of {src}. Posts = kind-1 notes. \"People posted\" is distinct authors "
-        f"in the whole window, so the 30-day figure counts anyone who posted even once — the "
-        f"per-day average is the one to compare.\n\n"
+        f"Complete UTC days · kind-1 notes · profiles with a NIP-05 · this relay's view of {src}\n"
         f"{stats['nip05_total']:,} NIP-05 users known\n\n"
         f"#nostr #grownostr #nostrstats"
     )

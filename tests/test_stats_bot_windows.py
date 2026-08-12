@@ -6,12 +6,10 @@ Reported as "Last 30 Days and Last 7 days Active Users makes no sense — Active
 higher on Last 30 days". Two separate causes, both of which made a correct measurement read as a
 wrong one:
 
-  THE LINE WAS DRAWN ON THE WRONG AXIS. Posts and active users differ by about 6x, so the
-  active-users series was normalised to its own maximum at 92% of the panel height — but the only
-  y-axis drawn was the POSTS one. On the 7-day panel every point carried a value label so it read
-  fine; on the 30-day and 6-month panels there are too many points to label, so the line sat near
-  the top of a scale reading in posts and ~1,400 people read as ~9,000. Same measurement, three
-  panels, three apparent magnitudes.
+  THE LINE WAS DRAWN ON THE WRONG SCALE. It was normalised to its own maximum at 92% of the panel
+  height while the only y-axis drawn was the POSTS one, so ~1,400 people read as ~9,000 and the same
+  measurement appeared at a different height on each of the three panels. Both series share the left
+  axis now: fewer people than posts means a line near the floor, which is the truth.
 
   THE LAST DAY WAS A PART-DAY. The window ended TODAY, so every chart's final bar was however much
   of today had happened — measured mid-morning UTC, 4.9k posts against a 9k run rate — and "past 7
@@ -154,56 +152,42 @@ class TestTheChartScales(unittest.TestCase):
                 self.assertGreaterEqual(S._nice_max(v), v)
                 self.assertEqual(S._nice_max(v), want)
 
-    def test_the_active_users_series_has_a_scale_of_its_own_on_the_panel(self):
-        """THE BUG, measured in pixels — and it is about the AXIS, not the line.
+    def test_both_series_are_drawn_on_the_one_left_scale(self):
+        """THE BUG, measured in pixels.
 
-        The line always did span the panel: it was normalised to its own maximum. What it did not
-        have was a scale saying so, and the only numbers on the panel were the posts axis on the
-        left. A reader takes the line's height off the nearest numbers, and those numbers were six
-        times too big. So what has to be on screen is a right-hand axis in the series' own colour —
-        and a series whose top value reaches the top of it.
+        The active-users line was normalised to its OWN maximum at 92% of the panel height while the
+        only axis on the panel was the posts one — so ~1,400 people were drawn at the height of ~9,000
+        posts, and the same measurement appeared at a different height on every panel. Both series
+        read off the left axis now: with posts at 50-70k and users at 500-2,000, the line belongs near
+        the FLOOR, and anything else is the renderer inventing a scale.
         """
         from PIL import Image
         W = H = 400
         base = Image.new("RGB", (W, H), S._BG)
         posts = [50000, 60000, 55000, 70000]
-        dau = [500, 1000, 1500, 2000]              # _nice_max → 2000, so the last point IS the top
+        dau = [500, 1000, 1500, 2000]
         fonts = (S._font(17), S._font(14), S._font(20))
         reg = (20, 40, W - 20, H - 20)
         S._draw_panel(base, reg, ["a", "b", "c", "d"], posts, dau,
                       S._CYAN, S._MAGENTA, "lines", "t", fonts)
 
-        # Where did the magenta series actually land? Match on hue rather than exact RGB — the glow
-        # pass blends it — and only inside the plot area, so the legend swatch is not counted.
+        # Where did the magenta series land? Match on hue (the glow pass blends it) and only inside
+        # the plot area, so the legend swatch and the value labels' outlines are not counted.
         x0, y0, x1, y1 = reg
-        top, bottom = H, 0
-        for y in range(y0 + 6, y1 - 40):
-            for x in range(x0 + 60, x1 - 60):
-                r, g, b = base.getpixel((x, y))
-                if r > 150 and b > 120 and g < 90:      # magenta-ish
-                    top = min(top, y)
-                    bottom = max(bottom, y)
-        self.assertLess(top, H, "the active-users series was not drawn at all")
         plot_top, plot_bottom = y0 + 6, y1 - 40
         height = plot_bottom - plot_top
-        # The maximum reaches the top of the panel...
-        self.assertLess(top - plot_top, height * 0.12,
-                        "the largest active-users value should reach the top of its own scale")
-        # ...and the series spans most of it, rather than being squashed against either edge.
-        self.assertGreater(bottom - top, height * 0.6,
-                           "the active-users line is flattened — it is being scaled by the posts axis")
-
-        # AND THE SCALE IS ON THE PANEL. Tick labels in the series' colour, in the right margin —
-        # i.e. outside the plot the line is drawn in. Without them the line has no numbers of its
-        # own and is read off the posts axis, which is the whole report.
-        right = 0
-        for y in range(y0, y1):
-            for x in range(x1 - 54, x1):
+        top = H
+        for y in range(plot_top, plot_bottom):
+            for x in range(x0 + 60, x1 - 60):
                 r, g, b = base.getpixel((x, y))
                 if r > 150 and b > 120 and g < 90:
-                    right += 1
-        self.assertGreater(right, 30,
-                           "no active-users axis: the line's only numbers are the posts scale")
+                    top = min(top, y)
+        self.assertLess(top, H, "the active-users series was not drawn at all")
+        # 2,000 against a 70,000 axis is 3% of the height. Allow generous room for the marker and its
+        # label, and still refuse anything that has been blown up to fill the panel.
+        self.assertGreater(top, plot_bottom - height * 0.35,
+                           "the active-users series is drawn far above where the left axis puts it — "
+                           "it is being scaled by something other than the shared maximum")
 
 
 if __name__ == "__main__":
