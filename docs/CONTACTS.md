@@ -48,10 +48,17 @@ right property. `tests/test_vcard.py` runs that file under node and asserts it: 
 number keeps the photo, keeps `X-*` fields, keeps the other app's `PRODID`, and never changes the
 UID.
 
-## Sync to a phone
+## Sync to another device (CardDAV)
+
+**On the Android app, skip this section.** ⋯ → Addressbooks → *Sync to this phone's Contacts app* is
+one switch and needs no URL, no password and no other software — see below. CardDAV is for your
+*other* devices: a desktop, an iPhone, a second Android phone, and anything that has to keep syncing
+while this app is closed. The Addressbooks panel leads with whichever of the two applies to the
+device you are holding.
 
 Same account, same password, same URL as the calendar — there is **one** CalDAV/CardDAV identity per
-user, not two. Generate the app password in Calendar → **⋯ → Sync to a device** and use:
+user, not two. **⋯ → Addressbooks → Sync to a device** on this screen shows the details, including
+each address book's own collection URL, and generates the app password:
 
 ```
 URL       https://<your-node>/caldav/<username>/
@@ -62,6 +69,11 @@ Password  the generated app password   (shown once)
 The username is your account's username — for a Nostr sign-in that is the `npub_…` handle, and **no
 email is needed**. DAVx5 discovers both the calendars and the addressbooks from that one URL.
 
+That panel is the Contacts screen's own, and it hands out **addressbook** URLs. It used to borrow the
+calendar's, which is not exported from `calendar.js` — so the button fell through to its fallback and
+navigated to the calendar. Reached, it would have been worse than that: a calendar URL under a
+Contacts heading is accepted by every client and syncs an empty address book with no error.
+
 The password is separate from your login password on purpose: a phone stores it forever in plain
 form, most accounts here signed in with a Nostr key and have no password at all, and revoking a
 device must not log you out of everything else. Generating a new one immediately invalidates every
@@ -69,26 +81,71 @@ device using the old one — that is also how you revoke.
 
 ## On Android: put them in the phone's OWN Contacts app
 
-**⋯ → Addressbooks → "Show these contacts in this phone's Contacts app"**, in the packaged Android
-app only. Your address book is copied into the phone itself, so these people appear in the **dialer**,
-in messaging apps, in the share sheet and anywhere else the phone offers a contact — with **no other
-software installed**. CardDAV (above) already gives you this through DAVx⁵; this is the same result
-without it.
+**⋯ → Addressbooks → "Sync to this phone's Contacts app"**, in the packaged Android app only, where
+it is the first thing in that panel and the only one you need. Your address book is kept in step with the phone itself, so these people appear in the
+**dialer**, in messaging apps, in the share sheet and anywhere else the phone offers a contact — with
+**no other software installed** — and a contact you add or edit in the phone's own Contacts app comes
+back here. CardDAV (above) already gives you this through DAVx⁵; this is the same result without it,
+with one difference that matters and is stated below: it only runs while this app is open.
 
 **Off by default**, per device, and it asks for Android's contacts permission at the moment you turn
 it on. Refusing changes nothing.
 
+An APK older than this feature says so — "update the app to turn this on" — rather than quietly
+offering the CardDAV page instead. A CardDAV URL is the wrong answer to "put my contacts on this
+phone": it sends somebody to install DAVx⁵ for something the app in front of them already does.
+
 ### What it is, precisely
 
-**One way: app → phone.** Edits made in the phone's own Contacts app are not read back and are
-replaced by the next push. The account type declares no edit schema, so an AOSP-derived Contacts app
-shows these cards as read-only — which is what they are. **CardDAV remains the two-way path**, and is
-the one to use on a desktop, on iOS, or when you want to add a contact from the phone.
+**Both ways.** Add or edit a contact in the phone's own Contacts app and it appears here; add or edit
+one here and it appears on the phone. The account declares an edit schema, so the Contacts app offers
+"Edit" on these cards and lists PosterChan when you choose where to save a new one.
+
+**It only runs while this app is open.** Not "usually", not "within an hour" — never, otherwise.
+A card is an encrypted Nostr event and the key that reads it lives in this app's WebView, so nothing
+else on the phone *can* sync it: not Android's sync scheduler, not a background job, not the Contacts
+app itself. A sweep happens when you open the app, when you open this screen, and when you change
+something. Edit a contact on the phone with PosterChan closed and it sits there, marked as changed,
+until the next time you open the app — which is fine, and is not the same thing as being lost.
+**If you want contacts that sync while the app is closed, use CardDAV** (above); it is also the route
+for a desktop or an iPhone, and it is unaffected by any of this.
+
+**Order: pull, then merge, then push.** Every sweep reads what the phone changed before it writes
+anything, because a push *is* an overwrite of the phone's copy — done first, it would destroy an edit
+made there before anything had read it, with nothing anywhere to say so.
 
 It is a **reconcile**, not an append: cards are matched on their UID, updated in place (so the
 favourite star, the contact id and any home-screen shortcut survive), and anything you delete here is
-deleted from the phone. That last half is the one that is easy to leave out — it is the same trap
-this file records against the CardDAV path below, and both are pinned by tests.
+deleted from the phone — and anything you delete on the phone is deleted here. Deleting on the phone
+leaves a tombstone rather than removing the row, which is what makes the deletion survive the app
+being killed before it could be told.
+
+### What wins when both sides changed
+
+Nothing is deleted to resolve a conflict, ever.
+
+* Only the **phone** changed since the last sync → the phone's version is stored. That is the normal
+  case and it is not a conflict.
+* **Both** sides changed → **last writer wins**, decided by the phone's own update time against the
+  card's `REV`, and **the loser is kept as a second card** named "… (conflict copy)". Both clocks are
+  approximate — `REV` is written by whichever app last touched the card, and Android's timestamp
+  belongs to the merged contact rather than to our row, so it moves when a linked Google contact does
+  — and that is precisely why the losing version is kept instead of trusted away. Merge the two and
+  delete the copy; nothing else is needed.
+
+### What a phone-side edit does NOT touch
+
+The rule this file states at the top applies in this direction too, and matters more: a phone edits
+about eight properties, and a card carries a photo, Apple-style grouped labels, a foreign `PRODID` and
+`X-*` fields. So an edit made on the phone **rewrites only the managed properties and carries every
+other line through untouched** — saving a phone number on the phone keeps the photo, keeps the
+labels, keeps the UID. `tests/test_vcard.py` asserts it.
+
+The edit schema deliberately offers **only** the fields that make the round trip: name (with prefix,
+middle and suffix), phones, emails, company and title, postal addresses, birthday and note. There is
+no nickname, website, IM or group field, and **no photo**: pictures are written *to* the phone and are
+changed here, not there. A field the phone offers and we then discard is worse than one it never
+showed — you would watch yourself type it and find it gone hours later.
 
 **Photos are written.** They cost more than anything else in this feature (a base64 `PHOTO` crosses
 the JS→Java bridge and is the bulk of every push), so they are downscaled to 512px on the way in and
@@ -101,13 +158,26 @@ The cards are encrypted Nostr events, and the session that can read them lives i
 Native Java has no session and no key, and Android's own sync scheduler runs when the app is *closed*
 — which is exactly when nothing on the device can read a contact. So this is **driven from
 JavaScript**: `static/js/client/contacts.js` hands already-decrypted cards to a Capacitor plugin and
-the plugin writes them into `ContactsContract`. It pushes when the Contacts screen loads, a few
-seconds after the app starts, and when you change something; a push where nothing changed sends
-nothing at all.
+the plugin writes them into `ContactsContract`, and reads back what the phone changed for the client
+to merge. It sweeps when the Contacts screen loads, a few seconds after the app starts, and when you
+change something; a sweep where nothing changed sends nothing at all.
+
+The phone side of the sweep costs nothing either, because the provider does the bookkeeping:
+`RawContacts.DIRTY` is set by the system on a *user* edit and **not** on a write carrying
+`CALLER_IS_SYNCADAPTER`, which is what every write of ours carries. So "dirty" means exactly
+"somebody changed this on the phone since we last wrote it", with no state of our own to keep in
+step. Nothing is marked clean until the app has confirmed it stored it, and only at the row version
+it was read at: edit the same contact again while a sweep is in flight and it stays dirty for the
+next one, rather than being marked uploaded and lost.
+
+The decisions — what a dirty row means, what to merge, what wins, what to keep — are in `vcard.js`,
+DOM-free and tested under node, for the reason folder sync gives: everything that can get the *answer*
+wrong is pure and tested, and everything that can destroy a *contact* is a thin adapter over it.
 
 For the same reason there is **no `SyncAdapter`**. One would give you a "Sync now" button that can
 never do anything, so the account is created with `setIsSyncable(…, 0)` — no sync toggle, no periodic
-job, nothing the OS can start.
+job, nothing the OS can start. This is also the whole content of "only while the app is open" above:
+it is a property of the encryption, not an unfinished feature.
 
 There **is** an account (`PosterChan`, account type `place.poster.app.contacts`), because a
 `RawContact` must belong to one and because the account is what makes this reversible: the Contacts
@@ -124,17 +194,21 @@ wipes first.
 
 ### What is not covered
 
-Nothing is written when the app is closed, and nothing can be. Groups, and any vCard property the
+Nothing is synced when the app is closed, and nothing can be. Groups, and any vCard property the
 editor has no field for, are preserved in the *store* (see above) but are not written to the phone —
-the phone gets name, phones, emails, company/title, postal address, birthday, note and photo.
+the phone gets name, phones, emails, company/title, postal addresses, birthday, note and photo, and
+gives back everything on that list except the photo.
 
 | | |
 |---|---|
-| Plugin | `mobile/android/.../contacts/ContactSyncPlugin.java` (`begin` / `put` / `commit`) |
+| Plugin | `mobile/android/.../contacts/ContactSyncPlugin.java` (`pull` / `taken` / `begin` / `put` / `commit`) |
 | Provider writer | `mobile/android/.../contacts/ContactWriter.java` |
+| Provider reader | `mobile/android/.../contacts/ContactReader.java` (dirty rows, tombstones, uid minting) |
+| Edit schema | `mobile/android/app/src/main/res/xml/contacts_structure.xml` |
 | Account type | `mobile/android/.../contacts/PosterChanAuthenticator.java` + `AuthenticatorService.java` |
-| Client | `static/js/client/contacts.js` — `pushPhonebook`, `PCContacts.syncTick/forgetDevice` |
-| Wiring test | `tests/test_android_contact_sync.py` |
+| Merge + conflict rule | `static/js/client/vcard.js` — `toPhone`, `applyPhone`, `phonePlan` (pure, node-tested) |
+| Client | `static/js/client/contacts.js` — `syncPhonebook` (pull → merge → push), `PCContacts.syncTick/forgetDevice` |
+| Wiring test | `tests/test_android_contact_sync.py` (+ `tests/androidstubs/` for the javac pass) |
 
 Android code reaches a phone only through the **CI APK build** (`.github/workflows/android.yml`) — a
 `sync.sh` deploy ships the JavaScript half and nothing else.
@@ -196,9 +270,15 @@ with the qualifier removed, **all** of a stranger's calendar and contact documen
 
 ```
 venv-unified/bin/python -m unittest tests.test_contacts tests.test_vcard
-venv-unified/bin/python -m pytest tests/test_android_contact_sync.py   # the phone-book wiring
+venv-unified/bin/python -m pytest tests/test_android_contact_sync.py   # the phone-book wiring + javac
 venv-unified/bin/python scripts/check_contacts_mobile.py     # layout + behaviour, phone and desktop
 ```
+
+`tests.test_vcard` is where the two-way sync's *decisions* are tested: a phone-side edit keeps the
+photo and the unknown fields, a deletion on the phone is a deletion rather than a card to re-add, a
+contact created on the phone becomes exactly one card however many times it is swept, a dirty row
+that says the same thing writes nothing, and the loser of a conflict is kept. They run the shipped
+`vcard.js` under node, so they test the code the phone runs.
 
 `check_client_mobile.py` never opens this screen, so the second one is not optional. It asserts the
 things a contact list breaks on specifically: a long name or the A–Z rail scrolling the page

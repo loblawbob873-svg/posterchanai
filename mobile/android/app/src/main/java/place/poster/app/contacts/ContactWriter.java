@@ -69,6 +69,18 @@ public final class ContactWriter {
    *  is visible to anyone holding the phone, and the identity is recorded in our own prefs instead. */
   public static final String ACCOUNT_NAME = "PosterChan";
 
+  /**
+   * The data rows this feature OWNS, and the exact set the account's edit schema
+   * (res/xml/contacts_structure.xml) offers. A push rewrites these and leaves everything else on the
+   * raw contact alone: another app (or an OEM Contacts app that ignores the schema) may have put a
+   * nickname or a website on one of our cards, and deleting rows we have no field for would quietly
+   * destroy them on the next push of an unrelated phone number.
+   */
+  static final String[] MANAGED_MIMES = {
+      StructuredName.CONTENT_ITEM_TYPE, Phone.CONTENT_ITEM_TYPE, Email.CONTENT_ITEM_TYPE,
+      Organization.CONTENT_ITEM_TYPE, StructuredPostal.CONTENT_ITEM_TYPE, Note.CONTENT_ITEM_TYPE,
+      Event.CONTENT_ITEM_TYPE, Photo.CONTENT_ITEM_TYPE };
+
   /** ContentProviderOperations per applyBatch. Flushed only at CARD boundaries — see write(). */
   private static final int BATCH_OPS = 300;
   /** Contact photos are stored as a thumbnail anyway; anything bigger is bytes across the bridge and
@@ -131,7 +143,14 @@ public final class ContactWriter {
     }
   }
 
-  /** Every raw contact under our account, keyed by the card UID we stamped into SOURCE_ID. */
+  /**
+   * Every LIVE raw contact under our account, keyed by the card UID we stamped into SOURCE_ID.
+   *
+   * DELETED=0 is load-bearing now that the phone can delete one of ours. A contact removed in the
+   * phone's Contacts app leaves a tombstone (DELETED=1) until the sync acknowledges it, and a
+   * tombstone is not a row to update: treated as live, the next push would write the card's data
+   * rows onto a deleted contact and the reconcile would count somebody as present who is not.
+   */
   public static Map<String, Long> existing(Context ctx) {
     Map<String, Long> out = new HashMap<>();
     List<Long> dupes = new ArrayList<>();
@@ -140,7 +159,8 @@ public final class ContactWriter {
       c = ctx.getContentResolver().query(
           RawContacts.CONTENT_URI,
           new String[]{RawContacts._ID, RawContacts.SOURCE_ID},
-          RawContacts.ACCOUNT_TYPE + "=? AND " + RawContacts.ACCOUNT_NAME + "=?",
+          RawContacts.ACCOUNT_TYPE + "=? AND " + RawContacts.ACCOUNT_NAME + "=? AND "
+              + RawContacts.DELETED + "=0",
           new String[]{ACCOUNT_TYPE, ACCOUNT_NAME}, null);
       while (c != null && c.moveToNext()) {
         String uid = c.getString(1);
@@ -178,8 +198,13 @@ public final class ContactWriter {
    * the rows it carried keep their OLD contents — and the caller must NOT then record the new hash
    * for them, or that person is "already up to date" for ever and their new number never reaches the
    * phone. Reporting a count instead of the names is exactly how that becomes invisible.
+   *
+   * `skip` is the two-way half: UIDs whose phone row has a change the app has not stored yet. The
+   * app's copy is NOT authoritative for those — writing it would undo an edit made here seconds ago,
+   * or resurrect somebody the phone has just deleted. See ContactReader.pending().
    */
-  public static Set<String> write(Context ctx, JSONArray cards, Map<String, Long> existing) {
+  public static Set<String> write(Context ctx, JSONArray cards, Map<String, Long> existing,
+                                  Set<String> skip) {
     Set<String> ok = new HashSet<>();
     if (cards == null || cards.length() == 0) return ok;
     ArrayList<ContentProviderOperation> ops = new ArrayList<>();
@@ -189,6 +214,7 @@ public final class ContactWriter {
       if (card == null) continue;
       String uid = card.optString("uid", "");
       if (uid.isEmpty()) continue;
+      if (skip != null && skip.contains(uid)) continue;
       Long rawId = existing.get(uid);
       try {
         buildCard(ops, uid, rawId, card);
@@ -219,11 +245,12 @@ public final class ContactWriter {
           .withValue(RawContacts.SOURCE_ID, uid)
           .build());
     } else {
-      // Rewrite the card's data rows wholesale. Diffing them property by property would be a second
-      // merge algorithm on top of the one the client already ran, and this direction is one-way: the
-      // app's copy is the answer.
+      // Rewrite the rows this feature OWNS. Diffing them property by property would be a second
+      // merge algorithm on top of the one the client already ran — the client has merged the phone's
+      // side in by now, so its copy is the answer. Anything outside MANAGED_MIMES belongs to the
+      // phone and is left where it is.
       ops.add(ContentProviderOperation.newDelete(syncUri(Data.CONTENT_URI))
-          .withSelection(Data.RAW_CONTACT_ID + "=?", new String[]{String.valueOf(rawId)})
+          .withSelection(managedSelection(), managedArgs(rawId))
           .build());
     }
 
@@ -234,6 +261,14 @@ public final class ContactWriter {
         .withValue(StructuredName.DISPLAY_NAME, fn.isEmpty() ? (given + " " + family).trim() : fn);
     if (!given.isEmpty()) name.withValue(StructuredName.GIVEN_NAME, given);
     if (!family.isEmpty()) name.withValue(StructuredName.FAMILY_NAME, family);
+    // The parts the editor has no field for but a vCard N: does. They are WRITTEN because they are
+    // READ back (ContactReader) — a name part offered on the phone and dropped here would be lost
+    // the first time somebody corrected a phone number.
+    String middle = card.optString("middle", ""), prefix = card.optString("prefix", ""),
+           suffix = card.optString("suffix", "");
+    if (!middle.isEmpty()) name.withValue(StructuredName.MIDDLE_NAME, middle);
+    if (!prefix.isEmpty()) name.withValue(StructuredName.PREFIX, prefix);
+    if (!suffix.isEmpty()) name.withValue(StructuredName.SUFFIX, suffix);
     ops.add(name.build());
 
     JSONArray tels = card.optJSONArray("tels");
@@ -272,21 +307,30 @@ public final class ContactWriter {
           .build());
     }
 
-    JSONObject adr = card.optJSONObject("adr");
-    if (adr != null) {
+    // EVERY address, not just the first. The phone can now edit these, and a card whose second
+    // address was never sent would lose it the moment the merge wrote the phone's list back.
+    // `adr` (singular) is still read for an APK older than two-way sync talking to this client.
+    JSONArray adrs = card.optJSONArray("adrs");
+    if (adrs == null || adrs.length() == 0) {
+      adrs = new JSONArray();
+      JSONObject one = card.optJSONObject("adr");
+      if (one != null) adrs.put(one);
+    }
+    for (int i = 0; i < adrs.length(); i++) {
+      JSONObject adr = adrs.optJSONObject(i);
+      if (adr == null) continue;
       String street = adr.optString("street", ""), city = adr.optString("city", ""),
              region = adr.optString("region", ""), code = adr.optString("code", ""),
              country = adr.optString("country", "");
-      if (!(street + city + region + code + country).trim().isEmpty()) {
-        ops.add(row(rawId, backRef, StructuredPostal.CONTENT_ITEM_TYPE)
-            .withValue(StructuredPostal.STREET, street)
-            .withValue(StructuredPostal.CITY, city)
-            .withValue(StructuredPostal.REGION, region)
-            .withValue(StructuredPostal.POSTCODE, code)
-            .withValue(StructuredPostal.COUNTRY, country)
-            .withValue(StructuredPostal.TYPE, StructuredPostal.TYPE_HOME)
-            .build());
-      }
+      if ((street + city + region + code + country).trim().isEmpty()) continue;
+      ops.add(row(rawId, backRef, StructuredPostal.CONTENT_ITEM_TYPE)
+          .withValue(StructuredPostal.STREET, street)
+          .withValue(StructuredPostal.CITY, city)
+          .withValue(StructuredPostal.REGION, region)
+          .withValue(StructuredPostal.POSTCODE, code)
+          .withValue(StructuredPostal.COUNTRY, country)
+          .withValue(StructuredPostal.TYPE, StructuredPostal.TYPE_HOME)
+          .build());
     }
 
     String note = card.optString("note", "");
@@ -321,11 +365,18 @@ public final class ContactWriter {
    * Delete every raw contact of ours whose UID is not in `keep`. THE HALF THAT IS EASY TO FORGET:
    * without it the phone book only ever grows, and a contact deleted in the web UI lives on in the
    * dialer for ever.
+   *
+   * `hold` is what stops that half eating the OTHER direction. A contact created in the phone's
+   * Contacts app is, for the moment between being created and being stored on the server, a card the
+   * app has never heard of — i.e. exactly what this method deletes. Held back until the app has
+   * acknowledged it, a sweep that fails costs a retry instead of the contact.
    */
-  public static int prune(Context ctx, Set<String> keep, Map<String, Long> existing) {
+  public static int prune(Context ctx, Set<String> keep, Map<String, Long> existing,
+                          Set<String> hold) {
     int gone = 0;
     for (Map.Entry<String, Long> e : existing.entrySet()) {
       if (keep.contains(e.getKey())) continue;
+      if (hold != null && hold.contains(e.getKey())) continue;
       if (deleteRaw(ctx, e.getValue())) gone++;
     }
     return gone;
@@ -366,8 +417,24 @@ public final class ContactWriter {
     }
   }
 
-  /** See the class comment: without this a delete is a tombstone, not a delete. */
-  private static Uri syncUri(Uri uri) {
+  /** A selection over the rows we own — see MANAGED_MIMES. */
+  private static String managedSelection() {
+    StringBuilder sb = new StringBuilder(Data.RAW_CONTACT_ID + "=? AND " + Data.MIMETYPE + " IN (");
+    for (int i = 0; i < MANAGED_MIMES.length; i++) sb.append(i == 0 ? "?" : ",?");
+    return sb.append(")").toString();
+  }
+
+  private static String[] managedArgs(long rawId) {
+    String[] args = new String[MANAGED_MIMES.length + 1];
+    args[0] = String.valueOf(rawId);
+    System.arraycopy(MANAGED_MIMES, 0, args, 1, MANAGED_MIMES.length);
+    return args;
+  }
+
+  /** See the class comment: without this a delete is a tombstone, not a delete — and, now that the
+   *  phone can edit our cards, without it every push would also stamp DIRTY on the whole address
+   *  book and the next pull would upload our own writes back as if they were the user's. */
+  static Uri syncUri(Uri uri) {
     return uri.buildUpon()
         .appendQueryParameter(ContactsContract.CALLER_IS_SYNCADAPTER, "true")
         .appendQueryParameter(RawContacts.ACCOUNT_NAME, ACCOUNT_NAME)

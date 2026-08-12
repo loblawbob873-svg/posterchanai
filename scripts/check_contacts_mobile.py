@@ -198,6 +198,42 @@ EDITOR = r"""(async () => {
 })()"""
 
 
+# On ANDROID the native switch is the answer and CardDAV is the fallback for other devices. Getting
+# this the wrong way round is what produced "why do I need a CardDAV URL, you were supposed to make me
+# avoid needing another app" — the feature was there and the panel led with the thing it replaced.
+# A plugin has to be PROBED (Capacitor.Plugins is empty for a Java-only plugin, and registerPlugin
+# returns a proxy whose methods all "exist"), so this stubs one and then takes it away again.
+NATIVE_FIRST = r"""(async () => {
+  const sleep = ms => new Promise(r=>setTimeout(r,ms));
+  const open = async () => { document.querySelector('#ct-menu').click(); await sleep(400);
+                             return document.querySelector('#modal-root .modal'); };
+  const out = {};
+  window.Capacitor = { getPlatform: () => 'android', Plugins: {} };
+  const plugin = { status: async () => ({ granted:true, account:true, owner:'me', count:4 }) };
+  window.__PC.capPlugin = (name, method) => (name === 'ContactSync' ? plugin : null);
+
+  let m = await open();
+  const rows = [...m.querySelectorAll('.cal-row')];
+  out.firstRowIsTheSwitch = !!(rows[0] && rows[0].classList.contains('ct-phonebook'));
+  out.hasSwitch = !!m.querySelector('#ctb-phonebook');
+  out.davLabel = (m.querySelector('#ctb-phone') || {}).textContent || '';
+  out.mentionsUrl = /https?:\/\//.test(m.textContent);
+  out.mentionsOtherApp = /DAVx|CardDAV/i.test(m.textContent);
+  window.__PC.closeModal();
+
+  // An APK older than the plugin: say so, rather than quietly offering CardDAV as if it were the
+  // answer. The probe is a real call, so taking the stub away is how that build looks.
+  window.__PC.capPlugin = () => null;
+  m = await open();
+  out.oldApk = m.textContent;
+  window.__PC.closeModal();
+
+  delete window.Capacitor;
+  await sleep(50);
+  return out;
+})()"""
+
+
 # ⋯ → "Sync to a device". Two live bugs, both reported by a user on the same day: the button borrowed
 # the calendar's panel, which is not exported, so it fell through to switchView('calendar') and left
 # the address book; and a load finishing while the user is on another screen repainted #feed anyway,
@@ -345,6 +381,30 @@ async def drive(url):
                     if s["restored"] != 4:
                         problems.append((label, "search-broken",
                                          f"clearing the search left {s['restored']} rows"))
+
+                nf = await js(NATIVE_FIRST, awaited=True)
+                if not nf:
+                    problems.append((label, "missing-control",
+                                     "the Addressbooks panel did not open with a stubbed plugin"))
+                else:
+                    if not nf["hasSwitch"]:
+                        problems.append((label, "native-not-offered",
+                                         "no phone-book switch on a build that has the plugin"))
+                    if not nf["firstRowIsTheSwitch"]:
+                        problems.append((label, "carddav-leads",
+                                         "the panel leads with something other than the native switch"))
+                    if "another device" not in nf["davLabel"]:
+                        problems.append((label, "carddav-leads",
+                                         f"the CardDAV button reads {nf['davLabel'].strip()!r} — on "
+                                         "Android it is the route for OTHER devices"))
+                    if nf["mentionsUrl"] or nf["mentionsOtherApp"]:
+                        problems.append((label, "carddav-leads",
+                                         "the panel shows a URL or names another app before the "
+                                         "switch that needs neither"))
+                    if "Update the app" not in nf["oldApk"]:
+                        problems.append((label, "silent-fallback",
+                                         "an APK without the plugin is shown CardDAV instead of "
+                                         "being told to update"))
 
                 sh = await js(SYNCSHEET, awaited=True)
                 if not sh or sh.get("error"):

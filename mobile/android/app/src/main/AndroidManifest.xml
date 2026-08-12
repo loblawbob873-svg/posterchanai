@@ -240,8 +240,9 @@
             <meta-data
                 android:name="android.accounts.AccountAuthenticator"
                 android:resource="@xml/contacts_authenticator" />
-            <!-- No edit schema in there = the Contacts app shows our cards as read-only, which is
-                 what a one-way sync actually is. -->
+            <!-- The EDIT SCHEMA. Its presence is what lets the phone's Contacts app edit our cards
+                 and save new ones into this account — the sync reads them back. It declares exactly
+                 the fields we round-trip: see the file, which explains why "exactly" matters. -->
             <meta-data
                 android:name="android.provider.CONTACTS_STRUCTURE"
                 android:resource="@xml/contacts_structure" />

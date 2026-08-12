@@ -1,8 +1,60 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- What the phone's Contacts app is told about our account type.
-     DELIBERATELY EMPTY. An account type that declares no edit schema is treated as READ-ONLY by
-     AOSP-derived Contacts apps, which is exactly what this sync is: one way, app → phone. Adding
-     data kinds here would offer an "Edit" button whose changes the next push silently overwrites.
-     (It is a hint, not a guarantee — an OEM Contacts app may still offer to edit. The reconcile
-     answers that case anyway: the app's copy wins on the next sweep.) -->
-<ContactsAccountType xmlns:android="http://schemas.android.com/apk/res/android" />
+
+     THE PRESENCE OF <EditSchema> IS WHAT MAKES THE ACCOUNT WRITABLE. An account type whose XML
+     declares no edit schema is read-only to AOSP-derived Contacts apps: no "Edit", and our account
+     never appears in the "save to" picker when somebody adds a contact. That was right while the
+     sync was one way. It is now two way, so the schema is here — and it is exactly the set of data
+     kinds ContactWriter writes and ContactReader reads back, and NOTHING ELSE.
+
+     "Nothing else" is the load-bearing half. Every kind listed here is a field the phone will offer;
+     a field we then discard on the next push is worse than one the phone never showed, because the
+     user watches themself type it and it disappears hours later with nothing to say why. So there is
+     no nickname, no website, no IM, no relation, no group membership — and no `photo` either: a
+     photo is written FROM the app and is not read back (the provider hands us its own thumbnail, not
+     the bytes we sent, so "did the user change it?" cannot be answered without keeping a second
+     record of what we wrote). Contact pictures are changed in PosterChan; docs/CONTACTS.md says so.
+
+     The name kind declares its parts because ContactWriter writes prefix/middle/suffix and
+     ContactReader reads them — a vCard N: has five components and dropping three of them would lose
+     them the first time a phone number was corrected here.
+
+     tests/test_android_contact_sync.py pins the kinds in this file to the mime types the two Java
+     halves actually round-trip, in both directions. -->
+<ContactsAccountType xmlns:android="http://schemas.android.com/apk/res/android">
+    <EditSchema>
+        <DataKind kind="name"
+            supportsDisplayName="true"
+            supportsPrefix="true"
+            supportsMiddleName="true"
+            supportsSuffix="true" />
+        <DataKind kind="phone">
+            <Type type="mobile" />
+            <Type type="home" />
+            <Type type="work" />
+            <Type type="fax_work" />
+            <Type type="fax_home" />
+            <Type type="pager" />
+            <Type type="other" />
+            <Type type="custom" />
+        </DataKind>
+        <DataKind kind="email">
+            <Type type="home" />
+            <Type type="work" />
+            <Type type="mobile" />
+            <Type type="other" />
+            <Type type="custom" />
+        </DataKind>
+        <DataKind kind="organization" />
+        <DataKind kind="postal" needsStructured="true">
+            <Type type="home" />
+            <Type type="work" />
+            <Type type="other" />
+        </DataKind>
+        <!-- Birthday only. An anniversary would be an Event row we have no vCard field for. -->
+        <DataKind kind="event" dateWithTime="false">
+            <Type type="birthday" yearOptional="true" maxOccurs="1" />
+        </DataKind>
+        <DataKind kind="note" />
+    </EditSchema>
+</ContactsAccountType>

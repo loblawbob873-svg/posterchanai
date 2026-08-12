@@ -31,12 +31,15 @@ import java.util.Set;
  * vCard, talks to a relay or decrypts anything — a second vCard parser in Java is how the phone book
  * and the app end up disagreeing about somebody's phone number.
  *
- * ONE WAY, app → phone. Edits made on the phone are not read back; the next push overwrites them.
- * That is stated in docs/CONTACTS.md rather than left to be discovered, and it is why the account
- * type declares no edit schema (res/xml/contacts_structure.xml) — an AOSP-derived Contacts app then
- * shows our cards as read-only, which matches what actually happens.
+ * TWO WAY, and the order is the whole design: PULL, then merge, then PUSH. A card edited in the
+ * phone's Contacts app is only visible as a change until somebody overwrites it, and a push is
+ * exactly that overwrite — push first and the edit is gone before it was ever read, with nothing
+ * anywhere to say so. So the client reads what the phone changed, merges it into the encrypted card
+ * (which it alone can read), stores it, and only then pushes the result back.
  *
- * THREE CALLS PER SWEEP, and the shape is what keeps it cheap:
+ * FIVE CALLS PER SWEEP, and the shape is what keeps it cheap:
+ *   pull(owner)  → what the phone changed since our last write: edits, creations, deletions.
+ *   taken(rows)  → the rows the app CONFIRMS it stored. Only these are marked clean.
  *   begin(owner) → the hash of every card we last wrote. JS diffs against that and sends only what
  *                  changed. Without this the client would have to push every base64 PHOTO across the
  *                  bridge on every visit to the screen — the same "4 bytes of string per 3 of data,
@@ -44,8 +47,14 @@ import java.util.Set;
  *   put(cards)   → upsert a batch, keyed on the card's UID.
  *   commit(uids) → the reconcile: anything of ours NOT in that list is deleted from the phone.
  *
- * `owner` is the signed-in pubkey. It is compared on every begin() and a mismatch wipes first — the
- * belt to sign-out's braces, for the phone that was killed before the client could say goodbye.
+ * Both halves of the push (put and commit) hold back UIDs with an unacknowledged phone-side change —
+ * see ContactReader.pending(). That single guard is what stops the two directions fighting: a person
+ * deleted on the phone is not re-inserted, and a person created on the phone is not pruned before
+ * the app has managed to store them.
+ *
+ * `owner` is the signed-in pubkey. It is compared on every begin() AND every pull() — a mismatch
+ * wipes first. On pull it matters more than anywhere else: without it, the first sweep after somebody
+ * else signs in on this phone would upload the PREVIOUS user's phone book into the new account.
  */
 @CapacitorPlugin(
     name = "ContactSync",
@@ -128,7 +137,104 @@ public class ContactSyncPlugin extends Plugin {
     call.resolve();
   }
 
-  /** Start a sweep: wipe if the account changed, and hand back what we believe is on the phone. */
+  /**
+   * The account this device's phone book belongs to, checked and taken over if it has changed.
+   *
+   * Returns true if it wiped. Called by BOTH begin() and pull(), and pull() is the one that would
+   * otherwise be a leak rather than a mess: reading a phone book left behind by the previous account
+   * and storing it under the new one publishes somebody else's contacts into somebody else's
+   * (encrypted, but not theirs) address book.
+   */
+  private boolean ownerGuard(String owner) {
+    String had = prefs().getString(KEY_OWNER, "");
+    boolean wiped = false;
+    if (!had.isEmpty() && !had.equals(owner)) {
+      ContactWriter.wipe(getContext());
+      prefs().edit().remove(KEY_HASHES).apply();
+      wiped = true;
+    }
+    prefs().edit().putString(KEY_OWNER, owner == null ? "" : owner).apply();
+    return wiped;
+  }
+
+  /**
+   * WHAT THE PHONE CHANGED — the half that makes this two-way.
+   *
+   * Runs FIRST in a sweep. Everything it reports is still on the phone and stays there until the
+   * client says, through taken(), that it stored it; nothing here forgets anything.
+   */
+  @PluginMethod
+  public void pull(PluginCall call) {
+    JSObject out = new JSObject();
+    if (!granted()) { out.put("granted", false); call.resolve(out); return; }
+    if (!ContactWriter.ensureAccount(getContext())) {
+      call.reject("could not create the PosterChan contacts account");
+      return;
+    }
+    boolean wiped = ownerGuard(call.getString("owner", ""));
+    // A wipe just removed every row: there is nothing of this account's to read, and anything that
+    // WAS dirty belonged to the account we just left.
+    JSONArray rows = new JSONArray();
+    if (!wiped) {
+      ContactReader.mintSourceIds(getContext());   // before the versions are read — it bumps them
+      rows = ContactReader.changes(getContext());
+    }
+    out.put("granted", true);
+    out.put("wiped", wiped);
+    out.put("rows", rows);
+    // The hash of what we last PUSHED for each of those cards, so the client can tell "the phone
+    // changed" from "both sides changed" without a second bridge call.
+    JSObject known = new JSObject();
+    JSONObject stored = readHashes();
+    for (int i = 0; i < rows.length(); i++) {
+      JSONObject r = rows.optJSONObject(i);
+      String uid = r == null ? "" : r.optString("uid", "");
+      if (!uid.isEmpty() && stored.has(uid)) known.put(uid, stored.optString(uid, ""));
+    }
+    out.put("pushed", known);
+    call.resolve(out);
+  }
+
+  /**
+   * Mark clean ONLY the rows the client says it stored.
+   *
+   * The client sends back the rows from pull() it actually persisted, each with the VERSION it was
+   * read at; ContactReader.taken() clears DIRTY only where that version still matches. Anything else
+   * — a save that failed, a contact the user edited again while the sweep was in flight — stays
+   * dirty and comes round again. Same rule as write() returning the UIDs that landed: an
+   * acknowledgement is a statement about what is stored, never about what was attempted.
+   */
+  @PluginMethod
+  public void taken(PluginCall call) {
+    if (!granted()) { call.reject("contacts permission is not granted"); return; }
+    JSArray list = call.getArray("rows");
+    JSONArray rows = new JSONArray();
+    for (int i = 0; list != null && i < list.length(); i++) {
+      Object o = list.opt(i);
+      if (o instanceof JSONObject) rows.put(o);
+    }
+    JSONArray cleared = ContactReader.taken(getContext(), rows);
+
+    // A card whose phone version the app has now stored is IN STEP with the phone, so record the
+    // hash the client computed for it — otherwise the push that follows would rewrite those rows for
+    // nothing, on every sweep after every edit. The client only sends `h` when the two sides really
+    // do agree; when the app's copy won a conflict it omits it, and the push puts its version back.
+    JSONObject stored = readHashes();
+    for (int i = 0; i < rows.length(); i++) {
+      JSONObject r = rows.optJSONObject(i);
+      if (r == null) continue;
+      String uid = r.optString("uid", "");
+      if (uid.isEmpty()) continue;
+      try {
+        if (r.optBoolean("deleted", false)) stored.remove(uid);
+        else if (r.has("h")) stored.put(uid, r.optString("h", ""));
+      } catch (Throwable ignored) {}
+    }
+    writeHashes(stored);
+    call.resolve(new JSObject().put("cleared", cleared.length()));
+  }
+
+  /** Start the push half of a sweep, and hand back what we believe is on the phone. */
   @PluginMethod
   public void begin(PluginCall call) {
     JSObject out = new JSObject();
@@ -139,19 +245,11 @@ public class ContactSyncPlugin extends Plugin {
       call.resolve(out);
       return;
     }
-    String owner = call.getString("owner", "");
-    String had = prefs().getString(KEY_OWNER, "");
     if (!ContactWriter.ensureAccount(getContext())) {
       call.reject("could not create the PosterChan contacts account");
       return;
     }
-    boolean wiped = false;
-    if (!had.isEmpty() && !had.equals(owner)) {
-      ContactWriter.wipe(getContext());
-      prefs().edit().remove(KEY_HASHES).apply();
-      wiped = true;
-    }
-    prefs().edit().putString(KEY_OWNER, owner == null ? "" : owner).apply();
+    boolean wiped = ownerGuard(call.getString("owner", ""));
 
     // The hashes are only a claim about the phone; the raw contacts are the fact. Anything we have a
     // hash for but no row for is dropped, so a card the user deleted by hand comes back on the next
@@ -182,7 +280,11 @@ public class ContactSyncPlugin extends Plugin {
       if (o instanceof JSONObject) arr.put(o);
     }
     Map<String, Long> have = ContactWriter.existing(getContext());
-    Set<String> landed = ContactWriter.write(getContext(), arr, have);
+    // Leave alone anything the phone has changed and the app has not stored yet — see
+    // ContactReader.pending(). This is read fresh, not passed in, because the user can be editing a
+    // contact while the sweep runs.
+    Set<String> hold = ContactReader.pending(getContext());
+    Set<String> landed = ContactWriter.write(getContext(), arr, have, hold);
 
     // Record a hash ONLY for a card whose batch was applied AND which is on the phone now. Recording
     // one for a card the provider refused would mark it "already up to date" for ever — the update
@@ -218,13 +320,16 @@ public class ContactSyncPlugin extends Plugin {
       if (o != null) keep.add(String.valueOf(o));
     }
     Map<String, Long> have = ContactWriter.existing(getContext());
-    int removed = ContactWriter.prune(getContext(), keep, have);
+    // A contact CREATED on the phone is a card the app has never heard of, which is precisely what
+    // this deletes. Held back until the app acknowledges it.
+    Set<String> hold = ContactReader.pending(getContext());
+    int removed = ContactWriter.prune(getContext(), keep, have, hold);
 
     JSONObject stored = readHashes();
     JSONObject kept = new JSONObject();
     for (Iterator<String> it = stored.keys(); it.hasNext(); ) {
       String uid = it.next();
-      if (keep.contains(uid)) {
+      if (keep.contains(uid) || hold.contains(uid)) {
         try { kept.put(uid, stored.optString(uid, "")); } catch (Throwable ignored) {}
       }
     }

@@ -106,10 +106,10 @@
       }finally{
         S.loading = false; S.ready = true; paint();
       }
-      // Keep the phone's own Contacts app in step. A no-op on every platform but Android and for
-      // everybody who has not turned it on, and a no-op again when nothing has changed since the
-      // last push — so it can sit on the end of every load without being thought about.
-      try{ pushPhonebook(); }catch(_){}
+      // Keep the phone's own Contacts app in step, both ways. A no-op on every platform but Android
+      // and for everybody who has not turned it on, and a no-op again when nothing has changed since
+      // the last sweep — so it can sit on the end of every load without being thought about.
+      try{ syncPhonebook(); }catch(_){}
     }
 
     // ---- rendering ---------------------------------------------------------------------------
@@ -362,12 +362,21 @@
      *
      * IT HAS TO BE DRIVEN FROM HERE. Native Java has no session, no storage key and no way to ask
      * for one, and Android's own sync scheduler runs when the app is closed — which is exactly when
-     * nothing on this device can read a card. A push therefore happens when the app is open, and
-     * that is the whole schedule.
+     * nothing on this device can read a card. A sweep therefore happens when the app is open, and
+     * that is the whole schedule. It is why there is no SyncAdapter and why "Sync now" does not
+     * exist: a card is an encrypted Nostr event, and the key is in this WebView.
      *
-     * ONE WAY: app → phone. Edits made in the phone's Contacts app are not read back and are
-     * replaced by the next push. CardDAV (Calendar → Sync to a device) is still the two-way path and
-     * is untouched by any of this.
+     * TWO WAY, and the ORDER is what makes it safe: PULL → MERGE → PUSH.
+     *
+     * A push is an overwrite of the phone's copy. Run it first and an edit made in the phone's
+     * Contacts app is gone before anything read it — no error, no trace, and the user finds out days
+     * later when they ring the old number. So every sweep reads what the phone changed, merges it
+     * into the encrypted card (which only this client can read), stores it, and pushes afterwards.
+     * The same order applies to the sweep that runs when this screen loads and the one that runs a
+     * few seconds after the app starts.
+     *
+     * CardDAV (⋯ → Addressbooks → Sync to a device) is untouched and remains the cross-platform
+     * two-way route — a desktop, an iPhone, and anything that has to sync while this app is closed.
      *
      * OFF BY DEFAULT and per-device: this writes into somebody's phone book, so it is opt-in, and
      * the switch lives beside the addressbook list (⋯ → Addressbooks). */
@@ -377,13 +386,6 @@
     const phonebookOn = () => !!CSet().get(PHONE_KEY, false);
     const owner = () => { try{ const me = PC.me ? PC.me() : PC.ME; return (me && me.pubkey) || ''; }
                           catch(_){ return ''; } };
-
-    /* FNV-1a. Not a checksum for anybody else — it only has to change when the card does. */
-    function hash(s){
-      let h = 0x811c9dc5;
-      for(let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = (h * 0x01000193) >>> 0; }
-      return h.toString(16);
-    }
 
     /* Every card in every book. The phone book is one list — a person is not filed under whichever
      * addressbook happens to be on screen. Memoised on S.rev so a repaint costs nothing. */
@@ -406,39 +408,75 @@
       return out;
     }
 
-    /* A card as the plugin wants it. `photo` is raw base64 — a data: URI would be decoded in Java
-     * for no reason, and an http(s) PHOTO is a URL we deliberately do NOT fetch (a phone book sync
-     * is not a licence to make requests to whatever host is written in somebody else's vCard). */
-    const PHOTO_MAX = 2 * 1024 * 1024;    // base64 chars; beyond this it is not a contact thumbnail
-    function nativeCard(c){
-      const n = c.n || {};
-      let photo = '';
-      const p = String(c.photo || '');
-      if(p.slice(0, 5) === 'data:'){
-        const i = p.indexOf(',');
-        if(i > 0 && p.length - i <= PHOTO_MAX) photo = p.slice(i + 1);
+    /* Everything the card↔phone mapping needs — the shape, the hash, the merge and the decision —
+     * lives in vcard.js, DOM-free and tested under node (tests/test_vcard.py). This file is the
+     * plumbing: fetches, bridge calls and the order they happen in. */
+
+    /* Index of what the app holds, for the merge: uid → {card, book}. */
+    function heldCards(){
+      const mine = {};
+      for(const b of S.books){
+        for(const rec of (S.cards[b.id] || [])){
+          try{
+            const c = V().parse(rec.ics || '');
+            c.uid = c.uid || rec.uid;
+            if(c.uid && !mine[c.uid]) mine[c.uid] = { card: c, book: b.id };
+          }catch(_){ /* one unreadable card must not stop the sweep */ }
+        }
       }
-      const a = (c.adrs || [])[0] || null;
-      const out = {
-        uid: c.uid,
-        fn: V().displayName(c),
-        given: n.given || '', family: n.family || '',
-        org: c.org || '', title: c.title || '', note: c.note || '', bday: c.bday || '',
-        tels: (c.tels || []).filter(t => t.value).map(t => ({ type: t.type || '', value: t.value })),
-        emails: (c.emails || []).filter(e => e.value).map(e => ({ type: e.type || '', value: e.value })),
-        adr: a ? { street: a.street||'', city: a.city||'', region: a.region||'',
-                   code: a.code||'', country: a.country||'' } : null,
-        photo,
-      };
-      /* The photo is hashed by LENGTH plus its ends, not by its bytes: a book of 500 faces is tens
-       * of megabytes of base64, and re-hashing all of it on every repaint to answer "did anything
-       * change" costs more than the push it is meant to avoid. Two different JPEGs of exactly the
-       * same length sharing both ends is not a case that happens. */
-      const forHash = Object.assign({}, out, {
-        photo: photo ? (photo.length + ':' + photo.slice(0, 32) + photo.slice(-32)) : '',
-      });
-      out.h = hash(JSON.stringify(forHash));
-      return out;
+      return mine;
+    }
+
+    /* PULL — what the phone changed since our last write, merged in and stored.
+     *
+     * Returns how many cards it wrote, which is also "does the push need fresh state". NOTHING is
+     * acknowledged that was not stored: a failed save leaves the row dirty on the phone and the
+     * change comes round again on the next sweep, rather than being marked as uploaded and lost.
+     * An APK older than two-way sync has no `pull` method at all — that resolves to nothing here and
+     * the sweep degrades to the one-way push it used to be. */
+    async function pullPhone(){
+      const P = nativeSync('pull');
+      if(!P) return 0;
+      let st = null;
+      try{ st = await P.pull({ owner: owner() }); }catch(_){ return 0; }
+      if(!st || st.granted === false) return 0;
+      const rows = st.rows || [];
+      if(!rows.length) return 0;
+      const pushed = st.pushed || {};
+      const fallback = S.book || (S.books[0] || {}).id || '';
+      const plan = V().phonePlan(
+        rows.map(r => Object.assign({}, r, { pushed: pushed[r.uid] || '' })), heldCards());
+      const ack = [];
+      let wrote = 0;
+      for(const step of plan){
+        const book = step.book || fallback;
+        try{
+          if(step.action === 'delete'){
+            await api(`/api/contacts/cards?book=${encodeURIComponent(step.book)}`
+                      + `&uid=${encodeURIComponent(step.uid)}`, { method:'DELETE' });
+            wrote++;
+          }else if(step.action === 'create' || step.action === 'update' || step.action === 'keep'){
+            if(!book) continue;         // no addressbook to put it in — leave it dirty, try later
+            // THE LOSER FIRST. If storing the conflict copy fails we must not have already
+            // overwritten the version it is a copy of.
+            if(step.copy){
+              await jput('/api/contacts/cards',
+                         { book, uid: step.copy.uid, vcf: V().serialize(step.copy) });
+              wrote++;
+            }
+            if(step.card){
+              await jput('/api/contacts/cards',
+                         { book, uid: step.uid, vcf: V().serialize(step.card) });
+              wrote++;
+            }
+          }
+          // 'clean' (dirty but identical) and 'drop' (deleted here and there) need no write at all.
+          ack.push(Object.assign({ rawId: step.row.rawId, version: step.row.version, uid: step.uid,
+                                   deleted: !!step.row.deleted }, step.ack || {}));
+        }catch(_){ /* not acknowledged: the phone keeps the change and we try again next sweep */ }
+      }
+      if(ack.length){ try{ await P.taken({ rows: ack }); }catch(_){} }
+      return wrote;
     }
 
     /* Push what changed. Cheap by construction: `begin()` returns the hash of every card already on
@@ -450,7 +488,7 @@
       const P = nativeSync('begin');
       if(!P || !phonebookOn()) return;
       if(_pushing) return _pushing;       // a sweep is a sweep; two at once would fight over uids
-      const list = everyCard().map(nativeCard);
+      const list = everyCard().map(c => V().toPhone(c));
       const sig = owner() + '|' + list.map(c => c.uid + ':' + c.h).join(',');
       if(!force && sig === _pushSig) return;
       _pushing = (async () => {
@@ -485,24 +523,88 @@
       return _pushing;
     }
 
-    /* The switch, in ⋯ → Addressbooks. The explanation sits beside it BEFORE it is flipped, because
-     * the Android permission prompt itself says only "access your contacts" — the reason has to be
-     * on screen already or the prompt is a coin toss. */
+    /* ONE SWEEP: pull, merge, store, then push. See the section comment for why that order is not
+     * negotiable. Serialized against itself — two sweeps at once would each act on a view of the
+     * phone the other has already changed. */
+    let _syncing = null;
+    function syncPhonebook(force){
+      if(!nativeSync('begin') || !phonebookOn()) return Promise.resolve();
+      if(_syncing) return _syncing;
+      _syncing = (async () => {
+        let wrote = 0;
+        try{ wrote = await pullPhone(); }catch(_){}
+        // Re-read what the pull just stored. Without this the push would send the state from before
+        // the merge — undoing the phone's edit on the phone — and the reconcile would not know about
+        // a contact created there at all.
+        if(wrote){ _pushSig = ''; try{ await load(); }catch(_){} }
+        await pushPhonebook(force || !!wrote);
+      })().catch(()=>{}).finally(()=>{ _syncing = null; });
+      return _syncing;
+    }
+
+    /* WHICH ROUTE THIS DEVICE IS SHOWN FIRST.
+     *
+     * On Android the answer is this app's own switch: no URL, no password, no second app to install.
+     * That is the entire point of the plugin, so leading with a CardDAV URL there — which is what
+     * this panel used to do — makes the feature invisible and recommends the thing it replaced.
+     *
+     * A PLUGIN HAS TO BE PROBED, not assumed. `Capacitor.Plugins` is empty for a plugin registered
+     * only in Java, and `registerPlugin()` hands back a proxy whose methods all "exist" whether the
+     * native side implements them or not — so the only honest test is to CALL one. A packaged app
+     * where that call fails is an APK older than this feature, and the useful thing to say is
+     * "update the app", not a CardDAV URL, which is a wrong turn dressed up as an answer. */
+    const capPlatform = () => {
+      try{ const c = window.Capacitor;
+           return c ? ((c.getPlatform && c.getPlatform()) || 'unknown') : 'web'; }
+      catch(_){ return 'web'; }
+    };
+    let _native;                    // undefined = not asked, false = this build has none, true = has
+    async function probeNative(){
+      if(_native === false) return null;          // known absent — do not ask on every open
+      const P = nativeSync('status');
+      if(!P){ _native = false; return null; }     // not a Capacitor build at all
+      try{
+        const st = (await P.status()) || {};
+        _native = true;
+        return st;                                // asked every time: the count is on screen
+      }catch(_){
+        // A first call that fails is a build without the plugin. A LATER one that fails is a blip,
+        // and must not turn a working switch into "update the app".
+        if(_native === undefined) _native = false;
+        return _native ? {} : null;
+      }
+    }
+
+    /* The switch, at the TOP of ⋯ → Addressbooks. The explanation sits beside it BEFORE it is
+     * flipped, because the Android permission prompt itself says only "access your contacts" — the
+     * reason has to be on screen already or the prompt is a coin toss. */
     function phonebookRow(st){
-      if(!nativeSync('begin')) return '';       // not the packaged Android app
+      if(!st){
+        // A packaged Android app whose build has no plugin. Say so: the fix is an app update, and
+        // pointing at CardDAV instead would send them to install DAVx⁵ for something this app does.
+        if(capPlatform() !== 'android') return '';
+        return `<div class="cal-row ct-phonebook" style="flex-wrap:wrap">
+          <span class="cal-name" style="flex:1 1 100%">Sync to this phone's Contacts app</span>
+          <p class="muted small" style="flex:1 1 100%;margin:4px 0 0">
+            <b>Update the app to turn this on.</b> This build can't put your contacts in the phone's
+            own Contacts app yet — a newer version can, with nothing else to install.</p>
+        </div>`;
+      }
       const on = phonebookOn();
       const n = (st && st.count) || 0;
       return `<div class="cal-row ct-phonebook" style="flex-wrap:wrap">
         <label class="row" style="gap:8px;align-items:center;flex:1 1 100%">
           <input type="checkbox" id="ctb-phonebook"${on ? ' checked' : ''}>
-          <span class="cal-name">Show these contacts in this phone's Contacts app</span>
+          <span class="cal-name">Sync to this phone's Contacts app</span>
         </label>
         <p class="muted small" style="flex:1 1 100%;margin:4px 0 0">
-          Copies your address book into the phone itself, so these people appear in the dialer, in
-          messaging apps and in the share sheet — no other app needed. Android will ask for
-          permission to your contacts; it is used to write this account's cards and to tidy up the
-          ones it wrote before. <b>One way:</b> changes made in the phone's Contacts app are replaced
-          from here. Everything is removed when you sign out or turn this off.
+          <b>This is all you need on this phone</b> — no address to type, no password, nothing else to
+          install. Your people appear in the dialer, in messaging apps and in the share sheet, and a
+          contact you add or edit in the phone's own Contacts app comes back here. Android asks for
+          permission to your contacts when you turn it on; it is used for this account's cards and
+          nothing else. It syncs <b>while the app is open</b> — your contacts are encrypted, so
+          nothing else on the phone can read them. Everything is removed when you sign out or turn
+          this off.
           ${on ? `<br><b>${n}</b> contact${n === 1 ? '' : 's'} on this phone.` : ''}</p>
       </div>`;
     }
@@ -525,7 +627,7 @@
           CSet().set(PHONE_KEY, true);
           toast('adding your contacts to this phone…');
           _pushSig = '';
-          await pushPhonebook(true);
+          await syncPhonebook(true);
           toast('done — look in the phone’s Contacts app');
         }else{
           CSet().set(PHONE_KEY, false);
@@ -560,11 +662,16 @@
           <input class="input" style="width:100%" value="${enc(base + encodeURIComponent(b.id) + '/')}"
                  readonly aria-label="Address book URL for ${enc(b.displayname || b.id)}">
         </div>`).join('');
-      const native = !!nativeSync('begin');
-      modal(`<h3>Sync your contacts to a device</h3>
-        <p class="muted small">Add a <b>CardDAV account</b> in a contacts app that speaks it —
-           DAVx⁵ on Android, the built-in accounts on iOS and macOS, Thunderbird on the desktop. It
-           syncs <b>both ways</b>: a contact added on the device appears here.</p>
+      const native = !!(await probeNative());
+      modal(`<h3>Sync to another device</h3>
+        ${native ? `<p class="muted small" style="margin-bottom:10px">
+           <b>You don't need any of this for the phone you are holding.</b> “Sync to this phone's
+           Contacts app”, at the top of the Addressbooks panel, is one switch and nothing to install.
+           This page is for your <i>other</i> devices — a desktop, an iPhone — and for keeping them in
+           step while this app is closed.</p>` : ''}
+        <p class="muted small">Add a <b>CardDAV account</b> in a contacts app that speaks it — the
+           built-in accounts on iOS and macOS, Thunderbird on the desktop, DAVx⁵ on another Android
+           phone. It syncs <b>both ways</b>: a contact added on the device appears here.</p>
         <label class="fld">Server <span class="muted small">(most apps discover everything from
           this)</span><input class="input" id="ctd-url" value="${enc(base)}" readonly></label>
         <label class="fld">Username<input class="input" id="ctd-user" value="${enc(cfg.username||'')}" readonly></label>
@@ -582,10 +689,7 @@
             ${cfg.has_password ? '<button class="btn btn-ghost small" id="ctd-clear">Revoke</button>' : ''}</div>
           <div id="ctd-out"></div>
         </div>
-        ${native ? `<p class="muted small"><b>On this Android phone you do not need any of this.</b>
-           “Show these contacts in this phone's Contacts app”, in the Addressbooks panel, puts them in
-           the dialer with nothing else installed. CardDAV is the route for your <i>other</i> devices —
-           a desktop, an iPhone — and for keeping them in sync when this app is closed.</p>` : ''}`,
+        `,
       root => {
         $$('#ctd-url, #ctd-user, .ct-davrow input', root).forEach(i => i.onfocus = ()=> i.select());
         $('#ctd-gen', root).onclick = async ()=>{
@@ -626,23 +730,25 @@
     }
 
     async function openMenu(){
-      // The phone-book row wants to say how many are on the device. One cheap native call, and only
-      // in the packaged app with the switch already on.
-      let st = null;
-      const SP = nativeSync('status');
-      if(SP && phonebookOn()){ try{ st = await SP.status(); }catch(_){} }
+      /* ONE cheap native call, and it decides the whole shape of this panel: on a phone that can do
+       * it, syncing to the phone's own Contacts app LEADS and CardDAV is the secondary route for
+       * other devices. Leading with a CardDAV URL on Android tells somebody to install another app
+       * for something this one already does — which is precisely what the plugin exists to avoid. */
+      const st = await probeNative();
+      const device = phonebookRow(st);
       modal(`<h3>Addressbooks</h3>
+        ${device ? `<div class="cal-list" style="margin-bottom:12px">${device}</div>` : ''}
         <div class="cal-list">${S.books.map(b => `<div class="cal-row">
             <span class="cal-name">${enc(b.displayname || b.id)}</span>
             <a class="btn btn-ghost small" href="/api/contacts/export?book=${encodeURIComponent(b.id)}"
                download><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Export</a>
             <button class="btn btn-ghost small ctb-del" data-id="${enc(b.id)}">Delete</button>
-          </div>`).join('') || '<div class="empty">No addressbooks yet.</div>'}
-          ${phonebookRow(st)}</div>
+          </div>`).join('') || '<div class="empty">No addressbooks yet.</div>'}</div>
         <div class="row" style="margin-top:14px;flex-wrap:wrap;gap:8px">
           <button class="btn btn-cyan small" id="ctb-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New addressbook</button>
           <button class="btn btn-ghost small" id="ctb-import"><svg class="ic b-ic" aria-hidden="true"><use href="#i-upload"></use></svg>Import .vcf</button>
-          <button class="btn btn-ghost small" id="ctb-phone"><svg class="ic b-ic" aria-hidden="true"><use href="#i-android"></use></svg>Sync to a device</button>
+          <button class="btn btn-ghost small" id="ctb-phone"><svg class="ic b-ic" aria-hidden="true"><use href="#i-android"></use></svg>${
+            st ? 'Sync to another device' : 'Sync to a device'}</button>
         </div>
         <input type="file" id="ctb-file" accept=".vcf,text/vcard" hidden>`, root => {
         wirePhonebook(root);
@@ -684,17 +790,17 @@
         if(!S.ready && !S.loading) load();
       },
       reload: load,
-      /* KEEP THE PHONE BOOK FED WITHOUT ANYBODY OPENING CONTACTS.
+      /* KEEP THE TWO COPIES IN STEP WITHOUT ANYBODY OPENING CONTACTS.
        *
-       * pushPhonebook runs at the end of load(), and load() only runs when this screen is rendered —
-       * so somebody who edits contacts on a laptop and never opens the screen on their phone would
-       * have a phone book that was filled once and never again. Called from app.js a few seconds
-       * after start, and it costs nothing at all unless this is the packaged Android app AND the
-       * switch is on: only then does it fetch the books. */
+       * A sweep runs at the end of load(), and load() only runs when this screen is rendered — so
+       * somebody who edits contacts on a laptop, or who adds one in the phone's own Contacts app and
+       * never opens this screen, would have two copies drifting apart. Called from app.js a few
+       * seconds after start, and it costs nothing at all unless this is the packaged Android app AND
+       * the switch is on: only then does it fetch the books. */
       async syncTick(){
         if(!nativeSync('begin') || !phonebookOn()) return;
-        if(!S.ready) return load();       // load() pushes at its end
-        return pushPhonebook();
+        if(!S.ready) return load();       // load() sweeps at its end
+        return syncPhonebook();
       },
       /* Sign-out and account switch. The phone's copy must not outlive the session that could read
        * it — a handed-down phone would otherwise keep the previous user's people in its dialer and

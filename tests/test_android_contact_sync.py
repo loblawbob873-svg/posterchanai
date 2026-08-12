@@ -23,9 +23,28 @@ of somebody else's people, with nothing in any log to say so:
   * the batch gets flushed mid-card, which silently attaches one person's data rows to another
     (withValueBackReference indexes into the batch being applied).
   * the switch stops defaulting to OFF, or sign-out stops wiping the device copy.
+
+And, since it became TWO WAY, every way the second direction eats data:
+
+  * the push runs before the pull, so an edit made on the phone is overwritten by the app's stale
+    copy before anything read it — no error, no trace;
+  * DIRTY is cleared for a row whose change was never stored, which marks it uploaded for ever;
+  * a deletion made on the phone is read as "a card the phone is missing" and re-inserted, which the
+    next pull deletes again, for as long as the app is open;
+  * a contact created on the phone is pruned before it has been stored, or gets a new uid on every
+    sweep and becomes several people;
+  * the edit schema offers a field we do not round-trip, so the user watches themself type something
+    that disappears on the next push.
+
+The Java is also TYPE-CHECKED here, against the hand-written stubs in tests/androidstubs — a broken
+column constant is a failing test in a second rather than a broken APK build on CI.
 """
 import os
 import re
+import shutil
+import subprocess
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ANDROID = os.path.join(ROOT, "mobile", "android", "app")
@@ -41,6 +60,8 @@ MANIFEST = _read(ANDROID, "src", "main", "AndroidManifest.xml")
 MAIN = _read(JAVA, "MainActivity.java")
 PLUGIN = _read(JAVA, "contacts", "ContactSyncPlugin.java")
 WRITER = _read(JAVA, "contacts", "ContactWriter.java")
+READER = _read(JAVA, "contacts", "ContactReader.java")
+VCARD_JS = _read(ROOT, "static", "js", "client", "vcard.js")
 AUTH = _read(JAVA, "contacts", "PosterChanAuthenticator.java")
 AUTHSVC = _read(JAVA, "contacts", "AuthenticatorService.java")
 AUTH_XML = _read(ANDROID, "src", "main", "res", "xml", "contacts_authenticator.xml")
@@ -81,12 +102,10 @@ def test_the_authenticator_is_declared_the_way_the_platform_binds_it():
     assert "@xml/contacts_authenticator" in body
     # …and guarded by answering only that action, or the authenticator goes to whoever asks.
     assert "ACTION_AUTHENTICATOR_INTENT.equals(intent.getAction())" in AUTHSVC
-    # A one-way sync means the phone's Contacts app must not offer to edit our cards: an account type
-    # with no edit schema is read-only to AOSP-derived Contacts apps.
+    # The edit schema is what lets the phone's Contacts app edit our cards and save new ones into
+    # this account. Its CONTENTS are pinned separately, below.
     assert "android.provider.CONTACTS_STRUCTURE" in body
     assert "@xml/contacts_structure" in body
-    assert "ContactsDataKind" not in STRUCT_XML, \
-        "declaring data kinds gives the account an edit schema, i.e. an Edit button we overwrite"
     # Settings → Accounts → Add account lists every registered type; returning null there is a dead
     # entry, so addAccount opens the app instead.
     assert "KEY_INTENT" in AUTH and "MainActivity.class" in AUTH
@@ -114,6 +133,12 @@ def test_every_write_goes_through_the_sync_adapter_uri():
         assert "syncUri(" in call, f"provider operation on a plain URI: {call}"
     for call in re.findall(r"getContentResolver\(\)\.delete\(\s*([A-Za-z_.()]+)", WRITER):
         assert call.startswith("syncUri"), f"delete on a plain URI ({call}) only tombstones the row"
+    # Now that the phone can edit our cards it matters a second time, and in the other direction: a
+    # write WITHOUT the parameter is recorded as a user edit, so every push would mark the whole
+    # address book dirty and the next pull would upload our own writes back as the user's.
+    for call in re.findall(r"getContentResolver\(\)\.(?:delete|update)\(\s*([A-Za-z_.()]+)", READER):
+        assert call.startswith("ContactWriter.syncUri"), \
+            f"the reader writes through a plain URI ({call}) — that is a user edit, not a sync"
 
 
 def test_the_reconcile_deletes_as_well_as_inserts():
@@ -186,6 +211,172 @@ def test_it_is_off_by_default_and_asks_before_it_writes():
     # A permission revoked in system settings AFTER the switch was turned on must turn it back off,
     # not leave a switch that says "on" while nothing is ever written.
     assert "st.granted === false" in CONTACTS_JS
+
+
+# --------------------------------------------------------------------------------------------
+# TWO WAY: the phone's own edits, coming back.
+# --------------------------------------------------------------------------------------------
+
+def test_the_sweep_pulls_before_it_pushes():
+    """The order is the whole design. A push is an overwrite of the phone's copy, so pushing first
+    destroys an edit made there before anything has read it — no error, nothing in any log, and the
+    user finds out when they ring the old number."""
+    sweep = re.search(r"function syncPhonebook\(force\)\{(.*?)\n    \}", CONTACTS_JS, re.S)
+    assert sweep, "syncPhonebook moved — re-point this test"
+    body = sweep.group(1)
+    pull = body.index("pullPhone(")
+    push = body.index("pushPhonebook(")
+    assert pull < push, "the push must not run before the pull"
+    # …and what the pull stored has to be re-read, or the push sends the state from before the merge
+    # and undoes the phone's edit on the phone.
+    assert "await load()" in body[pull:push], \
+        "the merged cards must be re-read before the push, or the push sends stale state"
+    # The screen's own load ends in a full sweep, not a bare push.
+    assert "try{ syncPhonebook(); }catch(_){}" in CONTACTS_JS
+
+
+def test_dirty_is_cleared_only_for_rows_the_app_actually_stored():
+    """RawContacts.DIRTY is the only record that the phone changed something. Clearing it for a row
+    whose change was not stored marks that edit as uploaded for ever — the same shape as recording a
+    hash for a batch the provider refused."""
+    taken = re.search(r"public static JSONArray taken\(Context ctx, JSONArray rows\) \{(.*?)\n  \}",
+                      READER, re.S)
+    assert taken, "ContactReader.taken moved — re-point this test"
+    body = taken.group(1)
+    # Only the rows handed in, and only at the version they were read at.
+    assert "rows.optJSONObject(i)" in body
+    assert re.search(r'RawContacts\._ID \+ "=\? AND " \+ RawContacts\.VERSION \+ "=\?', body), \
+        "clearing DIRTY without a version guard loses an edit made while the sweep was in flight"
+    assert "v.put(RawContacts.DIRTY, 0)" in body
+    # A row whose clear did not take is NOT reported as cleared.
+    assert "if (ok) cleared.put(rawId);" in body
+    # The client only ever acknowledges what it stored: the ack is built after the write, in the
+    # same iteration, and a throw skips it.
+    pull_js = re.search(r"async function pullPhone\(\)\{(.*?)\n    \}", CONTACTS_JS, re.S)
+    assert pull_js, "pullPhone moved — re-point this test"
+    js = pull_js.group(1)
+    assert js.index("ack.push(") > js.index("await jput("), \
+        "a row must be acknowledged after its save, never before"
+    assert "}catch(_){ /* not acknowledged" in js
+
+
+def test_a_deletion_made_on_the_phone_is_never_re_added():
+    """A tombstone (DELETED=1) is the only record of the deletion, and the app's copy still holds
+    that person — which is exactly what a push writes back. Re-inserted, the next pull deletes them
+    again, and the two halves fight for as long as the app is open."""
+    # A tombstone is not a live row…
+    assert 'RawContacts.DELETED + "=0"' in WRITER, \
+        "existing() must exclude tombstones, or a push writes onto a deleted contact"
+    # …and neither half of the push touches a uid with an unacknowledged phone-side change.
+    assert "public static Set<String> pending(Context ctx)" in READER
+    assert "if (skip != null && skip.contains(uid)) continue;" in WRITER
+    assert "if (hold != null && hold.contains(e.getKey())) continue;" in WRITER
+    put = re.search(r"public void put\(PluginCall call\) \{(.*?)\n  \}", PLUGIN, re.S)
+    commit = re.search(r"public void commit\(PluginCall call\) \{(.*?)\n  \}", PLUGIN, re.S)
+    assert put and commit
+    assert "ContactReader.pending(getContext())" in put.group(1), \
+        "put() must hold back cards the phone has changed"
+    assert "ContactReader.pending(getContext())" in commit.group(1), \
+        "the reconcile must hold back a contact created on the phone and not yet stored"
+    # And the client treats a deletion as a deletion rather than a card to write.
+    assert "action === 'delete'" in CONTACTS_JS and "method:'DELETE'" in CONTACTS_JS
+    assert "action: have ? 'delete' : 'drop'" in VCARD_JS
+
+
+def test_a_contact_created_on_the_phone_becomes_exactly_one_card():
+    """It has no uid of ours. Minting one in the CLIENT and losing it to a crash before the card
+    reaches the server would mint a second one next sweep — one person, two cards, for ever."""
+    mint = re.search(r"public static int mintSourceIds\(Context ctx\) \{(.*?)\n  \}", READER, re.S)
+    assert mint, "ContactReader.mintSourceIds moved — re-point this test"
+    body = mint.group(1)
+    assert "UUID.randomUUID()" in body
+    assert "v.put(RawContacts.SOURCE_ID," in body, "the uid must be written onto the row"
+    assert "IS NULL OR " in body and "SOURCE_ID" in body, \
+        "the write must be guarded on the row still having no uid"
+    # Minted BEFORE the versions are read — writing SOURCE_ID bumps RawContacts.VERSION, and a
+    # version read before that write would never match at acknowledge time.
+    pull = re.search(r"public void pull\(PluginCall call\) \{(.*?)\n  \}", PLUGIN, re.S)
+    assert pull, "ContactSyncPlugin.pull moved — re-point this test"
+    pbody = pull.group(1)
+    assert pbody.index("mintSourceIds") < pbody.index("ContactReader.changes"), \
+        "uids must be stamped before the rows (and their versions) are read"
+    # A row with no uid is not reported at all — it gets one on the next pass instead of being
+    # uploaded as an anonymous card.
+    assert 'if (uid == null || uid.isEmpty()) continue;' in READER
+    # …and the client stores it under the uid the row now carries, never a fresh one.
+    assert "made.uid = uid;" in VCARD_JS
+
+
+def test_the_edit_schema_offers_exactly_what_we_round_trip():
+    """A field the phone offers and we then discard is worse than one it never showed: the user
+    watches themself type it and it disappears on the next push, hours later, with nothing said."""
+    assert "<EditSchema>" in STRUCT_XML, \
+        "no edit schema = a read-only account: the phone cannot edit or add contacts at all"
+    kinds = set(re.findall(r'<DataKind\s+kind="([a-zA-Z]+)"', STRUCT_XML))
+    assert kinds == {"name", "phone", "email", "organization", "postal", "event", "note"}, kinds
+    # Every kind above is written by ContactWriter AND read back by ContactReader — the two lists
+    # are the definition of "round-trip".
+    for mime in ("StructuredName", "Phone", "Email", "Organization", "StructuredPostal", "Note",
+                 "Event"):
+        assert f"{mime}.CONTENT_ITEM_TYPE" in WRITER, mime
+        assert f"{mime}.CONTENT_ITEM_TYPE.equals(mime)" in READER, f"{mime} is written but not read"
+    # Photo is deliberately NOT editable on the phone: it is written from the app and cannot be read
+    # back reliably (the provider hands us its own thumbnail, not the bytes we sent).
+    assert 'kind="photo"' not in STRUCT_XML
+    for never in ("nickname", "website", "im", "relation", "sip_address", "groupMembership"):
+        assert f'kind="{never}"' not in STRUCT_XML, f"{never} is offered and then discarded"
+    # A birthday is a vCard BDAY; an anniversary is an Event row with nowhere to go.
+    assert 'type="birthday"' in STRUCT_XML and 'type="anniversary"' not in STRUCT_XML
+
+
+def test_a_push_only_rewrites_the_rows_this_feature_owns():
+    """The push used to delete every data row on the contact and rebuild it. With the phone able to
+    edit them, that also destroys anything another app put there — the same mistake vcard.js exists
+    to prevent on the card itself."""
+    assert "MANAGED_MIMES" in WRITER
+    assert "managedSelection()" in WRITER and "managedArgs(rawId)" in WRITER
+    build = WRITER[WRITER.index("private static void buildCard("):WRITER.index("/** A Data row that")]
+    assert 'Data.RAW_CONTACT_ID + "=?", new String[]{String.valueOf(rawId)}' not in build, \
+        "deleting every data row destroys the fields the phone owns"
+
+
+def test_a_phone_edit_keeps_what_the_phone_cannot_model():
+    """The merge is vcard.js's, so the photo, the Apple-style grouped labels, the foreign PRODID and
+    every X-* field survive an edit made on the phone. tests/test_vcard.py asserts the behaviour; this
+    asserts the client actually goes through it rather than building a card from eight fields."""
+    assert "V().phonePlan(" in CONTACTS_JS
+    assert "V().serialize(step.card)" in CONTACTS_JS
+    assert "out.other = (card && card.other) ? card.other.slice() : (out.other || []);" in VCARD_JS
+    # The loser of a conflict is stored BEFORE the winner overwrites it.
+    plan = re.search(r"async function pullPhone\(\)\{(.*?)\n    \}", CONTACTS_JS, re.S).group(1)
+    assert plan.index("step.copy") < plan.index("step.card"), \
+        "the conflict copy must be written before the version it is a copy of is replaced"
+
+
+def test_a_pull_checks_the_account_it_is_reading_for():
+    """Without it, the first sweep after somebody else signs in on this phone uploads the PREVIOUS
+    user's phone book into the new account — a leak, not a mess."""
+    pull = re.search(r"public void pull\(PluginCall call\) \{(.*?)\n  \}", PLUGIN, re.S).group(1)
+    assert 'ownerGuard(call.getString("owner", ""))' in pull
+    assert "if (!wiped) {" in pull, "a wipe must not then read the rows it just removed"
+    assert "ContactWriter.wipe(getContext());" in PLUGIN
+
+
+def test_the_java_type_checks_against_the_platform_stubs():
+    """javac over the real sources. The Gradle build only runs on CI, so without this a wrong column
+    constant or a method that does not exist is found half an hour later, by a robot."""
+    if shutil.which("javac") is None:
+        pytest.skip("no JDK")
+    import tempfile
+    src = [os.path.join(JAVA, "contacts", f) for f in
+           ("ContactWriter.java", "ContactReader.java", "ContactSyncPlugin.java")]
+    with tempfile.TemporaryDirectory() as out:
+        r = subprocess.run(
+            ["javac", "-nowarn", "-d", out,
+             "-sourcepath", os.path.join(ROOT, "tests", "androidstubs") + os.pathsep
+                            + os.path.join(ANDROID, "src", "main", "java")] + src,
+            capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0, r.stderr[-3000:]
 
 
 def test_the_push_is_skipped_when_nothing_changed():
