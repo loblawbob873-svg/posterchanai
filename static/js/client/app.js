@@ -21180,6 +21180,30 @@
         await new Promise(r=>setTimeout(r, 450*(attempt+1)));
       }
       notes.forEach(n=>Store.saveEvent(n));
+      /* A REPLY-HEAVY AUTHOR HAS AN EMPTY "POSTS" TAB WHILE THEIR REPLIES FILL YOUR TIMELINE, and
+       * that reads as a broken profile: "he appeared on the timeline but not in his profile — he
+       * posted so he should have posts."
+       *
+       * The timeline deliberately shows replies (feedNoteHtml wraps them in a "replying to" pair);
+       * the Posts tab deliberately excludes them (`!isReply(e)`). Both are right. What is wrong is
+       * the WINDOW: one page of the 80 most recent events. Measured on the reported npub, 168 of
+       * its 200 most recent kind-1s are replies — so the page can be all replies while the author
+       * has 32 top-level posts a little further back, and the tab says "No posts yet."
+       *
+       * Nostr filters cannot express "no e tag", so this cannot be asked for directly. Page BACK
+       * instead, by `until`, only when the window we have holds no top-level post and does hold
+       * replies — i.e. only for the authors this actually happens to, never on the common path.
+       * Bounded to two extra pages: this is a fill-in for a lopsided author, not scroll-back. */
+      const _top = () => Store.feed(e => e.pubkey === pk && !isReply(e)).length;
+      let older = notes;
+      for(let page = 0; page < 2 && !_top() && older.length; page++){
+        const oldest = Math.min(...older.map(e => e.created_at || 0).filter(Boolean));
+        if(!oldest) break;
+        try{ older = await Relay.query([{ authors:[pk], kinds:[1,1068,6], until: oldest - 1, limit: 80 }]); }
+        catch(_){ break; }
+        if(VIEW!=='profile' || myGen!==_profGen) return false;
+        older.forEach(n => Store.saveEvent(n));
+      }
       return VIEW==='profile' && myGen===_profGen;
     };
     if(!_cached){
@@ -21236,7 +21260,15 @@
       if(tab==='streams'){ const s=_dedupAddr(Store.byKind(30311).filter(e=> (e.pubkey===pk || streamHost(e)===pk) && !_isDeletedStream(e))).slice(0,lim);   // NOT Store.feed() — that allowlists kinds 1/6/1068/30023/34550/40, so it silently drops every 30311
         return s.length ? `<div class="stream-grid prof-streams">${s.map(streamCard).join('')}</div>` : `<div class="empty">${_prof.streamsLoaded?'No streams yet.':'Loading…'}</div>`; }
       const n=Store.feed(e=>e.pubkey===pk && !isReply(e) && !pinnedIds.has(e.id)).slice(0,lim);
-      return pinnedHtml + (n.length ? n.map(e=>noteHtml(e)).join('') : '<div class="empty">No posts yet.</div>');
+      if(n.length) return pinnedHtml + n.map(e=>noteHtml(e)).join('');
+      /* "No posts yet." is a claim, and for a reply-heavy author it is a FALSE one — their replies
+       * are on your timeline right now. Say which of the two this is, and offer the tab that has
+       * them, rather than telling somebody an active account is empty. */
+      const _reps = Store.feed(e=>e.pubkey===pk && isReply(e)).length;
+      return pinnedHtml + (_reps
+        ? `<div class="empty">No top-level posts — everything loaded from this account is a reply.
+             <button class="btn btn-cyan small prof-see-replies" style="margin-top:10px">See ${_reps} repl${_reps===1?'y':'ies'}</button></div>`
+        : '<div class="empty">No posts yet.</div>');
     };
     // Guard against redundant re-renders: the lazy-fetch (+ hydrate/live-event churn) can call fillList
     // with byte-identical HTML, and re-setting innerHTML re-triggers the .stream-card fade → screen flicker.
@@ -21255,6 +21287,16 @@
         h=`<div class="empty">Couldn’t show this list — ${enc(String((e&&e.message)||e).slice(0,140))}</div>`;
       }
       if(h===_lastFill) return; _lastFill=h; el.innerHTML=h;
+      /* The "See N replies" button the Posts tab offers a reply-only author. Bound HERE, inside
+       * fillList, because the list is re-rendered on every relay round and a handler attached
+       * anywhere else would be dropped by the next innerHTML. Drives the real tab so the button and
+       * the tab row cannot disagree about which one is active. */
+      const _sr = el.querySelector('.prof-see-replies');
+      if(_sr) _sr.onclick = () => {
+        const t = $$('.prof-tab', feed).find(x => x.dataset.tab === 'replies');
+        if(t) t.click();
+        else { _prof.tab = 'replies'; fillList('replies'); hydrate(feed); }
+      };
     };
     // Wire the Streams tab's cards to open the stream/VOD (author-name clicks still go to the profile).
     const _wireProfStreamClicks=()=>{ const el=$('#prof-list'); if(!el) return;
