@@ -496,7 +496,8 @@
       this.ordered = [];                 // events, oldest first
       this.listening = false;
       this.wantSerial = 0;
-      this.delivered = 0;                // how many updates the app has been handed — see deliver()
+      this.delivered = 0;                // the mark deliver() sends from
+      this._frozen = 0;                  // how much of `ordered` the app has actually been handed
       this.self = { addr: '', name: '' };
       this.dead = false;
     }
@@ -590,6 +591,7 @@
           summary: tag('summary') || undefined,
         } });
       }
+      this._frozen = max;                // nothing at or below this may be reordered again
     };
 
     Session.prototype.absorb = function(evs){
@@ -610,9 +612,15 @@
        * arrival slide in under events the app already has, which renumbers them — so the app would
        * be told the same serial twice with different payloads, and `max_serial` would stop meaning
        * "you are caught up". The delivered prefix is frozen; a late event joins the tail and is
-       * ordered among the others still waiting to go out. */
-      const head = this.ordered.slice(0, this.delivered);
-      const tail = this.ordered.slice(this.delivered);
+       * ordered among the others still waiting to go out.
+       *
+       * The mark is what has actually been POSTED, not `delivered` — those differ for exactly one
+       * call, and it is the one that matters. `setUpdateListener(cb, 12)` seeds `delivered = 12`
+       * while this session has posted NOTHING, so freezing 12 events there would freeze them in the
+       * arbitrary order the relay happened to answer in, and the resumed app would then be handed
+       * the wrong tail. Before the first deliver() the whole list is still free to sort. */
+      const head = this.ordered.slice(0, this._frozen);
+      const tail = this.ordered.slice(this._frozen);
       tail.sort((a, b) => (a.created_at - b.created_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
       this.ordered = head.concat(tail);
       return true;
@@ -621,9 +629,8 @@
     Session.prototype.start = async function(fromSerial){
       this.listening = true;
       this.wantSerial = Math.max(0, Number(fromSerial) || 0);
-      // `setUpdateListener(cb, serial)` means "I already have everything up to `serial`". That IS
-      // the delivered count, so it seeds it — before absorb(), which reads it to decide how much of
-      // the list it may reorder.
+      // `setUpdateListener(cb, serial)` means "I already have everything up to `serial`", so that is
+      // where delivery starts. It is NOT a freeze mark — see absorb().
       this.delivered = this.wantSerial;
       const filter = { kinds:[KIND_UPDATE], '#i':[this.app.uuid], limit: 1000 };
       let evs = [];

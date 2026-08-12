@@ -732,7 +732,7 @@ class EveryUpdateReachesTheAppExactlyOnce(unittest.TestCase):
     functions and a sort — nothing static can see it.
     """
 
-    def deliver(self, tail):
+    def deliver(self, tail, stored=None, resume=0):
         return _node("""
         const out = { updates: [] };
         let live = null;
@@ -744,7 +744,7 @@ class EveryUpdateReachesTheAppExactlyOnce(unittest.TestCase):
         };
         const ev = (id, at, payload) => ({ id, kind:4932, created_at:at, pubkey:'p',
                                            tags:[['i','g1']], content: JSON.stringify(payload) });
-        const STORED = [ev('aaa', 100, 'first'), ev('ccc', 300, 'third')];
+        const STORED = (%s).map(a => ev(a[0], a[1], a[2]));
         global.window = { addEventListener(){}, removeEventListener(){},
           Relay: RELAY, Store: { query: () => [] },
           __PC: { $: () => null, enc: s => s, toast(){},
@@ -766,11 +766,12 @@ class EveryUpdateReachesTheAppExactlyOnce(unittest.TestCase):
             out.updates.push([m.params.payload, m.params.serial, m.params.max_serial]);
         } } };
         (async () => {
-          await s.start(0);
+          await s.start(%d);
           %s
           setTimeout(() => { console.log(JSON.stringify(out)); process.exit(0); }, 40);
         })().catch(e => { console.error(e); process.exit(1); });
-        """ % (json.dumps(str(WEBXDC_JS)), tail))
+        """ % (json.dumps(stored or [["aaa", 100, "first"], ["ccc", 300, "third"]]),
+               json.dumps(str(WEBXDC_JS)), resume, tail))
 
     def _check(self, out):
         got = [u[0] for u in out["updates"]]
@@ -797,6 +798,17 @@ class EveryUpdateReachesTheAppExactlyOnce(unittest.TestCase):
         out = self.deliver("await s.sendUpdate({ payload:'mine' });")
         got = self._check(out)
         self.assertIn("mine", got, "the sender never received its own update")
+
+    def test_a_resume_sorts_the_history_before_it_counts_from_it(self):
+        """`setUpdateListener(cb, 1)` says the app already has one update — it does NOT say the
+        relay will answer in order. The serial is an index into the SORTED history, so the stored
+        events have to be sorted before it means anything. Freeze them in arrival order and the
+        resumed app is handed the wrong tail: the update it already has, and never the one it
+        does not."""
+        out = self.deliver("", stored=[["ccc", 300, "third"], ["aaa", 100, "first"]], resume=1)
+        self.assertEqual([u[0] for u in out["updates"]], ["third"],
+                         "a resumed app was handed the wrong update")
+        self.assertEqual(out["updates"][0][1], 2)
 
     def test_a_tie_broken_by_id_downwards_is_not_lost(self):
         """Same second, lower id: the sort puts it first, which is exactly the position the old

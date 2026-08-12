@@ -1344,12 +1344,78 @@
       toast(share.files && share.files.length ? 'attached — tell the AI what to do with it' : 'shared to the AI chat');
     }catch(_){ toast('couldn’t hand that to the AI chat'); }
   }
+  /* THE RAW NATIVE CHANNEL, used only when the Capacitor JS did not arrive.
+   *
+   * `registerPlugin` below is @capacitor/core's, and THIS BUNDLE DOES NOT SHIP @capacitor/core: the only
+   * Capacitor JS in the APK is `native-bridge.js`, which the WebView injects, and it defines
+   * getPlatform / nativePromise / nativeCallback and NOT registerPlugin (verified in the APK's own
+   * assets). So the documented fallback has always been a no-op here, and `Capacitor.Plugins[name]` —
+   * the map the native side injects alongside the bridge — was the ONLY way any of these plugins has
+   * ever been found. When that injection is missing or late, every native feature reports "not the
+   * packaged app" and says nothing.
+   *
+   * `androidBridge` is the layer under all of it: the WebView's own message channel, attached by Java
+   * before a single script runs, so it survives the injected JS being absent entirely. We only take it
+   * over when Capacitor's own transport is not there — never racing the bridge for its `onmessage`. */
+  let _rawSeq = 900000000, _rawCalls = null;
+  function _rawNative(){
+    const cap = window.Capacitor;
+    if(cap && typeof cap.nativePromise === 'function')
+      return (pluginId, methodName, options) => cap.nativePromise(pluginId, methodName, options || {});
+    const ab = window.androidBridge;
+    if(!ab || typeof ab.postMessage !== 'function') return null;
+    if(!_rawCalls){
+      _rawCalls = new Map();
+      const prev = typeof ab.onmessage === 'function' ? ab.onmessage : null;
+      ab.onmessage = (ev) => {
+        let r = null;
+        try{ r = JSON.parse((ev && ev.data) || 'null'); }catch(_){ r = null; }
+        const w = r && _rawCalls.get(r.callbackId);
+        if(!w){ if(prev) prev(ev); return; }
+        _rawCalls.delete(r.callbackId);
+        if(r.success) w.resolve(r.data);
+        else w.reject(new Error((r.error && r.error.message) || 'native error'));
+      };
+    }
+    return (pluginId, methodName, options) => new Promise((resolve, reject) => {
+      const callbackId = String(++_rawSeq);
+      _rawCalls.set(callbackId, { resolve, reject });
+      // A call that is never answered must not leave the caller awaiting for ever: a probe that hangs
+      // is worse than one that fails, because the panel it gates never renders at all.
+      setTimeout(() => { if(_rawCalls.delete(callbackId)) reject(new Error('native call timed out')); }, 15000);
+      try{ ab.postMessage(JSON.stringify({ callbackId, pluginId, methodName, options: options || {} })); }
+      catch(e){ _rawCalls.delete(callbackId); reject(e); }
+    });
+  }
   // Capacitor plugin proxies aren't pre-attached to Capacitor.Plugins when we don't import the plugin JS in
-  // the bundle — build them from the native registration via registerPlugin.
+  // the bundle — build them from the native registration via registerPlugin, and failing that from the
+  // raw channel above.
   function _capPlugin(name, method){
-    const cap = window.Capacitor; if(!cap) return null;
-    let p = cap.Plugins && cap.Plugins[name];
-    if((!p || (method && !p[method])) && cap.registerPlugin){ try{ p = cap.registerPlugin(name); }catch(_){} }
+    const cap = window.Capacitor;
+    let p = cap && cap.Plugins && cap.Plugins[name];
+    if((!p || (method && !p[method])) && cap && cap.registerPlugin){ try{ p = cap.registerPlugin(name); }catch(_){} }
+    if(!p || (method && !p[method])){
+      /* ONLY when the plugin map is absent or empty — i.e. the injection genuinely did not happen. A
+       * POPULATED map that does not list this plugin is an honest "this build does not have it", and
+       * answering with a proxy there would turn "the feature is missing" into "every call to it
+       * fails", which is a worse answer and a wrong one. */
+      const injected = !!(cap && cap.Plugins && Object.keys(cap.Plugins).length);
+      const send = injected ? null : _rawNative();
+      if(send){
+        const mk = (m) => (opts) => send(name, m, opts);
+        const hdr = ((cap && cap.PluginHeaders) || []).filter(h => h && h.name === name)[0];
+        const out = {};
+        if(hdr && hdr.methods) hdr.methods.forEach(m => { if(m && m.name) out[m.name] = mk(m.name); });
+        if(Object.keys(out).length) p = out;
+        else{
+          // No header list either: synthesise on demand. Every method resolves through the same
+          // channel, and a plugin the native side does not have rejects the call — which is what the
+          // callers already handle.
+          try{ p = new Proxy({}, { get: (_t, k) => (typeof k === 'string' ? mk(k) : undefined) }); }
+          catch(_){ p = method ? { [method]: mk(method) } : null; }
+        }
+      }
+    }
     return (p && (!method || p[method])) ? p : null;
   }
   // Read a shared file into a Blob. The send-intent plugin COPIES the file into the app's Data dir and hands
