@@ -154,6 +154,27 @@ jobs:
       # "RequestError: self-signed certificate", failing the mac build in ~25s while the same commit
       # builds cleanly on the next push. Three attempts turns a random red into a self-healing one;
       # a real breakage still fails all three and still fails the job.
+      # The real cure for the throttled downloads: once these are warm nothing is fetched from
+      # GitHub's release CDN at all, so a throttle there cannot fail the job.
+      #
+      # ABOVE `Install deps`, and that placement is the whole point. The Electron zip is downloaded
+      # TWICE by two different things, and this used to sit below the first one — so `npm ci` died in
+      # the electron package's own postinstall (`node install.js` → @electron/get → `RequestError:
+      # socket hang up`), three retries deep, before the cache step it needed had even run. Both
+      # writers share this one root: ~/.cache/electron holds @electron/get's `<sha256-of-url>/` dir
+      # AND app-builder's flat `electron-v33.4.11-<platform>.zip`, confirmed by inspecting a real
+      # build's cache. One warm restore therefore kills both downloads.
+      #
+      # Keyed on the lockfile so an electron bump re-downloads exactly once; `restore-keys` lets such
+      # a build still start from the previous cache, since the builder deps in the second directory
+      # (winCodeSign, NSIS, nsis-resources) are version-independent.
+      - name: Cache electron + electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.caches }}
+          key: ebcache-${{ matrix.name }}-${{ hashFiles('desktop/package-lock.json') }}
+          restore-keys: ebcache-${{ matrix.name }}-
+
       - name: Install deps
         working-directory: desktop
         # `shell: bash` is REQUIRED, not stylistic. Windows runners default to PowerShell, which
@@ -170,17 +191,6 @@ jobs:
           done
           echo "::error::npm ci failed three times"
           exit 1
-
-      # The real fix for the download failures below: once these are warm, the build fetches NOTHING
-      # from GitHub's release CDN, so a throttle there cannot fail a build at all. Keyed on the
-      # electron version so a bump re-downloads exactly once; `restore-keys` lets a bumped build start
-      # from the previous cache (the builder deps in the second directory are version-independent).
-      - name: Cache electron + electron-builder downloads
-        uses: actions/cache@v4
-        with:
-          path: ${{ matrix.caches }}
-          key: ebcache-${{ matrix.name }}-${{ hashFiles('desktop/package-lock.json') }}
-          restore-keys: ebcache-${{ matrix.name }}-
 
       - name: Build
         working-directory: desktop
