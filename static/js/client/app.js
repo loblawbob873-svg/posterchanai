@@ -2365,6 +2365,11 @@
        * read in the common case; it spends the network only when its snapshot is hours old. Delayed
        * past the first paint because nothing on screen is waiting for it. See PCCalendar.widgetTick. */
       setTimeout(()=>{ try{ if(window.PCCalendar) PCCalendar.widgetTick(); }catch(_){} }, 8000);
+      /* And the phone's OWN Contacts app, for the same reason: the push happens when the Contacts
+       * screen loads, and somebody who edits their address book on a laptop never opens that screen
+       * on the phone. Returns immediately on every platform but Android and for everybody who has
+       * not turned the switch on — see PCContacts.syncTick. */
+      setTimeout(()=>{ try{ if(window.PCContacts) PCContacts.syncTick(); }catch(_){} }, 9000);
       setTimeout(()=>ensureDMs(), 3000);   // subscribe to INCOMING DMs (read). Our kind-10050 DM-inbox list
       setTimeout(()=>{ try{ Mail.loginSync(); }catch(_){} }, 4500);   // fetch mail on login (background)
       Mail.startPolling();   // …and keep checking, so mail arriving later is noticed too
@@ -2696,6 +2701,22 @@
       h.replaceWith(el);
     }, true);
   }
+  /* The Android phone book holds a COPY of this account's contacts (opt-in — see contacts.js). It
+   * has to go with the session for the same reason the vault snapshot does, and unlike the vault it
+   * lives in a database OTHER APPS read: leaving it behind puts the previous user's people in the
+   * dialer, the share sheet and every messaging app on a handed-down phone.
+   *
+   * AWAITED — briefly. The reload below would otherwise cut the bridge call off mid-flight, and the
+   * owner check inside the plugin only rescues the case where somebody else signs in on this device
+   * afterwards. A second and a half, then go regardless: a sign-out that appears to hang is its own
+   * bug, and this is a no-op on every platform but Android. */
+  function _forgetPhonebook(){
+    try{
+      const p = (window.PCContacts && PCContacts.forgetDevice) ? PCContacts.forgetDevice() : null;
+      if(!p || !p.then) return Promise.resolve();
+      return Promise.race([p, new Promise(r => setTimeout(r, 1500))]);
+    }catch(_){ return Promise.resolve(); }
+  }
   function logout(){
     // The password vault's decrypted Android snapshot is not part of the session store, so it
     // survives a logout unless it is asked to go. A handed-down phone would otherwise keep
@@ -2707,7 +2728,8 @@
     try{ if(!GUEST && ME && ME.pubkey) Session.forget(ME.pubkey); }catch(_){}
     Session.clear(); try{ localStorage.removeItem('pc_settings_cache'); }catch(_){}   // per-user cache — never leak/save it across identities on a shared install
     try{ fetch('/api/auth/logout',{method:'POST'}); }catch(_){}   // clear the server session cookie too
-    Relay.worker.call('clearKey',{}); location.reload(); }
+    Relay.worker.call('clearKey',{});
+    _forgetPhonebook().then(()=> location.reload()); }
 
   // Settings → Account → "Delete all my notes": NIP-09 delete EVERY kind-1 (posts AND replies) the user
   // authored — and ONLY kind-1 (profile, follows, reactions, reposts, DMs, streams are untouched). Pages back
@@ -3217,7 +3239,7 @@
     try{ Session.clear(); }catch(_){}
     try{ fetch('/api/auth/logout', { method:'POST' }); }catch(_){}
     try{ Relay.worker.call('clearKey', {}); }catch(_){}
-    location.reload();
+    _forgetPhonebook().then(()=> location.reload());
   }
   function _accountSwitch(a){
     if(!a || !a.sess) return;
@@ -3226,7 +3248,9 @@
     try{ if(window.PCVault && PCVault.forget) PCVault.forget(); }catch(_){}
     try{ Relay.worker.call('clearKey', {}); }catch(_){}
     try{ fetch('/api/auth/logout', { method:'POST' }); }catch(_){}
-    location.reload();
+    // The phone book belongs to the account being left, not to the device — see _forgetPhonebook.
+    // The account being switched TO fills it again on its own first load.
+    _forgetPhonebook().then(()=> location.reload());
   }
 
   function _accountModal(){

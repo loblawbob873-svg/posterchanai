@@ -67,6 +67,78 @@ form, most accounts here signed in with a Nostr key and have no password at all,
 device must not log you out of everything else. Generating a new one immediately invalidates every
 device using the old one — that is also how you revoke.
 
+## On Android: put them in the phone's OWN Contacts app
+
+**⋯ → Addressbooks → "Show these contacts in this phone's Contacts app"**, in the packaged Android
+app only. Your address book is copied into the phone itself, so these people appear in the **dialer**,
+in messaging apps, in the share sheet and anywhere else the phone offers a contact — with **no other
+software installed**. CardDAV (above) already gives you this through DAVx⁵; this is the same result
+without it.
+
+**Off by default**, per device, and it asks for Android's contacts permission at the moment you turn
+it on. Refusing changes nothing.
+
+### What it is, precisely
+
+**One way: app → phone.** Edits made in the phone's own Contacts app are not read back and are
+replaced by the next push. The account type declares no edit schema, so an AOSP-derived Contacts app
+shows these cards as read-only — which is what they are. **CardDAV remains the two-way path**, and is
+the one to use on a desktop, on iOS, or when you want to add a contact from the phone.
+
+It is a **reconcile**, not an append: cards are matched on their UID, updated in place (so the
+favourite star, the contact id and any home-screen shortcut survive), and anything you delete here is
+deleted from the phone. That last half is the one that is easy to leave out — it is the same trap
+this file records against the CardDAV path below, and both are pinned by tests.
+
+**Photos are written.** They cost more than anything else in this feature (a base64 `PHOTO` crosses
+the JS→Java bridge and is the bulk of every push), so they are downscaled to 512px on the way in and
+only sent for cards that actually changed — but a phone book with no faces in the dialer is visibly
+the wrong product.
+
+### Why it works the way it does
+
+The cards are encrypted Nostr events, and the session that can read them lives in the **WebView**.
+Native Java has no session and no key, and Android's own sync scheduler runs when the app is *closed*
+— which is exactly when nothing on the device can read a contact. So this is **driven from
+JavaScript**: `static/js/client/contacts.js` hands already-decrypted cards to a Capacitor plugin and
+the plugin writes them into `ContactsContract`. It pushes when the Contacts screen loads, a few
+seconds after the app starts, and when you change something; a push where nothing changed sends
+nothing at all.
+
+For the same reason there is **no `SyncAdapter`**. One would give you a "Sync now" button that can
+never do anything, so the account is created with `setIsSyncable(…, 0)` — no sync toggle, no periodic
+job, nothing the OS can start.
+
+There **is** an account (`PosterChan`, account type `place.poster.app.contacts`), because a
+`RawContact` must belong to one and because the account is what makes this reversible: the Contacts
+app groups the cards under it, you can hide them there, and removing the account deletes every one.
+The authenticator behind it is a stub — nothing here authenticates anything.
+
+### Signing out
+
+Signing out, switching account, or turning the switch off **removes the account and every contact it
+put on the phone**. That is not tidiness: without it a handed-down phone keeps the previous user's
+people in its dialer and every share sheet. There is a second guard for the app that is killed before
+it can say goodbye — each push records which account it wrote for, and a push under a different one
+wipes first.
+
+### What is not covered
+
+Nothing is written when the app is closed, and nothing can be. Groups, and any vCard property the
+editor has no field for, are preserved in the *store* (see above) but are not written to the phone —
+the phone gets name, phones, emails, company/title, postal address, birthday, note and photo.
+
+| | |
+|---|---|
+| Plugin | `mobile/android/.../contacts/ContactSyncPlugin.java` (`begin` / `put` / `commit`) |
+| Provider writer | `mobile/android/.../contacts/ContactWriter.java` |
+| Account type | `mobile/android/.../contacts/PosterChanAuthenticator.java` + `AuthenticatorService.java` |
+| Client | `static/js/client/contacts.js` — `pushPhonebook`, `PCContacts.syncTick/forgetDevice` |
+| Wiring test | `tests/test_android_contact_sync.py` |
+
+Android code reaches a phone only through the **CI APK build** (`.github/workflows/android.yml`) — a
+`sync.sh` deploy ships the JavaScript half and nothing else.
+
 ## Import and export
 
 **⋯ → Addressbooks → Import .vcf** takes an export from Radicale, a phone, Google Contacts, anything.
@@ -124,6 +196,7 @@ with the qualifier removed, **all** of a stranger's calendar and contact documen
 
 ```
 venv-unified/bin/python -m unittest tests.test_contacts tests.test_vcard
+venv-unified/bin/python -m pytest tests/test_android_contact_sync.py   # the phone-book wiring
 venv-unified/bin/python scripts/check_contacts_mobile.py     # layout + behaviour, phone and desktop
 ```
 

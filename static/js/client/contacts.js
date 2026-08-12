@@ -106,6 +106,10 @@
       }finally{
         S.loading = false; S.ready = true; paint();
       }
+      // Keep the phone's own Contacts app in step. A no-op on every platform but Android and for
+      // everybody who has not turned it on, and a no-op again when nothing has changed since the
+      // last push — so it can sit on the end of every load without being thought about.
+      try{ pushPhonebook(); }catch(_){}
     }
 
     // ---- rendering ---------------------------------------------------------------------------
@@ -343,6 +347,188 @@
       });
     }
 
+    // ---- this phone's own Contacts app (Android only) ------------------------------------------
+    /* THE PHONE BOOK. Android can show these people in the dialer, the share sheet and every
+     * messaging app — but only if they are in ContactsContract, which is a native database no
+     * WebView can reach. So the client hands the already-decrypted cards to a Capacitor plugin
+     * (place.poster.app.contacts.ContactSyncPlugin) and that writes them.
+     *
+     * IT HAS TO BE DRIVEN FROM HERE. Native Java has no session, no storage key and no way to ask
+     * for one, and Android's own sync scheduler runs when the app is closed — which is exactly when
+     * nothing on this device can read a card. A push therefore happens when the app is open, and
+     * that is the whole schedule.
+     *
+     * ONE WAY: app → phone. Edits made in the phone's Contacts app are not read back and are
+     * replaced by the next push. CardDAV (Calendar → Sync to a device) is still the two-way path and
+     * is untouched by any of this.
+     *
+     * OFF BY DEFAULT and per-device: this writes into somebody's phone book, so it is opt-in, and
+     * the switch lives beside the addressbook list (⋯ → Addressbooks). */
+    const PHONE_KEY = 'androidPhonebook';
+    const CSet = () => window.ClientSettings || { get:(k,d)=>d, set(){} };
+    const nativeSync = (m) => (PC.capPlugin ? PC.capPlugin('ContactSync', m || 'begin') : null);
+    const phonebookOn = () => !!CSet().get(PHONE_KEY, false);
+    const owner = () => { try{ const me = PC.me ? PC.me() : PC.ME; return (me && me.pubkey) || ''; }
+                          catch(_){ return ''; } };
+
+    /* FNV-1a. Not a checksum for anybody else — it only has to change when the card does. */
+    function hash(s){
+      let h = 0x811c9dc5;
+      for(let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = (h * 0x01000193) >>> 0; }
+      return h.toString(16);
+    }
+
+    /* Every card in every book. The phone book is one list — a person is not filed under whichever
+     * addressbook happens to be on screen. Memoised on S.rev so a repaint costs nothing. */
+    let _all = [], _allRev = -1;
+    function everyCard(){
+      if(_allRev === S.rev) return _all;
+      const out = [], seen = new Set();
+      for(const b of S.books){
+        for(const rec of (S.cards[b.id] || [])){
+          try{
+            const c = V().parse(rec.ics || '');
+            c.uid = c.uid || rec.uid;
+            if(!c.uid || seen.has(c.uid)) continue;   // one UID = one person, whatever book it is in
+            seen.add(c.uid);
+            out.push(c);
+          }catch(_){ /* one unreadable card must not empty the phone book */ }
+        }
+      }
+      _all = out; _allRev = S.rev;
+      return out;
+    }
+
+    /* A card as the plugin wants it. `photo` is raw base64 — a data: URI would be decoded in Java
+     * for no reason, and an http(s) PHOTO is a URL we deliberately do NOT fetch (a phone book sync
+     * is not a licence to make requests to whatever host is written in somebody else's vCard). */
+    const PHOTO_MAX = 2 * 1024 * 1024;    // base64 chars; beyond this it is not a contact thumbnail
+    function nativeCard(c){
+      const n = c.n || {};
+      let photo = '';
+      const p = String(c.photo || '');
+      if(p.slice(0, 5) === 'data:'){
+        const i = p.indexOf(',');
+        if(i > 0 && p.length - i <= PHOTO_MAX) photo = p.slice(i + 1);
+      }
+      const a = (c.adrs || [])[0] || null;
+      const out = {
+        uid: c.uid,
+        fn: V().displayName(c),
+        given: n.given || '', family: n.family || '',
+        org: c.org || '', title: c.title || '', note: c.note || '', bday: c.bday || '',
+        tels: (c.tels || []).filter(t => t.value).map(t => ({ type: t.type || '', value: t.value })),
+        emails: (c.emails || []).filter(e => e.value).map(e => ({ type: e.type || '', value: e.value })),
+        adr: a ? { street: a.street||'', city: a.city||'', region: a.region||'',
+                   code: a.code||'', country: a.country||'' } : null,
+        photo,
+      };
+      /* The photo is hashed by LENGTH plus its ends, not by its bytes: a book of 500 faces is tens
+       * of megabytes of base64, and re-hashing all of it on every repaint to answer "did anything
+       * change" costs more than the push it is meant to avoid. Two different JPEGs of exactly the
+       * same length sharing both ends is not a case that happens. */
+      const forHash = Object.assign({}, out, {
+        photo: photo ? (photo.length + ':' + photo.slice(0, 32) + photo.slice(-32)) : '',
+      });
+      out.h = hash(JSON.stringify(forHash));
+      return out;
+    }
+
+    /* Push what changed. Cheap by construction: `begin()` returns the hash of every card already on
+     * the phone, so a visit that changed nothing sends nothing, and the first push after adding one
+     * person sends one person. */
+    const PUT_BUDGET = 1200000;           // bytes of JSON per bridge call — photos are the bulk
+    let _pushSig = '', _pushing = null;
+    async function pushPhonebook(force){
+      const P = nativeSync('begin');
+      if(!P || !phonebookOn()) return;
+      if(_pushing) return _pushing;       // a sweep is a sweep; two at once would fight over uids
+      const list = everyCard().map(nativeCard);
+      const sig = owner() + '|' + list.map(c => c.uid + ':' + c.h).join(',');
+      if(!force && sig === _pushSig) return;
+      _pushing = (async () => {
+        let st = null;
+        try{ st = await P.begin({ owner: owner() }); }catch(_){ return; }
+        if(st && st.granted === false){
+          // Revoked in Android's settings after the switch was turned on. Turning it back off is the
+          // honest answer — a switch that says "on" while nothing is written is the worse one.
+          CSet().set(PHONE_KEY, false); _pushSig = '';
+          toast('Android has revoked access to your contacts — phone sync turned off');
+          return;
+        }
+        const known = (st && st.hashes) || {};
+        let batch = [], size = 0;
+        const flush = async () => {
+          if(!batch.length) return;
+          const cards = batch; batch = []; size = 0;
+          await P.put({ cards });
+        };
+        for(const c of list){
+          if(known[c.uid] === c.h) continue;
+          batch.push(c);
+          size += (c.photo ? c.photo.length : 0) + 400;
+          if(size >= PUT_BUDGET) await flush();
+        }
+        await flush();
+        // ALWAYS, even when nothing was written: this is the half that deletes. Somebody removed in
+        // the web UI is only removed from the phone here.
+        await P.commit({ uids: list.map(c => c.uid) });
+        _pushSig = sig;
+      })().catch(()=>{}).finally(()=>{ _pushing = null; });
+      return _pushing;
+    }
+
+    /* The switch, in ⋯ → Addressbooks. The explanation sits beside it BEFORE it is flipped, because
+     * the Android permission prompt itself says only "access your contacts" — the reason has to be
+     * on screen already or the prompt is a coin toss. */
+    function phonebookRow(st){
+      if(!nativeSync('begin')) return '';       // not the packaged Android app
+      const on = phonebookOn();
+      const n = (st && st.count) || 0;
+      return `<div class="cal-row ct-phonebook" style="flex-wrap:wrap">
+        <label class="row" style="gap:8px;align-items:center;flex:1 1 100%">
+          <input type="checkbox" id="ctb-phonebook"${on ? ' checked' : ''}>
+          <span class="cal-name">Show these contacts in this phone's Contacts app</span>
+        </label>
+        <p class="muted small" style="flex:1 1 100%;margin:4px 0 0">
+          Copies your address book into the phone itself, so these people appear in the dialer, in
+          messaging apps and in the share sheet — no other app needed. Android will ask for
+          permission to your contacts; it is used to write this account's cards and to tidy up the
+          ones it wrote before. <b>One way:</b> changes made in the phone's Contacts app are replaced
+          from here. Everything is removed when you sign out or turn this off.
+          ${on ? `<br><b>${n}</b> contact${n === 1 ? '' : 's'} on this phone.` : ''}</p>
+      </div>`;
+    }
+
+    function wirePhonebook(root){
+      const box = $('#ctb-phonebook', root);
+      if(!box) return;
+      box.onchange = async () => {
+        const P = nativeSync('enable');
+        if(!P){ box.checked = false; return; }
+        if(box.checked){
+          let r = null;
+          try{ r = await P.enable(); }catch(_){ r = null; }
+          if(!r || !r.granted){
+            // A refusal must break nothing: put the switch back and say what happened.
+            box.checked = false; CSet().set(PHONE_KEY, false);
+            toast('Android didn’t allow access to your contacts — nothing was changed');
+            return;
+          }
+          CSet().set(PHONE_KEY, true);
+          toast('adding your contacts to this phone…');
+          _pushSig = '';
+          await pushPhonebook(true);
+          toast('done — look in the phone’s Contacts app');
+        }else{
+          CSet().set(PHONE_KEY, false);
+          _pushSig = '';
+          try{ await P.disable(); }catch(_){}
+          toast('removed from this phone');
+        }
+      };
+    }
+
     // ---- books, import/export ------------------------------------------------------------------
     async function makeBook(){
       modal(`<h3>New addressbook</h3>
@@ -359,20 +545,27 @@
         });
     }
 
-    function openMenu(){
+    async function openMenu(){
+      // The phone-book row wants to say how many are on the device. One cheap native call, and only
+      // in the packaged app with the switch already on.
+      let st = null;
+      const SP = nativeSync('status');
+      if(SP && phonebookOn()){ try{ st = await SP.status(); }catch(_){} }
       modal(`<h3>Addressbooks</h3>
         <div class="cal-list">${S.books.map(b => `<div class="cal-row">
             <span class="cal-name">${enc(b.displayname || b.id)}</span>
             <a class="btn btn-ghost small" href="/api/contacts/export?book=${encodeURIComponent(b.id)}"
                download><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Export</a>
             <button class="btn btn-ghost small ctb-del" data-id="${enc(b.id)}">Delete</button>
-          </div>`).join('') || '<div class="empty">No addressbooks yet.</div>'}</div>
+          </div>`).join('') || '<div class="empty">No addressbooks yet.</div>'}
+          ${phonebookRow(st)}</div>
         <div class="row" style="margin-top:14px;flex-wrap:wrap;gap:8px">
           <button class="btn btn-cyan small" id="ctb-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New addressbook</button>
           <button class="btn btn-ghost small" id="ctb-import"><svg class="ic b-ic" aria-hidden="true"><use href="#i-upload"></use></svg>Import .vcf</button>
           <button class="btn btn-ghost small" id="ctb-phone"><svg class="ic b-ic" aria-hidden="true"><use href="#i-android"></use></svg>Sync to a device</button>
         </div>
         <input type="file" id="ctb-file" accept=".vcf,text/vcard" hidden>`, root => {
+        wirePhonebook(root);
         $('#ctb-add', root).onclick = ()=>{ closeModal(); makeBook(); };
         $('#ctb-import', root).onclick = ()=> $('#ctb-file', root).click();
         $('#ctb-phone', root).onclick = ()=>{
@@ -414,6 +607,29 @@
         if(!S.ready && !S.loading) load();
       },
       reload: load,
+      /* KEEP THE PHONE BOOK FED WITHOUT ANYBODY OPENING CONTACTS.
+       *
+       * pushPhonebook runs at the end of load(), and load() only runs when this screen is rendered —
+       * so somebody who edits contacts on a laptop and never opens the screen on their phone would
+       * have a phone book that was filled once and never again. Called from app.js a few seconds
+       * after start, and it costs nothing at all unless this is the packaged Android app AND the
+       * switch is on: only then does it fetch the books. */
+      async syncTick(){
+        if(!nativeSync('begin') || !phonebookOn()) return;
+        if(!S.ready) return load();       // load() pushes at its end
+        return pushPhonebook();
+      },
+      /* Sign-out and account switch. The phone's copy must not outlive the session that could read
+       * it — a handed-down phone would otherwise keep the previous user's people in its dialer and
+       * in every share sheet. Removing the ACCOUNT takes every card with it, so there is no sweep
+       * here to half-finish. `begin()`'s owner check is the second line of defence for the app that
+       * was killed before this could run. */
+      forgetDevice(){
+        _pushSig = '';
+        const P = nativeSync('disable');
+        if(!P) return Promise.resolve();
+        try{ return Promise.resolve(P.disable()).catch(()=>{}); }catch(_){ return Promise.resolve(); }
+      },
     };
   }
 

@@ -223,6 +223,30 @@
                 android:resource="@xml/autofill_service" />
         </service>
     
+        <!-- The account our contacts belong to. A RawContact must have an account, and this account
+             is what makes the feature reversible: the Contacts app groups our cards under
+             "PosterChan", the user can hide them there, and removing the account deletes every one.
+             The authenticator behind it is a STUB — nothing here authenticates anything (the key is
+             a Nostr key held in the WebView), and there is deliberately NO sync adapter, because a
+             system-scheduled sync runs in a process that cannot read an encrypted card.
+             exported=true is required: the binder is the platform's, and it is guarded by answering
+             only ACTION_AUTHENTICATOR_INTENT. -->
+        <service
+            android:name=".contacts.AuthenticatorService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accounts.AccountAuthenticator" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accounts.AccountAuthenticator"
+                android:resource="@xml/contacts_authenticator" />
+            <!-- No edit schema in there = the Contacts app shows our cards as read-only, which is
+                 what a one-way sync actually is. -->
+            <meta-data
+                android:name="android.provider.CONTACTS_STRUCTURE"
+                android:resource="@xml/contacts_structure" />
+        </service>
+
         <!-- Where a UnifiedPush distributor delivers. In connector 3.x this is a SERVICE on the
              PUSH_EVENT action, and it must NOT be exported — the distributor binds it by permission,
              and exporting it would let any app on the phone feed us notifications. -->
@@ -293,6 +317,14 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- Putting your PosterChan address book into the phone's OWN Contacts app (opt-in, off by
+         default, asked for at the moment the switch is flipped). WRITE is the feature; READ is what
+         makes it a RECONCILE rather than a wipe-and-rewrite — it reads back the raw contacts under
+         our own account type (and nothing else) so a card can be updated in place, keeping the
+         favourite star and the contact id, and so a contact deleted in the app can be deleted here
+         instead of living on in the dialer. Both are in the CONTACTS group, so Android asks once. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.WRITE_CONTACTS" />
 
     <!-- required="false" so tablets / camera-less devices can still install and run. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />

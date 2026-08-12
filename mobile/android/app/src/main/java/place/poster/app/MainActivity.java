@@ -44,6 +44,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(place.poster.app.call.CallPlugin.class);
         registerPlugin(place.poster.app.calendar.CalendarPlugin.class);
         registerPlugin(place.poster.app.sync.FolderSyncPlugin.class);
+        registerPlugin(place.poster.app.contacts.ContactSyncPlugin.class);
         if (isSend(getIntent())) shareNonce++;   // cold-started BY a share
         super.onCreate(savedInstanceState);
         surviveRenderProcessDeath();

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Registers the account type our contacts belong to. `accountType` is the join between this file,
+     ContactWriter.ACCOUNT_TYPE and every RawContact we write — change it in one place only and the
+     phone silently keeps the old account (with the old contacts in it) while we write into a new
+     one nothing displays. tests/test_android_contact_sync.py pins the two together. -->
+<account-authenticator xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accountType="place.poster.app.contacts"
+    android:label="@string/app_name"
+    android:icon="@mipmap/ic_launcher"
+    android:smallIcon="@mipmap/ic_launcher" />

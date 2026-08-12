@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What the phone's Contacts app is told about our account type.
+     DELIBERATELY EMPTY. An account type that declares no edit schema is treated as READ-ONLY by
+     AOSP-derived Contacts apps, which is exactly what this sync is: one way, app → phone. Adding
+     data kinds here would offer an "Edit" button whose changes the next push silently overwrites.
+     (It is a hint, not a guarantee — an OEM Contacts app may still offer to edit. The reconcile
+     answers that case anyway: the app's copy wins on the next sweep.) -->
+<ContactsAccountType xmlns:android="http://schemas.android.com/apk/res/android" />
