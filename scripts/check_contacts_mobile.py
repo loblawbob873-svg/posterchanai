@@ -80,6 +80,9 @@ window.__saved = null;
 window.fetch = async (url, opts) => {
   const u = String(url);
   const j = d => ({ ok:true, status:200, json: async()=>d });
+  if(u.startsWith('/api/calendar/config'))
+    return j({ enabled:true, url:'https://node.example/caldav/tester/', username:'tester',
+               has_password:false });
   if(u.startsWith('/api/contacts/books'))
     return j({ books:[{id:'contacts',displayname:'Contacts',kind:'VADDRESSBOOK'}] });
   if(u.startsWith('/api/contacts/cards')){
@@ -192,6 +195,40 @@ EDITOR = r"""(async () => {
   const saved = window.__saved;
   return { fields: inputs.length, small, wide,
            sentVcf: saved ? String(saved.vcf) : '', uid: saved ? saved.uid : '' };
+})()"""
+
+
+# ⋯ → "Sync to a device". Two live bugs, both reported by a user on the same day: the button borrowed
+# the calendar's panel, which is not exported, so it fell through to switchView('calendar') and left
+# the address book; and a load finishing while the user is on another screen repainted #feed anyway,
+# which is what made "contacts no longer appear in contacts" after that navigation.
+SYNCSHEET = r"""(async () => {
+  const menu = document.querySelector('#ct-menu');
+  if (!menu) return {error:'no ⋯ menu button'};
+  menu.click();
+  await new Promise(r=>setTimeout(r,300));
+  const btn = document.querySelector('#ctb-phone');
+  if (!btn) return {error:'no "Sync to a device" button in the menu'};
+  btn.click();
+  await new Promise(r=>setTimeout(r,500));
+  const m = document.querySelector('#modal-root .modal');
+  const values = m ? [...m.querySelectorAll('input')].map(i => i.value) : [];
+  const sheet = { view: window.__view, text: m ? m.textContent : '', values };
+  window.__PC.closeModal();
+  await new Promise(r=>setTimeout(r,150));
+  sheet.rowsAfter = document.querySelectorAll('.ct-row').length;
+
+  // …and a load that lands after the user has walked away must leave that screen alone.
+  window.__view = 'home';
+  document.querySelector('#feed').innerHTML = '<div id="pc-other-view">another screen</div>';
+  await window.PCContacts.reload();
+  await new Promise(r=>setTimeout(r,150));
+  sheet.otherViewKept = !!document.querySelector('#pc-other-view');
+  window.__view = 'contacts';
+  window.PCContacts.render();
+  await new Promise(r=>setTimeout(r,300));
+  sheet.rowsBack = document.querySelectorAll('.ct-row').length;
+  return sheet;
 })()"""
 
 
@@ -308,6 +345,31 @@ async def drive(url):
                     if s["restored"] != 4:
                         problems.append((label, "search-broken",
                                          f"clearing the search left {s['restored']} rows"))
+
+                sh = await js(SYNCSHEET, awaited=True)
+                if not sh or sh.get("error"):
+                    problems.append((label, "missing-control",
+                                     f"the sync sheet did not open ({(sh or {}).get('error')})"))
+                else:
+                    if sh["view"] != "contacts":
+                        problems.append((label, "left-the-screen",
+                                         f"'Sync to a device' navigated to {sh['view']!r}"))
+                    if not any("/caldav/tester/contacts/" in v for v in sh["values"]):
+                        problems.append((label, "wrong-collection",
+                                         "the sheet shows no ADDRESSBOOK URL — a calendar URL under a "
+                                         f"Contacts heading syncs an empty book: {sh['values']!r}"))
+                    if "CardDAV" not in sh["text"]:
+                        problems.append((label, "wrong-collection",
+                                         "the sheet does not say what kind of account to add"))
+                    if sh["rowsAfter"] != 4:
+                        problems.append((label, "list-empty",
+                                         f"{sh['rowsAfter']} rows after closing the sync sheet"))
+                    if not sh["otherViewKept"]:
+                        problems.append((label, "paints-off-view",
+                                         "a contacts load finishing on another screen repainted #feed"))
+                    if sh["rowsBack"] != 4:
+                        problems.append((label, "state-lost",
+                                         f"coming back to contacts showed {sh['rowsBack']} rows"))
 
                 ed = await js(EDITOR, awaited=True)
                 if not ed or ed.get("error"):

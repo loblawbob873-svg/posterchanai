@@ -570,6 +570,11 @@
     }
 
     function paint(){
+      /* NEVER DRAW INTO A VIEW WE NO LONGER OWN — see the same guard in contacts.js. This one has
+       * two live triggers: `widgetTick` calls load() a few seconds after app start, from whatever
+       * screen the user is actually on, and a load started here finishes after they have navigated
+       * away. Both used to replace #feed with a calendar. */
+      if(!inView()) return;
       const feed = $('#feed'); if(!feed) return;
       if(S.loading && !S.ready){ feed.innerHTML = '<div class="cal-wrap"><div class="spinner"></div></div>'; return; }
       if(S.enabled === false || S.error){ feed.innerHTML = `<div class="cal-wrap">${offScreen()}</div>`; return; }

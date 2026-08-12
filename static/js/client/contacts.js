@@ -189,6 +189,13 @@
     }
 
     function paint(){
+      /* NEVER DRAW INTO A VIEW WE NO LONGER OWN. `#feed` is shared by every screen, and paint() is
+       * called from the END of async work — a load, a phone-book sweep — which can easily finish
+       * after the user has gone somewhere else. Without this guard a slow contacts load repaints
+       * over whatever they are reading now, and the reverse (the calendar's load landing on top of
+       * this screen) is what made a full address book look empty after one tap on "Sync to a
+       * device". Every other async view here already does this; these two did not. */
+      if(!inView()) return;
       const feed = $('#feed'); if(!feed) return;
       if(S.loading && !S.ready){ feed.innerHTML = '<div class="ct-wrap"><div class="spinner"></div></div>'; return; }
       if(S.enabled === false || S.error){ feed.innerHTML = `<div class="ct-wrap">${offScreen()}</div>`; return; }
@@ -529,6 +536,79 @@
       };
     }
 
+    /* ---- CardDAV: "Sync to a device", on THIS screen -------------------------------------------
+     *
+     * IT USED TO BORROW THE CALENDAR'S, and that was wrong twice over. The panel lives inside
+     * calendar.js and is not exported (`window.PCCalendar` is `{render, reload, widgetTick}`), so
+     * the call fell through to the fallback and SWITCHED THE VIEW — a tap labelled "Sync to a
+     * device" on the Contacts screen navigated to the calendar and left the address book behind.
+     * And even reached, it hands out the CALENDAR's details under a Contacts heading, which is the
+     * worse failure: the URL works, the phone accepts it, and the address book comes up empty with
+     * nothing to say why.
+     *
+     * ONE IDENTITY, TWO COLLECTION TYPES. The account, the password and the base URL are shared with
+     * the calendar by design (docs/CONTACTS.md), so the password endpoints are the calendar's — but
+     * the URL a client needs for an ADDRESSBOOK is that book's own collection, and that is what this
+     * shows. */
+    async function cardDavPanel(){
+      let cfg = {};
+      try{ cfg = await api('/api/calendar/config'); }catch(_){ cfg = {}; }
+      const base = String(cfg.url || '');
+      /* Styled inline on purpose: client.css is a shared file and this is two rules. */
+      const books = S.books.map(b => `<div class="ct-davrow" style="margin:6px 0">
+          <span class="cal-name" style="display:block;margin-bottom:2px">${enc(b.displayname || b.id)}</span>
+          <input class="input" style="width:100%" value="${enc(base + encodeURIComponent(b.id) + '/')}"
+                 readonly aria-label="Address book URL for ${enc(b.displayname || b.id)}">
+        </div>`).join('');
+      const native = !!nativeSync('begin');
+      modal(`<h3>Sync your contacts to a device</h3>
+        <p class="muted small">Add a <b>CardDAV account</b> in a contacts app that speaks it —
+           DAVx⁵ on Android, the built-in accounts on iOS and macOS, Thunderbird on the desktop. It
+           syncs <b>both ways</b>: a contact added on the device appears here.</p>
+        <label class="fld">Server <span class="muted small">(most apps discover everything from
+          this)</span><input class="input" id="ctd-url" value="${enc(base)}" readonly></label>
+        <label class="fld">Username<input class="input" id="ctd-user" value="${enc(cfg.username||'')}" readonly></label>
+        <div class="fld"><b>Address book URLs</b>
+          <p class="muted small">For an app that asks for the collection itself rather than
+             discovering it. <b>These are the contacts ones</b> — a calendar URL pasted here gives you
+             an empty address book and no error.</p>
+          ${books || '<div class="empty">No addressbooks yet.</div>'}</div>
+        <div class="fld"><b>Password</b>
+          <p class="muted small">A sync-only app password, separate from your login and <b>shared with
+             the calendar</b> — one account per person, not two. Shown once; generating a new one
+             immediately stops every device using the old one.</p>
+          <div class="row"><button class="btn btn-cyan small" id="ctd-gen">
+            ${cfg.has_password ? 'Generate a new password' : 'Generate password'}</button>
+            ${cfg.has_password ? '<button class="btn btn-ghost small" id="ctd-clear">Revoke</button>' : ''}</div>
+          <div id="ctd-out"></div>
+        </div>
+        ${native ? `<p class="muted small"><b>On this Android phone you do not need any of this.</b>
+           “Show these contacts in this phone's Contacts app”, in the Addressbooks panel, puts them in
+           the dialer with nothing else installed. CardDAV is the route for your <i>other</i> devices —
+           a desktop, an iPhone — and for keeping them in sync when this app is closed.</p>` : ''}`,
+      root => {
+        $$('#ctd-url, #ctd-user, .ct-davrow input', root).forEach(i => i.onfocus = ()=> i.select());
+        $('#ctd-gen', root).onclick = async ()=>{
+          try{
+            const r = await jpost('/api/calendar/password');
+            $('#ctd-out', root).innerHTML =
+              `<div class="cal-pw"><code>${enc(r.password)}</code>
+                 <button class="btn btn-ghost small" id="ctd-copy">Copy</button></div>
+               <p class="muted small">Copy it now — it is stored only as a hash and cannot be shown again.</p>`;
+            const cp = $('#ctd-copy', root);
+            if(cp) cp.onclick = ()=>{ try{ navigator.clipboard.writeText(r.password); toast('copied'); }catch(_){ } };
+          }catch(err){ toast('could not generate: ' + ((err && err.message) || 'error')); }
+        };
+        const cl = $('#ctd-clear', root);
+        if(cl) cl.onclick = async ()=>{
+          if(!(await uiConfirm('Revoke the app password? Every synced device stops — calendars too.'))) return;
+          try{ await api('/api/calendar/password', { method:'DELETE' });
+               closeModal(); toast('revoked'); }
+          catch(err){ toast('could not revoke: ' + ((err && err.message) || 'error')); }
+        };
+      });
+    }
+
     // ---- books, import/export ------------------------------------------------------------------
     async function makeBook(){
       modal(`<h3>New addressbook</h3>
@@ -568,12 +648,9 @@
         wirePhonebook(root);
         $('#ctb-add', root).onclick = ()=>{ closeModal(); makeBook(); };
         $('#ctb-import', root).onclick = ()=> $('#ctb-file', root).click();
-        $('#ctb-phone', root).onclick = ()=>{
-          closeModal();
-          // One CalDAV/CardDAV identity per user: the calendar screen owns that panel.
-          if(window.PCCalendar && window.PCCalendar.phonePanel) window.PCCalendar.phonePanel();
-          else if(window.__PC.switchView) window.__PC.switchView('calendar');
-        };
+        // The CardDAV details for THIS screen's collections, and it stays on this screen — see
+        // cardDavPanel. Borrowing the calendar's used to navigate away from the address book.
+        $('#ctb-phone', root).onclick = ()=>{ closeModal(); cardDavPanel(); };
         $('#ctb-file', root).onchange = async (e)=>{
           const f = e.target.files && e.target.files[0]; if(!f) return;
           const fd = new FormData(); fd.append('file', f);
