@@ -209,6 +209,33 @@
    * default must never beat an answer. Deep links are unaffected: they route through routeFromPath,
    * which is the user having said. */
   let _viewChosen = false;
+
+  /* THE FIRST SEARCH USED TO GO NOWHERE, and this is why "I have to search twice to see results".
+   *
+   * Both search boxes (#nav-search-input on the desktop sidebar, #search-input in the mobile topbar)
+   * are in the SHELL HTML, so they are on screen and typeable from the very first paint. They are not
+   * WIRED until bindSearch, which runs inside bindGlobalsOnce, inside startApp — measured at ~600ms
+   * on this desktop against the live instance, and far longer on a cold APK start on a phone, which
+   * is exactly where somebody opens the app and immediately taps search. An Enter in that window hit
+   * no listener at all: no spinner, no results, no error, nothing on screen changed. You search
+   * again, by which time the app has booted, and it works.
+   *
+   * Installed at PARSE time (this runs as app.js evaluates, long before startApp) so the keystroke is
+   * REMEMBERED rather than dropped, and replayed by startApp once there is something to answer it.
+   * Capture phase, so it cannot be swallowed by anything bound later; it stands down the moment the
+   * real handler exists. Deliberately does NOT call runSearch itself — pre-boot there is no relay, no
+   * Store hydration and no ME, and half-running a search then is how this kind of fix becomes the
+   * next silent failure. */
+  let _pendingSearch = '';
+  try{
+    document.addEventListener('keydown', e => {
+      if(e.key !== 'Enter' || window.__pcGlobalsBound) return;      // bound → the real handler owns it
+      const t = e.target;
+      if(!t || (t.id !== 'nav-search-input' && t.id !== 'search-input')) return;
+      const q = (t.value || '').trim();
+      if(q) _pendingSearch = q;
+    }, true);
+  }catch(_){}
   // Timeline pause/resume while backgrounded — set by watchTimeline for the CURRENT view.
   let _tlPause = null, _tlResume = null, _tlPaused = false, _tlHideTimer = null;
   // Short enough to get the CLOSE frame out before the OS freezes the socket (after that the relay
@@ -2704,6 +2731,10 @@
     // _viewChosen for the two shapes that produced ("search twice", and a profile with no posts, a
     // dead ⋯ menu and a dead Copy npub).
     else if(!_consumeLaunchParams() && !_viewChosen){ switchView(_startTimeline()); _onLandingView = true; }
+    /* …and now answer a search that was typed while all of the above was still starting up. AFTER the
+     * landing, never before: the landing would otherwise paint straight over the results, which is
+     * the same clobber _viewChosen exists to prevent. See _pendingSearch. */
+    if(_pendingSearch){ const q = _pendingSearch; _pendingSearch = ''; try{ runSearch(q); }catch(_){} }
     // Drain a file/text shared IN from another app (a fresh OS-share launch, OR a guest who has just
     // logged in with a share still waiting). Self-guards on GUEST (prompts + keeps the stash) and on an
     // empty stash (no-op). Runs AFTER a view is set, so the composer opens over a real backdrop — never a
