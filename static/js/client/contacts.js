@@ -604,14 +604,60 @@
      * native side implements them or not — so the only honest test is to CALL one. A packaged app
      * where that call fails is an APK older than this feature, and the useful thing to say is
      * "update the app", not a CardDAV URL, which is a wrong turn dressed up as an answer. */
-    const capPlatform = () => {
-      try{ const c = window.Capacitor;
-           return c ? ((c.getPlatform && c.getPlatform()) || 'unknown') : 'web'; }
-      catch(_){ return 'web'; }
-    };
+    /* IS THIS THE PACKAGED ANDROID APP — asked WITHOUT the Capacitor bridge.
+     *
+     * THE QUESTION USED TO BE PUT TO THE VERY THING THAT CAN BE BROKEN. The only gate on showing
+     * anything here was `Capacitor.getPlatform()`, which exists only once the native bridge's
+     * injected JS has run; when it has not, it answers 'web' — the same answer Chrome gives — so the
+     * panel rendered NOTHING: no switch, and not the sentence written to explain its absence either.
+     * A bridge that never arrived was indistinguishable from a browser that will never have one, on
+     * the one build both were written for, and the report was "there is no phone-book row at all".
+     *
+     * Three independent signals, any one of which settles it:
+     *   androidBridge      the WebView's own message channel, attached by Java before a single script
+     *                      runs — present even when every line of Capacitor's JS is missing.
+     *   Capacitor          the bridge itself, when it did arrive.
+     *   __PC_APP_BUILD__   baked into index.html by mobile/build-www.sh, so it is proof that this HTML
+     *                      IS the packaged app rather than the website — paired with an Android user
+     *                      agent, so the desktop build (same shim, no Android) is not caught by it,
+     *                      and a browser on a phone (no shim) is not either.
+     *
+     * `why` goes on the screen. A build that cannot reach its own plugin has to say WHICH piece is
+     * missing, or the next report is "nothing happens" all over again. */
+    function deviceEnv(){
+      const e = { android:false, cap:false, bridge:false, plugin:false, platform:'', why:'' };
+      try{
+        const c = window.Capacitor;
+        e.cap = !!c;
+        e.bridge = !!window.androidBridge;
+        e.plugin = !!(c && c.Plugins && c.Plugins.ContactSync);
+        try{ e.platform = (c && c.getPlatform && c.getPlatform()) || ''; }catch(_){ e.platform = ''; }
+        const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
+        const packaged = typeof window.__PC_APP_BUILD__ !== 'undefined'
+                      || typeof window.__PC_API_BASE__ !== 'undefined';
+        e.android = e.platform === 'android' || e.bridge || e.plugin
+                 || (packaged && /Android/i.test(ua));
+        /* Enough to settle it from a SCREENSHOT. Every hypothesis this failure has produced —
+         * "the plugin is not registered", "the name does not match", "the bridge is late", "it is
+         * not really the app" — is a different one of these values, and guessing between them has
+         * already cost more than printing them ever will. */
+        let keys = 0;
+        try{ keys = (c && c.Plugins) ? Object.keys(c.Plugins).length : 0; }catch(_){}
+        e.why = 'platform=' + (e.platform || 'unknown') + ' capacitor=' + (e.cap ? 'yes' : 'no')
+              + ' bridge=' + (e.bridge ? 'yes' : 'no') + ' plugin=' + (e.plugin ? 'yes' : 'no')
+              + ' plugins=' + keys
+              + ' promise=' + ((c && typeof c.nativePromise === 'function') ? 'yes' : 'no');
+      }catch(_){ }
+      return e;
+    }
+    const capPlatform = () => (deviceEnv().android ? 'android' : 'web');
     let _native;                    // undefined = not asked, false = this build has none, true = has
     async function probeNative(){
-      if(_native === false) return null;          // known absent — do not ask on every open
+      // Known absent — do not ask on every open. But on the packaged app ASK AGAIN: the bridge can
+      // arrive after the page's scripts (the same startup race that killed Folder Sync for a whole
+      // session), and this is a hand-opened panel, so a second cheap call costs nothing and is the
+      // difference between healing itself and being dead until the app is restarted.
+      if(_native === false && !deviceEnv().android) return null;
       const P = nativeSync('status');
       if(!P){ _native = false; return null; }     // not a Capacitor build at all
       try{
@@ -631,14 +677,25 @@
      * reason has to be on screen already or the prompt is a coin toss. */
     function phonebookRow(st){
       if(!st){
-        // A packaged Android app whose build has no plugin. Say so: the fix is an app update, and
-        // pointing at CardDAV instead would send them to install DAVx⁵ for something this app does.
-        if(capPlatform() !== 'android') return '';
+        /* A packaged Android app that could not reach the plugin. SAY SO — and say which piece is
+         * missing. Rendering nothing here is what made a detection bug invisible: the switch was
+         * gone, the sentence explaining the switch was gone, and the panel looked exactly like the
+         * one that shipped before this feature existed. Pointing at CardDAV instead would send
+         * somebody to install DAVx⁵ for something this app already does. */
+        const env = deviceEnv();
+        if(!env.android) return '';       // a browser or the desktop app: CardDAV really is the answer
+        const line = env.cap
+          ? `<b>Update the app to turn this on.</b> This build can't put your contacts in the phone's
+             own Contacts app yet — a newer version can, with nothing else to install.`
+          : `<b>The app's native bridge didn't load.</b> Everything this app does on the phone itself
+             — the Contacts app, folder sync, the share sheet — goes through it. Close PosterChan
+             completely and open it again; if it keeps happening, reinstall the latest APK.`;
         return `<div class="cal-row ct-phonebook" style="flex-wrap:wrap">
           <span class="cal-name" style="flex:1 1 100%">Sync to this phone's Contacts app</span>
-          <p class="muted small" style="flex:1 1 100%;margin:4px 0 0">
-            <b>Update the app to turn this on.</b> This build can't put your contacts in the phone's
-            own Contacts app yet — a newer version can, with nothing else to install.</p>
+          <p class="muted small" style="flex:1 1 100%;margin:4px 0 0">${line}
+            <br><span class="muted small" id="ctb-phonewhy">${enc(env.why)}${
+              window.__PC_APP_BUILD__ ? ' build=' + enc(String(window.__PC_APP_BUILD__)) : ''}</span></p>
+          <button class="btn btn-ghost small" id="ctb-phoneretry" style="margin-top:6px">Try again</button>
         </div>`;
       }
       const on = phonebookOn();
@@ -661,6 +718,11 @@
     }
 
     function wirePhonebook(root){
+      /* The bridge can come up AFTER this panel was opened, so the row that says it is missing owns
+       * the way back: forget the verdict and ask again, rather than making somebody restart the app
+       * to find out whether it healed. */
+      const again = $('#ctb-phoneretry', root);
+      if(again) again.onclick = () => { _native = undefined; closeModal(); openMenu(); };
       const box = $('#ctb-phonebook', root);
       if(!box) return;
       box.onchange = async () => {
@@ -845,6 +907,11 @@
         if(!S.loading && (!S.ready || S.error)) load();
       },
       reload: load,
+      /* ⋯ → Addressbooks, reachable without the DOM. The row that decides whether this phone can
+       * sync to its own Contacts app is inside it, and "it renders nothing at all" is precisely the
+       * bug that shipped — so tests/client/contacts_device_sim.js opens THIS, under node, against
+       * each shape of a half-arrived Capacitor bridge. */
+      openMenu,
       /* KEEP THE TWO COPIES IN STEP WITHOUT ANYBODY OPENING CONTACTS.
        *
        * A sweep runs at the end of load(), and load() only runs when this screen is rendered — so

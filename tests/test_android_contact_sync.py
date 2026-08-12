@@ -83,6 +83,41 @@ def test_plugin_is_registered_and_named_the_same_on_both_sides():
     # it exists in.
     assert "PC.capPlugin ? PC.capPlugin('ContactSync'" in CONTACTS_JS
     assert "cap.registerPlugin(name)" in APPJS, "capPlugin must fall back to registerPlugin"
+    # Every name the client asks for has to be one Java answers to. A typo here is invisible: the
+    # lookup returns null, which every caller reads as "not the packaged app".
+    asked = set(re.findall(r"capPlugin\(\s*'([A-Za-z]+)'", CONTACTS_JS))
+    assert asked == {"ContactSync"}, f"contacts.js asks for {asked}"
+
+
+def test_the_plugin_is_registered_before_the_bridge_is_built():
+    """registerPlugin() only counts BEFORE super.onCreate(): that is where Capacitor builds the
+    bridge and writes the plugin map into the WebView. Registered after, the class is loaded, the
+    APK builds, every test that greps for the call passes — and JS never sees the plugin."""
+    body = re.search(r"public void onCreate\(Bundle[^)]*\)\s*\{(.*?)\n    \}", MAIN, re.S)
+    assert body, "MainActivity.onCreate not found"
+    inner = body.group(1)
+    reg = inner.index("registerPlugin(place.poster.app.contacts.ContactSyncPlugin.class)")
+    sup = inner.index("super.onCreate(")
+    assert reg < sup, "ContactSync is registered after the bridge is built — JS will never see it"
+
+
+def test_the_lookup_does_not_depend_on_a_function_this_bundle_does_not_ship():
+    """`Capacitor.registerPlugin` is @capacitor/core's, and the APK does not ship @capacitor/core:
+    the only Capacitor JS in it is the WebView-injected native-bridge, which defines getPlatform /
+    nativePromise / nativeCallback and NOT registerPlugin. So the documented fallback is a no-op
+    here and `Capacitor.Plugins[name]` was the ONLY path there has ever been — which is why a bridge
+    that did not arrive made every native feature report "not the packaged app" and say nothing."""
+    assert "_rawNative()" in APPJS, "capPlugin lost its raw-channel fallback"
+    assert "window.androidBridge" in APPJS, "the WebView's own channel is the layer under all of it"
+    assert "cap.nativePromise(pluginId, methodName" in APPJS
+    bridge = os.path.join(ROOT, "mobile", "node_modules", "@capacitor", "android", "capacitor",
+                          "src", "main", "assets", "native-bridge.js")
+    if not os.path.exists(bridge):
+        pytest.skip("mobile/node_modules not installed")
+    src = _read(bridge)
+    assert "registerPlugin" not in src, (
+        "native-bridge.js now ships registerPlugin — re-check whether the raw fallback is still needed")
+    assert "cap.nativePromise =" in src, "the raw fallback rides nativePromise when it is there"
 
 
 def test_the_account_type_is_the_same_string_everywhere():
@@ -387,3 +422,58 @@ def test_the_push_is_skipped_when_nothing_changed():
     # The plugin's hashes are a claim about the phone; the raw contacts are the fact. A card the user
     # deleted by hand must come back rather than be skipped for ever as "unchanged".
     assert "if (have.containsKey(uid)) hashes.put(uid" in PLUGIN
+
+
+# ---- the row itself, on a packaged build ------------------------------------------------------
+#
+# THE BUG THIS BLOCK EXISTS FOR. On the APK the ⋯ → Addressbooks panel showed no phone-book row at
+# all — not the switch, and not the sentence written to explain the switch's absence either — so a
+# detection bug was indistinguishable from a browser, and from an APK built before the feature. The
+# cause is a shape a grep cannot see: `phonebookRow` returned '' whenever `Capacitor.getPlatform()`
+# was not 'android', i.e. it asked the very object that can be missing. Reproduced below by running
+# the shipped contacts.js in each world a half-arrived Capacitor produces (contacts_device_sim.js);
+# `raw-bridge` — none of Capacitor's JS in the page, only the WebView's own Java channel — is the one
+# that rendered nothing, and now renders a working switch.
+
+DEVICE_SIM = os.path.join(ROOT, "tests", "client", "contacts_device_sim.js")
+PACKAGED = ("full", "plugin-map-only", "raw-bridge", "raw-bridge-no-plugin",
+            "no-capacitor", "no-plugin")
+
+
+def _device(env):
+    if shutil.which("node") is None:
+        pytest.skip("node not installed")
+    import json
+    r = subprocess.run(["node", DEVICE_SIM, json.dumps({"env": env})],
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr[-3000:]
+    return json.loads(r.stdout)
+
+
+@pytest.mark.parametrize("env", PACKAGED)
+def test_the_phone_book_row_is_never_empty_on_a_packaged_build(env):
+    res = _device(env)
+    assert res["row"], f"{env}: the packaged app rendered NO phone-book row at all"
+    assert res["hasSwitch"] or res["hasRetry"], f"{env}: neither a switch nor a way to re-ask"
+    if not res["hasSwitch"]:
+        # No switch is allowed only when it SAYS why, and names the piece that is missing — the next
+        # report has to be diagnosable rather than "nothing happens".
+        assert res["saysUpdate"] or res["saysBridge"], f"{env}: a missing switch with no reason"
+        assert "platform=" in res["why"] and "plugin=" in res["why"], f"{env}: no diagnostics"
+
+
+def test_a_page_with_no_capacitor_js_at_all_still_reaches_the_plugin():
+    """The reported failure, reproduced: `window.Capacitor` never reached the page. Pre-fix this
+    rendered an empty string; the WebView's own androidBridge was there the whole time."""
+    res = _device("raw-bridge")
+    assert res["hasSwitch"], "the switch is missing on a phone whose native channel is up"
+    assert ["status", {}] in res["nativeCalls"], "the probe never reached native"
+
+
+@pytest.mark.parametrize("env", ("browser", "web-on-android"))
+def test_the_row_stays_away_from_anything_that_is_not_the_packaged_app(env):
+    """The other half. In a browser — including Chrome on an Android phone — there is no plugin to
+    offer and CardDAV really is the answer, so an over-eager detector would put a switch that cannot
+    work in front of every web user."""
+    res = _device(env)
+    assert not res["row"], f"{env}: offered a phone-book switch that cannot exist"
