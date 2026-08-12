@@ -102,11 +102,15 @@ class SidebarFixtureTests(unittest.TestCase):
     """The fixture is the product. If this stops describing the real nav, nothing below means much."""
 
     def test_the_real_sidebar_parsed_out_of_the_template(self):
-        rows = run()["rows"]
-        keys = [r["key"] for r in rows]
-        for expect in ("global", "notes", "settings", "bookmarks", "blossom", "__music",
-                       "group:disc", "group:games", "group:files", "chess", "torrents"):
+        r = run()
+        rows = r["rows"]
+        keys = [row["key"] for row in rows]
+        for expect in ("global", "notes", "__music", "group:disc", "group:games", "group:files",
+                       "chess", "torrents"):
             self.assertIn(expect, keys, f"{expect} missing — the template parse has drifted")
+        # The locked three are in the SIDEBAR (so the parse found them) but never in the editor.
+        for locked in LOCKED:
+            self.assertIn(locked, r["visible"], f"{locked} missing — the template parse has drifted")
         self.assertGreater(len(keys), 25, "the nav has ~35 rows; the parse found almost none")
         self.assertEqual(len(keys), len(set(keys)), "a key was offered twice")
         # Labels come from the row's own <span>, minus its badge.
@@ -132,17 +136,25 @@ class LockedRowTests(unittest.TestCase):
         self.assertEqual(r["published"], [{"navHidden": ["4chan"]}])
         self.assertEqual(r["settings"]["navHidden"], ["4chan"])
 
-    def test_their_switches_are_disabled_and_say_why(self):
+    def test_they_are_not_listed_in_the_editor_at_all(self):
+        """Not a disabled switch — a control that cannot move is not a setting, and three of them at
+        the top of the list read as a bug ("Settings (always shown) — why is it even there!")."""
         r = run(editor={})
-        self.assertEqual(set(r["editorLocked"]), LOCKED, "exactly three rows are locked")
         for k in LOCKED:
-            self.assertRegex(r["html"], rf'data-navkey="{k}"[^>]*disabled')
-        self.assertIn("always shown", r["html"])
+            self.assertNotIn(k, r["editorKeys"], f"{k} was offered a switch")
+            self.assertNotIn(f'data-navkey="{k}"', r["html"])
+        self.assertNotIn("always shown", r["html"])
+        self.assertNotIn("disabled", r["html"])
+        # …and the list still says why, since the user cannot act on it anywhere else.
+        self.assertIn("aren't listed", r["html"])
 
-    def test_the_editor_cannot_turn_them_off_even_if_the_box_is_forced(self):
-        """A `disabled` attribute is a hint to a person, not a guarantee about the DOM."""
-        r = run(editor={"uncheck": ["settings", "bookmarks", "blossom", "news"]})
+    def test_the_editor_cannot_turn_them_off_even_if_a_box_is_forged(self):
+        """No switch exists, but the DOM is not a guarantee — the save still filters."""
+        r = run(editor={"forge": ["settings", "bookmarks", "blossom"], "uncheck":
+                        ["settings", "bookmarks", "blossom", "news"]})
         self.assertEqual(r["hiddenSet"], ["news"])
+        # The WRITE side too — what reaches the relay is what other devices will read back.
+        self.assertEqual(r["published"], [{"navHidden": ["news"]}])
         for k in LOCKED:
             self.assertIn(k, r["visible"])
 

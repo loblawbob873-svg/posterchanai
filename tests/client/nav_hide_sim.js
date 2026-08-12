@@ -150,9 +150,12 @@ out.html = _navHideHtml();
 if(opt.editor){
   const keys = [...out.html.matchAll(/data-navkey="([^"]*)"/g)].map(m => m[1]);
   const locked = new Set([...out.html.matchAll(/data-navkey="([^"]*)"[^>]*disabled/g)].map(m => m[1]));
+  // `forge` adds switches the editor never drew — the DOM is not a guarantee about what the save
+  // may write, and the locked rows have no switch at all now.
+  const all = keys.concat((opt.editor.forge || []).filter(k => keys.indexOf(k) < 0));
   let handler = null;
-  LIST = { boxes: keys.map(k => ({ dataset: { navkey: k }, disabled: locked.has(k),
-                                   checked: !navHiddenSet().has(k) })),
+  LIST = { boxes: all.map(k => ({ dataset: { navkey: k }, disabled: locked.has(k),
+                                  checked: !navHiddenSet().has(k) })),
            addEventListener(ev, fn){ if(ev === 'change') handler = fn; } };
   _wireNavHide();
   for(const k of (opt.editor.uncheck || [])){ const b = LIST.boxes.find(x => x.dataset.navkey === k); if(b) b.checked = false; }

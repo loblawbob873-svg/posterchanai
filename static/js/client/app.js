@@ -388,8 +388,10 @@
    * the app on another device), `Bookmarks` and `Blossom` are the only doors to things the user
    * PUT somewhere — saved posts and uploaded files — with no second surface that lists them. A
    * document written by a newer, older or hostile client can name them all it likes; `navHiddenSet`
-   * drops them on the way in, `setNavHidden` drops them on the way out, and the switch is `disabled`
-   * mostly so nobody wonders why it springs back.
+   * drops them on the way in and `setNavHidden` drops them on the way out. They are NOT LISTED in
+   * the editor at all — a row with a dead switch beside it is a control that does nothing, and three
+   * of them at the top of the list read as a bug. The sentence above the list is where the rule is
+   * explained, which is the right place for something the user cannot act on.
    *
    * KEYS ARE NOT ALL VIEW SLUGS. Music and Go Live are actions with an id and no `data-view`, and a
    * whole group is worth turning off in one go, so those get `__music` / `__golive` / `group:disc`.
@@ -428,11 +430,13 @@
       // Gated off for this install → there is nothing here to decide. Our own hiding uses NAV_OFF,
       // so a row the user turned off is still listed (it has to be, to turn it back on).
       if(btn.classList.contains('hidden')) return;
+      // Never offered, so never listed — see the banner: a switch that cannot move is not a setting.
+      if(NAV_LOCKED.has(key)) return;
       const group = key.indexOf('group:') === 0;
       if(group && btn.closest('.nav-group') && btn.closest('.nav-group').classList.contains('hidden')) return;
       seen.add(key);
       out.push({ key, label: _navLabel(btn) || key, group, sub: btn.classList.contains('sub'),
-                 locked: NAV_LOCKED.has(key), off: off.has(key) });
+                 off: off.has(key) });
     });
     return out;
   }
@@ -496,11 +500,11 @@
     const rows = navRows();
     // Its own TAB, so an empty one has to say why rather than being a blank panel.
     if(!rows.length) return `<div class="muted small">Nothing to arrange — this install has no sidebar to read.</div>`;
-    return `<div class="muted small">Turn off anything you don't use and it leaves the left sidebar, the phone's ☰ More sheet and the desktop. Nothing is deleted and nothing stops working: the feature still runs and still opens from a link, and turning the switch back on brings it back everywhere. <b>Settings</b>, <b>Bookmarks</b> and <b>Blossom</b> always stay — Settings is the way back, and the other two are the only lists of what you saved and uploaded. Syncs across your devices.</div>
+    return `<div class="muted small">Turn off anything you don't use and it leaves the left sidebar, the phone's ☰ More sheet and the desktop. Nothing is deleted and nothing stops working: the feature still runs and still opens from a link, and turning the switch back on brings it back everywhere. Syncs across your devices.<br>Settings, Bookmarks and Blossom aren't listed: Settings is how you get back to this screen, and the other two are the only lists of what you saved and uploaded.</div>
       <div class="nav-hide-list" id="nav-hide-list">${rows.map(r=>`
         <label class="fld nav-hide-row${r.sub?' sub':''}${r.group?' grp':''}" style="flex-direction:row;justify-content:space-between;align-items:center">
-          <span>${enc(r.label)}${r.group?' <span class="muted small">(whole group)</span>':''}${r.locked?' <span class="muted small">(always shown)</span>':''}</span>
-          <label class="switch"><input type="checkbox" data-navkey="${enc(r.key)}"${r.off?'':' checked'}${r.locked?' disabled':''}><span class="slider"></span></label>
+          <span>${enc(r.label)}${r.group?' <span class="muted small">(whole group)</span>':''}</span>
+          <label class="switch"><input type="checkbox" data-navkey="${enc(r.key)}"${r.off?'':' checked'}><span class="slider"></span></label>
         </label>`).join('')}</div>`;
   }
   function _wireNavHide(){
