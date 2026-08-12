@@ -5,6 +5,7 @@ import os
 import re
 import socket
 import time
+from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse
 from sqlalchemy.orm import Session
@@ -808,6 +809,98 @@ class SearchService:
             logger.info("asset fetch failed for %s: %s", url, e)
             return {"url": url, "body": b"", "content_type": "", "error": str(e)[:200]}
 
+    # A nostr bech32 entity anywhere in the URL — path, fragment or `nostr:` URI. HOST-AGNOSTIC on
+    # purpose: the entity is self-describing, so njump.me, primal.net, snort and this instance all
+    # name the same person, and every one of them serves a client shell to a server-side fetch.
+    _NOSTR_ENTITY_RE = re.compile(
+        r"(?:^|[/:?&#=])(?:nostr:)?((?:npub1|nprofile1|note1|nevent1)"
+        r"[023456789acdefghjklmnpqrstuvwxyz]{20,})", re.I)
+
+    async def _fetch_nostr_entity(self, url: str, max_length: int = 15000) -> Optional[dict]:
+        """Resolve a nostr profile/note URL from the RELAYS, in the shape fetch_url_content returns.
+
+        Returns None when the URL names no nostr entity, so the caller falls through to the ordinary
+        HTML fetch — this must never swallow a normal page.
+
+        `naddr` deliberately falls through: its TLV type-0 is a `d` identifier rather than a 32-byte
+        key, so decode_any answers None for it and there is nothing to look up without also carrying
+        the kind and author. An article link is far rarer than "tell me about this user", and guessing
+        is what produced the bug this fixes.
+        """
+        m = self._NOSTR_ENTITY_RE.search(url or "")
+        if not m:
+            return None
+        entity = m.group(1)
+        try:
+            from app.services.nostr import bech32 as _b32, nostr_service as _ns
+        except Exception:
+            return None
+        raw = _b32.decode_any(entity)
+        if not raw or len(raw) != 32:
+            return None
+        hex_id = raw.hex()
+        is_profile = entity.lower().startswith(("npub1", "nprofile1"))
+        # This node's own relay first: it is the one that certainly holds the accounts here, and it is
+        # a loopback hop rather than a public round trip. The public defaults follow for anyone whose
+        # posts this instance has never seen.
+        relays = ["ws://127.0.0.1:3052"] + list(_ns.DEFAULT_RELAYS)
+
+        def _done(title: str, body: str) -> dict:
+            return {"url": url, "title": title[:200], "content": body[:max_length], "error": None}
+
+        if is_profile:
+            meta = await _ns.get_metadata(hex_id, relays) or {}
+            notes = []
+            try:
+                from app.services.nostr import relay as _relay
+                notes = await _relay.query(
+                    relays, [{"kinds": [1], "authors": [hex_id], "limit": 20}], timeout=8) or []
+            except Exception:
+                notes = []
+            name = (meta.get("display_name") or meta.get("name") or "").strip()
+            npub = entity if entity.lower().startswith("npub1") else _b32.encode("npub", raw)
+            # Say WHAT this is in the first line. The model is being handed a person, not a web page,
+            # and without that framing it reaches for the host name — which is how a poster shop got
+            # into an answer about a nostr user.
+            lines = [f"Nostr user profile (from the nostr network, NOT a web page): {name or 'unnamed'}",
+                     f"npub: {npub}"]
+            for key, label in (("nip05", "NIP-05 / verified name"), ("about", "About"),
+                               ("website", "Website"), ("lud16", "Lightning address")):
+                val = str(meta.get(key) or "").strip()
+                if val:
+                    lines.append(f"{label}: {val}")
+            if not meta:
+                lines.append("No profile metadata (kind-0) was found for this user on the relays"
+                             " queried. Do NOT guess who they are from the URL's domain name.")
+            # Cap AFTER sorting, and cap here rather than leaning on `limit`: that is per-RELAY, so a
+            # 20-note request across this pool came back with 167. Left uncapped they overrun
+            # max_length and the tail is chopped mid-sentence, which reads to the model as a post that
+            # trails off. Twenty recent posts is plenty to characterise somebody.
+            notes.sort(key=lambda e: e.get("created_at") or 0, reverse=True)
+            notes = notes[:20]
+            if notes:
+                lines.append(f"\nTheir {len(notes)} most recent posts:")
+                for ev in notes:
+                    when = datetime.utcfromtimestamp(ev.get("created_at") or 0).strftime("%Y-%m-%d")
+                    text = " ".join(str(ev.get("content") or "").split())[:400]
+                    if text:
+                        lines.append(f"- [{when}] {text}")
+            else:
+                lines.append("\nNo recent posts were returned for this user.")
+            return _done(f"Nostr profile: {name or npub[:16]}", "\n".join(lines))
+
+        ev = await _ns.fetch_event(relays, hex_id)
+        if not ev:
+            return _done("Nostr note (not found)",
+                         f"This URL names a nostr note ({entity}) that could not be found on the "
+                         f"relays queried. Do NOT guess its contents from the URL.")
+        author = await _ns.get_metadata(ev.get("pubkey") or "", relays) or {}
+        who = (author.get("display_name") or author.get("name") or "").strip() or (ev.get("pubkey") or "")[:16]
+        when = datetime.utcfromtimestamp(ev.get("created_at") or 0).strftime("%Y-%m-%d %H:%M UTC")
+        return _done(f"Nostr post by {who}",
+                     f"Nostr post (from the nostr network, NOT a web page)\n"
+                     f"Author: {who}\nPosted: {when}\n\n{ev.get('content') or ''}")
+
     async def fetch_url_content(self, url: str, max_length: int = 15000) -> Optional[dict]:
         """Fetch and extract text content from a URL"""
         # YouTube *videos* need the transcript, not the watch-page HTML (which is contentless and
@@ -821,6 +914,21 @@ class SearchService:
                 return await self._fetch_youtube_content(url, max_length)
         except Exception as _yt_err:
             logger.warning(f"YouTube transcript path failed for {url}: {_yt_err}")
+
+        # A NOSTR ENTITY IS THE SAME PROBLEM AS A YOUTUBE WATCH PAGE, and worse in one way: the HTML
+        # for https://<instance>/<npub…> is the CLIENT SHELL — the profile is fetched from relays by
+        # JS that never runs here — so the fetch succeeds with 200 and ~39 KB of boilerplate. Measured
+        # on the reported URL, the extracted text was "PosterChan · Nostr … Offline — showing saved
+        # posts The Ultimate Nostr Experience POSTER//CHAN" with the npub appearing nowhere at all.
+        # The model gets no user, falls back to a web search for the host name, and answers about an
+        # e-commerce poster shop called "The Poster Place" — a confident answer about the wrong
+        # subject, which is the worst possible failure for "tell me about this user".
+        try:
+            nostr = await self._fetch_nostr_entity(url, max_length)
+            if nostr is not None:
+                return nostr
+        except Exception as _n_err:
+            logger.warning(f"Nostr entity path failed for {url}: {_n_err}")
 
         # SSRF protection: validate URL before fetching
         is_safe, error_msg = is_safe_url(url)
