@@ -362,15 +362,158 @@
       // "Get the app" points at /apk and /desktop/* on an instance. With none, there is no host to
       // download from — and the person is already IN the app.
       const apps = document.querySelector('.rb-apps'); if(apps) apps.classList.toggle('hidden', solo);
-      // A nav group whose every child is gone is an empty disclosure triangle. Fold the whole group.
-      $$('.nav-group').forEach(g => {
-        const kids = [...g.querySelectorAll('.nav-item.sub')];
-        if(kids.length) g.classList.toggle('hidden', kids.every(k => k.classList.contains('hidden')));
-      });
     }catch(_){}
+    // The user's own hiding is applied AFTER the gating, never before: gating decides what this
+    // deployment has at all, the preference decides what to do with what is left. It folds the
+    // groups on the way out, which is why there is no separate fold call here.
+    applyNavHidden();
     // Standing on a view that just went away → go somewhere that exists.
     if(solo && INSTANCE_VIEWS.has(VIEW)){ try{ switchView('global'); }catch(_){} }
   }
+
+  /* ===== HIDING ROWS FROM THE LEFT NAV =========================================================
+   *
+   * Anyone who never opens Torrents, or 4chan, or six games, is paying for them with a row of the
+   * sidebar on every screen. So the rows are a PREFERENCE: turn one off and it leaves the sidebar
+   * and the phone's ☰ More sheet. It is stored with the rest of the client prefs in the per-account
+   * kind-30078 document `pcai:client-prefs`, so a sidebar tidied on a laptop is tidy on the phone.
+   *
+   * WHAT IT IS NOT: it hides a DOOR, never a feature. The view still exists, still runs, and is
+   * still reachable from PosterChan OS's start menu, from search, from a keyboard shortcut, and from
+   * a link. That is deliberate — a preference that could make a screen unreachable is a way to lock
+   * yourself out of your own notes, and the way back would be a screen you may also have hidden.
+   *
+   * THREE ROWS CAN NEVER BE HIDDEN, and the rule is enforced in the DATA, not in the checkbox.
+   * `Settings` is the way back from every mistake this preference can make (including hiding half
+   * the app on another device), `Bookmarks` and `Blossom` are the only doors to things the user
+   * PUT somewhere — saved posts and uploaded files — with no second surface that lists them. A
+   * document written by a newer, older or hostile client can name them all it likes; `navHiddenSet`
+   * drops them on the way in, `setNavHidden` drops them on the way out, and the switch is `disabled`
+   * mostly so nobody wonders why it springs back.
+   *
+   * KEYS ARE NOT ALL VIEW SLUGS. Music and Go Live are actions with an id and no `data-view`, and a
+   * whole group is worth turning off in one go, so those get `__music` / `__golive` / `group:disc`.
+   * `_navKey` is the single place that decides, and the mobile sheets map their own literals onto it
+   * rather than keeping a second spelling.
+   *
+   * A ROW THIS DEVICE CANNOT SHOW IS NOT A ROW THIS DEVICE MAY UN-HIDE. Instance gating and
+   * `nostr_only` mean the list of rows differs per node, so the editor keeps every stored key it did
+   * not offer a switch for (see the change handler) — otherwise saving the list on a nostr-only node
+   * would quietly un-hide Email, Terminal and the rest everywhere else. */
+  const NAV_LOCKED = new Set(['settings', 'bookmarks', 'blossom']);
+  const NAV_OFF = 'nav-off';        // ours; NEVER `hidden`, which applyInstanceGating owns and resets
+  function _navKey(el){
+    if(!el) return '';
+    if(el.dataset && el.dataset.view) return el.dataset.view;
+    if(el.id === 'nav-music') return '__music';
+    if(el.id === 'nav-golive') return '__golive';
+    if(el.classList.contains('nav-grouphd') && el.id) return 'group:' + el.id.replace(/-toggle$/, '');
+    return '';
+  }
+  // The row's own words, minus the badge counters that live inside the same <span>.
+  function _navLabel(btn){
+    const span = btn.querySelector('span'); if(!span) return '';
+    let t = [...span.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').trim();
+    if(!t){ const c = span.cloneNode(true); c.querySelectorAll('.badge, .pill, i').forEach(n => n.remove()); t = (c.textContent || '').trim(); }
+    return t;
+  }
+  /* Every row this deployment actually offers, in sidebar order — read from the DOM rather than
+   * listed here, so a nav entry added next month is switchable the day it ships (the same rule the
+   * desktop launcher and the phone's Files sheet already follow). */
+  function navRows(){
+    const off = navHiddenSet(), out = [], seen = new Set();
+    document.querySelectorAll('.sidebar .nav .nav-item').forEach(btn => {
+      const key = _navKey(btn);
+      if(!key || seen.has(key)) return;
+      // Gated off for this install → there is nothing here to decide. Our own hiding uses NAV_OFF,
+      // so a row the user turned off is still listed (it has to be, to turn it back on).
+      if(btn.classList.contains('hidden')) return;
+      const group = key.indexOf('group:') === 0;
+      if(group && btn.closest('.nav-group') && btn.closest('.nav-group').classList.contains('hidden')) return;
+      seen.add(key);
+      out.push({ key, label: _navLabel(btn) || key, group, sub: btn.classList.contains('sub'),
+                 locked: NAV_LOCKED.has(key), off: off.has(key) });
+    });
+    return out;
+  }
+  function navHiddenSet(){
+    let raw = ClientSettings.get('navHidden', []);
+    if(typeof raw === 'string'){ try{ raw = JSON.parse(raw); }catch(_){ raw = []; } }
+    const out = new Set();
+    if(Array.isArray(raw)) for(const k of raw){
+      const s = String(k == null ? '' : k).slice(0, 60);
+      if(s && !NAV_LOCKED.has(s)) out.add(s);
+    }
+    return out;
+  }
+  // A group whose every child is gone is an empty disclosure triangle — fold the whole group. Both
+  // reasons a child can be gone count, or turning off the last game leaves a "Games" that opens onto
+  // nothing.
+  function _foldEmptyNavGroups(){
+    $$('.nav-group').forEach(g => {
+      if(g.classList.contains(NAV_OFF)) return;         // the whole group is off by choice already
+      const kids = [...g.querySelectorAll('.nav-item.sub')];
+      if(kids.length) g.classList.toggle('hidden',
+        kids.every(k => k.classList.contains('hidden') || k.classList.contains(NAV_OFF)));
+    });
+  }
+  function applyNavHidden(){
+    try{
+      const off = navHiddenSet();
+      document.querySelectorAll('.sidebar .nav .nav-item').forEach(btn => {
+        const key = _navKey(btn); if(!key) return;
+        // A group header hides its whole group; every other row hides itself.
+        const target = (key.indexOf('group:') === 0 && btn.closest('.nav-group')) || btn;
+        target.classList.toggle(NAV_OFF, off.has(key));
+      });
+      _foldEmptyNavGroups();
+    }catch(_){}
+  }
+  function setNavHidden(keys){
+    const list = [];
+    for(const k of (keys || [])){
+      const s = String(k == null ? '' : k).slice(0, 60);
+      if(s && !NAV_LOCKED.has(s) && list.indexOf(s) < 0) list.push(s);
+    }
+    ClientSettings.set('navHidden', list);
+    _prefTouched.add('navHidden');     // a late restore must not undo what was just switched
+    applyNavHidden();
+    return saveClientPrefsNostr({ navHidden: list });
+  }
+  /* The phone's sheets are the same nav under another name, so they read the same set. Their `v`
+   * values are the sheet's own literals for the three sub-sheets; everything else already matches. */
+  const _SHEET_NAV_KEY = { __discover: 'group:disc', __games: 'group:games', __files: 'group:files' };
+  function _sheetOff(off, v){ return off.has(_SHEET_NAV_KEY[v] || v); }
+
+  /* The editor, in Settings → Profile. Switches read "show", not "hide": everything is on to begin
+   * with, and a row of switches that are all off for a sidebar that shows everything reads as broken.
+   * A group header carries its children with it, which is why they are drawn indented under it. */
+  function _navHideHtml(){
+    const rows = navRows();
+    if(!rows.length) return '';
+    return `<label class="fld">🧭 Sidebar</label>
+      <div class="muted small">Turn off anything you don't use and it leaves the left sidebar and the phone's ☰ More sheet. Nothing is deleted and nothing stops working — the feature is still there in desktop mode's start menu, in search, and on any link to it. <b>Settings</b>, <b>Bookmarks</b> and <b>Blossom</b> always stay: they are the way back, and the only lists of what you saved and uploaded. Syncs across your devices.</div>
+      <div class="nav-hide-list" id="nav-hide-list">${rows.map(r=>`
+        <label class="fld nav-hide-row${r.sub?' sub':''}${r.group?' grp':''}" style="flex-direction:row;justify-content:space-between;align-items:center">
+          <span>${enc(r.label)}${r.group?' <span class="muted small">(whole group)</span>':''}${r.locked?' <span class="muted small">(always shown)</span>':''}</span>
+          <label class="switch"><input type="checkbox" data-navkey="${enc(r.key)}"${r.off?'':' checked'}${r.locked?' disabled':''}><span class="slider"></span></label>
+        </label>`).join('')}</div>`;
+  }
+  function _wireNavHide(){
+    const list = $('#nav-hide-list'); if(!list) return;
+    list.addEventListener('change', () => {
+      const boxes = $$('input[data-navkey]', list);
+      const shown = new Set(boxes.map(cb => cb.dataset.navkey));
+      /* Keys with no switch on THIS device are kept exactly as they were. The row list is per node
+       * (instance gating, nostr_only) and per shell version, so a save made where Email does not
+       * exist must not be a save that un-hides Email on the laptop where it does. */
+      const keep = [...navHiddenSet()].filter(k => !shown.has(k));
+      setNavHidden(keep.concat(boxes.filter(cb => !cb.checked && !cb.disabled).map(cb => cb.dataset.navkey)));
+    });
+  }
+  /* ===== end of the left-nav hiding block =====
+   * The two banners are SLICE MARKERS: tests/client/nav_hide_sim.js cuts this block out of app.js and
+   * runs the shipped code against a stub sidebar built from templates/client.html. Keep them. */
   let _myFollowersLoaded = false;
   let signer = null;
   const subs = {};                 // view -> subId
@@ -2360,6 +2503,10 @@
         ft.onclick=()=>{ const o=!ClientSettings.get('filesOpen', false); ClientSettings.set('filesOpen', o); apply(o); }; } }
     ensureNavItems();          // MUST precede the click binding below — an injected row needs a handler
     $$('.nav-item[data-view]').forEach(b=> b.onclick = ()=>switchView(b.dataset.view));
+    // …and AFTER the injection, or a row this shell was too old to carry arrives un-hidden. Boot
+    // already ran this once via applyInstanceGating; it is idempotent and reads localStorage, so the
+    // sidebar is tidy before the relay has answered rather than reshuffling once it does.
+    applyNavHidden();
     // Collapsible "Discover" group (Articles / Streams / Communities) in the sidebar.
     { const dt=$('#disc-toggle'); if(dt){ const sub=$('#disc-sub'), chev=$('#disc-chev');
         const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; try{ bumpChat(); }catch(_){} };   // the chat count moves between the header and the Chat item as this opens/closes
@@ -12587,6 +12734,7 @@
   function moreMenu(){
     const dn=Drafts.live().length;   // per-item counts so the ☰ badge is explained once opened
     const counts={drafts:dn, mail:(Number(Mail && Mail.unread)||0)};
+    const _navOffKeys=navHiddenSet();
     // Discover + Games each live in their OWN sub-sheet (one row here) so they don't crowd the More sheet.
     // Admin moved into User Settings (admins only), so it's no longer a top-level More-sheet item.
     // '__golive' opens the go-live sheet directly — the phone camera path is the one most people want,
@@ -12606,7 +12754,11 @@
                    && !(window.PC_NOSTR_ONLY && v==='terminal')    // SSH runs on the instance
                    && !(window.PC_NOSTR_ONLY && v==='mail')        // …and so does IMAP/SMTP
                    && !(_viewNeedsInstance(v))                     // server-less bundle: nothing behind it
-                   && !(v==='__golive' && CFG.stream_enabled===false));   // hide AI+Translate in Nostr-only; Go Live only where the node streams
+                   && !(v==='__golive' && CFG.stream_enabled===false)     // hide AI+Translate in Nostr-only; Go Live only where the node streams
+                   // …and whatever the user turned off in Settings → Sidebar. This sheet IS the
+                   // sidebar on a phone, so a row hidden on the laptop that survived here would make
+                   // the preference mean nothing on the device it declutters most.
+                   && !_sheetOff(_navOffKeys, v));
     const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
     // Live streams / calls ALWAYS show (even 0) so the counts are visible on phone too — matches the
     // desktop ticker. users/online/on-relay stay gated (they read "0" only before the first stats fetch).
@@ -12649,13 +12801,18 @@
   function filesMenu(){
     const rows = $$('#files-sub .nav-item').map(b => {
       const v = b.dataset.view || (b.id === 'nav-music' ? '__music' : '');
-      if(!v || b.classList.contains('hidden')) return null;    // gated off for this install → gated off here
+      // Gated off for this install, or turned off in Settings → Sidebar → gated off here too.
+      if(!v || b.classList.contains('hidden') || b.classList.contains(NAV_OFF)) return null;
       const use = b.querySelector('use');
       const href = (use && (use.getAttribute('href') || use.getAttribute('xlink:href'))) || '#i-folder';
       const label = ((b.querySelector('span') || {}).textContent || v).trim();
       return { v, svg: '<svg class="ic" aria-hidden="true"><use href="' + href + '"></use></svg>', label };
     }).filter(Boolean);
-    if(rows.length) return _filesSheet(rows);
+    /* The fallback is for a shell too OLD to have the group — not for a group whose rows are all
+     * gated or switched off, which is a real answer and has to be allowed to be empty. Keyed on the
+     * group being absent, so hiding every Files row shows an empty sheet rather than resurrecting
+     * the literal below over the user's own choice. */
+    if(rows.length || $('#files-sub .nav-item')) return _filesSheet(rows);
     return _filesSheet([{ v:'blossom', svg:ICO('flower'), label:'Blossom' },
                         { v:'__music', svg:ICO('music'),  label:'Music' },
                         { v:'sync',    svg:ICO('refresh'), label:'Folder Sync' }]);
@@ -12666,8 +12823,10 @@
     });
   }
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
+    const _off=navHiddenSet();
     const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['communities','users','Communities'],['chat','chat','Chat'],['torrents','magnet','Torrents'],['repos','git','Git'],['4chan','leaf','4chan'],['stats','bars','Server Stats']]
-      .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='markets'));   // Markets needs the AI backend (Budget is client-only, so it stays)
+      .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='markets')     // Markets needs the AI backend (Budget is client-only, so it stays)
+                   && !_off.has(v));                              // …and the user's own Settings → Sidebar choices
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-compass"></use></svg> Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}${v==='chat'?'<i id="chat-badge-m" class="badge hidden"></i>':''}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
       if(window.PCNews) window.PCNews.updateBadge();
@@ -12675,7 +12834,9 @@
     });
   }
   function gamesMenu(){
-    const items=[['chess','pawn','Chess'],['ttt','hash','Tic-Tac-Toe'],['hangman','target','Hangman'],['connect4','discs','Connect Four'],['blackjack','cards','Blackjack'],['holdem','spade',"Texas Hold'em"]];
+    const _off=navHiddenSet();
+    const items=[['chess','pawn','Chess'],['ttt','hash','Tic-Tac-Toe'],['hangman','target','Hangman'],['connect4','discs','Connect Four'],['blackjack','cards','Blackjack'],['holdem','spade',"Texas Hold'em"]]
+      .filter(([v])=> !_off.has(v));   // Settings → Sidebar, same list the desktop group reads
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-gamepad"></use></svg> Games</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
     });
@@ -13788,6 +13949,20 @@
          && pr.mediaCacheGB!==ClientSettings.get('mediaCacheGB', 4)){
         ClientSettings.set('mediaCacheGB', pr.mediaCacheGB);
         try{ _applyMediaCacheBudget(pr.mediaCacheGB); }catch(_){}
+      }
+      /* The sidebar rows this account turned off. Applied the moment it lands rather than at the next
+       * reload — a sidebar that tidies itself two seconds in is the whole point of syncing it, and
+       * `applyNavHidden` is idempotent. An ABSENT key is left alone, never read as "hide nothing":
+       * every other pref here follows that rule and this one has more to lose, since a device that
+       * cleared it would publish the empty list back over everyone else's choices.
+       * A stale editor is worse than a stale sidebar — the switches ARE the state as far as the next
+       * save is concerned — so the open pane is re-checked in place instead of re-rendered, which
+       * would throw away whatever else is half-typed in it. */
+      if(!_prefTouched.has('navHidden') && Array.isArray(pr.navHidden)){
+        ClientSettings.set('navHidden', pr.navHidden.map(v=>String(v==null?'':v).slice(0,60)).filter(Boolean).slice(0,200));
+        applyNavHidden();
+        try{ const off=navHiddenSet();
+             $$('#nav-hide-list input[data-navkey]').forEach(cb=>{ if(!cb.disabled) cb.checked = !off.has(cb.dataset.navkey); }); }catch(_){}
       }
       if(!_prefTouched.has('vimKeys') && typeof pr.vimKeys==='boolean') ClientSettings.set('vimKeys', pr.vimKeys);
       if(!_prefTouched.has('cleanLinks') && typeof pr.cleanLinks==='boolean') ClientSettings.set('cleanLinks', pr.cleanLinks);   // 🧹 link-tracker removal follows across devices
@@ -23866,6 +24041,7 @@
             </select>
           </label>
           <div class="muted small">Which feed you land on when the app starts. Nostrverse is everything the relays carry; Home is only the people you follow. You can still switch any time with the tabs above the timeline. Syncs across your devices.</div>
+          ${_navHideHtml()}
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide replies in timelines<label class="switch"><input type="checkbox" id="set-hide-replies" ${ClientSettings.get('hideReplies',false)?'checked':''}><span class="slider"></span></label></label>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide fediverse posts in timelines<label class="switch"><input type="checkbox" id="set-hide-fedi" ${ClientSettings.get('hideFediBridge',true)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">On by default. The bridge mirrors whole fediverse timelines onto Nostr under stand-in keys — this keeps them out of Home and Nostrverse. Mentions, replies and DMs from fediverse people still reach you either way.</div>
@@ -24148,6 +24324,7 @@
         ClientSettings.set('startTimeline', v); _prefTouched.add('startTimeline'); saveClientPrefsNostr({ startTimeline: v });
         toast(v==='home'?'opening on Home from now on':'opening on Nostrverse from now on');
       }; }
+    _wireNavHide();   // Settings → Profile → 🧭 Sidebar
     { const hr=$('#set-hide-replies'); if(hr) hr.onchange=()=>{
         ClientSettings.set('hideReplies', hr.checked);
         _prefTouched.add('hideReplies'); saveClientPrefsNostr({ hideReplies: hr.checked });
