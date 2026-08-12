@@ -285,6 +285,13 @@
                                   // Email is IMAP/SMTP through this instance's mail service — with no
                                   // instance there is nothing behind the screen at all.
                                   'mail',
+                                  /* Games → Webxdc. The DIRECTORY would work — it is relay events and
+                                   * other people's Blossom URLs — but Play cannot: a mini app runs on
+                                   * `xdc.<instance>`, and with no instance `instanceHost()` falls back
+                                   * to the bundle's own origin (`app://posterchan`), so every launch
+                                   * is guaranteed to fail. A gallery of games that cannot start one is
+                                   * worse than no row. */
+                                  'xdc',
                                   // folder sync stores its manifest through /client/sync-manifest,
                                   // whose collapse guard is the thing that stops an empty read
                                   // wiping a folder. No instance, no guard, no sync.
@@ -327,6 +334,7 @@
    * up-to-date shell already has them and nothing happens. */
   const _NAV_REQUIRED = [
     { view:'sync', into:'#files-sub', icon:'#i-refresh', label:'Folder Sync' },
+    { view:'xdc', into:'#games-sub', icon:'#i-gamepad', label:'Webxdc' },
   ];
   function ensureNavItems(){
     for(const it of _NAV_REQUIRED){
@@ -4159,7 +4167,7 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', '4chan':'4chan', news:'News 🗞️', websearch:'Web Search 🔎', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', '4chan':'4chan', news:'News 🗞️', websearch:'Web Search 🔎', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
     { const tl = (v==='home'||v==='global'||v==='trending');   // the three views that carry the .tl-tabs header
@@ -4265,6 +4273,7 @@
     if (VIEW==='notes'){ if(window.PCNotes) return window.PCNotes.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='sync'){ if(window.PCSync) return window.PCSync.paint(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='vault'){ if(window.PCVault) return window.PCVault.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
+    if (VIEW==='xdc'){ if(window.PCWebxdc && PCWebxdc.gallery) return PCWebxdc.gallery(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (window.PCGames && window.PCGames[VIEW]) return window.PCGames[VIEW]();   // game modules (chess.js/ttt.js/hangman.js)
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='settings') return renderSettings();
@@ -12843,7 +12852,7 @@
   }
   function gamesMenu(){
     const _off=navHiddenSet();
-    const items=[['chess','pawn','Chess'],['ttt','hash','Tic-Tac-Toe'],['hangman','target','Hangman'],['connect4','discs','Connect Four'],['blackjack','cards','Blackjack'],['holdem','spade',"Texas Hold'em"]]
+    const items=[['chess','pawn','Chess'],['ttt','hash','Tic-Tac-Toe'],['hangman','target','Hangman'],['connect4','discs','Connect Four'],['blackjack','cards','Blackjack'],['holdem','spade',"Texas Hold'em"],['xdc','gamepad','Webxdc']]
       .filter(([v])=> !_off.has(v));   // Settings → Sidebar, same list the desktop group reads
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-gamepad"></use></svg> Games</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
@@ -14257,6 +14266,17 @@
   }
   // NIP-92: one `imeta` tag per uploaded media URL that appears in the note content, so other clients
   // render our images/video inline (right aspect ratio via dim) and can verify them (x = sha256).
+  /* Returns imeta tags — AND, for a note carrying a mini app, one `t webxdc`.
+   *
+   * That hashtag is what makes an attached app FINDABLE. `imeta` is a multi-letter tag, so no relay
+   * indexes it and no filter can ask for it: a game posted here could only ever be found by someone
+   * who happened to scroll past the post. `#t` is indexed everywhere, so Games → Mini Apps can ask
+   * the network the direct question. (Ditto's apps arrive as kind 1063, which is queryable by `#m`
+   * and is the gallery's other source — see PCWebxdc.gallery.)
+   *
+   * Emitted from HERE rather than at each of the ten call sites, and rather than at attach time.
+   * Ten copies of one rule is the shape this codebase has been bitten by repeatedly, and attach time
+   * is too early: it would announce an app from a post the user then decided not to send. */
   function imetaTagsFor(content){
     const out=[], seen=new Set();
     for(let u of ((content||'').match(/https?:\/\/\S+/g)||[])){
@@ -14270,6 +14290,8 @@
       if(m.summary) parts.push('summary '+m.summary);
       out.push(['imeta', ...parts]);
     }
+    // One `t`, however many apps are in the post, and only when there is one.
+    if(out.some(t => t.includes('m application/x-webxdc'))) out.push(['t', 'webxdc']);
     return out;
   }
   // ---- Blossom access (request-to-upload) ----
@@ -27938,6 +27960,11 @@
     carryPrivateToRelays,
     $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast,
     ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
+    /* The one pass that fills every `.name[data-prof]` (and avatars, nip05s, @mentions) once a kind-0
+     * arrives. A sub-module that paints author names MUST be able to call it, or its names are frozen
+     * at whatever was cached when it drew — webxdc.js's app gallery is not repainted by anything else,
+     * so without this its bylines stay truncated pubkeys for the whole session. */
+    decorateProfiles,
     runSearch,                                                // → the desktop's taskbar search box
     openExternal,                                             // → web search results, and anything else that must leave the app
     /* THE NATIVE PLUGIN LOOKUP, shared. Not a convenience: `_capPlugin` falls back to

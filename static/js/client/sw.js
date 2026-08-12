@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v1152';
+const CACHE = 'pc-nostr-v1153';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -27,6 +27,19 @@ const MEDIA_MAX = 10000;                  // high entry cap (Cache.keys() is ins
                                           // the configurable BYTE budget below is the real limit. Pairs with
                                           // navigator.storage.persist() so the cache isn't evicted by the OS.
 const CONFIG_CACHE = 'pc-config-v1';      // client-written config the SW reads (currently: /media-budget bytes)
+/* The .xdc ARCHIVES (webxdc.js owns it; named here ONLY so the activate sweep keeps it).
+ *
+ * The sweep below is a KEEP-LIST — it deletes every cache it does not recognise — so a cache opened
+ * by some other module is destroyed by the next activate, i.e. by every UI deploy that bumps CACHE.
+ * For mini apps that is the worst possible thing to throw away: they are the largest deliberate
+ * downloads in the client (5.8 MB for Quake III, 178 MB for the Half-Life port) and they are
+ * content-addressed, so the re-download fetches bytes byte-identical to the ones just deleted. It
+ * was silent, too — the app still opens, it just spends a minute doing it, on mobile data.
+ *
+ * NEVER put a cache in this file without adding it here as well. That is the same shape as the three
+ * auto-cleaners Notes had to be exempted from: the sweep is right by default and catastrophic for
+ * anything it has not been told about. */
+const WEBXDC_CACHE = 'pc-webxdc-v1';
 const VIDEO_MAX_BYTES = 60 * 1024 * 1024; // cache a PLAYED video up to this size (raised 15→60MB for more
                                           // re-watch/bandwidth savings); the 4GB byte budget is the real cap
                                           // and trimCache evicts oldest, so bigger clips just get cached too.
@@ -151,7 +164,14 @@ self.addEventListener('activate', e => {
   // Drop stale shell caches but KEEP the current shell cache AND the media cache (don't re-download
   // every avatar/image just because the app code was redeployed).
   e.waitUntil(caches.keys().then(ks => Promise.all(
-    ks.filter(k => k !== CACHE && k !== MEDIA_CACHE && k !== DRIVE_CACHE && k !== SHARE_CACHE && k !== CONFIG_CACHE).map(k => caches.delete(k))
+    /* `pc-` ONLY. CacheStorage is per-ORIGIN, not per-scope, and this worker shares an origin with
+     * the main PWA's (`/sw.js`, scope `/`), whose caches are `posterchanai-vNN`. Deleting everything
+     * unrecognised reached across and wiped those; that worker had the mirror-image bug and wiped
+     * these right back, so a user of both surfaces re-downloaded one of them whenever either version
+     * bumped. Each side now collects only its own namespace. */
+    ks.filter(k => k.startsWith('pc-')
+                && k !== CACHE && k !== MEDIA_CACHE && k !== DRIVE_CACHE && k !== SHARE_CACHE
+                && k !== CONFIG_CACHE && k !== WEBXDC_CACHE).map(k => caches.delete(k))
   )).then(()=>self.clients.claim()));
 });
 

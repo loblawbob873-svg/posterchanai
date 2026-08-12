@@ -133,7 +133,7 @@
    * than an empty folder. */
   const FOLDERS = [
     { key: 'games', label: 'Nostr Games', icon: '#i-gamepad',
-      views: ['chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem'] },
+      views: ['chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem', 'xdc'] },
   ];
 
   /* ---- YOUR layout -----------------------------------------------------------------------------

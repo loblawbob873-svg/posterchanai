@@ -1879,6 +1879,49 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    Play rather than hidden in a menu — it is only ever wanted when something is already wrong. */
 .xdc-reset{flex:none;opacity:.75}
 .xdc-reset:hover{opacity:1}
+/* ---- Games → Webxdc: the directory --------------------------------------------------------------
+   A gallery, not a list, because these apps ship real cover art (Ditto's kind-1063 carries an
+   `image` tag) and a wall of covers is the difference between "some files" and "things to play".
+   The cover box has a FIXED aspect-ratio and the tile a fixed row template, so a grid of 30 tiles
+   settles at its final size in the first paint — art arrives lazily and nothing below it moves,
+   which is the same rule the timeline follows. */
+.xdc-gal-top{display:flex;align-items:flex-start;gap:14px;padding:16px 18px 4px}
+.xdc-gal-top .muted{flex:1;min-width:0;line-height:1.45}
+.xdc-gal-top .btn{flex:none}
+.xdc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px;padding:14px 18px 24px}
+.xdc-tile{display:flex;flex-direction:column;background:var(--panel2);border:1px solid var(--line);
+  border-radius:16px;overflow:hidden;cursor:pointer;transition:border-color .15s,transform .12s;animation:fade .25s}
+.xdc-tile:hover{border-color:var(--neon);transform:translateY(-2px)}
+.xdc-cover{aspect-ratio:1/1;background:#0b0716;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.xdc-cover img{width:100%;height:100%;object-fit:cover;display:block}
+/* No art: the glyph, big and dimmed, so a coverless tile reads as "a mini app" and not as an image
+   that failed to load. */
+.xdc-cover-none{background:radial-gradient(circle at 50% 40%,rgba(var(--accent-rgb),.20),transparent 70%)}
+.xdc-cover-none .ic{width:44%;height:44%;color:var(--neon);opacity:.55}
+.xdc-tmeta{padding:10px 12px 4px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.xdc-tmeta b{font-size:14px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.xdc-tmeta span{font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The byline carries `.name` so decorateProfiles fills it — which also brings that class's timeline
+   styling with it. Put back the muted byline weight it is meant to have inside a tile. */
+.xdc-tmeta .name{font-size:inherit;font-weight:500;color:var(--muted)}
+.xdc-tfoot{color:var(--neon);opacity:.85}
+.xdc-tacts{display:flex;gap:8px;padding:8px 12px 12px;margin-top:auto}
+.xdc-tacts .btn{flex:1;min-width:0}
+@media(max-width:820px){
+  .xdc-grid{gap:10px;padding:10px 12px 20px}
+  .xdc-gal-top{padding:12px 12px 2px;flex-direction:column;gap:8px}
+  .xdc-gal-top .btn{align-self:flex-start}
+  .xdc-tmeta{padding:8px 10px 2px}
+  .xdc-tacts{padding:6px 10px 10px;gap:6px}
+}
+/* Two up on a PHONE only. `minmax(190px,1fr)` alone gives ONE column at 390px, which turns nine
+   games into nine full-width banners nobody scrolls to the end of — so it is forced here.
+   Measured, and this is why the breakpoint is 600 and not the 820 the rest of the mobile rules use:
+   forcing two columns at 820 gave 391px covers, i.e. two enormous tiles on a tablet that has room
+   for four. Above 600px auto-fill already does the right thing at every width. */
+@media(max-width:600px){
+  .xdc-grid{grid-template-columns:1fr 1fr}
+}
 /* The app itself. It fills whatever it is given — a desktop window's body, or a full-screen sheet on
    a phone — and the frame is the only thing in it, because everything else is the app's own chrome. */
 .xdc-host{position:relative;width:100%;height:100%;min-height:220px;background:#000}

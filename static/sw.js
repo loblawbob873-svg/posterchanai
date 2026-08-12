@@ -24,12 +24,27 @@ self.addEventListener('install', event => {
   );
 });
 
+/* THIS WORKER MUST ONLY DELETE ITS OWN CACHES.
+ *
+ * CacheStorage is per-ORIGIN, not per-scope, and this worker shares an origin with the Nostr client's
+ * (`/client/sw.js`, scope `/client/`). A bare "delete everything that is not CACHE_NAME" therefore
+ * reaches straight across and destroys the client's shell (`pc-nostr-vNNN`), its media cache, the
+ * encrypted drive's blobs, and `pc-webxdc-v1` — which holds the downloaded mini apps, up to 178 MB
+ * for the Half-Life port, re-fetched byte-for-byte identical because they are content-addressed.
+ * The client's worker had the mirror-image bug and was deleting `posterchanai-vNN` right back, so a
+ * user who used both surfaces re-downloaded one of them every time either version bumped.
+ *
+ * Nothing said so; each app just got slow once in a while. Scoped by PREFIX so the two workers stop
+ * fighting, and so a cache added on either side is not silently collected by the other.
+ * Guarded by tests/test_webxdc_gallery.py::SwCacheKeepList. */
+const CACHE_PREFIX = 'posterchanai-';
+
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(cacheNames => {
       return Promise.all(
         cacheNames
-          .filter(name => name !== CACHE_NAME)
+          .filter(name => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME)
           .map(name => caches.delete(name))
       );
     })

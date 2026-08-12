@@ -1092,7 +1092,13 @@
         if((get('m') || '').toLowerCase() !== MIME) return null;
         const url = get('url');
         if(!/^https?:\/\//i.test(url)) return null;
-        return { url, sha:get('x'), uuid:get('webxdc'), name:(get('alt') || '').replace(/^Webxdc app:\s*/i, '') };
+        /* `image` and `size` are Ditto's, and they are what make the gallery a gallery rather than a
+         * list of names: every app announced this way carries real cover art. Read here so there is
+         * one place that knows how an app is described, and ignored by the timeline card, which has
+         * no room for a cover. A kind-1 imeta carries neither — those tiles fall back to the glyph. */
+        const img = get('image');
+        return { url, sha:get('x'), uuid:get('webxdc'), name:(get('alt') || '').replace(/^Webxdc app:\s*/i, ''),
+                 image: /^https?:\/\//i.test(img) ? img : '', size: Number(get('size')) || 0 };
       }
       for(const t of ev.tags){
         if(t[0] !== 'imeta') continue;
@@ -1123,6 +1129,256 @@
           <button class="btn btn-neon small xdc-play">Play</button>
         </div>`;
     }
+
+    /* ===== THE DIRECTORY (Games → Webxdc) ========================================================
+     *
+     * A mini app reaches this client as an ATTACHMENT to somebody's post, which means the only way
+     * to find one was to scroll past it. Apps that nobody happens to see are apps nobody can play,
+     * and a game with no second player is not a game — so the whole point of the feature was being
+     * lost to discovery. This is the directory: every app the network is carrying, as a cover-art
+     * card you press to play.
+     *
+     * WHERE THEY COME FROM — three sources, because no single one can see them all:
+     *
+     *  1. kind 1063 with `#m application/x-webxdc`. This is Ditto's shape and it is the one that
+     *     matters today: `m` is a single-letter tag, so relays index it and the question can be
+     *     asked directly. It is also the RICH one — those events carry cover art, a byte size and a
+     *     description, which is what makes a tile worth looking at.
+     *  2. kind 1 with `#t webxdc`, which app.js now attaches to any post carrying an app
+     *     (imetaTagsFor). `imeta` is multi-letter and therefore unindexable: without that hashtag a
+     *     game posted from here could never be found by a query, only stumbled upon.
+     *  3. THE LOCAL CACHE, scanned for imeta apps directly. This is the only source that can see a
+     *     post made before (2) existed, and it costs nothing — the events are already in memory.
+     *
+     * ONE TILE PER IDENTIFIER, NOT PER FILE. Two people posting the same .xdc have the same sha and
+     * different identifiers, and the identifier is what decides whose game you join — so they are
+     * two rooms and belong on two tiles. Collapsing them by sha would silently drop everyone into
+     * whichever room happened to sort first.
+     *
+     * PLAY COUNTS ARE THE SORT, and they come free: every move is a kind 4932 whose `i` tag is the
+     * identifier, so one query orders the whole directory by what people are actually playing. An
+     * app nobody has touched still appears — at the bottom, by recency, because a directory that
+     * hides the new arrivals can never get any.
+     */
+    const GAL_LIMIT = 300;         // apps per source; the network carries ~10 today
+    const GAL_UPDATES = 500;       // moves sampled for the play counts
+    const GAL_NOTES = 2000;        // cached notes scanned for source (3) — the cache is smaller than this
+    /* How long the list stays warm. Generous on purpose: a directory of posted apps changes about
+     * once a week, and the cost of being stale is a tile arriving late, while the cost of being
+     * eager is a relay round trip every time somebody clicks the window. Refresh is right there. */
+    const GAL_TTL = 15 * 60 * 1000;
+    let _gal = { apps: [], at: 0, loading: null };
+
+    /* What makes two rows the same app. See the banner: the identifier, and only as a last resort
+     * the file — an app with no identifier is a solo copy and cannot be merged with anything.
+     *
+     * THE FALLBACK USES `_isDigest`, for the reason `_cacheKey` already had to learn: `x` is only
+     * SOMETIMES a sha256. The published Half-Life port carries the literal "hl", and two uuid-less
+     * apps whose authors both wrote a label there would key alike — one tile, one app's URL under
+     * the other's name, and the second app missing from the directory with nothing logged. A
+     * non-digest `x` is not an identity, so the URL is. */
+    const _galKey = a => a.uuid || ('sha:' + (_isDigest(a.sha) ? String(a.sha).toLowerCase() : a.url));
+
+    function _galRecord(ev){
+      const app = appOf(ev);
+      if(!app) return null;
+      return Object.assign({}, app, { evId: ev.id, pubkey: ev.pubkey, at: ev.created_at || 0,
+                                      note: String(ev.content || '').trim().slice(0, 200),
+                                      plays: 0, last: 0 });
+    }
+
+    /* Merge a row in. The BEST record wins per field rather than the newest whole record: the same
+     * game can arrive as a bare kind-1 imeta from one person and as a fully described kind-1063 from
+     * another, and taking either wholesale throws away half of what is known about it. */
+    function _galMerge(into, rec){
+      const key = _galKey(rec);
+      const cur = into.get(key);
+      if(!cur){ into.set(key, rec); return; }
+      // DESCRIPTION fields fill in from whoever has them — these say what the app IS.
+      if(!cur.image && rec.image) cur.image = rec.image;
+      if(!cur.name && rec.name) cur.name = rec.name;
+      if(!cur.size && rec.size) cur.size = rec.size;
+      if(!cur.note && rec.note) cur.note = rec.note;
+      /* IDENTITY MOVES AS ONE PIECE, and that is a security property rather than tidiness.
+       *
+       * The earliest post is the one to credit — that is where the app was published — but `url` and
+       * `sha` are WHAT PLAY RUNS, and they belong to the post being credited. Merged field by field,
+       * they would keep whatever the first-INSERTED record carried, and insertion order here is
+       * cache-scan order, not post order. So a tile could read "by Alice", link to Alice's post, and
+       * download and execute the bytes at Bob's URL under the same identifier — which is exactly the
+       * move an attacker reposting a popular identifier would make. Credit and bytes are the same
+       * decision, taken once, from one record. */
+      if(rec.at && (!cur.at || rec.at < cur.at)){
+        cur.at = rec.at; cur.evId = rec.evId; cur.pubkey = rec.pubkey;
+        cur.url = rec.url; cur.sha = rec.sha;
+      }
+    }
+
+    async function galLoad(force){
+      if(!force && _gal.at && (Date.now() - _gal.at) < GAL_TTL) return _gal.apps;
+      if(_gal.loading) return _gal.loading;
+      _gal.loading = (async () => {
+        const found = new Map();
+        const soak = (evs) => { for(const ev of (evs || [])){ const r = _galRecord(ev); if(r) _galMerge(found, r); } };
+        /* The cache FIRST and synchronously, so the grid can paint before the network answers —
+         * with nothing on screen this view is indistinguishable from one that is broken. */
+        try{
+          const S = window.Store;
+          if(S && S.query){
+            soak(S.query([{ kinds:[1063], limit:GAL_LIMIT }]));
+            soak(S.query([{ kinds:[1], limit:GAL_NOTES }]));
+          }
+        }catch(_){}
+        /* EVERY KIND THE COMPOSER CAN ATTACH AN APP TO, not just kind 1. `imetaTagsFor` emits the
+         * `t webxdc` hashtag for whatever it is building, and it builds polls (1068), NIP-22
+         * comments (1111) and git issues (1621) as well as notes — so asking for kind 1 alone tags
+         * those posts for discovery and then never looks for them. Following the empty state's own
+         * instruction from the poll composer would have produced nothing, with no error anywhere. */
+        let net = [];
+        try{
+          net = await Relay.query([{ kinds:[1063], '#m':[MIME], limit:GAL_LIMIT },
+                                   { kinds:[1, 1068, 1111, 1621], '#t':['webxdc'], limit:GAL_LIMIT }], 9000) || [];
+        }catch(_){}
+        soak(net);
+        // Keep what the network taught us: this is also the only path by which an app posted on
+        // another client ever reaches the cache, so a later visit paints it instantly.
+        try{ for(const ev of net) window.Store && Store.saveEvent(ev); }catch(_){}
+
+        /* Moves → how busy each room is. A miss here is not a failure: the directory still lists
+         * everything, just ordered by recency, so this is queried without blocking on it.
+         *
+         * ASKED FOR BY IDENTIFIER (`#i`), never as "the 500 newest updates". Unscoped, the answer is
+         * whatever the network happened to be playing in that window — so a busy stranger's game
+         * crowds out the counts for every app in this list, and the download grows with the network
+         * rather than with the directory. Scoped, every move returned is one that belongs to a tile
+         * on screen. Nothing to ask about if the directory is empty. */
+        const ids = [...found.keys()].filter(k => k.indexOf('sha:') !== 0);
+        if(ids.length){
+          try{
+            const ups = await Relay.query([{ kinds:[KIND_UPDATE], '#i': ids, limit:GAL_UPDATES }], 9000) || [];
+            for(const ev of ups){
+              const i = ((ev.tags || []).find(t => t[0] === 'i') || [])[1];
+              if(!i) continue;
+              const a = found.get(i);
+              if(!a) continue;                     // a room whose app we have never seen: nothing to show
+              a.plays++;
+              if((ev.created_at || 0) > a.last) a.last = ev.created_at || 0;
+            }
+          }catch(_){}
+        }
+
+        const apps = [...found.values()].sort((a, b) => (b.plays - a.plays) || (b.last - a.last) || (b.at - a.at));
+        /* AN EMPTY RESULT NEVER GOES WARM, and that is the whole guard.
+         *
+         * A failed load and an empty directory are the same answer here: `Relay.query` resolves `[]`
+         * for a relay that said nothing AND for sockets that were still CONNECTING, which is the
+         * normal state seconds after launch. Nothing can tell them apart from in here — so the empty
+         * one is never treated as authoritative. Stamped, it would have repainted "No mini apps
+         * found yet" on every entry and every desktop-window focus for a quarter of an hour without
+         * asking again; the feature would look like the network carries nothing at all.
+         *
+         * The cost of being wrong the other way is one two-filter query per entry on a network that
+         * genuinely has no apps. That is the cheap direction, and it is the same trade the uptime
+         * doc and the folder-sync manifest make: never write on the strength of an empty read. */
+        _gal = { apps, at: apps.length ? Date.now() : 0, loading: null };
+        return apps;
+      })();
+      try{ return await _gal.loading; }finally{ _gal.loading = null; }
+    }
+
+    const _galSize = n => !n ? '' : (n >= 1048576 ? (n / 1048576).toFixed(n >= 10485760 ? 0 : 1) + ' MB'
+                                                  : Math.max(1, Math.round(n / 1024)) + ' KB');
+
+    /* The byline is a `.name[data-prof]`, and the CLASS is load-bearing — app.js's one
+     * decorateProfiles pass keys on it, so a kind-0 that arrives after the grid painted fills the
+     * name in place. With the attribute alone the tile would show a truncated pubkey for the whole
+     * session, because nothing repaints this view on its own. Same shape as the article, stream and
+     * market bylines.
+     *
+     * NEVER put a backtick in a comment inside the template literal below — it ends the string, and
+     * the markup after it is then parsed as code. Cost one round of red tests to learn twice. */
+    function galTile(a){
+      const name = a.name || 'Mini app';
+      const who = PC.profOf(a.pubkey) || {};
+      const by = who.display_name || who.name || PC.safePk(a.pubkey);
+      try{ PC.needProfile(a.pubkey); }catch(_){}
+      const cover = a.image
+        ? `<img src="${enc(a.image)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">`
+        : `<svg class="ic" aria-hidden="true"><use href="#i-gamepad"></use></svg>`;
+      const foot = [a.plays ? (a.plays + (a.plays === 1 ? ' move' : ' moves')) : '', _galSize(a.size)]
+                     .filter(Boolean).join(' · ');
+      return `<div class="xdc-tile" data-key="${enc(_galKey(a))}">
+          <div class="xdc-cover${a.image ? '' : ' xdc-cover-none'}">${cover}</div>
+          <div class="xdc-tmeta">
+            <b title="${enc(name)}">${enc(name)}</b>
+            <span class="muted small">by <span class="name" data-prof="${enc(a.pubkey)}">${enc(by)}</span></span>
+            ${foot ? `<span class="muted small xdc-tfoot">${enc(foot)}</span>` : ''}
+          </div>
+          <div class="xdc-tacts">
+            <button class="btn btn-neon small xdc-tplay">Play</button>
+            ${a.evId ? `<button class="btn btn-ghost small xdc-tpost" title="Open the post this app was shared in">Post</button>` : ''}
+          </div>
+        </div>`;
+    }
+
+    /* The view. Painted twice on purpose — once from the cache the moment it is entered, once when
+     * the network answers — because the alternative is a spinner on a screen whose whole job is to
+     * show that there is something to play. */
+    /* ENTERING THIS VIEW IS NOT THE SAME AS REFRESHING IT.
+     *
+     * `renderView` runs on every entry AND every time a desktop window is focused, so a gallery that
+     * queried on render would hit the relays each time you clicked its window — for a directory that
+     * changes about once a week. The apps live in module state (like Web Search's results), so a
+     * repaint is memory only; the network is asked when the list is COLD, and otherwise only by the
+     * Refresh button. A running app is unaffected either way: its sheet hangs off document.body, not
+     * #feed, and `open()` on an app that is already live brings it forward instead of reloading it. */
+    async function gallery(){
+      const feed = $('#feed');
+      if(!feed) return;
+      /* STILL OURS TO PAINT? — asked of the DOM, not of the router.
+       *
+       * `VIEW === 'xdc'` alone stranded a desktop window: park a gallery mid-load (click another
+       * window), the query resolves with the view no longer current, the repaint is skipped, and
+       * os.js restores the window without re-rendering it — so it sits on a spinner with a disabled
+       * Refresh button for ever. The real question is whether the markup this call painted is still
+       * on screen, which is true for a parked window and false for a view that was replaced. */
+      const mine = () => document.body.contains(feed) && feed.querySelector('.xdc-gal-top');
+      const paint = (apps, loading) => {
+        if(window.__PC.VIEW !== 'xdc' && !mine()) return;   // replaced by another view mid-query
+        const head = `<div class="xdc-gal-top">
+            <div class="muted small">Mini apps — webxdc games, polls and shared editors people have posted. They run in a sandbox with no network of their own, and everyone who opens the same app is in the same game.</div>
+            <button class="btn btn-ghost small" id="xdc-gal-refresh"${loading ? ' disabled' : ''}>${loading ? 'Looking…' : 'Refresh'}</button>
+          </div>`;
+        const body = apps.length
+          ? `<div class="xdc-grid">${apps.map(galTile).join('')}</div>`
+          : (loading ? '<div class="spinner"></div>'
+                     : `<div class="empty">No mini apps found yet. Attach a <code>.xdc</code> to a post with <b>🎮 Mini app</b> in the composer and it will show up here.</div>`);
+        feed.innerHTML = head + body;
+        try{ PC.decorateProfiles && PC.decorateProfiles(); }catch(_){}
+        const rf = $('#xdc-gal-refresh', feed);
+        if(rf) rf.onclick = () => { _gal.at = 0; gallery(); };
+      };
+      const warm = _gal.at && (Date.now() - _gal.at) < GAL_TTL;
+      paint(_gal.apps, !warm);
+      if(warm) return;                                  // a focus/repaint costs nothing
+      paint(await galLoad(false), false);
+    }
+
+    /* One delegated handler, for the same reason the timeline card has one: this grid is repainted
+     * by two different passes and lives inside a desktop window as often as inside #feed. */
+    document.addEventListener('click', (e) => {
+      const tile = e.target.closest && e.target.closest('.xdc-tile');
+      if(!tile) return;
+      if(e.target.closest('[data-prof]')) return;      // the author's name is still a link to them
+      e.preventDefault(); e.stopPropagation();
+      const app = _gal.apps.find(a => _galKey(a) === tile.dataset.key);
+      if(!app) return;
+      if(e.target.closest('.xdc-tpost')){
+        try{ PC.openThread && PC.openThread(app.evId); }catch(_){}
+        return;
+      }
+      open(app);
+    });
 
     /* ONE delegated handler for every card, ever, rather than a bind pass each render path has to
      * remember to call. The timeline, a thread, a profile, a DM bubble and the desktop's own windows
@@ -1218,6 +1474,9 @@
      * that drops everybody, a base64 round trip that mangles high bytes — and none of it is visible
      * from either browser. See tests/test_webxdc.py::TwoPlayers. */
     window.PCWebxdc = { open, appOf, cardHtml, attach, sheetOpen, closeSheet,
+                        // Games → Webxdc. `__gal` is the directory's own state, exposed so
+                        // tests/test_webxdc_gallery.py can drive the merge/sort against real events.
+                        gallery, __galLoad: galLoad, __galKey: _galKey, __galTile: galTile,
                         MIME, KIND_UPDATE, Session };
   }
   init();

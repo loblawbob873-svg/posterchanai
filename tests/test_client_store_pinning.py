@@ -131,3 +131,56 @@ def test_notes_attachment_urls_survive_the_markdown_sanitiser():
     i = src.index("function _mdUrl")
     body = src[i:i + 400]
     assert "pcres" in body, "the pcres allowance is not inside _mdUrl any more"
+
+
+def test_mini_app_announcements_survive_the_firehose():
+    """Games → Webxdc reads these back. They were announced in February, so the newest-N rule
+    evicts every one of them after a few minutes of feed reading — and the directory then reads
+    "nothing here yet" exactly when the relays are unreachable and a downloaded, cached, playable
+    game is worth the most."""
+    r = _run("""
+        const mk = i => ({ id:'x'+i, pubkey:'stranger', kind:1063, created_at: 2000+i, sig:'x',
+          tags:[['url','https://b.example/'+i+'.xdc'],['m','application/x-webxdc'],
+                ['x', String(i).padStart(64,'0')],['webxdc','u'+i]], content:'' });
+        for (let i = 0; i < 12; i++) Store.saveEvent(mk(i));
+        for (let i = 0; i < 9000; i++) Store.saveEvent(post(i));
+        process.stdout.write(JSON.stringify({ apps: Store.query([{ kinds:[1063], limit:5000 }]).length }));
+    """)
+    assert r["apps"] == 12, f"the firehose evicted mini apps: {r['apps']}/12 left"
+
+
+def test_a_1063_that_is_not_a_mini_app_is_not_pinned():
+    """kind 1063 is generic file metadata — pinning every image someone posted would defeat the
+    bound entirely. Only the webxdc mime earns it."""
+    r = _run("""
+        const mk = i => ({ id:'f'+i, pubkey:'stranger', kind:1063, created_at: 2000+i, sig:'x',
+          tags:[['url','https://b.example/'+i+'.png'],['m','image/png']], content:'' });
+        for (let i = 0; i < 500; i++) Store.saveEvent(mk(i));
+        for (let i = 0; i < 9000; i++) Store.saveEvent(post(i));
+        process.stdout.write(JSON.stringify({ kept: Store.query([{ kinds:[1063], limit:99999 }]).length }));
+    """)
+    assert r["kept"] < 500, "plain file-metadata events should still be evictable"
+
+
+def test_the_mini_app_pin_is_capped():
+    """UNLIKE EVERY OTHER PIN HERE, this one is written by ANYBODY — a kind-1063 needs no
+    relationship to the signed-in user. Uncapped, a spammer publishing a few thousand cheap
+    announcements mints that many unevictable entries: _evictMem keeps pinned events in full and
+    _pruneIDB may not delete them, so the set only grows, the quota fills, and the cache can free
+    nothing to recover. The overflow is not deleted — it just evicts like any other event."""
+    r = _run("""
+        const mk = i => ({ id:'x'+i, pubkey:'spammer', kind:1063, created_at: 2000+i, sig:'x',
+          tags:[['url','https://b.example/'+i+'.xdc'],['m','application/x-webxdc'],
+                ['x', String(i).padStart(64,'0')],['webxdc','u'+i]], content:'' });
+        for (let i = 0; i < 3000; i++) Store.saveEvent(mk(i));
+        for (let i = 0; i < 9000; i++) Store.saveEvent(post(i));
+        const apps = Store.query([{ kinds:[1063], limit:99999 }]);
+        process.stdout.write(JSON.stringify({
+          apps: apps.length,
+          newestKept: apps.some(e => e.id === 'x2999'),
+          posts: Store.query([{kinds:[1], limit:99999}]).length }));
+    """)
+    assert r["apps"] <= 400, f"{r['apps']} announcements pinned — the cap is not holding"
+    assert r["apps"] >= 300, f"the cap threw away too much ({r['apps']})"
+    assert r["newestKept"], "the cap must keep the NEWEST announcements, not an arbitrary slice"
+    assert r["posts"] >= 400, f"pinned announcements starved the timeline cache ({r['posts']})"

@@ -89,6 +89,22 @@ def sidebar_spec():
 SPEC = sidebar_spec()
 
 
+def _group_members(toggle_id):
+    """The rows inside one .nav-group, from the template — never a hand-written list.
+
+    A hardcoded copy of the six games passed happily until a seventh row (Webxdc) joined the group,
+    at which point "hide every child" no longer emptied it and the fold assertion failed for a
+    reason that had nothing to do with folding.
+    """
+    for row in SPEC:
+        if row.get("cls") == "nav-group" and any(k.get("id") == toggle_id for k in row["children"]):
+            return [k["view"] for k in row["children"] if k.get("view")]
+    raise AssertionError(f"no .nav-group holding #{toggle_id} — the template parse has drifted")
+
+
+GAMES_GROUP = _group_members("games-toggle")
+
+
 def run(**opts):
     opts.setdefault("sidebar", SPEC)
     out = subprocess.run(["node", str(SIM), json.dumps(opts)], capture_output=True, timeout=90)
@@ -112,6 +128,11 @@ class SidebarFixtureTests(unittest.TestCase):
         for locked in LOCKED:
             self.assertIn(locked, r["visible"], f"{locked} missing — the template parse has drifted")
         self.assertGreater(len(keys), 25, "the nav has ~35 rows; the parse found almost none")
+        # Webxdc is in the Games group — the one nav row that is a directory of other people's apps.
+        self.assertIn("xdc", GAMES_GROUP)
+        # …and it needs nothing added to this screen: the Sidebar tab reads the nav from the DOM, so
+        # a row shipped today is switchable today. That is the whole reason it is not a hand list.
+        self.assertIn("xdc", keys)
         self.assertEqual(len(keys), len(set(keys)), "a key was offered twice")
         # Labels come from the row's own <span>, minus its badge.
         by = {r["key"]: r for r in rows}
@@ -187,14 +208,14 @@ class HidingTests(unittest.TestCase):
         self.assertIn("news", r["visible"])          # a different group is untouched
 
     def test_a_group_whose_every_child_is_off_folds_itself(self):
-        r = run(hide=["chess", "ttt", "hangman", "connect4", "blackjack", "holdem"])
+        r = run(hide=GAMES_GROUP)
         self.assertNotIn("group:games", r["visible"], "an empty Games triangle was left behind")
         self.assertIn("group:disc", r["visible"])
 
     def test_one_surviving_child_keeps_the_group(self):
-        r = run(hide=["ttt", "hangman", "connect4", "blackjack", "holdem"])
+        r = run(hide=GAMES_GROUP[1:])
         self.assertIn("group:games", r["visible"])
-        self.assertIn("chess", r["visible"])
+        self.assertIn(GAMES_GROUP[0], r["visible"])
 
     def test_applying_the_same_set_twice_changes_nothing(self):
         """applyNavHidden runs from boot, from applyInstanceGating and from every save."""

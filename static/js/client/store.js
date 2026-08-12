@@ -41,7 +41,33 @@
   // Matched by the d-tag rather than by author because Store has no idea who is logged in — and it
   // needs none: `pcai:note…` under kind 30078 is by construction this user's own notes and folders.
   function _isPinned(ev){
-    if (!ev || ev.kind !== 30078) return false;
+    if (!ev) return false;
+    /* A MINI APP'S ANNOUNCEMENT (kind 1063, `m application/x-webxdc`).
+     *
+     * The only non-30078 thing pinned here, and for the same reason as the rest: the newest-N rule is
+     * right for a firehose and wrong for a small set of documents that are looked up by name. The
+     * apps on the network today were announced in February; a few minutes of reading the global feed
+     * evicts every one of them, so Games → Webxdc would go from "nine games" to "nothing here yet"
+     * with the relays unreachable — which is exactly when a downloaded, cached, playable game is
+     * worth the most. They are tiny (a dozen tags) and there are single digits of them.
+     *
+     * AND IT IS CAPPED, WHICH NOTHING ELSE HERE IS. Every other pin is a kind-30078 document the
+     * signed-in user WROTE, so its size is their own doing. This one is written by anybody: a
+     * spammer publishing a few thousand cheap announcements would otherwise mint that many
+     * unevictable entries — `_evictMem` keeps pinned events in full, `_pruneIDB` may not delete
+     * them, so the set only grows, the quota fills, and the cache can free nothing to recover. The
+     * cap is applied in `_splitPinned` (newest kept, the rest evict normally) because a predicate on
+     * one event cannot count.
+     *
+     * DELIBERATELY NOT kind-1 posts that carry an app. `t webxdc` is a tag anyone can put on
+     * anything, and an app post ages out like the note it is — the gallery re-queries — while the
+     * 1063 announcement, which is what a directory is actually built from, stays. */
+    if (ev.kind === 1063){
+      for (const t of ev.tags || []) if (t && t[0] === 'm' &&
+          String(t[1] || '').toLowerCase() === 'application/x-webxdc') return true;
+      return false;
+    }
+    if (ev.kind !== 30078) return false;
     // `pcai:note*` (Notes) and `pcai:pw*` (the password vault — items, folders and the vault key
     // event itself). Both are documents only their author can decrypt, so evicting one by the
     // newest-N rule that is right for the firehose means it is simply GONE from this device until a
@@ -87,9 +113,18 @@
   }
   // Split a list into [pinned, rest-newest-first] — shared by the three places that trim a cache so
   // they cannot drift on what "keep" means.
+  /* How many third-party mini-app announcements may be pinned at once. Generous against the real
+     network (single digits today, and galLoad asks for at most 300 per load) and small against the
+     abuse case, which is unbounded — see the kind-1063 note in _isPinned. */
+  const XDC_PIN_MAX = 400;
   function _splitPinned(list){
-    const pin = [], rest = [];
-    for (const ev of list) (_isPinned(ev) ? pin : rest).push(ev);
+    const pin = [], xdc = [], rest = [];
+    for (const ev of list) (_isPinned(ev) ? (ev.kind === 1063 ? xdc : pin) : rest).push(ev);
+    /* The capped pin. Newest announcements are kept pinned; the overflow is not DELETED, it simply
+       rejoins the ordinary newest-N population and evicts like any other event — so an app that
+       falls out of the cache is one the gallery re-queries, not one that is gone. */
+    xdc.sort((a,b)=>b.created_at-a.created_at);
+    for (let i = 0; i < xdc.length; i++) (i < XDC_PIN_MAX ? pin : rest).push(xdc[i]);
     rest.sort((a,b)=>b.created_at-a.created_at);
     return [pin, rest];
   }
@@ -128,8 +163,15 @@
     _idxDelFrom(idx.kind, ev.kind, ev.id);
     for (const t of ev.tags || []){ if (t && t.length >= 2 && typeof t[0] === 'string' && t[0].length === 1) _idxDelFrom(idx.tag, t[0] + ':' + t[1], ev.id); }
   }
+  // `_pinCount` raises the eviction CEILING, so it has to agree with _splitPinned about the cap —
+  // counting every announcement would lift the ceiling by the abuse case itself, which is the growth
+  // the cap exists to stop.
   function _reindex(){ idx.author.clear(); idx.kind.clear(); idx.tag.clear(); _pinCount = 0;
-    for (const ev of mem.events.values()){ _indexAdd(ev); if (_isPinned(ev)) _pinCount++; } }
+    let xdc = 0;
+    for (const ev of mem.events.values()){ _indexAdd(ev);
+      if (!_isPinned(ev)) continue;
+      if (ev.kind === 1063 && ++xdc > XDC_PIN_MAX) continue;
+      _pinCount++; } }
   // Candidate event-id set for ONE filter, using the most selective index; null = "scan everything".
   function _candidates(f){
     if (f.ids) return new Set(f.ids.filter(id => mem.events.has(id)));
