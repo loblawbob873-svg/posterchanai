@@ -330,6 +330,13 @@ URL_WITHOUT_PROTOCOL = re.compile(
     r'(?<![/@])\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+(?:com|org|net|edu|gov|io|co|info|biz|me|tv|us|uk|de|fr|jp|cn|ru|br|au|in|nl|se|no|fi|dk|pl|cz|ch|at|be|es|it|pt|ca|mx|ar|nz|za|kr|tw|hk|sg|my|th|vn|id|ph|ae|il|tr)(?:/[^\s<>"\')\]},]*)?',
     re.IGNORECASE
 )
+# A bare nostr entity in free text: `npub1…`, `nprofile1…`, `note1…`, `nevent1…`, optionally
+# `nostr:`-prefixed. Bech32's charset excludes 1/b/i/o, and the word boundaries stop this firing
+# inside a longer token — a URL that already contains one is matched by the patterns above, and
+# extract_urls' dedupe keeps it from being added a second time.
+NOSTR_BARE_ENTITY = re.compile(
+    r"\b(?:nostr:)?((?:npub1|nprofile1|note1|nevent1)[023456789acdefghjklmnpqrstuvwxyz]{20,})\b",
+    re.IGNORECASE)
 
 
 class SearchService:
@@ -648,6 +655,28 @@ class SearchService:
             # Don't add if we already have this URL with protocol
             if full_url not in urls and f"http://{url}" not in urls:
                 urls.append(full_url)
+
+        # A BARE NOSTR ENTITY IS A LINK TOO, and leaving it out is the same hallucination with the
+        # http:// missing. "tell me about npub14q8uff…" (or `nostr:npub…`) extracted NOTHING, so the
+        # chat fetched nothing, and the model — asked about a user it had no data for — invented one:
+        # it produced a display name and a bio out of the surrounding words. Pasting a bare npub is
+        # the normal way to refer to somebody on nostr, so this is the common case, not the edge.
+        #
+        # Emitted as a `nostr:` pseudo-URL so it travels the SAME path as a profile link: callers pass
+        # it to fetch_urls -> fetch_url_content -> _fetch_nostr_entity, which already accepts that
+        # form. Nothing downstream needs a second code path, and there is no HTML fetch to fall
+        # through to (is_safe_url rejects the scheme), so a resolve failure cannot become a web search
+        # for the raw key.
+        for m in NOSTR_BARE_ENTITY.finditer(text or ""):
+            key = m.group(1)
+            # Skip one that is already INSIDE a URL we picked up. `https://poster.place/npub1…` and
+            # the bare `npub1…` are the same person, and both would be fetched — the same profile
+            # twice, burning one of the three URL slots a message gets.
+            if any(key.lower() in u.lower() for u in urls):
+                continue
+            ent = f"nostr:{key}"
+            if ent not in urls:
+                urls.append(ent)
 
         # Deduplicate while preserving order
         seen = set()

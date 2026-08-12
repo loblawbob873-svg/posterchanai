@@ -137,3 +137,48 @@ def test_it_runs_before_the_html_fetch(monkeypatch):
     assert "_fetch_nostr_entity" in src
     assert src.index("_fetch_nostr_entity") < src.index("is_safe_url"), \
         "the nostr path must be tried before the HTML fetch, or the shell is what the model gets"
+
+
+# --- a BARE npub is a link too --------------------------------------------------------------
+# "tell me about npub14q8uff…" extracted NOTHING, so the chat fetched nothing, and the model —
+# asked about a user it had no data for — invented one, producing a display name and a bio out of
+# the surrounding words. Pasting a bare npub is the normal way to name somebody on nostr, so this
+# is the common case rather than the edge, and the URL-only fix did not cover it.
+
+@pytest.mark.parametrize("text", [
+    f"tell me about {NPUB}",
+    f"tell me about nostr:{NPUB}",
+    f"who is {NPUB}?",
+])
+def test_a_bare_entity_becomes_a_fetchable_pseudo_url(text):
+    got = SearchService.extract_urls(text)
+    assert got == [f"nostr:{NPUB}"], got
+
+
+def test_a_profile_url_is_not_also_fetched_as_a_bare_entity():
+    """Both forms name the same person. Emitting both fetches the profile TWICE and burns one of the
+    three URL slots a message gets."""
+    got = SearchService.extract_urls(f"https://poster.place/{NPUB}")
+    assert got == [f"https://poster.place/{NPUB}"], got
+
+
+@pytest.mark.parametrize("text", [
+    "what is a npub anyway?",
+    "Summarize this page: https://cnn.com",
+    "note this down for me",
+    "nevermind",
+])
+def test_ordinary_prose_produces_no_nostr_entity(text):
+    assert not [u for u in SearchService.extract_urls(text) if u.startswith("nostr:")], text
+
+
+def test_a_real_url_still_survives_alongside_a_bare_entity():
+    got = SearchService.extract_urls(f"check example.com and {NPUB}")
+    assert "https://example.com" in got and f"nostr:{NPUB}" in got, got
+
+
+def test_the_pseudo_url_is_one_the_resolver_accepts():
+    """The whole point of emitting `nostr:<entity>` is that it travels the SAME path as a profile
+    link. If the resolver stopped accepting that form, extraction would succeed and the fetch would
+    silently produce nothing — the original bug with an extra step."""
+    assert SearchService._NOSTR_ENTITY_RE.search(f"nostr:{NPUB}")
