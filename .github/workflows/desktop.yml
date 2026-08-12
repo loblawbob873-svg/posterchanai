@@ -36,6 +36,10 @@ permissions:
 
 jobs:
   build:
+    # Named explicitly, because every matrix value otherwise lands in the job name and `caches` below
+    # is a multi-line string — which rendered the three jobs as "build (windows-latest, windows,
+    # build:win, windows-x86_64, ~\AppData\Local\electron\Cache ⏎ ~\AppDa...".
+    name: ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
