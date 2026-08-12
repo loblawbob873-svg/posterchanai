@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import ipaddress
 import logging
@@ -845,6 +846,94 @@ class SearchService:
         r"(?:^|[/:?&#=])(?:nostr:)?((?:npub1|nprofile1|note1|nevent1)"
         r"[023456789acdefghjklmnpqrstuvwxyz]{20,})", re.I)
 
+
+    # Total wall-clock this resolution may spend. Sized against the CALLER: chat.py wraps fetch_urls
+    # in asyncio.wait_for(..., timeout=15) for up to 3 URLs, so anything near 15s here cancels the
+    # whole batch and the model is told only that the fetch timed out — which it then answers over
+    # the top of. Nine seconds leaves room for two more URLs in the same message.
+    @staticmethod
+    def _nostr_relays():
+        """(this node's own relay, the pool it syncs with) — from SETTINGS, never hardcoded.
+
+        Mirrors what /client/config already hands the web client: the port is `nostr_relay_port`
+        (the same accessor chat_store, caldav_store, blossom_service and the bot manager use, so a
+        node that moved its relay does not have one service still talking to 3052), and the pool is
+        `nostr_relay_upstream_relays` when an operator has set one, else the shipped defaults.
+        """
+        try:
+            port = settings_store.get_int("nostr_relay_port", 3052)
+        except Exception:
+            port = 3052
+        local = [f"ws://127.0.0.1:{port}"]
+        try:
+            from app.services.nostr import nostr_service as _ns
+            remote = _ns.relay.normalize_relays(
+                settings_store.get("nostr_relay_upstream_relays", "") or "") or list(_ns.DEFAULT_RELAYS)
+        except Exception:
+            remote = []
+        return local, [r for r in remote if r not in local]
+
+    _NOSTR_LOCAL_TIMEOUT = 3.0    # loopback; measured 0.0s on a hit, so this is pure headroom
+    _NOSTR_REMOTE_TIMEOUT = 6.0   # only reached for somebody this node has never seen
+
+    async def _nostr_profile_data(self, hex_id: str, local: list, remote: list):
+        """(metadata, notes) for a pubkey — THIS NODE'S OWN RELAY FIRST, then the wider pool.
+
+        Returns (None, []) when nothing could be read at all; the caller turns that into an explicit
+        refusal, because "I could not ask" and "this person has no profile" are different answers and
+        only one of them is honest.
+
+        THE LOCAL RELAY IS NOT AN OPTIMISATION, IT IS THE FIX. Measured on the reported profile:
+
+            local relay only   0.0s   name + 20 notes
+            public pool       12.0s   TimeoutError
+
+        Asking all sixteen at once means paying the SLOWEST of them, so the whole resolution blew
+        chat.py's 15s cap (20.0s cold, sequential), the fetch was cancelled, and the model — handed
+        only "could not fetch" — answered anyway, inventing a real-world Jordan Peterson for a user
+        called "Jordan". This node's relay already holds the accounts here and everything its
+        web-of-trust has synced, over loopback, so it answers that case instantly and the pool is
+        only paid for somebody genuinely unknown here.
+
+        Each stage runs its two queries CONCURRENTLY: sequential metadata-then-notes was most of the
+        original 20s, and a partial answer still beats a timeout — a profile with no posts, or posts
+        with no kind-0, are both worth showing.
+        """
+        from app.services.nostr import nostr_service as _ns, relay as _relay
+
+        async def _both(pool, timeout):
+            async def _meta():
+                try:
+                    return await _ns.get_metadata(hex_id, pool) or {}
+                except Exception:
+                    return None
+
+            async def _notes():
+                try:
+                    return await _relay.query(
+                        pool, [{"kinds": [1], "authors": [hex_id], "limit": 20}],
+                        timeout=timeout) or []
+                except Exception:
+                    return []
+
+            try:
+                return await asyncio.wait_for(asyncio.gather(_meta(), _notes()), timeout=timeout + 1)
+            except (asyncio.TimeoutError, Exception):
+                return None, []
+
+        if local:
+            meta, notes = await _both(local, self._NOSTR_LOCAL_TIMEOUT)
+            # Anything real from home is enough — do not spend the pool's latency to add to it.
+            if meta or notes:
+                return (meta or {}), (notes or [])
+
+        if not remote:
+            return None, []
+        meta, notes = await _both(remote, self._NOSTR_REMOTE_TIMEOUT)
+        if meta is None and not notes:
+            return None, []
+        return (meta or {}), (notes or [])
+
     async def _fetch_nostr_entity(self, url: str, max_length: int = 15000) -> Optional[dict]:
         """Resolve a nostr profile/note URL from the RELAYS, in the shape fetch_url_content returns.
 
@@ -869,23 +958,29 @@ class SearchService:
             return None
         hex_id = raw.hex()
         is_profile = entity.lower().startswith(("npub1", "nprofile1"))
-        # This node's own relay first: it is the one that certainly holds the accounts here, and it is
-        # a loopback hop rather than a public round trip. The public defaults follow for anyone whose
-        # posts this instance has never seen.
-        relays = ["ws://127.0.0.1:3052"] + list(_ns.DEFAULT_RELAYS)
+        local, remote = self._nostr_relays()
 
         def _done(title: str, body: str) -> dict:
             return {"url": url, "title": title[:200], "content": body[:max_length], "error": None}
 
         if is_profile:
-            meta = await _ns.get_metadata(hex_id, relays) or {}
-            notes = []
-            try:
-                from app.services.nostr import relay as _relay
-                notes = await _relay.query(
-                    relays, [{"kinds": [1], "authors": [hex_id], "limit": 20}], timeout=8) or []
-            except Exception:
-                notes = []
+            meta, notes = await self._nostr_profile_data(hex_id, local, remote)
+            if meta is None:
+                # COULD NOT ASK — and that must never be silent. Measured cold, the two queries ran
+                # SEQUENTIALLY over this relay pool and took 20.0s, past the 15s asyncio.wait_for that
+                # chat.py puts around fetch_urls; the whole fetch was cancelled, the model got
+                # "[Note: Could not fetch URL content due to timeout]", and answered anyway — asked
+                # about "Jordan" it produced a character study of Jordan PETERSON, inferred from the
+                # first name. So an unreachable relay returns a REFUSAL INSTRUCTION rather than
+                # nothing, and never None (None falls through to the HTML shell, the original bug).
+                return _done(
+                    "Nostr profile (could not be read)",
+                    "This URL names a nostr user, but their profile could not be read from the "
+                    "relays just now (timeout).\n\nYou have NO information about this person. Say "
+                    "that you could not load their profile and stop. Do NOT describe them, do NOT "
+                    "guess from their display name or the URL, and do NOT substitute a real-world "
+                    "person who happens to share a name — that is a fabrication about a real "
+                    "individual.")
             name = (meta.get("display_name") or meta.get("name") or "").strip()
             npub = entity if entity.lower().startswith("npub1") else _b32.encode("npub", raw)
             # Say WHAT this is in the first line. The model is being handed a person, not a web page,
@@ -918,12 +1013,12 @@ class SearchService:
                 lines.append("\nNo recent posts were returned for this user.")
             return _done(f"Nostr profile: {name or npub[:16]}", "\n".join(lines))
 
-        ev = await _ns.fetch_event(relays, hex_id)
+        ev = await _ns.fetch_event((local + remote) or None, hex_id)
         if not ev:
             return _done("Nostr note (not found)",
                          f"This URL names a nostr note ({entity}) that could not be found on the "
                          f"relays queried. Do NOT guess its contents from the URL.")
-        author = await _ns.get_metadata(ev.get("pubkey") or "", relays) or {}
+        author = await _ns.get_metadata(ev.get("pubkey") or "", (local + remote) or None) or {}
         who = (author.get("display_name") or author.get("name") or "").strip() or (ev.get("pubkey") or "")[:16]
         when = datetime.utcfromtimestamp(ev.get("created_at") or 0).strftime("%Y-%m-%d %H:%M UTC")
         return _done(f"Nostr post by {who}",
