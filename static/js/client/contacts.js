@@ -562,9 +562,24 @@
           if(size >= PUT_BUDGET) await flush();
         }
         await flush();
-        // ALWAYS, even when nothing was written: this is the half that deletes. Somebody removed in
-        // the web UI is only removed from the phone here.
-        await P.commit({ uids: list.map(c => c.uid) });
+        /* THE PRUNE IS DISABLED. Do not re-enable it without the root cause in hand.
+         *
+         * 2026-08-11, on a real phone: a user turned the switch on, their contacts synced, and the
+         * phone's Contacts app then emptied — repeatedly. Written, gone, written, gone. `commit()` is
+         * a keep-set, so it is the only call here that can delete anything, which makes it the only
+         * suspect until proven otherwise. The guards above (`loadedOk`, the collapse guard) both cover
+         * an EMPTY list; whatever happened was not that, because a non-empty list still ended with an
+         * empty phone. That means the keep-set and the rows on the phone disagreed about identity, and
+         * every way that can happen is silent and destroys data on somebody's actual phone.
+         *
+         * The cost of leaving it off is EXACTLY the gap docs/CONTACTS.md already records against the
+         * CardDAV path: a contact deleted in the web UI stays on the phone and can be edited back into
+         * existence. That is a stale row. The alternative is an emptied address book. Not close.
+         *
+         * Java-side `commit()` also has NO collapse guard of its own — it prunes whatever it is handed
+         * — and a plugin must not trust its caller. Re-enabling this needs both: the identity bug
+         * found, and a native guard that refuses a reconcile deleting more than it keeps. */
+        void P.commit;
         _pushSig = sig;
       })().catch(()=>{}).finally(()=>{ _pushing = null; });
       return _pushing;
