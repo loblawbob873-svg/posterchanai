@@ -200,6 +200,25 @@ the no-replies early return, since a frozen timeline need not contain a reply.
 `tests/client/test_anim_off_never_hides_content.py` measures OPACITY against the real stylesheet, and
 re-runs the pre-fix rule to prove the check can fail.
 
+**TIMELINE, PROFILE AND SEARCH ARE CHECKED AS A RATE, NEVER ONCE —
+`scripts/check_search_profile_stability.py`.** All three were reported as "unstable across all app
+builds", and a single-shot check is the wrong instrument for that: each flow passes on the first try,
+which is precisely what kept them open across several rounds of "fixed". Every trial boots its OWN
+browser session with a throwaway key, because the failures live in the FIRST use of a session and are
+invisible from a warm page. That is how the search bug was finally measured: ten searches from one
+booted session gave `complete === false` + 0 posts on **#1** and 40 posts on **#2-#10** — the relay
+and the query were fine, the search was just early, going out while the client still had the
+timeline's opening flood on the same socket. `runSearch` now does that second search ITSELF (retry
+once when `complete === false`, replacing the result only if the retry did better), instead of
+handing the user a button to do the one thing the code already knew was worth doing. The profile flow
+asserts posts **and** the tab row **and** a BOUND Copy-npub, because those three die together when a
+render aborts halfway and reads as three unrelated bugs; the timeline flow asserts cards are VISIBLE
+(computed opacity), not merely present.
+**And a lesson about fixing "unstable" without a rate: a speculative boot-landing guard (`_viewChosen`)
+shipped and BROKE the APK — `applyInstanceGating` can `switchView` during boot, which made the landing
+skip itself. It was reverted to byte-identical-to-known-good within the hour. Do not change the boot
+path to fix a symptom you have not first reproduced as a rate.**
+
 ### Commands (shared by web UI + Telegram)
 
 `app/services/command_service.py` → `CommandService.COMMANDS` dict + `execute_command()`
