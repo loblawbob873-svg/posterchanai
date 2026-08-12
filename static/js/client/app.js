@@ -21180,30 +21180,6 @@
         await new Promise(r=>setTimeout(r, 450*(attempt+1)));
       }
       notes.forEach(n=>Store.saveEvent(n));
-      /* A REPLY-HEAVY AUTHOR HAS AN EMPTY "POSTS" TAB WHILE THEIR REPLIES FILL YOUR TIMELINE, and
-       * that reads as a broken profile: "he appeared on the timeline but not in his profile — he
-       * posted so he should have posts."
-       *
-       * The timeline deliberately shows replies (feedNoteHtml wraps them in a "replying to" pair);
-       * the Posts tab deliberately excludes them (`!isReply(e)`). Both are right. What is wrong is
-       * the WINDOW: one page of the 80 most recent events. Measured on the reported npub, 168 of
-       * its 200 most recent kind-1s are replies — so the page can be all replies while the author
-       * has 32 top-level posts a little further back, and the tab says "No posts yet."
-       *
-       * Nostr filters cannot express "no e tag", so this cannot be asked for directly. Page BACK
-       * instead, by `until`, only when the window we have holds no top-level post and does hold
-       * replies — i.e. only for the authors this actually happens to, never on the common path.
-       * Bounded to two extra pages: this is a fill-in for a lopsided author, not scroll-back. */
-      const _top = () => Store.feed(e => e.pubkey === pk && !isReply(e)).length;
-      let older = notes;
-      for(let page = 0; page < 2 && !_top() && older.length; page++){
-        const oldest = Math.min(...older.map(e => e.created_at || 0).filter(Boolean));
-        if(!oldest) break;
-        try{ older = await Relay.query([{ authors:[pk], kinds:[1,1068,6], until: oldest - 1, limit: 80 }]); }
-        catch(_){ break; }
-        if(VIEW!=='profile' || myGen!==_profGen) return false;
-        older.forEach(n => Store.saveEvent(n));
-      }
       return VIEW==='profile' && myGen===_profGen;
     };
     if(!_cached){
@@ -21334,6 +21310,39 @@
         if(VIEW==='profile' && _prof.pk===pk && _prof.tab==='streams'){ fillList('streams'); hydrate(feed); _wireProfStreamClicks(); } }
     });
     { const cn=$('#copy-npub'); if(cn) cn.onclick=()=> copyValue(npub, 'npub copied', 'Their npub:'); }
+    /* BACKFILL FOR A REPLY-HEAVY AUTHOR — AFTER the render, never before it.
+     *
+     * The Posts tab excludes replies (`!isReply`) while the timeline includes them, so an author
+     * whose recent 80 events are nearly all replies gets "No posts yet." about an account whose
+     * posts are filling your feed. Measured on one reported npub: 168 of its 200 most recent kind-1s
+     * are replies, with 32 top-level ones further back. Nostr filters cannot express "no e tag", so
+     * the only way to find them is to page BACK by `until`.
+     *
+     * THE FIRST CUT OF THIS PUT THE PAGING INSIDE _loadNotes, AND THAT WAS A REGRESSION: _loadNotes
+     * gates the whole render (`if(!await _loadNotes()) return;`), so two extra relay round trips ran
+     * BEFORE the list, the tabs, the ⋯ menu and Copy-npub were bound — delaying the profile and
+     * widening the window in which a navigation abandons the render half-built. That is the exact
+     * "no posts, dead hamburger, dead copy npub" triad it was supposed to help with.
+     *
+     * So it runs here instead: fire-and-forget, nothing awaits it, and it only repaints if it
+     * actually found something and the user is still on this profile. Same shape as the articles and
+     * streams lazy-loaders above. Bounded to two pages — a fill-in, not scroll-back. */
+    (async () => {
+      const top = () => Store.feed(e => e.pubkey === pk && !isReply(e)).length;
+      if(top()) return;                                   // the common case: nothing to do
+      let older = Store.feed(e => e.pubkey === pk);
+      for(let page = 0; page < 2 && older.length; page++){
+        const stamps = older.map(e => e.created_at || 0).filter(Boolean);
+        if(!stamps.length) return;
+        const oldest = Math.min.apply(null, stamps);
+        try{ older = await Relay.query([{ authors:[pk], kinds:[1,1068,6], until: oldest - 1, limit: 80 }]) || []; }
+        catch(_){ return; }
+        if(!older.length) return;
+        older.forEach(e => Store.saveEvent(e));
+        if(VIEW!=='profile' || _prof.pk!==pk || myGen!==_profGen) return;   // they moved on; drop it
+        if(top()){ if(_prof.tab === 'notes'){ fillList('notes'); hydrate(feed); } return; }
+      }
+    })();
     { const ln=$('#prof-ln'); if(ln) ln.onclick=()=>doZap(null, pk); }
     { const xb=$('#prof-xmr'); if(xb) xb.onclick=()=>doXmrTip(null, pk); }
     { const xt=$('#xmrtip-prof'); if(xt) xt.onclick=()=>doXmrTip(null, pk); }
