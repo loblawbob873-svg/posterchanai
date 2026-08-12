@@ -64,6 +64,30 @@ need them most, and nothing errors; the relay just starts publishing the nginx *
 its NIP-11 host. Declaring the WebSocket pair at the server level is safe for ordinary requests, as
 the `map` yields `close` whenever a client didn't ask to upgrade.
 
+## Mini apps (webxdc): a second hostname, `xdc.example.com`
+
+`.xdc` games, polls and shared editors are code somebody else wrote. They run in an iframe, and the
+only thing between that code and the localStorage holding the reader's **Nostr key and session** is
+the same-origin policy — so they run on a separate origin, which the client derives itself as `xdc.`
+plus whatever hostname it was loaded from. There is no setting; there is only the hostname.
+
+```bash
+./install.sh --webxdc
+```
+
+That does the whole thing: it refuses (printing the record to add) if `xdc.<your-domain>` doesn't
+resolve yet, installs a temporary HTTP-only vhost so the ACME challenge can be answered, offers
+`certbot --nginx -d xdc.<your-domain>` — **its own certificate**, never `--expand` on the production
+one — then installs `nginx/webxdc-sandbox.conf.example` with your hostname and upstream substituted,
+`nginx -t` before every reload, rolling back if it fails. Re-running it is safe.
+
+The vhost proxies exactly two paths to the app (`/__sandbox__/` and `/sw.js`) and answers everything
+else itself. **Do not add `Service-Worker-Allowed` to it** — the app sets that header, and sent twice
+`fetch` combines the duplicates into `"/, /"`, which Firefox rejects with
+`SecurityError: The operation is insecure`. That reads as "Firefox forbids service workers here" and
+cost an evening. Skip this whole section and mini apps fail silently: the post publishes, Play opens
+a blank window, and nothing reaches your server to log. See [WEBXDC.md](WEBXDC.md).
+
 ## Git-over-Nostr (GRASP) smart-HTTP
 
 If you enable the built-in git host (**Admin → Git → `git_server_enabled`**; see

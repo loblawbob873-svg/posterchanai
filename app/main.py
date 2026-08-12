@@ -774,6 +774,19 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error starting sandbox reaper: {e}", exc_info=True)
 
+            try:
+                # Mini apps (.xdc) run on `xdc.<instance-host>` — a separate ORIGIN, so untrusted app
+                # code cannot reach the localStorage holding the reader's Nostr key. This app already
+                # serves both paths that origin needs; the DNS record, certificate and vhost in front
+                # are the operator's, and MISSING THEM IS SILENT: posting works, Play opens a blank
+                # window, and nothing is ever requested from this server to log. So say it once, in
+                # the log, and never again. Fire-and-forget with every call bounded — a slow or absent
+                # DNS server must not cost the boot anything.
+                from app.services.webxdc_service import start_sandbox_host_check
+                start_sandbox_host_check()
+            except Exception as e:
+                logging.debug(f"webxdc sandbox host check not started: {e}")
+
         else:
             logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
 

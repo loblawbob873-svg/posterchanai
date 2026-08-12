@@ -21,11 +21,15 @@
 # So: one ordinary hostname, one extra -d on the certificate certbot already renews.
 #
 # ---------------------------------------------------------------------------------------------
-# WHAT THIS NEEDS, once:
+# WHAT THIS NEEDS, once — and `./install.sh --webxdc` does all of it, including refusing before it
+# writes anything if the DNS record is not there yet:
 #   1. DNS:  xdc.poster.place  ->  wherever poster.place points (a CNAME to poster.place is fine;
 #            proxied through Cloudflare is fine).
-#   2. TLS:  sudo certbot --nginx --expand -d poster.place -d xdc.poster.place
-#            (HTTP-01, no wildcard, no API token. Renewal keeps working as it does today.)
+#   2. TLS:  sudo certbot --nginx -d xdc.poster.place
+#            A certificate of its OWN, like every other subdomain here (ai., adguard., …), and
+#            certbot registers its renewal. HTTP-01, no wildcard, no DNS API token.
+#            NOT `--expand -d poster.place -d xdc.poster.place`: that rewrites the PRODUCTION
+#            certificate to add a game feature, so a failed issuance takes the instance off TLS.
 # Until both exist this vhost answers only over the LAN, with a certificate warning.
 # ---------------------------------------------------------------------------------------------
 #

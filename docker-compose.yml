@@ -376,6 +376,18 @@ services:
   # certificates and account on pc-proxy-ssl. Renewals are manual by design (`certbot renew`) — put
   # it in a cron job or systemd timer on the host.
   #
+  # MINI APPS (.xdc games/polls) NEED A SECOND HOSTNAME: xdc.<your-domain>. The seeded config already
+  # has its vhost and the self-signed certificate already covers it, so all that is missing on a
+  # fresh deployment is the DNS record and — for a real certificate — one more certbot run:
+  #
+  #   DNS:  xdc.your-domain.com  CNAME  your-domain.com     (proxied through Cloudflare is fine)
+  #   docker compose exec proxy certbot --nginx -d xdc.your-domain.com
+  #
+  # The client derives that origin itself (`xdc.` + whatever host it was loaded from), so there is
+  # nothing to set here. Skip it and mini apps show a blank window with nothing in any log — which
+  # is exactly why it is written down twice. Front this with your OWN proxy instead? Route
+  # xdc.<domain> to the same app container; docs/WEBXDC.md has the Caddy/Traefik one-liners.
+  #
   # Once this is up you usually want the two HTTP ports on loopback so http://<ip>:3051 stops
   # answering around your TLS. In .env:  POSTERCHANAI_PORT=127.0.0.1:3051
   #                                      POSTERCHANAI_NOSTR_RELAY_PORT=127.0.0.1:3052

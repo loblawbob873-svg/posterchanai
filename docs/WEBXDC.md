@@ -89,6 +89,105 @@ No wildcard and no DNS API token. The vhost is `nginx/webxdc-sandbox.conf.exampl
 router.lan as `/etc/nginx/sites-enabled/webxdc.conf` (certbot rewrote its `ssl_certificate` lines
 when it installed the new cert).
 
+## Deploying this on your own node
+
+Everything else about mini apps ships in the code: the client, the loader, the sandbox service
+worker, the relay's kind-20932 exemption, the two routes the app answers. **The only thing a fresh
+node is missing is the second hostname**, and missing it is silent — the composer still offers
+`🎮 Mini app`, the post publishes, the cartridge renders, and Play opens a window that stays blank
+forever. Nothing is requested from your server, so nothing appears in any log. The app warns about
+exactly this once at startup (`[webxdc] xdc.<host> does not resolve …`), which is the only signal
+there is.
+
+### Step 1 — DNS (every deployment, no exceptions)
+
+```
+xdc.your-domain.com    CNAME    your-domain.com      # or an A/AAAA with the same address
+```
+
+Proxied through Cloudflare is fine — this is ordinary HTTPS on 443. (A **port** instead of a
+hostname does *not* survive Cloudflare; that is measured, and written up above.)
+
+### Step 2 — route it to the app
+
+The app serves both paths the sandbox origin needs, gated on the `Host` header, so this is purely
+your reverse proxy. Two paths, no static files, no extra service.
+
+**nginx (bare metal) — one command:**
+
+```bash
+./install.sh --webxdc
+```
+
+It works out your instance hostname, **refuses before writing anything if `xdc.<host>` does not
+resolve yet** (printing the record to add), installs a temporary HTTP-only vhost so the ACME
+challenge can be answered, offers `certbot --nginx -d xdc.<host>`, then installs the real vhost from
+`nginx/webxdc-sandbox.conf.example` — running `nginx -t` before every reload and rolling back if it
+fails — and finally curls `https://xdc.<host>/__sandbox__/` and tells you what it got. Safe to
+re-run; it never re-requests a certificate it already has and leaves an unchanged config alone.
+
+Useful overrides: `WEBXDC_DOMAIN=` (skip the prompt), `WEBXDC_UPSTREAM=` (default `127.0.0.1:3051`),
+`WEBXDC_SKIP_CERTBOT=1`, `WEBXDC_SKIP_DNS=1` (split-horizon DNS), `WEBXDC_DRY_RUN=1` (print
+everything, change nothing).
+
+**Docker compose with the bundled `proxy` service:** the vhost is already in the seeded config and
+the first-boot self-signed certificate already covers `xdc.<domain>`, so mini apps work behind the
+browser warning immediately. For a real certificate:
+
+```bash
+docker compose exec proxy certbot --nginx -d xdc.your-domain.com
+docker compose exec proxy nginx -s reload
+```
+
+(The config is seeded from `POSTERCHANAI_DOMAIN` on the proxy's **first** boot only. An existing
+deployment owns its `/etc/nginx/conf.d/posterchanai.conf` — copy the `xdc.` blocks out of
+`docker/proxy/posterchanai.conf` into it by hand.)
+
+**Caddy** — one line, certificate included:
+
+```
+xdc.your-domain.com { reverse_proxy posterchanai:3051 }
+```
+
+**Traefik** — one more label on the app container, alongside whatever router you already have:
+
+```yaml
+- "traefik.http.routers.pcxdc.rule=Host(`xdc.your-domain.com`)"
+- "traefik.http.routers.pcxdc.tls.certresolver=le"
+- "traefik.http.services.pcxdc.loadbalancer.server.port=3051"
+```
+
+**nginx-proxy / acme-companion** — add the name to the app container's environment:
+`VIRTUAL_HOST=your-domain.com,xdc.your-domain.com` and `LETSENCRYPT_HOST` likewise.
+
+**Anything else:** send `xdc.<your-domain>` to the same container/port as the client, over HTTPS,
+passing the `Host` header through. That last part is load-bearing — the app decides which of the two
+service workers to serve at `/sw.js` from `Host`, so a proxy that rewrites it hands mini apps the
+PWA's worker and the app never starts.
+
+### What you do *not* have to do
+
+- **No new Python packages.** The two routes use only the standard library and what FastAPI already
+  imports; `requirements.txt` is unchanged.
+- **No wildcard certificate, no DNS API token, no second port.** Both were tried; see above.
+- **Nothing to enable in Admin, and no restart.** The client derives the sandbox origin itself
+  (`xdc.` + whatever host it was loaded from), which is why there is no setting for it and nothing
+  that can drift out of step with the server.
+- **No static files to serve.** The sandbox origin proxies to the app like every other path; the
+  `.xdc` bytes never touch your server at all.
+
+### Checking it
+
+```bash
+curl -sI https://xdc.your-domain.com/__sandbox__/ | head -1     # HTTP/2 200
+curl -sI https://xdc.your-domain.com/sw.js | head -1            # HTTP/2 200
+```
+
+A **404** means the request is reaching nginx but not the app (or the `Host` header is being
+rewritten). A **connection failure** means DNS or the firewall. A **certificate warning** means
+certbot has not run for that name — and that one is fatal to mini apps rather than merely ugly,
+because a service worker needs a secure context and the frame has no way to show you the warning.
+
 ### Two designs that were tried first
 
 Both look right, and both are recorded so nobody spends the afternoon again:
@@ -261,4 +360,9 @@ localStorage and get an origin per app, which closes that gap too.
 | `static/js/client/zip.js` | the `.xdc` reader — no library; the browser's own `DecompressionStream` |
 | `static/webxdc-sandbox/` | the two files the sandbox origin serves |
 | `app/main.py` | `_is_sandbox_host` and the two routes it gates |
+| `app/services/webxdc_service.py` | the one startup warning when `xdc.<host>` isn't deployed |
+| `scripts/install/webxdc.sh` | `./install.sh --webxdc` — DNS check, certbot, the vhost |
+| `nginx/webxdc-sandbox.conf.example` | the vhost, as deployed (the installer renders it) |
+| `docker/proxy/posterchanai.conf` | the same vhost for the compose `proxy` service |
 | `tests/test_webxdc.py` | the zip reader against real Python-built archives, and the attachment parser |
+| `tests/test_webxdc_deploy.py` | the installer's refusals and rendering, run for real under bash |

@@ -24,10 +24,16 @@ if [ ! -f "$CERTS/fullchain.pem" ]; then
     # 10 years: this cert is untrusted by definition, so a short life buys nothing and an expired
     # self-signed cert is a worse error message than an untrusted one. SANs cover the loopback
     # names too, so `curl -k https://localhost` from the host works for a smoke test.
+    #
+    # xdc.${DOMAIN} is in there because that is where mini apps (.xdc games/polls) run — a separate
+    # ORIGIN, so untrusted app code cannot reach the localStorage holding the reader's Nostr key.
+    # Without the SAN a mini app is the ONE feature a self-signed deployment cannot even click
+    # through: the browser warning is per-origin, and the app is loaded in a frame that can't show
+    # one, so it fails at service-worker registration with a blank window and nothing in any log.
     openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
         -keyout "$CERTS/privkey.pem" -out "$CERTS/fullchain.pem" \
         -subj "/CN=${DOMAIN}" \
-        -addext "subjectAltName=DNS:${DOMAIN},DNS:localhost,IP:127.0.0.1" 2>/dev/null
+        -addext "subjectAltName=DNS:${DOMAIN},DNS:xdc.${DOMAIN},DNS:localhost,IP:127.0.0.1" 2>/dev/null
     chmod 600 "$CERTS/privkey.pem"
     echo "[proxy] minted a self-signed certificate for ${DOMAIN} in $CERTS"
     echo "[proxy] browsers WILL warn until you run: certbot --nginx -d <your-domain>"

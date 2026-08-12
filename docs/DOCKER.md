@@ -231,6 +231,22 @@ certbot rewrites `server_name` and the two `ssl_certificate` lines in the contai
 you. Renewal is manual too — `docker compose exec proxy certbot renew`, from a cron job or systemd
 timer on the host.
 
+**Mini apps need a second hostname.** `.xdc` games/polls run on `xdc.<your-domain>` — a separate
+*origin*, so untrusted app code can't reach the localStorage holding your Nostr key. The proxy's
+seeded config already has that vhost and the first-boot self-signed certificate already covers the
+name, so all that's missing is DNS plus one more certbot run:
+
+```
+DNS:  xdc.your-domain.com   CNAME   your-domain.com      # proxied through Cloudflare is fine
+docker compose exec proxy certbot --nginx -d xdc.your-domain.com
+```
+
+Skip it and mini apps fail *silently*: posting works, Play opens a blank window, and nothing is ever
+requested from your server to log. The app says so once at startup (`[webxdc] xdc.<host> does not
+resolve …`). Fronting compose with your **own** proxy instead? Route `xdc.<domain>` to the same app
+container and pass the `Host` header through — [WEBXDC.md](WEBXDC.md) has the Caddy/Traefik/
+nginx-proxy one-liners.
+
 Everything the proxy owns lives on volumes, so your edits and certbot's survive `up -d` and
 restarts:
 

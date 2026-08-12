@@ -40,6 +40,7 @@ source "$INSTALL_DIR/turn.sh"
 source "$INSTALL_DIR/stream.sh"
 source "$INSTALL_DIR/sandbox.sh"
 source "$INSTALL_DIR/searxng.sh"
+source "$INSTALL_DIR/webxdc.sh"
 
 # Handle --help and --packages options
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
@@ -90,6 +91,14 @@ fi
 # Add-on: install the built-in MediaMTX media server for OBS streaming (downloads a prebuilt binary).
 if [ "$1" = "--stream" ]; then
     setup_stream_server
+    exit $?
+fi
+
+# Add-on: the webxdc mini-app sandbox ORIGIN — xdc.<your-domain>: a DNS record, its own certificate
+# and an nginx vhost. The app already serves both paths that origin needs; without the hostname a
+# mini app posts fine and then shows a blank window forever, with nothing in any log.
+if [ "$1" = "--webxdc" ]; then
+    setup_webxdc_sandbox
     exit $?
 fi
 
@@ -301,6 +310,30 @@ main() {
     # install — it's stdlib + the git package — so this only reports, and the host still ships OFF
     # (Admin → Git). Non-fatal: a box without git simply can't host repos.
     check_git_host || print_warning "Git host prerequisites missing; docs/GIT.md explains what to install"
+
+    # Step 9g: the webxdc mini-app sandbox ORIGIN (xdc.<domain>). NOT run by default like MediaMTX or
+    # SearXNG, because it is the only optional feature that needs something outside this machine — a
+    # DNS record — before it can do anything. Offered instead, and only where there is an nginx to
+    # add a vhost to; declining costs nothing, since every other part of mini apps already ships.
+    # Non-fatal in every branch: a node with no hostname yet still finishes its install.
+    if command -v nginx >/dev/null 2>&1; then
+        echo ""
+        echo "Mini apps (.xdc games, polls, shared editors) run on a SEPARATE hostname — xdc.<your-domain>"
+        echo "— because an app is untrusted code and must not share the origin holding your Nostr key."
+        echo "Needs a DNS record + its own certificate. Skip it and everything else still works; mini"
+        echo "apps just show a blank window. You can do it later with ./install.sh --webxdc"
+        WEBXDC_ANS=""
+        read -r -p "Set up the mini-app sandbox origin now? [y/N]: " WEBXDC_ANS || true
+        case "$WEBXDC_ANS" in
+            [Yy]*) setup_webxdc_sandbox || print_warning "Mini-app sandbox not configured; retry with ./install.sh --webxdc (docs/WEBXDC.md)";;
+            *) echo "  Skipped. Later:  ./install.sh --webxdc   (docs/WEBXDC.md)";;
+        esac
+    else
+        echo ""
+        echo "Mini apps (.xdc) need a second hostname, xdc.<your-domain>, in front of this app."
+        echo "  With nginx:   ./install.sh --webxdc"
+        echo "  With Caddy / Traefik / another proxy: one rule — docs/WEBXDC.md"
+    fi
 
     # Step 10: Setup XPU image instance for Intel Arc
     setup_xpu_image_instance
