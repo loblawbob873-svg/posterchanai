@@ -47,6 +47,13 @@ BASE = sys.argv[2] if len(sys.argv) > 2 else "https://poster.place"
 # branches (no follows, no mutes, no pinned posts).
 SK = os.urandom(32).hex()
 NPUB = "npub1fdtthaqujtjcd6yfy7kt0zpkadyl9vvypq00s5nztnmche74d0tqv6uwwr"
+# A REPLY-HEAVY AUTHOR, and the reason this second npub exists: the Posts tab excludes replies, so an
+# account whose recent window is all replies takes a DIFFERENT path — a background backfill that pages
+# further back looking for top-level posts. Every profile in the original check had posts on page one,
+# so that path never ran in any trial, and a change to it shipped a regression the suite called 9/9.
+# The assertion here is not "it finds posts" (it may genuinely have none recently) but that the render
+# COMPLETES: the tab row and a BOUND Copy-npub, which is what dies when a profile aborts half-built.
+NPUB_REPLIES = "npub1zl9wau3w0n0ll9kqycrkkehegtd4pcq8sgal9kefw7fn7r7956vqyv9gnh"
 QUERIES = ["half-life", "nostr", "bitcoin", "doom", "music", "art", "linux", "photography"]
 
 # Present is not the same as visible. Reads computed opacity on the cards themselves, and counts the
@@ -98,8 +105,9 @@ async def _session(ws, flow, query):
                    {"source": "try{localStorage.setItem('pc_nostr_session',JSON.stringify({sk:%s}));}catch(e){}"
                               % json.dumps(SK)})
 
-        if flow == "profile":
-            await call("Page.navigate", {"url": f"{BASE}/client/{NPUB}"})
+        if flow in ("profile", "profile_replies"):
+            who = NPUB_REPLIES if flow == "profile_replies" else NPUB
+            await call("Page.navigate", {"url": f"{BASE}/client/{who}"})
             await asyncio.sleep(20)
             st = await js("""JSON.stringify({
                 posts: document.querySelectorAll('#prof-list article.note').length,
@@ -107,6 +115,11 @@ async def _session(ws, flow, query):
                 copy:  !!(document.getElementById('copy-npub')||{}).onclick,
                 title: (document.getElementById('view-title')||{}).textContent})""")
             d = json.loads(st)
+            if flow == "profile_replies":
+                # Posts may legitimately be 0 here. What must NOT happen is the render aborting
+                # before its bindings — that is the reported "no posts, dead hamburger, dead copy".
+                return (d.get("tabs") == 5 and d.get("copy")
+                        and d.get("title") == "Profile"), st
             return (d.get("posts", 0) > 0 and d.get("tabs") == 5 and d.get("copy")), st
 
         await call("Page.navigate", {"url": BASE + "/client"})
@@ -164,9 +177,9 @@ async def main():
         print("SKIP  no Chrome on this box")
         return 2
 
-    tally = {"timeline": [0, 0], "profile": [0, 0], "search": [0, 0]}
+    tally = {"timeline": [0, 0], "profile": [0, 0], "profile_replies": [0, 0], "search": [0, 0]}
     for i in range(SESSIONS):
-        for flow in ("timeline", "profile", "search"):
+        for flow in ("timeline", "profile", "profile_replies", "search"):
             shutil.rmtree(PROFILE_DIR, ignore_errors=True)
             proc = subprocess.Popen(
                 ["google-chrome-stable", "--headless=new", "--disable-gpu", "--no-sandbox",
