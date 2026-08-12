@@ -132,11 +132,24 @@
 
     // ---- reading the app ------------------------------------------------------------------------
 
-    const _cache = new Map();          // sha/url -> Promise<{bytes, index}>
+    const _cache = new Map();          // key -> Promise<{bytes, index}>
     const CACHE = 'pc-webxdc-v1';      // the archives themselves, one Response per app URL
 
     async function sha256Hex(bytes){
       return _hex(await crypto.subtle.digest('SHA-256', bytes));
+    }
+
+    const _isDigest = (v) => /^[0-9a-f]{64}$/i.test(String(v || ''));
+
+    /* THE URL IS THE IDENTITY, NOT `x`. This memo used to key on `app.sha || app.url`, and `x` is
+     * only SOMETIMES a sha256 — the published Half-Life port carries the literal "hl", which is
+     * exactly what the verification code a few lines down exists to tolerate. Two apps whose authors
+     * both wrote a label there collide, and the second one served the first one's archive: the
+     * wrong game, with no download and nothing in any console. The digest still joins the key when
+     * it IS one, so a post correcting a wrong `x` is not answered from the old bytes. */
+    function _cacheKey(app){
+      const sha = String((app && app.sha) || '');
+      return String((app && app.url) || '') + '#' + (_isDigest(sha) ? sha.toLowerCase() : '');
     }
 
     /* Forget everything THIS device remembers about an app, so the next launch starts from nothing.
@@ -148,7 +161,7 @@
      * "clear browsing data", which also signs them out of this instance. That is what turned an
      * evening of black screens into an evening: not the poison, the absence of a way out of it. */
     async function forget(app){
-      try{ _cache.delete(app.sha || app.url); }catch(_){}
+      try{ _cache.delete(_cacheKey(app)); }catch(_){}
       try{ const c = await caches.open(CACHE); await c.delete(app.url); }catch(_){}
     }
 
@@ -159,7 +172,7 @@
      * for one reader or for everybody, and nothing about the post would change. A mismatch is fatal
      * and says so — silently running it anyway would make the check decorative. */
     async function load(app){
-      const key = app.sha || app.url;
+      const key = _cacheKey(app);
       if(_cache.has(key)) return _cache.get(key);
       const p = (async () => {
         /* FETCHED ONCE PER DEVICE, NOT PER LAUNCH.
@@ -188,7 +201,7 @@
         }catch(_){}
         if(bytes && bytes.length){
           try{
-            if(/^[0-9a-f]{64}$/i.test(String(app.sha || ''))){
+            if(_isDigest(app.sha)){
               const got = await sha256Hex(bytes);
               if(got.toLowerCase() !== String(app.sha).toLowerCase()){
                 throw new Error('the cached copy is not the app that was posted');
@@ -214,7 +227,7 @@
          * check applies to a value that IS a sha256, and a non-hash `x` is ignored rather than
          * enforced: the tag is advisory in the wild, and a wrong refusal is worse than a missing
          * check on a file the reader chose to open. */
-        if(/^[0-9a-f]{64}$/i.test(String(app.sha || ''))){
+        if(_isDigest(app.sha)){
           const got = await sha256Hex(bytes);
           if(got.toLowerCase() !== String(app.sha).toLowerCase()){
             throw new Error('this app does not match the one that was posted — refusing to run it');
@@ -483,6 +496,7 @@
       this.ordered = [];                 // events, oldest first
       this.listening = false;
       this.wantSerial = 0;
+      this.delivered = 0;                // how many updates the app has been handed — see deliver()
       this.self = { addr: '', name: '' };
       this.dead = false;
     }
@@ -499,6 +513,11 @@
       this._onMsg = null;
       if(this.frame && this.frame.parentElement) this.frame.remove();
       this.frame = null;
+      // The full-screen sheet is part of the session, not something the caller has to remember to
+      // remove — a destroy that leaves it standing is a black rectangle with no way out of it.
+      if(this.sheet && this.sheet.parentElement) this.sheet.remove();
+      this.sheet = null;
+      if(this.onDestroy){ const f = this.onDestroy; this.onDestroy = null; try{ f(); }catch(_){} }
     };
 
     Session.prototype.post = function(m, transfer){
@@ -540,15 +559,24 @@
 
     // ---- the Nostr half ---------------------------------------------------------------------------
 
-    /* Deliver everything past `serial`, oldest first, then keep delivering as events arrive.
+    /* Deliver everything the app has not been given yet, oldest first.
      *
      * `max_serial` is the highest we hold, which is how an app knows it has caught up (the spec:
      * "when max_serial equals serial, this update is the last one"). Both are LOCAL numbers — see
-     * the header — so they are assigned here, in (created_at, id) order, and stay stable for this
-     * device because the ordering is total and the list only grows. */
-    Session.prototype.deliverFrom = function(serial){
+     * the header — so they are assigned here, in (created_at, id) order.
+     *
+     * DRIVEN BY WHAT HAS BEEN DELIVERED, never by an index captured before a sort. This used to read
+     * `before = ordered.length`, absorb, then deliver from `before` — but absorb() SORTS, so an
+     * update that lands out of order (a peer whose clock is behind, or the same second with a lower
+     * id — both ordinary) takes a position at or before `before`. The app was then handed a
+     * DUPLICATE of an old update and never saw the new one at all, which for an append-only log is
+     * a move that silently never happened. Worst on the sender's own echo, which the spec requires
+     * be delivered. */
+    Session.prototype.deliver = function(){
       const max = this.ordered.length;
-      for(let i = serial; i < this.ordered.length; i++){
+      const from = Math.max(0, Math.min(this.delivered, max));
+      this.delivered = max;
+      for(let i = from; i < max; i++){
         const ev = this.ordered[i];
         let payload = null;
         try{ payload = JSON.parse(ev.content || 'null'); }catch(_){ payload = null; }
@@ -573,30 +601,43 @@
         added = true;
       }
       if(!added) return false;
-      // Total order, and STABLE: two updates in the same second are broken by id, so every device
-      // that holds both puts them in the same order. Sorting the whole list rather than inserting is
-      // fine — a game's history is hundreds of events, not millions.
-      this.ordered.sort((a, b) => (a.created_at - b.created_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      /* Total order, and STABLE: two updates in the same second are broken by id, so every device
+       * that holds both puts them in the same order. Sorting rather than inserting is fine — a
+       * game's history is hundreds of events, not millions.
+       *
+       * ONLY THE UNDELIVERED TAIL IS SORTED. A serial is a promise: once update 7 has been handed to
+       * the app, nothing may become update 7 afterwards. Re-sorting the whole list lets a late
+       * arrival slide in under events the app already has, which renumbers them — so the app would
+       * be told the same serial twice with different payloads, and `max_serial` would stop meaning
+       * "you are caught up". The delivered prefix is frozen; a late event joins the tail and is
+       * ordered among the others still waiting to go out. */
+      const head = this.ordered.slice(0, this.delivered);
+      const tail = this.ordered.slice(this.delivered);
+      tail.sort((a, b) => (a.created_at - b.created_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      this.ordered = head.concat(tail);
       return true;
     };
 
     Session.prototype.start = async function(fromSerial){
       this.listening = true;
       this.wantSerial = Math.max(0, Number(fromSerial) || 0);
+      // `setUpdateListener(cb, serial)` means "I already have everything up to `serial`". That IS
+      // the delivered count, so it seeds it — before absorb(), which reads it to decide how much of
+      // the list it may reorder.
+      this.delivered = this.wantSerial;
       const filter = { kinds:[KIND_UPDATE], '#i':[this.app.uuid], limit: 1000 };
       let evs = [];
       try{ evs = await Relay.query([filter]); }catch(_){ evs = []; }
       try{ (window.Store.query([filter]) || []).forEach(e => evs.push(e)); }catch(_){}
       this.absorb(evs);
       if(this.dead) return;
-      this.deliverFrom(this.wantSerial);
+      this.deliver();
       // Live from here. A game is two people taking turns; without this the second player's move
       // arrives only if something else happens to re-query.
       try{
         this.sub = Relay.subscribe([filter], { onEvent: (ev) => {
           if(this.dead) return;
-          const before = this.ordered.length;
-          if(this.absorb([ev])) this.deliverFrom(before);
+          if(this.absorb([ev])) this.deliver();
         } });
       }catch(_){}
     };
@@ -625,8 +666,7 @@
        * round trip completes feels broken on a slow connection — and never appears at all if the
        * relay drops the echo. */
       if(ev && ev.id && !this.seen.has(ev.id)){
-        const before = this.ordered.length;
-        if(this.absorb([ev])) this.deliverFrom(before);
+        if(this.absorb([ev])) this.deliver();
       }
       return true;
     };
@@ -891,8 +931,10 @@
         const from = Number((d.params || {}).serial) || 0;
         if(this.listening){
           // A second call is undefined behaviour per the spec; replaying from the given serial is the
-          // least surprising thing to do with it.
-          this.deliverFrom(from);
+          // least surprising thing to do with it. It rewinds the delivered mark, which is the ONE
+          // place that is allowed to go backwards — the app has just said it wants those again.
+          this.delivered = Math.max(0, Math.min(from, this.ordered.length));
+          this.deliver();
           this.reply(id, null);
           return;
         }
@@ -905,12 +947,38 @@
 
     let _openSeq = 0;
 
+    /* EVERY RUNNING APP, so pressing Play on one that is already open cannot start a second copy.
+     *
+     * A Session owns a relay REQ, a `message` listener on this window and an iframe. Mounting a new
+     * one over an old one leaves ALL of that behind: the old subscription keeps streaming, and its
+     * listener answers the sandbox too — so every update is delivered twice and the app plays two
+     * moves for one. On the desktop it was invisible, because PCOS.openDoc focuses the existing
+     * window and the second session was mounted into it after wiping the first one's frame out of
+     * the DOM; on a phone it was a second full-screen sheet stacked on the first. Keyed the way the
+     * window is keyed, so the two can never disagree about what "already open" means. */
+    const _live = new Map();
+    const _liveKey = (app) => String((app && (app.uuid || app.sha)) || (app && app.url) || '');
+
     /* Open an app. On the DESKTOP it gets a real window — movable, resizable, and able to sit beside
      * the timeline, which is what a game wants; everywhere else it is a full-screen sheet, because a
      * phone has no room for anything else. */
     async function open(app, opts){
       if(!app || !app.url){ toast('that post has no app in it'); return; }
       const reset = !!(opts && opts.reset);
+      const key = _liveKey(app);
+      const prev = _live.get(key);
+      if(prev && !prev.dead){
+        /* Already running. A RESET means "throw this away and start again", so it is the one case
+         * that tears the old one down; anything else brings it forward, because restarting a game
+         * somebody is in the middle of is the bug, not the fix. */
+        if(!reset){
+          try{ if(window.PCOS && PCOS.isOn && PCOS.isOn() && PCOS.focusDoc) PCOS.focusDoc('webxdc:' + key); }catch(_){}
+          try{ if(prev.sheet && prev.sheet.parentElement) document.body.appendChild(prev.sheet); }catch(_){}
+          return prev;
+        }
+        try{ prev.destroy(); }catch(_){}
+      }
+      _live.delete(key);
       const id = ++_openSeq;
       let files;
       try{
@@ -923,6 +991,11 @@
       const name = app.name || (await manifestName(files)) || 'Mini app';
       const session = new Session(Object.assign({}, app, { name }), files);
       session.reset = reset;                           // the loader wipes the sandbox origin first
+      session.key = key;
+      _live.set(key, session);
+      // Out of the registry the moment it dies, so a later Play mounts a fresh one rather than
+      // "focusing" a corpse.
+      session.onDestroy = () => { if(_live.get(key) === session) _live.delete(key); };
 
       const mountInto = (el) => {
         el.classList.add('xdc-host');
@@ -958,8 +1031,7 @@
         /* noFeed: a game owns its window. Without it the window joins the shared-feed hand-off, so
          * clicking any OTHER window pulls the timeline out of this one and repaints it — and a
          * repaint around a live iframe blanks or restarts the game. Reported exactly that way. */
-        const w = PCOS.openDoc('webxdc:' + (session.app.uuid || session.app.sha || String(id)),
-                               name, '#i-gamepad', () => {}, true);
+        const w = PCOS.openDoc('webxdc:' + key, name, '#i-gamepad', () => {}, true);
         const host = w && (w.slot || w.body);
         if(!host){ toast('could not open a window for that app'); return session; }
         host.classList.add('xdc-slot');
@@ -979,9 +1051,26 @@
           <button class="xdc-x" aria-label="Close">✕</button>
         </div><div class="xdc-body"></div>`;
       document.body.appendChild(sheet);
-      $('.xdc-x', sheet).onclick = () => { session.destroy(); sheet.remove(); };
+      session.sheet = sheet;                 // so destroy() takes the overlay with it — and so the
+                                             // Android back button has something to close
+      $('.xdc-x', sheet).onclick = () => session.destroy();
       mountInto($('.xdc-body', sheet));
       return session;
+    }
+
+    /* THE ANDROID BACK BUTTON. A full-screen mini app is an overlay like Notes' drawer and Web
+     * Search's reader, and every one of those is registered in app.js's backButton chain. This one
+     * was not, so Back navigated the view UNDERNEATH and left the game sitting on top of it — on the
+     * one surface where Back is how people leave a game. */
+    function sheetOpen(){
+      for(const s of _live.values()) if(!s.dead && s.sheet && s.sheet.parentElement) return true;
+      return false;
+    }
+    function closeSheet(){
+      for(const s of Array.from(_live.values())){
+        if(!s.dead && s.sheet && s.sheet.parentElement){ try{ s.destroy(); }catch(_){} return true; }
+      }
+      return false;
     }
 
     // ---- reading an app off an event -----------------------------------------------------------------
@@ -1121,7 +1210,8 @@
      * receives. Every part of that path fails silently — a filter that matches nothing, a self-drop
      * that drops everybody, a base64 round trip that mangles high bytes — and none of it is visible
      * from either browser. See tests/test_webxdc.py::TwoPlayers. */
-    window.PCWebxdc = { open, appOf, cardHtml, attach, MIME, KIND_UPDATE, Session };
+    window.PCWebxdc = { open, appOf, cardHtml, attach, sheetOpen, closeSheet,
+                        MIME, KIND_UPDATE, Session };
   }
   init();
 })();

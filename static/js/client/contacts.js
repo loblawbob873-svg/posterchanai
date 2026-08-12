@@ -388,11 +388,27 @@
      * OFF BY DEFAULT and per-device: this writes into somebody's phone book, so it is opt-in, and
      * the switch lives beside the addressbook list (⋯ → Addressbooks). */
     const PHONE_KEY = 'androidPhonebook';
+    /* WHOSE consent this is. ClientSettings is DEVICE-wide and survives sign-out, so the switch
+     * alone meant the NEXT account signed in on that handset was pushed into the phone's Contacts
+     * app with no prompt and no opt-in — somebody else's decision applied to your address book.
+     * Consent is per account: the switch only counts for the pubkey that flipped it. */
+    const PHONE_OWNER = 'androidPhonebookOwner';
     const CSet = () => window.ClientSettings || { get:(k,d)=>d, set(){} };
     const nativeSync = (m) => (PC.capPlugin ? PC.capPlugin('ContactSync', m || 'begin') : null);
-    const phonebookOn = () => !!CSet().get(PHONE_KEY, false);
     const owner = () => { try{ const me = PC.me ? PC.me() : PC.ME; return (me && me.pubkey) || ''; }
                           catch(_){ return ''; } };
+    function phonebookOn(){
+      if(!CSet().get(PHONE_KEY, false)) return false;
+      const me = owner();
+      if(!me) return false;                       // not signed in yet: write nothing either way
+      const who = _s(CSet().get(PHONE_OWNER, ''));
+      // ADOPT ON FIRST USE. A device that turned this on before consent was scoped has no owner
+      // recorded, and the account on it now is the one that turned it on — refusing there would
+      // silently stop syncing a phone book that is already working.
+      if(!who){ CSet().set(PHONE_OWNER, me); return true; }
+      return who === me;
+    }
+    const _s = (v) => String(v == null ? '' : v);
 
     /* Every card in every book. The phone book is one list — a person is not filed under whichever
      * addressbook happens to be on screen. Memoised on S.rev so a repaint costs nothing. */
@@ -505,7 +521,7 @@
         if(st && st.granted === false){
           // Revoked in Android's settings after the switch was turned on. Turning it back off is the
           // honest answer — a switch that says "on" while nothing is written is the worse one.
-          CSet().set(PHONE_KEY, false); _pushSig = '';
+          CSet().set(PHONE_KEY, false); CSet().set(PHONE_OWNER, ''); _pushSig = '';
           toast('Android has revoked access to your contacts — phone sync turned off');
           return;
         }
@@ -655,17 +671,17 @@
           try{ r = await P.enable(); }catch(_){ r = null; }
           if(!r || !r.granted){
             // A refusal must break nothing: put the switch back and say what happened.
-            box.checked = false; CSet().set(PHONE_KEY, false);
+            box.checked = false; CSet().set(PHONE_KEY, false); CSet().set(PHONE_OWNER, '');
             toast('Android didn’t allow access to your contacts — nothing was changed');
             return;
           }
-          CSet().set(PHONE_KEY, true);
+          CSet().set(PHONE_KEY, true); CSet().set(PHONE_OWNER, owner());
           toast('adding your contacts to this phone…');
           _pushSig = '';
           await syncPhonebook(true);
           toast('done — look in the phone’s Contacts app');
         }else{
-          CSet().set(PHONE_KEY, false);
+          CSet().set(PHONE_KEY, false); CSet().set(PHONE_OWNER, '');
           _pushSig = '';
           try{ await P.disable(); }catch(_){}
           toast('removed from this phone');
@@ -822,7 +838,11 @@
     window.PCContacts = {
       render(){
         paint();
-        if(!S.ready && !S.loading) load();
+        /* A FAILED LOAD IS NOT A VERDICT. `ready` was set on the way out of load() whatever
+         * happened, so one blip — the app opening before wifi associates, a 502 while the node
+         * restarts — pinned this screen to "could not load your contacts" for the life of the page,
+         * and the only way back was a full reload. Coming back to the screen retries. */
+        if(!S.loading && (!S.ready || S.error)) load();
       },
       reload: load,
       /* KEEP THE TWO COPIES IN STEP WITHOUT ANYBODY OPENING CONTACTS.
@@ -844,6 +864,11 @@
        * was killed before this could run. */
       forgetDevice(){
         _pushSig = '';
+        /* THE SWITCH GOES WITH IT. ClientSettings is device-wide and Session.clear() does not touch
+         * it, so a switch left on was consent the NEXT account inherited: sign in on that handset
+         * and their contacts were pushed into the phone book with nothing asked. Both keys, so
+         * turning it on again is a deliberate act by whoever is signed in then. */
+        try{ CSet().set(PHONE_KEY, false); CSet().set(PHONE_OWNER, ''); }catch(_){}
         const P = nativeSync('disable');
         if(!P) return Promise.resolve();
         try{ return Promise.resolve(P.disable()).catch(()=>{}); }catch(_){ return Promise.resolve(); }

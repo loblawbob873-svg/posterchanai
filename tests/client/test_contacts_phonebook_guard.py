@@ -96,5 +96,63 @@ class PhonebookGuardTests(unittest.TestCase):
         self.assertEqual(commits(res), [[]])
 
 
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class ComingBackToTheScreenTests(unittest.TestCase):
+    """A load that failed once must not be the answer for the rest of the page.
+
+    `ready` was set on the way out of load() whatever happened, and render() only loads when
+    `!ready`. So one blip — the app opening before wifi associates, a 502 while the node restarts —
+    pinned Contacts to "could not load your contacts" until a full page reload, on a screen people
+    reach from the sidebar several times a session.
+    """
+
+    def test_a_later_visit_retries_a_load_that_failed(self):
+        res = run(failLoad=True, books=[BOOK], cards={"default": [card("a", "Ann")]},
+                  phone=[], steps=["reload", "ok", "render"])
+        self.assertEqual(len([u for u in res["fetched"] if "/books" in u]), 2,
+                         "the screen never asked again — the error is pinned for the page")
+        # …and the retry completed, so the sweep it ends in is armed again.
+        self.assertTrue(any("/cards" in u for u in res["fetched"]))
+
+    def test_a_successful_load_is_not_repeated_on_every_visit(self):
+        """The other half: state lives in the module precisely so coming back is free."""
+        res = run(books=[BOOK], cards={"default": [card("a", "Ann")]}, phone=["a"],
+                  steps=["reload", "render", "render"])
+        self.assertEqual(len([u for u in res["fetched"] if "/books" in u]), 1)
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class ConsentIsPerAccountTests(unittest.TestCase):
+    """The phone-book switch used to survive sign-out.
+
+    ClientSettings is DEVICE-wide and `Session.clear()` does not touch it, so a switch left on was
+    consent the NEXT account inherited: sign in on that handset and their contacts were pushed into
+    ContactsContract with no prompt and no opt-in. The plugin's own owner guard wipes the previous
+    account's rows, which is the leak half — this is the other half, where somebody's address book
+    is published to a phone they never agreed to.
+    """
+
+    def test_signing_out_turns_the_switch_off(self):
+        res = run(phone=["a"], steps=["forget"])
+        self.assertIs(res["settings"]["androidPhonebook"], False)
+        self.assertEqual(res["settings"].get("androidPhonebookOwner", ""), "")
+        self.assertIn(["disable"], res["calls"], "the device copy must be removed too")
+
+    def test_another_accounts_consent_does_not_sync_this_one(self):
+        res = run(owner="me", books=[BOOK], cards={"default": [card("a", "Ann")]}, phone=["x"],
+                  settings={"androidPhonebook": True, "androidPhonebookOwner": "somebody-else"})
+        self.assertEqual(res["calls"], [], "another account's switch synced this account's contacts")
+        self.assertEqual(res["phoneRows"], ["x"])
+
+    def test_a_device_that_had_it_on_before_consent_was_scoped_keeps_working(self):
+        """Upgrade path. No owner recorded means the account signed in now is the one that turned it
+        on — refusing there would silently stop syncing a phone book that already works."""
+        res = run(owner="me", books=[BOOK], cards={"default": [card("a", "Ann")]}, phone=["a"],
+                  settings={"androidPhonebook": True})
+        self.assertEqual(commits(res), [["a"]])
+        self.assertEqual(res["settings"]["androidPhonebookOwner"], "me",
+                         "the owner must be recorded, or the next account inherits it again")
+
+
 if __name__ == "__main__":
     unittest.main()

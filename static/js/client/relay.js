@@ -484,9 +484,23 @@
      *
      * And no OK waiter: an acknowledgement that arrives after the packet is stale tells nobody
      * anything, and one waiter per packet is a Map that grows at 30 entries a second. */
+    /* ONE relay, but it must be a relay that is actually UP.
+     *
+     * This used to be `_conns.get(url || this.url) || [...values][0]`, and both halves were wrong
+     * together: `this.url` is simply urls[0], and the fallback only fired when the map had NO entry
+     * at all — which never happens, because a relay that is down or reconnecting KEEPS its entry for
+     * the whole session. So while the first relay was reconnecting, every packet was dropped with
+     * the rest of the pool connected and nothing said, and two players whose relay lists began with
+     * different hosts could never see each other's movement at all.
+     *
+     * Preference order: the relay the caller named, then the pool's primary (`this.url` — this
+     * instance's own relay, where the other player is), then ANY open socket. Never a dropped packet
+     * while a live socket exists. */
     publishFast(event, url){
-      const c = this._conns.get(url || this.url) || [...this._conns.values()][0];
-      if (!c || !c.ws || c.ws.readyState !== 1) return false;
+      const up = (c) => !!(c && c.ws && c.ws.readyState === 1);
+      let c = this._conns.get(url || this.url);
+      if (!up(c)) c = [...this._conns.values()].find(up);
+      if (!up(c)) return false;
       c._send(['EVENT', event]);
       return true;
     },

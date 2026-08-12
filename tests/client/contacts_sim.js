@@ -92,6 +92,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'contacts.js'));
     if(step === 'reload'){ await C.reload(); }
     else if(step === 'syncTick'){ await C.syncTick(); }
     else if(step === 'forget'){ await C.forgetDevice(); }
+    else if(step === 'render'){ C.render(); await new Promise(r => setTimeout(r, 20)); }
     else if(step === 'ok'){ opt.failLoad = false; }
     else if(step === 'fail'){ opt.failLoad = true; }
     else if(step === 'settle'){ await new Promise(r => setTimeout(r, 30)); }

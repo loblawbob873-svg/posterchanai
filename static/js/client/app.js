@@ -2512,6 +2512,10 @@
         if(_App && _App.addListener){ try{ _App.addListener('backButton', ()=>{
           if(document.getElementById('call-overlay') || document.getElementById('room-overlay')) return;  // never bail mid-call
           if(document.body.classList.contains('modal-open')){ try{ closeModal(); }catch(_){} return; }     // close an open sheet/modal
+          // A mini app is a FULL-SCREEN sheet over everything, and it is a game — Back is how anybody
+          // leaves one on Android. Without this Back navigated the view underneath and left the game
+          // standing on top of it, so the only way out was the ✕ the game itself is covering.
+          if(window.PCWebxdc && PCWebxdc.sheetOpen && PCWebxdc.sheetOpen()){ try{ PCWebxdc.closeSheet(); }catch(_){} return; }
           // Notes' folder drawer is an overlay too, and only exists on a phone — i.e. only where
           // this button does. Without this, Back left Notes with the drawer still standing open.
           if(window.PCNotes && PCNotes.drawerOpen && PCNotes.drawerOpen()){ try{ PCNotes.closeDrawer(); }catch(_){} return; }
@@ -10462,6 +10466,27 @@
       renderView(true);
     }catch(e){ toast('failed: '+((e&&e.message)||e)); }
   }
+  /* THE ACTION ROW — reply, repost, quote, react, tip, more.
+   *
+   * ONE implementation, because a card without it is a post nobody can answer, boost, zap or
+   * bookmark, and that failure is invisible in review: the card looks finished. The mini-app card
+   * (kind 1063) was rendered by hand and simply had no `.acts` at all, so a game shared as a post
+   * could not be replied to. Everything it needs comes off the event, so any card that renders a
+   * `.note` with `data-id` can call it — the delegated click handler keys on nothing else. */
+  function actsRow(ev){
+    const counts = countsFor(ev.id);
+    const liked = myReaction(ev.id);
+    const hasNoteXmr = isXmrAddr(xmrForNote(ev));
+    const hasNoteBch = isBchAddr(bchOf(profOf(ev.pubkey)));
+    return `<div class="acts">
+          <button class="act" data-a="reply" title="reply">${REPLY_ICON} <span class="n">${counts.replies?fmtSats(counts.replies):''}</span></button>
+          <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
+          <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
+          <button class="act ${liked?'on':''}" data-a="react" title="${liked?'remove your reaction':'react'}"><span class="react-ic">${liked||REACT_ICON}</span> <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
+          <button class="act actz ${(counts.zaps||counts.tipN)?'on':''}" data-a="tip" title="tip — Lightning${hasNoteXmr?', Monero':''}${hasNoteBch?', Bitcoin Cash':''}"><span class="tipbolt">${ZAP_ICON}${hasNoteXmr?`<sup class="xmr-mark">ɱ</sup>`:''}${hasNoteBch?`<sup class="bch-mark">🟢</sup>`:''}</span> <span class="n">${enc(tipCountLabel(counts))}</span></button>
+          <button class="act actm ${BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>
+        </div>`;
+  }
   let _noteCardErrs = 0;
   function noteCard(ev, prefix=''){
    try{
@@ -10477,14 +10502,12 @@
     const av = NO_IMAGES ? LOGO : (p.picture || LOGO);
     const handle = niceNip05(p.nip05) || ('@'+npubOf(ev.pubkey).slice(4,12));
     const counts = countsFor(ev.id);
-    const liked = myReaction(ev.id);
     const mine = ev.pubkey===ME.pubkey;
     // NIP-36 content warning: blur the body + media behind a reveal button.
     const cwTag = ev.tags.find(t=>t[0]==='content-warning');
     const cw = BLUR_NSFW && (!!cwTag || isSensitive(ev));   // content-warning OR #nsfw tag; honour the toggle
     const cwReason = cwTag ? String(cwTag[1]||'').trim() : (cw ? 'NSFW' : '');
     const noteXmr = xmrForNote(ev), hasNoteXmr = isXmrAddr(noteXmr);   // resolve ONCE; stash on the card so the tip handler still has it if the note is later evicted from Store
-    const hasNoteBch = isBchAddr(bchOf(profOf(ev.pubkey)));   // BCH is a profile field (no per-note tag), so the 🟢 hint shows once the author's kind-0 is cached; doTip still offers BCH at click time regardless
     // 🎉 congrats / 🌅 gm from the post's own text; 😭 from other people's reactions. Text wins when both
     // apply, so a "congrats!" that someone sobbed at still reads as the celebration it is.
     const _celeb = _celebrateOf(bodyTxt) || ((_postEffectsOn() && counts.sob) ? 'sob' : '');
@@ -10503,14 +10526,7 @@
         ${webxdcCardHtml(ev)}
         ${quoteHtml(ev)}
         ${cw?`</div></div>`:''}
-        <div class="acts">
-          <button class="act" data-a="reply" title="reply">${REPLY_ICON} <span class="n">${counts.replies?fmtSats(counts.replies):''}</span></button>
-          <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
-          <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
-          <button class="act ${liked?'on':''}" data-a="react" title="${liked?'remove your reaction':'react'}"><span class="react-ic">${liked||REACT_ICON}</span> <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
-          <button class="act actz ${(counts.zaps||counts.tipN)?'on':''}" data-a="tip" title="tip — Lightning${hasNoteXmr?', Monero':''}${hasNoteBch?', Bitcoin Cash':''}"><span class="tipbolt">${ZAP_ICON}${hasNoteXmr?`<sup class="xmr-mark">ɱ</sup>`:''}${hasNoteBch?`<sup class="bch-mark">🟢</sup>`:''}</span> <span class="n">${enc(tipCountLabel(counts))}</span></button>
-          <button class="act actm ${BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>
-        </div>
+        ${actsRow(ev)}
       </div></article>`;
    }catch(e){
      // One bad global (a missing NostrTools, a half-booted app) makes EVERY card take this branch, and a
@@ -24950,6 +24966,7 @@
             <span class="vchk"></span><span class="time">${timeAgo(ev.created_at)}</span></div>
           ${webxdcCardHtml(ev)}
           ${desc ? `<div class="txt">${applyEmojis(linkify(desc), ev)}</div>` : ''}
+          ${actsRow(ev)}
         </div></article>`;
     }catch(_){ return ''; }
   }

@@ -317,45 +317,52 @@
   /* Pair the phone's list against the stored one so each entry keeps its GROUP — an Apple-style
    * `item1.EMAIL` must stay with the `item1.X-ABLABEL` that names it. Matched on the value first
    * (an unchanged number is the same property however the list was reordered), falling back to
-   * position for the one that was edited. */
+   * position for the one that was edited.
+   *
+   * TWO PASSES, AND THAT IS THE WHOLE POINT. Resolving matches and fallbacks in one pass lets an
+   * entry with no match consume the slot an EXACT match still needed: with `item1`=Mom and
+   * `item2`=Work stored, adding a number on the phone reaches this as `[new, Mom]` — the new one
+   * has no match, takes `item1` positionally, and Mom is left to fall back onto `item2`. The label
+   * "Mom" is now on the office, on every device and in every CardDAV client, with nothing said. So
+   * every exact match claims its slot BEFORE any fallback is allowed to look. */
+  function _assign(list, src, same){
+    const at = list.map(() => -1);
+    const used = src.map(() => false);
+    for(let n = 0; n < list.length; n++){
+      for(let i = 0; i < src.length; i++){
+        if(!used[i] && same(src[i], list[n])){ at[n] = i; used[i] = true; break; }
+      }
+    }
+    for(let n = 0; n < list.length; n++){
+      if(at[n] >= 0) continue;
+      for(let i = 0; i < src.length; i++) if(!used[i]){ at[n] = i; used[i] = true; break; }
+    }
+    return at;
+  }
+
   function _pair(incoming, mine, key){
     const src = mine || [];
-    const used = src.map(() => false);
     const norm = v => _s(v).replace(/[\s()\-.]/g, '').toLowerCase();
-    const out = [];
-    for(const x of (incoming || [])){
-      const value = _s(x && x.value);
-      if(!value) continue;
-      let j = -1;
-      for(let i = 0; i < src.length; i++){
-        if(!used[i] && norm(src[i][key]) === norm(value)){ j = i; break; }
-      }
-      if(j < 0) for(let i = 0; i < src.length; i++) if(!used[i]){ j = i; break; }
-      const from = j >= 0 ? src[j] : {};
-      if(j >= 0) used[j] = true;
-      out.push({ value, type: keepType(from.type, x && x.type), group: _s(from.group) });
-    }
-    return out;
+    const list = (incoming || []).filter(x => _s(x && x.value));
+    const at = _assign(list, src, (s, x) => norm(s[key]) === norm(x.value));
+    return list.map((x, n) => {
+      const from = at[n] >= 0 ? src[at[n]] : {};
+      return { value: _s(x.value), type: keepType(from.type, x.type), group: _s(from.group) };
+    });
   }
 
   function _pairAdrs(incoming, mine){
     const src = mine || [];
-    const used = src.map(() => false);
     const key = a => (_s(a.street) + '|' + _s(a.city)).toLowerCase();
-    const out = [];
-    for(const x of (incoming || [])){
-      const a = x || {};
-      if(!(_s(a.street) + _s(a.city) + _s(a.region) + _s(a.code) + _s(a.country)).trim()) continue;
-      let j = -1;
-      for(let i = 0; i < src.length; i++) if(!used[i] && key(src[i]) === key(a)){ j = i; break; }
-      if(j < 0) for(let i = 0; i < src.length; i++) if(!used[i]){ j = i; break; }
-      const from = j >= 0 ? src[j] : {};
-      if(j >= 0) used[j] = true;
-      out.push({ type: _s(from.type), group: _s(from.group), po: _s(from.po), ext: _s(from.ext),
-                 street: _s(a.street), city: _s(a.city), region: _s(a.region),
-                 code: _s(a.code), country: _s(a.country) });
-    }
-    return out;
+    const list = (incoming || []).map(x => x || {}).filter(
+      a => !!(_s(a.street) + _s(a.city) + _s(a.region) + _s(a.code) + _s(a.country)).trim());
+    const at = _assign(list, src, (s, a) => key(s) === key(a));
+    return list.map((a, n) => {
+      const from = at[n] >= 0 ? src[at[n]] : {};
+      return { type: _s(from.type), group: _s(from.group), po: _s(from.po), ext: _s(from.ext),
+               street: _s(a.street), city: _s(a.city), region: _s(a.region),
+               code: _s(a.code), country: _s(a.country) };
+    });
   }
 
   /* The phone's version of a card, merged into the stored one. `other` — the photo, the labels, the

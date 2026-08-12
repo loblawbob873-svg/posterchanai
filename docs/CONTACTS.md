@@ -187,10 +187,22 @@ The authenticator behind it is a stub — nothing here authenticates anything.
 ### Signing out
 
 Signing out, switching account, or turning the switch off **removes the account and every contact it
-put on the phone**. That is not tidiness: without it a handed-down phone keeps the previous user's
-people in its dialer and every share sheet. There is a second guard for the app that is killed before
-it can say goodbye — each push records which account it wrote for, and a push under a different one
-wipes first.
+put on the phone**, and **turns the switch itself back off**. That is not tidiness: without it a
+handed-down phone keeps the previous user's people in its dialer and every share sheet — and a switch
+left on is consent the *next* account inherits, so signing in would push a second person's address
+book into that handset with nothing asked. The switch is therefore recorded against the pubkey that
+flipped it and only counts for that account. There is a second guard for the app that is killed
+before it can say goodbye — each push records which account it wrote for, and a push under a
+different one wipes first.
+
+### The reconcile refuses to empty a phone book
+
+The reconcile is a keep-set: everything under the account that is not in it is deleted. That makes an
+empty list the most destructive thing this bridge can be handed, and every way to produce one is
+silent — the app opening before wifi associates, a 5xx, a relay that read empty. So a sweep needs a
+load that actually completed, and an empty keep-set is **refused** whenever the phone holds rows,
+out loud. The cost is that deleting your very last contact here no longer empties the handset by
+itself; turning the switch off does, and removes the account with it.
 
 ### What is not covered
 

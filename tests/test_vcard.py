@@ -292,6 +292,63 @@ class PhonebookTests(unittest.TestCase):
         self.assertIsNone(older[0].get("card"))
         self.assertEqual(older[0]["copy"]["org"], "Edited on the phone")
 
+    LABELLED = ("BEGIN:VCARD\r\nVERSION:3.0\r\nUID:L1\r\nFN:Labelled\r\n"
+                "item1.TEL;TYPE=cell:5550001\r\nitem1.X-ABLABEL:Mom\r\n"
+                "item2.TEL;TYPE=work:5550002\r\nitem2.X-ABLABEL:Office\r\n"
+                "END:VCARD\r\n")
+
+    def test_adding_a_number_on_the_phone_does_not_relabel_the_others(self):
+        """Matches and positional fallbacks resolved in ONE pass let the new entry — which matches
+        nothing — take the slot an exact match still needed. The phone sends `[new, Mom, Office]`
+        (its own order), `new` claims `item1`, and Mom slides onto `item2`: the label "Mom" is now
+        on the office number, on every device and in every CardDAV client, silently."""
+        out = _node(f"""
+          const mine = V.parse({json.dumps(self.LABELLED)});
+          const phone = V.toPhone(mine);
+          // A number added on the phone. ContactsContract has no ordering promise and hands back
+          // the new row first as often as not.
+          phone.tels = [{{type:'cell', value:'5559999'}}].concat(phone.tels);
+          const merged = V.applyPhone(mine, phone);
+          console.log(JSON.stringify(merged.tels.map(t => [t.value, t.group, t.type])));
+        """)
+        by_value = {v: (g, t) for v, g, t in out}
+        self.assertEqual(by_value["5550001"][0], "item1", "the 'Mom' label moved to another number")
+        self.assertEqual(by_value["5550002"][0], "item2", "the 'Office' label moved")
+        self.assertEqual(by_value["5550001"][1], "cell")
+        self.assertEqual(by_value["5550002"][1], "work")
+        # The new number is genuinely new: it takes no existing group and cannot borrow a label.
+        self.assertEqual(by_value["5559999"][0], "")
+
+    def test_an_edited_number_still_keeps_its_label(self):
+        """The fallback's whole job. Changing item2's digits leaves it matching nothing, and it must
+        land on the one slot the exact matches did not claim — keeping "Office"."""
+        out = _node(f"""
+          const mine = V.parse({json.dumps(self.LABELLED)});
+          const phone = V.toPhone(mine);
+          phone.tels[1].value = '5558888';
+          const merged = V.applyPhone(mine, phone);
+          console.log(JSON.stringify(merged.tels.map(t => [t.value, t.group])));
+        """)
+        self.assertEqual(out, [["5550001", "item1"], ["5558888", "item2"]])
+
+    def test_the_same_ordering_rule_holds_for_addresses(self):
+        """_pairAdrs had the identical single-pass shape, and an ADR carries the PO box, the extended
+        address and the label group the phone cannot model."""
+        card = ("BEGIN:VCARD\\r\\nVERSION:3.0\\r\\nUID:A1\\r\\nFN:A\\r\\n"
+                "item1.ADR;TYPE=home:;;1 Home St;Springfield;;;\\r\\nitem1.X-ABLABEL:House\\r\\n"
+                "item2.ADR;TYPE=work:;Suite 4;2 Work Ave;Shelbyville;;;\\r\\n"
+                "item2.X-ABLABEL:Office\\r\\nEND:VCARD")
+        out = _node(f"""
+          const mine = V.parse('{card}');
+          const phone = V.toPhone(mine);
+          phone.adrs = [{{street:'3 New Rd', city:'Ogdenville'}}].concat(phone.adrs);
+          const merged = V.applyPhone(mine, phone);
+          console.log(JSON.stringify(merged.adrs.map(a => [a.street, a.group, a.type, a.ext])));
+        """)
+        by_street = {s: (g, t, e) for s, g, t, e in out}
+        self.assertEqual(by_street["1 Home St"][0], "item1")
+        self.assertEqual(by_street["2 Work Ave"], ("item2", "work", "Suite 4"))
+
     def test_only_the_phone_changing_is_not_a_conflict(self):
         """`pushed` is the hash of what we last put on the phone. Equal to the card's hash now means
         this side has not moved, so there is no conflict and no copy — one edit, one card."""

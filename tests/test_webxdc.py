@@ -714,5 +714,244 @@ class ResettingAnApp(unittest.TestCase):
         self.assertEqual(out["ready"], ["ready"], "a normal open must still announce itself")
 
 
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class EveryUpdateReachesTheAppExactlyOnce(unittest.TestCase):
+    """THE APPEND-ONLY LOG, WHICH IS THE ENTIRE SPEC.
+
+    An app's state IS the sequence of updates. Skip one and the game is not "a bit behind" — it is
+    wrong, permanently, with the board on two screens disagreeing and nothing anywhere to say why.
+
+    Delivery used to be driven by `before = ordered.length`, captured BEFORE `absorb()` — which
+    pushes AND re-sorts by (created_at, id). Any update that sorts earlier than the newest one
+    already held (a peer whose clock is a second behind, or the same second with a lower id, both
+    completely ordinary) therefore landed at or before that index: the app was handed a DUPLICATE of
+    an old update and never saw the new one. The sender's own echo, which the spec explicitly
+    requires be delivered, is the most likely case of all.
+
+    Run against the shipped Session with a relay stub, because this is a relationship between two
+    functions and a sort — nothing static can see it.
+    """
+
+    def deliver(self, tail):
+        return _node("""
+        const out = { updates: [] };
+        let live = null;
+        const RELAY = {
+          subscribe(filters, opts){ live = opts && opts.onEvent; return 'sub1'; },
+          close(){},
+          query: async () => STORED,
+          publishFast: () => true,
+        };
+        const ev = (id, at, payload) => ({ id, kind:4932, created_at:at, pubkey:'p',
+                                           tags:[['i','g1']], content: JSON.stringify(payload) });
+        const STORED = [ev('aaa', 100, 'first'), ev('ccc', 300, 'third')];
+        global.window = { addEventListener(){}, removeEventListener(){},
+          Relay: RELAY, Store: { query: () => [] },
+          __PC: { $: () => null, enc: s => s, toast(){},
+                  publish: async () => ({ ok:true, ev: ev('bbb', 200, 'mine') }),
+                  me: () => ({ pubkey:'me', npub:'npub1me' }), profOf: () => ({}),
+                  apiBase: () => 'https://example.com' } };
+        global.Relay = RELAY;
+        global.document = { addEventListener(){}, querySelectorAll: () => [],
+          createElement: () => ({ setAttribute(){}, classList:{add(){}}, appendChild(){}, style:{} }) };
+        global.location = { hostname:'example.com', href:'https://example.com/' };
+        global.crypto = require('crypto').webcrypto;
+        require(%s);
+
+        const s = new window.PCWebxdc.Session({ url:'https://x/a.xdc', uuid:'g1', name:'g' },
+                                              { index:new Map(), bytes:new Uint8Array() });
+        s.origin = 'https://xdc.example';
+        s.frame = { contentWindow: { postMessage(m){
+          if(m && m.method === 'webxdc.update')
+            out.updates.push([m.params.payload, m.params.serial, m.params.max_serial]);
+        } } };
+        (async () => {
+          await s.start(0);
+          %s
+          setTimeout(() => { console.log(JSON.stringify(out)); process.exit(0); }, 40);
+        })().catch(e => { console.error(e); process.exit(1); });
+        """ % (json.dumps(str(WEBXDC_JS)), tail))
+
+    def _check(self, out):
+        got = [u[0] for u in out["updates"]]
+        self.assertEqual(len(got), len(set(got)),
+                         f"an update was delivered twice: {out['updates']}")
+        serials = [u[1] for u in out["updates"]]
+        self.assertEqual(serials, sorted(set(serials)),
+                         f"serials repeated or went backwards: {out['updates']}")
+        return got
+
+    def test_an_update_that_arrives_out_of_order_is_still_delivered(self):
+        """`bbb` sorts BETWEEN the two already delivered. The old code delivered `third` a second
+        time and `mine` never at all."""
+        out = self.deliver(
+            "live({ id:'bbb', kind:4932, created_at:200, pubkey:'q', tags:[['i','g1']],"
+            " content: JSON.stringify('middle') });")
+        got = self._check(out)
+        self.assertEqual(got, ["first", "third", "middle"])
+
+    def test_the_senders_own_move_is_delivered_even_when_it_sorts_first(self):
+        """The spec: the sender receives its own updates. `publish` here answers with an event dated
+        BEFORE what we already hold — a phone whose clock is a second behind its peer, which is the
+        ordinary case, not a pathological one."""
+        out = self.deliver("await s.sendUpdate({ payload:'mine' });")
+        got = self._check(out)
+        self.assertIn("mine", got, "the sender never received its own update")
+
+    def test_a_tie_broken_by_id_downwards_is_not_lost(self):
+        """Same second, lower id: the sort puts it first, which is exactly the position the old
+        index had already passed."""
+        out = self.deliver(
+            "live({ id:'000', kind:4932, created_at:300, pubkey:'q', tags:[['i','g1']],"
+            " content: JSON.stringify('tie') });")
+        got = self._check(out)
+        self.assertIn("tie", got)
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class OpeningAnApp(unittest.TestCase):
+    """`open()` end to end, with a real .xdc and a stubbed browser.
+
+    Two bugs live here and both are invisible on screen:
+
+      * the archive memo was keyed on `app.sha`, which the same file documents is often a LABEL and
+        not a digest (the published Half-Life port carries the literal "hl"). Two apps whose authors
+        both wrote one collide and the second one is served the FIRST one's archive — the wrong
+        game, no download, nothing in any console.
+      * pressing Play on an app that is already open mounted a SECOND Session over the first. The
+        old one keeps its relay REQ and its `message` listener, so every packet is delivered twice
+        and the app plays one move as two.
+    """
+
+    APP_A = None
+
+    def drive(self, tail, apps=None):
+        a = _xdc({"index.html": b"<b>A</b>", "manifest.toml": b'name = "Ay"'})
+        b = _xdc({"index.html": b"<b>B</b>", "manifest.toml": b'name = "Bee"'})
+        return _node("""
+        const out = { fetched: [], toasts: [], sheets: 0, destroyed: [], mounted: [] };
+        const BODIES = {
+          'https://host/a.xdc': Uint8Array.from(%s),
+          'https://host/b.xdc': Uint8Array.from(%s),
+        };
+        global.fetch = async (url) => {
+          out.fetched.push(url);
+          const b = BODIES[url];
+          if(!b) throw new Error('no such app');
+          return { ok:true, status:200, headers:{ get: () => String(b.length) },
+                   arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.length) };
+        };
+        global.caches = { open: async () => ({ match: async () => null, put: async () => {},
+                                               delete: async () => true }) };
+        const store = {};
+        global.localStorage = { getItem: k => (k in store ? store[k] : null),
+                                setItem: (k,v) => { store[k] = String(v); },
+                                removeItem: k => { delete store[k]; } };
+        function el(tag){
+          const e = { tagName:tag, className:'', innerHTML:'', parentElement:null, onclick:null,
+            src:'', style:{}, dataset:{},
+            classList:{ add(){}, remove(){}, contains: () => false },
+            setAttribute(){}, getAttribute: () => null, addEventListener(){},
+            appendChild(c){ if(c) c.parentElement = e; return c; },
+            remove(){ if(e.parentElement === document.body) out.sheets--; e.parentElement = null; },
+            querySelector: () => el('div'), querySelectorAll: () => [] };
+          return e;
+        }
+        const body = el('body');
+        body.appendChild = (c) => { if(c){ if(c.parentElement !== body && c.className === 'xdc-sheet') out.sheets++;
+                                           c.parentElement = body; } return c; };
+        global.document = { body, createElement: el, addEventListener(){}, removeEventListener(){},
+                            querySelector: () => null, querySelectorAll: () => [] };
+        global.location = { hostname:'example.com', href:'https://example.com/' };
+        global.crypto = require('crypto').webcrypto;
+        const RELAY = { subscribe: () => 's1', close(){}, query: async () => [], publishFast: () => true };
+        global.window = { addEventListener(){}, removeEventListener(){}, Relay: RELAY,
+          Store: { query: () => [] }, localStorage: global.localStorage,
+          __PC: { $: (sel, root) => el('div'), enc: s => s,
+                  toast: (m) => { out.toasts.push(String(m)); },
+                  publish: async () => ({ ok:true, ev:null }),
+                  me: () => ({ pubkey:'me', npub:'npub1me' }), profOf: () => ({}),
+                  apiBase: () => 'https://example.com' } };
+        global.Relay = RELAY;
+        global.window.PCZip = require(%s);
+        require(%s);
+        const X = window.PCWebxdc;
+        // The frame is never really created here, so mount() is stubbed out — what is under test is
+        // open()'s bookkeeping, not the sandbox handshake (covered elsewhere).
+        X.Session.prototype.mount = async function(){ out.mounted.push(this.app.url); this.frame = el('iframe'); };
+        const _d = X.Session.prototype.destroy;
+        X.Session.prototype.destroy = function(){ out.destroyed.push(this.app.url); return _d.call(this); };
+        (async () => {
+          %s
+          console.log(JSON.stringify(out));
+          process.exit(0);
+        })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+        """ % (json.dumps(list(a)), json.dumps(list(b)),
+               json.dumps(str(ZIP_JS)), json.dumps(str(WEBXDC_JS)), tail))
+
+    def test_two_apps_sharing_a_non_hash_x_tag_are_two_apps(self):
+        """Both carry `x: "hl"` — a label, exactly like the real Half-Life port. Keyed on that, the
+        second open is answered from the first one's archive and never downloads at all."""
+        out = self.drive("""
+          await X.open({ url:'https://host/a.xdc', sha:'hl', uuid:'ua' });
+          await X.open({ url:'https://host/b.xdc', sha:'hl', uuid:'ub' });
+        """)
+        self.assertEqual(out["fetched"], ['https://host/a.xdc', 'https://host/b.xdc'],
+                         "the second app was served the first one's archive")
+        self.assertEqual(out["mounted"], ['https://host/a.xdc', 'https://host/b.xdc'])
+
+    def test_the_same_app_is_still_downloaded_only_once(self):
+        """The memo has to keep working — 178 MB re-downloaded per launch is the thing it exists for.
+        Two DIFFERENT identifiers so the already-open check does not answer instead."""
+        out = self.drive("""
+          const s = await X.open({ url:'https://host/a.xdc', sha:'hl', uuid:'ua' });
+          s.destroy();
+          await X.open({ url:'https://host/a.xdc', sha:'hl', uuid:'ua2' });
+        """)
+        self.assertEqual(out["fetched"], ['https://host/a.xdc'])
+
+    def test_pressing_play_on_an_open_app_does_not_mount_a_second_session(self):
+        """Two Sessions on one app = two relay REQs and two message listeners, so every update is
+        delivered twice and the app plays one move as two."""
+        out = self.drive("""
+          const a = await X.open({ url:'https://host/a.xdc', sha:'', uuid:'ua' });
+          const b = await X.open({ url:'https://host/a.xdc', sha:'', uuid:'ua' });
+          out.same = (a === b);
+        """)
+        self.assertTrue(out["same"], "a second Session was mounted over the first")
+        self.assertEqual(out["mounted"], ['https://host/a.xdc'])
+        self.assertEqual(out["sheets"], 1, "a second full-screen sheet was stacked on the first")
+
+    def test_a_reset_does_tear_the_old_one_down(self):
+        """Reset means "throw this away and start again" — the one case that must NOT be answered by
+        focusing what is already there."""
+        out = self.drive("""
+          await X.open({ url:'https://host/a.xdc', sha:'', uuid:'ua' });
+          await X.open({ url:'https://host/a.xdc', sha:'', uuid:'ua' }, { reset:true });
+        """)
+        self.assertEqual(out["destroyed"], ['https://host/a.xdc'])
+        self.assertEqual(out["mounted"], ['https://host/a.xdc', 'https://host/a.xdc'])
+        self.assertEqual(out["sheets"], 1, "the old sheet was left behind under the new one")
+
+    def test_the_back_button_has_a_sheet_to_close(self):
+        """A full-screen mini app is an overlay like Notes' drawer and Web Search's reader, and every
+        one of those is in app.js's backButton chain. Without these two the Android Back button
+        navigated the view UNDERNEATH and left the game standing on top of it."""
+        out = self.drive("""
+          out.beforeOpen = X.sheetOpen();
+          await X.open({ url:'https://host/a.xdc', sha:'', uuid:'ua' });
+          out.whileOpen = X.sheetOpen();
+          out.closed = X.closeSheet();
+          out.afterClose = X.sheetOpen();
+        """)
+        self.assertFalse(out["beforeOpen"])
+        self.assertTrue(out["whileOpen"], "an open mini app is invisible to the back button")
+        self.assertTrue(out["closed"])
+        self.assertFalse(out["afterClose"])
+        self.assertEqual(out["destroyed"], ['https://host/a.xdc'],
+                         "closing the sheet must stop the session, not just hide it")
+        self.assertEqual(out["sheets"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
