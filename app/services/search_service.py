@@ -322,8 +322,13 @@ def is_safe_url(url: str) -> tuple[bool, str]:
 
 # Regex patterns for URL detection
 # Match full URLs with protocol
+# The trailing character class drops the punctuation that ends a SENTENCE rather than a URL. `:`
+# and `;` are there because "Content from https://www.cnn.com/:" — the header this app itself puts
+# above fetched content, and the way people write "see: <url>:" — captured the colon and then
+# fetched `https://www.cnn.com/:`, which answers 404. Measured in the journal as
+# "Failed to fetch https://www.cnn.com/:: HTTP 404".
 URL_WITH_PROTOCOL = re.compile(
-    r'https?://[^\s<>"\')\]},]+[^\s<>"\')\]},.]',
+    r'https?://[^\s<>"\')\]},]+[^\s<>"\')\]},.:;]',
     re.IGNORECASE
 )
 # Match domain-style URLs without protocol (e.g., example.com/path)
@@ -639,12 +644,19 @@ class SearchService:
     # page was fetched correctly; it was read as an appendix to a question the model had already
     # answered from its priors. So the content goes FIRST and the question LAST, which is the order
     # the bare-URL summarize path here has always used, and the reason it never had this bug.
+    # "Sorry, I can't access external links. But from his activity…" — reported with the whole
+    # profile in the prompt, and then it invented the activity. The link WAS opened, by this app,
+    # before the model ever saw the message; a model that says otherwise is refusing a question it
+    # has the answer to and then filling the gap from priors, which is the worst of both. So the
+    # note says the reading already happened, in the first sentence, and forbids the refusal.
     GROUNDING_NOTE = (
-        "The text above was fetched just now from the link(s) in the message below — it is that "
-        "page's own content. Answer ONLY from it. If a name in it also belongs to someone famous, "
-        "that is a coincidence: the text above is about the person or subject at the link, never "
-        "the famous one, and you must not bring in anything you know about that name. If the text "
-        "above does not answer the question, say exactly that.")
+        "The text above was fetched just now, for you, from the link(s) in the message below — it "
+        "is that page's own content, already retrieved. You are NOT being asked to browse, so "
+        "never reply that you cannot access links or open URLs: the page is right there. Answer "
+        "ONLY from it. If a name in it also belongs to someone famous, that is a coincidence: the "
+        "text above is about the person or subject at the link, never the famous one, and you must "
+        "not bring in anything you know about that name. If the text above does not answer the "
+        "question, say exactly that — do not fill the gap with what you already believe.")
 
     @classmethod
     def build_grounded_message(cls, user_text: str, url_context: str,

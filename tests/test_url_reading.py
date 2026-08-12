@@ -106,6 +106,56 @@ def test_the_browser_is_spent_on_at_most_one_url_per_message(monkeypatch):
     assert [allow for _, allow in seen] == [True, False, False]
 
 
+@pytest.mark.skipif(not page_render.chrome_available(), reason="no Chrome on this node")
+def test_a_page_that_arrives_in_bursts_is_read_whole():
+    """WHY THE ANSWERS WERE INCONSISTENT. The stop rule was "two polls without growth" (~0.8s). On
+    an idle box that read a profile at ~15000 chars five times out of five; in the journal, on a
+    busy box, the SAME url came back at 463, 9823, 14155 and 15657 chars — a loading page goes
+    quiet BETWEEN bursts. Here the second burst lands 1s after the first, which the old rule missed
+    and the current one waits for."""
+    html = ("<!doctype html><title>Bursts</title><body><div id=a></div><div id=b></div>"
+            "<script>document.getElementById('a').textContent='FIRST '+'x'.repeat(2000);"
+            "setTimeout(function(){document.getElementById('b').textContent='SECOND-BURST';},2200);"
+            "</script>")
+    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False) as fh:
+        fh.write(html)
+        path = fh.name
+    try:
+        out = page_render.render_page_text("file://" + path, timeout=20)
+        assert out is not None
+        assert "FIRST" in out[1]
+        assert "SECOND-BURST" in out[1], "stopped reading while the page was still filling in"
+    finally:
+        os.unlink(path)
+
+
+def test_an_almost_empty_page_is_given_longer_to_finish():
+    """A page holding a few hundred characters is far more likely to be mid-load than to be that
+    empty — the 463-char reading. It has to stay quiet much longer before that counts as the page."""
+    assert page_render.THIN_QUIET_SECONDS > page_render.QUIET_SECONDS
+    # Both have to fit inside a render, or the rule is decided by the deadline instead.
+    assert page_render.THIN_QUIET_SECONDS + 2 < page_render.RENDER_TIMEOUT
+
+
+def test_a_url_does_not_swallow_the_punctuation_after_it():
+    """`Content from https://www.cnn.com/:` is the header this app puts above fetched content, and
+    the URL came out with the colon attached and then 404'd."""
+    for text, want in [
+        ("Content from https://www.cnn.com/:\nTitle: CNN", "https://www.cnn.com/"),
+        ("see: https://example.com/a;", "https://example.com/a"),
+        ("read https://example.com/a.", "https://example.com/a"),
+    ]:
+        assert SearchService.extract_urls(text)[0] == want, text
+
+
+def test_the_model_is_told_the_link_was_already_opened():
+    """"Sorry, I can't access external links" — said with the whole page in the prompt, and then
+    the activity was invented."""
+    note = SearchService.GROUNDING_NOTE.lower()
+    assert "already retrieved" in note
+    assert "never reply that you cannot access links" in note
+
+
 def test_where_the_page_ended_up_is_re_checked():
     """The fetcher validates every HTTP redirect hop; a browser also follows the ones the page
     performs in script. A render that lands somewhere the guard refuses is thrown away, not read."""

@@ -45,6 +45,21 @@ UNRENDERED_TEXT_CHARS = 400
 # asyncio.wait_for(..., timeout=15).
 RENDER_TIMEOUT = 11.0
 
+POLL_SECONDS = 0.3
+# EVERY page gets at least this long, however quiet it goes. This is the floor, and it is the part
+# that makes the output consistent: a quiet interval alone cannot tell "finished" from "between
+# bursts", and a client that fetches over a WEBSOCKET does not even move the browser's own
+# network-idle signal — so there is no event to wait for, only time. Measured, a flat 7s settle and
+# a 3s floor read the same profile at the same size; without a floor the same url came back at 463,
+# 9823, 14155 and 15657 chars depending on how busy the box was.
+MIN_RENDER_SECONDS = 3.0
+# After the floor, stop once the text has stopped growing for this long.
+QUIET_SECONDS = 1.2
+# …and a page still holding almost nothing is far more likely to be mid-load than to be that empty,
+# so it has to stay quiet for longer before we accept it. This is the 463-char reading.
+THIN_PAGE_CHARS = 1200
+THIN_QUIET_SECONDS = 3.0
+
 
 def chrome_available() -> bool:
     return find_chrome() is not None
@@ -151,11 +166,20 @@ def render_page_text(url: str, timeout: float = RENDER_TIMEOUT,
             cmd("Page.navigate", {"url": url})
 
             # Poll rather than sleeping a flat settle: a plain page is done in well under a second,
-            # while an SPA that opens a websocket for its content needs several. Stop as soon as the
-            # text stops growing, so a fast page costs a fast render.
-            best, title, stable, landed = "", "", 0, url
+            # while an SPA that opens a websocket for its content needs several.
+            #
+            # WHEN TO STOP IS THE WHOLE RELIABILITY OF THIS FUNCTION, and the first rule here — "two
+            # polls without growth" — was a race. On an idle box it read a profile at a steady
+            # ~15000 chars, five runs out of five; on a busy one the SAME url came back at 463,
+            # 9823, 14155 and 15657 chars, because a page that is still fetching goes quiet between
+            # bursts and 0.8s of quiet is not "finished". The answer the model gives is only as
+            # consistent as what it was handed, so the rule is now: quiet for a real interval, and a
+            # page still holding almost nothing has to be quiet for MUCH longer before we believe
+            # that is all there is.
+            best, title, landed = "", "", url
+            started = last_growth = time.time()
             while time.time() < deadline:
-                time.sleep(0.4)
+                time.sleep(POLL_SECONDS)
                 try:
                     r = cmd("Runtime.evaluate", {
                         "expression": "[document.title||'', document.body?document.body.innerText:''"
@@ -171,11 +195,12 @@ def render_page_text(url: str, timeout: float = RENDER_TIMEOUT,
                                    url, landed)
                     return None
                 if len(text) > len(best):
-                    best, stable = text, 0
-                else:
-                    stable += 1
-                # Two quiet polls with something real on the page: it has finished drawing.
-                if best.strip() and stable >= 2:
+                    best, last_growth = text, time.time()
+                    continue
+                if not best.strip() or time.time() - started < MIN_RENDER_SECONDS:
+                    continue
+                quiet = time.time() - last_growth
+                if quiet >= (THIN_QUIET_SECONDS if len(best) < THIN_PAGE_CHARS else QUIET_SECONDS):
                     break
             if not best.strip():
                 return None
