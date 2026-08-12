@@ -68,6 +68,14 @@ public final class ContactWriter {
   /** What the Contacts app shows as the account. Deliberately NOT the user's npub: the account list
    *  is visible to anyone holding the phone, and the identity is recorded in our own prefs instead. */
   public static final String ACCOUNT_NAME = "PosterChan";
+  /** The clause that scopes a statement to our account, and its arguments. ONE definition, used by
+   *  every read and every delete on both sides — this reads and writes a database full of other
+   *  people's contacts, so "which rows are ours" is not a thing to spell out per query. */
+  static final String OURS = RawContacts.ACCOUNT_TYPE + "=? AND " + RawContacts.ACCOUNT_NAME + "=?";
+
+  static String[] oursArgs() {
+    return new String[]{ACCOUNT_TYPE, ACCOUNT_NAME};
+  }
 
   /**
    * The data rows this feature OWNS, and the exact set the account's edit schema
@@ -159,9 +167,7 @@ public final class ContactWriter {
       c = ctx.getContentResolver().query(
           RawContacts.CONTENT_URI,
           new String[]{RawContacts._ID, RawContacts.SOURCE_ID},
-          RawContacts.ACCOUNT_TYPE + "=? AND " + RawContacts.ACCOUNT_NAME + "=? AND "
-              + RawContacts.DELETED + "=0",
-          new String[]{ACCOUNT_TYPE, ACCOUNT_NAME}, null);
+          OURS + " AND " + RawContacts.DELETED + "=0", oursArgs(), null);
       while (c != null && c.moveToNext()) {
         String uid = c.getString(1);
         if (uid == null || uid.isEmpty()) continue;
@@ -362,22 +368,43 @@ public final class ContactWriter {
   }
 
   /**
-   * Delete every raw contact of ours whose UID is not in `keep`. THE HALF THAT IS EASY TO FORGET:
-   * without it the phone book only ever grows, and a contact deleted in the web UI lives on in the
-   * dialer for ever.
+   * WHICH of our raw contacts a reconcile would delete: everything we hold that is not in `keep`.
    *
-   * `hold` is what stops that half eating the OTHER direction. A contact created in the phone's
+   * Pure, and separate from prune() for one reason: ContactSyncPlugin.commit() has to REFUSE a
+   * reconcile that would delete more than it keeps, and a guard that counts a different set from the
+   * one the delete walks is not a guard. One list, asked once, used by both.
+   *
+   * `hold` is what stops the reconcile eating the OTHER direction. A contact created in the phone's
    * Contacts app is, for the moment between being created and being stored on the server, a card the
-   * app has never heard of — i.e. exactly what this method deletes. Held back until the app has
+   * app has never heard of — i.e. exactly what this would delete. Held back until the app has
    * acknowledged it, a sweep that fails costs a retry instead of the contact.
    */
-  public static int prune(Context ctx, Set<String> keep, Map<String, Long> existing,
-                          Set<String> hold) {
-    int gone = 0;
+  public static Set<String> doomed(Map<String, Long> existing, Set<String> keep, Set<String> hold) {
+    Set<String> out = new HashSet<>();
+    if (existing == null) return out;
     for (Map.Entry<String, Long> e : existing.entrySet()) {
-      if (keep.contains(e.getKey())) continue;
+      if (keep != null && keep.contains(e.getKey())) continue;
       if (hold != null && hold.contains(e.getKey())) continue;
-      if (deleteRaw(ctx, e.getValue())) gone++;
+      out.add(e.getKey());
+    }
+    return out;
+  }
+
+  /**
+   * Delete exactly the raw contacts named by doomed(). THE HALF THAT IS EASY TO FORGET: without it
+   * the phone book only ever grows, and a contact deleted in the web UI lives on in the dialer for
+   * ever.
+   *
+   * It takes the SET rather than deciding again from `keep`: the decision is made once, above the
+   * guard that can refuse it, and this only carries it out.
+   */
+  public static int prune(Context ctx, Set<String> doomed, Map<String, Long> existing) {
+    int gone = 0;
+    if (doomed == null || existing == null) return 0;
+    for (String uid : doomed) {
+      Long id = existing.get(uid);
+      if (id == null) continue;
+      if (deleteRaw(ctx, id)) gone++;
     }
     return gone;
   }
@@ -385,19 +412,26 @@ public final class ContactWriter {
   /** Everything we ever wrote, with the account left in place. */
   public static int wipe(Context ctx) {
     try {
-      return ctx.getContentResolver().delete(syncUri(RawContacts.CONTENT_URI),
-          RawContacts.ACCOUNT_TYPE + "=? AND " + RawContacts.ACCOUNT_NAME + "=?",
-          new String[]{ACCOUNT_TYPE, ACCOUNT_NAME});
+      return ctx.getContentResolver().delete(syncUri(RawContacts.CONTENT_URI), OURS, oursArgs());
     } catch (Throwable t) {
       Log.w(TAG, "contacts: wipe failed", t);
       return 0;
     }
   }
 
+  /**
+   * SAY THE ACCOUNT OUT LOUD. syncUri() carries ACCOUNT_NAME/ACCOUNT_TYPE as query parameters and
+   * ContactsProvider2 does fold them into the selection (appendAccountIdToSelection) — so an id from
+   * somewhere else would not match today. That is undocumented behaviour propping up the one call in
+   * this app that can delete a row out of somebody's phone book, and the row id it is handed comes
+   * from a map built elsewhere. One extra clause costs nothing and means the delete is scoped by the
+   * statement itself, whatever the provider does with the URI.
+   */
   private static boolean deleteRaw(Context ctx, long rawId) {
     try {
       return ctx.getContentResolver().delete(syncUri(RawContacts.CONTENT_URI),
-          RawContacts._ID + "=?", new String[]{String.valueOf(rawId)}) > 0;
+          RawContacts._ID + "=? AND " + OURS,
+          new String[]{String.valueOf(rawId), ACCOUNT_TYPE, ACCOUNT_NAME}) > 0;
     } catch (Throwable t) {
       Log.w(TAG, "contacts: could not delete a raw contact", t);
       return false;

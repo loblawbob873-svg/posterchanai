@@ -197,12 +197,30 @@ different one wipes first.
 
 ### The reconcile refuses to empty a phone book
 
-The reconcile is a keep-set: everything under the account that is not in it is deleted. That makes an
-empty list the most destructive thing this bridge can be handed, and every way to produce one is
-silent — the app opening before wifi associates, a 5xx, a relay that read empty. So a sweep needs a
-load that actually completed, and an empty keep-set is **refused** whenever the phone holds rows,
-out loud. The cost is that deleting your very last contact here no longer empties the handset by
-itself; turning the switch off does, and removes the account with it.
+The reconcile is a keep-set: everything under the account that is not in it is deleted. That makes a
+**short** list the most destructive thing this bridge can be handed, and every way to produce one is
+silent — the app opening before wifi associates, a 5xx, one addressbook out of several whose cards
+never arrived, a relay that answered a 200 with fewer contacts than you have.
+
+This emptied a real phone book, twice, and it took four guards to bring back:
+
+1. **A sweep needs a load that COMPLETED, and a WHOLE one.** A per-book fetch that failed used to be
+   swallowed into "that book has no contacts in it" — and the flag that says a load succeeded is
+   about history, so it could not see it: one *had* succeeded, earlier. A book that did not load now
+   keeps its last good cards and the sweep is skipped until a whole load lands.
+2. **`/api/contacts/cards` reads the relay strictly.** An unreachable relay answers `503`, never a
+   `200` carrying part of your address book. This is the same rule the drive index, the folder-sync
+   manifest and the uptime document each learned the hard way: `[]` must not mean both "nothing" and
+   "I could not ask".
+3. **The client refuses a reconcile that would delete more than it keeps**, out loud, before the
+   phone is asked to do anything.
+4. **And so does the plugin** — against the ROWS, not a count, because every guard on the client is
+   advisory and the client is the thing that got it wrong. It answers `refused:true` with the numbers
+   rather than pruning, and `force:true` is the only way past it. Nothing in the app passes `force`.
+
+The cost is that a genuine mass delete no longer reaches the handset by itself. Turning the switch
+off does — it removes the account and every row with it — and turning it back on writes what you
+have now. A stale contact against an emptied address book is not a close call.
 
 ### What is not covered
 

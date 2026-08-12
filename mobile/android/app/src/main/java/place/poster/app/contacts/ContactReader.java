@@ -51,12 +51,24 @@ public final class ContactReader {
 
   private static final String TAG = "PosterChan";
 
-  /** Only ever OUR account: this reads a database full of other people's contacts. */
-  private static final String OURS =
-      RawContacts.ACCOUNT_TYPE + "=? AND " + RawContacts.ACCOUNT_NAME + "=?";
+  /** Only ever OUR account: this reads a database full of other people's contacts. ONE definition,
+   *  ContactWriter's, so the reads here and the deletes there cannot come to mean different rows. */
+  private static final String OURS = ContactWriter.OURS;
 
   private static String[] ours() {
-    return new String[]{ContactWriter.ACCOUNT_TYPE, ContactWriter.ACCOUNT_NAME};
+    return ContactWriter.oursArgs();
+  }
+
+  /** …and the same clause on a statement that names a single row. See ContactWriter.deleteRaw: the
+   *  account scoping on these otherwise rests entirely on what the provider does with syncUri()'s
+   *  query parameters, which is undocumented, on the two calls that clear a phone-side change. */
+  private static String[] oneOfOurs(long rawId, String... extra) {
+    String[] args = new String[3 + extra.length];      // the row, the account's two, then the rest
+    args[0] = String.valueOf(rawId);
+    args[1] = ContactWriter.ACCOUNT_TYPE;
+    args[2] = ContactWriter.ACCOUNT_NAME;
+    System.arraycopy(extra, 0, args, 3, extra.length);
+    return args;
   }
 
   private ContactReader() {}
@@ -95,9 +107,9 @@ public final class ContactReader {
       try {
         // Guarded by "still has no source id" so two sweeps racing cannot overwrite each other's uid.
         done += ctx.getContentResolver().update(ContactWriter.syncUri(RawContacts.CONTENT_URI), v,
-            RawContacts._ID + "=? AND (" + RawContacts.SOURCE_ID + " IS NULL OR "
-                + RawContacts.SOURCE_ID + "='')",
-            new String[]{String.valueOf(id)});
+            RawContacts._ID + "=? AND " + OURS + " AND (" + RawContacts.SOURCE_ID
+                + " IS NULL OR " + RawContacts.SOURCE_ID + "='')",
+            oneOfOurs(id));
       } catch (Throwable t) {
         Log.w(TAG, "contacts: could not stamp a uid on a phone-created contact", t);
       }
@@ -198,15 +210,15 @@ public final class ContactReader {
         if (r.optBoolean("deleted", false)) {
           // The tombstone has done its job: the server no longer has this card either.
           ok = ctx.getContentResolver().delete(ContactWriter.syncUri(RawContacts.CONTENT_URI),
-              RawContacts._ID + "=? AND " + RawContacts.DELETED + "=1",
-              new String[]{String.valueOf(rawId)}) > 0;
+              RawContacts._ID + "=? AND " + OURS + " AND " + RawContacts.DELETED + "=1",
+              oneOfOurs(rawId)) > 0;
         } else {
           ContentValues v = new ContentValues();
           v.put(RawContacts.DIRTY, 0);
           ok = ctx.getContentResolver().update(ContactWriter.syncUri(RawContacts.CONTENT_URI), v,
-              RawContacts._ID + "=? AND " + RawContacts.VERSION + "=? AND "
+              RawContacts._ID + "=? AND " + OURS + " AND " + RawContacts.VERSION + "=? AND "
                   + RawContacts.DELETED + "=0",
-              new String[]{String.valueOf(rawId), String.valueOf(version)}) > 0;
+              oneOfOurs(rawId, String.valueOf(version))) > 0;
         }
       } catch (Throwable t) {
         Log.w(TAG, "contacts: could not acknowledge a phone-side change", t);

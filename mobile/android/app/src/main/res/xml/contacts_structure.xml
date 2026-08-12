@@ -46,7 +46,13 @@
             <Type type="custom" />
         </DataKind>
         <DataKind kind="organization" />
-        <DataKind kind="postal" needsStructured="true">
+        <!-- `structuredPostal`, and the spelling is the whole feature. AOSP's ExternalAccountType
+             accepts a fixed list of kind names and throws DefinitionException on anything else —
+             which discards the ENTIRE EditSchema, not the one line. `postal` reads perfectly, builds
+             perfectly, and left the PosterChan account READ-ONLY on the phone: no Edit on our cards,
+             and the account missing from the "save to" picker, i.e. the whole two-way half gone with
+             nothing said anywhere. -->
+        <DataKind kind="structuredPostal" needsStructured="true">
             <Type type="home" />
             <Type type="work" />
             <Type type="other" />

@@ -96,6 +96,82 @@ class PhonebookGuardTests(unittest.TestCase):
         self.assertEqual(commits(res), [[]])
 
 
+BOOK2 = {"id": "work", "displayname": "Work"}
+TEN = [card(u, u.upper()) for u in "abcdefgh"]          # eight in the first book…
+TWO = [card(u, u.upper()) for u in "ij"]                # …two in the second
+ALL_TEN = [c["uid"] for c in TEN + TWO]
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class AShortKeepSetTests(unittest.TestCase):
+    """THE ONE THAT EMPTIED A REAL PHONE, TWICE — and the reason the reconcile was switched off.
+
+    Both guards that existed then only ever asked "is the list EMPTY?", and it never was. A keep-set
+    that is merely SHORT is the same delete order with a quieter symptom, and every way of producing
+    one is silent: a per-book fetch that failed and was swallowed into `[]`, a relay read behind it
+    that answered a 200 with fewer cards than the user has, a phone whose rows and the app's uids
+    disagree about identity.
+    """
+
+    def test_a_book_that_did_not_load_never_shortens_the_keep_set(self):
+        """THE BUG. `/api/contacts/books` answers, one book's cards do not, the failure is swallowed,
+        and `loadedOk` — which is about history, and a load HAD completed — cannot see it. The sweep
+        that follows says "these eight are all my contacts" to a phone holding ten."""
+        res = run(books=[BOOK, BOOK2], cards={"default": TEN, "work": TWO}, phone=ALL_TEN,
+                  steps=["reload", "settle", "failbooks:work", "reload", "settle"])
+        self.assertEqual(len(commits(res)), 1, "a partial load reconciled the phone book")
+        self.assertEqual(sorted(res["phoneRows"]), sorted(ALL_TEN),
+                         "the two contacts in the book that did not load were deleted from the phone")
+
+    def test_the_sweep_comes_back_when_the_whole_book_does(self):
+        """The other half: refusing for ever after one blip is its own failure. A later whole load
+        reconciles again, or a contact deleted in the web UI never leaves the phone."""
+        res = run(books=[BOOK, BOOK2], cards={"default": TEN, "work": TWO}, phone=ALL_TEN,
+                  steps=["reload", "settle", "failbooks:work", "remove:work:j", "reload", "settle",
+                         "ok", "reload", "settle"])
+        self.assertEqual(len(commits(res)), 2, "the sweep never resumed")
+        self.assertEqual(sorted(commits(res)[-1]), sorted(u for u in ALL_TEN if u != "j"))
+        self.assertNotIn("j", res["phoneRows"], "a real deletion never reached the phone")
+
+    def test_a_short_list_is_refused_before_it_reaches_the_phone_at_all(self):
+        """The client's own guard, which is what makes the refusal SAYABLE: no commit is attempted,
+        so the phone is never asked to delete nine people and no toast has to explain a bridge call
+        that half-happened."""
+        res = run(books=[BOOK], cards={"default": [card("a", "Ann")]}, phone=ALL_TEN)
+        self.assertEqual(commits(res), [], "a keep-set of 1 against 10 rows was sent to the phone")
+        self.assertEqual(sorted(res["phoneRows"]), sorted(ALL_TEN))
+        self.assertTrue(any("came back short" in t for t in res["toasts"]),
+                        "a refused reconcile must say so, not fail silently")
+
+    def test_the_plugin_refuses_a_collapse_the_client_cannot_see(self):
+        """WHY THE NATIVE GUARD IS THE LOAD-BEARING ONE. The client compares two COUNTS, so a phone
+        whose rows carry uids the app has never heard of — the identity mismatch the reconcile was
+        switched off for — looks like an ordinary sweep from here: five stale rows, three cards, two
+        more deleted than kept and nothing in the arithmetic to show it. The plugin compares the rows
+        themselves, and it is the caller it does not trust.
+
+        Both halves are asserted here, so this cannot pass against a plugin that does not guard."""
+        cards = [card(u, u.upper()) for u in "abc"]
+        stale = ["x", "y", "z", "w", "v"]
+        res = run(books=[BOOK], cards={"default": cards}, phone=list(stale))
+        self.assertTrue(commits(res), "the client refused it — this test needs it to get through")
+        self.assertEqual(sorted(res["phoneRows"]), sorted(stale + ["a", "b", "c"]),
+                         "the plugin obeyed a reconcile that deleted more than it kept")
+        self.assertTrue(any("kept its" in t for t in res["toasts"]),
+                        "the refusal never reached the user")
+
+        # …and the same sweep against the phone as it was before the guard existed.
+        was = run(books=[BOOK], cards={"default": cards}, phone=list(stale), nativeGuard=False)
+        self.assertEqual(sorted(was["phoneRows"]), ["a", "b", "c"],
+                         "unguarded, this sweep is meant to delete those five rows")
+
+    def test_a_native_refusal_is_said_once_not_on_every_sweep(self):
+        cards = [card(u, u.upper()) for u in "abc"]
+        res = run(books=[BOOK], cards={"default": cards}, phone=["x", "y", "z", "w", "v"],
+                  steps=["reload", "syncTick", "syncTick", "settle"])
+        self.assertEqual(len([t for t in res["toasts"] if "kept its" in t]), 1)
+
+
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
 class ComingBackToTheScreenTests(unittest.TestCase):
     """A load that failed once must not be the answer for the rest of the page.

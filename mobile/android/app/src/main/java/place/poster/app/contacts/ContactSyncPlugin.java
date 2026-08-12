@@ -146,6 +146,13 @@ public class ContactSyncPlugin extends Plugin {
    * (encrypted, but not theirs) address book.
    */
   private boolean ownerGuard(String owner) {
+    // AN ABSENT OWNER IS "I DON'T KNOW", NOT "SOMEBODY ELSE". The client only sweeps while it is
+    // signed in, but `owner()` there reads the session at the moment of the call — a sign-out or an
+    // account switch landing in the gap between the switch's check and this bridge call sends an
+    // empty string, and read as a mismatch that WIPES the whole phone book and then records "" as
+    // the owner, so the next sweep writes it all back. Written, gone, written, gone, with nothing in
+    // any log. An empty owner now changes nothing at all, in either direction.
+    if (owner == null || owner.isEmpty()) return false;
     String had = prefs().getString(KEY_OWNER, "");
     boolean wiped = false;
     if (!had.isEmpty() && !had.equals(owner)) {
@@ -308,6 +315,23 @@ public class ContactSyncPlugin extends Plugin {
    * This is the half that is easy to leave out, and leaving it out is the exact bug docs/CONTACTS.md
    * already records against the CardDAV path: a contact deleted in the web UI stays on the phone and
    * can be edited back into existence.
+   *
+   * AND IT REFUSES A COLLAPSE, because a plugin must not trust its caller. This call emptied a real
+   * phone book, twice: the client's own guards covered an EMPTY `uids` and nothing else, so any way
+   * of producing a SHORT one — a per-book fetch that failed and was swallowed into `[]`, a relay read
+   * that answered partially with a 200 on top of it — arrived here as an ordinary reconcile and was
+   * obeyed. Every guard on the JS side is advisory: the JS is the thing that got it wrong.
+   *
+   * The rule is one sentence and it is the same one the client applies: A RECONCILE THAT WOULD DELETE
+   * MORE THAN IT KEEPS IS NOT A RECONCILE, IT IS A COLLAPSE. It is refused, out loud — `refused:true`
+   * with the numbers, so the client can say something rather than watch a sweep "succeed" — and the
+   * stored hashes are left exactly as they were, so the next sweep is not told these cards are
+   * already on a phone they were never written to.
+   *
+   * The escape hatch is `force:true`, for a caller that has PROVED the shrink is real (a genuine mass
+   * delete, a user who asked for it). Nothing in the client passes it today; the deliberate way to
+   * rebuild this phone's copy is to turn the switch off — which removes the account and every row
+   * with it — and on again.
    */
   @PluginMethod
   public void commit(PluginCall call) {
@@ -323,7 +347,19 @@ public class ContactSyncPlugin extends Plugin {
     // A contact CREATED on the phone is a card the app has never heard of, which is precisely what
     // this deletes. Held back until the app acknowledges it.
     Set<String> hold = ContactReader.pending(getContext());
-    int removed = ContactWriter.prune(getContext(), keep, have, hold);
+
+    // ONE set, computed once: the guard must be asked about exactly the rows prune() will delete, or
+    // it is guarding a different reconcile from the one that runs.
+    Set<String> doomed = ContactWriter.doomed(have, keep, hold);
+    boolean force = Boolean.TRUE.equals(call.getBoolean("force", false));
+    if (isCollapse(doomed.size(), have.size() - doomed.size(), force)) {
+      call.resolve(new JSObject().put("refused", true).put("removed", 0)
+                                 .put("would", doomed.size())
+                                 .put("kept", have.size() - doomed.size())
+                                 .put("count", have.size()));
+      return;
+    }
+    int removed = ContactWriter.prune(getContext(), doomed, have);
 
     JSONObject stored = readHashes();
     JSONObject kept = new JSONObject();
@@ -335,6 +371,21 @@ public class ContactSyncPlugin extends Plugin {
     }
     writeHashes(kept);
     call.resolve(new JSObject().put("removed", removed).put("count", have.size() - removed));
+  }
+
+  /**
+   * The collapse rule, on its own so it can be RUN in a test rather than read.
+   *
+   * `remove > keep` is deliberately crude, and crude is the point: it needs no idea of why the list
+   * is short, which is what makes it hold against the next silent way of producing one. A reconcile
+   * that deletes nothing is always allowed (a brand-new account keeps zero rows and removes zero —
+   * refusing there would stop the hash bookkeeping ever starting), and an empty keep-set is refused
+   * by the same arithmetic the moment there is anything at all to delete.
+   */
+  static boolean isCollapse(int remove, int keep, boolean force) {
+    if (force) return false;
+    if (remove <= 0) return false;
+    return remove > keep;
   }
 
   private JSONObject readHashes() {

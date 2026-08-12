@@ -72,10 +72,31 @@ async def _known_ids(db, user) -> dict:
         raise HTTPException(status_code=503, detail="Could not reach your contacts just now — try again.")
 
 
+def _unreachable(what: str, e: Exception) -> HTTPException:
+    """A relay we could not ask is a 503, never an empty 200.
+
+    THE READS BEHIND THIS ROUTER DECIDE WHAT GETS DELETED FROM A PHONE. `list_docs` answers `{}` for
+    both "no documents" and "I could not reach the relay" unless it is asked strictly, and a timeout
+    part-way through a long read answers with the documents it managed to collect — so a flaky relay
+    turns into a 200 carrying fewer contacts than the user has. The client then pushes that to the
+    handset as the whole address book, and the native reconcile deletes everybody missing from it.
+    That is how a real phone book emptied itself, twice. Strict here, and an error the client can see.
+    """
+    logger.warning("[carddav] %s unreadable: %s", what, e)
+    return HTTPException(status_code=503,
+                         detail="Could not reach your contacts just now — try again.")
+
+
 @router.get("/books")
 async def list_books(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _require_enabled()
-    return {"books": await caldav_store.list_addressbooks(db, current_user)}
+    try:
+        books = await caldav_store.list_addressbooks(db, current_user, strict=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _unreachable("addressbook list", e)
+    return {"books": books}
 
 
 class BookIn(BaseModel):
@@ -110,9 +131,19 @@ async def delete_book(book_id: str, current_user: User = Depends(get_current_use
 async def list_cards(book: str = Query(...), current_user: User = Depends(get_current_user),
                      db: Session = Depends(get_db)):
     """Raw cards for one addressbook. Parsed in the client, which already has to parse a vCard to
-    render the editor — doing it in both places is how two views disagree."""
+    render the editor — doing it in both places is how two views disagree.
+
+    STRICT, for the reason spelled out in _unreachable: this list is the keep-set the phone's own
+    Contacts app is reconciled against, so a short answer is not a smaller address book, it is a
+    delete order."""
     _require_enabled()
-    return {"cards": await caldav_store.get_items(db, current_user, book)}
+    try:
+        cards = await caldav_store.get_items(db, current_user, book, strict=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _unreachable(f"addressbook {book!r}", e)
+    return {"cards": cards}
 
 
 class CardIn(BaseModel):

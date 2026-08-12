@@ -71,6 +71,40 @@ APPJS = _read(ROOT, "static", "js", "client", "app.js")
 
 ACCOUNT_TYPE = "place.poster.app.contacts"
 
+CONTACT_SRC = [os.path.join(JAVA, "contacts", f) for f in
+               ("ContactWriter.java", "ContactReader.java", "ContactSyncPlugin.java")]
+
+
+def _run_java(body: str, name: str = "Driver") -> str:
+    """Compile the REAL contacts sources plus a throwaway driver against tests/androidstubs, run it,
+    and hand back stdout.
+
+    The stubs are signature-only, so nothing that touches ContactsContract can run here — but the
+    DECISIONS can, and those are what destroy data. A pure static method plus javac beats any regex
+    at answering "does this rule actually say what it means to say". The driver joins the plugin's
+    own package so a guard does not have to be public to be tested."""
+    if shutil.which("javac") is None or shutil.which("java") is None:
+        pytest.skip("no JDK")
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        src = os.path.join(tmp, name + ".java")
+        with open(src, "w", encoding="utf-8") as fh:
+            fh.write("package place.poster.app.contacts;\npublic class %s {\n"
+                     "  public static void main(String[] argv) throws Exception {\n%s\n  }\n}\n"
+                     % (name, body))
+        out = os.path.join(tmp, "out")
+        os.makedirs(out)
+        c = subprocess.run(
+            ["javac", "-nowarn", "-d", out,
+             "-sourcepath", os.path.join(ROOT, "tests", "androidstubs") + os.pathsep
+                            + os.path.join(ANDROID, "src", "main", "java")] + CONTACT_SRC + [src],
+            capture_output=True, text=True, timeout=300)
+        assert c.returncode == 0, c.stderr[-3000:]
+        r = subprocess.run(["java", "-cp", out, "place.poster.app.contacts." + name],
+                           capture_output=True, text=True, timeout=120)
+        assert r.returncode == 0, r.stderr[-3000:]
+        return r.stdout.strip()
+
 
 def test_plugin_is_registered_and_named_the_same_on_both_sides():
     assert "registerPlugin(place.poster.app.contacts.ContactSyncPlugin.class)" in MAIN
@@ -185,10 +219,114 @@ def test_the_reconcile_deletes_as_well_as_inserts():
     assert 'call.reject("commit needs the full uid list")' in body, \
         "a missing uid list must refuse, never be read as 'delete everything'"
     prune = re.search(r"public static int prune\(.*?\n  \}", WRITER, re.S)
-    assert prune and "deleteRaw(" in prune.group(0) and "keep.contains" in prune.group(0)
+    assert prune and "deleteRaw(" in prune.group(0)
+    assert "public static Set<String> doomed(" in WRITER
     # …and the client must call it on EVERY sweep, including one that wrote nothing — a deletion is
     # the one change that produces no card to push.
     assert "await P.commit({ uids:" in CONTACTS_JS
+
+
+def test_the_reconcile_refuses_to_delete_more_than_it_keeps():
+    """THE GUARD THE KILL SWITCH WAS WAITING FOR, and the only one that is not advisory.
+
+    This call emptied a real phone book twice. Every guard on the client covered an EMPTY keep-set
+    and nothing else, so a merely SHORT one — a per-book fetch swallowed into `[]`, a relay read that
+    answered a 200 with fewer cards than the user has, a phone whose rows carry uids the app has
+    never heard of — arrived as an ordinary reconcile and was obeyed. A plugin must not trust its
+    caller, and the caller is exactly what got it wrong.
+
+    The rule is RUN here, not grepped: `isCollapse` is pure, so javac + java answer the question a
+    regex can only pretend to. It is also asked about the same set prune() deletes — doomed() — so a
+    guard cannot come to be counting a different reconcile from the one that runs.
+    """
+    commit = re.search(r"public void commit\(PluginCall call\) \{(.*?)\n  \}", PLUGIN, re.S).group(1)
+    guard = commit.index("isCollapse(")
+    assert guard < commit.index("ContactWriter.prune("), "the guard runs after the delete"
+    assert 'put("refused", true)' in commit, \
+        "a refusal must be reported, or the client watches a sweep 'succeed' and says nothing"
+    assert commit.index("ContactWriter.doomed(") < guard, \
+        "the guard must be asked about the rows prune() will actually delete"
+    assert 'call.getBoolean("force", false)' in commit, "no way to ever complete a real mass delete"
+    # The refusal returns BEFORE the hashes are rewritten: recording a keep-set that was not applied
+    # tells the next sweep those cards are already on a phone they were never written to.
+    assert commit.index("return;", guard) < commit.index("readHashes()", guard)
+
+    cases = [
+        # (remove, keep, force, refused)
+        (0, 0, False, False),    # a brand-new account: nothing to keep, nothing to delete
+        (0, 40, False, False),   # an ordinary sweep that changes nothing
+        (1, 40, False, False),   # …and one that deletes a person
+        (20, 21, False, False),  # half the book, deliberately: still allowed
+        (21, 20, False, True),   # more than it keeps
+        (3, 0, False, True),     # the keep-set and the rows disagree about identity
+        (40, 0, False, True),    # the empty keep-set that started all this
+        (40, 0, True, False),    # …unless the caller has proved it
+    ]
+    out = _run_java("""
+    int[][] c = {%s};
+    StringBuilder sb = new StringBuilder();
+    for (int[] r : c) sb.append(ContactSyncPlugin.isCollapse(r[0], r[1], r[2] == 1) ? '1' : '0');
+    System.out.println(sb);
+    """ % ",".join("{%d,%d,%d}" % (r, k, 1 if f else 0) for r, k, f, _ in cases), "Guard")
+    assert out == "".join("1" if c[3] else "0" for c in cases), \
+        f"isCollapse answered {out} for {[(c[0], c[1], c[2]) for c in cases]}"
+
+
+def test_a_contact_the_phone_just_made_is_neither_deleted_nor_counted():
+    """`hold` keeps a phone-created contact out of the reconcile until the app has stored it. It has
+    to be out of the COUNT the guard reads as well as out of the delete, or a phone where somebody
+    has just added three people looks like a reconcile trying to remove three — and the guard the
+    delete now sits behind would refuse the whole sweep for the safest thing on it."""
+    out = _run_java("""
+    java.util.Map<String, Long> have = new java.util.HashMap<>();
+    have.put("a", 1L); have.put("b", 2L); have.put("made-on-the-phone", 3L);
+    java.util.Set<String> keep = new java.util.HashSet<>(java.util.Arrays.asList("a", "b"));
+    java.util.Set<String> hold = new java.util.HashSet<>(
+        java.util.Arrays.asList("made-on-the-phone"));
+    java.util.List<String> held = new java.util.ArrayList<>(
+        ContactWriter.doomed(have, keep, hold));
+    java.util.List<String> bare = new java.util.ArrayList<>(
+        ContactWriter.doomed(have, keep, new java.util.HashSet<String>()));
+    java.util.Collections.sort(held); java.util.Collections.sort(bare);
+    System.out.println(held + "|" + bare);
+    """, "Doomed")
+    assert out == "[]|[made-on-the-phone]"
+
+
+def test_an_absent_owner_is_not_somebody_else():
+    """ownerGuard WIPES the whole phone book when the account has changed, which is right — and read
+    an EMPTY owner as a change, which is the same wipe fired by a caller bug. The client only sweeps
+    while signed in, but it re-reads the session at each bridge call, so a sign-out landing between
+    the switch's check and this one sends "" — and the guard then also RECORDS "" as the owner, so
+    the next sweep writes the whole book back. Written, gone, written, gone."""
+    guard = re.search(r"private boolean ownerGuard\(String owner\) \{(.*?)\n  \}", PLUGIN, re.S)
+    assert guard, "ownerGuard moved — re-point this test"
+    body = guard.group(1)
+    assert body.index("owner.isEmpty()) return false;") < body.index("ContactWriter.wipe("), \
+        "an empty owner still reaches the wipe"
+    # …and the client passes ONE reading of it through the whole sweep rather than re-asking.
+    push = re.search(r"async function pushPhonebook\(force\)\{(.*?)\n    \}", CONTACTS_JS, re.S)
+    assert push and "const me = owner();" in push.group(1) and "P.begin({ owner: me })" in push.group(1)
+
+
+def test_every_row_level_write_names_the_account_it_belongs_to():
+    """These statements name a single _ID and rely on ContactsProvider2 folding syncUri()'s
+    ACCOUNT_NAME/ACCOUNT_TYPE parameters into the selection (appendAccountIdToSelection). That is
+    real, and it is undocumented, and it is propping up the calls that delete rows out of a database
+    full of OTHER people's contacts — with an id that came from a map built somewhere else. One
+    clause each, so the scoping is in the statement whatever the provider does with the URI."""
+    delete_raw = re.search(r"private static boolean deleteRaw\(.*?\n  \}", WRITER, re.S).group(0)
+    assert 'RawContacts._ID + "=? AND " + OURS' in delete_raw
+    taken = re.search(r"public static JSONArray taken\(Context ctx, JSONArray rows\) \{(.*?)\n  \}",
+                      READER, re.S).group(1)
+    assert taken.count('RawContacts._ID + "=? AND " + OURS') == 2, \
+        "the tombstone delete and the DIRTY clear must both name the account"
+    mint = re.search(r"public static int mintSourceIds\(Context ctx\) \{(.*?)\n  \}",
+                     READER, re.S).group(1)
+    assert 'RawContacts._ID + "=? AND " + OURS' in mint
+    # ONE definition of "ours", or the reads and the deletes can come to mean different rows.
+    assert "static final String OURS =" in WRITER
+    assert "private static final String OURS = ContactWriter.OURS;" in READER
 
 
 def test_a_batch_is_never_flushed_in_the_middle_of_a_card():
@@ -280,7 +418,7 @@ def test_dirty_is_cleared_only_for_rows_the_app_actually_stored():
     body = taken.group(1)
     # Only the rows handed in, and only at the version they were read at.
     assert "rows.optJSONObject(i)" in body
-    assert re.search(r'RawContacts\._ID \+ "=\? AND " \+ RawContacts\.VERSION \+ "=\?', body), \
+    assert re.search(r'RawContacts\.VERSION \+ "=\?', body), \
         "clearing DIRTY without a version guard loses an edit made while the sweep was in flight"
     assert "v.put(RawContacts.DIRTY, 0)" in body
     # A row whose clear did not take is NOT reported as cleared.
@@ -348,7 +486,14 @@ def test_the_edit_schema_offers_exactly_what_we_round_trip():
     assert "<EditSchema>" in STRUCT_XML, \
         "no edit schema = a read-only account: the phone cannot edit or add contacts at all"
     kinds = set(re.findall(r'<DataKind\s+kind="([a-zA-Z]+)"', STRUCT_XML))
-    assert kinds == {"name", "phone", "email", "organization", "postal", "event", "note"}, kinds
+    assert kinds == {"name", "phone", "email", "organization", "structuredPostal", "event",
+                     "note"}, kinds
+    # AND THE SPELLING IS THE FEATURE. AOSP's ExternalAccountType accepts a fixed list of kind names
+    # and throws DefinitionException on anything else — which discards the ENTIRE EditSchema, not the
+    # offending line. `postal` reads perfectly and left the account READ-ONLY on the phone: no Edit
+    # on our cards, and PosterChan missing from the "save to" picker, i.e. the whole direction this
+    # file exists to open, gone, with nothing said anywhere. This test PINNED the wrong spelling.
+    assert 'kind="postal"' not in STRUCT_XML
     # Every kind above is written by ContactWriter AND read back by ContactReader — the two lists
     # are the definition of "round-trip".
     for mime in ("StructuredName", "Phone", "Email", "Organization", "StructuredPostal", "Note",
@@ -403,8 +548,7 @@ def test_the_java_type_checks_against_the_platform_stubs():
     if shutil.which("javac") is None:
         pytest.skip("no JDK")
     import tempfile
-    src = [os.path.join(JAVA, "contacts", f) for f in
-           ("ContactWriter.java", "ContactReader.java", "ContactSyncPlugin.java")]
+    src = CONTACT_SRC
     with tempfile.TemporaryDirectory() as out:
         r = subprocess.run(
             ["javac", "-nowarn", "-d", out,

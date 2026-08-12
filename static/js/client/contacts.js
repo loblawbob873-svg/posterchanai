@@ -27,6 +27,9 @@
     // anything downstream, and the phone-book sweep DELETES what it is not told to keep. Nothing
     // may reconcile against state no load ever produced. See the collapse guard below.
     loadedOk:false,
+    // Did the LAST load fetch every book? Separate from loadedOk, which is about history: after one
+    // good load, loadedOk is true for ever and cannot say that THIS load came back short.
+    partial:false,
     scroll:0,
   };
 
@@ -96,14 +99,27 @@
         S.books = r.books || [];
         if(!S.book || !S.books.some(b => b.id === S.book)) S.book = (S.books[0] || {}).id || '';
         S.enabled = true;
+        /* A BOOK THAT DID NOT LOAD IS NOT A BOOK WITH NO CONTACTS IN IT.
+         *
+         * This swallowed a per-book failure into `[]` and then set `loadedOk` anyway, so a load that
+         * fetched two books out of three looked exactly like one where a third of the address book
+         * had been deleted — and the phone-book reconcile, which decides what to DELETE from the
+         * handset from precisely this list, was handed a short keep-set. `loadedOk` says "a load
+         * completed" and could not see it, because one had: the LAST one. So the last good copy of a
+         * book that failed is kept (blanking it on screen helps nobody either), and the sweep is told
+         * this load was partial. Refusing to reconcile until a whole one lands costs a stale row on
+         * the phone; the alternative cost somebody their phone book, twice. */
         const got = {};
+        let whole = true;
         for(const b of S.books){
           try{ got[b.id] = (await api('/api/contacts/cards?book=' + encodeURIComponent(b.id))).cards || []; }
-          catch(_){ got[b.id] = []; }
+          catch(_){ whole = false; got[b.id] = S.cards[b.id] || []; }
         }
         S.cards = got;
         S.rev = (S.rev || 0) + 1;
-        S.loadedOk = true;      // …and only here. Never cleared: a LATER failure leaves the last
+        S.partial = !whole;     // this load, not the screen's whole history — see the sweep
+        if(whole) S.loadedOk = true;
+                                // …and only here. Never cleared: a LATER failure leaves the last
                                 // good books/cards in place, which is real state worth pushing.
       }catch(e){
         const msg = (e && e.message) || '';
@@ -460,8 +476,10 @@
     async function pullPhone(){
       const P = nativeSync('pull');
       if(!P) return 0;
+      const me = owner();
+      if(!me) return 0;                 // never hand the owner guard a blank — see pushPhonebook
       let st = null;
-      try{ st = await P.pull({ owner: owner() }); }catch(_){ return 0; }
+      try{ st = await P.pull({ owner: me }); }catch(_){ return 0; }
       if(!st || st.granted === false) return 0;
       const rows = st.rows || [];
       if(!rows.length) return 0;
@@ -511,13 +529,20 @@
       const P = nativeSync('begin');
       if(!P || !phonebookOn()) return;
       if(!S.loadedOk) return;             // never reconcile against state no load ever produced
+      if(S.partial) return;               // …nor against one that came back missing a book
       if(_pushing) return _pushing;       // a sweep is a sweep; two at once would fight over uids
       const list = everyCard().map(c => V().toPhone(c));
-      const sig = owner() + '|' + list.map(c => c.uid + ':' + c.h).join(',');
+      /* ONE reading of who we are, for the whole sweep. `owner()` reads the live session, and an
+       * account switch landing between two of these calls hands the plugin a different pubkey — or,
+       * on sign-out, an empty one — which its owner guard reads as "somebody else" and answers by
+       * wiping the phone book. It refuses an empty owner now; this is the other half. */
+      const me = owner();
+      if(!me) return;
+      const sig = me + '|' + list.map(c => c.uid + ':' + c.h).join(',');
       if(!force && sig === _pushSig) return;
       _pushing = (async () => {
         let st = null;
-        try{ st = await P.begin({ owner: owner() }); }catch(_){ return; }
+        try{ st = await P.begin({ owner: me }); }catch(_){ return; }
         if(st && st.granted === false){
           // Revoked in Android's settings after the switch was turned on. Turning it back off is the
           // honest answer — a switch that says "on" while nothing is written is the worse one.
@@ -530,25 +555,33 @@
          *
          * `commit({uids})` is a keep-set: everything under this account that is NOT in it is DELETED
          * from the phone — out of the dialer, the share sheet, favourites, ringtones and shortcuts.
-         * So an empty list is the single most destructive thing this bridge can be handed, and the
-         * ways to produce one are all silent: books that never loaded, a 200 carrying `{books:[]}`,
-         * a relay that answered empty. `loadedOk` above covers the first; this covers the rest by
-         * refusing to be the reason a full phone book becomes an empty one.
+         * So a SHORT list is the most destructive thing this bridge can be handed, and every way to
+         * produce one is silent: a book whose cards never loaded, a 200 carrying `{books:[]}`, a
+         * relay read that answered partially behind it.
          *
-         * The cost is that genuinely deleting your LAST contact no longer empties the phone by
-         * itself. That is the honest trade, and there is a deliberate way to do it: turning the
-         * switch off removes the account and every row with it. */
+         * IT USED TO REFUSE ONLY A TOTALLY EMPTY LIST, and that is why it never fired while a real
+         * phone book emptied itself twice: nine cards out of ninety is not empty. The rule is now the
+         * one the plugin applies to the rows themselves — A RECONCILE THAT WOULD DELETE MORE THAN IT
+         * KEEPS IS A COLLAPSE — computed here from the count the phone just reported, so the client
+         * can say something useful instead of watching the bridge refuse.
+         *
+         * The cost is that a genuine mass delete no longer reaches the phone by itself. That is the
+         * honest trade, and there is a deliberate way to do it: turning the switch off removes the
+         * account and every row with it, and turning it back on writes the current book. */
         const onPhone = (st && typeof st.count === 'number')
                           ? st.count : Object.keys(known).length;
-        if(!list.length && onPhone > 0){
+        const wouldRemove = Math.max(0, onPhone - list.length);
+        if(wouldRemove > list.length){
           if(!_collapseSaid){
             _collapseSaid = true;
-            toast('your address book came back empty — the ' + onPhone + ' contact'
-                  + (onPhone === 1 ? '' : 's') + ' on this phone were left alone');
+            toast(list.length
+              ? 'your address book came back short (' + list.length + ' of ' + onPhone
+                + ') — the contacts on this phone were left alone'
+              : 'your address book came back empty — the ' + onPhone + ' contact'
+                + (onPhone === 1 ? '' : 's') + ' on this phone were left alone');
           }
           return;                          // and NO _pushSig: the next sweep tries again
         }
-        _collapseSaid = false;
         let batch = [], size = 0;
         const flush = async () => {
           if(!batch.length) return;
@@ -562,24 +595,32 @@
           if(size >= PUT_BUDGET) await flush();
         }
         await flush();
-        /* THE PRUNE IS DISABLED. Do not re-enable it without the root cause in hand.
+        /* THE RECONCILE. ALWAYS, even when nothing was written: this is the half that deletes, and
+         * somebody removed in the web UI is only removed from the phone here.
          *
-         * 2026-08-11, on a real phone: a user turned the switch on, their contacts synced, and the
-         * phone's Contacts app then emptied — repeatedly. Written, gone, written, gone. `commit()` is
-         * a keep-set, so it is the only call here that can delete anything, which makes it the only
-         * suspect until proven otherwise. The guards above (`loadedOk`, the collapse guard) both cover
-         * an EMPTY list; whatever happened was not that, because a non-empty list still ended with an
-         * empty phone. That means the keep-set and the rows on the phone disagreed about identity, and
-         * every way that can happen is silent and destroys data on somebody's actual phone.
+         * It was switched off on 2026-08-11 after a real phone book emptied itself repeatedly, and
+         * this is what had to be true before it came back — three guards, none of which existed then,
+         * each with a test verified to fail without it:
+         *   · a per-book fetch failure no longer arrives here as a short keep-set (load(), above);
+         *   · a keep-set that would delete more than it keeps is refused here, out loud;
+         *   · and the SAME rule is enforced inside commit() against the rows themselves, because
+         *     every guard on this side is advisory — the JS is the thing that got it wrong.
+         * Behind all three: /api/contacts/cards now reads the relay strictly, so "I could not ask"
+         * arrives as a 503 instead of a 200 carrying fewer contacts than the user has.
          *
-         * The cost of leaving it off is EXACTLY the gap docs/CONTACTS.md already records against the
-         * CardDAV path: a contact deleted in the web UI stays on the phone and can be edited back into
-         * existence. That is a stale row. The alternative is an emptied address book. Not close.
-         *
-         * Java-side `commit()` also has NO collapse guard of its own — it prunes whatever it is handed
-         * — and a plugin must not trust its caller. Re-enabling this needs both: the identity bug
-         * found, and a native guard that refuses a reconcile deleting more than it keeps. */
-        void P.commit;
+         * A refusal is a REFUSAL, not a failure: nothing was deleted, `_pushSig` is left alone so the
+         * next sweep tries again, and it is said once rather than repeated every 9 seconds. */
+        let done = null;
+        try{ done = await P.commit({ uids: list.map(c => c.uid) }); }catch(_){ return; }
+        if(done && done.refused){
+          if(!_collapseSaid){
+            _collapseSaid = true;
+            toast('this phone kept its ' + (done.count || 0) + ' contacts: the update would have '
+                  + 'removed ' + (done.would || 0) + ' of them');
+          }
+          return;
+        }
+        _collapseSaid = false;
         _pushSig = sig;
       })().catch(()=>{}).finally(()=>{ _pushing = null; });
       return _pushing;
@@ -595,6 +636,10 @@
       // start with no network — the app opening before wifi associates — sweeps from `books:[]` and
       // takes the whole phone book with it.
       if(!S.loadedOk) return Promise.resolve();
+      // …and a WHOLE one. The pull half is no safer here than the push: a card whose book failed to
+      // fetch is missing from heldCards(), so the phone's row for it reads as a contact created on
+      // the phone and is stored again, in whichever book happens to be first — one person, two cards.
+      if(S.partial) return Promise.resolve();
       if(_syncing) return _syncing;
       _syncing = (async () => {
         let wrote = 0;

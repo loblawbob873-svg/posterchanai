@@ -33,12 +33,28 @@ const PLUGIN = {
     for(const u of phoneRows) hashes[u] = 'h:' + u;
     return { granted: opt.revoked ? false : true, hashes, count: phoneRows.length };
   },
-  async put(a){ calls.push(['put', (a.cards || []).map(c => c.uid)]); return { written:(a.cards||[]).length }; },
+  async put(a){
+    calls.push(['put', (a.cards || []).map(c => c.uid)]);
+    // A written card IS on the phone from here on — and the reconcile that follows reads the rows
+    // fresh, so a stub that forgot them would be asked to prune a phone that is missing everything
+    // the sweep just wrote, i.e. the one shape the guards exist to refuse.
+    for(const c of (a.cards || [])) if(!phoneRows.includes(c.uid)) phoneRows.push(c.uid);
+    return { written:(a.cards||[]).length };
+  },
+  /* commit() WITH THE PLUGIN'S OWN COLLAPSE GUARD, because that guard is the load-bearing one: it is
+   * the last thing between a keep-set built from a bad read and somebody's dialer. `nativeGuard:false`
+   * runs the phone as it was before it existed, which is how a test can show the difference rather
+   * than assert it. See ContactSyncPlugin.commit / isCollapse. */
   async commit(a){
-    calls.push(['commit', (a.uids || []).slice()]);
+    calls.push(['commit', (a.uids || []).slice(), a.force ? 'force' : '']);
     const keep = new Set(a.uids || []);
+    const doomed = phoneRows.filter(u => !keep.has(u));
+    const kept = phoneRows.length - doomed.length;
+    if(opt.nativeGuard !== false && !a.force && doomed.length > 0 && doomed.length > kept){
+      return { refused:true, removed:0, would:doomed.length, kept, count:phoneRows.length };
+    }
     phoneRows = phoneRows.filter(u => keep.has(u));
-    return { removed:0, count:phoneRows.length };
+    return { removed:doomed.length, count:phoneRows.length };
   },
   async pull(a){ calls.push(['pull', a]); return { granted:true, rows:(opt.pullRows || []), pushed:{} }; },
   async taken(a){ calls.push(['taken', a]); return {}; },
@@ -65,6 +81,9 @@ function makeFetch(){
     if(/\/books/.test(url)) return { ok:true, status:200, json:async()=>({ books: opt.books || [] }) };
     if(/\/cards/.test(url)){
       const book = decodeURIComponent((url.match(/book=([^&]*)/) || [,''])[1]);
+      // ONE BOOK OUT OF SEVERAL FAILING is the shape that emptied a phone: the client swallowed it
+      // into `[]`, the load still looked complete, and the reconcile was handed a short keep-set.
+      if((opt.failBooks || []).includes(book)) throw new Error('NetworkError: failed to fetch');
       return { ok:true, status:200, json:async()=>({ cards:(opt.cards || {})[book] || [] }) };
     }
     return { ok:true, status:200, json:async()=>({}) };
@@ -93,7 +112,12 @@ require(path.join(ROOT, 'static', 'js', 'client', 'contacts.js'));
     else if(step === 'syncTick'){ await C.syncTick(); }
     else if(step === 'forget'){ await C.forgetDevice(); }
     else if(step === 'render'){ C.render(); await new Promise(r => setTimeout(r, 20)); }
-    else if(step === 'ok'){ opt.failLoad = false; }
+    else if(step === 'ok'){ opt.failLoad = false; opt.failBooks = []; }
+    else if(step.slice(0, 10) === 'failbooks:'){ opt.failBooks = step.slice(10).split(',').filter(Boolean); }
+    else if(step.slice(0, 7) === 'remove:'){       // somebody deleted a contact in the web UI
+      const [book, uid] = step.slice(7).split(':');
+      opt.cards[book] = (opt.cards[book] || []).filter(c => c.uid !== uid);
+    }
     else if(step === 'fail'){ opt.failLoad = true; }
     else if(step === 'settle'){ await new Promise(r => setTimeout(r, 30)); }
   }

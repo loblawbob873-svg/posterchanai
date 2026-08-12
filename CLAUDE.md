@@ -404,6 +404,25 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   foreign `PRODID` and `X-*` fields; this app has fields for ~8 properties, so `vcard.js` rewrites
   only what it manages and carries every other line through untouched **with its group prefix**, or a
   saved phone number silently strips the photo everywhere else.
+  **THE PHONE-BOOK RECONCILE IS A KEEP-SET, so a SHORT list is a delete order.** The APK's native
+  sync (`mobile/android/.../contacts/`, switch in ⋯ → Addressbooks) emptied a real phone book twice:
+  the guards then in place only ever asked "is the list EMPTY?", and it never was. Four things now
+  stand between a bad read and somebody's dialer, each with a test verified to fail without it —
+  (a) a per-book fetch failure is no longer swallowed into `[]` (it keeps the last good cards and
+  marks the load PARTIAL; `loadedOk` is about history and cannot see it, because a load HAD
+  completed); (b) `/api/contacts/cards` and `/books` read the relay **strictly**, so "I could not
+  ask" is a 503 rather than a 200 carrying part of the address book (`list_docs` returns what it
+  collected when a read times out part-way); (c) the client refuses a reconcile that would delete
+  more than it keeps; and (d) `ContactSyncPlugin.commit()` applies the SAME rule to the ROWS and
+  answers `refused:true` — a plugin must not trust its caller, and the caller is what got it wrong.
+  `force:true` is the only way past (d) and nothing passes it; the deliberate way to rebuild a
+  handset's copy is the switch, off and on. Also: an EMPTY `owner` is "I don't know", never
+  "somebody else" — read as a mismatch it wiped the phone book and recorded `""`, so the next sweep
+  wrote it all back (written, gone, written, gone). And the edit schema's kinds are AOSP's exact
+  spellings — `structuredPostal`, never `postal`, which throws `DefinitionException` and discards the
+  WHOLE `<EditSchema>`, leaving the account silently read-only on the phone.
+  `tests/test_android_contact_sync.py` (javac + `java` RUN the pure guards) +
+  `tests/client/test_contacts_phonebook_guard.py` (the shipped contacts.js against a stub phone).
   **Gotchas:** (1) a collection with no `kind` must default to a CALENDAR — anything else hides every
   calendar that existed before addressbooks did, data intact and nothing logged; (2) the reconcile
   picks BOTH the Radicale tag and the file extension from the kind, and the delete half matters as
