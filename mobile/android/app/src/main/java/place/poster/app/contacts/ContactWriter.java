@@ -3,6 +3,7 @@ package place.poster.app.contacts;
 import android.accounts.Account;
 import android.accounts.AccountManager;
 import android.content.ContentProviderOperation;
+import android.content.ContentProviderResult;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.database.Cursor;
@@ -211,8 +212,36 @@ public final class ContactWriter {
    */
   public static Set<String> write(Context ctx, JSONArray cards, Map<String, Long> existing,
                                   Set<String> skip) {
+    return write(ctx, cards, existing, skip, new Report());
+  }
+
+  /**
+   * WHAT A WRITE ACTUALLY DID, as opposed to what it attempted.
+   *
+   * This feature was debugged blind across four APK builds because the failure REPORTS SUCCESS: a
+   * batch the provider quietly no-ops does not throw, `write()` hands back the uids it sent, and
+   * every layer above says it worked while the phone's Contacts app stays empty. `applyBatch`
+   * returns a ContentProviderResult per operation — an insert that landed carries a `uri` — so the
+   * one question that matters ("did rows appear?") is answerable here and nowhere else.
+   */
+  public static final class Report {
+    public int cards, built, held, ops, batches, failedBatches, applied, noop;
+    public String error = "";
+
+    /** One line, safe to put on a screen and read back over a phone call. */
+    public String line() {
+      return "ops=" + ops + " applied=" + applied + " noop=" + noop
+           + " batches=" + batches + (failedBatches > 0 ? "/" + failedBatches + " failed" : "")
+           + (error.isEmpty() ? "" : " err=" + error);
+    }
+  }
+
+  public static Set<String> write(Context ctx, JSONArray cards, Map<String, Long> existing,
+                                  Set<String> skip, Report rep) {
     Set<String> ok = new HashSet<>();
+    if (rep == null) rep = new Report();
     if (cards == null || cards.length() == 0) return ok;
+    rep.cards = cards.length();
     ArrayList<ContentProviderOperation> ops = new ArrayList<>();
     List<String> pending = new ArrayList<>();
     for (int i = 0; i < cards.length(); i++) {
@@ -220,11 +249,12 @@ public final class ContactWriter {
       if (card == null) continue;
       String uid = card.optString("uid", "");
       if (uid.isEmpty()) continue;
-      if (skip != null && skip.contains(uid)) continue;
+      if (skip != null && skip.contains(uid)) { rep.held++; continue; }
       Long rawId = existing.get(uid);
       try {
         buildCard(ops, uid, rawId, card);
         pending.add(uid);
+        rep.built++;
       } catch (Throwable t) {
         Log.w(TAG, "contacts: skipping a card we could not build", t);
       }
@@ -232,11 +262,11 @@ public final class ContactWriter {
       // chunk that splits a card would point its data rows at whatever happened to sit at that index
       // in the next batch — silently attaching one person's phone number to another.
       if (ops.size() >= BATCH_OPS) {
-        if (apply(ctx, ops)) ok.addAll(pending);
+        if (apply(ctx, ops, rep)) ok.addAll(pending);
         ops = new ArrayList<>(); pending = new ArrayList<>();
       }
     }
-    if (apply(ctx, ops)) ok.addAll(pending);
+    if (apply(ctx, ops, rep)) ok.addAll(pending);
     return ok;
   }
 
@@ -438,15 +468,41 @@ public final class ContactWriter {
     }
   }
 
-  private static boolean apply(Context ctx, ArrayList<ContentProviderOperation> ops) {
+  /**
+   * DID THIS OPERATION CHANGE ANYTHING? On its own so it can be RUN in a test rather than read.
+   *
+   * An insert that landed carries the new row's `uri`; an update or delete carries a `count`. A
+   * provider that accepted the operation and did nothing carries neither — and applyBatch does NOT
+   * throw for it, which is the entire reason a sweep can hand over ninety cards, report success, and
+   * leave the phone's Contacts app empty. Getting this backwards would make the diagnostic lie in
+   * the one direction that matters.
+   */
+  static boolean landed(ContentProviderResult r) {
+    if (r == null) return false;
+    if (r.uri != null) return true;
+    return r.count != null && r.count.intValue() > 0;
+  }
+
+  private static boolean apply(Context ctx, ArrayList<ContentProviderOperation> ops, Report rep) {
     if (ops.isEmpty()) return true;
+    rep.batches++;
+    rep.ops += ops.size();
     try {
-      ctx.getContentResolver().applyBatch(ContactsContract.AUTHORITY, ops);
+      ContentProviderResult[] res =
+          ctx.getContentResolver().applyBatch(ContactsContract.AUTHORITY, ops);
+      // COUNT WHAT CAME BACK. An operation that changed nothing returns a result with no uri and a
+      // count of zero, and applyBatch does NOT throw for it — which is the whole reason a sweep can
+      // report success and leave a phone book empty.
+      for (int i = 0; res != null && i < res.length; i++) {
+        if (landed(res[i])) rep.applied++; else rep.noop++;
+      }
       return true;
     } catch (Throwable t) {
       // One malformed card must not abandon the rest of the address book — the same rule the client
-      // follows when a vCard will not parse. It IS reported, though: see write().
+      // follows when a vCard will not parse. It IS reported, though: see write() and Report.
       Log.w(TAG, "contacts: a batch of " + ops.size() + " operations failed", t);
+      rep.failedBatches++;
+      if (rep.error.isEmpty()) rep.error = String.valueOf(t);
       return false;
     }
   }

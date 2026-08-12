@@ -173,6 +173,103 @@ class AShortKeepSetTests(unittest.TestCase):
 
 
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
+class APartialLoadWritesButDoesNotDeleteTests(unittest.TestCase):
+    """THE SECOND FAILURE, and it was caused by the fix for the first.
+
+    Refusing the whole sweep whenever a load came back short traded "the phone book empties itself"
+    for "nothing is ever written to the phone" — reported, verbatim, as *"nothing going to android
+    contacts app"*. It is the quieter of the two and in some ways the worse one to diagnose: a
+    per-book failure keeps the last good cards, so the Contacts screen shows a complete address book
+    with NO error, the sweep says nothing at all, and if a book fails reliably the feature is dead
+    for ever with nothing anywhere to say so.
+
+    The rule the fix restores is an asymmetry, not a threshold: A SHORT LOAD MAY INSERT AND UPDATE,
+    AND MAY NOT RECONCILE. Deleting is what a short keep-set gets catastrophically wrong; writing one
+    cannot lose anybody, and the worst an extra row can do is wait for a whole sweep to remove it.
+    """
+
+    def test_a_partial_load_still_writes_every_contact_it_did_load(self):
+        """FAILS BEFORE THE FIX: zero bridge calls, zero rows, zero toasts."""
+        res = run(books=[BOOK, BOOK2], cards={"default": TEN, "work": TWO},
+                  failBooks=["work"], phone=[])
+        puts = [c[1] for c in res["calls"] if c[0] == "put"]
+        self.assertTrue(puts, "a partial load wrote nothing to the phone at all")
+        self.assertEqual(sorted(u for b in puts for u in b), sorted(c["uid"] for c in TEN))
+        self.assertEqual(sorted(res["phoneRows"]), sorted(c["uid"] for c in TEN))
+
+    def test_a_partial_load_never_reconciles(self):
+        """The half that must NOT come back with it. Verified to fail if the prune is re-allowed:
+        the two contacts in the book that did not load would be deleted from the phone."""
+        res = run(books=[BOOK, BOOK2], cards={"default": TEN, "work": TWO},
+                  failBooks=["work"], phone=ALL_TEN)
+        self.assertEqual(commits(res), [], "a partial load was allowed to delete")
+        self.assertEqual(sorted(res["phoneRows"]), sorted(ALL_TEN))
+
+    def test_a_partial_load_says_which_half_it_skipped(self):
+        """"Nothing was deleted" and "nothing ran" look identical from the phone."""
+        res = run(books=[BOOK, BOOK2], cards={"default": TEN, "work": TWO},
+                  failBooks=["work"], phone=[])
+        self.assertIn("prune=skipped", res["diag"])
+        self.assertIn("landed=8", res["diag"])
+
+    def test_the_reconcile_comes_back_on_the_next_whole_load(self):
+        """The mode is part of the push signature, so a sweep that wrote everything without being
+        allowed to reconcile must not tell the next one there is nothing left to do."""
+        res = run(books=[BOOK, BOOK2], cards={"default": TEN, "work": TWO}, phone=list(ALL_TEN),
+                  steps=["failbooks:work", "reload", "settle", "ok", "reload", "settle"])
+        self.assertEqual(len(commits(res)), 1, "the reconcile never resumed after a partial load")
+        self.assertEqual(sorted(commits(res)[0]), sorted(ALL_TEN))
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class TheSweepMustMeasureWhatItDidTests(unittest.TestCase):
+    """A SWEEP THAT REPORTS SUCCESS AND WRITES NOTHING IS THE FAILURE MODE OF THIS FEATURE.
+
+    There is no device on the machine this is developed on — no adb, no emulator — so every round of
+    "here is a fix, install this APK" returns exactly one bit, and four builds were spent that way.
+    What ends that is not a better guess: it is the sweep reporting numbers it MEASURED. `applyBatch`
+    does not throw for an operation that changes nothing, so the row count under our account, read
+    back after the write, is the only thing that can tell a sweep that worked from one that did not.
+    """
+
+    def test_a_provider_that_accepts_everything_and_stores_nothing_is_reported(self):
+        res = run(books=[BOOK], cards={"default": TEN}, phone=[], putNoop=True)
+        self.assertTrue(any("stored none of them" in t for t in res["toasts"]),
+                        "the sweep reported success while the phone stayed empty")
+        self.assertIn("landed=0", res["diag"])
+        self.assertIn("phone 0→0", res["diag"])
+
+    def test_a_phone_with_no_account_says_so_instead_of_going_quiet(self):
+        """Every raw contact hangs off the PosterChan account. The plugin used to REJECT the call,
+        which arrives here inside a `catch(_){ return; }` — i.e. as silence."""
+        res = run(books=[BOOK], cards={"default": TEN}, phone=[], noAccount=True)
+        self.assertTrue(any("account" in t for t in res["toasts"]),
+                        "a phone that can hold nothing said nothing")
+        self.assertEqual(res["phoneRows"], [])
+        self.assertIn("no contacts account", res["diag"])
+
+    def test_a_healthy_sweep_still_reports_its_numbers(self):
+        """ON SUCCESS TOO. A diagnostic that only appears when something looks wrong would have said
+        nothing about the build this exists for: nothing looked wrong."""
+        res = run(books=[BOOK], cards={"default": TEN}, phone=[])
+        self.assertIn("landed=8", res["diag"])
+        self.assertIn("phone 0→8", res["diag"])
+        self.assertIn("prune=ok", res["diag"])
+        self.assertEqual(res["toasts"], [], "a healthy sweep must not interrupt anybody")
+
+    def test_a_failed_write_is_retried_rather_than_signed_off(self):
+        """Recording the push signature for a sweep that landed nothing tells every later sweep there
+        is nothing left to try — the same shape as recording a hash for a batch the provider
+        refused."""
+        res = run(books=[BOOK], cards={"default": TEN}, phone=[], putNoop=True,
+                  steps=["reload", "settle", "syncTick", "settle"])
+        self.assertEqual(len([c for c in res["calls"] if c[0] == "put"]), 2,
+                         "a write that landed nothing was recorded as done")
+        # …and it is still said only once.
+        self.assertEqual(len([t for t in res["toasts"] if "stored none" in t]), 1)
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
 class ComingBackToTheScreenTests(unittest.TestCase):
     """A load that failed once must not be the answer for the rest of the page.
 

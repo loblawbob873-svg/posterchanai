@@ -420,7 +420,29 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   "somebody else" — read as a mismatch it wiped the phone book and recorded `""`, so the next sweep
   wrote it all back (written, gone, written, gone). And the edit schema's kinds are AOSP's exact
   spellings — `structuredPostal`, never `postal`, which throws `DefinitionException` and discards the
-  WHOLE `<EditSchema>`, leaving the account silently read-only on the phone.
+  WHOLE `<EditSchema>`, leaving the account read-only *in the Contacts app's editor*. That schema is
+  read by the CONTACTS APP (`ExternalAccountType`), never by ContactsProvider2 — it cannot affect
+  what this app WRITES, which goes to the provider through `applyBatch` as a sync adapter. Rows were
+  landing on the phone while the spelling was wrong, so do not reach for it to explain a write that
+  did not happen.
+  **THEN THE GUARDS STOPPED IT SYNCING AT ALL, and that was the same bug with the sign flipped.**
+  Refusing the whole sweep on a partial load meant NOTHING reached the phone — for ever, if a book
+  fails reliably — reported as *"nothing going to android contacts app"*, with no error on screen (a
+  per-book failure keeps the last good cards, so the address book still looks complete) and nothing
+  in any log. **A partial load suppresses DELETION, never INSERTION**: `put` runs, `commit` is
+  skipped and says which, and the PULL is skipped too — but for its own reason, that a card whose
+  book failed is missing from `heldCards()` and the phone's row for it is stored again as a
+  phone-created contact (one person, two cards). The push signature carries the mode, so a partial
+  sweep does not tell the next whole one there is nothing left to do.
+  **AND THE SWEEP REPORTS WHAT IT MEASURED.** Four APK builds were spent guessing because there is no
+  device here and the failure REPORTS SUCCESS: `applyBatch` does not throw for an operation that
+  changes nothing. `put()` now answers with the row count under our account BEFORE and AFTER, re-read
+  from ContactsContract, plus the `ContentProviderResult` tally, and ⋯ → Addressbooks shows the line
+  **on success too** (`cards=90 sent=90 landed=0 phone 0→0 noop=180/180` is the shape that was
+  invisible). Two conditions that were silent now say so once and are NOT signed off in `_pushSig`,
+  so they retry: a phone that could not create the account (`begin`/`pull` used to `call.reject`,
+  which lands in a client `catch` and looks exactly like nothing happening), and a write that was
+  accepted and stored nothing.
   `tests/test_android_contact_sync.py` (javac + `java` RUN the pure guards) +
   `tests/client/test_contacts_phonebook_guard.py` (the shipped contacts.js against a stub phone).
   **Gotchas:** (1) a collection with no `kind` must default to a CALENDAR — anything else hides every

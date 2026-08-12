@@ -174,8 +174,12 @@ public class ContactSyncPlugin extends Plugin {
   public void pull(PluginCall call) {
     JSObject out = new JSObject();
     if (!granted()) { out.put("granted", false); call.resolve(out); return; }
+    // See begin(): an account that will not exist is a fact to report, not an exception to swallow.
     if (!ContactWriter.ensureAccount(getContext())) {
-      call.reject("could not create the PosterChan contacts account");
+      out.put("granted", true);
+      out.put("account", false);
+      out.put("rows", new JSONArray());
+      call.resolve(out);
       return;
     }
     boolean wiped = ownerGuard(call.getString("owner", ""));
@@ -187,6 +191,7 @@ public class ContactSyncPlugin extends Plugin {
       rows = ContactReader.changes(getContext());
     }
     out.put("granted", true);
+    out.put("account", true);
     out.put("wiped", wiped);
     out.put("rows", rows);
     // The hash of what we last PUSHED for each of those cards, so the client can tell "the phone
@@ -252,8 +257,17 @@ public class ContactSyncPlugin extends Plugin {
       call.resolve(out);
       return;
     }
+    /* NO ACCOUNT MEANS NO ROWS, EVER — say so instead of throwing.
+     *
+     * A rejected plugin call arrives in the client as an exception inside a `catch(_){ return; }`,
+     * i.e. as silence: the sweep stops, nothing is written, nothing is said, and the switch keeps
+     * claiming it is on. Every raw contact hangs off this account, so this is the one condition
+     * under which the feature cannot work at all, and it is exactly the one that must be visible. */
     if (!ContactWriter.ensureAccount(getContext())) {
-      call.reject("could not create the PosterChan contacts account");
+      out.put("granted", true);
+      out.put("account", false);
+      out.put("count", 0);
+      call.resolve(out);
       return;
     }
     boolean wiped = ownerGuard(call.getString("owner", ""));
@@ -269,13 +283,24 @@ public class ContactSyncPlugin extends Plugin {
       if (have.containsKey(uid)) hashes.put(uid, stored.optString(uid, ""));
     }
     out.put("granted", true);
+    out.put("account", ContactWriter.hasAccount(getContext()));
     out.put("hashes", hashes);
     out.put("count", have.size());
     out.put("wiped", wiped);
     call.resolve(out);
   }
 
-  /** Upsert a batch of already-decrypted cards. */
+  /**
+   * Upsert a batch of already-decrypted cards.
+   *
+   * IT ANSWERS WITH WHAT IT MEASURED, not with what it was asked to do. A sweep that hands over
+   * ninety cards and leaves the phone's Contacts app empty is the failure this feature has actually
+   * had, and it is invisible from the WebView: applyBatch does not throw for a no-op, so every layer
+   * above reports success. So the reply carries the number of rows that exist under our account
+   * BEFORE and AFTER — re-read from ContactsContract, never inferred — plus the batch's own
+   * ContentProviderResult tally. The client shows it in ⋯ → Addressbooks, on success as well, since
+   * a diagnostic that only appears when something looks wrong would have said nothing here.
+   */
   @PluginMethod
   public void put(PluginCall call) {
     if (!granted()) { call.reject("contacts permission is not granted"); return; }
@@ -291,7 +316,8 @@ public class ContactSyncPlugin extends Plugin {
     // ContactReader.pending(). This is read fresh, not passed in, because the user can be editing a
     // contact while the sweep runs.
     Set<String> hold = ContactReader.pending(getContext());
-    Set<String> landed = ContactWriter.write(getContext(), arr, have, hold);
+    ContactWriter.Report rep = new ContactWriter.Report();
+    Set<String> landed = ContactWriter.write(getContext(), arr, have, hold, rep);
 
     // Record a hash ONLY for a card whose batch was applied AND which is on the phone now. Recording
     // one for a card the provider refused would mark it "already up to date" for ever — the update
@@ -306,7 +332,19 @@ public class ContactSyncPlugin extends Plugin {
       try { stored.put(uid, c.optString("h", "")); } catch (Throwable ignored) {}
     }
     writeHashes(stored);
-    call.resolve(new JSObject().put("written", landed.size()));
+    call.resolve(new JSObject().put("written", landed.size())
+                               .put("sent", arr.length())
+                               .put("held", rep.held)
+                               .put("before", have.size())
+                               .put("after", after.size())
+                               .put("account", ContactWriter.hasAccount(getContext()))
+                               .put("ops", rep.ops)
+                               .put("applied", rep.applied)
+                               .put("noop", rep.noop)
+                               .put("batches", rep.batches)
+                               .put("failed", rep.failedBatches)
+                               .put("error", rep.error)
+                               .put("detail", rep.line()));
   }
 
   /**

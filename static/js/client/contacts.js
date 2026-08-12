@@ -520,6 +520,30 @@
       return wrote;
     }
 
+    /* WHAT THE LAST SWEEP ACTUALLY DID, MEASURED — and put on the screen.
+     *
+     * This feature has been debugged BLIND across four APK builds. There is no device here, no adb
+     * and no emulator, and the failure mode reports success: a sweep that hands ninety cards to the
+     * bridge and leaves nothing in the phone's Contacts app looks, from this side, exactly like one
+     * that worked. Every round of that costs somebody an install and returns one bit.
+     *
+     * So the sweep now records what it MEASURED — how many cards it sent, how many the bridge says
+     * landed, and how many rows exist under our account before and after, read back out of
+     * ContactsContract rather than inferred from a batch that did not throw — and ⋯ → Addressbooks
+     * shows it. It is shown on SUCCESS too, because a diagnostic that appears only when something
+     * looks wrong would have said nothing at all here: nothing looked wrong. */
+    let _diag = '', _diagSaid = '';
+    const _hhmm = () => { try{ return new Date().toTimeString().slice(0, 5); }catch(_){ return ''; } };
+    const _err = (e) => String((e && e.message) || e || 'error').slice(0, 90);
+    function _fmtDiag(d){
+      const p = ['cards=' + d.cards, 'sent=' + d.sent, 'landed=' + d.landed];
+      p.push('phone ' + (d.before == null ? '?' : d.before) + '→' + (d.after == null ? '?' : d.after));
+      if(d.prune) p.push('prune=' + d.prune);
+      if(d.batch) p.push(d.batch);
+      if(d.note) p.push(d.note);
+      return (d.t ? d.t + ' · ' : '') + p.join(' · ');
+    }
+
     /* Push what changed. Cheap by construction: `begin()` returns the hash of every card already on
      * the phone, so a visit that changed nothing sends nothing, and the first push after adding one
      * person sends one person. */
@@ -527,9 +551,20 @@
     let _pushSig = '', _pushing = null, _collapseSaid = false;
     async function pushPhonebook(force){
       const P = nativeSync('begin');
-      if(!P || !phonebookOn()) return;
-      if(!S.loadedOk) return;             // never reconcile against state no load ever produced
-      if(S.partial) return;               // …nor against one that came back missing a book
+      if(!P || !phonebookOn()) return null;
+      /* WHAT A SHORT LOAD MAY AND MAY NOT DO. The asymmetry IS the fix.
+       *
+       * Refusing the whole sweep was the previous answer, and it traded one silent failure for
+       * another: a load that came back missing a book stopped everything, so NOTHING reached the
+       * phone — permanently, if a book fails reliably — with no error on screen (a per-book failure
+       * keeps the last good cards, so the address book still looks complete) and nothing in any log.
+       * "Writes nothing" is not a safer failure than "deletes something", it is just a quieter one.
+       *
+       * DELETING is what a short list gets catastrophically wrong. WRITING one cannot lose anybody:
+       * the worst an insert can do is leave a row a later, whole sweep removes. So a partial load
+       * may insert and update, and may not reconcile — and it says which, on screen. */
+      if(!S.loadedOk && !S.partial) return null;   // no load has ever reached the cards at all
+      let mayPrune = S.loadedOk && !S.partial;
       if(_pushing) return _pushing;       // a sweep is a sweep; two at once would fight over uids
       const list = everyCard().map(c => V().toPhone(c));
       /* ONE reading of who we are, for the whole sweep. `owner()` reads the live session, and an
@@ -537,18 +572,39 @@
        * on sign-out, an empty one — which its owner guard reads as "somebody else" and answers by
        * wiping the phone book. It refuses an empty owner now; this is the other half. */
       const me = owner();
-      if(!me) return;
-      const sig = me + '|' + list.map(c => c.uid + ':' + c.h).join(',');
-      if(!force && sig === _pushSig) return;
+      if(!me) return null;
+      // The MODE is part of the signature: a sweep that wrote everything but was not allowed to
+      // reconcile must not tell the next one — the one that finally has a whole load — that there is
+      // nothing left to do. Same cards, different question.
+      const sig = me + '|' + (mayPrune ? 'r' : 'w') + '|' + list.map(c => c.uid + ':' + c.h).join(',');
+      if(!force && sig === _pushSig) return null;
       _pushing = (async () => {
+        const d = { t:_hhmm(), cards:list.length, sent:0, landed:0, before:null, after:null,
+                    prune:'', batch:'', note:'', ok:true };
+        let recordSig = true;             // …unless this sweep is one that must be tried again
+        const stop = (extra) => { Object.assign(d, extra || {}); _diag = _fmtDiag(d); return d; };
+        // Said ONCE per distinct problem, not every 9 seconds — but said again when the problem
+        // changes, because "it is still broken in the same way" and "it broke differently" are
+        // different facts and only one of them is worth interrupting somebody for.
+        const say = (msg, key) => { if(_diagSaid !== key){ _diagSaid = key; toast(msg); } };
         let st = null;
-        try{ st = await P.begin({ owner: me }); }catch(_){ return; }
+        try{ st = await P.begin({ owner: me }); }
+        catch(e){ return stop({ ok:false, note:'begin() failed: ' + _err(e) }); }
         if(st && st.granted === false){
           // Revoked in Android's settings after the switch was turned on. Turning it back off is the
           // honest answer — a switch that says "on" while nothing is written is the worse one.
           CSet().set(PHONE_KEY, false); CSet().set(PHONE_OWNER, ''); _pushSig = '';
           toast('Android has revoked access to your contacts — phone sync turned off');
-          return;
+          return stop({ ok:false, note:'permission revoked' });
+        }
+        /* NO ACCOUNT, NO ROWS — and nothing anywhere says so. Every raw contact hangs off the
+         * PosterChan account; if it could not be created, a write is accepted and lands nowhere.
+         * The plugin used to REJECT the call here, which this side swallowed into a silent return.
+         * `=== false` on purpose: an APK older than this reports nothing and must not be accused. */
+        if(st && st.account === false){
+          say('this phone could not create the PosterChan contacts account — nothing was written',
+              'noaccount');
+          return stop({ ok:false, note:'no contacts account on this phone' });
         }
         const known = (st && st.hashes) || {};
         /* THE COLLAPSE GUARD — the same one that saved the drive index and the folder-sync manifest.
@@ -567,11 +623,21 @@
          *
          * The cost is that a genuine mass delete no longer reaches the phone by itself. That is the
          * honest trade, and there is a deliberate way to do it: turning the switch off removes the
-         * account and every row with it, and turning it back on writes the current book. */
+         * account and every row with it, and turning it back on writes the current book.
+         *
+         * IT TAKES THE DELETE AWAY, NOT THE SWEEP. It used to return here, which meant a suspicious
+         * count also stopped the write — the very thing that is safe. */
         const onPhone = (st && typeof st.count === 'number')
                           ? st.count : Object.keys(known).length;
+        d.before = onPhone;
         const wouldRemove = Math.max(0, onPhone - list.length);
-        if(wouldRemove > list.length){
+        if(mayPrune && wouldRemove > list.length){
+          mayPrune = false;
+          // A REFUSAL IS RETRIED, a skip is not. The counts can change under us — the user deletes
+          // the stale rows by hand, the missing book comes back — and the signature does not carry
+          // them, so signing this sweep off would refuse for ever without asking again.
+          recordSig = false;
+          d.prune = 'refused(short ' + list.length + '/' + onPhone + ')';
           if(!_collapseSaid){
             _collapseSaid = true;
             toast(list.length
@@ -580,13 +646,23 @@
               : 'your address book came back empty — the ' + onPhone + ' contact'
                 + (onPhone === 1 ? '' : 's') + ' on this phone were left alone');
           }
-          return;                          // and NO _pushSig: the next sweep tries again
         }
         let batch = [], size = 0;
         const flush = async () => {
           if(!batch.length) return;
           const cards = batch; batch = []; size = 0;
-          await P.put({ cards });
+          d.sent += cards.length;
+          let r = null;
+          try{ r = await P.put({ cards }); }
+          catch(e){ d.ok = false; d.note = 'put() failed: ' + _err(e); return; }
+          // MEASURED, not assumed. `written` is the set of uids the provider actually took; `after`
+          // is a fresh count of the rows under our account. An applyBatch that no-ops without
+          // throwing is exactly the failure this feature has been chasing, and it is invisible from
+          // any other vantage point. An older APK reports neither, so fall back to the count sent.
+          d.landed += (r && typeof r.written === 'number') ? r.written : cards.length;
+          if(r && typeof r.after === 'number') d.after = r.after;
+          if(r && r.error) d.batch = 'batch=' + String(r.error).slice(0, 60);
+          else if(r && r.noop) d.batch = 'noop=' + r.noop + '/' + (r.ops || 0);
         };
         for(const c of list){
           if(known[c.uid] === c.h) continue;
@@ -595,6 +671,15 @@
           if(size >= PUT_BUDGET) await flush();
         }
         await flush();
+        /* THE ONE THE OLD CODE COULD NOT SEE: cards handed over, nothing on the phone. Every layer
+         * below reports success for it — applyBatch does not throw, the plugin resolves, the sweep
+         * finishes — so unless the answer is checked against the rows, "it worked" is what the user
+         * is told while their Contacts app stays empty. */
+        if(d.sent > 0 && d.landed === 0){
+          d.ok = false;
+          say('this phone accepted ' + d.sent + ' contact' + (d.sent === 1 ? '' : 's')
+              + ' and stored none of them — open ⋯ → Addressbooks for the details', 'nolanding');
+        }
         /* THE RECONCILE. ALWAYS, even when nothing was written: this is the half that deletes, and
          * somebody removed in the web UI is only removed from the phone here.
          *
@@ -609,20 +694,41 @@
          * arrives as a 503 instead of a 200 carrying fewer contacts than the user has.
          *
          * A refusal is a REFUSAL, not a failure: nothing was deleted, `_pushSig` is left alone so the
-         * next sweep tries again, and it is said once rather than repeated every 9 seconds. */
+         * next sweep tries again, and it is said once rather than repeated every 9 seconds.
+         *
+         * AND IT IS SKIPPED, NOT FAILED, ON A PARTIAL LOAD — the writes above have already happened.
+         * Which of the two it was goes in the diagnostic, because "nothing was deleted" and "nothing
+         * ran" look identical from the phone. */
+        if(!mayPrune){
+          if(!d.prune) d.prune = 'skipped(' + (S.partial ? 'a book did not load'
+                                                        : 'no whole load yet') + ')';
+          // The writes DID happen, so don't repeat them on every tick — unless they didn't, in which
+          // case a signature would tell the next sweep there is nothing left to try.
+          if(d.ok && recordSig){ _pushSig = sig; _diagSaid = ''; }
+          return stop();
+        }
         let done = null;
-        try{ done = await P.commit({ uids: list.map(c => c.uid) }); }catch(_){ return; }
+        try{ done = await P.commit({ uids: list.map(c => c.uid) }); }
+        catch(e){ return stop({ ok:false, note:'commit() failed: ' + _err(e) }); }
         if(done && done.refused){
+          d.prune = 'refused(would ' + (done.would || 0) + ', keep ' + (done.kept || 0) + ')';
+          if(typeof done.count === 'number') d.after = done.count;
           if(!_collapseSaid){
             _collapseSaid = true;
             toast('this phone kept its ' + (done.count || 0) + ' contacts: the update would have '
                   + 'removed ' + (done.would || 0) + ' of them');
           }
-          return;
+          return stop({ ok:false });
         }
+        d.prune = 'ok removed=' + ((done && done.removed) || 0);
+        if(done && typeof done.count === 'number') d.after = done.count;
         _collapseSaid = false;
-        _pushSig = sig;
-      })().catch(()=>{}).finally(()=>{ _pushing = null; });
+        // A WRITE THAT LANDED NOTHING IS NOT DONE. Recording the signature would tell every later
+        // sweep there is nothing to try, which is how a transient provider failure becomes permanent
+        // — the same shape as recording a hash for a batch the provider refused.
+        if(d.ok && recordSig){ _pushSig = sig; _diagSaid = ''; }
+        return stop();
+      })().catch(()=>null).finally(()=>{ _pushing = null; });
       return _pushing;
     }
 
@@ -631,25 +737,27 @@
      * phone the other has already changed. */
     let _syncing = null;
     function syncPhonebook(force){
-      if(!nativeSync('begin') || !phonebookOn()) return Promise.resolve();
-      // A sweep both pushes and DELETES, so it needs a load that actually landed. Without this a
-      // start with no network — the app opening before wifi associates — sweeps from `books:[]` and
-      // takes the whole phone book with it.
-      if(!S.loadedOk) return Promise.resolve();
-      // …and a WHOLE one. The pull half is no safer here than the push: a card whose book failed to
-      // fetch is missing from heldCards(), so the phone's row for it reads as a contact created on
-      // the phone and is stored again, in whichever book happens to be first — one person, two cards.
-      if(S.partial) return Promise.resolve();
+      if(!nativeSync('begin') || !phonebookOn()) return Promise.resolve(null);
+      // A sweep acts on the phone, so it needs a load that actually landed. Without this a start
+      // with no network — the app opening before wifi associates — sweeps from `books:[]` and takes
+      // the whole phone book with it. What a PARTIAL load may still do is decided in pushPhonebook:
+      // it writes, it does not delete.
+      if(!S.loadedOk && !S.partial) return Promise.resolve(null);
       if(_syncing) return _syncing;
       _syncing = (async () => {
         let wrote = 0;
-        try{ wrote = await pullPhone(); }catch(_){}
+        /* THE PULL NEEDS A WHOLE LOAD, and for a different reason from the reconcile. A card whose
+         * book failed to fetch is missing from heldCards(), so the phone's row for it reads as a
+         * contact CREATED on the phone and is stored again, in whichever book happens to be first —
+         * one person, two cards. That is a write to the server off the back of an absence, which is
+         * the one thing a short read must never cause. The push has no such problem. */
+        if(S.loadedOk && !S.partial){ try{ wrote = await pullPhone(); }catch(_){} }
         // Re-read what the pull just stored. Without this the push would send the state from before
         // the merge — undoing the phone's edit on the phone — and the reconcile would not know about
         // a contact created there at all.
         if(wrote){ _pushSig = ''; try{ await load(); }catch(_){} }
-        await pushPhonebook(force || !!wrote);
-      })().catch(()=>{}).finally(()=>{ _syncing = null; });
+        return await pushPhonebook(force || !!wrote);
+      })().catch(()=>null).finally(()=>{ _syncing = null; });
       return _syncing;
     }
 
@@ -774,6 +882,11 @@
           nothing else on the phone can read them. Everything is removed when you sign out or turn
           this off.
           ${on ? `<br><b>${n}</b> contact${n === 1 ? '' : 's'} on this phone.` : ''}</p>
+        ${on ? `<p class="muted small" style="flex:1 1 100%;margin:4px 0 0">
+          <span id="ctb-phonediag">${_diag ? 'Last sync · ' + enc(_diag)
+                                           : 'No sync has run yet on this device.'}
+          <br>phone: permission=${st.granted ? 'yes' : 'NO'} account=${
+            st.account === false ? 'NO' : 'yes'} rows=${n}</span></p>` : ''}
       </div>`;
     }
 
@@ -797,11 +910,27 @@
             toast('Android didn’t allow access to your contacts — nothing was changed');
             return;
           }
+          /* THE ACCOUNT IS THE OTHER HALF OF "YES". Permission granted and no account created means
+           * every row we write hangs off nothing; the switch would sit there saying "on" while the
+           * Contacts app stayed empty for ever. `enable()` has always reported it — this side used
+           * to look only at `granted`, so the one build where it mattered said "done". */
+          if(r.account === false){
+            box.checked = false; CSet().set(PHONE_KEY, false); CSet().set(PHONE_OWNER, '');
+            toast('this phone would not create the PosterChan contacts account — nothing was written');
+            return;
+          }
           CSet().set(PHONE_KEY, true); CSet().set(PHONE_OWNER, owner());
           toast('adding your contacts to this phone…');
           _pushSig = '';
-          await syncPhonebook(true);
-          toast('done — look in the phone’s Contacts app');
+          /* SAY WHAT HAPPENED, NOT WHAT WAS ATTEMPTED. "done — look in the phone's Contacts app" was
+           * printed unconditionally, so the build that wrote nothing at all still ended by telling
+           * the user to go and look at an empty Contacts app. */
+          const d = await syncPhonebook(true);
+          if(d && d.cards > 0 && !d.after && !d.landed){
+            toast('nothing reached this phone — ' + (_diag || 'see ⋯ → Addressbooks'));
+          }else{
+            toast('done — look in the phone’s Contacts app');
+          }
         }else{
           CSet().set(PHONE_KEY, false); CSet().set(PHONE_OWNER, '');
           _pushSig = '';
@@ -984,6 +1113,10 @@
         if(!S.ready) return load();       // load() sweeps at its end
         return syncPhonebook();
       },
+      /* The last sweep's MEASURED numbers, for the panel and for the tests. Not derived from the
+       * screen: it is the answer the phone gave, which is the only thing that has ever been able to
+       * tell a sweep that worked from one that reported success and wrote nothing. */
+      lastSweep(){ return _diag; },
       /* Sign-out and account switch. The phone's copy must not outlive the session that could read
        * it — a handed-down phone would otherwise keep the previous user's people in its dialer and
        * in every share sheet. Removing the ACCOUNT takes every card with it, so there is no sweep

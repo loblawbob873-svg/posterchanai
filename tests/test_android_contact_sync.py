@@ -333,14 +333,16 @@ def test_a_batch_is_never_flushed_in_the_middle_of_a_card():
     """withValueBackReference indexes into the batch being applied. A chunk boundary inside a card
     points its data rows at whatever sits at that index in the NEXT batch — one person's phone number
     on somebody else's contact, with no error anywhere."""
-    write = re.search(r"public static Set<String> write\(.*?\n  \}", WRITER, re.S)
+    # The 5-arg one: the 2-arg overload above it only forwards. (Anchored on `Report rep` so this
+    # cannot silently start matching the delegate and asserting nothing.)
+    write = re.search(r"public static Set<String> write\([^)]*Report rep\).*?\n  \}", WRITER, re.S)
     assert write, "ContactWriter.write moved — re-point this test"
     body = write.group(0)
     flush = body.index("if (ops.size() >= BATCH_OPS)")
     build = body.index("buildCard(ops,")
     assert build < flush, "the flush must come after a whole card has been built"
     # Exactly two flushes: the one guarded by the card boundary, and the final one after the loop.
-    assert body.count("apply(ctx, ops)") == 2, \
+    assert body.count("apply(ctx, ops, rep)") == 2, \
         "an extra apply() in write() is an extra chance to split a card across two batches"
     build_body = WRITER[WRITER.index("private static void buildCard("):
                         WRITER.index("/** A Data row that")]
@@ -354,9 +356,51 @@ def test_a_refused_batch_is_not_remembered_as_written():
     reaches the phone, and nothing anywhere says so. That is why write() returns the UIDs that landed
     rather than a count."""
     assert "public static Set<String> write(" in WRITER
-    assert re.search(r"if \(apply\(ctx, ops\)\) ok\.addAll\(pending\);", WRITER)
+    assert re.search(r"if \(apply\(ctx, ops, rep\)\) ok\.addAll\(pending\);", WRITER)
     assert "private static boolean apply(" in WRITER
     assert "!landed.contains(uid) || !after.containsKey(uid)" in PLUGIN
+
+
+def test_a_sweep_reports_what_it_measured_not_what_it_attempted():
+    """THE INSTRUMENT, and it exists because this feature was debugged BLIND for four APK builds.
+
+    There is no device on the machine this is developed on — no adb, no emulator, no /dev/kvm — so
+    every round of "here is a fix, install this" returns exactly one bit. And the failure mode
+    REPORTS SUCCESS: `applyBatch` does not throw for an operation that changes nothing, so a sweep
+    can hand over ninety cards, resolve cleanly, and leave the phone's Contacts app empty.
+
+    So `put()` answers with the row count under our account BEFORE and AFTER the write, re-read from
+    ContactsContract rather than inferred, plus the batch's own ContentProviderResult tally — and the
+    client puts it on screen, on success as well, because a diagnostic that appears only when
+    something looks wrong would have said nothing at all about the build it exists for.
+    """
+    for key in ("before", "after", "applied", "noop", "ops", "account", "sent"):
+        assert f'put("{key}"' in PLUGIN, f"put() no longer reports {key}"
+    assert "ContactWriter.existing(getContext())" in PLUGIN
+    # …and the client SHOWS it, rather than logging it where nobody on a phone can reach it.
+    assert "lastSweep()" in CONTACTS_JS and "ctb-phonediag" in CONTACTS_JS
+    assert "typeof r.after === 'number'" in CONTACTS_JS, \
+        "the measured row count must reach the diagnostic, or it is guessing again"
+
+    # The one decision in that tally, RUN: an insert that landed carries a uri, an update a count, a
+    # provider that quietly did nothing carries neither. Backwards, the instrument lies in exactly
+    # the direction that matters.
+    out = _run_java("""
+    android.content.ContentProviderResult ins = new android.content.ContentProviderResult(
+        android.net.Uri.parse("content://com.android.contacts/raw_contacts/7"));
+    android.content.ContentProviderResult upd = new android.content.ContentProviderResult(1);
+    android.content.ContentProviderResult nope = new android.content.ContentProviderResult(0);
+    android.content.ContentProviderResult bare = new android.content.ContentProviderResult();
+    StringBuilder sb = new StringBuilder();
+    for (android.content.ContentProviderResult r :
+         new android.content.ContentProviderResult[]{ ins, upd, nope, bare, null }) {
+      sb.append(ContactWriter.landed(r) ? '1' : '0');
+    }
+    ContactWriter.Report rep = new ContactWriter.Report();
+    rep.ops = 4; rep.applied = 0; rep.noop = 4; rep.batches = 1;
+    System.out.println(sb + "|" + rep.line());
+    """, "Landed")
+    assert out == "11000|ops=4 applied=0 noop=4 batches=1", out
 
 
 def test_signing_out_takes_the_phones_copy_with_it():
@@ -442,7 +486,7 @@ def test_a_deletion_made_on_the_phone_is_never_re_added():
         "existing() must exclude tombstones, or a push writes onto a deleted contact"
     # …and neither half of the push touches a uid with an unacknowledged phone-side change.
     assert "public static Set<String> pending(Context ctx)" in READER
-    assert "if (skip != null && skip.contains(uid)) continue;" in WRITER
+    assert "if (skip != null && skip.contains(uid)) { rep.held++; continue; }" in WRITER
     assert "if (hold != null && hold.contains(e.getKey())) continue;" in WRITER
     put = re.search(r"public void put\(PluginCall call\) \{(.*?)\n  \}", PLUGIN, re.S)
     commit = re.search(r"public void commit\(PluginCall call\) \{(.*?)\n  \}", PLUGIN, re.S)
@@ -561,7 +605,7 @@ def test_the_java_type_checks_against_the_platform_stubs():
 def test_the_push_is_skipped_when_nothing_changed():
     """It runs at the end of every load and from app start. Sending every base64 PHOTO across the
     bridge each time is the cost that would make it unusable on a real address book."""
-    assert "if(!force && sig === _pushSig) return;" in CONTACTS_JS
+    assert "if(!force && sig === _pushSig) return null;" in CONTACTS_JS
     assert "if(known[c.uid] === c.h) continue;" in CONTACTS_JS
     # The plugin's hashes are a claim about the phone; the raw contacts are the fact. A card the user
     # deleted by hand must come back rather than be skipped for ever as "unchanged".

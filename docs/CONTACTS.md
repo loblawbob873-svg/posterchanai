@@ -204,10 +204,10 @@ never arrived, a relay that answered a 200 with fewer contacts than you have.
 
 This emptied a real phone book, twice, and it took four guards to bring back:
 
-1. **A sweep needs a load that COMPLETED, and a WHOLE one.** A per-book fetch that failed used to be
-   swallowed into "that book has no contacts in it" — and the flag that says a load succeeded is
-   about history, so it could not see it: one *had* succeeded, earlier. A book that did not load now
-   keeps its last good cards and the sweep is skipped until a whole load lands.
+1. **A sweep needs a load that COMPLETED, and the DELETE half needs a WHOLE one.** A per-book fetch
+   that failed used to be swallowed into "that book has no contacts in it" — and the flag that says a
+   load succeeded is about history, so it could not see it: one *had* succeeded, earlier. A book that
+   did not load now keeps its last good cards and the sweep is told the load was **partial**.
 2. **`/api/contacts/cards` reads the relay strictly.** An unreachable relay answers `503`, never a
    `200` carrying part of your address book. This is the same rule the drive index, the folder-sync
    manifest and the uptime document each learned the hard way: `[]` must not mean both "nothing" and
@@ -221,6 +221,53 @@ This emptied a real phone book, twice, and it took four guards to bring back:
 The cost is that a genuine mass delete no longer reaches the handset by itself. Turning the switch
 off does — it removes the account and every row with it — and turning it back on writes what you
 have now. A stale contact against an emptied address book is not a close call.
+
+### …and it must still SYNC. A partial load suppresses deletion, never insertion
+
+The first version of the guards above refused the **whole sweep** whenever a load came back short,
+and that traded one silent failure for another: nothing reached the phone at all — permanently, if a
+book fails reliably — reported as *"nothing going to android contacts app"*. It is the harder of the
+two to see, because a per-book failure keeps the last good cards, so the Contacts screen shows a
+complete address book with **no error anywhere**.
+
+The rule is an asymmetry, not a threshold. Deleting is what a short keep-set gets catastrophically
+wrong; **writing** one cannot lose anybody — the worst an extra row can do is wait for a whole sweep
+to remove it. So on a partial load:
+
+| | partial load | whole load |
+|---|---|---|
+| pull (phone → app) | **skipped** — a card whose book failed to load is missing from `heldCards()`, so the phone's row for it reads as *created on the phone* and is stored again: one person, two cards. That is a server write off the back of an absence. | runs |
+| put (app → phone) | **runs** | runs |
+| commit (the reconcile) | **skipped**, and it says so | runs |
+
+The push signature carries the mode, so a sweep that wrote everything without being allowed to
+reconcile does not tell the next one — the one that finally has a whole load — that there is nothing
+left to do.
+
+### The sweep reports what it MEASURED
+
+This feature was debugged blind across four APK builds: there is no device on the development
+machine, and the failure mode **reports success**. `applyBatch` does not throw for an operation that
+changes nothing, so a sweep can hand over ninety cards, resolve cleanly, and leave the phone's
+Contacts app empty — and every layer says it worked.
+
+So `put()` answers with the number of rows under our account **before and after** the write, re-read
+from ContactsContract rather than inferred, plus the batch's own `ContentProviderResult` tally; the
+reconcile answers with what it pruned, refused or skipped; and ⋯ → Addressbooks shows the line —
+**on success too**, because a diagnostic that appears only when something looks wrong would have said
+nothing at all about the build it exists for:
+
+```
+Last sync · 21:03 · cards=90 · sent=90 · landed=90 · phone 0→90 · prune=ok removed=0
+Last sync · 21:03 · cards=90 · sent=90 · landed=0  · phone 0→0  · prune=ok removed=0 · noop=180/180
+Last sync · 21:03 · cards=90 · sent=8  · landed=8  · phone 0→8  · prune=skipped(a book did not load)
+```
+
+Two conditions that used to be silent now say so out loud, once: a phone that could not create the
+PosterChan **account** (every raw contact hangs off it — the plugin used to *reject* that call, which
+arrives in the client inside a `catch` and is therefore indistinguishable from nothing happening),
+and a write that was accepted and **stored nothing**. Neither is signed off in the push signature, so
+they are retried rather than remembered as done.
 
 ### What is not covered
 

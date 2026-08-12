@@ -24,22 +24,36 @@ let phoneRows = (opt.phone || []).slice();          // uids ContactsContract hol
 
 const PLUGIN = {
   async status(){ return { granted:true, account:true, owner:opt.owner || 'me', count:phoneRows.length }; },
-  async enable(){ calls.push(['enable']); return { granted:true }; },
+  async enable(){ calls.push(['enable']); return { granted:true, account: !opt.noAccount }; },
   async disable(){ calls.push(['disable']); phoneRows = []; return {}; },
   async begin(a){
     calls.push(['begin', a]);
     if(opt.beginThrows) throw new Error('bridge is gone');
     const hashes = {};
     for(const u of phoneRows) hashes[u] = 'h:' + u;
-    return { granted: opt.revoked ? false : true, hashes, count: phoneRows.length };
+    // `account:false` is the phone that could not create the PosterChan account. Every row hangs off
+    // it, so this is "nothing will ever be written" — and it used to arrive here as a rejected call
+    // the client swallowed into silence.
+    if(opt.noAccount) return { granted:true, account:false, count:0 };
+    return { granted: opt.revoked ? false : true, account:true, hashes, count: phoneRows.length };
   },
   async put(a){
     calls.push(['put', (a.cards || []).map(c => c.uid)]);
-    // A written card IS on the phone from here on — and the reconcile that follows reads the rows
-    // fresh, so a stub that forgot them would be asked to prune a phone that is missing everything
-    // the sweep just wrote, i.e. the one shape the guards exist to refuse.
-    for(const c of (a.cards || [])) if(!phoneRows.includes(c.uid)) phoneRows.push(c.uid);
-    return { written:(a.cards||[]).length };
+    const sent = (a.cards || []).length;
+    const before = phoneRows.length;
+    /* THE PROVIDER THAT ACCEPTS EVERYTHING AND STORES NOTHING. `putNoop` is the shape this feature
+     * actually failed in: applyBatch does not throw for an operation that changes nothing, so a
+     * sweep can report success while the phone's Contacts app stays empty. The reply carries the
+     * MEASURED row count either way, which is the only thing that can tell the two apart. */
+    if(!opt.putNoop){
+      // A written card IS on the phone from here on — and the reconcile that follows reads the rows
+      // fresh, so a stub that forgot them would be asked to prune a phone that is missing everything
+      // the sweep just wrote, i.e. the one shape the guards exist to refuse.
+      for(const c of (a.cards || [])) if(!phoneRows.includes(c.uid)) phoneRows.push(c.uid);
+    }
+    return { written: opt.putNoop ? 0 : sent, sent, held:0, before, after: phoneRows.length,
+             account:true, ops: sent * 2, applied: opt.putNoop ? 0 : sent * 2,
+             noop: opt.putNoop ? sent * 2 : 0, batches:1, failed:0, error:'' };
   },
   /* commit() WITH THE PLUGIN'S OWN COLLAPSE GUARD, because that guard is the load-bearing one: it is
    * the last thing between a keep-set built from a bad read and somebody's dialer. `nativeGuard:false`
@@ -56,7 +70,11 @@ const PLUGIN = {
     phoneRows = phoneRows.filter(u => keep.has(u));
     return { removed:doomed.length, count:phoneRows.length };
   },
-  async pull(a){ calls.push(['pull', a]); return { granted:true, rows:(opt.pullRows || []), pushed:{} }; },
+  async pull(a){
+    calls.push(['pull', a]);
+    if(opt.noAccount) return { granted:true, account:false, rows:[] };
+    return { granted:true, account:true, rows:(opt.pullRows || []), pushed:{} };
+  },
   async taken(a){ calls.push(['taken', a]); return {}; },
 };
 
@@ -122,5 +140,8 @@ require(path.join(ROOT, 'static', 'js', 'client', 'contacts.js'));
     else if(step === 'settle'){ await new Promise(r => setTimeout(r, 30)); }
   }
   await new Promise(r => setTimeout(r, 30));      // let any trailing sweep finish
-  console.log(JSON.stringify({ calls, toasts, fetched, phoneRows, settings }));
+  // `diag` is the line the phone-book panel puts on screen. It exists because this feature was
+  // debugged blind across four APK builds and its failure mode reports success — see contacts.js.
+  const diag = (C && C.lastSweep) ? C.lastSweep() : '';
+  console.log(JSON.stringify({ calls, toasts, fetched, phoneRows, settings, diag }));
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
