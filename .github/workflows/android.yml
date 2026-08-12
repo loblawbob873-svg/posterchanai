@@ -98,11 +98,31 @@ jobs:
       # zapstore.yaml; `zsp` reads the version straight out of the APK, uploads it to Blossom and publishes the
       # NIP-82 app/release events. Skipped (not failed) when SIGN_WITH isn't set, so forks still build an APK.
       # NB: -q, not -y — the upstream docs advertise a -y flag the binary doesn't actually have.
+      # Cache the zsp binary so a throttled GitHub release CDN cannot fail this step. Keyed on the
+      # pinned version, so bumping zsp downloads it exactly once.
+      - name: Cache zsp
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/zsp
+          key: zsp-v0.4.11
+
+      # BEST EFFORT, AND THAT IS THE POINT. Everything this step needs has already happened: the APK
+      # is built, signed, and published to the rolling GitHub Release that poster.place/apk serves.
+      # Nothing here can un-publish it. So when Zapstore (or the CDN in front of its tool) is down,
+      # failing the job does not protect anything — it just paints the run red and reports "the
+      # Android build is failing" about an APK that shipped fine, which is exactly how it was read.
+      # The failure is surfaced as a warning ANNOTATION naming the store, so a real Zapstore problem
+      # is still visible rather than swallowed.
       - name: Publish to Zapstore
+        continue-on-error: true
         env:
           SIGN_WITH: ${{ secrets.ZAPSTORE_SIGN_WITH }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ZSP_CACHE: ~/.cache/zsp
         run: |
+          set -o pipefail
+          fail(){ echo "::warning title=Zapstore publish failed::The APK WAS built, signed and published to GitHub Releases (poster.place/apk serves it). Only the Zapstore listing did not update: $1"; exit 0; }
+          trap 'fail "see the step log above"' ERR
           # Surface the skip as a run ANNOTATION, not just a log line: this step exits 0 either way (a fork
           # with no key must still build an APK), so a silent skip renders as a green tick and reads exactly
           # like a successful publish. Say which one actually happened.
@@ -116,8 +136,18 @@ jobs:
           # on the way to GitHub's release CDN. The APK was built, signed and uploaded; the run went
           # red at the last step and the release did not go out. `--retry-all-errors` is what makes
           # curl retry a handshake failure (plain --retry only covers transient HTTP codes).
-          curl -sSfLo /tmp/zsp --retry 4 --retry-delay 5 --retry-all-errors --connect-timeout 20 \
-            https://github.com/zapstore/zsp/releases/download/v0.4.11/zsp-0.4.11-linux-amd64
+          # Reuse a cached copy when the step above restored one: this download is from GitHub's
+          # release CDN, which THROTTLES — measured here as two straight `curl: (22) ... 503`s, the
+          # same throttling that was failing the desktop build's electron download the same evening.
+          # Retries do not beat a throttle; not downloading does.
+          if [ -x "$ZSP_CACHE/zsp" ]; then
+            cp "$ZSP_CACHE/zsp" /tmp/zsp
+            echo "zsp restored from cache"
+          else
+            curl -sSfLo /tmp/zsp --retry 4 --retry-delay 5 --retry-all-errors --connect-timeout 20 \
+              https://github.com/zapstore/zsp/releases/download/v0.4.11/zsp-0.4.11-linux-amd64
+            mkdir -p "$ZSP_CACHE" && cp /tmp/zsp "$ZSP_CACHE/zsp"
+          fi
           chmod +x /tmp/zsp
           # Prove the APK's signing certificate belongs to this npub (NIP-C1, kind 30509). Without it Zapstore
           # can't tie the app to a developer key and warns users it "cannot reach signer key" — and `publish -q`
