@@ -53,7 +53,15 @@ QUERIES = ["half-life", "nostr", "bitcoin", "doom", "music", "art", "linux", "ph
 # two shapes of ghost: a reply label with no <article>, and an <article> nobody can see.
 TIMELINE_PROBE = r"""(() => {
   const cards = [...document.querySelectorAll('#tl-notes article.note')];
-  const invisible = cards.filter(c => parseFloat(getComputedStyle(c).opacity) === 0).length;
+  // STUCK, not merely mid-fade. `.note` animates opacity 0 -> 1 over .3s, so a card that arrived a
+  // moment ago is legitimately transparent right now; counting it made this check fail on a busy
+  // feed for the one reason that is not a bug. A card is only wrong if it is transparent AND has no
+  // running animation to finish — which is exactly the anim-off freeze this exists to catch.
+  const invisible = cards.filter(c => {
+    const st = getComputedStyle(c);
+    if (parseFloat(st.opacity) !== 0) return false;
+    return st.animationName === 'none' || st.animationPlayState === 'paused';
+  }).length;
   const zero = cards.filter(c => c.offsetHeight === 0).length;
   const pairs = [...document.querySelectorAll('#tl-notes .reply-pair')];
   return {cards: cards.length, invisible, zero,
