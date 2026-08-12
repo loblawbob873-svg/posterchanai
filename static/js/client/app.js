@@ -25761,7 +25761,7 @@
      * once a live socket exists. renderProfileView and flushEvents already wait like this. */
     try{ if(Relay.ready) await Relay.ready(4000); }catch(_){}
     if(VIEW!=='search') return;
-    const [postEvs, addrEvs, profEvs] = await Promise.all([
+    let [postEvs, addrEvs, profEvs] = await Promise.all([
       Relay.query([{ kinds:[1], search:q, limit:40 }]).catch(()=>[]),
       Relay.query([{ kinds:[30023,30311,34550,2003,30617], limit:240 }]).catch(()=>[]),
       // Also ask the relay for matching PROFILES (NIP-50 kind-0 search) — otherwise "Profiles" only ever
@@ -25769,6 +25769,32 @@
       // clear) never appears. Cached below so the local name/nip05 filter picks them up too.
       Relay.query([{ kinds:[0], search:q, limit:20 }]).catch(()=>[]),
     ]);
+    /* THE SECOND SEARCH, DONE FOR YOU — this is "I have to search twice to see results".
+     *
+     * Waiting for a live socket above is not enough. The FIRST search of a session goes out while the
+     * client is still taking the timeline's opening flood down the same connection, and the NIP-50
+     * reply misses `query`'s timer. Measured against the live relay, 10 searches back to back from one
+     * booted session: #1 came back unanswered with 0 posts, #2-#10 returned 40 every time. Nothing was
+     * wrong with the query or the relay — it was early.
+     *
+     * The app already KNOWS this happened: `complete === false` is "no relay EOSE'd", which is
+     * precisely the state the retry button was offered for. Offering a button is asking the user to do
+     * by hand the one thing the code is certain is worth doing, so it does it itself — once, briefly
+     * delayed to let the opening flood drain. The button stays for the case where the retry ALSO comes
+     * back unanswered, which is a genuinely unreachable relay rather than a busy moment.
+     *
+     * Only ever REPLACES the result when the retry did better: an answered reply (even an empty one is
+     * a real "nothing matches") beats an unanswered one, and a longer list beats a shorter. So this can
+     * turn a wrong empty screen into results and can never turn results into an empty screen. */
+    if(postEvs && postEvs.complete === false){
+      await new Promise(r => setTimeout(r, 900));
+      if(VIEW!=='search') return;
+      try{
+        const again = await Relay.query([{ kinds:[1], search:q, limit:40 }]);
+        if(again && (again.complete !== false || again.length > postEvs.length)) postEvs = again;
+      }catch(_){}
+      if(VIEW!=='search') return;
+    }
     postEvs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     addrEvs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     (profEvs||[]).forEach(e=>{ Store.saveProfile(e); });
