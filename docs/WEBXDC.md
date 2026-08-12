@@ -219,6 +219,42 @@ then the referrer (an in-app link to a second page inherits no query). No token 
 open is unambiguous and still answered — that is also what keeps an older cached client working. No
 token and two loaders is a guess, and it is **refused**, because guessing is the whole bug.
 
+### When an app will not start: Reset
+
+Every mini app card carries a **Reset** button beside Play, and it exists because there was no way
+out of an app that had saved itself into a state it could not start from. A mini app keeps stored
+state in two places, neither of which a reader can see or reach:
+
+- the **archive**, cached here under `pc-webxdc-v1` so a 178 MB game is downloaded once per device;
+- whatever the **app itself** wrote on `xdc.<instance>` — `localStorage` and `IndexedDB`. An
+  emscripten game keeps its entire config there, which is where a persisted video mode or renderer
+  choice lives.
+
+When either goes bad the app fails identically on every launch, for ever, and the only remedy a
+reader could reach was the browser's *"clear browsing data"* — which also signs them out of this
+instance. Reset does exactly that, scoped: it drops the cached archive, then hands the loader
+`?__reset=1`, which wipes the sandbox origin's caches, IndexedDB, `localStorage` and service worker
+before navigating itself to a clean boot **without** the flag (a flag that survived would wipe on
+every load, and re-registering a worker in the document that just unregistered it is a race). It is
+confirmed first, and the confirmation says that **IndexedDB is not namespaced per app**, so a reset
+clears what every mini app on this instance has saved, not only the one being reset.
+
+Two things measured while chasing exactly this, both worth not re-deriving:
+
+- **`zip.js` never returns a window onto the archive.** Both compression methods produce a private
+  buffer (`raw.slice()` for stored, a fresh array out of `DecompressionStream` for deflate) — checked
+  against the real 178 MB Half-Life archive, all 21 entries, byte-identical to `unzip` and every one
+  owning its own buffer. That matters because the fetch reply **transfers** the entry's
+  `ArrayBuffer`, and a transfer detaches *the whole buffer* in this realm: a shared view would empty
+  the archive on the first file served and every file after it would be zero bytes — an app that
+  boots into nothing, silently, on every launch. The reply site no longer depends on that invariant
+  holding two directories away; it checks the view owns its buffer and copies if it does not.
+  `tests/test_webxdc.py::ServingDoesNotConsumeTheArchive` asserts both halves.
+- **A cached archive that will not open is deleted and refetched.** It used to throw out of `load()`
+  with the bad entry still in place, so the next launch failed the same way with nothing to do about
+  it. `bytes.length > 0` was the only check; the sha is now verified too, when the `x` tag is a real
+  digest.
+
 ### Reading an app's own error message
 
 Half-Life's *"Failed to start multiplayer game. Make sure this app is running inside a

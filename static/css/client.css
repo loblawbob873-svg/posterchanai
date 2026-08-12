@@ -1872,6 +1872,10 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .xdc-meta b{font-size:13.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .xdc-meta span{font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .xdc-play{flex:none}
+/* The way out of an app that has saved itself into a state it cannot start from. Muted and beside
+   Play rather than hidden in a menu — it is only ever wanted when something is already wrong. */
+.xdc-reset{flex:none;opacity:.75}
+.xdc-reset:hover{opacity:1}
 /* The app itself. It fills whatever it is given — a desktop window's body, or a full-screen sheet on
    a phone — and the frame is the only thing in it, because everything else is the app's own chrome. */
 .xdc-host{position:relative;width:100%;height:100%;min-height:220px;background:#000}

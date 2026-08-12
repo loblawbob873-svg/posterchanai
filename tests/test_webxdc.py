@@ -568,5 +568,151 @@ class TheWorkerServesTheRIGHTApp(unittest.TestCase):
         self.assertEqual(out["status"], 403)
 
 
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class ServingDoesNotConsumeTheArchive(unittest.TestCase):
+    """Serving a file must not damage the archive it came out of.
+
+    The sandbox is fed one entry at a time and the reply TRANSFERS the entry's ArrayBuffer, because
+    an app can be 178 MB and a copy per hop is the difference between a game that starts and a black
+    screen. A transfer detaches the buffer *in this realm* — all of it, not the slice being sent — so
+    if any entry's bytes were a view onto the ARCHIVE, serving one file would empty the archive and
+    every file after it would be zero bytes. The app boots into nothing and says nothing, on every
+    launch, and the only thing that clears it is wiping the browser's storage.
+
+    Both compression methods are exercised because they take different code paths, and the largest
+    entry is served FIRST so a shared buffer would take everything else down with it.
+    """
+
+    def _serve(self, archive: bytes, names, method_note=""):
+        return _read(archive, """
+            const idx = new Map();
+            for(const e of PCZip.entries(BYTES)) if(e.name) idx.set(e.name, e);
+            const order = %s;
+            const served = {}, sha = {};
+            for(const n of order){
+                const b = await PCZip.read(BYTES, idx.get(n));
+                // …exactly what the reply site does with it.
+                const buf = (b.byteOffset === 0 && b.byteLength === b.buffer.byteLength)
+                          ? b.buffer : b.slice().buffer;
+                served[n] = b.length;
+                sha[n] = [...new Uint8Array(buf)].reduce((a,c)=>(a*31+c)%%1000003, 7);
+                structuredClone(buf, { transfer: [buf] });     // the transfer, for real
+            }
+            // …and now the archive has to still be an archive.
+            const after = [...PCZip.entries(BYTES)].map(e => e.name).sort();
+            const reread = {};
+            for(const n of order) reread[n] = (await PCZip.read(BYTES, idx.get(n))).length;
+            console.log(JSON.stringify({ served, sha, after, reread }));
+        """ % json.dumps(list(names)))
+
+    def test_a_transferred_entry_does_not_empty_a_deflated_archive(self):
+        files = {"index.html": "<b>hi</b>", "big.bin": "Q" * 200000, "small.js": "run()"}
+        out = self._serve(_xdc(files), ["big.bin", "index.html", "small.js"])
+        self.assertEqual(out["after"], ["big.bin", "index.html", "small.js"])
+        self.assertEqual(out["reread"], {"big.bin": 200000, "index.html": 9, "small.js": 5},
+                         "serving one file emptied the archive the others come from")
+
+    def test_a_transferred_entry_does_not_empty_a_STORED_archive(self):
+        """The dangerous half: a stored entry is bytes already sitting inside the archive, so it is
+        the one a reader is most likely to hand out as a subarray. Half-Life's three campaign
+        archives (29-79 MB) are all stored."""
+        files = {"index.html": "<b>hi</b>", "hl/big.zip": "Z" * 4000, "a.png": "\x00\x01\x02"}
+        out = self._serve(_xdc(files, compression=zipfile.ZIP_STORED),
+                          ["hl/big.zip", "index.html", "a.png"])
+        self.assertEqual(out["after"], ["a.png", "hl/big.zip", "index.html"])
+        self.assertEqual(out["reread"], {"hl/big.zip": 4000, "index.html": 9, "a.png": 3},
+                         "serving the stored entry detached the archive's own buffer")
+
+    def test_every_entry_owns_its_bytes(self):
+        """The invariant the reply site depends on, stated once: `read()` never returns a window
+        onto the archive. Asserted rather than inferred, because it is two files away from the
+        transfer that would punish it."""
+        files = {"index.html": "x", "stored.bin": "S" * 5000, "deflated.bin": "D" * 5000}
+        for comp in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            out = _read(_xdc(files, compression=comp), """
+                const own = {};
+                for(const e of PCZip.entries(BYTES)){
+                    if(!e.name) continue;
+                    const b = await PCZip.read(BYTES, e);
+                    own[e.name] = (b.byteOffset === 0 && b.byteLength === b.buffer.byteLength);
+                }
+                console.log(JSON.stringify(own));
+            """)
+            self.assertTrue(all(out.values()), f"{comp}: an entry shares the archive's buffer: {out}")
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class ResettingAnApp(unittest.TestCase):
+    """`?__reset=1` on the loader, which is the only way a reader can clear a mini app's state.
+
+    An app keeps its saves on the sandbox origin (localStorage, IndexedDB — an emscripten game keeps
+    its whole config there) and that origin exists precisely so the client cannot reach it. Before
+    this there was no way out of an app that had saved itself into a state it could not start from
+    except the browser's "clear browsing data", which also signs the reader out of their instance.
+
+    Run under node against the shipped loader script with the storage APIs stubbed, because every
+    step of it fails silently: a wipe that never runs, a flag that survives into the next load (a
+    reset loop), or a `ready` posted into a document that is about to navigate.
+    """
+
+    def run_loader(self, search):
+        src = _loader_js()
+        return _node("""
+            const calls = { caches: [], idb: [], unregistered: 0, local: 0, session: 0,
+                            replaced: null, ready: [] };
+            const search = %s;
+            global.location = { search, href: 'https://xdc.example/__sandbox__/' + search,
+                                hash: '', reload(){ calls.reloaded = true; },
+                                replace(u){ calls.replaced = u; } };
+            global.URL = URL; global.URLSearchParams = URLSearchParams;
+            global.document = { getElementById: () => ({ set textContent(v){ calls.said = v; },
+                                                         remove(){} }),
+                                createElement: () => ({ setAttribute(){}, addEventListener(){} }),
+                                body: { appendChild(){} } };
+            global.window = { addEventListener(){} };
+            global.parent = { postMessage(m){ calls.ready.push(m && m.method); } };
+            global.localStorage = { clear(){ calls.local++; } };
+            global.sessionStorage = { clear(){ calls.session++; } };
+            global.caches = { keys: async () => ['app-v1', 'other'],
+                              delete: async (k) => { calls.caches.push(k); return true; } };
+            global.indexedDB = { databases: async () => [{ name: 'xash-fs' }, { name: 'saves' }],
+                                 deleteDatabase(n){ calls.idb.push(n);
+                                   const r = {}; setTimeout(() => r.onsuccess && r.onsuccess(), 0);
+                                   return r; } };
+            // `navigator` is a read-only built-in global in modern node — a plain assignment is
+            // silently ignored, and the loader would see node's own, which has no serviceWorker.
+            Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {
+                serviceWorker: {
+                  addEventListener(){}, register: async () => ({}),
+                  getRegistrations: async () => [{ unregister: async () => { calls.unregistered++; } }],
+                } } });
+            %s
+            setTimeout(() => console.log(JSON.stringify(calls)), 60);
+        """ % (json.dumps(search), src))
+
+    def test_a_reset_wipes_the_origin_and_reboots_without_the_flag(self):
+        out = self.run_loader("?__xdc=tok&__reset=1")
+        self.assertEqual(sorted(out["caches"]), ["app-v1", "other"])
+        self.assertEqual(sorted(out["idb"]), ["saves", "xash-fs"])
+        self.assertEqual(out["local"], 1)
+        self.assertEqual(out["session"], 1)
+        self.assertEqual(out["unregistered"], 1)
+        self.assertTrue(out["replaced"], "the reset never navigated to a clean boot")
+        self.assertNotIn("__reset", out["replaced"],
+                         "the flag survived the reset — the next load wipes again, for ever")
+        self.assertIn("__xdc=tok", out["replaced"], "the reset lost the app's own token")
+        self.assertEqual(out["ready"], [],
+                         "it announced itself to the parent in a document that is navigating away")
+
+    def test_an_ordinary_open_wipes_nothing(self):
+        out = self.run_loader("?__xdc=tok")
+        self.assertEqual(out["caches"], [])
+        self.assertEqual(out["idb"], [])
+        self.assertEqual(out["local"], 0)
+        self.assertEqual(out["unregistered"], 0)
+        self.assertIsNone(out["replaced"])
+        self.assertEqual(out["ready"], ["ready"], "a normal open must still announce itself")
+
+
 if __name__ == "__main__":
     unittest.main()

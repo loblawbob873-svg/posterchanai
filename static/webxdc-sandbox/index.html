@@ -384,8 +384,66 @@
     '})();'
   ].join('\n');
 
-  // Announce readiness. The parent answers with `init`, which is also what tells us its origin.
-  try{ parent.postMessage({ jsonrpc:'2.0', method:'ready', params:{ version:VERSION } }, '*'); }
-  catch(_){ say('This page has to be opened by PosterChan.'); }
+  /* ---- ?__reset=1 : throw away everything this ORIGIN remembers, then boot clean ----------------
+   *
+   * The reader asked for this from the client (the Reset button on a mini app's card). It has to
+   * happen HERE because none of it is reachable from there: the app's localStorage and IndexedDB, and
+   * this worker's caches, all live on `xdc.<instance>`, which is a different origin precisely so the
+   * client cannot touch it. Without this the only cure for an app that has saved itself into a state
+   * it cannot start from is the browser's "clear browsing data" — which also signs the reader out of
+   * their instance, and which nobody should have to be told to run.
+   *
+   * IndexedDB is NOT namespaced per app (see docs/WEBXDC.md), so this clears what every mini app on
+   * this instance has saved, not only the one being reset. That is stated in the confirmation the
+   * client shows rather than discovered afterwards.
+   *
+   * It ends in `location.replace` to the SAME url with the flag removed, and that is deliberate:
+   * re-registering a worker in the document that just unregistered it is a race, while a fresh
+   * navigation with no stored anything is simply the ordinary boot below. `ready` is NOT posted on
+   * this pass — the parent must not start handing us files into a document that is going away. */
+  var RESET = false;
+  try{ RESET = new URLSearchParams(location.search).get('__reset') === '1'; }catch(_){}
+  if(RESET){
+    say('resetting…');
+    var wipes = [];
+    try{ localStorage.clear(); }catch(_){}
+    try{ sessionStorage.clear(); }catch(_){}
+    try{ wipes.push(caches.keys().then(function(ks){
+      return Promise.all(ks.map(function(k){ return caches.delete(k); })); })); }catch(_){}
+    try{
+      if(indexedDB.databases){
+        wipes.push(indexedDB.databases().then(function(dbs){
+          return Promise.all((dbs || []).map(function(d){
+            return d && d.name ? new Promise(function(res){
+              var r = indexedDB.deleteDatabase(d.name);
+              // `blocked` fires when another tab still holds it: give up rather than hang for ever.
+              r.onsuccess = r.onerror = r.onblocked = function(){ res(); };
+              setTimeout(res, 3000);
+            }) : null;
+          }));
+        }));
+      }
+    }catch(_){}
+    try{ if(navigator.serviceWorker && navigator.serviceWorker.getRegistrations){
+      wipes.push(navigator.serviceWorker.getRegistrations().then(function(rs){
+        return Promise.all(rs.map(function(r){ return r.unregister(); })); }));
+    } }catch(_){}
+    // Bounded: a wipe that hangs must not leave the reader on "resetting…" for ever.
+    var done = false;
+    var go = function(){
+      if(done) return;
+      done = true;
+      var u = new URL(location.href);
+      u.searchParams.delete('__reset');
+      u.hash = '';                       // and not the reload marker, which belongs to a boot
+      location.replace(u.toString());
+    };
+    setTimeout(go, 6000);
+    Promise.all(wipes).then(go, go);
+  }else{
+    // Announce readiness. The parent answers with `init`, which is also what tells us its origin.
+    try{ parent.postMessage({ jsonrpc:'2.0', method:'ready', params:{ version:VERSION } }, '*'); }
+    catch(_){ say('This page has to be opened by PosterChan.'); }
+  }
 })();
 </script>

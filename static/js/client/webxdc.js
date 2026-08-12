@@ -132,10 +132,24 @@
 
     // ---- reading the app ------------------------------------------------------------------------
 
-    const _cache = new Map();          // sha/url -> Promise<Map(name → bytes)>
+    const _cache = new Map();          // sha/url -> Promise<{bytes, index}>
+    const CACHE = 'pc-webxdc-v1';      // the archives themselves, one Response per app URL
 
     async function sha256Hex(bytes){
       return _hex(await crypto.subtle.digest('SHA-256', bytes));
+    }
+
+    /* Forget everything THIS device remembers about an app, so the next launch starts from nothing.
+     *
+     * A mini app accumulates two kinds of stored state and neither has any UI of its own: the archive
+     * cached here, and whatever the app itself wrote on the sandbox origin (localStorage, IndexedDB —
+     * an emscripten game keeps its whole config there). When one of them goes bad the app fails the
+     * same way on every launch for ever, and the only recovery a reader can reach is the browser's
+     * "clear browsing data", which also signs them out of this instance. That is what turned an
+     * evening of black screens into an evening: not the poison, the absence of a way out of it. */
+    async function forget(app){
+      try{ _cache.delete(app.sha || app.url); }catch(_){}
+      try{ const c = await caches.open(CACHE); await c.delete(app.url); }catch(_){}
     }
 
     /* Fetch the .xdc and unzip it, once per app per session.
@@ -156,16 +170,36 @@
          * difference between "opens instantly" and "why is it downloading again". Kept in a cache of
          * its own rather than the client's: those evict on rules written for a firehose of timeline
          * images, and a mini app is a deliberate, enormous, content-addressed thing. */
-        const CACHE = 'pc-webxdc-v1';
+        /* A CACHE HIT HAS TO EARN IT, AND A BAD ONE MUST NOT BE PERMANENT.
+         *
+         * `bytes.length > 0` is not a check: a truncated entry has a length, parses far enough to
+         * look plausible, and then serves half an app. And whatever the reason, a cached archive that
+         * cannot be opened used to THROW out of here — leaving the bad entry exactly where it was, so
+         * the next launch failed identically, and the next, with nothing the reader could do about it
+         * short of clearing the whole origin. So the hit is opened inside a try: anything wrong with
+         * it deletes the entry and falls through to the network, which is the one path that can
+         * actually fix it. The sha is checked too when the tag is a real digest — a cached copy is
+         * bytes this device has held for days, and it is the only copy anything reads after that. */
         let bytes = null;
         try{
           const c = await caches.open(CACHE);
           const hit = await c.match(app.url);
           if(hit) bytes = new Uint8Array(await hit.arrayBuffer());
         }catch(_){}
-        if(bytes){
-          if(!bytes.length) bytes = null;                  // a truncated entry is not a cache hit
-          else return await _openArchive(bytes, app);
+        if(bytes && bytes.length){
+          try{
+            if(/^[0-9a-f]{64}$/i.test(String(app.sha || ''))){
+              const got = await sha256Hex(bytes);
+              if(got.toLowerCase() !== String(app.sha).toLowerCase()){
+                throw new Error('the cached copy is not the app that was posted');
+              }
+            }
+            return await _openArchive(bytes, app);
+          }catch(e){
+            try{ console.warn('[webxdc] dropping a cached archive that will not open:',
+                              (e && e.message) || e); }catch(_){}
+            try{ const c = await caches.open(CACHE); await c.delete(app.url); }catch(_){}
+          }
         }
         const r = await fetch(app.url, { credentials:'omit', referrerPolicy:'no-referrer' });
         if(!r.ok) throw new Error('could not download the app (HTTP ' + r.status + ')');
@@ -703,7 +737,10 @@
        * Firefox at all — noted in docs/WEBXDC.md rather than discovered later. */
       f.setAttribute('referrerpolicy', 'no-referrer');
       f.setAttribute('allow', 'autoplay; fullscreen; gamepad');
-      f.src = this.origin + '/__sandbox__/?__xdc=' + encodeURIComponent(this.token);
+      /* `__reset` is handled by the loader BEFORE it boots anything, and it is not passed on to the
+       * app's own frame: the app must not be able to ask for it, and must not see it in its URL. */
+      f.src = this.origin + '/__sandbox__/?__xdc=' + encodeURIComponent(this.token)
+            + (this.reset ? '&__reset=1' : '');
       this.frame = f;
 
       this._onMsg = (ev) => {
@@ -767,7 +804,18 @@
          * screen. An ArrayBuffer in the transfer list is a pointer move. Every entry is freshly
          * inflated per request, so giving the buffer away costs the parent nothing. */
         this.resolve(path).then((r) => {
-          const buf = (r.body && r.body.buffer) ? r.body.buffer : null;
+          /* ONLY A BUFFER NOBODY ELSE HOLDS MAY BE TRANSFERRED. Transferring DETACHES it in this
+           * realm — every byte of it, not the slice being sent — so handing over a view onto the
+           * ARCHIVE would empty the archive itself, and every file served after that would be zero
+           * bytes: an app that boots into nothing, permanently, with no error anywhere. zip.js does
+           * return a private copy for both compression methods today (measured against the real
+           * 178 MB Half-Life archive: all 21 entries own their buffer), but that is a property of a
+           * file two directories away, and this is the line that depends on it. So it is checked
+           * HERE, where the transfer happens, and a shared view is copied instead. */
+          const v = (r.body && r.body.buffer) ? r.body : null;
+          const buf = !v ? null
+                    : (v.byteOffset === 0 && v.byteLength === v.buffer.byteLength) ? v.buffer
+                    : v.slice().buffer;
           this.reply(id, {
             status: r.status,
             statusText: '',
@@ -860,18 +908,21 @@
     /* Open an app. On the DESKTOP it gets a real window — movable, resizable, and able to sit beside
      * the timeline, which is what a game wants; everywhere else it is a full-screen sheet, because a
      * phone has no room for anything else. */
-    async function open(app){
+    async function open(app, opts){
       if(!app || !app.url){ toast('that post has no app in it'); return; }
+      const reset = !!(opts && opts.reset);
       const id = ++_openSeq;
       let files;
       try{
-        toast('opening ' + (app.name || 'the app') + '…');
+        if(reset){ await forget(app); toast('resetting ' + (app.name || 'the app') + '…'); }
+        else toast('opening ' + (app.name || 'the app') + '…');
         files = await load(app);
       }catch(e){ toast((e && e.message) || 'could not open that app'); return; }
       if(id !== _openSeq) return;                      // superseded by another launch
 
       const name = app.name || (await manifestName(files)) || 'Mini app';
       const session = new Session(Object.assign({}, app, { name }), files);
+      session.reset = reset;                           // the loader wipes the sandbox origin first
 
       const mountInto = (el) => {
         el.classList.add('xdc-host');
@@ -887,7 +938,9 @@
           toast('the sandbox never asked for a single file — the app frame did not start. Reload the '
               + 'page, and if it persists the service worker on ' + sandboxHostName() + ' is the suspect.');
         }
-      }, 9000);
+      // A reset wipes the sandbox origin and then navigates the loader again before any of this
+      // starts, so the ordinary ceiling would accuse a reset that is working of having failed.
+      }, reset ? 25000 : 9000);
 
       let osWin = null;
       try{ osWin = window.PCOS && PCOS.isOn && PCOS.isOn(); }catch(_){ osWin = false; }
@@ -970,6 +1023,7 @@
             <b>${enc(label)}</b>
             <span>Mini app · runs in a sandbox with no network</span>
           </div>
+          <button class="btn small xdc-reset" title="Throw away this app's downloaded copy and everything it has saved on this device, then start it fresh">Reset</button>
           <button class="btn btn-neon small xdc-play">Play</button>
         </div>`;
     }
@@ -985,7 +1039,22 @@
       e.preventDefault(); e.stopPropagation();
       let app = null;
       try{ app = JSON.parse(card.dataset.xdc || 'null'); }catch(_){}
-      if(app) open(app);
+      if(!app) return;
+      /* RESET IS THE WAY OUT, and it exists because there was not one. A mini app keeps state in two
+       * places a reader cannot see — the archive cached here, and whatever the app wrote on the
+       * sandbox origin — and either going bad makes every launch fail identically for ever. The only
+       * remedy was the browser's "clear browsing data", which also clears the instance this client is
+       * signed in to. Asked first, because it does throw away saved games. */
+      if(e.target.closest('.xdc-reset')){
+        const go = PC.uiConfirm
+          ? PC.uiConfirm('Reset ' + (app.name || 'this mini app') + '? Its downloaded copy and '
+                       + 'anything mini apps have saved on this device are thrown away, then it '
+                       + 'starts fresh. Use this when an app will not start.')
+          : Promise.resolve(true);
+        Promise.resolve(go).then((ok) => { if(ok) open(app, { reset:true }); });
+        return;
+      }
+      open(app);
     }, true);
 
     /* ---- posting one ------------------------------------------------------------------------------
