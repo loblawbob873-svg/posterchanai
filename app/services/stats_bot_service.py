@@ -93,9 +93,17 @@ def _collect_stats(days: int = _DAYS, months: int = _MONTHS) -> dict:
             conn.rollback()   # a failed statement poisons the txn for the following named-cursor scan
 
         now = datetime.now(timezone.utc)
+        # THE DAILY WINDOW ENDS YESTERDAY, and every panel is better for it. Including today put a
+        # PARTIAL day at the end of every chart — measured mid-morning UTC it was 4.9k posts against a
+        # 9k run rate — so the last bar always looked like the network had fallen off a cliff, the
+        # "past 7 days" total was really six and a bit, and the trailing point dragged the line down
+        # on all three panels. Complete UTC days only; the month panel still shows the current month,
+        # where a partial bucket is obvious and expected.
         midnight = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
-        starts = [int((midnight - timedelta(days=days - 1 - i)).timestamp()) for i in range(days)]
+        last_day = midnight - timedelta(days=1)
+        starts = [int((last_day - timedelta(days=days - 1 - i)).timestamp()) for i in range(days)]
         day_since = starts[0]
+        day_until = int(midnight.timestamp())        # exclusive: today is not a day yet
         labels = [datetime.fromtimestamp(s, timezone.utc).strftime("%a") for s in starts]
         dates = [datetime.fromtimestamp(s, timezone.utc).strftime("%m/%d") for s in starts]
 
@@ -128,7 +136,7 @@ def _collect_stats(days: int = _DAYS, months: int = _MONTHS) -> dict:
         for ts, pk in scan:
             if pk not in nip05:
                 continue
-            if ts >= day_since:
+            if day_since <= ts < day_until:
                 idx = int((ts - day_since) // 86400)       # UTC has no DST → each bucket is exactly 86400s
                 if 0 <= idx < days:
                     posts[idx] += 1
@@ -150,11 +158,19 @@ def _collect_stats(days: int = _DAYS, months: int = _MONTHS) -> dict:
 
         # DAU/MAU are per-period DISTINCT, so a week/month "active users" total is the UNION of the
         # finer sets (not the sum of counts). Posts are simple sums.
+        # A UNIQUE-USER COUNT OVER 7 DAYS AND ONE OVER 30 ARE NOT COMPARABLE, and printing them on
+        # consecutive lines invites exactly that comparison ("active users looks way higher on 30
+        # days" — of course it does: a longer window catches anyone who posted once). The average
+        # DAY is the figure that means the same thing in both, so it goes out beside them.
+        dau_week = [x for x in dau[-7:] if x]
+        dau_all = [x for x in dau if x]
         return {
             "labels": labels, "dates": dates, "posts": posts, "dau": dau,
             "month_labels": month_labels, "posts_by_month": m_posts, "mau": mau,
             "posts_week": sum(posts[-7:]), "posts_month": sum(posts),
             "active_week": _union(actives[-7:]), "active_month": _union(actives),
+            "dau_avg_week": int(round(sum(dau_week) / len(dau_week))) if dau_week else 0,
+            "dau_avg_month": int(round(sum(dau_all) / len(dau_all))) if dau_all else 0,
             "nip05_total": len(nip05),
         }
     finally:
@@ -180,6 +196,22 @@ def _font(sz: int):
         return ImageFont.load_default()
 
 
+def _nice_max(v: float) -> float:
+    """The next round number at or above `v` — 1, 2, 2.5 or 5 × a power of ten.
+
+    Axis ticks have to be numbers a reader can hold ("0 · 2.5k · 5k"), not the data's own maximum
+    printed to one decimal. It matters more here than usual because this chart now has TWO scales and
+    they share five gridlines: a tick that is not round on both is a tick nobody can read off.
+    """
+    v = max(float(v), 1.0)
+    import math
+    p = 10 ** math.floor(math.log10(v))
+    for m in (1, 2, 2.5, 5, 10):
+        if v <= m * p:
+            return m * p
+    return 10 * p
+
+
 def _kfmt(v) -> str:
     v = float(v)
     if v >= 1000:
@@ -188,9 +220,21 @@ def _kfmt(v) -> str:
 
 
 def _draw_panel(base, reg, xlabels, posts, dau, post_color, dau_color, post_mode, title, fonts):
-    """Draw one chart into region `reg`=(x0,y0,x1,y1). post_mode 'bars' or 'lines'. Posts use the
-    left scale; active users get their own (~92% height). Glow is composited per-panel — the glow
-    layer is black outside this panel's shapes, so screen() only blooms here."""
+    """Draw one chart into region `reg`=(x0,y0,x1,y1). post_mode 'bars' or 'lines'.
+
+    TWO SERIES, TWO AXES, AND BOTH AXES ARE DRAWN. Posts and active users differ by roughly a factor
+    of six here, so one scale would flatten the smaller series into the x-axis — which is why the
+    active-users line was normalised to its own maximum. But only the POSTS axis was ever labelled,
+    so on the 30-day and 6-month panels (where per-point labels are too dense to print) the line sat
+    near the top of a scale that reads in posts, and 1.4k active users read as ~9k. That is the
+    "active users looks way higher on Last 30 days" report: the same ~1,400 people, drawn at three
+    different heights on three panels, against numbers belonging to something else.
+
+    So the right-hand axis is the active-users scale, in that series' own colour, and both maxima are
+    rounded (`_nice_max`) so the five shared gridlines are readable on both sides.
+
+    Glow is composited per-panel — the glow layer is black outside this panel's shapes, so screen()
+    only blooms here."""
     from PIL import Image, ImageDraw, ImageFilter, ImageChops
     f_lbl, f_sm, f_hdr = fonts
     x0, y0, x1, y1 = reg
@@ -206,19 +250,21 @@ def _draw_panel(base, reg, xlabels, posts, dau, post_color, dau_color, post_mode
     d.line([(lx + 95, y0 - 19), (lx + 111, y0 - 19)], fill=dau_color, width=3)
     d.text((lx + 117, y0 - 27), "Active users", font=f_sm, fill=_TEXT, anchor="la")
 
-    L, R, T, B = x0 + 52, x1, y0 + 6, y1 - 40
+    # The right margin is the active-users axis now, so the plot stops short of the panel edge.
+    L, R, T, B = x0 + 52, x1 - 56, y0 + 6, y1 - 40
     pw, ph = R - L, B - T
     n = len(posts)
-    pmax = max(max(posts), 1)
-    dmax = max(max(dau), 1)
-    for g in range(5):                       # grid + posts y-ticks
+    pmax = _nice_max(max(posts))
+    dmax = _nice_max(max(dau))
+    for g in range(5):                       # grid + BOTH y-scales, each in its series' colour
         y = B - ph * g / 4
         d.line([(L, y), (R, y)], fill=_GRID)
-        d.text((L - 10, y - 8), _kfmt(pmax * g / 4), font=f_sm, fill=_MUTED, anchor="ra")
+        d.text((L - 10, y - 8), _kfmt(pmax * g / 4), font=f_sm, fill=post_color, anchor="ra")
+        d.text((R + 10, y - 8), _kfmt(dmax * g / 4), font=f_sm, fill=dau_color, anchor="la")
     slot = pw / n
     xs = [L + slot * i + slot / 2 for i in range(n)]
     post_pts = [(xs[i], B - ph * posts[i] / pmax) for i in range(n)]
-    dau_pts = [(xs[i], B - ph * (dau[i] / dmax) * 0.92) for i in range(n)]
+    dau_pts = [(xs[i], B - ph * dau[i] / dmax) for i in range(n)]
     bw = slot * 0.5
     bars = [(xs[i] - bw / 2, post_pts[i][1], xs[i] + bw / 2, B) for i in range(n)]
 
@@ -252,16 +298,25 @@ def _draw_panel(base, reg, xlabels, posts, dau, post_color, dau_color, post_mode
     for i in range(n):
         if i % step == 0 or i == n - 1:
             d.text((xs[i], B + 8), xlabels[i], font=f_sm, fill=_MUTED, anchor="ma")
+    # ONLY THE POSTS SERIES IS LABELLED PER POINT, now that the active-users axis exists. Both were
+    # labelled, and on a bars panel the two collided head-on — "9.3k" printed over "1.5k", which is a
+    # worse way to read a number than not printing it. The line's own axis is on the right, in its
+    # own colour, and the exact totals are in the post text.
     if n <= 10:
         for i in range(n):
             if posts[i]:
-                if post_mode == "bars":   # INSIDE the bar top (dark) so it can't collide with the line above
-                    d.text((xs[i], post_pts[i][1] + 5), _kfmt(posts[i]), font=f_sm, fill=_BG, anchor="ma")
+                if post_mode == "bars":
+                    # INSIDE the bar top (dark) so it cannot collide with the line — unless the bar is
+                    # too short to hold it, which on a panel spanning 7k to 323k is most of them: the
+                    # label then landed on the axis and read as part of it.
+                    if B - post_pts[i][1] >= 22:
+                        d.text((xs[i], post_pts[i][1] + 5), _kfmt(posts[i]), font=f_sm, fill=_BG, anchor="ma")
+                    else:
+                        d.text((xs[i], post_pts[i][1] - 7), _kfmt(posts[i]), font=f_sm, fill=post_color,
+                               anchor="mb", stroke_width=2, stroke_fill=_BG)
                 else:
                     d.text((xs[i], post_pts[i][1] - 7), _kfmt(posts[i]), font=f_sm, fill=post_color,
                            anchor="mb", stroke_width=2, stroke_fill=_BG)
-            d.text((dau_pts[i][0], dau_pts[i][1] - 8), _kfmt(dau[i]), font=f_sm, fill=dau_color,
-                   anchor="mb", stroke_width=2, stroke_fill=_BG)
 
 
 def _render_chart(stats: dict, title: str) -> bytes:
@@ -295,8 +350,10 @@ def _render_chart(stats: dict, title: str) -> bytes:
                     _VIOLET, _ORANGE, "bars", f"Last {len(m_labels)} months", fonts)
 
     d = ImageDraw.Draw(base)
-    foot = (f"Posts = kind-1 notes by NIP-05 users · Active = distinct NIP-05 authors per period "
-            f"· {stats['nip05_total']} NIP-05 users known")
+    # The footer has to say which axis is which, because the two series are now on different scales:
+    # a reader who takes the line off the left-hand numbers is the bug this chart just had.
+    foot = (f"Posts (left axis) = kind-1 notes · Active users (right axis) = distinct authors, "
+            f"complete UTC days · NIP-05 profiles only · {stats['nip05_total']:,} known")
     d.text((70, H - 38), foot, font=f_sm, fill=_MUTED, anchor="la")
 
     out = io.BytesIO()
@@ -330,14 +387,20 @@ def _summary_text(stats: dict) -> str:
     name = _instance_name()
     relays = _relay_count()
     src = f"{relays} relays" if relays else "its connected relays"
+    # "Active users" on two windows reads as one number that moved. It is two different questions,
+    # and the answer to the comparable one — how many posted on an average DAY — goes beside them.
     return (
         f"📊 Nostr activity on {name}\n\n"
         f"Past 7 days:\n"
-        f"• {stats['posts_week']:,} posts · {stats['active_week']:,} active users\n"
+        f"• {stats['posts_week']:,} posts · {stats['active_week']:,} people posted "
+        f"(~{stats.get('dau_avg_week', 0):,}/day)\n"
         f"Past 30 days:\n"
-        f"• {stats['posts_month']:,} posts · {stats['active_month']:,} active users\n\n"
-        f"How it's counted: only NIP-05–verified users, aggregated from this relay's view of {src}. "
-        f"Posts = kind-1 notes; Active = distinct authors who posted that period.\n\n"
+        f"• {stats['posts_month']:,} posts · {stats['active_month']:,} people posted "
+        f"(~{stats.get('dau_avg_month', 0):,}/day)\n\n"
+        f"How it's counted: complete UTC days, users with a NIP-05 address in their profile, from "
+        f"this relay's view of {src}. Posts = kind-1 notes. \"People posted\" is distinct authors "
+        f"in the whole window, so the 30-day figure counts anyone who posted even once — the "
+        f"per-day average is the one to compare.\n\n"
         f"{stats['nip05_total']:,} NIP-05 users known\n\n"
         f"#nostr #grownostr #nostrstats"
     )
