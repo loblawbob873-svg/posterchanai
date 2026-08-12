@@ -40,17 +40,31 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `caches` = the two directories electron-builder downloads into, per OS. They are DIFFERENT
+          # roots and both matter: the Electron dist zip (115 MB) goes to the ELECTRON cache, while
+          # winCodeSign/NSIS/nsis-resources go to the ELECTRON-BUILDER one. Verified by observation,
+          # not from the name: with `ELECTRON_BUILDER_CACHE` pointed elsewhere, a build still resolved
+          # electron out of ~/.cache/electron and left the override directory empty. See "Cache".
           - os: windows-latest
             name: windows
             script: build:win
             tor: windows-x86_64
+            caches: |
+              ~\AppData\Local\electron\Cache
+              ~\AppData\Local\electron-builder\Cache
           - os: ubuntu-latest
             name: linux
             script: build:linux
             tor: linux-x86_64
+            caches: |
+              ~/.cache/electron
+              ~/.cache/electron-builder
           - os: macos-latest
             name: mac
             script: build:mac
+            caches: |
+              ~/Library/Caches/electron
+              ~/Library/Caches/electron-builder
             # BOTH Mac architectures, because electron-builder packs ONE extraResources tree into the x64
             # and arm64 .dmgs alike and a Mach-O is built for one or the other. Shipping only x86_64 made
             # the Tor switch depend on Rosetta — which an Apple Silicon Mac does not have until something
@@ -153,32 +167,49 @@ jobs:
           echo "::error::npm ci failed three times"
           exit 1
 
+      # The real fix for the download failures below: once these are warm, the build fetches NOTHING
+      # from GitHub's release CDN, so a throttle there cannot fail a build at all. Keyed on the
+      # electron version so a bump re-downloads exactly once; `restore-keys` lets a bumped build start
+      # from the previous cache (the builder deps in the second directory are version-independent).
+      - name: Cache electron + electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.caches }}
+          key: ebcache-${{ matrix.name }}-${{ hashFiles('desktop/package-lock.json') }}
+          restore-keys: ebcache-${{ matrix.name }}-
+
       - name: Build
         working-directory: desktop
         # RETRIED, for the same reason `npm ci` above is, and with the same `shell: bash` (a Windows
         # runner defaults to PowerShell and would not parse the loop at all).
         #
         # electron-builder fetches its own helpers at build time — the Electron dist zip, winCodeSign,
-        # NSIS, nsis-resources — from GitHub releases, through app-builder's Go downloader, whose
-        # stack frame for this is literally `DownloadNoRetry`. One transient EOF from the CDN
-        # therefore kills the whole job minutes in, after the bundle and Tor are already staged:
+        # NSIS, nsis-resources — from GitHub's release CDN, through app-builder's Go downloader, whose
+        # stack frame for this is literally `DownloadNoRetry`. One refused download kills the whole
+        # job minutes in, after the bundle and Tor are already staged.
         #
-        #   ⨯ Get ".../nsis-resources-3.4.1/nsis-resources-3.4.1.7z": EOF
-        #   ⨯ app-builder.exe process failed ERR_ELECTRON_BUILDER_CANNOT_EXECUTE
+        # It is THROTTLING, not a one-off glitch, and the backoff is sized for that. Measured across
+        # three runs it hit whichever runner it felt like and gave a different error each time —
+        # Linux `Get ".../electron-v33.4.11-linux-x64.zip": EOF`, then Windows `...nsis-resources
+        # -3.4.1.7z": EOF`, then Windows `cannot resolve .../electron-v33.4.11-win32-x64.zip: status
+        # code 503` — while the other platforms of the same commit published fine and the same asset
+        # served instantly (HTTP 206) from outside Actions. A first attempt at this retried 3x over
+        # 100s and all three attempts got the 503, which is what says "throttle", so the window is now
+        # ~9 minutes. The Cache step above is the actual cure; this is what gets through the run that
+        # has to fill it.
         #
-        # It is not OS-specific however it looks on the day — it took the Windows job on one push and
-        # the Linux job (on the electron dist zip) on another, while the other two platforms of the
-        # same commit published fine. Nothing is cleaned between attempts: the downloader writes to a
-        # temp path and renames on success, so a failure leaves no partial file to poison, and
-        # whatever DID land stays cached instead of pulling 115 MB again.
+        # Nothing is cleaned between attempts: the downloader writes to a temp path and renames on
+        # success, so a failure leaves no partial file to poison, and whatever DID land is reused.
         shell: bash
         run: |
-          for i in 1 2 3; do
+          for i in 1 2 3 4 5; do
             npm run ${{ matrix.script }} && exit 0
-            echo "::warning::${{ matrix.script }} failed (attempt $i/3) — retrying in $((i*20))s"
-            sleep $((i*20))
+            [ $i -eq 5 ] && break
+            d=$((i*i*30))
+            echo "::warning::${{ matrix.script }} failed (attempt $i/5) — retrying in ${d}s"
+            sleep $d
           done
-          echo "::error::${{ matrix.script }} failed three times"
+          echo "::error::${{ matrix.script }} failed five times"
           exit 1
 
       # Insurance: `--publish never` means electron-builder doesn't run its publisher, and whether it
