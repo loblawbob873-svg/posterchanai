@@ -256,5 +256,117 @@ class MobileSheetTests(unittest.TestCase):
                             f"{fn.strip('function (')} does not consult the hidden set")
 
 
+DESKTOP_SIM = ROOT / "tests" / "client" / "nav_hide_desktop_sim.js"
+
+GAMES = ["chess", "ttt", "hangman", "connect4", "blackjack", "holdem"]
+
+
+def desktop(off_views=(), off_group=False, doc=None):
+    """The launcher's view of a sidebar where some rows carry `nav-off`."""
+    rows = [{"cls": "nav-item", "view": v, "label": v.title()}
+            for v in ("global", "notes", "torrents", "settings", "bookmarks", "blossom")]
+    rows += [{"cls": "nav-item sub", "view": v, "label": v.title(), "group": "games-grp"}
+             for v in GAMES]
+    for r in rows:
+        if r["view"] in off_views:
+            r["cls"] += " nav-off"
+    if off_group:
+        for r in rows:
+            if r.get("group") == "games-grp":
+                r["group"] = "games-grp nav-off"
+    out = subprocess.run(["node", str(DESKTOP_SIM), json.dumps({"sidebar": rows, "doc": doc or {}})],
+                         capture_output=True, timeout=90)
+    if out.returncode != 0:
+        raise AssertionError(out.stderr.decode()[-3000:])
+    return json.loads(out.stdout.decode())
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class DesktopLauncherTests(unittest.TestCase):
+    """A row switched off in Settings → Sidebar has to leave the DESKTOP too.
+
+    It did not, at first: the preference was read as "hide the door, keep the start menu", so
+    switching Games off tidied the sidebar and left all six icons on the desktop — reported as
+    "games did not work as a whole group from Desktop". The start menu is not a way back, it is the
+    same launcher; the way back is the switch.
+    """
+
+    def test_the_desktop_starts_out_showing_everything(self):
+        d = desktop()
+        self.assertIn("torrents", d["desktop"])
+        self.assertEqual(sorted(d["folders"][0]["members"]), sorted(GAMES))
+
+    def test_a_switched_off_row_leaves_the_desktop(self):
+        d = desktop(off_views=["torrents", "notes"])
+        self.assertNotIn("torrents", d["launch"])
+        self.assertNotIn("torrents", d["desktop"])
+        self.assertNotIn("notes", d["desktop"])
+        self.assertIn("global", d["desktop"])
+
+    def test_switching_off_a_whole_group_empties_its_folder(self):
+        """THE REPORTED BUG. `nav-off` sits on the .nav-group, not on each child, so a check that
+        only looked at the button itself left the Nostr Games folder fully populated."""
+        d = desktop(off_group=True)
+        for g in GAMES:
+            self.assertNotIn(g, d["launch"], f"{g} survived its group being switched off")
+        self.assertEqual(d["folders"], [], "an empty Nostr Games folder was still drawn")
+        self.assertIn("global", d["desktop"])
+
+    def test_switching_off_every_member_one_by_one_also_empties_it(self):
+        d = desktop(off_views=GAMES)
+        self.assertEqual(d["folders"], [])
+
+    def test_a_locked_row_is_on_the_desktop_like_any_other(self):
+        for k in ("settings", "bookmarks", "blossom"):
+            self.assertIn(k, desktop()["desktop"])
+
+    def test_the_users_own_desktop_arrangement_still_applies(self):
+        """The launcher list shrinking must not disturb the pcai:desktop document — order, folders
+        and its own hidden set are a separate decision and keep working."""
+        d = desktop(off_views=["torrents"], doc={"order": ["notes", "global"], "hidden": ["blossom"]})
+        self.assertEqual(d["desktop"][:2], ["notes", "global"])
+        self.assertNotIn("blossom", d["desktop"])     # hidden by the DESKTOP's own document
+        self.assertNotIn("torrents", d["desktop"])    # …and by the sidebar switch
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class DesktopWiringTests(unittest.TestCase):
+    """The parts a stub sidebar cannot reach."""
+
+    def setUp(self):
+        self.os_js = (ROOT / "static" / "js" / "client" / "os.js").read_text(encoding="utf-8")
+
+    def test_the_launcher_uses_launchApps_and_the_lookups_do_not(self):
+        """`apps()` stays COMPLETE on purpose: openApp and routeView use it to look up a view's
+        label and icon, so filtering there would stop a hidden view opening from a link — the one
+        thing this preference must never do."""
+        self.assertIn("computeLayout(launchApps(), _doc)", self.os_js)
+        self.assertIn("launchApps().filter(a => a.label.toLowerCase()", self.os_js)
+        self.assertIn("const app = apps().find(a => a.view === view)", self.os_js)
+        self.assertIn("if(!apps().some(a => a.view === view)) return false;", self.os_js)
+
+    def test_the_two_shadowing_extras_answer_to_their_own_rows(self):
+        """Music and Go Live are EXTRAS in os.js but real rows in the sidebar (#nav-music,
+        #nav-golive), so they have to follow the same switch."""
+        self.assertIn("_EXTRA_ROW = { __music: 'nav-music', __golive: 'nav-golive' }", self.os_js)
+
+    def test_the_ancestor_walk_is_bounded_to_the_nav_group(self):
+        """`closest('.hidden')` would answer "everything is gone" during boot — the whole app shell
+        is `<div id="app" class="app hidden">` until sign-in — and draw an empty desktop."""
+        gone = self.os_js[self.os_js.index("function _navGone("):]
+        gone = gone[:gone.index("\n  }") + 4]
+        self.assertIn("closest('.nav-group')", gone)
+        self.assertNotIn("closest('.hidden')", gone)
+        self.assertNotIn("closest('.nav-off')", gone)
+
+    def test_changing_the_setting_redraws_the_desktop(self):
+        """Otherwise the icons only go on the next reload, which reads as the switch not working."""
+        self.assertIn("navChanged: refreshIcons", self.os_js)
+        app = APP.read_text(encoding="utf-8")
+        apply_fn = app[app.index("  function applyNavHidden(){"):]
+        apply_fn = apply_fn[:apply_fn.index("\n  function ")]
+        self.assertIn("PCOS.navChanged", apply_fn)
+
+
 if __name__ == "__main__":
     unittest.main()

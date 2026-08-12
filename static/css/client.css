@@ -3374,12 +3374,13 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .set-body code{color:var(--cyan);font-size:15px}
 .set-body .input{font-size:17px;padding:14px 16px}
 .set-body .btn.small{font-size:15px;padding:10px 16px}
-/* Settings → Profile → 🧭 Sidebar: one switch per nav row, boxed so ~30 of them read as one control
-   rather than as thirty settings. Its own scroll on a phone, or the pane below it is unreachable
-   without scrolling past every game. The rows carry the sidebar's own indenting so a group and its
-   children are recognisable as the group you are looking at on the left. */
-.nav-hide-list{margin:8px 0 4px;padding:6px 10px;border:1px solid var(--line);border-radius:var(--r);
-  background:rgba(8,5,18,.35);max-height:44vh;overflow-y:auto}
+/* Settings → Sidebar: one switch per nav row, boxed so ~35 of them read as one control rather than
+   as thirty-five settings. It is the whole tab, so the box scrolls with the pane rather than owning
+   a scroller of its own — a short inner scroller inside a scrolling pane is the shape nobody can
+   drive on a phone. The rows carry the sidebar's own indenting, so a group and its children are
+   recognisable as the group being looked at on the left. */
+.nav-hide-list{margin:10px 0 4px;padding:6px 10px;border:1px solid var(--line);border-radius:var(--r);
+  background:rgba(8,5,18,.35)}
 .nav-hide-row{margin:2px 0;text-transform:none;letter-spacing:0;font-size:15px;font-weight:500;color:var(--text);gap:12px}
 .nav-hide-row>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nav-hide-row.sub{padding-left:18px}

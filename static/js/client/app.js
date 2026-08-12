@@ -468,6 +468,10 @@
       });
       _foldEmptyNavGroups();
     }catch(_){}
+    /* The desktop is the SAME nav in another shape, so it redraws from the same switch — a Games
+     * folder still sitting there after Games was switched off is the preference not having worked.
+     * No-op unless PosterChan OS is actually on screen. */
+    try{ window.PCOS && PCOS.navChanged && PCOS.navChanged(); }catch(_){}
   }
   function setNavHidden(keys){
     const list = [];
@@ -490,9 +494,9 @@
    * A group header carries its children with it, which is why they are drawn indented under it. */
   function _navHideHtml(){
     const rows = navRows();
-    if(!rows.length) return '';
-    return `<label class="fld">🧭 Sidebar</label>
-      <div class="muted small">Turn off anything you don't use and it leaves the left sidebar and the phone's ☰ More sheet. Nothing is deleted and nothing stops working — the feature is still there in desktop mode's start menu, in search, and on any link to it. <b>Settings</b>, <b>Bookmarks</b> and <b>Blossom</b> always stay: they are the way back, and the only lists of what you saved and uploaded. Syncs across your devices.</div>
+    // Its own TAB, so an empty one has to say why rather than being a blank panel.
+    if(!rows.length) return `<div class="muted small">Nothing to arrange — this install has no sidebar to read.</div>`;
+    return `<div class="muted small">Turn off anything you don't use and it leaves the left sidebar, the phone's ☰ More sheet and the desktop. Nothing is deleted and nothing stops working: the feature still runs and still opens from a link, and turning the switch back on brings it back everywhere. <b>Settings</b>, <b>Bookmarks</b> and <b>Blossom</b> always stay — Settings is the way back, and the other two are the only lists of what you saved and uploaded. Syncs across your devices.</div>
       <div class="nav-hide-list" id="nav-hide-list">${rows.map(r=>`
         <label class="fld nav-hide-row${r.sub?' sub':''}${r.group?' grp':''}" style="flex-direction:row;justify-content:space-between;align-items:center">
           <span>${enc(r.label)}${r.group?' <span class="muted small">(whole group)</span>':''}${r.locked?' <span class="muted small">(always shown)</span>':''}</span>
@@ -24003,7 +24007,9 @@
     // or Android (Orbot). It is deliberately NOT in INSTANCE_SETTINGS_TABS: a relays-only install is
     // exactly where someone is most likely to want everything routed through Tor.
     const _torTab = (_hasNativeTor() || !!window.Capacitor) ? [['tor','Tor']] : [];
-    const tabs=[['profile','Profile'],['relays','Relays'],..._torTab,['media','Media'],['zaps','Zaps'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']]
+    // 🧭 Sidebar is its OWN tab, not a block in Profile: it is ~35 switches, which inside a pane of
+    // unrelated settings is a wall you scroll past rather than a thing you go to.
+    const tabs=[['profile','Profile'],['sidebar','Sidebar'],['relays','Relays'],..._torTab,['media','Media'],['zaps','Zaps'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']]
       .filter(t => !(_standalone() && INSTANCE_SETTINGS_TABS.has(t[0])));
     // Standalone has no built-in relay for the switch to fall back TO, so "use my own relays" is not a
     // choice there — the list IS the relay config, always on. The switch is hidden and forced checked
@@ -24041,7 +24047,6 @@
             </select>
           </label>
           <div class="muted small">Which feed you land on when the app starts. Nostrverse is everything the relays carry; Home is only the people you follow. You can still switch any time with the tabs above the timeline. Syncs across your devices.</div>
-          ${_navHideHtml()}
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide replies in timelines<label class="switch"><input type="checkbox" id="set-hide-replies" ${ClientSettings.get('hideReplies',false)?'checked':''}><span class="slider"></span></label></label>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide fediverse posts in timelines<label class="switch"><input type="checkbox" id="set-hide-fedi" ${ClientSettings.get('hideFediBridge',true)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">On by default. The bridge mirrors whole fediverse timelines onto Nostr under stand-in keys — this keeps them out of Home and Nostrverse. Mentions, replies and DMs from fediverse people still reach you either way.</div>
@@ -24072,6 +24077,7 @@
           ${_standalone() ? '' : `<label class="fld">Notification email<input class="input" id="us-email" value="${enc(s.notification_email||'')}" placeholder="you@example.com"></label>
           <label class="fld">News sources <span class="muted small">(one per line: url|name) — used by the <code>news</code> command</span><textarea class="input" id="us-news-src" rows="4">${enc(s.news_sources||'')}</textarea></label>`}
         </div>
+        <div class="us-pane" data-pane="sidebar">${_navHideHtml()}</div>
         <div class="us-pane" data-pane="mail">
           <div class="muted small">IMAP/SMTP accounts for the <code>mail</code> command. First account is the default sender.</div>
           <div id="us-mail-list"></div>

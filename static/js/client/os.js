@@ -53,7 +53,18 @@
    * The desktop icons and the start menu are meant to be "the features on the left navbar", so they
    * are taken from it at open time — including each item's own icon. A feature added to the nav
    * (or hidden by nostr_only, or by _viewNeedsInstance) appears or disappears here for free, and
-   * there is no second list to forget to update. */
+   * there is no second list to forget to update.
+   *
+   * THAT INCLUDES WHAT THE USER SWITCHED OFF. Settings → Profile → 🧭 Sidebar removes rows from the
+   * nav (`nav-off`, app.js), and "the features on the left navbar" has to mean it here too — a
+   * desktop still carrying every game after Games was switched off is a preference that did not
+   * work. It was read as "hide the door, keep the start menu" at first, which is wrong: the start
+   * menu is not a way back, it is the same launcher, and the way back is the switch itself.
+   *
+   * The filter is `_navGone`, and it is applied ONLY to the launcher (`launchApps`). `apps()` itself
+   * stays complete, because openApp and routeView use it to LOOK UP a view's label and icon — filter
+   * there and hiding a row would stop the view opening from a link, which is the one thing this
+   * preference must never do. */
   /* The app's NAME, without its unread count.
    *
    * The count is an `<i class="badge">` INSIDE the label span —
@@ -79,6 +90,18 @@
     return t;
   }
 
+  /* Is this sidebar row gone — switched off by the user, or gated off by the deployment?
+   *
+   * Bounded to the row and its own `.nav-group`, deliberately NOT a `closest('.hidden')` walk: the
+   * whole app shell is `<div id="app" class="app hidden">` until sign-in, so an unbounded walk
+   * answers "everything is gone" during boot and draws an empty desktop. */
+  function _navGone(btn){
+    if(!btn) return false;
+    if(btn.classList.contains('nav-off') || btn.classList.contains('hidden')) return true;
+    const g = btn.closest && btn.closest('.nav-group');
+    return !!(g && (g.classList.contains('nav-off') || g.classList.contains('hidden')));
+  }
+
   function apps(){
     const seen = new Set();
     return $$('.sidebar .nav .nav-item[data-view]').map(btn => {
@@ -86,10 +109,18 @@
       if(!view || seen.has(view)) return null;
       seen.add(view);
       const use = btn.querySelector('svg use');
-      return { view, label: _navLabel(btn) || view,
+      return { view, label: _navLabel(btn) || view, off: _navGone(btn),
                icon: use ? (use.getAttribute('href') || use.getAttribute('xlink:href') || '') : '' };
-    }).filter(Boolean).concat(EXTRAS.filter(x => x.when()));
+      // EXTRAS are not sidebar rows, but two of them SHADOW one (#nav-music, #nav-golive) — so they
+      // answer to the same switch. `__profile` has no row and is never hidden by this.
+    }).filter(Boolean).concat(EXTRAS.filter(x => x.when())
+                                    .map(x => ({ ...x, off: _navGone(document.getElementById(_EXTRA_ROW[x.view])) })));
   }
+  const _EXTRA_ROW = { __music: 'nav-music', __golive: 'nav-golive' };
+  /* What the LAUNCHER draws: the desktop icons, the folders and the start menu. `apps()` is the
+   * complete list and stays that way — see the banner above for why filtering it would break opening
+   * a hidden view from a link. */
+  function launchApps(){ return apps().filter(a => !a.off); }
 
   /* Entries that are not sidebar nav items. Go Live lives in the mobile "More" sheet and in the
    * rightbar, neither of which the desktop shows, so the launcher — which reads .nav-item[data-view]
@@ -338,7 +369,7 @@
     // The signer-retry budget belongs to the ACCOUNT, not the page: switching accounts asks a
     // different key to decrypt a different document, and that deserves its own second chance.
     if(pk !== _docPk){ _doc = null; _docAt = 0; _wr = false; _layWhy = ''; _signerRetried = false; _docPk = pk; unwatchLayout(); }
-    _lay = computeLayout(apps(), _doc);
+    _lay = computeLayout(launchApps(), _doc);
     return _lay;
   }
 
@@ -4203,7 +4234,9 @@
        * "Hide from desktop" safe to offer at all, and it is where every desktop keeps the apps that
        * are not on its desktop. The right-click menu out there is the way to put one back. */
       const lay = layout();
-      const list = q ? apps().filter(a => a.label.toLowerCase().includes(q.toLowerCase()))
+      // Search searches the LAUNCHER, not every view that exists: typing "torrents" after switching
+      // Torrents off must not hand back the icon the switch just removed.
+      const list = q ? launchApps().filter(a => a.label.toLowerCase().includes(q.toLowerCase()))
                      : lay.items.concat(lay.hidden);
       /* Typing here searches NOSTR — that row is FIRST, so it is what Enter runs, and it opens in
        * its own window like every other result on this desktop. The app list stays underneath
@@ -4506,6 +4539,11 @@
                   // nothing to subscribe to, and polling an element we could be told about is the
                   // mistake the games were just fixed for.
                   musicChanged, noteView,
+                  /* app.js calls this when Settings → 🧭 Sidebar changes. refreshIcons, not refresh:
+                   * the LIST changed, the document did not, so re-reading the layout off the relay
+                   * would cost a round trip per switch flip. It also closes a folder window whose
+                   * members have all just gone, which is the visible half of hiding a group. */
+                  navChanged: refreshIcons,
                   isRepainting: () => repainting > 0, parkedSlot, noteScroll,
                   windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min })),
                   /* The layout arithmetic, exposed so tests/test_desktop_layout.py can run the
@@ -4514,6 +4552,11 @@
                    * twice, a feature added next month that never shows up — so it is tested directly
                    * rather than inferred from a rendered desktop. */
                   __layout: (list, doc) => computeLayout(list, doc), __normDoc: (d) => _normDoc(d),
+                  /* The launcher's own list, for the same reason: "a row switched off in Settings →
+                   * Sidebar is gone from the desktop too" is invisible when it is wrong — you get a
+                   * desktop, just one still carrying the app you removed. tests/client/test_nav_hide.py
+                   * drives it against a stub sidebar. */
+                  __launchApps: () => launchApps(),
                   // The size arithmetic, for the same reason: 'a widget fits the screen it is on'
                   // is the whole of the tablet↔desktop requirement and nothing on screen says
                   // when it is wrong — the panel is just too big, or too small to read.
