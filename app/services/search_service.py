@@ -6,12 +6,12 @@ import os
 import re
 import socket
 import time
-from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 from bs4 import BeautifulSoup
 from app.services import settings_store
+from app.services import page_render
 
 logger = logging.getLogger(__name__)
 
@@ -331,14 +331,6 @@ URL_WITHOUT_PROTOCOL = re.compile(
     r'(?<![/@])\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+(?:com|org|net|edu|gov|io|co|info|biz|me|tv|us|uk|de|fr|jp|cn|ru|br|au|in|nl|se|no|fi|dk|pl|cz|ch|at|be|es|it|pt|ca|mx|ar|nz|za|kr|tw|hk|sg|my|th|vn|id|ph|ae|il|tr)(?:/[^\s<>"\')\]},]*)?',
     re.IGNORECASE
 )
-# A bare nostr entity in free text: `npub1…`, `nprofile1…`, `note1…`, `nevent1…`, optionally
-# `nostr:`-prefixed. Bech32's charset excludes 1/b/i/o, and the word boundaries stop this firing
-# inside a longer token — a URL that already contains one is matched by the patterns above, and
-# extract_urls' dedupe keeps it from being added a second time.
-NOSTR_BARE_ENTITY = re.compile(
-    r"\b(?:nostr:)?((?:npub1|nprofile1|note1|nevent1)[023456789acdefghjklmnpqrstuvwxyz]{20,})\b",
-    re.IGNORECASE)
-
 
 class SearchService:
     def __init__(self, db: Session):
@@ -640,6 +632,36 @@ class SearchService:
 
         return query.strip(), categories, time_range
 
+    # WHAT WE READ HAS TO OUTRANK WHAT THE MODEL ALREADY "KNOWS", and where it sits in the message
+    # decides that. Measured: with the question first and 4709 chars of a fetched profile appended
+    # after it — a crypto-anarchist meme poster called Jordan S — the answer's first token was
+    # "Jordan Peterson is definitely an asshole", a real public figure the page never mentions. The
+    # page was fetched correctly; it was read as an appendix to a question the model had already
+    # answered from its priors. So the content goes FIRST and the question LAST, which is the order
+    # the bare-URL summarize path here has always used, and the reason it never had this bug.
+    GROUNDING_NOTE = (
+        "The text above was fetched just now from the link(s) in the message below — it is that "
+        "page's own content. Answer ONLY from it. If a name in it also belongs to someone famous, "
+        "that is a coincidence: the text above is about the person or subject at the link, never "
+        "the famous one, and you must not bring in anything you know about that name. If the text "
+        "above does not answer the question, say exactly that.")
+
+    @classmethod
+    def build_grounded_message(cls, user_text: str, url_context: str,
+                               instruction: Optional[str] = None) -> str:
+        """The user turn for a message whose links were fetched: content, grounding rule, question.
+
+        One helper for all three chat surfaces (web UI, the OpenAI-compatible API and Telegram),
+        which had three different orderings of the same three pieces and so three different
+        behaviours from the same fetch.
+        """
+        parts = [(url_context or "").strip(), "", cls.GROUNDING_NOTE]
+        if instruction:
+            parts.append(instruction)
+        if (user_text or "").strip():
+            parts.append(f"\nThe user's message: {user_text.strip()}")
+        return "\n".join(parts)
+
     @staticmethod
     def extract_urls(text: str) -> list[str]:
         """Extract URLs from text, including those without http:// prefix"""
@@ -656,28 +678,6 @@ class SearchService:
             # Don't add if we already have this URL with protocol
             if full_url not in urls and f"http://{url}" not in urls:
                 urls.append(full_url)
-
-        # A BARE NOSTR ENTITY IS A LINK TOO, and leaving it out is the same hallucination with the
-        # http:// missing. "tell me about npub14q8uff…" (or `nostr:npub…`) extracted NOTHING, so the
-        # chat fetched nothing, and the model — asked about a user it had no data for — invented one:
-        # it produced a display name and a bio out of the surrounding words. Pasting a bare npub is
-        # the normal way to refer to somebody on nostr, so this is the common case, not the edge.
-        #
-        # Emitted as a `nostr:` pseudo-URL so it travels the SAME path as a profile link: callers pass
-        # it to fetch_urls -> fetch_url_content -> _fetch_nostr_entity, which already accepts that
-        # form. Nothing downstream needs a second code path, and there is no HTML fetch to fall
-        # through to (is_safe_url rejects the scheme), so a resolve failure cannot become a web search
-        # for the raw key.
-        for m in NOSTR_BARE_ENTITY.finditer(text or ""):
-            key = m.group(1)
-            # Skip one that is already INSIDE a URL we picked up. `https://poster.place/npub1…` and
-            # the bare `npub1…` are the same person, and both would be fetched — the same profile
-            # twice, burning one of the three URL slots a message gets.
-            if any(key.lower() in u.lower() for u in urls):
-                continue
-            ent = f"nostr:{key}"
-            if ent not in urls:
-                urls.append(ent)
 
         # Deduplicate while preserving order
         seen = set()
@@ -839,194 +839,15 @@ class SearchService:
             logger.info("asset fetch failed for %s: %s", url, e)
             return {"url": url, "body": b"", "content_type": "", "error": str(e)[:200]}
 
-    # A nostr bech32 entity anywhere in the URL — path, fragment or `nostr:` URI. HOST-AGNOSTIC on
-    # purpose: the entity is self-describing, so njump.me, primal.net, snort and this instance all
-    # name the same person, and every one of them serves a client shell to a server-side fetch.
-    _NOSTR_ENTITY_RE = re.compile(
-        r"(?:^|[/:?&#=])(?:nostr:)?((?:npub1|nprofile1|note1|nevent1)"
-        r"[023456789acdefghjklmnpqrstuvwxyz]{20,})", re.I)
+    async def fetch_url_content(self, url: str, max_length: int = 15000,
+                                allow_render: bool = True) -> Optional[dict]:
+        """Fetch and extract text content from a URL.
 
-
-    # Total wall-clock this resolution may spend. Sized against the CALLER: chat.py wraps fetch_urls
-    # in asyncio.wait_for(..., timeout=15) for up to 3 URLs, so anything near 15s here cancels the
-    # whole batch and the model is told only that the fetch timed out — which it then answers over
-    # the top of. Nine seconds leaves room for two more URLs in the same message.
-    @staticmethod
-    def _nostr_relays():
-        """(this node's own relay, the pool it syncs with) — from SETTINGS, never hardcoded.
-
-        Mirrors what /client/config already hands the web client: the port is `nostr_relay_port`
-        (the same accessor chat_store, caldav_store, blossom_service and the bot manager use, so a
-        node that moved its relay does not have one service still talking to 3052), and the pool is
-        `nostr_relay_upstream_relays` when an operator has set one, else the shipped defaults.
+        `allow_render=False` forbids the headless-browser fallback below — `fetch_urls` spends it on
+        at most ONE url per message, because every caller wraps the whole batch in a 15s timeout and
+        three renders would not fit.
         """
-        try:
-            port = settings_store.get_int("nostr_relay_port", 3052)
-        except Exception:
-            port = 3052
-        local = [f"ws://127.0.0.1:{port}"]
-        try:
-            from app.services.nostr import nostr_service as _ns
-            remote = _ns.relay.normalize_relays(
-                settings_store.get("nostr_relay_upstream_relays", "") or "") or list(_ns.DEFAULT_RELAYS)
-        except Exception:
-            remote = []
-        return local, [r for r in remote if r not in local]
-
-    _NOSTR_LOCAL_TIMEOUT = 3.0    # loopback; measured 0.0s on a hit, so this is pure headroom
-    _NOSTR_REMOTE_TIMEOUT = 6.0   # only reached for somebody this node has never seen
-
-    async def _nostr_profile_data(self, hex_id: str, local: list, remote: list):
-        """(metadata, notes) for a pubkey — THIS NODE'S OWN RELAY FIRST, then the wider pool.
-
-        Returns (None, []) when nothing could be read at all; the caller turns that into an explicit
-        refusal, because "I could not ask" and "this person has no profile" are different answers and
-        only one of them is honest.
-
-        THE LOCAL RELAY IS NOT AN OPTIMISATION, IT IS THE FIX. Measured on the reported profile:
-
-            local relay only   0.0s   name + 20 notes
-            public pool       12.0s   TimeoutError
-
-        Asking all sixteen at once means paying the SLOWEST of them, so the whole resolution blew
-        chat.py's 15s cap (20.0s cold, sequential), the fetch was cancelled, and the model — handed
-        only "could not fetch" — answered anyway, inventing a real-world Jordan Peterson for a user
-        called "Jordan". This node's relay already holds the accounts here and everything its
-        web-of-trust has synced, over loopback, so it answers that case instantly and the pool is
-        only paid for somebody genuinely unknown here.
-
-        Each stage runs its two queries CONCURRENTLY: sequential metadata-then-notes was most of the
-        original 20s, and a partial answer still beats a timeout — a profile with no posts, or posts
-        with no kind-0, are both worth showing.
-        """
-        from app.services.nostr import nostr_service as _ns, relay as _relay
-
-        async def _both(pool, timeout):
-            async def _meta():
-                try:
-                    return await _ns.get_metadata(hex_id, pool) or {}
-                except Exception:
-                    return None
-
-            async def _notes():
-                try:
-                    return await _relay.query(
-                        pool, [{"kinds": [1], "authors": [hex_id], "limit": 20}],
-                        timeout=timeout) or []
-                except Exception:
-                    return []
-
-            try:
-                return await asyncio.wait_for(asyncio.gather(_meta(), _notes()), timeout=timeout + 1)
-            except (asyncio.TimeoutError, Exception):
-                return None, []
-
-        if local:
-            meta, notes = await _both(local, self._NOSTR_LOCAL_TIMEOUT)
-            # Anything real from home is enough — do not spend the pool's latency to add to it.
-            if meta or notes:
-                return (meta or {}), (notes or [])
-
-        if not remote:
-            return None, []
-        meta, notes = await _both(remote, self._NOSTR_REMOTE_TIMEOUT)
-        if meta is None and not notes:
-            return None, []
-        return (meta or {}), (notes or [])
-
-    async def _fetch_nostr_entity(self, url: str, max_length: int = 15000) -> Optional[dict]:
-        """Resolve a nostr profile/note URL from the RELAYS, in the shape fetch_url_content returns.
-
-        Returns None when the URL names no nostr entity, so the caller falls through to the ordinary
-        HTML fetch — this must never swallow a normal page.
-
-        `naddr` deliberately falls through: its TLV type-0 is a `d` identifier rather than a 32-byte
-        key, so decode_any answers None for it and there is nothing to look up without also carrying
-        the kind and author. An article link is far rarer than "tell me about this user", and guessing
-        is what produced the bug this fixes.
-        """
-        m = self._NOSTR_ENTITY_RE.search(url or "")
-        if not m:
-            return None
-        entity = m.group(1)
-        try:
-            from app.services.nostr import bech32 as _b32, nostr_service as _ns
-        except Exception:
-            return None
-        raw = _b32.decode_any(entity)
-        if not raw or len(raw) != 32:
-            return None
-        hex_id = raw.hex()
-        is_profile = entity.lower().startswith(("npub1", "nprofile1"))
-        local, remote = self._nostr_relays()
-
-        def _done(title: str, body: str) -> dict:
-            return {"url": url, "title": title[:200], "content": body[:max_length], "error": None}
-
-        if is_profile:
-            meta, notes = await self._nostr_profile_data(hex_id, local, remote)
-            if meta is None:
-                # COULD NOT ASK — and that must never be silent. Measured cold, the two queries ran
-                # SEQUENTIALLY over this relay pool and took 20.0s, past the 15s asyncio.wait_for that
-                # chat.py puts around fetch_urls; the whole fetch was cancelled, the model got
-                # "[Note: Could not fetch URL content due to timeout]", and answered anyway — asked
-                # about "Jordan" it produced a character study of Jordan PETERSON, inferred from the
-                # first name. So an unreachable relay returns a REFUSAL INSTRUCTION rather than
-                # nothing, and never None (None falls through to the HTML shell, the original bug).
-                return _done(
-                    "Nostr profile (could not be read)",
-                    "This URL names a nostr user, but their profile could not be read from the "
-                    "relays just now (timeout).\n\nYou have NO information about this person. Say "
-                    "that you could not load their profile and stop. Do NOT describe them, do NOT "
-                    "guess from their display name or the URL, and do NOT substitute a real-world "
-                    "person who happens to share a name — that is a fabrication about a real "
-                    "individual.")
-            name = (meta.get("display_name") or meta.get("name") or "").strip()
-            npub = entity if entity.lower().startswith("npub1") else _b32.encode("npub", raw)
-            # Say WHAT this is in the first line. The model is being handed a person, not a web page,
-            # and without that framing it reaches for the host name — which is how a poster shop got
-            # into an answer about a nostr user.
-            lines = [f"Nostr user profile (from the nostr network, NOT a web page): {name or 'unnamed'}",
-                     f"npub: {npub}"]
-            for key, label in (("nip05", "NIP-05 / verified name"), ("about", "About"),
-                               ("website", "Website"), ("lud16", "Lightning address")):
-                val = str(meta.get(key) or "").strip()
-                if val:
-                    lines.append(f"{label}: {val}")
-            if not meta:
-                lines.append("No profile metadata (kind-0) was found for this user on the relays"
-                             " queried. Do NOT guess who they are from the URL's domain name.")
-            # Cap AFTER sorting, and cap here rather than leaning on `limit`: that is per-RELAY, so a
-            # 20-note request across this pool came back with 167. Left uncapped they overrun
-            # max_length and the tail is chopped mid-sentence, which reads to the model as a post that
-            # trails off. Twenty recent posts is plenty to characterise somebody.
-            notes.sort(key=lambda e: e.get("created_at") or 0, reverse=True)
-            notes = notes[:20]
-            if notes:
-                lines.append(f"\nTheir {len(notes)} most recent posts:")
-                for ev in notes:
-                    when = datetime.utcfromtimestamp(ev.get("created_at") or 0).strftime("%Y-%m-%d")
-                    text = " ".join(str(ev.get("content") or "").split())[:400]
-                    if text:
-                        lines.append(f"- [{when}] {text}")
-            else:
-                lines.append("\nNo recent posts were returned for this user.")
-            return _done(f"Nostr profile: {name or npub[:16]}", "\n".join(lines))
-
-        ev = await _ns.fetch_event((local + remote) or None, hex_id)
-        if not ev:
-            return _done("Nostr note (not found)",
-                         f"This URL names a nostr note ({entity}) that could not be found on the "
-                         f"relays queried. Do NOT guess its contents from the URL.")
-        author = await _ns.get_metadata(ev.get("pubkey") or "", (local + remote) or None) or {}
-        who = (author.get("display_name") or author.get("name") or "").strip() or (ev.get("pubkey") or "")[:16]
-        when = datetime.utcfromtimestamp(ev.get("created_at") or 0).strftime("%Y-%m-%d %H:%M UTC")
-        return _done(f"Nostr post by {who}",
-                     f"Nostr post (from the nostr network, NOT a web page)\n"
-                     f"Author: {who}\nPosted: {when}\n\n{ev.get('content') or ''}")
-
-    async def fetch_url_content(self, url: str, max_length: int = 15000) -> Optional[dict]:
-        """Fetch and extract text content from a URL"""
+        did_render = False
         # YouTube *videos* need the transcript, not the watch-page HTML (which is contentless and
         # makes the LLM hallucinate). Centralised here so EVERY caller - telegram/web/
         # pleroma and the summarize & post commands - gets it via fetch_urls()
@@ -1038,21 +859,6 @@ class SearchService:
                 return await self._fetch_youtube_content(url, max_length)
         except Exception as _yt_err:
             logger.warning(f"YouTube transcript path failed for {url}: {_yt_err}")
-
-        # A NOSTR ENTITY IS THE SAME PROBLEM AS A YOUTUBE WATCH PAGE, and worse in one way: the HTML
-        # for https://<instance>/<npub…> is the CLIENT SHELL — the profile is fetched from relays by
-        # JS that never runs here — so the fetch succeeds with 200 and ~39 KB of boilerplate. Measured
-        # on the reported URL, the extracted text was "PosterChan · Nostr … Offline — showing saved
-        # posts The Ultimate Nostr Experience POSTER//CHAN" with the npub appearing nowhere at all.
-        # The model gets no user, falls back to a web search for the host name, and answers about an
-        # e-commerce poster shop called "The Poster Place" — a confident answer about the wrong
-        # subject, which is the worst possible failure for "tell me about this user".
-        try:
-            nostr = await self._fetch_nostr_entity(url, max_length)
-            if nostr is not None:
-                return nostr
-        except Exception as _n_err:
-            logger.warning(f"Nostr entity path failed for {url}: {_n_err}")
 
         # SSRF protection: validate URL before fetching
         is_safe, error_msg = is_safe_url(url)
@@ -1244,6 +1050,24 @@ class SearchService:
                     links_section = "\n".join(links_text[:8])
                     text = f"ARTICLE LINKS:\n{links_section}\n\nPAGE TEXT:\n{text}"
 
+                # NOTHING CAME OUT — so read the page the way a browser reads it. What the server
+                # sent is only the whole page on a server-rendered site; anywhere else it is a shell
+                # whose text arrives when the page's own JavaScript runs. Measured here, an SPA
+                # route extracts ZERO characters while the thinnest real page extracts ~2800, and
+                # zero characters is the shape that makes a model answer from its priors instead.
+                # Generic on purpose: the fallback knows nothing about the site, only that this one
+                # said nothing.
+                if allow_render and page_render.looks_unrendered(text):
+                    rendered = await asyncio.to_thread(
+                        page_render.render_page_text, str(response.url),
+                        page_render.RENDER_TIMEOUT,
+                        lambda u: is_safe_url(u)[0])
+                    if rendered:
+                        r_title, r_text = rendered
+                        logger.info("Rendered %s in a browser: %d chars (server sent %d)",
+                                    url, len(r_text), len(text))
+                        text, title, did_render = r_text, (title or r_title), True
+
                 # Truncate if too long
                 if len(text) > max_length:
                     text = text[:max_length] + "\n\n[Content truncated...]"
@@ -1252,7 +1076,8 @@ class SearchService:
                     "url": url,
                     "title": title or url,
                     "content": text,
-                    "error": None
+                    "error": None,
+                    "rendered": did_render,
                 }
 
             except httpx.HTTPStatusError as e:
@@ -1273,11 +1098,18 @@ class SearchService:
                 }
 
     async def fetch_urls(self, urls: list[str], max_urls: int = 3) -> list[dict]:
-        """Fetch content from multiple URLs"""
+        """Fetch content from multiple URLs.
+
+        The browser fallback is spent at most ONCE per message: it costs seconds, and the callers
+        give the whole batch 15s. A message with three JS-rendered links reads the first one
+        properly rather than timing out and reading none of them.
+        """
         results = []
+        rendered_one = False
         for url in urls[:max_urls]:
-            result = await self.fetch_url_content(url)
+            result = await self.fetch_url_content(url, allow_render=not rendered_one)
             if result:
+                rendered_one = rendered_one or bool(result.get("rendered"))
                 results.append(result)
         return results
 

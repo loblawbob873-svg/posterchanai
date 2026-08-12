@@ -199,6 +199,21 @@ RESPOND WITH THE COMMAND ONLY!"""
             if not self._is_valid_command(command):
                 return None
             
+            # A LINK IS SOMETHING TO READ, NOT SOMETHING TO LOOK UP. "Summarize this page:
+            # https://www.cnn.com/" came back from this classifier as `search https://www.cnn.com/`,
+            # so instead of fetching the page the node ran a WEB SEARCH FOR THE URL STRING and the
+            # model summarized whatever that returned. Chat already fetches every URL in a message,
+            # so dropping the intent here is what makes the page get read.
+            #
+            # Only the lookup verbs are dropped — `yt`/`ytdl`/`pin screenshot` are real things to do
+            # WITH a link, and they keep working.
+            if command.split()[0].lower() in ("search", "images", "news"):
+                from app.services.search_service import SearchService as _SS
+                if _SS.extract_urls(user_message):
+                    logger.info("Intent %r dropped: the message links a page, and reading it is "
+                                "chat's job", command)
+                    return None
+
             # HARD SAFETY CHECK: Block geni command for text content creation
             if command.lower().startswith("geni"):
                 text_creation_keywords = [

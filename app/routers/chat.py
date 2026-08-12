@@ -2202,9 +2202,12 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                 logger.info(f"Adding {len(url_context)} chars of URL context to message")
                                 if _is_bare_url:
                                     # Bare URL: instruction goes AFTER content; explicit anti-loop stop.
-                                    user_msg_text = url_context + "\n\nWrite a single concise paragraph summarizing the above. Output ONLY the summary paragraph, then STOP."
+                                    user_msg_text = SearchService.build_grounded_message(
+                                        "", url_context,
+                                        instruction="Write a single concise paragraph summarizing the above. "
+                                                    "Output ONLY the summary paragraph, then STOP.")
                                 else:
-                                    user_msg_text = f"{content}\n\n[The following web content was fetched from URLs mentioned in the user's message:]{url_context}"
+                                    user_msg_text = SearchService.build_grounded_message(content, url_context)
                                 # If last_role is user, merge with last message instead of creating duplicate
                                 if last_role == "user":
                                     messages[-1]["content"] += f"\n\n{user_msg_text}"

@@ -379,14 +379,16 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                     
                     # Append URL context to user message if URLs were found
                     if url_context:
-                        injected = url_context
-
-                        if injected:
-                            if isinstance(messages[-1]["content"], list):
-                                messages[-1]["content"].append({"type": "text", "text": injected})
-                            else:
-                                messages[-1]["content"] += injected
-                            logger.info(f"Telegram: Added URL context ({len(url_context)} chars) to message")
+                        # Content first, question last — same helper as the web UI and the
+                        # OpenAI-compatible API, so a link read on Telegram is read the same way.
+                        if isinstance(messages[-1]["content"], list):
+                            messages[-1]["content"].append({
+                                "type": "text",
+                                "text": SearchService.build_grounded_message("", url_context)})
+                        else:
+                            messages[-1]["content"] = SearchService.build_grounded_message(
+                                messages[-1]["content"], url_context)
+                        logger.info(f"Telegram: Added URL context ({len(url_context)} chars) to message")
                     
                     if len(messages) > 1:
                         user_content = messages[1]['content']

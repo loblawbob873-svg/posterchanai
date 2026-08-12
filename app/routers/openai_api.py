@@ -524,16 +524,14 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
 
                             if _is_summarize_req:
                                 # Clean message: article content first, then a single clear instruction
-                                messages[_last_user_idx]["content"] = (
-                                    _url_context.strip() +
-                                    "\n\nWrite a single concise paragraph summarizing the above article."
-                                )
+                                messages[_last_user_idx]["content"] = _SS.build_grounded_message(
+                                    "", _url_context,
+                                    instruction="Write a single concise paragraph summarizing the above article.")
                             else:
-                                # User has a specific question/task — append the content as reference
-                                messages[_last_user_idx]["content"] = (
-                                    _user_content +
-                                    f"\n\nHere is the content from the URLs mentioned above:{_url_context}"
-                                )
+                                # A specific question — but the CONTENT still comes first, or the
+                                # model answers it before reading (see SearchService.GROUNDING_NOTE).
+                                messages[_last_user_idx]["content"] = _SS.build_grounded_message(
+                                    _user_content, _url_context)
 
                             logger.info(f"[OPENAI-API] Injected {len(_url_context)} chars of URL context (summarize={_is_summarize_req})")
         except Exception as _url_err:
