@@ -22,6 +22,11 @@
     cards:{},                   // bookId -> [{uid, ics, …}] as stored
     q:'',                       // search
     loading:false, error:'',
+    // Has a load ever COMPLETED? `books`/`cards` are only assigned on success, so before the first
+    // one they are empty — which is indistinguishable from "this account has no contacts" to
+    // anything downstream, and the phone-book sweep DELETES what it is not told to keep. Nothing
+    // may reconcile against state no load ever produced. See the collapse guard below.
+    loadedOk:false,
     scroll:0,
   };
 
@@ -98,6 +103,8 @@
         }
         S.cards = got;
         S.rev = (S.rev || 0) + 1;
+        S.loadedOk = true;      // …and only here. Never cleared: a LATER failure leaves the last
+                                // good books/cards in place, which is real state worth pushing.
       }catch(e){
         const msg = (e && e.message) || '';
         // 404 is the server being off, which is a state to explain rather than an error to report.
@@ -483,10 +490,11 @@
      * the phone, so a visit that changed nothing sends nothing, and the first push after adding one
      * person sends one person. */
     const PUT_BUDGET = 1200000;           // bytes of JSON per bridge call — photos are the bulk
-    let _pushSig = '', _pushing = null;
+    let _pushSig = '', _pushing = null, _collapseSaid = false;
     async function pushPhonebook(force){
       const P = nativeSync('begin');
       if(!P || !phonebookOn()) return;
+      if(!S.loadedOk) return;             // never reconcile against state no load ever produced
       if(_pushing) return _pushing;       // a sweep is a sweep; two at once would fight over uids
       const list = everyCard().map(c => V().toPhone(c));
       const sig = owner() + '|' + list.map(c => c.uid + ':' + c.h).join(',');
@@ -502,6 +510,29 @@
           return;
         }
         const known = (st && st.hashes) || {};
+        /* THE COLLAPSE GUARD — the same one that saved the drive index and the folder-sync manifest.
+         *
+         * `commit({uids})` is a keep-set: everything under this account that is NOT in it is DELETED
+         * from the phone — out of the dialer, the share sheet, favourites, ringtones and shortcuts.
+         * So an empty list is the single most destructive thing this bridge can be handed, and the
+         * ways to produce one are all silent: books that never loaded, a 200 carrying `{books:[]}`,
+         * a relay that answered empty. `loadedOk` above covers the first; this covers the rest by
+         * refusing to be the reason a full phone book becomes an empty one.
+         *
+         * The cost is that genuinely deleting your LAST contact no longer empties the phone by
+         * itself. That is the honest trade, and there is a deliberate way to do it: turning the
+         * switch off removes the account and every row with it. */
+        const onPhone = (st && typeof st.count === 'number')
+                          ? st.count : Object.keys(known).length;
+        if(!list.length && onPhone > 0){
+          if(!_collapseSaid){
+            _collapseSaid = true;
+            toast('your address book came back empty — the ' + onPhone + ' contact'
+                  + (onPhone === 1 ? '' : 's') + ' on this phone were left alone');
+          }
+          return;                          // and NO _pushSig: the next sweep tries again
+        }
+        _collapseSaid = false;
         let batch = [], size = 0;
         const flush = async () => {
           if(!batch.length) return;
@@ -529,6 +560,10 @@
     let _syncing = null;
     function syncPhonebook(force){
       if(!nativeSync('begin') || !phonebookOn()) return Promise.resolve();
+      // A sweep both pushes and DELETES, so it needs a load that actually landed. Without this a
+      // start with no network — the app opening before wifi associates — sweeps from `books:[]` and
+      // takes the whole phone book with it.
+      if(!S.loadedOk) return Promise.resolve();
       if(_syncing) return _syncing;
       _syncing = (async () => {
         let wrote = 0;
