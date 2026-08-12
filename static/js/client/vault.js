@@ -706,17 +706,51 @@
    * move on — and wrong for anything you have to carry into another application: the pairing code has
    * to survive opening a browser, finding the extension, and possibly installing it first, and a
    * clipboard that empties underneath you looks exactly like a Copy button that does not work. */
+  /* THE NATIVE BRIDGE IS TRIED FIRST, because in the desktop app and the APK there is no web
+   * clipboard at all — `navigator.clipboard` is refused on the app:// origin and absent in the
+   * Android WebView — so every Copy in the password manager answered "couldn't reach the clipboard"
+   * on the two platforms people actually keep their passwords on.
+   *
+   * AND THE CLEAR ARMS ON EVERY PATH, INCLUDING THAT ONE. It is tempting not to: clearing properly
+   * means reading the clipboard back to check it is still ours, and the native bridge is write-only.
+   * But the alternative is worse in exactly the situation this feature exists for — a banking
+   * password parked on the Android system clipboard for the rest of the day, readable by the next
+   * app focused and captured by every clipboard-history keyboard. Making the write work without
+   * re-arming the clear would turn a button that did nothing into a leaked secret.
+   *
+   * So the native clear is BLIND — the same trade every mobile password manager makes — and the
+   * toast says the window out loud so it is never a surprise. The cost is bounded and visible: if
+   * you copy something else inside the window, that gets blanked too.
+   *
+   * `clearTimeout` runs before any of it, on every path. A timer armed by an earlier copy must never
+   * be left to fire against a later one. */
   async function copy(text, what, holdMs){
-    try{ await navigator.clipboard.writeText(text); }
-    catch(_){ toast('couldn’t reach the clipboard'); return; }
+    clearTimeout(_clipT); _clipT = null;
+    let via = '';
+    const nativeWrite = async (v) => {
+      try{ if(window.pcClip && window.pcClip.write) return !!(await window.pcClip.write(v)); }catch(_){}
+      const cap = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Clipboard;
+      try{ if(cap && cap.write){ await cap.write({ string:v }); return true; } }catch(_){}
+      return false;
+    };
+    if(await nativeWrite(text)) via = 'native';
+    if(!via){
+      try{ await navigator.clipboard.writeText(text); via = 'web'; }
+      catch(_){ toast('couldn’t reach the clipboard'); return; }
+    }
     const hold = holdMs || CLIP_CLEAR_MS;
     toast((what||'copied') + ' — clipboard clears in ' +
           (hold >= 60000 ? Math.round(hold/60000) + ' min' : Math.round(hold/1000) + 's'));
-    clearTimeout(_clipT);
     _clipT = setTimeout(async () => {
       try{
-        if(document.hasFocus() && (await navigator.clipboard.readText()) === text)
-          await navigator.clipboard.writeText('');
+        // The web path can CHECK before it clears, and does: only blank the clipboard while it still
+        // holds what we put there. The native path has no read, so it clears regardless.
+        if(via === 'web'){
+          if(document.hasFocus() && (await navigator.clipboard.readText()) === text)
+            await navigator.clipboard.writeText('');
+          return;
+        }
+        await nativeWrite('');
       }catch(_){ }
     }, hold);
   }

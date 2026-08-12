@@ -128,11 +128,16 @@ function drive(){
        + '<button class="del">'+ICON+'</button>',
   })).join('');
 }
-// A synced folder: no checkbox column, and folder rows.
+// A synced folder: no checkbox column, and folder rows. The action counts here MUST match what
+// _renderSyncedRoot emits — two buttons on a folder (rename, delete) and four on a file (download,
+// keep a copy, rename, delete). They were one and none while the view was read-only, and a repro
+// that keeps the old count is how a widened actions column passes a check it no longer describes.
 function synced(){
+  const EDITS = '<button class="rnsync">'+ICON+'</button><button class="rmsync">'+ICON+'</button>';
   const rows = [
-    _fxDetailsRow({dir:true, name:'2026 receipts and invoices', icon:'📁', size:_fxBytes(41231), type:'38 items', when:_fxWhen(1786400000000), acts:''}),
-    _fxDetailsRow({name:'notes.md', icon:'📄', size:_fxBytes(1204), type:_fxType('md'), when:_fxWhen(1786400000000), acts:'<button class="dlsync">'+ICON+'</button>'}),
+    _fxDetailsRow({dir:true, name:'2026 receipts and invoices', icon:'📁', size:_fxBytes(41231), type:'38 items', when:_fxWhen(1786400000000), acts:EDITS}),
+    _fxDetailsRow({name:'notes.md', icon:'📄', size:_fxBytes(1204), type:_fxType('md'), when:_fxWhen(1786400000000),
+                   acts:'<button class="dlsync">'+ICON+'</button><button class="keepsync">'+ICON+'</button>'+EDITS}),
   ];
   return rows.join('');
 }
@@ -181,9 +186,17 @@ function paint(which){
     return;
   }
   const nosel = which === 'synced';
+  /* The synced view now mounts an UPLOADER between the toolbar and the grid — a drop zone with a
+     button in it. It is part of what has to fit at 390px, so the repro carries it: a check that
+     leaves out a block the screen actually renders is measuring a screen nobody has. */
+  const DROP = nosel ? '<div class="drop-zone" id="sf-drop"><div class="dz-inner"><span class="dz-ic">\u2b06</span>'
+    + ' Drop files here, or <button class="btn btn-cyan small" id="sf-pick">choose files</button>'
+    + '<div class="muted small">\u2192 \ud83d\udd04 Documents / 2026 receipts and invoices \u00b7 added to every device that syncs this folder</div>'
+    + '</div><div class="up-queue" id="sf-queue"></div></div>' : '';
   document.getElementById('feed').innerHTML =
     '<div class="fx-explorer"><div class="fx-side">' + side() + '</div>'
     + '<div class="fx-main">' + _fxBarHTML(CRUMBS)
+    + DROP
     + '<div class="files-grid details' + (nosel?' nosel':'') + '" id="bl-grid">'
     + _fxColsHTML(!nosel) + (nosel ? synced() : drive()) + '</div></div></div>';
 }

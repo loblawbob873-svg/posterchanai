@@ -946,7 +946,8 @@
                  <button class="btn btn-ghost small" id="cph-copy">Copy</button></div>
                <p class="muted small">Copy it now — it is stored only as a hash and cannot be shown again.</p>`;
             const cp = $('#cph-copy', root);
-            if(cp) cp.onclick = ()=>{ try{ navigator.clipboard.writeText(r.password); toast('copied'); }catch(_){ } };
+            if(cp) cp.onclick = ()=> PC.copyValue ? PC.copyValue(r.password, 'copied', 'Your calendar password:')
+                                                 : toast('this build cannot reach the clipboard');
             S.sync = Object.assign({}, S.sync, { has_password: true });
           }catch(err){ toast('could not generate: ' + ((err && err.message) || 'error')); }
         };

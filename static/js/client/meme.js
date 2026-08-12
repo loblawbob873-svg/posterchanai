@@ -3446,7 +3446,7 @@
       return u;
     };
     const c=document.getElementById('mb-copy');
-    if(c) c.onclick=async()=>{ try{ const u=await up(); await navigator.clipboard.writeText(u); toast('link copied'); }
+    if(c) c.onclick=async()=>{ try{ const u=await up(); if(PC.copyValue) await PC.copyValue(u, 'link copied', 'Link:'); else toast(u); }
       catch(err){ const el=linkEl(); if(el) el.textContent='upload failed: '+((err&&err.message)||err); } };
     // Upload once, then publish a kind-1 carrying the link with NIP-10 tags to the source post — the
     // same two steps (and the same eTags) as the Effects studio's sendEffectReply, so a meme reply
@@ -3487,7 +3487,7 @@
     if(p) p.onclick=async()=>{ try{ const u=await up();
         // compose() takes an OPTIONS OBJECT — passing the bare URL string destructured to nothing and
         // opened an empty composer with no link in it.
-        if(PC.compose) PC.compose({ text:u }); else { await navigator.clipboard.writeText(u); toast("link copied — paste it into a post"); } }
+        if(PC.compose) PC.compose({ text:u }); else if(PC.copyValue) { await PC.copyValue(u, 'link copied — paste it into a post', 'Link:'); } else toast(u); }
       catch(err){ const el=linkEl(); if(el) el.textContent='upload failed: '+((err&&err.message)||err); } };
   }
 

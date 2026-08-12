@@ -376,7 +376,7 @@
     // groups on the way out, which is why there is no separate fold call here.
     applyNavHidden();
     // Standing on a view that just went away → go somewhere that exists.
-    if(solo && INSTANCE_VIEWS.has(VIEW)){ try{ switchView('global'); }catch(_){} }
+    if(solo && INSTANCE_VIEWS.has(VIEW)){ try{ switchView(_startTimeline()); }catch(_){} }
   }
 
   /* ===== HIDING ROWS FROM THE LEFT NAV =========================================================
@@ -1401,7 +1401,7 @@
   }
   async function routeFromPath(){
     const e = _entityFromPath();
-    if(!e){ switchView('global'); return; }
+    if(!e){ switchView(_startTimeline()); return; }   // the root path IS "back to my timeline"
     _routing = true;
     try{
       if(e.kind==='user'){
@@ -1418,7 +1418,7 @@
       }
     }catch(err){ console.warn('[route] could not open', e, err); }
     finally{ _routing = false; }
-    switchView('global');   // unrecognised/failed → default feed
+    switchView(_startTimeline());   // unrecognised/failed → the timeline this user opens on
   }
 
   // PWA launch params: the home-screen shortcuts (?compose=1 / ?view=<name>) and the Web Share
@@ -1870,7 +1870,7 @@
       const el = $('#'+c.dataset.copy); if(!el) return;
       if(el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') return;   // handled by _copyFrom
       const txt = el.textContent || ''; if(!txt) return;                 // never "copy" emptiness
-      try{ navigator.clipboard.writeText(txt).then(()=>toast('copied')).catch(()=>toast('copy failed')); }
+      try{ copyValue(txt, 'copied', 'Copy this:'); }
       catch(_){ toast('copy failed'); }
     });
   }
@@ -2754,7 +2754,7 @@
           if(window.PCWebSearch && PCWebSearch.readerOpen && PCWebSearch.readerOpen()){ try{ PCWebSearch.closeReader(); }catch(_){} return; }
           if(window.PCVault && PCVault.drawerOpen && PCVault.drawerOpen()){ try{ PCVault.closeDrawer(); }catch(_){} return; }
           const mini=document.getElementById('mini-player'); if(mini && mini.classList.contains('on')){ try{ closeMini(); }catch(_){} return; }
-          if(typeof VIEW!=='undefined' && VIEW && VIEW!=='home'){ try{ history.back(); }catch(_){ switchView('home'); } return; }
+          if(typeof VIEW!=='undefined' && VIEW && VIEW!=='home'){ try{ history.back(); }catch(_){ switchView(_startTimeline()); } return; }
           if(window.__pcBackArmed){ try{ _App.exitApp && _App.exitApp(); }catch(_){} return; }             // second tap at home → exit
           window.__pcBackArmed=true; try{ toast('press back again to exit'); }catch(_){}
           setTimeout(()=>{ window.__pcBackArmed=false; }, 2000);
@@ -4676,6 +4676,7 @@
     { const keep=_tl.pages===0 ? 200 : _FEED_MAX_CARDS;
       const cards=[...box.children].filter(el=>el.classList.contains('note')||el.classList.contains('reply-pair'));
       for(let i=keep;i<cards.length;i++) cards[i].remove(); }
+    _healGhostPairs(box);
     decorateProfiles(); hydrateLinkCards(feed); hydratePolls(feed);
   }
   // "new posts" pill — only on the live timelines; clicking it jumps to top and shows them
@@ -5243,6 +5244,9 @@
     // Nothing yet AND the relay has not finished answering: that is LOADING, not empty.
     if(!notes.length && !_tl.eosed){ notesEl.innerHTML = _skelNotes(6); if(preserveScroll) feed.scrollTop=top; return; }
     _reconcileNotes(notesEl, notes, `No posts yet. ${VIEW==='home'?'Follow people or check Nostrverse.':''}`);
+    // BEFORE hydrate, so a card this puts back is decorated and observed like every other one. The
+    // reconcile reuses keyed cards, so nothing else in a redraw ever looks inside one again.
+    _healGhostPairs(notesEl, true);
     hydrate(notesEl); if(preserveScroll) feed.scrollTop=top;
   }
   // Bring `box`'s cards in line with `notes` by KEY, reusing every card that is already there.
@@ -5437,7 +5441,7 @@
     }
     invalidateCounts();
     if(_tlMedia){ if(evs.length) _drawTimeline(true); }   // grow the grid from the now-larger Store set
-    else if(frag.childElementCount){ const box=_tlNotes(feed); box.appendChild(frag); _capFeedDom(feed, box); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); hydratePolls(feed); observeProfiles(feed); }
+    else if(frag.childElementCount){ const box=_tlNotes(feed); box.appendChild(frag); _capFeedDom(feed, box); _healGhostPairs(box); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); hydratePolls(feed); observeProfiles(feed); }
     _tl.pages++;
     if(minTs<_tl.oldest) _tl.oldest=minTs;
     // "The relay returned nothing older" and "we gave up waiting" are different answers, and only the
@@ -5709,7 +5713,9 @@
     $('#av-zap').onclick=()=>doZap(e.id, e.pubkey);
     { const ed=$('#av-edit'); if(ed) ed.onclick=()=>renderArticleEditor(e); }
     { const dl=$('#av-del'); if(dl) dl.onclick=()=>deleteArticle(e); }
-    $('#av-copy').onclick=()=>{ try{ const naddr=NT().nip19.naddrEncode({ identifier:(e.tags.find(t=>t[0]==='d')||[])[1]||'', pubkey:e.pubkey, kind:30023 }); navigator.clipboard.writeText(_webLink(naddr)); toast('article link copied'); }catch(_){ navigator.clipboard.writeText(e.id); toast('id copied'); } };
+    $('#av-copy').onclick=()=>{ let _lk=e.id, _m='id copied';
+      try{ _lk=_webLink(NT().nip19.naddrEncode({ identifier:(e.tags.find(t=>t[0]==='d')||[])[1]||'', pubkey:e.pubkey, kind:30023 })); _m='article link copied'; }catch(_){}
+      copyValue(_lk, _m, 'Link to this article:'); };
     { const cb=$('#av-comment'); if(cb) cb.onclick=()=>{ if(GUEST){ _guestPrompt(); return; } compose({articleComment:e}); }; }
     feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
     feed.querySelectorAll('.markdown img').forEach(im=> im.onclick=()=>openLightbox(im.currentSrc||im.src));
@@ -6017,7 +6023,9 @@
     { const b=$('#li-sold'); if(b) b.onclick=()=>toggleListingSold(e); }
     { const b=$('#li-edit'); if(b) b.onclick=()=>renderListingEditor(e); }
     { const b=$('#li-del'); if(b) b.onclick=()=>deleteListing(e); }
-    $('#li-copy').onclick=()=>{ try{ const naddr=NT().nip19.naddrEncode({ identifier:(e.tags.find(t=>t[0]==='d')||[])[1]||'', pubkey:e.pubkey, kind:30402 }); navigator.clipboard.writeText(_webLink(naddr)); toast('listing link copied'); }catch(_){ navigator.clipboard.writeText(e.id); toast('id copied'); } };
+    $('#li-copy').onclick=()=>{ let _lk=e.id, _m='id copied';
+      try{ _lk=_webLink(NT().nip19.naddrEncode({ identifier:(e.tags.find(t=>t[0]==='d')||[])[1]||'', pubkey:e.pubkey, kind:30402 })); _m='listing link copied'; }catch(_){}
+      copyValue(_lk, _m, 'Link to this listing:'); };
     feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
     feed.querySelectorAll('.markdown img').forEach(im=> im.onclick=()=>openLightbox(im.currentSrc||im.src));
     decorateProfiles();
@@ -6355,7 +6363,7 @@
     { const ab=$('#tor-add',feed); if(ab) ab.onclick=addTorrent; }
     decorateProfiles();
     $$('.tor-card .name[data-prof]',feed).forEach(n=> n.onclick=()=>renderProfileView(n.dataset.prof));
-    $$('.tor-copy',feed).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.magnet); toast('magnet copied'); }catch(_){ _copyFallback('Magnet link:', b.dataset.magnet); } });
+    $$('.tor-copy',feed).forEach(b=> b.onclick=()=> copyValue(b.dataset.magnet, 'magnet copied', 'Magnet link:'));
     /* "Download here" hands the magnet to THIS node's torrent client and shows you the manager. The
      * magnet link beside it still exists for handing the torrent to your own app; before, that was
      * the only thing on offer, which on a phone means an app that may not be installed. */
@@ -6547,8 +6555,8 @@
     const wire=()=>{
       decorateProfiles();
       $$('.repo-card .name[data-prof]',feed).forEach(n=> n.onclick=ev=>{ ev.stopPropagation(); renderProfileView(n.dataset.prof); });
-      $$('.repo-clone',feed).forEach(b=> b.onclick=async ev=>{ ev.stopPropagation(); try{ await navigator.clipboard.writeText(b.dataset.clone); toast('clone URL copied'); }catch(_){ await uiPrompt('Clone URL', {value:b.dataset.clone}); } });
-      $$('.repo-share',feed).forEach(b=> b.onclick=async ev=>{ ev.stopPropagation(); try{ await navigator.clipboard.writeText(b.dataset.share); toast('project link copied'); }catch(_){ await uiPrompt('Project link', {value:b.dataset.share}); } });
+      $$('.repo-clone',feed).forEach(b=> b.onclick=ev=>{ ev.stopPropagation(); copyValue(b.dataset.clone, 'clone URL copied', 'Clone URL:'); });
+      $$('.repo-share',feed).forEach(b=> b.onclick=ev=>{ ev.stopPropagation(); copyValue(b.dataset.share, 'project link copied', 'Project link:'); });
       $$('.repo-card a[href]',feed).forEach(a=> a.onclick=ev=>ev.stopPropagation());   // ↗ Open must not also open the detail
       $$('.repo-card',feed).forEach(c=> c.onclick=()=>{ const e=Store.get(c.dataset.id); if(e) openRepo(e); });
     };
@@ -6607,7 +6615,7 @@
     </div>`;
   }
   function _wireQuickStart(root){
-    $$('.qs-copy',root).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.cmd); toast('copied'); }catch(_){ await uiPrompt('Copy', {value:b.dataset.cmd}); } });
+    $$('.qs-copy',root).forEach(b=> b.onclick=()=> copyValue(b.dataset.cmd, 'copied', 'Copy this:'));
   }
   function _showRepoQuickStart(clone, repoId, ev){
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-send"></use></svg>${enc(repoId)} — get started</h3>${_repoQuickStartHtml(clone, repoId)}
@@ -6927,8 +6935,8 @@
     </div>`;
     $('#repo-back',feed).onclick=()=>switchView('repos');
     $$('[data-prof]',feed).forEach(el=> el.onclick=ev=>{ ev.stopPropagation(); renderProfileView(el.dataset.prof); });
-    { const cb=$('.repo-clone',feed); if(cb) cb.onclick=async()=>{ try{ await navigator.clipboard.writeText(cb.dataset.clone); toast('clone URL copied'); }catch(_){ await uiPrompt('Clone URL', {value:cb.dataset.clone}); } }; }
-    { const sb=$('.rv-share',feed); if(sb) sb.onclick=async()=>{ try{ await navigator.clipboard.writeText(sb.dataset.share); toast('project link copied — share it anywhere'); }catch(_){ await uiPrompt('Project link', {value:sb.dataset.share}); } }; }
+    { const cb=$('.repo-clone',feed); if(cb) cb.onclick=()=> copyValue(cb.dataset.clone, 'clone URL copied', 'Clone URL:'); }
+    { const sb=$('.rv-share',feed); if(sb) sb.onclick=()=> copyValue(sb.dataset.share, 'project link copied — share it anywhere', 'Project link:'); }
     { const eb=$('.rv-edit',feed); if(eb) eb.onclick=()=>publishRepo(e); }
     { const xb=$('.rv-delete',feed); if(xb) xb.onclick=()=>deleteRepo(e); }
     { const ni=$('#rv-newissue',feed); if(ni) ni.onclick=()=>newRepoIssue(e); }
@@ -7206,10 +7214,9 @@
       <div class="muted small" style="padding:10px 2px">${cs.length} most recent commit${cs.length===1?'':'s'} on ${enc(_rv.refName||_rv.ref)}</div>`;
     { const a=$('#cm-allhist',box); if(a){ a.onclick=()=>_loadRepoCommits(feed); a.onkeydown=ev=>{ if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); a.click(); } }; } }
     // Copying the sha must not also open the diff — the button is inside the clickable row.
-    $$('.cm-sha',box).forEach(b=> b.onclick=async ev=>{
+    $$('.cm-sha',box).forEach(b=> b.onclick=ev=>{
       ev.stopPropagation();
-      try{ await navigator.clipboard.writeText(b.dataset.sha); toast('commit sha copied'); }
-      catch(_){ await uiPrompt('Commit:', {value:b.dataset.sha}); }
+      copyValue(b.dataset.sha, 'commit sha copied', 'Commit:');
     });
     $$('.cm-row',box).forEach(r=> r.onclick=()=>_openRepoCommit(feed, r.dataset.sha));
   }
@@ -7273,10 +7280,7 @@
       ${filesHtml||'<div class="rv-empty muted small">This commit changed nothing.</div>'}
     </div>`;
     $('#cmv-back',box).onclick=()=>_loadRepoCommits(feed);
-    $('#cmv-copy',box).onclick=async()=>{
-      try{ await navigator.clipboard.writeText(j.sha||sha); toast('commit sha copied'); }
-      catch(_){ await uiPrompt('Commit:', {value:j.sha||sha}); }
-    };
+    $('#cmv-copy',box).onclick=()=> copyValue(j.sha||sha, 'commit sha copied', 'Commit:');
   }
   // ---------- Files browser (self-hosted GRASP repos) ----------
   async function _loadRepoFiles(feed, path){
@@ -7676,9 +7680,7 @@
     // _copyFallback, not a bare catch: navigator.clipboard is REFUSED outright in a few of the
     // places this runs (an insecure origin, a WebView without permission), and this is the one
     // string a streamer has to be able to get out of the app.
-    { const cl=$('#st-selflink'); if(cl) cl.onclick=async()=>{
-        try{ await navigator.clipboard.writeText(watchLink); toast('watch link copied'); }
-        catch(_){ _copyFallback('Your watch link:', watchLink); } }; }
+    { const cl=$('#st-selflink'); if(cl) cl.onclick=()=> copyValue(watchLink, 'watch link copied', 'Your watch link:'); }
     { const pb=$('#st-pop'); if(pb) pb.onclick=()=>popOutStream(e); }
     { const wb=$('#st-window'); if(wb) wb.onclick=()=>openStreamWindow(e); }
     if(!ClientSettings.get('streamChatHidden',false)) _streamChat(saddr, haddr, sRelays);   // don't start the sub if chat is hidden
@@ -7999,6 +8001,55 @@
     if(navigator.clipboard && navigator.clipboard.writeText){
       navigator.clipboard.writeText(val).then(()=>toast('copied (web)')).catch(fb); return; }
     fb();
+  }
+  /* COPYING A STRING, EVERYWHERE, THROUGH THE ONE CASCADE THAT WORKS IN ALL THREE SHELLS.
+   *
+   * `navigator.clipboard` is not available in the APK's WebView and not in the desktop shell either
+   * — Electron serves the bundle from a custom `app://` scheme, and the write is refused there — so
+   * the plain web call is the path that works in a BROWSER and nowhere else. Most of this app's copy
+   * buttons were written as `navigator.clipboard.writeText(x); toast('copied')`: no await, no catch,
+   * so the promise rejects into nothing and the toast says it worked. "Copying npub on user profile
+   * does not copy", with a toast claiming it did, is that line exactly.
+   *
+   * Same order as _copyFrom (native bridge → Capacitor → web → execCommand), which has been through
+   * three environments failing differently and should not be re-derived per call site. The last
+   * resort is _copyFallback, which puts the value on screen where it can be copied by hand: a copy
+   * button that fails silently is worse than one that admits it.
+   *
+   * _copyFrom stays separate and is still the right call for an INPUT — it copies from the real,
+   * visible field (a WebView refuses execCommand on an off-screen element) and unmasks a password
+   * field for exactly the instant of the copy. This one is for a value the page merely holds. */
+  function copyValue(text, okMsg, failLabel){
+    const val = String(text == null ? '' : text);
+    const ok = () => { toast(okMsg || 'copied'); return true; };
+    // A temporary textarea, appended and focused for real — an off-screen one is refused by the same
+    // WebViews this exists for, so it is placed within the viewport and made invisible instead.
+    const exec = () => {
+      let done = false;
+      try{
+        const ta = document.createElement('textarea');
+        ta.value = val;
+        ta.setAttribute('readonly', '');
+        ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0';
+        document.body.appendChild(ta);
+        ta.focus(); ta.select();
+        if(ta.setSelectionRange) ta.setSelectionRange(0, val.length);
+        done = document.execCommand('copy');     // returns FALSE on failure — it does not throw
+        ta.remove();
+      }catch(_){ done = false; }
+      return done;
+    };
+    const fb = () => { if(exec()) return ok();
+                       _copyFallback(failLabel || 'Copy this:', val, { once:true }); return false; };
+    try{
+      if(window.pcClip && window.pcClip.write)
+        return window.pcClip.write(val).then(w => w ? ok() : fb()).catch(fb);
+      const cap = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Clipboard;
+      if(cap && cap.write) return cap.write({ string: val }).then(ok).catch(fb);
+      if(navigator.clipboard && navigator.clipboard.writeText)
+        return navigator.clipboard.writeText(val).then(ok).catch(fb);
+    }catch(_){ /* fall through — a throwing clipboard is a missing one */ }
+    return Promise.resolve(fb());
   }
   function _stopLiveHb(){ if(_liveHb){ clearInterval(_liveHb); _liveHb=null; } }
   function _startLiveHb(){   // if the HLS 404s repeatedly, OBS stopped → mark the stream ended so it doesn't orphan as LIVE
@@ -10097,7 +10148,31 @@
                     : (_isTxid(t.txid) ? `<span class="xt-txid" title="transaction id">tx ${enc(t.txid.slice(0,10))}…</span>` : ''))
       + `</div>`;
   }
+  /* EVERY CARD KIND IS CAUGHT HERE, not just kind 1 — and that is what stops one bad event taking a
+   * whole SCREEN with it.
+   *
+   * noteCard() has had its own try/catch for a long time, so a malformed kind-1 costs exactly one
+   * card. Nothing else did: a poll with no `option` tags, an article whose content is not what
+   * articleCard expects, a channel whose kind-40 content is not JSON — each of those threw straight
+   * out of here, and out of whatever was building the list.
+   *
+   * On a PROFILE that is the whole view. `listFor('notes')` maps over the author's events and its
+   * result is assigned to #prof-list, so a throw means the list is never filled AND every binding
+   * after it — the tabs, ⋯, "Copy npub", the follow stats — is never made. The report reads as three
+   * unrelated bugs ("no posts", "the hamburger menu isn't showing", "copying the npub does nothing")
+   * with no error on screen, because the header above it rendered perfectly.
+   *
+   * The timeline has the same shape through _noteNode, and so does search, the thread view and the
+   * notification rail. One guard here covers all of them. */
   function noteHtml(ev){
+    try{ return _noteHtml(ev); }
+    catch(e){
+      if((_noteCardErrs=(_noteCardErrs||0)+1) <= 3) try{ console.error('[noteHtml] kind', ev&&ev.kind, (ev&&ev.id)||'?', e); }catch(_){}
+      const why = (e && (e.message || e.name)) ? String(e.message || e.name).slice(0,140) : '';
+      return `<article class="note" data-id="${(ev&&ev.id)||''}" data-pk="${(ev&&ev.pubkey)||''}"><div class="body"><div class="txt muted small">⚠ couldn't render this post${why?' — '+enc(why):''}</div></div></article>`;
+    }
+  }
+  function _noteHtml(ev){
     if (ev.kind===6){  // repost
       let inner=null; try{ inner=JSON.parse(ev.content); }catch(_){}
       if(inner && inner.id) Store.saveEvent(inner);
@@ -10122,10 +10197,77 @@
   // Timeline renderer: the Home/Global feeds show replies (like Nostr/fediverse), NOT just top-level
   // posts. A reply renders WITH its "↩ replying to" parent context so it reads in-context instead of as
   // an orphaned card. Thread + profile views render their own context, so they keep calling noteHtml.
+  /* THE CARD IS BUILT FIRST, and the label is only ever wrapped around one that exists.
+   *
+   * "↩ REPLYING TO alice" with nothing under it, stacked down the whole screen, is the ghost timeline
+   * people report from the Android app. The label is built from the reply's OWN tags, so it renders
+   * whatever else fails — which is what makes the failure look like the feed being empty rather than
+   * like an error. Reversing the order means the label cannot outlive its post: no card, no label,
+   * and the missing post is then an ordinary missing row that the next draw fills in.
+   *
+   * noteCard() catches its own errors and always answers with a card, so `!card` is not a case that
+   * should ever be reachable — which is exactly why it is worth handling here rather than assuming. */
   function feedNoteHtml(ev){
+    const card = noteHtml(ev) || '';   // noteHtml catches its own renderers — see its guard
+    if(!card) return '';
     return (ev.kind===1 && isReply(ev))
-      ? `<div class="reply-pair">${replyContextHtml(ev)}${noteHtml(ev)}</div>`
-      : noteHtml(ev);
+      ? `<div class="reply-pair">${replyContextHtml(ev)}${card}</div>`
+      : card;
+  }
+  /* THE SWEEP THAT PUTS A GHOST RIGHT, and says which kind of ghost it was.
+   *
+   * The guard above stops this client BUILDING a label with no post. It cannot stop one that is
+   * already on screen, and there is a second way to get the same picture that no amount of care in
+   * the builder touches: the card is in the DOM and drew NOTHING. On Android that is a real
+   * possibility — the WebView's renderer is under memory pressure the whole time and a card carries an
+   * entry animation, i.e. its own compositing layer.
+   *
+   * The two are distinguished by MEASURING, because they have different fixes and the report from the
+   * outside ("only REPLYING TO, no posts") is identical:
+   *
+   *   missing  no <article> inside the pair    → rebuild the card from the Store event
+   *   blank    an <article> of zero height     → the layout is wrong, not the DOM; kick a reflow
+   *
+   * Neither is a repaint the reconcile would ever do on its own: it matches on data-key and REUSES
+   * the card already there, so a pair that came out wrong stays wrong for the life of the page. That
+   * is the "it fixes itself after a while" — new posts draw correctly above the broken ones.
+   *
+   * The counts are kept (and exposed as PC.ghostStats) rather than only fixed, so the next report
+   * says which of the two it was instead of starting this hunt again. */
+  const _ghosts = { missing:0, blank:0, dropped:0, at:0 };
+  /* `measure` is off on the live-prepend path. Reading offsetHeight forces a synchronous layout, and
+   * a busy feed prepends several times a minute on the very device this is written for — so the
+   * cheap half (is the <article> THERE?) runs every time, and the half that costs a layout runs on a
+   * full draw, which has just rebuilt the list anyway. */
+  function _healGhostPairs(box, measure){
+    if(!box || !box.querySelectorAll || !box.isConnected) return 0;
+    const pairs = box.querySelectorAll('.reply-pair');
+    if(!pairs.length) return 0;
+    let n = 0;
+    for(const p of pairs){
+      const card = p.querySelector('article.note');
+      if(!card){
+        // data-key IS the event id for a reply (only kind 6 keys on something else, and a repost is
+        // never a reply-pair), so the post can be rebuilt from the cache it was drawn from.
+        const ev = Store.get(p.dataset.key || '');
+        const node = ev ? _noteNode(ev) : null;
+        if(node){ p.replaceWith(node); _ghosts.missing++; }
+        else { p.remove(); _ghosts.dropped++; if(p.dataset.key) needEvent(p.dataset.key); }
+        n++; continue;
+      }
+      /* Zero-height is only meaningful once the pair itself has been laid out — a feed that is
+       * display:none (the view moved on) measures every child at zero and would "heal" the lot. */
+      if(measure && p.offsetHeight > 0 && card.offsetHeight === 0){
+        const was = card.style.display;
+        card.style.display = 'none'; void card.offsetHeight; card.style.display = was || '';
+        _ghosts.blank++; n++;
+      }
+    }
+    if(n){
+      _ghosts.at = Date.now();
+      try{ console.warn('[timeline] recovered', n, 'ghost reply card(s)', JSON.stringify(_ghosts)); }catch(_){}
+    }
+    return n;
   }
   // ---------- NIP-88 polls: kind-1068 poll, kind-1018 responses ----------
   const _myPollVotes = {};   // pollId -> Set(optionId)
@@ -11116,7 +11258,7 @@
         const tx=xv.dataset.xtxid||'', ad=xv.dataset.xaddr||'', pf=xv.dataset.xproof||'';
         if(!_isTxid(tx) || !isXmrAddr(ad) || !_isProofSig(pf)){ toast('this proof looks malformed — not copying'); return; }   // re-validate: never build a wallet command from untrusted tag data
         const cmd=`check_tx_proof ${tx} ${ad} "" ${pf}`;
-        try{ navigator.clipboard.writeText(cmd).then(()=>toast('verify command copied — paste it into your Monero wallet'),()=>_copyFallback('Paste this into your Monero wallet:',cmd)); }catch(_){ _copyFallback('Paste this into your Monero wallet:',cmd); } return; }
+        copyValue(cmd, 'verify command copied — paste it into your Monero wallet', 'Paste this into your Monero wallet:'); return; }
       const av=e.target.closest('.av'); if(av){ const n=e.target.closest('.note'); if(n){ renderProfileView(n.dataset.pk); return; } }
       const prof=e.target.closest('[data-prof]'); if(prof){ renderProfileView(prof.dataset.prof); return; }
       const q=e.target.closest('[data-open]'); if(q){ openThread(q.dataset.open); return; }
@@ -11177,7 +11319,10 @@
       if(a==='zap') return doZap(id,pk);
       if(a==='xmrtip') return doXmrTip(id,pk,art.dataset.xmr);
       if(a==='bookmark') return toggleBookmark(id,btn);
-      if(a==='copyid'){ try{ navigator.clipboard.writeText(_webLink(NT().nip19.neventEncode({id}))); toast('link copied'); }catch(_){ try{ navigator.clipboard.writeText(_webLink(NT().nip19.noteEncode(id))); toast('link copied'); }catch(__){ navigator.clipboard.writeText(id); toast('id copied'); } } return; }
+      if(a==='copyid'){ let _lk=id, _m='id copied';
+        try{ _lk=_webLink(NT().nip19.neventEncode({id})); _m='link copied'; }
+        catch(_){ try{ _lk=_webLink(NT().nip19.noteEncode(id)); _m='link copied'; }catch(__){} }
+        copyValue(_lk, _m, 'Link to this post:'); return; }
       if(a==='translate') return translatePost(id);
       if(a==='pin') return togglePin(id);
       if(a==='block') return doBlock(pk);
@@ -11348,7 +11493,7 @@
       <a class="btn btn-neon full" href="lightning:${enc(pr)}">Open in wallet</a>
       <div class="keybox" style="margin-top:10px"><code id="z-inv">${enc(pr)}</code></div>
       <button class="btn btn-cyan full" id="z-copy">Copy invoice</button>`, root=>{
-      $('#z-copy',root).onclick=()=>{ navigator.clipboard.writeText(pr); toast('invoice copied'); };
+      $('#z-copy',root).onclick=()=>{ copyValue(pr, 'invoice copied', 'Lightning invoice:'); };
     });
   }
   // ---------- Monero tips (non-custodial) ----------
@@ -11429,7 +11574,7 @@
         amtEl.addEventListener('input',()=>{ sync(); renderQr(); });
         $$('.xmr-preset',root).forEach(b=> b.onclick=()=>{ amtEl.value=b.dataset.amt; sync(); renderQr(); });   // one-tap amount
         openBtn.addEventListener('click',()=>{ tell.engaged=true; });
-        $('#xmr-copy',root).onclick=()=>{ tell.engaged=true; try{ navigator.clipboard.writeText(addr).then(()=>toast('address copied'),()=>_copyFallback('Copy the Monero address:',addr)); }catch(_){ _copyFallback('Copy the Monero address:',addr); } };
+        $('#xmr-copy',root).onclick=()=>{ tell.engaged=true; copyValue(addr, 'address copied', 'Copy the Monero address:'); };
         { const s=$('#xmr-sent',root); if(s) s.onclick=async()=>{ const a=amtVal();
           const txid=(($('#xmr-txid',root)||{}).value||'').trim().toLowerCase();
           const proof=(($('#xmr-prf',root)||{}).value||'').trim();
@@ -11548,7 +11693,7 @@
         amtEl.addEventListener('input',()=>{ sync(); renderQr(); });
         $$('.bch-preset',root).forEach(b=> b.onclick=()=>{ amtEl.value=b.dataset.amt; sync(); renderQr(); });
         openBtn.addEventListener('click',()=>{ tell.engaged=true; });
-        $('#bch-copy',root).onclick=()=>{ tell.engaged=true; try{ navigator.clipboard.writeText(addr).then(()=>toast('address copied'),()=>_copyFallback('Copy the BCH address:',addr)); }catch(_){ _copyFallback('Copy the BCH address:',addr); } };
+        $('#bch-copy',root).onclick=()=>{ tell.engaged=true; copyValue(addr, 'address copied', 'Copy the BCH address:'); };
         { const s=$('#bch-sent',root); if(s) s.onclick=async()=>{ const a=amtVal();
           const txid=(($('#bch-txid',root)||{}).value||'').trim().toLowerCase();
           if(txid && !/^[0-9a-f]{64}$/.test(txid)){ toast('txid should be 64 hex characters'); return; }
@@ -12000,7 +12145,10 @@
     if(IS_ADMIN && !mine) items.push(['block','🚫 Block author','danger']);
     openMenuPopover(anchorBtn, items, a=>{
       if(a==='bookmark'){ toggleBookmark(id, null).then(()=>{ if(anchorBtn) anchorBtn.classList.toggle('on', BOOKMARKS.has(id)); }); return; }
-      if(a==='copyid'){ try{ navigator.clipboard.writeText(_webLink(NT().nip19.neventEncode({id}))); toast('link copied'); }catch(_){ try{ navigator.clipboard.writeText(_webLink(NT().nip19.noteEncode(id))); toast('link copied'); }catch(__){ navigator.clipboard.writeText(id); toast('id copied'); } } return; }
+      if(a==='copyid'){ let _lk=id, _m='id copied';
+        try{ _lk=_webLink(NT().nip19.neventEncode({id})); _m='link copied'; }
+        catch(_){ try{ _lk=_webLink(NT().nip19.noteEncode(id)); _m='link copied'; }catch(__){} }
+        copyValue(_lk, _m, 'Link to this post:'); return; }
       if(a==='rebroadcast') return rebroadcastPost(id);
       if(a==='translate') return translatePost(id);
       if(a==='summary') return summarizePost(id);
@@ -12057,9 +12205,9 @@
         <button class="btn btn-cyan small" id="rawev-close">Close</button>
       </div>`, root=>{
       const cp=root.querySelector('#rawev-copy');
-      if(cp) cp.onclick=async()=>{ try{ await navigator.clipboard.writeText(json); toast('📋 JSON copied'); }catch(_){ toast('could not copy'); } };
+      if(cp) cp.onclick=()=> copyValue(json, '📋 JSON copied', 'Raw event JSON:');
       const ci=root.querySelector('#rawev-copyid');
-      if(ci) ci.onclick=async()=>{ try{ await navigator.clipboard.writeText(nevent); toast('🔗 nevent copied'); }catch(_){ toast('could not copy'); } };
+      if(ci) ci.onclick=()=> copyValue(nevent, '🔗 nevent copied', 'nevent:');
       const cl=root.querySelector('#rawev-close'); if(cl) cl.onclick=closeModal;
     });
   }
@@ -12141,12 +12289,15 @@
       const file=new File([bin], 'post.png', { type:'image/png' });
       toast('📤 uploading…');
       const link=await uploadBlob(file);
-      try{ await navigator.clipboard.writeText(link); }catch(_){}
+      // Best-effort and SILENT: the modal below shows the link and has its own Copy button, so a
+      // shell with no clipboard must not toast a failure here on top of a successful upload.
+      try{ if(window.pcClip && window.pcClip.write) await window.pcClip.write(link);
+           else if(navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(link); }catch(_){}
       modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-camera"></use></svg>Post card</h3><img src="${enc(link)}" style="max-width:100%;max-height:54vh;border-radius:10px;display:block;margin:0 auto">`+
         `<div class="muted small" style="margin-top:10px;word-break:break-all">${enc(link)}</div>`+
         `<div class="row ss-acts"><button class="btn btn-cyan small" id="ss-fx"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>Effect</button><button class="btn btn-cyan small" id="ss-meme"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>Meme Builder</button><button class="btn btn-cyan small" id="ss-note"><svg class="ic b-ic" aria-hidden="true"><use href="#i-note"></use></svg>Save to Notes</button><button class="btn btn-neon small" id="ss-copy"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy link</button><a class="btn btn-cyan small" href="${enc(link)}" target="_blank" rel="noopener"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Open</a><button class="btn btn-cyan small" id="ss-close">Close</button></div>`,
         root=>{
-          const cp=root.querySelector('#ss-copy'); if(cp) cp.onclick=async()=>{ try{ await navigator.clipboard.writeText(link); toast('📋 link copied'); }catch(_){ toast(link); } };
+          const cp=root.querySelector('#ss-copy'); if(cp) cp.onclick=()=> copyValue(link, '📋 link copied', 'Link:');
           // 🎬 Effect: run the card PNG through the Effects studio; no reply target → its 🚀 Post button
           // publishes a fresh timeline post, exactly like an effect made from a regular image.
           const fx=root.querySelector('#ss-fx'); if(fx) fx.onclick=()=>{ closeModal(); launchEffectStudio(link, null); };
@@ -14585,7 +14736,7 @@
     }catch(e){ toast('save failed: '+((e&&e.message)||e)); return false; }
   }
   function copyUrl(u){ try{ u=new URL(u, location.href).href; }catch(_){}
-    try{ navigator.clipboard.writeText(u); toast('URL copied'); }catch(_){ const t=document.createElement('textarea'); t.value=u; document.body.appendChild(t); t.select(); try{document.execCommand('copy'); toast('URL copied');}catch(e){toast('copy failed');} t.remove(); } }
+    copyValue(u, 'URL copied', 'URL:'); }
   function gifPicker(ta){
     /* A SUB-modal: it opens over the composer's own modal, so it needs to sit above it. Expressed as
      * a class rather than an inline z-index, because an inline value beats every stylesheet rule —
@@ -15885,10 +16036,15 @@
    * manifests themselves (their d-tags ARE the pair keys); nothing new is written, because an index
    * of folders would be one more replaceable document that a single empty read could wipe.
    *
-   * Browsing one is READ-ONLY here, deliberately. Renaming or deleting a file in this view would be
-   * a write to the shared manifest that every other device then applies to real files on real disks
-   * — the one thing this screen has no business doing without the sync engine, its three snapshots
-   * and its trash. Downloads decrypt in the browser, like every other encrypted file here. */
+   * You can now ADD, RENAME and DELETE here, and what that edits is the MANIFEST — never a file.
+   * Every device applies the change on its next sweep through the paths it already uses: a new entry
+   * is downloaded, a tombstone is moved to `.pc-trash`, a rename is both. So this screen still holds
+   * no filesystem, still works on a phone that syncs nothing, and still cannot destroy anything the
+   * sweep could not (see PCSync.edit, which writes through the same guarded save).
+   *
+   * The one thing that IS different from a device-side change: a delete here happens without looking
+   * at the files, so the confirmations name the count, and the server's collapse guard still stands
+   * behind it. Downloads decrypt in the browser, like every other encrypted file here. */
   let _syncRoot = '';                 // the pair key being browsed ('' = the drive, not a synced folder)
   let _syncPath = '';                 // subdirectory inside it ('' = its root)
   let _syncPairs = null;              // [{key,n,updated_at}] · null = not asked yet · 'error' = asked and failed
@@ -15951,7 +16107,11 @@
       const rest = p.slice(pre.length);
       if(!rest || rest.split('/')[0] === '.pc-trash') continue;   // the folder's own trash is not content
       const cut = rest.indexOf('/');
-      if(cut < 0){ files.push({ path:p, name:rest, size:+e.size||0, mtime:+e.mtime||0, sha:e.sha }); continue; }
+      // `chunks` travels with the row: a file stored in pieces has NO `sha` of its own, and a screen
+      // that only knows about `sha` offers a Download button that can never work (it is also what
+      // every file over 16 MB looks like — the common case, not the exotic one).
+      if(cut < 0){ files.push({ path:p, name:rest, size:+e.size||0, mtime:+e.mtime||0, sha:e.sha,
+                                chunks:e.chunks }); continue; }
       const nm = rest.slice(0, cut);
       const d = dirs.get(nm) || { name:nm, dir:true, n:0, size:0, mtime:0 };
       d.n++; d.size += +e.size || 0; d.mtime = Math.max(d.mtime, +e.mtime || 0);
@@ -16030,8 +16190,22 @@
       return await _masterDecrypt(await FilesIdx._ensureMK(), bytes);
     }
   }
-  async function _syncDownload(btn, sha, name){
-    if(!sha){ toast('this file has no stored copy yet'); return; }
+  /* The file's bytes, whole or in pieces, as a Blob.
+   *
+   * A Blob rather than a Uint8Array on purpose: a chunked file is one the renderer could not hold in
+   * the first place (that is why it was chunked), and a Blob built from its parts is backed by the
+   * browser's own storage instead of the JS heap. Concatenating into one array here would reintroduce
+   * exactly the ceiling chunking exists to remove. */
+  async function _syncFileBlob(sha, chunks){
+    if(chunks && chunks.length){
+      const parts = [];
+      for(const c of chunks) parts.push(await _syncBlobBytes(c));
+      return new Blob(parts);
+    }
+    return new Blob([await _syncBlobBytes(sha)]);
+  }
+  async function _syncDownload(btn, sha, name, chunks){
+    if(!sha && !(chunks && chunks.length)){ toast('this file has no stored copy yet'); return; }
     // innerHTML, not textContent: the button IS an <svg> sprite reference, so textContent reads as ''
     // and writing to it deletes the icon — restoring the empty string afterwards leaves a blank
     // button for the rest of the session.
@@ -16039,7 +16213,7 @@
     try{
       if(btn){ btn.disabled = true; btn.innerHTML = '…'; }
       toast('decrypting…');
-      await saveBlobAs(new Blob([await _syncBlobBytes(sha)]), name || 'file');
+      await saveBlobAs(await _syncFileBlob(sha, chunks), name || 'file');
     }catch(e){ toast('download failed: ' + ((e && e.message) || e)); }
     finally{ if(btn){ btn.disabled = false; btn.innerHTML = was; } }
   }
@@ -16167,14 +16341,118 @@
     $$('[data-thumb]', grid).forEach(el=>_thumbObs.observe(el));
   }
 
+  /* An edit to the shared manifest, made from here. Everything that can go wrong with one is the
+   * same: it is a network write that other people's machines will act on, so it says what it did, it
+   * drops the cached manifest (the view must never redraw from the copy it just invalidated) and it
+   * asks for the folder counts again, since the number beside the folder is now wrong. */
+  async function _syncEdit(what, run){
+    const key = _syncRoot;
+    try{
+      const r = await run();
+      _syncManifests.delete(key);
+      try{ if(window.PCSync && PCSync.accountFolders) await PCSync.accountFolders(true); }catch(_){}
+      if(VIEW==='blossom' && _filesTab==='public' && _syncRoot===key) renderBlossom();
+      return r;
+    }catch(e){
+      const m = (e && e.message) || String(e);
+      // A refusal is not a failure to report quietly: the collapse guard and the "already exists"
+      // check both come back this way, and both mean nothing was changed anywhere.
+      toast(what + ' failed: ' + m);
+      _syncManifests.delete(key);
+      throw e;
+    }
+  }
+  /* Uploading INTO a synced folder, one file at a time.
+   *
+   * Sequential on purpose, like the drive's uploader: each file is encrypted and hashed in this
+   * renderer, and running several at once is what turns a phone's WebView into a memory kill. The
+   * manifest is written per file rather than once at the end, so an interrupted batch leaves the
+   * files that DID land in the folder instead of losing all of them. */
+  let _sfUploading = false;
+  async function _syncUploadFiles(files){
+    files = (files||[]).filter(Boolean);
+    if(!files.length || _sfUploading) return;
+    const key = _syncRoot, dir = _syncPath;     // capture: navigating mid-upload must not misfile
+    /* REPLACING IS NOT ADDING, and it happens to every device. An upload onto a path that already
+     * exists is a change, so the copies on the other machines are overwritten on their next sweep —
+     * the same thing that happens when you edit the file on a device, except that here nobody has
+     * SEEN the file being replaced. Asked once for the whole batch rather than per file.
+     *
+     * The manifest is READ when it is not already cached, rather than warning only when the folder
+     * happens to have been browsed recently: this prompt is the one thing between a drag-and-drop
+     * and somebody's file being replaced on four machines. */
+    let known = null;
+    try{ known = { paths: await _syncManifest(key) }; }catch(_){ known = _syncManifests.get(key) || null; }
+    if(known && known.paths){
+      const clash = files.filter(f => { const e = known.paths[(dir ? dir + '/' : '') + f.name];
+                                        return e && !e.deletedAt; }).map(f => f.name);
+      if(clash.length){
+        const list = clash.slice(0, 5).join(', ') + (clash.length > 5 ? ' and ' + (clash.length-5) + ' more' : '');
+        if(!await uiConfirm('“' + key + '” already has ' + list + '.\n\nUploading replaces '
+                            + (clash.length===1?'it':'them') + ' on every device that syncs this folder.')) return;
+      }
+    }
+    const q = $('#sf-queue');
+    if(q) q.innerHTML = files.map((f,i)=>`<div class="up-item"><span class="up-name">${enc(f.name)}</span><span class="up-stat" id="sf-stat-${i}">queued</span></div>`).join('');
+    const stat = (i, s) => { const el = $('#sf-stat-'+i); if(el) el.textContent = s; };
+    _sfUploading = true;
+    let ok = 0, failed = 0;
+    /* uploadMany, not a loop of upload(): each manifest write is a fresh encrypted copy of the WHOLE
+     * document, which for a folder with thousands of paths is megabytes — once per file, a fifty-photo
+     * drop moves more manifest than photos. It checkpoints instead, so an interrupted batch still
+     * leaves the files that landed. A row reaches 'added' when its ENTRY is stored, not when its bytes
+     * are, which is why the status can sit at 100% for a moment before it turns over. */
+    try{
+      const r = await PCSync.edit.uploadMany(key, dir, files, {
+        onFile: (i, text) => stat(i, text),
+        onProgress: (i, done, total) => stat(i, total ? Math.round(done/total*100) + '%' : 'uploading…'),
+      });
+      ok = r.ok; failed = r.failed;
+    }catch(e){ toast('upload failed: ' + ((e && e.message) || e)); }
+    finally { _sfUploading = false; }   // a flag left set is an uploader that never works again
+    _syncManifests.delete(key);
+    try{ if(window.PCSync && PCSync.accountFolders) await PCSync.accountFolders(true); }catch(_){}
+    toast(ok ? (ok + ' file' + (ok===1?'':'s') + ' added — your devices pick them up on their next sync'
+                + (failed ? ', ' + failed + ' failed' : ''))
+             : 'nothing was added');
+    if(VIEW==='blossom' && _filesTab==='public' && _syncRoot===key) renderBlossom();
+  }
   async function _renderSyncedRoot(pane){
     const details = _fxView()==='details';
+    /* A client whose sync.js predates PCSync.edit is a REAL case, not a paranoid one: this app is a
+     * service-worker PWA and an APK, so app.js and sync.js can be different ages on the same device.
+     * Without the check the buttons draw and every one of them is a TypeError. */
+    const canEdit = !!(window.PCSync && PCSync.edit);
+    /* The uploader sits OUTSIDE the grid, so it is there whether the folder is empty, full, or
+     * unreadable — an empty synced folder is exactly the one you most want to put something in. */
+    const head = !canEdit ? '' : `<div class="drop-zone" id="sf-drop"><input type="file" id="sf-file" multiple hidden>
+        <div class="dz-inner"><span class="dz-ic"><svg class="ic b-ic" aria-hidden="true"><use href="#i-upload"></use></svg></span>
+          Drop files here, or <button class="btn btn-cyan small" id="sf-pick">choose files</button>
+          <div class="muted small">→ 🔄 ${enc(_syncRoot)}${_syncPath?' / '+enc(_syncPath):''} · added to every device that syncs this folder</div></div>
+        <div class="up-queue" id="sf-queue"></div></div>`;
     pane.innerHTML = '<div class="fx-explorer">'
       + '<div class="fx-side">' + _fxSideHTML() + '</div>'
-      + '<div class="fx-main">' + _fxBarHTML(_fxCrumbs())
+      + '<div class="fx-main">' + _fxBarHTML(_fxCrumbs()) + head
       + '<div class="files-grid' + (details?' details nosel':'') + '" id="bl-grid"><div class="spinner"></div></div>'
       + '</div></div>';
     _fxBindSide(pane); _fxBindBar(pane);
+    {
+      const input = $('#sf-file', pane), drop = $('#sf-drop', pane), pick = $('#sf-pick', pane);
+      if(pick && input) pick.onclick = () => input.click();
+      if(input) input.onchange = () => { const fs=[...input.files]; input.value=''; _syncUploadFiles(fs); };
+      if(drop){
+        drop.ondragover = e => { if(e.dataTransfer && [...(e.dataTransfer.types||[])].includes('Files')){ e.preventDefault(); drop.classList.add('over'); } };
+        drop.ondragleave = () => drop.classList.remove('over');
+        // Files only — no webkitGetAsEntry recursion here. A dropped FOLDER would have to create a
+        // subtree in the manifest, and a half-walked directory tree is a half-created folder on every
+        // device; the drive's uploader can take that risk because nothing it writes leaves this account.
+        drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over');
+          const fs = [...((e.dataTransfer && e.dataTransfer.files)||[])];
+          if(fs.length) _syncUploadFiles(fs);
+          else toast('drop files rather than a folder — folders sync from a device');
+        };
+      }
+    }
     const grid = $('#bl-grid', pane); if(!grid) return;
 
     let paths=null, err='';
@@ -16206,9 +16484,16 @@
       const icon = it.dir ? '📁' : _fxIcon(ext, '');
       const type = it.dir ? (it.n + ' item' + (it.n===1?'':'s')) : _fxType(ext);
       const canThumb = !it.dir && it.sha && _THUMB_EXT.test(ext) && (it.size||0) <= _THUMB_MAX;
-      const act = it.dir ? ''
-        : `<button class="dlsync" data-sha="${enc(it.sha||'')}" data-name="${enc(it.name)}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`
-          + `<button class="keepsync" data-sha="${enc(it.sha||'')}" data-name="${enc(it.name)}" title="Save a copy to your drive"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg></button>`;
+      // The FULL path is what an edit needs — a manifest has no folders, only paths — and a directory
+      // row has none of its own, so it is rebuilt from where we are standing.
+      const full = it.dir ? ((_syncPath ? _syncPath + '/' : '') + it.name) : it.path;
+      const edits = !canEdit ? ''
+        : `<button class="rnsync" data-path="${enc(full)}" data-name="${enc(it.name)}" title="Rename${it.dir?' this folder everywhere':''}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg></button>`
+          + `<button class="rmsync" data-path="${enc(full)}" data-name="${enc(it.name)}"${it.dir?' data-dir="1"':''} title="Delete${it.dir?' this folder':''} on every device"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>`;
+      const act = (it.dir ? ''
+        : `<button class="dlsync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`
+          + `<button class="keepsync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" title="Save a copy to your drive"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg></button>`)
+        + edits;
       const nav = it.dir ? ` data-dir="${enc(it.name)}"` : '';
       if(details) return _fxDetailsRow({ dir:!!it.dir, name:it.name, icon:icon, size:_fxBytes(it.size),
         type:type, when:_fxWhen(it.mtime), acts:act });
@@ -16229,23 +16514,57 @@
       if(e.target.closest('.fc-acts')) return;
       const b = c.querySelector('.dlsync'); if(b) b.click();
     });
+    const _chunksOf = (b) => (b.dataset.chunks ? b.dataset.chunks.split(',').filter(Boolean) : null);
     $$('.dlsync', grid).forEach(b=> b.onclick=(e)=>{ e.preventDefault(); e.stopPropagation();
-      _syncDownload(b, b.dataset.sha, b.dataset.name); });
+      _syncDownload(b, b.dataset.sha, b.dataset.name, _chunksOf(b)); });
+    /* RENAME. The path is what changes, so a folder is renamed by renaming everything under it — one
+     * write, one confirmation, and the devices move that many files. The box is seeded with the leaf
+     * only: this is a rename, and offering the whole path invites someone to retype a directory by
+     * hand and quietly move the file somewhere else. */
+    $$('.rnsync', grid).forEach(b=> b.onclick=async (e)=>{ e.preventDefault(); e.stopPropagation();
+      const from = b.dataset.path, was = b.dataset.name || '';
+      const to = await uiPrompt('Rename “' + was + '” — this renames it on every device that syncs “' + _syncRoot + '”.',
+                                { value: was, ok:'Rename' });
+      if(to === null) return;
+      const leaf = String(to).trim();
+      if(!leaf || leaf === was) return;
+      if(leaf.includes('/')){ toast('a name cannot contain “/” — drag it on a device to move it'); return; }
+      const cut = from.lastIndexOf('/');
+      const parent = cut < 0 ? '' : from.slice(0, cut + 1);            // '' at the folder's root
+      b.disabled = true;
+      try{ await _syncEdit('rename', () => PCSync.edit.rename(_syncRoot, from, parent + leaf)); }
+      catch(_){ b.disabled = false; }
+    });
+    /* DELETE. This is the one action on this screen that reaches other people's machines and takes
+     * something away, so it names the number of files and it says where they go — every device moves
+     * its copy into `.pc-trash/<date>/`, which is what makes this recoverable rather than final. */
+    $$('.rmsync', grid).forEach(b=> b.onclick=async (e)=>{ e.preventDefault(); e.stopPropagation();
+      const path = b.dataset.path, name = b.dataset.name || path, isDir = b.dataset.dir === '1';
+      /* COUNTED NOW, not when the row was drawn. This screen can sit open while another device fills
+       * the folder, and the number is what the user is agreeing to: a stale "3" over a live 403 is
+       * how somebody approves deleting three files and loses four hundred — and `removed` accounting
+       * for the shrink is exactly what carries that past the server's collapse guard unquestioned.
+       * The same number goes to remove() as `expect`, which refuses if it has grown since. */
+      let n = 1;
+      try{ n = await PCSync.edit.count(_syncRoot, path); }
+      catch(err){ toast('couldn’t read the folder: ' + ((err && err.message) || err)); return; }
+      if(!n){ toast('that is already gone'); renderBlossom(); return; }
+      const what = isDir ? ('“' + name + '” and the ' + n + ' file' + (n===1?'':'s') + ' in it') : ('“' + name + '”');
+      if(!await uiConfirm('Delete ' + what + ' from “' + _syncRoot + '”?\n\nEvery device that syncs this '
+                          + 'folder moves its copy to .pc-trash on its next sync — nothing is erased.')) return;
+      b.disabled = true;
+      try{ await _syncEdit('delete', () => PCSync.edit.remove(_syncRoot, path, n)); }
+      catch(_){ b.disabled = false; }
+    });
     /* "Save a copy to your drive" — the same _keepBytes every other save in the app uses, so a photo
      * kept from a synced folder lands in Posts and a track lands in the music library, exactly as it
-     * would from anywhere else.
-     *
-     * There is deliberately no DELETE here. Removing a file from a synced folder is not a drive
-     * operation: it has to become a tombstone in the manifest and then a deletion on every other
-     * device, which is the sweep's job and is guarded by three snapshots and a collapse check. A
-     * button here that wrote the manifest directly would be a second, unguarded way to delete
-     * somebody's files off every machine they own. Delete it on a device and let sync carry it. */
+     * would from anywhere else. */
     $$('.keepsync', grid).forEach(b=> b.onclick=async (e)=>{ e.preventDefault(); e.stopPropagation();
-      const sha=b.dataset.sha, name=b.dataset.name||'file';
-      if(!sha){ toast('this file has no stored copy yet'); return; }
+      const sha=b.dataset.sha, name=b.dataset.name||'file', chunks=_chunksOf(b);
+      if(!sha && !(chunks && chunks.length)){ toast('this file has no stored copy yet'); return; }
       b.disabled=true;
       try{
-        const bytes=await _syncBlobBytes(sha);
+        const bytes=await _syncFileBlob(sha, chunks);
         // fileFromBytes, not `new File(...)`: a synced blob is ciphertext with no type of its own,
         // so the NAME is the only thing that still knows what it is. Without it the copy is stored
         // untyped and the drive draws it as a generic 📎 — and a track would miss the music library.
@@ -19948,10 +20267,7 @@
           self.openUid = null;
           self.loadList();
         };
-        if(b('msc-copy')) b('msc-copy').onclick = async () => {
-          try{ await navigator.clipboard.writeText(addr); toast('address copied'); }
-          catch(_){ toast(addr); }
-        };
+        if(b('msc-copy')) b('msc-copy').onclick = () => copyValue(addr, 'address copied', 'Address:');
       });
     },
     async action(act, msg, folder, acct){
@@ -20310,7 +20626,7 @@
     openMenuPopover(anchorEl, items, a=>{
       if(a==='reply'){ _dmReply = {id:m.id, text:m.text||'', mine:!!m.mine}; _dmReplyBanner();
         const i=$('#dm-in'); if(i) i.focus(); return; }
-      if(a==='copy'){ try{ navigator.clipboard.writeText(m.text||''); toast('copied'); }catch(_){ toast('copy failed'); } return; }
+      if(a==='copy'){ copyValue(m.text||'', 'copied', 'Copy this message:'); return; }
       if(a==='hide'){ _dmHide(m.id); toast('deleted for you'); renderDmThread(pk); return; }
     });
   }
@@ -20680,7 +20996,21 @@
     // Guard against redundant re-renders: the lazy-fetch (+ hydrate/live-event churn) can call fillList
     // with byte-identical HTML, and re-setting innerHTML re-triggers the .stream-card fade → screen flicker.
     let _lastFill=null;
-    const fillList=(tab)=>{ const el=$('#prof-list'); if(!el) return; const h=listFor(tab); if(h===_lastFill) return; _lastFill=h; el.innerHTML=h; };
+    /* THE LIST IS ALLOWED TO FAIL; THE PAGE IS NOT. Building it walks whatever this author has
+     * published, and the card renderers are now individually guarded — but a tab is more than its
+     * cards (a media grid, a stream grid, the pinned section), and this call sits BEFORE every
+     * binding on the profile. An exception here used to leave a profile with no posts, no working
+     * ⋯ menu and a dead "Copy npub", which is three bug reports for one throw. */
+    const fillList=(tab)=>{
+      const el=$('#prof-list'); if(!el) return;
+      let h;
+      try{ h=listFor(tab); }
+      catch(e){
+        try{ console.error('[profile] could not build the', tab, 'list', e); }catch(_){}
+        h=`<div class="empty">Couldn’t show this list — ${enc(String((e&&e.message)||e).slice(0,140))}</div>`;
+      }
+      if(h===_lastFill) return; _lastFill=h; el.innerHTML=h;
+    };
     // Wire the Streams tab's cards to open the stream/VOD (author-name clicks still go to the profile).
     const _wireProfStreamClicks=()=>{ const el=$('#prof-list'); if(!el) return;
       el.querySelectorAll('.stream-card').forEach(c=>{ c.style.cursor='pointer';
@@ -20690,6 +21020,15 @@
     _prof = { pk, tab:'notes', loading:false, done:false, limit:40, fill:fillList, following:[], followers:[],
               oldest: authorNotes.length ? authorNotes[authorNotes.length-1].created_at : 0 };
     fillList('notes');
+    /* EVERYTHING FROM HERE TO THE BACKGROUND LOADS IS ONE STRAIGHT RUN OF BINDINGS, and a throw
+     * anywhere in it silently truncates the page at that point: the header is already on screen and
+     * looks right, while the tabs, ⋯, "Copy npub" and the follow stats below it were simply never
+     * wired. That is not one bug report, it is three unrelated-sounding ones ("no posts", "the
+     * hamburger menu isn't showing", "copying the npub does nothing"), none of which names a cause.
+     *
+     * So it says so instead. The block is deliberately NOT re-indented inside the try — the change
+     * here is the guard, and a reformat would bury it in the diff. */
+    try{
     hydrate(feed);
     decorateVerified($('#prof-vchk'), pk, p.nip05);
     $$('.prof-tab',feed).forEach(t=> t.onclick=async()=>{ $$('.prof-tab',feed).forEach(x=>x.classList.toggle('active',x===t)); const tab=t.dataset.tab; _prof.tab=tab; fillList(tab); hydrate(feed);
@@ -20707,7 +21046,7 @@
             for(const e of ext) Store.saveEvent(e); } }catch(_){}
         if(VIEW==='profile' && _prof.pk===pk && _prof.tab==='streams'){ fillList('streams'); hydrate(feed); _wireProfStreamClicks(); } }
     });
-    $('#copy-npub').onclick=()=>{ navigator.clipboard.writeText(npub); toast('npub copied'); };
+    { const cn=$('#copy-npub'); if(cn) cn.onclick=()=> copyValue(npub, 'npub copied', 'Their npub:'); }
     { const ln=$('#prof-ln'); if(ln) ln.onclick=()=>doZap(null, pk); }
     { const xb=$('#prof-xmr'); if(xb) xb.onclick=()=>doXmrTip(null, pk); }
     { const xt=$('#xmrtip-prof'); if(xt) xt.onclick=()=>doXmrTip(null, pk); }
@@ -20716,8 +21055,8 @@
     // Posts has no list of its own — the Notes tab IS that list, so send them there rather than leaving a
     // dead-looking button next to two clickable stats.
     { const pb=$('#show-posts'); if(pb) pb.onclick=()=>{ const t=$$('.prof-tab',feed).find(x=>x.dataset.tab==='notes'); if(t) t.click(); }; }
-    $('#show-following').onclick=()=>peopleModal('Following', _prof.following||[]);
-    $('#show-followers').onclick=async()=>{   // lazy-load the follower LIST only when actually opened (count was already fetched via NIP-45)
+    { const sf=$('#show-following'); if(sf) sf.onclick=()=>peopleModal('Following', _prof.following||[]); }
+    { const sfw=$('#show-followers'); if(sfw) sfw.onclick=async()=>{   // lazy-load the follower LIST only when actually opened (count was already fetched via NIP-45)
       if(!_prof.followers || !_prof.followers.length){
         const fe=await Relay.query([{kinds:[3],'#p':[pk],limit:1000}]).catch(()=>[]);
         _prof.followers=[...new Set(fe.map(e=>e.pubkey))];
@@ -20736,11 +21075,19 @@
         }
       }
       peopleModal('Followers', _prof.followers||[]);
-    };
-    if(mine){ $('#edit-prof').onclick=()=>editProfile(p); $('#open-settings').onclick=()=>switchView('settings'); }
+    }; }
+    if(mine){ const ep=$('#edit-prof'); if(ep) ep.onclick=()=>editProfile(p);
+              const os=$('#open-settings'); if(os) os.onclick=()=>switchView('settings'); }
     else { const z=$('#zap-prof'); if(z)z.onclick=()=>doZap(null,pk);
       const cb=$('#call-prof'); if(cb)cb.onclick=()=>startCall(pk, {video:false}); }
     { const mn=$('#prof-menu'); if(mn)mn.onclick=()=>openProfileMenu(pk, mn); }   // ☰ on own + others' profiles
+    }catch(e){
+      try{ console.error('[profile] the page stopped binding partway', e); }catch(_){}
+      const head=$('.pbody',feed);
+      if(head) head.insertAdjacentHTML('beforeend',
+        '<div class="muted small">⚠ part of this profile didn’t load — '
+        + enc(String((e&&e.message)||e).slice(0,140)) + '</div>');
+    }
     // Background: following / followers / pinned — fetched in PARALLEL after the first paint and
     // patched in, so the profile opens instantly instead of waiting on (esp.) the 1000-event
     // followers query. Re-checks _prof.pk so a fast navigation away doesn't patch the wrong profile.
@@ -23203,7 +23550,10 @@
   }
   async function copyFileUrl(u, btn){
     if(btn){ btn.disabled=true; _btnText(btn,'uploading…'); }
-    try{ const pub=await _fileToPublicUrl(u); try{ await navigator.clipboard.writeText(pub); toast('link copied'); }catch(_){ toast(pub); } if(btn){ _btnText(btn,'✓ copied'); btn.disabled=false; } }
+    // The label follows copyValue's ANSWER: a shell with no clipboard falls back to showing the
+    // link, and a button that says "✓ copied" over that is a lie the user acts on.
+    try{ const pub=await _fileToPublicUrl(u); const ok=await copyValue(pub, 'link copied', 'Link:');
+         if(btn){ _btnText(btn, ok?'✓ copied':'Copy link'); btn.disabled=false; } }
     catch(e){ toast('failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn,'Copy link'); } }
   }
   async function replyFileUrl(u, btn){
@@ -23356,8 +23706,8 @@
     if(btn){ btn.disabled=true; _btnText(btn,'uploading…'); }
     try{
       if(!m.url){ const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0)); m.url=await uploadBlob(new File([bin], 'effect.'+m.ext, { type:m.mime })); }
-      try{ await navigator.clipboard.writeText(m.url); toast('link copied'); }catch(_){ toast(m.url); }
-      if(btn){ _btnText(btn,'✓ copied'); btn.disabled=false; }
+      const ok=await copyValue(m.url, 'link copied', 'Link:');
+      if(btn){ _btnText(btn, ok?'✓ copied':'Copy link'); btn.disabled=false; }
     }catch(e){ toast('upload failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn,'Copy link'); } }
   }
   // --- Interactive multiple-choice flashcards (study quiz) ---------------------------------------
@@ -23882,7 +24232,7 @@
         }catch(_){ toast('delete failed'); }
       }; }
     { const dn=$('#set-del-notes'); if(dn) dn.onclick=()=>_deleteAllMyNotes(); }
-    { const cn=$('#set-copy-npub'); if(cn) cn.onclick=async()=>{ try{ await navigator.clipboard.writeText(ME.npub); toast('npub copied'); }catch(_){ _copyFallback('Your npub:', ME.npub); } }; }
+    { const cn=$('#set-copy-npub'); if(cn) cn.onclick=()=> copyValue(ME.npub, 'npub copied', 'Your npub:'); }
     { const sn=$('#set-show-nsec'); if(sn) sn.onclick=async()=>{
         let r; try{ r=await Relay.worker.call('exportNsec', {}); }catch(_){ r=null; }
         const nsec=r&&r.nsec; if(!nsec){ toast('secret key not available on this login'); return; }
@@ -23891,7 +24241,7 @@
           <div class="keyrow"><code id="nsec-val">${enc(nsec)}</code></div>
           <div class="set-actions"><button class="btn btn-neon small" id="nsec-copy"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy nsec</button><button class="btn btn-ghost small" id="nsec-close">Close</button></div>`,
           root=>{
-            $('#nsec-copy',root).onclick=async()=>{ try{ await navigator.clipboard.writeText(nsec); toast('nsec copied — keep it secret!'); }catch(_){ _copyFallback('Your nsec (copy it):', nsec); } };
+            $('#nsec-copy',root).onclick=()=> copyValue(nsec, 'nsec copied — keep it secret!', 'Your nsec (copy it):');
             $('#nsec-close',root).onclick=closeModal;
           });
       }; }
@@ -24920,7 +25270,11 @@
     { const tb=$('#th-back',feed);
       // Pop real history when we pushed an entry; a cold deep link pushed none, and history.back() there
       // would leave the app rather than return to it.
-      if(tb) tb.onclick=()=>{ if(_navPushed>0){ try{ history.back(); return; }catch(_){} } switchView('home'); }; }
+      // ...and the destination is the timeline the USER opens the app on, never a hardcoded Home.
+      // "Opening a post and clicking back always brings you back to the Home tab instead of obeying
+      // Timeline the app opens on" — reported, and true down BOTH branches: this one named Home, and
+      // the history pop lands on the root path, which routeFromPath used to answer with Nostrverse.
+      if(tb) tb.onclick=()=>{ if(_navPushed>0){ try{ history.back(); return; }catch(_){} } switchView(_startTimeline()); }; }
     // Reveal + flash the clicked post (when it isn't the root).
     if(id!==root.id){ const el=feed.querySelector(`.thread-node[data-tid="${CSS.escape(id)}"]`);
       if(el) _revealThreadNode(feed, el, id); }
@@ -25110,8 +25464,8 @@
     // Discover result cards → open the right view (community vs stream share .stream-card → split by kind).
     $$('.article-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const a=Store.get(c.dataset.id); if(a) openArticle(a); });
     $$('.stream-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const x=Store.get(c.dataset.id); if(x) (x.kind===34550?openCommunity:openStream)(x); });
-    $$('.tor-copy',feed).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.magnet); toast('magnet copied'); }catch(_){ _copyFallback('Magnet:', b.dataset.magnet); } });
-    $$('.repo-clone',feed).forEach(b=> b.onclick=async ev=>{ ev.stopPropagation(); try{ await navigator.clipboard.writeText(b.dataset.clone); toast('clone URL copied'); }catch(_){ await uiPrompt('Clone URL', {value:b.dataset.clone}); } });
+    $$('.tor-copy',feed).forEach(b=> b.onclick=()=> copyValue(b.dataset.magnet, 'magnet copied', 'Magnet link:'));
+    $$('.repo-clone',feed).forEach(b=> b.onclick=ev=>{ ev.stopPropagation(); copyValue(b.dataset.clone, 'clone URL copied', 'Clone URL:'); });
     $$('.repo-card a[href]',feed).forEach(a=> a.onclick=ev=>ev.stopPropagation());
     $$('.repo-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const e=Store.get(c.dataset.id); if(e) openRepo(e); });
     // pagination cursor for scroll-back through more search hits
@@ -25542,19 +25896,21 @@
    * about the worst place to spend that: the next thing you do is paste it somewhere and type an
    * amount. uiPrompt is the same shape (a pre-filled, selectable input) with no native dialog, and
    * it re-tries the copy on OK, which is usually all the second attempt needs. */
-  function _copyFallback(message, value){
+  function _copyFallback(message, value, opts){
     return uiPrompt(message, { value, ok: 'Copy', cancel: 'Close' }).then(v => {
       if(v == null) return;
       /* The retry FAILING has to be said out loud. This helper only ever runs because the clipboard
        * was refused once already, so the second attempt failing is the likely case, not the odd one
        * — and a button labelled "Copy" that closes silently having copied nothing is how somebody
        * pastes a stale clipboard into a wallet. The native prompt this replaced at least left the
-       * string selected on screen; the toast has to carry that job instead. */
-      const failed = () => toast('could not copy — select the text and press Ctrl-C');
-      try{
-        const p = navigator.clipboard && navigator.clipboard.writeText(v);
-        if(p && p.then) p.then(()=>toast('copied'), failed); else failed();
-      }catch(_){ failed(); }
+       * string selected on screen; the toast has to carry that job instead.
+       *
+       * The retry goes through copyValue, NOT navigator.clipboard: in the APK and the desktop app
+       * the web clipboard is not refused-this-time, it is ABSENT, so a retry that knows only that
+       * route could never succeed there. `once` is set when copyValue is what opened this prompt,
+       * which is what stops the two calling each other. */
+      if(opts && opts.once){ toast('could not copy — select the text and press Ctrl-C'); return; }
+      copyValue(v, 'copied', message);
     });
   }
   // In-app prompt — themed replacement for native window.prompt() (which wedges Electron focus, see
@@ -26676,8 +27032,7 @@
       const { blob, disp } = await fetchMediaBlob(src);
       const name = fileNameFor(src, blob, '', disp, await sniffExt(blob)) || 'media';
       const url=await uploadBlob(new File([blob], name, { type: blob.type || 'application/octet-stream' }));
-      try{ await navigator.clipboard.writeText(url); toast('saved to Blossom — link copied'); }
-      catch(_){ toast('saved to Blossom'); }
+      await copyValue(url, 'saved to Blossom — link copied', 'Saved. The link:');
     }catch(err){
       if(typeof _blossomDenied==='function' && _blossomDenied(err)){ requestBlossomAccess(); toast('🔒 No upload access — requested it from the admin.'); }
       else toast('Blossom save failed: '+((err&&err.message)||err));
@@ -27079,16 +27434,31 @@
   // Windows: start at 24h and double on each dry spell up to 30d, so scrolling keeps finding
   // older-but-hot posts rather than stopping.
   const TR_WIN0=24*3600, TR_WIN_MAX=30*24*3600, TR_PAGE=20, TR_QUERY_LIMIT=3000;
-  let _tr={ tab:'hot', win:TR_WIN0, loading:false, done:false, exhausted:false, shown:new Set(), queue:[], gen:0 };
+  let _tr={ tab:'hot', win:TR_WIN0, loading:false, done:false, exhausted:false, unreachable:false, shown:new Set(), queue:[], gen:0 };
   try{ const t=localStorage.getItem('trTab'); if(t==='hot'||t==='follows') _tr.tab=t; }catch(_){}
   // Rank notes by how many reactions/reposts point at them inside `windowSec`.
   // Returns [[noteId, count, icon],…] desc. `follows` restricts the REACTORS to the people you follow.
+  /* WAIT FOR A SOCKET THAT CAN ANSWER, and say whether one did.
+   *
+   * A REQ written to a CONNECTING socket is silently dropped (relay.js `_send`), and the moment this
+   * view is most likely to be opened against one is the moment somebody has just logged in and is
+   * looking around. Reported as "logged in, nothing under Trending" — and it STAYS nothing, because
+   * an empty answer widens the window, and a few widenings later `exhausted` latches and the view
+   * gives up for the rest of the visit. renderProfileView and flushEvents already wait like this.
+   *
+   * `complete` is the other half. It is true only when every relay we asked sent an EOSE, so a
+   * timeout — or no live socket at all — is "the relays never spoke", which says nothing about
+   * whether anything is trending. Latching `exhausted` on that answer is what turns one slow moment
+   * into an empty screen with no way back. The flag rides on the returned array, the way
+   * Relay.query's own does. */
   async function trRank(windowSec, follows){
     const since=Math.floor(Date.now()/1000)-windowSec;
     const me=(ME&&ME.pubkey)||'';   // '' for a logged-out guest — FOLLOWS is empty there anyway
     const f={ kinds:[6,7], since, limit:TR_QUERY_LIMIT };
-    if(follows){ const authors=[...FOLLOWS].filter(p=>p!==me); if(!authors.length) return []; f.authors=authors; }
-    let evs=[]; try{ evs=await Relay.query([f]); }catch(_){}
+    if(follows){ const authors=[...FOLLOWS].filter(p=>p!==me); if(!authors.length){ const none=[]; none.complete=true; return none; } f.authors=authors; }
+    let live=true; try{ if(Relay.ready) live = await Relay.ready(4000); }catch(_){ live=true; }
+    let evs=[], complete=false;
+    try{ evs=await Relay.query([f]); complete = live && evs.complete !== false; }catch(_){ evs=[]; complete=false; }
     const tally={}, icon={};
     for(const e of evs){
       if(follows && e.pubkey===me) continue;   // your own likes aren't "from your follows"
@@ -27096,7 +27466,9 @@
       const id=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]; if(!id) continue;
       tally[id]=(tally[id]||0)+1; if(e.kind===6) icon[id]='🔁'; else if(!icon[id]) icon[id]='❤️';
     }
-    return Object.entries(tally).sort((a,b)=>b[1]-a[1]).map(([id,c])=>[id,c,icon[id]||'❤️']);
+    const rows = Object.entries(tally).sort((a,b)=>b[1]-a[1]).map(([id,c])=>[id,c,icon[id]||'❤️']);
+    rows.complete = complete;
+    return rows;
   }
   // One ranked row = a heat line + the ordinary feed card, so every interaction the timeline has works
   // here for free. '' when the note isn't renderable (not on this relay, not a kind 1, muted).
@@ -27122,6 +27494,12 @@
         const ranked=await trRank(_tr.win, _tr.tab==='follows');
         if(_tr.gen!==gen || VIEW!=='trending') return 0;
         _tr.queue=ranked.filter(x=>!_tr.shown.has(x[0]));
+        /* AN UNANSWERED QUERY IS NOT AN EMPTY MONTH. Widening the window and latching `exhausted` on
+         * it spends every window against a socket that is not talking yet, and then the view is done
+         * for the visit. Stop instead, remember why, and leave the windows where they are — the next
+         * entry (or a scroll) asks again, by which time the socket is up. */
+        if(ranked.complete === false){ _tr.unreachable = true; break; }
+        _tr.unreachable = false;
         if(_tr.win>=TR_WIN_MAX) _tr.exhausted=true; else _tr.win=Math.min(_tr.win*2, TR_WIN_MAX);
         if(!_tr.queue.length) continue;   // nothing new in this window → widen and try again
       }
@@ -27161,7 +27539,7 @@
     const feed=$('#feed'); if(!feed) return;
     feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate','feed-meme');   // scrollable list view
     _tr.gen++;   // invalidate any in-flight page from the previous entry / the other tab
-    _tr.win=TR_WIN0; _tr.done=false; _tr.exhausted=false; _tr.shown=new Set(); _tr.queue=[]; _tr.loading=true;
+    _tr.win=TR_WIN0; _tr.done=false; _tr.exhausted=false; _tr.unreachable=false; _tr.shown=new Set(); _tr.queue=[]; _tr.loading=true;
     // Same header as Home/Nostrverse (composer + tabs) and the same #tl-notes box, so the inline
     // composer, the ＋ FAB and loadSentinel() all behave exactly as they do on the other two tabs.
     feed.innerHTML = _timelineHeaderHtml() + _trBarHtml() + '<div id="tl-notes"><div class="spinner"></div></div>'
@@ -27177,9 +27555,15 @@
       _tr.loading=false;
       if(n) return;
       const box=_tlNotes($('#feed')); if(!box || box.querySelector('.note')) return;
-      box.innerHTML=`<div class="empty">${_tr.tab==='follows'
-        ? (FOLLOWS.size ? 'Nothing from your follows yet — they haven’t liked or boosted anything this month.' : 'Follow people to see what they’re into.')
-        : 'Nothing trending yet. Check back once there are a few reactions about.'}</div>`;
+      // "The relays didn't answer" and "nothing is trending" are different screens, and only one of
+      // them is worth waiting on. The retry re-enters the view, which re-arms the windows too.
+      box.innerHTML = _tr.unreachable
+        ? `<div class="empty">Couldn’t reach your relays just now — nothing has been ranked yet.<br>
+             <button class="btn btn-cyan small" id="tr-retry" style="margin-top:10px">Try again</button></div>`
+        : `<div class="empty">${_tr.tab==='follows'
+            ? (FOLLOWS.size ? 'Nothing from your follows yet — they haven’t liked or boosted anything this month.' : 'Follow people to see what they’re into.')
+            : 'Nothing trending yet. Check back once there are a few reactions about.'}</div>`;
+      { const rb=$('#tr-retry'); if(rb) rb.onclick=()=>renderTrending(); }
     });
   }
   async function loadMoreTrending(){
@@ -27959,12 +28343,20 @@
     // automatically after a relay change). Exposed for the sub-modules and for the console.
     carryPrivateToRelays,
     $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast,
+    /* The clipboard, for the sub-modules. `navigator.clipboard` works in a browser and in NEITHER
+       shell (the APK's WebView and the desktop's app:// origin both refuse it), so a module that
+       calls it directly has a copy button that silently does nothing on two of three platforms. */
+    copyValue,
     ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
     /* The one pass that fills every `.name[data-prof]` (and avatars, nip05s, @mentions) once a kind-0
      * arrives. A sub-module that paints author names MUST be able to call it, or its names are frozen
      * at whatever was cached when it drew — webxdc.js's app gallery is not repainted by anything else,
      * so without this its bylines stay truncated pubkeys for the whole session. */
     decorateProfiles,
+    /* The ghost-reply sweep and what it has had to fix (see _healGhostPairs). Exposed so
+       scripts/check_timeline_ghosts.py can plant one and watch it come back, and so a report of
+       "only REPLYING TO, no posts" can be answered with a number instead of a hunt. */
+    healGhostPairs: _healGhostPairs, ghostStats: () => Object.assign({}, _ghosts),
     runSearch,                                                // → the desktop's taskbar search box
     openExternal,                                             // → web search results, and anything else that must leave the app
     /* THE NATIVE PLUGIN LOOKUP, shared. Not a convenience: `_capPlugin` falls back to

@@ -268,16 +268,36 @@ class TestSyncedFolderThumbnails(unittest.TestCase):
         i = src.index("function _bindThumbs")
         self.assertIn("isConnected", src[i:i + 900])
 
-    def test_a_synced_folder_has_no_delete_button(self):
-        """Deleting from a synced folder is not a drive operation — it has to become a tombstone in
-        the manifest and then a deletion on every other device, which is the sweep's job and is
-        guarded by three snapshots and a collapse check. A button here writing the manifest directly
-        would be a second, unguarded way to delete someone's files off every machine they own."""
+    def test_a_synced_folder_deletes_through_the_sync_store_only(self):
+        """Deleting from a synced folder is not a drive operation. It has to become a TOMBSTONE in
+        the shared manifest and then a deletion on every other device, which means going through
+        `PCSync.edit` — and therefore through `store.save`, with the re-read and merge, the server's
+        collapse guard and the `removed` count that tells a deliberate mass delete from a bug.
+
+        What this screen must never grow is a second path: a button that writes the manifest itself,
+        or that reaches for the DRIVE's delete (FilesIdx), would be an unguarded way to remove
+        someone's files off every machine they own. The screen was read-only when this test was
+        written; it is not any more, so the assertion is about the ROUTE rather than the button."""
         src = open(APP, encoding="utf-8").read()
+        # From the renderer to the end of it — an offset window would silently stop covering the
+        # handlers as the view grows, which is how a check quietly starts testing nothing.
         i = src.index("async function _renderSyncedRoot")
-        body = src[i:i + 6000]
-        self.assertNotIn("delsync", body)
+        body = src[i:src.index("\n  }", src.index("_bindThumbs(grid);", i))]
         self.assertIn("keepsync", body)
+        self.assertIn("rmsync", body, "the synced folder has a delete button")
+        self.assertIn("PCSync.edit.remove", body,
+                      "deletion must go through PCSync.edit (store.save + the collapse guard)")
+        for forbidden in ("FilesIdx.remove", "FilesIdx.del", "delsync"):
+            self.assertNotIn(forbidden, body,
+                             "a synced folder must not reach for the drive's own delete: " + forbidden)
+        # ...and it must ASK first, with a count read at that moment rather than one painted earlier:
+        # this action reaches machines that are not in front of anyone.
+        rm = body.index("$$('.rmsync'")
+        handler = body[rm:rm + 1800]
+        self.assertIn("uiConfirm", handler,
+                      "deleting from a synced folder must be confirmed — it deletes on every device")
+        self.assertIn("PCSync.edit.count", handler,
+                      "the number in the confirmation must be read fresh, not taken from the row")
 
 
 if __name__ == "__main__":

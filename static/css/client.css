@@ -7611,8 +7611,11 @@ html.os-on #upload-badge.upbadge{z-index:333}
    their columns and the sizes appeared under "Type". An encrypted row (no Copy URL) and a synced
    folder row (no buttons at all) would each land somewhere different again.
    scripts/check_files_explorer.py measures this per column, per row. */
+/* One width for both, because a synced folder's rows now carry four buttons (download, keep a copy,
+   rename, delete) — the same count as the drive's. `.nosel` used to narrow this to 40px, from when
+   the only action there was Download; a row that outgrows the column steals the width back from the
+   NAME, which is the drift a fixed width exists to prevent. */
 .files-grid.details{--fx-acts:124px}
-.files-grid.details.nosel{--fx-acts:40px}   /* a synced folder has one button per row, and none on a folder */
 .fx-cols,.files-grid.details .file-card.row{
   display:grid;grid-template-columns:24px minmax(0,1fr) 88px 140px 172px var(--fx-acts);align-items:center;gap:8px}
 .files-grid.details.nosel .fx-cols,
@@ -7657,8 +7660,16 @@ html.os-on #upload-badge.upbadge{z-index:333}
    carries the whole card and must not keep the 140px photo well. */
 .files-grid .file-card.isdir{cursor:pointer}
 .files-grid .file-card.isdir .file-icon{height:96px;font-size:34px}
-.fc-acts .dlsync{background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:4px 6px;line-height:1}
-.fc-acts .dlsync:hover{color:var(--cyan)}
+/* The synced-folder row's four actions are one family — a button that keeps the browser's default
+   chrome beside three that don't reads as a different KIND of control, which is how "Save a copy"
+   looked next to Download. Both views put these inside .fc-acts, so one selector covers tiles and
+   rows alike. */
+.fc-acts .dlsync,.fc-acts .keepsync,.fc-acts .rnsync,.fc-acts .rmsync{background:none;border:none;
+  color:var(--muted);cursor:pointer;font-size:15px;padding:4px 6px;line-height:1}
+.fc-acts .dlsync:hover,.fc-acts .keepsync:hover,.fc-acts .rnsync:hover{color:var(--cyan)}
+/* Deletion is the one action here that reaches every other device and takes something away. */
+.fc-acts .rmsync:hover{color:var(--danger,#ff6b6b)}
+.fc-acts button[disabled]{opacity:.5;cursor:default}
 
 @media(max-width:820px){
   /* The sidebar is a horizontal strip on a phone, so the synced section joins the same strip rather

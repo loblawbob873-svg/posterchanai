@@ -129,6 +129,38 @@ class TestTwoDeviceSync(unittest.TestCase):
     def test_three_devices_converge(self):
         self.check("three-devices-converge")
 
+    # ---- Files → Synced folders: a BROWSER editing a folder it holds none of ---------------------
+
+    def test_web_delete_reaches_the_devices(self):
+        """A file deleted from Files → Synced folders leaves every device — into .pc-trash, and it
+        stays gone: a second round must not have anyone re-uploading it."""
+        self.check("web-delete-reaches-the-devices")
+
+    def test_a_web_delete_behaves_exactly_like_a_device_delete(self):
+        """The risk in letting a browser write the manifest is that it becomes a SECOND way to
+        delete, going round the engine and behaving subtly differently from the tested one. The same
+        situation is run three ways — deleted on a device, deleted from the browser, and with the
+        key dropped instead of tombstoned — and every observable outcome has to match, including the
+        agreement-less device that re-uploads the file under diff()'s deliberate DELETE-LOSES-TO-EDIT
+        rule. That resurrection is engine policy, not something the editor introduces; what this
+        pins is that the editor inherits it rather than inventing something of its own."""
+        self.check("a-web-delete-behaves-exactly-like-a-device-delete")
+
+    def test_web_rename_carries_the_bytes(self):
+        """A rename is a tombstone plus a new entry pointing at the SAME blob, so no bytes move:
+        both devices end up with the new name, the same content, and not one new blob stored."""
+        self.check("web-rename-carries-the-bytes")
+
+    def test_web_rename_a_folder_moves_its_subtree(self):
+        """Renaming a folder renames every path under it — and nothing that merely shares its
+        prefix. `2025-summary.txt` is not in `2025/`."""
+        self.check("web-rename-a-folder-moves-its-subtree")
+
+    def test_web_upload_reaches_the_devices(self):
+        """A file added from the browser is downloaded by every device, byte for byte, and nobody
+        uploads over it afterwards."""
+        self.check("web-upload-reaches-the-devices")
+
 
 @unittest.skipIf(not NODE, "no node on this node")
 class TestPairKeyCrossesTheWire(unittest.TestCase):

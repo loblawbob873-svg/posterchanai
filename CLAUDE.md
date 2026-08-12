@@ -132,6 +132,38 @@ The bots are managed from **Admin → Bots** (`templates/admin/tabs/bots.html` +
 | Templates | `templates/` (Jinja2); admin tabs in `templates/admin/tabs/`, modals in `templates/includes/modals/` |
 | Frontend JS | `static/js/` (`app.js`, `chat.js`, `admin.js`; Nostr client = `static/js/client/*.js` + `static/css/client.css`) |
 
+**A VIEW THAT QUERIES ON ENTRY MUST WAIT FOR A SOCKET THAT CAN ANSWER — `await Relay.ready()`.** A REQ
+written to a CONNECTING socket is silently dropped (`relay.js _send`), and the moment a view is most
+likely to be opened against one is right after somebody logs in. `renderProfileView` and `flushEvents`
+already waited; **Trending did not**, so "logged in, nothing under Trending" — and it STAYED nothing,
+because an empty answer widened the window and a few widenings later `exhausted` latched and the view
+gave up for the rest of the visit. The second half of the fix is the same `complete` rule the timeline
+uses: a query that no relay EOSE'd is "the relays never spoke", never "nothing is trending", so it must
+not spend a window or latch anything — `_tr.unreachable` says so on screen with a retry.
+
+**ONE BAD EVENT MUST NOT COST A SCREEN, and `noteCard`'s try/catch was never enough.** It only ever
+covered kind 1: a poll (1068), an article (30023), a community (34550), a channel (40) or a webxdc
+1063 threw straight out of `noteHtml` and out of whatever was building the list. On a PROFILE that is
+the whole view — `listFor('notes')` maps the author's events and its result is assigned to
+`#prof-list`, so a throw meant the list was never filled AND every binding after it (the tabs, ⋯,
+"Copy npub", the follow stats) was never made. That reads as three unrelated bugs — "no posts", "the
+hamburger menu isn't showing", "copying the npub does nothing" — with nothing on screen and nothing
+in any log, because the header above it rendered perfectly. The guard is in `noteHtml` now (every
+kind), plus `fillList`. **The clipboard is `copyValue()`, never `navigator.clipboard` directly**: it
+works in a browser and in NEITHER shell (the APK's WebView refuses it, and so does the desktop's
+`app://` origin), and ~30 call sites were written `navigator.clipboard.writeText(x); toast('copied')`
+— no await, no catch, so the promise rejected into nothing and the toast lied. `_copyFrom(el)` stays
+separate for INPUTS (it copies from the real visible field and unmasks a password for the instant of
+the copy). The password manager's `copy()` in vault.js tries the native bridge first and only arms
+its 45s auto-clear on the web path, since clearing requires reading the clipboard back.
+**"↩ REPLYING TO …" with nothing under it** (the Android "ghost timeline") is the same family:
+`feedNoteHtml` builds the CARD first and never wraps a label around one that does not exist, and
+`_healGhostPairs` sweeps after every draw — the reconcile matches on `data-key` and REUSES cards, so
+a pair that came out wrong stays wrong for the life of the page. It distinguishes MISSING (no
+`<article>` → rebuild from the Store) from BLANK (an `<article>` of zero height → kick a reflow) and
+counts both in `PC.ghostStats()`, so the next report says which. `scripts/check_timeline_ghosts.py`
+plants one against the live client and asserts it heals.
+
 ### Commands (shared by web UI + Telegram)
 
 `app/services/command_service.py` → `CommandService.COMMANDS` dict + `execute_command()`
@@ -587,6 +619,35 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   **Background sync cannot upload and that is not a bug**: every network step is signed by the user's
   Nostr key, which with Amber/NIP-46 is not on the device — so Android's WorkManager job notices
   changes and notifies, and opening the app is what syncs. See `docs/FOLDER_SYNC.md`.
+  **Files → Synced folders can now ADD/RENAME/DELETE, and what it edits is the MANIFEST, never a file**
+  (`PCSync.edit` in sync.js; the browser half is `_renderSyncedRoot`). Devices apply it on their next
+  sweep through the paths they already use — new entry → download, tombstone → `.pc-trash`, rename →
+  both — so a browser that syncs nothing can reorganise a folder and nothing here touches a disk. It
+  goes through `store.save` like a sweep, inheriting the re-read+merge, the server collapse guard and
+  the `removed` count that lets a deliberate mass delete through. **A delete is a TOMBSTONE, never a
+  removed key** — the same record `plan.deleteRemote` writes, so `same()`/`live()`/`gone()` read a web
+  edit exactly as they read a device's, and the document can still say a file was deleted rather than
+  never existing. What NEITHER shape can do is stop a device whose `base` was cleared (a reinstall,
+  "Stop syncing" and back) re-uploading a file it still holds — both sides look changed and diff()
+  applies DELETE LOSES TO EDIT on purpose. **That is engine policy and it fires identically for a
+  delete made on a device**, which is the point of
+  `tests/client/two_device_sim.js::a-web-delete-behaves-exactly-like-a-device-delete`: three arms, one
+  outcome, so this screen cannot become a second and subtly different way to delete. A rename is a
+  tombstone plus a new entry pointing at the SAME blob (no bytes move, asserted). Dropping a FOLDER on
+  that screen is refused on purpose: a half-walked directory tree is a half-created folder on every
+  device.
+  **Three more rules, each one a review finding with teeth:** (1) a manifest has no directories and a
+  filesystem does, so `_blockedBy` refuses a file at a path other entries live under (and vice versa) —
+  otherwise every device is asked to write a FILE where it has a DIRECTORY, fails on every sweep for
+  ever, and the bad entry draws as ONE file while deleting it covers the whole subtree. (2) The delete
+  confirmation's count is read FRESH and travels to `edit.remove` as `expect`, which refuses if it has
+  grown: a screen left open while another device fills the folder would otherwise ask about 3 files and
+  tombstone 403 — and `removed` accounting for the shrink is exactly what waves that past the server's
+  collapse guard. (3) `rename` re-checks its destinations inside `store.save`'s merge (`verify`), not
+  only against the manifest it read: the merge is what would otherwise overwrite a path another device
+  published seconds earlier. Uploads batch through `edit.uploadMany` (one manifest write per 20 files),
+  because each write is a fresh encrypted copy of the WHOLE document — per file, a 50-photo drop moves
+  more manifest than photos.
 - **The nostr-only Docker image downloads NO model weights.** `DOWNLOAD_MODEL` /
   `DOWNLOAD_DEPTH_MODEL` / `DOWNLOAD_U2NET_MODEL` are `ENV …=1` in the Dockerfile's **shared** final
   stage, so they are on in EVERY image — including `GPU=nostr`, which installs

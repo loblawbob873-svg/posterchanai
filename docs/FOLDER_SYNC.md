@@ -141,9 +141,31 @@ Files → **Blossom** lists your synced folders beside the drive's own folders, 
 one from any device, including a browser that cannot sync at all. The rows come from the manifest —
 what your devices agreed the folder contains — and a download decrypts in your browser.
 
-It is **read only** there, deliberately. Renaming or deleting from that screen would be a write to the
-shared manifest that every other device then applies to real files on real disks, which is the sync
-engine's job, with its three snapshots and its trash, not a file browser's.
+You can also **add, rename and delete** from there, from a device that holds none of the files. What
+those edit is the **manifest**, never a file: the devices carry the change out on their next sweep,
+through the paths they already use — a new entry is downloaded, a deletion is moved to `.pc-trash`,
+a rename is both. Nothing is erased, and a rename moves no bytes (the blob is already stored; only
+the name in the agreement changes).
+
+Because a delete here happens without looking at any of the files, it is the one action on that
+screen that names its consequence first: it counts the files, says that every device moves its copy
+to `.pc-trash`, and the server's collapse guard — the same one that refuses a manifest that shrinks
+sharply — still stands behind the write.
+
+It is the **same delete** a device makes, with the same known edge: a machine whose agreement was
+cleared (a reinstall, "Stop syncing" and back) and that still holds the file will put it back, because
+[delete loses to edit](#safety-rules) and with no `base` both sides look
+changed. Delete it again from a device that is up to date, or let that machine sync once before you
+tidy up. The simulation runs all three arms — deleted on a device, deleted from the browser, key
+dropped instead of tombstoned — and requires one outcome. Uploads go up encrypted, content-addressed and chunked
+above 16 MB, exactly as a sweep's do, and a batch writes the shared list once per twenty files rather
+than once per file. Dropping a whole *folder* onto the screen is deliberately not supported, because a
+half-walked directory tree would be a half-created folder on every device.
+
+Two things it will refuse outright, both because a manifest has no folders in it and your disks do:
+adding a file whose name is already a folder here (or putting something *inside* a name that is a
+file), and deleting a folder whose contents grew while the screen was open — the count you were shown
+is the count it will delete, and if another device changed it in between you are asked again.
 
 There are no thumbnails for the same reason there is no server-side search: every blob is ciphertext,
 so a preview costs a full download and a decrypt per file, and a folder of 4000 photos would pay that

@@ -286,14 +286,18 @@
     async save(id, s){
       let paths = s.manifest || {};
       if(Array.isArray(s.touched) && s.touched.length){
-        try{
-          const fresh = await this.manifest(id);
-          if(fresh && typeof fresh === 'object'){
-            const merged = Object.assign({}, fresh);
-            for(const p of s.touched) if(paths[p] !== undefined) merged[p] = paths[p];
-            paths = merged;
-          }
-        }catch(_){ /* keep our snapshot — see above */ }
+        let fresh = null;
+        try{ fresh = await this.manifest(id); }
+        catch(_){ /* keep our snapshot — see above */ }
+        if(fresh && typeof fresh === 'object'){
+          /* `verify` gets the LAST read before the write, which is the only copy that can answer
+           * "is this still safe?" — the merge below is what would otherwise quietly overwrite a
+           * path another device published while we were deciding. Throwing here saves nothing. */
+          if(typeof s.verify === 'function') s.verify(fresh);
+          const merged = Object.assign({}, fresh);
+          for(const p of s.touched) if(paths[p] !== undefined) merged[p] = paths[p];
+          paths = merged;
+        }
       }
       const live = Object.keys(paths).filter(p => paths[p] && !paths[p].deletedAt).length;
       const json = JSON.stringify(paths);
@@ -334,7 +338,11 @@
       // this device believe in an agreement the others never saw. AWAITED: an unawaited write is a
       // save that reports success before it has one, and its failure is an unhandled rejection
       // nobody sees.
-      await _saveBase(id, s.base || {});
+      //
+      // OMITTING `base` means "I have no agreement to record", which is what a manifest edit made
+      // from Files → Synced folders is (see _mutate). `{}` still WRITES an empty agreement, because
+      // a sweep that genuinely settled on nothing has to be able to say so.
+      if(s.base !== undefined) await _saveBase(id, s.base);
     },
     /* The FILE's hash, for the manifest's content identity — distinct from the blob address, which is
      * the hash of the ciphertext. Provided by the store because syncrun.js has no crypto of its own. */
@@ -374,10 +382,18 @@
    * the whole point of this section is that an empty answer used to be a lie. */
   let _acct = null, _acctAt = 0, _acctBusy = false;
   const _ACCT_TTL = 120000, _ACCT_RETRY = 20000;
-  async function accountFolders(){
+  async function accountFolders(force){
     if(!PC.me || !PC.me() || !PC.me().pubkey){ _acct = null; return false; }
     const age = Date.now() - _acctAt;
-    if(_acctBusy || (_acct !== null && age < (_acct === 'error' ? _ACCT_RETRY : _ACCT_TTL))) return false;
+    /* `force` is for a device that has just CHANGED the folder — its own write is the one answer the
+     * TTL must not sit on, or the count beside the folder stays two minutes behind what it did.
+     *
+     * A fetch already IN FLIGHT was issued before that write, so its answer is stale by construction
+     * and joining it would cache the pre-edit count for another two minutes. We cannot cancel it, so
+     * the TTL is expired instead: this call still returns false, and the next repaint refetches
+     * rather than reading a number that is known to be old. */
+    if(_acctBusy){ if(force) _acctAt = 0; return false; }
+    if(!force && _acct !== null && age < (_acct === 'error' ? _ACCT_RETRY : _ACCT_TTL)) return false;
     _acctBusy = true; _acctAt = Date.now();
     try{
       const auth = await PC.signAuth('sync-folders');
@@ -389,6 +405,281 @@
     _acctBusy = false;
     return true;
   }
+  /* ---- EDITING A SYNCED FOLDER FROM A DEVICE THAT DOES NOT HOLD IT ----------------------------
+   *
+   * Files → Synced folders browses the MANIFEST — the document every device agrees on — which is why
+   * it works in a browser that syncs nothing. Adding, renaming and deleting there therefore cannot
+   * touch a file: it edits that agreement, and the devices carry it out on their next sweep, through
+   * the same download/trash paths every other change takes. Nothing here reaches a disk, and nothing
+   * here is a second kind of sync.
+   *
+   * WHICH MEANS IT IS THE ONE PLACE IN THE APP THAT CAN DELETE FILES OFF EVERY MACHINE YOU OWN
+   * WITHOUT LOOKING AT ANY OF THEM. So it goes through `store.save` like a sweep does, and inherits
+   * all of it: the re-read and merge (a device syncing right now must not lose the paths it just
+   * added), the server's collapse guard, and the `removed` count that lets a deliberate mass delete
+   * through while a shrink nobody accounts for is still refused.
+   *
+   * A DELETE IS A TOMBSTONE, never a removed key — the same record `plan.deleteRemote` writes, so
+   * same()/live()/gone() read a web edit exactly as they read a device's. Dropping the key instead
+   * leaves the document unable to say a file was ever deleted, which is a fact the next device to
+   * join has no other source for. (Measured: on a device that HAS agreed, the two are equivalent;
+   * see the three-way equivalence scenario in tests/client/two_device_sim.js.)
+   *
+   * WHAT NEITHER SHAPE CAN DO is stop a device whose `base` was cleared — a reinstall, "Stop
+   * syncing" and back — from re-uploading a file it still holds. Both sides look changed there, and
+   * diff() applies DELETE LOSES TO EDIT on purpose. That is exactly what happens when the deletion
+   * is made on a device, too; this screen is not a weaker way to delete, it is the same one.
+   *
+   * A RENAME IS A TOMBSTONE PLUS A NEW ENTRY POINTING AT THE SAME BLOB. No bytes move: the devices
+   * that hold the file trash their copy under the old name and fetch the new one from Blossom, which
+   * is the only shape that works given a device may be offline for either half.
+   */
+  // `.pc-trash` is the folder's own trash, at any depth. Nothing may be written into it from here:
+  // the sweep would then sync a deletion back out as a file.
+  const RESERVED = /(^|\/)\.pc-trash(\/|$)/;
+  /* A MANIFEST HAS NO DIRECTORIES — only paths — and a real filesystem does. So a path is only
+   * writable if nothing else in the manifest makes it impossible on disk:
+   *
+   *   `notes` when `notes/todo.md` lives     → every device is asked to write a FILE where it has a
+   *                                            DIRECTORY. That fails (EISDIR) on every sweep for
+   *                                            ever, and `base` never advances past it.
+   *   `notes/x.md` when `notes` is a file    → the mirror image, and just as permanent.
+   *
+   * The first one is also how a delete becomes much larger than the confirmation said: a live entry
+   * at `notes` draws as one file, while `_liveUnder('notes')` covers everything under `notes/`. */
+  function _blockedBy(paths, path){
+    const pre = path + '/';
+    for(const p in paths){
+      if(!paths[p] || paths[p].deletedAt) continue;
+      if(p.indexOf(pre) === 0) return 'there is already a folder called “' + path + '” here';
+      if(path.indexOf(p + '/') === 0) return '“' + p + '” is a file, so nothing can go inside it';
+    }
+    return null;
+  }
+  function _liveUnder(paths, path){
+    const out = [];
+    if(paths[path] && !paths[path].deletedAt) out.push(path);
+    const pre = path + '/';
+    for(const p in paths) if(p.indexOf(pre) === 0 && paths[p] && !paths[p].deletedAt) out.push(p);
+    return out;
+  }
+  /* One read-modify-write of the shared manifest. `build` is SYNCHRONOUS on purpose — anything slow
+   * (hashing, uploading) happens before it is called, so the window between reading the manifest and
+   * saving it stays as short as it can be, and the merge in store.save covers the rest. */
+  async function _mutate(key, build, verify){
+    const paths = await store.manifest(key);
+    const next = Object.assign({}, paths);
+    const touched = [], now = Date.now();
+    let removed = 0;
+    // A build that THROWS saves nothing: every check a caller wants to make against the current
+    // manifest belongs in here, where it is reading the copy that is about to be written.
+    build({
+      paths, now,
+      put(p, entry){ next[p] = entry; touched.push(p); },
+      drop(p){
+        if(!next[p] || next[p].deletedAt) return;      // already gone — not a deletion, and not a shrink
+        next[p] = { deletedAt: now }; touched.push(p); removed++;
+      },
+    });
+    if(!touched.length) return { touched: [], removed: 0 };
+    /* NO `base`. An edit made here is not this device's agreement about anything — it may not even
+     * hold the folder — and writing one back would do two bad things: roll back the agreement a
+     * sweep running in this same tab has just advanced, and let an IndexedDB failure throw AFTER the
+     * manifest is safely published, reporting a committed edit as a failure. store.save skips the
+     * write entirely when no base is passed. */
+    await store.save(key, { manifest: next, touched, removed, verify });
+    return { touched, removed };
+  }
+  /* The per-blob ceiling this NODE will accept, which is not the same question as maxBytes() asks:
+   * that one is about a platform's filesystem adapter, and a browser upload always has File.slice.
+   * Cached for the session like maxBytes, and 0 means "the node did not say". */
+  let _srvMax = null;
+  async function serverMaxBytes(){
+    if(_srvMax !== null) return _srvMax;
+    let server = 0;
+    try{
+      const r = await fetch('/client/config');
+      const j = await r.json();
+      const mb = +(j && (j.blossom_max_upload_mb || j.max_upload_mb)) || 0;
+      server = mb > 0 ? mb * 1024 * 1024 : 0;
+    }catch(_){}
+    _srvMax = server;
+    return server;
+  }
+  /* THE BYTES HALF OF AN UPLOAD: everything up to (but not including) the manifest write.
+   *
+   * Separate so a batch can put many entries in with ONE manifest write — see uploadMany. Nothing
+   * here touches the shared document, so a failure costs an upload and never an agreement. */
+  async function _prepareUpload(key, dir, file, onProgress){
+    const path = (dir ? dir + '/' : '') + file.name;
+    if(RESERVED.test(path)) throw new Error('that name is reserved by folder sync');
+    const size = file.size;
+    if(size > SYNC_MAX_BYTES) throw new Error('bigger than folder sync can carry ('
+      + Math.round(SYNC_MAX_BYTES / (1024*1024*1024)) + ' GB)');
+    const srv = await serverMaxBytes();
+    // The chunk has to be something the node will accept, since a chunk IS the request.
+    const CH = srv > 0 ? Math.min(CHUNK_FALLBACK, srv) : CHUNK_FALLBACK;
+    const mtime = +file.lastModified || Date.now();
+    let entry;
+    if(size > CH){
+      if(!store.putParts) throw new Error('this build cannot upload a file that big');
+      const readPart = async (off, len) =>
+        new Uint8Array(await file.slice(off, off + len).arrayBuffer());
+      const res = await store.putParts(readPart, size, onProgress, CH);
+      /* No `csum` on this path, deliberately. csum is the hash of the whole CONTENT and computing
+       * it here would mean holding the whole file, which is the one thing chunking exists to avoid.
+       * The chunk list is the identity instead — the same entry an incremental Android scan
+       * produces, and syncrun already compares against it (see the R0.chunks verify path).
+       *
+       * `cs` IS NOT OPTIONAL HERE, even though a sweep's own upload omits it. A sweep uses the
+       * platform's chunk size, which is what `chunkShas(..., R0.cs || 0)` falls back to; this path
+       * picks its own — capped by what the NODE accepts, so it is routinely smaller. Without it
+       * recorded, a device verifying the file re-chunks at the default size, computes a different
+       * list, decides the file changed and re-uploads it. */
+      entry = { chunks: res.chunks, cs: res.cs || CH, size, mtime, device: deviceName() };
+    } else {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const put = await store.putBlob(bytes);
+      const sha = (put && typeof put === 'object') ? put.sha : put;
+      let csum = null;
+      try{ csum = await store.hashBytes(bytes); }catch(_){}
+      entry = { sha, size, mtime, device: deviceName() };
+      if(csum) entry.csum = csum;
+      if(onProgress) { try{ onProgress(size, size); }catch(_){} }
+    }
+    return { path, entry };
+  }
+  const edit = {
+    /* A file or a whole directory. Everything live UNDER a directory is tombstoned, because a folder
+     * does not exist in a manifest — only the paths inside it do.
+     *
+     * `expect` IS THE NUMBER THE USER WAS SHOWN, and it is checked against what this actually covers
+     * at write time. A screen left open while another device fills the folder would otherwise ask
+     * "delete these 3 files?" and delete four hundred — and `removed` accounting for the shrink is
+     * exactly what waves that past the server's collapse guard, so nothing downstream would query
+     * it either. */
+    async remove(key, path, expect){
+      return _mutate(key, api => {
+        const list = _liveUnder(api.paths, path);
+        if(expect != null && list.length > expect)
+          throw new Error('“' + path + '” now holds ' + list.length + ' files, not ' + expect
+                          + ' — another device changed it. Nothing was deleted; look again.');
+        for(const p of list) api.drop(p);
+      });
+    },
+    // How many live files a remove would take. Read fresh, because it is what the confirmation
+    // promises and what `expect` is then checked against.
+    async count(key, path){
+      return _liveUnder(await store.manifest(key), path).length;
+    },
+    /* Rename a file or a directory. `to` is a full path, not a leaf, so this is also a move.
+     *
+     * REFUSED IF ANYTHING LIVE IS ALREADY THERE. Overwriting by rename would tombstone the target's
+     * entry and put ours in its place, and the devices holding it would trash a file the user never
+     * named — there is no undo for that anywhere in this feature except .pc-trash.
+     *
+     * Every one of those checks runs INSIDE the builder, against the manifest that is about to be
+     * saved. Checked against an earlier read they are a race with a good disguise: a path deleted
+     * between the two reads would be re-created here as a live entry pointing at a blob the folder
+     * had just let go of. */
+    async rename(key, from, to){
+      if(RESERVED.test(to)) throw new Error('that name is reserved by folder sync');
+      let dests = [];
+      return _mutate(key, api => {
+        const list = _liveUnder(api.paths, from);
+        if(!list.length) throw new Error('“' + from + '” is not in this folder any more');
+        const blocked = _blockedBy(api.paths, to);
+        // A rename INTO its own subtree is the one case _blockedBy would refuse wrongly — moving
+        // `2025` to `2025/old` is nonsense, but it is nonsense the UI cannot produce (a name may not
+        // contain a slash), so refusing it here is right.
+        if(blocked) throw new Error(blocked);
+        dests = [];
+        for(const p of list){
+          const dest = to + p.slice(from.length);
+          if(dest === p) throw new Error('that is the same name');
+          if(api.paths[dest] && !api.paths[dest].deletedAt) throw new Error('“' + dest + '” already exists');
+          // The SAME blob under a new name: sha/chunks/cs/csum/size/mtime are the file's, and only
+          // the path changes. `device` records who moved it, which is what the others' reports show.
+          api.put(dest, Object.assign({}, api.paths[p], { device: deviceName() }));
+          api.drop(p);
+          dests.push(dest);
+        }
+      }, /* verify at merge time */ fresh => {
+        /* THE CHECK ABOVE IS NOT THE LAST WORD, because store.save re-reads the manifest and merges
+         * `touched` over whatever it holds NOW. A device that published a file at one of our
+         * destinations in the seconds since would have it overwritten by the merge — the user
+         * renamed one file and a different file's contents were replaced on every machine. This runs
+         * on that final read, and throwing here aborts the save with nothing written. */
+        for(const d of dests)
+          if(fresh[d] && !fresh[d].deletedAt)
+            throw new Error('“' + d + '” was created on another device a moment ago — nothing was changed');
+      });
+    },
+    /* PUT FILES INTO A SYNCED FOLDER FROM HERE, with the manifest written every CHECKPOINT of them
+     * rather than every one.
+     *
+     * The bytes take exactly the path a sweep's upload takes — encrypted with the drive key,
+     * content-addressed, deduped, chunked when big — because the devices that receive them have only
+     * one way to read a manifest entry.
+     *
+     * Each _mutate is a read, a re-read inside store.save, and a whole fresh encrypted copy of the
+     * manifest — which for a folder Folder Sync has filed thousands of paths into is megabytes. Once
+     * per file, a fifty-photo drop moves more manifest than photos. The sweep has the same problem
+     * and answers it the same way: checkpoint, so an interrupted batch keeps what it already put in
+     * the folder instead of losing all of it.
+     *
+     * The BLOBS still go up one file at a time — that half is bounded by renderer memory, not by
+     * round trips, and the reason it is sequential has not changed. */
+    async uploadMany(key, dir, files, hooks){
+      const h = hooks || {}, CHECKPOINT = 20;
+      const done = [];
+      let pending = [];
+      const flush = async () => {
+        if(!pending.length) return;
+        const batch = pending; pending = [];
+        await _mutate(key, api => {
+          for(const it of batch){
+            const blocked = _blockedBy(api.paths, it.path);
+            // One impossible path must not take the other nineteen down with it.
+            if(blocked){ it.error = blocked; continue; }
+            api.put(it.path, it.entry);
+            it.ok = true;
+          }
+        });
+        for(const it of batch){
+          if(h.onFile) try{ h.onFile(it.i, it.ok ? 'added' : ('failed: ' + it.error)); }catch(_){}
+          done.push(it);
+        }
+      };
+      /* One read up front, purely to REFUSE EARLY. The authoritative check is inside the flush,
+       * against the manifest actually being written — this only saves sending a 2 GB file to a path
+       * that was never going to be accepted, and leaving its blobs referenced by nothing. */
+      let known = null;
+      try{ known = await store.manifest(key); }catch(_){}
+      for(let i = 0; i < files.length; i++){
+        const f = files[i];
+        try{
+          if(known){
+            const blocked = _blockedBy(known, (dir ? dir + '/' : '') + f.name);
+            if(blocked) throw new Error(blocked);
+          }
+          if(h.onFile) try{ h.onFile(i, 'uploading…'); }catch(_){}
+          const { path, entry } = await _prepareUpload(key, dir, f,
+            (a, b) => { if(h.onProgress) try{ h.onProgress(i, a, b); }catch(_){} });
+          pending.push({ i, path, entry });
+          if(pending.length >= CHECKPOINT) await flush();
+        }catch(e){
+          const msg = (e && e.message) || String(e);
+          if(h.onFile) try{ h.onFile(i, 'failed: ' + msg); }catch(_){}
+          done.push({ i, error: msg });
+        }
+      }
+      await flush();
+      return { ok: done.filter(x => x.ok).length, failed: done.filter(x => !x.ok).length, done };
+    },
+  };
+
+
   // What this account syncs that this device has no directory for.
   function unmapped(){
     if(!Array.isArray(_acct)) return [];
@@ -626,13 +917,7 @@
   let _maxBytes = null;
   async function maxBytes(){
     if(_maxBytes !== null) return _maxBytes;
-    let server = 0;
-    try{
-      const r = await fetch('/client/config');
-      const j = await r.json();
-      const mb = +(j && (j.blossom_max_upload_mb || j.max_upload_mb)) || 0;
-      server = mb > 0 ? mb * 1024 * 1024 : 0;
-    }catch(_){}
+    const server = await serverMaxBytes();
     const fs = FS();
     const chunked = !!(fs && typeof fs.readPart === 'function');
     /* The server's limit is PER UPLOAD, and a chunked upload's uploads are CHUNKS. Taking the lower
@@ -689,13 +974,10 @@
      * hold the file move their copy into `.pc-trash` on their next sweep, exactly as they would for
      * any other deletion, and nothing is erased anywhere. It goes through the ordinary save, so the
      * merge and the server's collapse guard both still apply. */
-    if(tombstone.length){
-      const now = Date.now();
-      const next = Object.assign({}, man);
-      for(const path of tombstone) next[path] = { deletedAt: now };
-      await store.save(key, { manifest: next, base: await store.base(key),
-                              touched: tombstone, removed: tombstone.length });
-    }
+    // Through _mutate, which is the one place that knows what a manifest edit looks like — a fresh
+    // read, tombstones (never removed keys), and the `removed` count the collapse guard reads. It
+    // also re-reads, so a copy another device deleted while this ran is not re-tombstoned.
+    if(tombstone.length) await _mutate(key, api => { for(const path of tombstone) api.drop(path); });
     return { list, moved, absent, failed, tombstoned: tombstone.length };
   }
 
@@ -1150,6 +1432,8 @@
 
   // accountFolders/acct are shared with Files → Blossom, which lists the same pair keys as browsable
   // roots. One fetch, one cache, one answer about what this account syncs.
-  window.PCSync = { paint, folders, sweep, startAll, store, status,
+  // `edit` is how Files → Synced folders adds, renames and deletes: it writes the shared manifest
+  // through the same guarded save a sweep uses, and the devices carry the change out.
+  window.PCSync = { paint, folders, sweep, startAll, store, status, edit,
                     accountFolders, acct: () => _acct };
 })();

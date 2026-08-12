@@ -144,7 +144,10 @@ function makeDevice(world, opts){
         paths = merged;
       }
       world.docs.set(dtag(k), paths);
-      bases.set(k, JSON.parse(JSON.stringify(s.base || {})));
+      // Mirrors sync.js again: OMITTING `base` means "I have no agreement to record" (what a manifest
+      // edit made from Files → Synced folders is). `{}` still writes an empty one, because a sweep
+      // that genuinely settled on nothing has to be able to say so.
+      if(s.base !== undefined) bases.set(k, JSON.parse(JSON.stringify(s.base)));
     },
     async hashBytes(bytes){ return sha256(bytes); },
     // The address these bytes WOULD have. Deterministic here for the same reason it is in life:
@@ -853,6 +856,281 @@ scenario('three-devices-converge', async () => {
   return {
     ok: everyoneHasIt && everyoneLostIt && everyoneKeptACopy,
     detail: { everyoneHasIt, everyoneLostIt, everyoneKeptACopy, live: ds.map(d => d.live()) },
+  };
+});
+
+/* ---- a BROWSER editing the folder it does not hold -------------------------------------------
+ *
+ * Files → Synced folders can add, rename and delete from a device that holds none of the files: what
+ * it edits is the manifest, and the devices carry it out on their next sweep. That claim is the
+ * whole feature, and it is exactly the kind of claim this file exists to test — the engine has to
+ * read a web edit as an ordinary remote change, or "delete" means "delete here and upload it again
+ * from the next machine that sweeps".
+ *
+ * `_liveUnder` is LIFTED from the shipped sync.js rather than copied: which paths a folder delete
+ * covers is the part with teeth (a subtree, tombstones only for what is live), and a copy here
+ * would pass while the app did something else. The put/drop/save around it mirrors `_mutate`'s
+ * contract, which the store's own merge already covers above. */
+const SYNC_SRC = require('fs').readFileSync(
+  path.join(__dirname, '..', '..', 'static', 'js', 'client', 'sync.js'), 'utf8');
+const _liveUnder = (() => {
+  const m = SYNC_SRC.match(/function _liveUnder\(paths, path\)\{[\s\S]*?\n  \}/);
+  if(!m) throw new Error('_liveUnder() not found in sync.js — has it been renamed?');
+  return new Function(m[0] + '; return _liveUnder;')();
+})();
+// ...and the rule that stops a file being written where a DIRECTORY is (and the reverse).
+const _blockedBy = (() => {
+  const m = SYNC_SRC.match(/function _blockedBy\(paths, path\)\{[\s\S]*?\n  \}/);
+  if(!m) throw new Error('_blockedBy() not found in sync.js — has it been renamed?');
+  return new Function(m[0] + '; return _blockedBy;')();
+})();
+
+function makeWebEditor(world, key){
+  // No filesystem, no base, no device id — a browser. Saves the way sync.js's store does: merge the
+  // touched paths onto whatever the document holds NOW.
+  const save = (next, touched) => {
+    const fresh = world.manifestOf(key);
+    const merged = Object.assign({}, fresh);
+    for(const p of touched) if(next[p] !== undefined) merged[p] = next[p];
+    world.docs.set(dtag(key), merged);
+    world.writes++;
+  };
+  let clock = Date.UTC(2026, 7, 2, 11, 0);
+  return {
+    remove(p){
+      const paths = world.manifestOf(key), next = Object.assign({}, paths), touched = [];
+      const now = ++clock;
+      for(const q of _liveUnder(paths, p)){ next[q] = { deletedAt: now }; touched.push(q); }
+      save(next, touched);
+      return touched;
+    },
+    // The WRONG shape, kept so the equivalence test below can measure it: drop the key outright
+    // instead of recording a tombstone.
+    removeByDeletingTheKey(p){
+      const paths = world.manifestOf(key), next = Object.assign({}, paths), touched = [];
+      for(const q of _liveUnder(paths, p)){ delete next[q]; touched.push(q); }
+      world.docs.set(dtag(key), next);       // no merge: the keys have to actually go
+      return touched;
+    },
+    rename(from, to){
+      const paths = world.manifestOf(key), next = Object.assign({}, paths), touched = [];
+      const now = ++clock;
+      for(const q of _liveUnder(paths, from)){
+        const dest = to + q.slice(from.length);
+        next[dest] = Object.assign({}, paths[q], { device: 'browser' });
+        next[q] = { deletedAt: now };
+        touched.push(dest, q);
+      }
+      save(next, touched);
+      return touched;
+    },
+    upload(p, text){
+      const paths = world.manifestOf(key);
+      const blocked = _blockedBy(paths, p);
+      if(blocked) throw new Error(blocked);
+      const bytes = bytesOf(text), sha = sha256(bytes);
+      world.blobs.set(sha, bytes);           // what PC.syncBlobs.put does, minus the encryption
+      const next = Object.assign({}, paths);
+      next[p] = { sha, csum: sha, size: bytes.length, mtime: ++clock, device: 'browser' };
+      save(next, [p]);
+      return p;
+    },
+  };
+}
+
+/* A file deleted from the browser leaves every device — into its trash, not out of existence. */
+scenario('web-delete-reaches-the-devices', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Documents' });
+  const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Documents' });
+
+  laptop.put('report.txt', 'the quarterly numbers');
+  laptop.put('notes/todo.md', '- ship it');
+  await laptop.sweep(); await phone.sweep();
+
+  makeWebEditor(w, 'Documents').remove('report.txt');
+
+  const a = await laptop.sweep(), b = await phone.sweep();
+  // ...and it STAYS gone: a second round must not resurrect it from either device.
+  await laptop.sweep(); await phone.sweep();
+
+  return {
+    ok: laptop.live().indexOf('report.txt') === -1 && phone.live().indexOf('report.txt') === -1
+        && laptop.trashed().length === 1 && phone.trashed().length === 1
+        && laptop.live().indexOf('notes/todo.md') !== -1        // the rest of the folder is untouched
+        && a.uploaded.length === 0 && b.uploaded.length === 0,   // nobody re-uploaded it
+    detail: { laptop: laptop.live(), phone: phone.live(), trashed: laptop.trashed(),
+              uploaded: [a.uploaded, b.uploaded] },
+  };
+});
+
+/* A WEB DELETE IS THE SAME DELETE, and this is what says so.
+ *
+ * The risk in letting a browser edit the manifest is that it becomes a SECOND way to delete — one
+ * that goes round the engine and behaves subtly differently from the one that has been tested. So
+ * this runs the identical situation twice: once deleted from a device (the engine writing its own
+ * tombstone through plan.deleteRemote) and once from the browser, and requires the outcome on the
+ * other machines to be the same in every particular.
+ *
+ * It measures the AGREEMENT-LESS device on purpose, because that is where deletion is at its most
+ * surprising: a device whose `base` was cleared (a reinstall, "Stop syncing" and back, an app update
+ * that moved the storage origin) still holds the file, so both sides look changed and diff() applies
+ * DELETE LOSES TO EDIT — the file is re-uploaded and comes back everywhere. That is deliberate
+ * engine policy, not a fault of the editor, and the point here is that the browser inherits it
+ * rather than inventing something else. Writing a tombstone (never dropping the key) is what keeps
+ * that true: the engine's own vocabulary, so same()/gone()/live() read a web edit exactly as they
+ * read a device's.
+ *
+ * The third arm is the shape NOT to write, and MEASURED it is equivalent on this sweep — which is
+ * worth knowing, because it means the reason to write a tombstone is not that dropping the key
+ * resurrects anything here. It is that the DOCUMENT then keeps no record of the deletion at all:
+ * nothing downstream can tell a file that was deleted from one that never existed. */
+scenario('a-web-delete-behaves-exactly-like-a-device-delete', async () => {
+  const run = async (how) => {
+    const w = makeWorld();
+    const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Documents' });
+    const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Documents' });
+    laptop.put('report.txt', 'the quarterly numbers');
+    laptop.put('notes/todo.md', '- ship it');
+    await laptop.sweep(); await phone.sweep();
+
+    if(how === 'device'){ phone.rm('report.txt'); await phone.sweep(); }
+    else if(how === 'web') makeWebEditor(w, 'Documents').remove('report.txt');
+    else makeWebEditor(w, 'Documents').removeByDeletingTheKey('report.txt');
+
+    // A device that DID agree carries the deletion out — measured BEFORE anything else touches the
+    // folder, or the resurrection below is what you end up looking at.
+    const agreed = await laptop.sweep();
+    const settled = {
+      goneFromAgreed: laptop.live().indexOf('report.txt') === -1,
+      trashedNotErased: laptop.trashed().length,
+      restKept: laptop.live().indexOf('notes/todo.md') !== -1,
+      agreedUploaded: agreed.uploaded.length,
+    };
+    // Now a device with no agreement and the file still on its disk.
+    const fresh = makeDevice(w, { name:'desktop', id:'ccc3', key:'Documents' });
+    fresh.put('report.txt', 'the quarterly numbers');
+    const back = await fresh.sweep({ hash:false });
+
+    return Object.assign(settled, { freshResurrects: back.uploaded.indexOf('report.txt') !== -1 });
+  };
+  const device = await run('device'), web = await run('web'), dropped = await run('drop');
+  const same = JSON.stringify(device) === JSON.stringify(web);
+
+  return {
+    ok: same && device.goneFromAgreed && device.trashedNotErased === 1 && device.restKept
+        && device.agreedUploaded === 0
+        // ...and the agreement-less device re-uploads whoever deleted it — engine policy, both ways.
+        && device.freshResurrects && web.freshResurrects && dropped.freshResurrects,
+    detail: { device, web, dropped, identical: same },
+  };
+});
+
+/* A rename in the browser moves no bytes — the blob is already stored — and both devices end up with
+ * the file under its new name and the same content. */
+scenario('web-rename-carries-the-bytes', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Documents' });
+  const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Documents' });
+
+  laptop.put('draft.txt', 'the quarterly numbers');
+  await laptop.sweep(); await phone.sweep();
+  const blobsBefore = w.blobs.size;
+
+  makeWebEditor(w, 'Documents').rename('draft.txt', 'final.txt');
+
+  const a = await laptop.sweep(), b = await phone.sweep();
+  await laptop.sweep(); await phone.sweep();
+
+  return {
+    ok: laptop.read('final.txt') === 'the quarterly numbers'
+        && phone.read('final.txt') === 'the quarterly numbers'
+        && laptop.live().indexOf('draft.txt') === -1 && phone.live().indexOf('draft.txt') === -1
+        && w.blobs.size === blobsBefore                    // no new bytes were stored anywhere
+        && a.uploaded.length === 0 && b.uploaded.length === 0,
+    detail: { laptop: laptop.live(), phone: phone.live(), blobs: [blobsBefore, w.blobs.size],
+              uploaded: [a.uploaded, b.uploaded] },
+  };
+});
+
+/* A whole FOLDER renamed from the browser: every path under it moves, and nothing outside it does. */
+scenario('web-rename-a-folder-moves-its-subtree', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Documents' });
+  const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Documents' });
+
+  laptop.put('2025/jan.txt', 'january');
+  laptop.put('2025/feb/notes.md', 'february');
+  laptop.put('2025-summary.txt', 'not in the folder');   // shares the prefix, is NOT under it
+  await laptop.sweep(); await phone.sweep();
+
+  makeWebEditor(w, 'Documents').rename('2025', 'archive/2025');
+
+  await laptop.sweep(); await phone.sweep();
+
+  return {
+    ok: phone.read('archive/2025/jan.txt') === 'january'
+        && phone.read('archive/2025/feb/notes.md') === 'february'
+        && phone.read('2025-summary.txt') === 'not in the folder'
+        && phone.live().filter(p => p.indexOf('2025/') === 0).length === 0,
+    detail: { phone: phone.live(), laptop: laptop.live() },
+  };
+});
+
+/* A file uploaded from the browser arrives on both devices, byte for byte. */
+scenario('web-upload-reaches-the-devices', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Documents' });
+  const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Documents' });
+
+  laptop.put('report.txt', 'the quarterly numbers');
+  await laptop.sweep(); await phone.sweep();
+
+  makeWebEditor(w, 'Documents').upload('invoices/march.pdf', 'INVOICE march');
+
+  const a = await laptop.sweep(), b = await phone.sweep();
+  await laptop.sweep(); await phone.sweep();
+
+  return {
+    ok: laptop.read('invoices/march.pdf') === 'INVOICE march'
+        && phone.read('invoices/march.pdf') === 'INVOICE march'
+        && a.downloaded.length === 1 && b.downloaded.length === 1
+        && a.uploaded.length === 0 && b.uploaded.length === 0,   // nothing was re-uploaded over it
+    detail: { laptop: laptop.live(), phone: phone.live(),
+              downloaded: [a.downloaded, b.downloaded], uploaded: [a.uploaded, b.uploaded] },
+  };
+});
+
+/* A MANIFEST HAS NO DIRECTORIES, and a filesystem does. Uploading a file called `notes` into a
+ * folder that already holds `notes/todo.md` asks every device to write a FILE where it has a
+ * DIRECTORY: it fails on each sweep for ever, and `base` never advances past it. The second half is
+ * worse than the first — a live entry at `notes` draws as ONE file, while deleting it covers
+ * everything under `notes/`, so the confirmation says 1 and four hundred files could go. */
+scenario('a-file-cannot-be-written-where-a-directory-is', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Documents' });
+  const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Documents' });
+
+  laptop.put('notes/todo.md', '- ship it');
+  laptop.put('notes/ideas.md', '- a better idea');
+  await laptop.sweep(); await phone.sweep();
+
+  const web = makeWebEditor(w, 'Documents');
+  let refusedFile = '', refusedDir = '';
+  try{ web.upload('notes', 'a file with the same name as the folder'); }
+  catch(e){ refusedFile = String(e.message || e); }
+  // ...and the mirror image: nothing may go INSIDE a path that is a file.
+  try{ web.upload('notes/todo.md/attachment.txt', 'nested under a file'); }
+  catch(e){ refusedDir = String(e.message || e); }
+
+  await laptop.sweep(); await phone.sweep();
+
+  return {
+    ok: !!refusedFile && !!refusedDir
+        && phone.read('notes/todo.md') === '- ship it'
+        && phone.live().indexOf('notes') === -1
+        && laptop.live().length === 2 && phone.live().length === 2,
+    detail: { refusedFile, refusedDir, laptop: laptop.live(), phone: phone.live() },
   };
 });
 
