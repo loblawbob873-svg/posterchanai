@@ -179,6 +179,26 @@ a pair that came out wrong stays wrong for the life of the page. It distinguishe
 `<article>` → rebuild from the Store) from BLANK (an `<article>` of zero height → kick a reflow) and
 counts both in `PC.ghostStats()`, so the next report says which. `scripts/check_timeline_ghosts.py`
 plants one against the live client and asserts it heals.
+**BUT THE ONE THAT WAS ACTUALLY HAPPENING ON RESUME WAS A THIRD KIND, AND BOTH OF THOSE PROBES ARE
+BLIND TO IT: the card is present, at full height, and TRANSPARENT.** `body.anim-off` (set while
+backgrounded, to idle the GPU) was `animation-play-state: paused`, and `.note`'s entry animation is
+`noteRise … both`, which STARTS at `opacity:0` — so every card drawn while the class was on was
+frozen at its first keyframe for as long as the class stayed on. `.reply-ctx` has no animation, so
+the label rendered perfectly above an invisible post: "↩ REPLYING TO alice" all the way down, plain
+posts simply absent, nothing in any log, and the ghost sweep reporting success because the card is
+there and 46px tall. **The local relay and the cache-first paint were working the whole time — the
+right posts were being painted invisible.** Three changes: (1) `anim-off` now sets `animation: none`,
+not `paused` — a disabled animation always resolves to the element's resting style, so it cannot
+strand content, where a frozen one holds whatever keyframe it reached; (2) the class is owned by
+`_animOff`, called from `_tlBackground`/`_tlForeground`, so the NATIVE resume signal releases it too
+— it was armed and released from `visibilitychange` alone, which on Android arrives late or is
+coalesced away, and the resume path DRAWS inside that gap (Capacitor's `resume` fires from the
+Activity, which was never frozen, so `_tlForeground` re-subscribes and `_resumeRelay` repaints while
+the WebView still says hidden; "nothing loads for a while" is the delayed event finally landing);
+(3) `_healGhostPairs` clears a stale `anim-off` on a visible page and counts it as `frozen`, ahead of
+the no-replies early return, since a frozen timeline need not contain a reply.
+`tests/client/test_anim_off_never_hides_content.py` measures OPACITY against the real stylesheet, and
+re-runs the pre-fix rule to prove the check can fail.
 
 ### Commands (shared by web UI + Telegram)
 

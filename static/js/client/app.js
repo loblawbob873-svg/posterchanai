@@ -203,12 +203,31 @@
    *
    * NOT on the desktop app: Chromium reports `hidden` for a window merely COVERED by another one, and
    * a covered window is still an app someone is running with no radio to spare. */
+  /* `body.anim-off` stops the client's decorative motion while nobody is looking (client.css). It is
+   * set and cleared HERE, from the same pair of functions the timeline subscription uses, for the
+   * same reason and after the same bug: it was armed and released from `visibilitychange` ALONE —
+   * the one signal this file already documents as arriving late on Android, or being coalesced away
+   * entirely.
+   *
+   * That gap is not cosmetic, because the resume path DRAWS inside it. Capacitor's `resume` fires
+   * from the Activity, which was never frozen, so it is the earliest moment the app knows it is
+   * back: _tlForeground re-subscribes and _resumeRelay's reconnect repaints the feed, all while the
+   * WebView still believes it is hidden and the class is still on. Every card drawn in that window
+   * was frozen at the first keyframe of its entry animation, i.e. transparent — reported as "every
+   * time I resume the app the timeline is empty with REPLYING TO... posts, nothing loads for a
+   * while". The "for a while" is the delayed visibilitychange finally landing and releasing them.
+   *
+   * The CSS no longer freezes an entry animation, so a stale class can no longer hide a post. This
+   * is the other half: the class tracks the app, not one unreliable event. */
+  function _animOff(on){ try{ document.body.classList.toggle('anim-off', !!on); }catch(_){} }
   function _tlBackground(){
+    _animOff(true);          // ...before the desktop guard: a covered window still pauses its motion
     if(_isDesktopApp()) return;
     clearTimeout(_tlHideTimer);
     _tlHideTimer = setTimeout(()=>{ try{ _tlPause && _tlPause(); }catch(_){} }, _TL_HIDE_AFTER);
   }
   function _tlForeground(){
+    _animOff(false);
     clearTimeout(_tlHideTimer); _tlHideTimer = null;
     try{ _tlResume && _tlResume(); }catch(_){}
   }
@@ -2791,7 +2810,9 @@
     bindMobileGestures();   // pull-to-refresh + swipe between primary tabs (mobile/PWA)
     // Perf/battery: pause ALL CSS animations (cyberpunk city parallax, glows) when the tab/PWA is
     // backgrounded — the GPU idles when you're not looking (laptop heat + mobile battery).
-    document.addEventListener('visibilitychange', ()=>{ document.body.classList.toggle('anim-off', document.hidden);
+    /* No `anim-off` toggle of its own here any more: _tlBackground/_tlForeground below own it, so
+     * this signal and the native one cannot disagree about it (see _animOff). */
+    document.addEventListener('visibilitychange', ()=>{
       if(document.hidden){
         _hiddenAt = Date.now();
         /* Drop the timeline after a grace period — a glance at the notification shade should not churn
@@ -2826,7 +2847,7 @@
     // give reliable second chances to reconnect + refetch. Debounced so they don't stack with the above.
     window.addEventListener('online', _resumeRelay);
     window.addEventListener('pageshow', e=>{ if(e && e.persisted) _resumeRelay(); });
-    if(document.hidden) document.body.classList.add('anim-off');
+    if(document.hidden) _animOff(true);   // bound while already backgrounded — no event is coming
     const rb=document.querySelector('.rightbar');
     // No auto-scroll ticker: the column used to creep downward on its own and loop back to the top.
     // It fought anyone trying to read it, and the column is short enough (Topics + Notifications) that there's
@@ -10245,13 +10266,29 @@
    *
    * The counts are kept (and exposed as PC.ghostStats) rather than only fixed, so the next report
    * says which of the two it was instead of starting this hunt again. */
-  const _ghosts = { missing:0, blank:0, dropped:0, at:0 };
+  const _ghosts = { missing:0, blank:0, dropped:0, frozen:0, at:0 };
   /* `measure` is off on the live-prepend path. Reading offsetHeight forces a synchronous layout, and
    * a busy feed prepends several times a minute on the very device this is written for — so the
    * cheap half (is the <article> THERE?) runs every time, and the half that costs a layout runs on a
    * full draw, which has just rebuilt the list anyway. */
   function _healGhostPairs(box, measure){
     if(!box || !box.querySelectorAll || !box.isConnected) return 0;
+    /* THE THIRD GHOST, and the one that produced this screen for real: a card that is in the DOM, at
+     * its full height, and TRANSPARENT. Neither probe below can see it — it has an <article> and it
+     * has height — which is why the two of them shipped, were verified against a planted ghost, and
+     * changed nothing on the phone.
+     *
+     * There is exactly one thing in this client that can make a whole feed transparent at once, and
+     * it is not a property of any post: `body.anim-off` left on while the page is being looked at.
+     * So the check is that state, not a per-card style read — O(1), no layout, and it works on a
+     * timeline with no replies on it at all, which the per-pair loop below cannot do. Both real
+     * causes are fixed (client.css no longer freezes an entry animation; _animOff is driven by the
+     * native resume signal too), so reaching this is a signal gap nobody has found yet — hence the
+     * count, so the next report names it instead of restarting this hunt. */
+    if(!document.hidden && document.body.classList.contains('anim-off')){
+      _animOff(false); _ghosts.frozen++; _ghosts.at = Date.now();
+      try{ console.warn('[timeline] cleared a stale anim-off on a visible page — see _animOff'); }catch(_){}
+    }
     const pairs = box.querySelectorAll('.reply-pair');
     if(!pairs.length) return 0;
     let n = 0;

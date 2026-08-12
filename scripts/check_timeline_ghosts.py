@@ -45,6 +45,14 @@ SURVEY = r"""(() => {
                  .map(p => ({key: p.dataset.key || '?', html: p.innerHTML.slice(0, 200)})),
     blank: pairs.filter(p => { const a = p.querySelector('article.note');
                                return a && p.offsetHeight > 0 && a.offsetHeight === 0; }).length,
+    /* THE THIRD SHAPE: present, full height, and transparent — what `anim-off` used to do to every
+       card drawn while the app was backgrounded, and the one neither probe above can see. Measured
+       as opacity on the cards that HAVE a box, so a post mid-entry-animation is not counted. */
+    invisible: pairs.filter(p => { const a = p.querySelector('article.note');
+                                   return a && a.offsetHeight > 0
+                                          && parseFloat(getComputedStyle(a).opacity) === 0; }).length,
+    animOff: document.body.classList.contains('anim-off'),
+    hidden: document.hidden,
   };
 })()"""
 
@@ -110,6 +118,14 @@ async def drive(ws_url):
             problems.append(f"ghost reply card (no post under the label): {g['key']} — {g['html']!r}")
         if survey["blank"]:
             problems.append(f"{survey['blank']} reply card(s) drew a zero-height post")
+        if survey.get("invisible"):
+            problems.append(
+                f"{survey['invisible']} reply card(s) are present, full height and TRANSPARENT — "
+                "the post is drawn and cannot be seen, which reads as a label with nothing under it")
+        if survey.get("animOff") and not survey.get("hidden"):
+            problems.append(
+                "body.anim-off is set on a VISIBLE page — see _animOff in app.js. While that class "
+                "is on, anything with an entry animation used to be frozen at opacity 0")
 
         planted = await js(PLANT)
         if not planted:

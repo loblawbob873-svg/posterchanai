@@ -509,10 +509,27 @@ code{font-family:var(--mono);word-break:break-all}
 .sidebar.glass,.topbar.glass,.rightbar.glass,.mobilenav.glass{
   backdrop-filter: none; -webkit-backdrop-filter: none;
 }
-/* Perf/battery: pause ALL CSS animations when the tab/PWA is backgrounded (app.js toggles
-   body.anim-off on visibilitychange) so the GPU idles when you're not looking — big win for laptop
-   heat AND mobile battery, with zero change to the visible/foreground look. */
-body.anim-off *, body.anim-off *::before, body.anim-off *::after{ animation-play-state: paused !important; }
+/* Perf/battery: stop ALL CSS animations when the tab/PWA is backgrounded (app.js toggles
+   body.anim-off — see _animOff) so the GPU idles when you're not looking — big win for laptop heat
+   AND mobile battery, with zero change to the visible/foreground look.
+
+   OFF, NOT FROZEN, and that one word is the whole Android "empty timeline" bug.
+
+   This rule used to be `animation-play-state: paused`. Freezing an animation holds the element at
+   whatever keyframe it had reached — and a card INSERTED while the class is on has reached its
+   FIRST one. `.note`'s entry animation is `noteRise ... both`, which starts at `opacity:0`, so every
+   post drawn while backgrounded was stranded fully transparent for as long as the class stayed on.
+   It kept its full height, so nothing measured it as missing, and `.reply-ctx` (no animation of its
+   own) rendered perfectly above it: a screen of "↩ REPLYING TO alice" with nothing underneath, and
+   plain posts simply absent. That is the report, and it survived the ghost-pair sweep because the
+   sweep looks for a card of zero height and this one is 51px tall and invisible.
+
+   `animation: none` cannot strand anything: with no animation an element renders at its resting
+   style, which for content is visible. The failure direction is the safe one. What it costs is that
+   an infinite decoration restarts from 0% instead of resuming mid-cycle when you come back — all of
+   them here are spinners, pulses, glows and shimmers where that is invisible, and the one animation
+   where it would have shown (the city parallax) is already `animation:none` above for perf. */
+body.anim-off *, body.anim-off *::before, body.anim-off *::after{ animation: none !important; }
 /* Mobile: drop the GPU-heavy continuous parallax + backdrop-blur (battery drain on phones, and the
    city parallax is a desktop flourish barely visible on a small screen). */
 @media(max-width:820px){
@@ -4350,7 +4367,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 @keyframes actPop{ 0%{transform:scale(1)} 40%{transform:scale(1.42)} 70%{transform:scale(.9)} 100%{transform:scale(1)} }
 
 /* The login card gently breathes so the very first screen feels alive. Battery-safe: a static glow
-   layer whose OPACITY pulses (compositor-only, no per-frame paint), login-screen only, and it pauses
+   layer whose OPACITY pulses (compositor-only, no per-frame paint), login-screen only, and it stops
    with the app's anim-off-when-hidden system. */
 .auth-card.neon-border{ position:relative; }
 .auth-card.neon-border::before{
@@ -4389,7 +4406,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
    Landing redesign — a striking, theme-adaptive first impression. The grid + glows use ACCENT
    VARS, so they glow blue/purple on the Dark default and go full cyan/magenta on Cyberpunk.
    Battery-safe: the grid drifts via TRANSFORM only (GPU compositor, zero per-frame paint), the
-   glows are STATIC, it only exists on the login screen, and it pauses under anim-off/reduced-motion.
+   glows are STATIC, it only exists on the login screen, and it stops under anim-off/reduced-motion.
    Mobile-first: fixed layers (no scroll jank) + chips wrap + hidden on short phones to keep the CTA up.
    ============================================================================================ */
 .auth-gate::before{   /* drifting neon grid, faded from the top */
