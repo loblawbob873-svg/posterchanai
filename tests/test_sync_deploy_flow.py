@@ -260,3 +260,53 @@ def test_store_metadata_and_templates_restart_nothing():
     # And the fail-safe default must survive: anything that IS runtime still restarts.
     assert dt.units_for(["app/services/nostr_relay/outbox.py"]) == ["posterchanai-relay.service"]
     assert len(dt.units_for(["run-intel.sh"])) >= 5, "a launcher must still restart everything"
+
+
+def test_a_service_the_routers_import_always_restarts_the_app():
+    """A module the ROUTERS import must include the app in its targets — including when the import
+    sits inside a function.
+
+    Every mapping in _OWNED was measured by importing each role's modules and reading sys.modules,
+    and that measurement cannot see a LAZY import: `app/routers/admin.py` does
+    `from app.services.stats_bot_service import build_stats` inside the endpoint, so the module is
+    absent from the app's sys.modules at startup and the file was mapped to the worker alone. It
+    lands there the first time an admin presses the button and stays for the life of the process —
+    so a chart fix reached the worker's nightly cron while the button an admin actually looks at went
+    on rendering the old code, with the deploy reporting every node in sync. "Why does stats look the
+    same."
+
+    Under-restarting is the dangerous direction: over-restarting costs an outage somebody notices,
+    while this ships code that runs nowhere and looks deployed.
+    """
+    import importlib.util
+    import re
+    spec = importlib.util.spec_from_file_location(
+        "dt", os.path.join(REPO, "scripts", "deploy_targets.py"))
+    dt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(dt)
+
+    routers = os.path.join(REPO, "app", "routers")
+    wanted = set()
+    for root, _dirs, files in os.walk(routers):
+        for fn in files:
+            if not fn.endswith(".py"):
+                continue
+            src = open(os.path.join(root, fn), encoding="utf-8").read()
+            for m in re.finditer(r"from\s+app\.services\.([\w.]+)\s+import|import\s+app\.services\.([\w.]+)", src):
+                wanted.add(m.group(1) or m.group(2))
+
+    assert wanted, "found no app.services imports in the routers — has the tree moved?"
+    missing = []
+    for mod in sorted(wanted):
+        rel = "app/services/" + mod.replace(".", "/") + ".py"
+        if not os.path.exists(os.path.join(REPO, rel)):
+            rel = "app/services/" + mod.replace(".", "/") + "/"     # a package
+            if not os.path.isdir(os.path.join(REPO, rel)):
+                continue
+        units = dt.units_for([rel])
+        if "posterchanai.service" not in units:
+            missing.append((rel, units))
+    assert not missing, (
+        "these are imported by app/routers/ but do not restart the app: %s. A router import means the "
+        "APP runs this code; leaving it off the targets deploys a fix to a process that never serves "
+        "it." % missing)

@@ -97,12 +97,25 @@ _OWNED = (
     ("app/services/mail_sync.py", (APP,)),
     ("relay_main.py", (RELAY,)),
     ("app/services/nostr_relay/", (RELAY,)),
+    # ...except the trigger surface, which the APP calls: app/routers/nostr.py and bots.py import
+    # thread.py for trigger_backfill / trigger_wot_refresh / trigger_wot_add. Lazily, so the
+    # sys.modules measurement that built this table could not see it.
+    ("app/services/nostr_relay/thread.py", (APP, RELAY)),
     ("app/worker.py", (WORKER,)),
-    ("app/services/logs_scheduler.py", (WORKER,)),
+    # The cron runs in the worker and the "Run Logs" BUTTON runs in the app — one entry point,
+    # run_logs_for_admin, shared by both (and by the /logs command). A lazy import in admin.py.
+    ("app/services/logs_scheduler.py", (APP, WORKER)),
     ("app/services/social_notifications_service.py", (WORKER,)),
     ("app/services/nitter_feeds_service.py", (WORKER,)),
     ("app/services/uptime_service.py", (WORKER,)),
-    ("app/services/stats_bot_service.py", (WORKER,)),
+    # THE APP IMPORTS THIS TOO, and lazily — which is the trap. `app/routers/admin.py` does
+    # `from app.services.stats_bot_service import build_stats` INSIDE the Preview and Run endpoints,
+    # so the module never appears in the app's sys.modules at startup and the measurement that maps
+    # everything else here reports "worker only". It lands in sys.modules the first time somebody
+    # presses Preview, and stays there for the life of the process: a chart fix then deployed to a
+    # worker that only draws it on the nightly cron, while the button an admin actually looks at kept
+    # rendering the old code. Reported as "why does stats look the same".
+    ("app/services/stats_bot_service.py", (APP, WORKER)),
     ("app/services/nostr_push_service.py", (WORKER,)),
     ("app/services/fedi_nostr_bridge_service.py", (WORKER,)),
     ("app/services/fedi_nostr_writeback_service.py", (WORKER,)),
@@ -113,7 +126,9 @@ _OWNED = (
     ("turnserver/", (MEDIA,)),
     ("app/services/tor_service.py", (TOR,)),
     ("app/services/http_proxy_service.py", (PROXY,)),
-    ("app/services/git_http_service.py", (GIT,)),
+    # The git host is its own process, but the app IMPORTS this module: /api/git/status calls
+    # git_http_status(), and Admin start/stop calls start_git_http/stop_git_http. Lazily, again.
+    ("app/services/git_http_service.py", (APP, GIT)),
     # The git smart-HTTP server itself: its own process, launched by git_http_service from this path.
     ("git_host_main.py", (GIT,)),
     ("botframework/", (BOTS,)),
