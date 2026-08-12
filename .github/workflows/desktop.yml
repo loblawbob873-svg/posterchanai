@@ -155,7 +155,31 @@ jobs:
 
       - name: Build
         working-directory: desktop
-        run: npm run ${{ matrix.script }}
+        # RETRIED, for the same reason `npm ci` above is, and with the same `shell: bash` (a Windows
+        # runner defaults to PowerShell and would not parse the loop at all).
+        #
+        # electron-builder fetches its own helpers at build time — the Electron dist zip, winCodeSign,
+        # NSIS, nsis-resources — from GitHub releases, through app-builder's Go downloader, whose
+        # stack frame for this is literally `DownloadNoRetry`. One transient EOF from the CDN
+        # therefore kills the whole job minutes in, after the bundle and Tor are already staged:
+        #
+        #   ⨯ Get ".../nsis-resources-3.4.1/nsis-resources-3.4.1.7z": EOF
+        #   ⨯ app-builder.exe process failed ERR_ELECTRON_BUILDER_CANNOT_EXECUTE
+        #
+        # It is not OS-specific however it looks on the day — it took the Windows job on one push and
+        # the Linux job (on the electron dist zip) on another, while the other two platforms of the
+        # same commit published fine. Nothing is cleaned between attempts: the downloader writes to a
+        # temp path and renames on success, so a failure leaves no partial file to poison, and
+        # whatever DID land stays cached instead of pulling 115 MB again.
+        shell: bash
+        run: |
+          for i in 1 2 3; do
+            npm run ${{ matrix.script }} && exit 0
+            echo "::warning::${{ matrix.script }} failed (attempt $i/3) — retrying in $((i*20))s"
+            sleep $((i*20))
+          done
+          echo "::error::${{ matrix.script }} failed three times"
+          exit 1
 
       # Insurance: `--publish never` means electron-builder doesn't run its publisher, and whether it
       # still writes the update feed varies by version. Generate it from the built bytes when missing —
