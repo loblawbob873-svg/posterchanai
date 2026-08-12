@@ -132,6 +132,22 @@ The bots are managed from **Admin → Bots** (`templates/admin/tabs/bots.html` +
 | Templates | `templates/` (Jinja2); admin tabs in `templates/admin/tabs/`, modals in `templates/includes/modals/` |
 | Frontend JS | `static/js/` (`app.js`, `chat.js`, `admin.js`; Nostr client = `static/js/client/*.js` + `static/css/client.css`) |
 
+**IF THE CLIENT ALREADY HOLDS WHAT THE VIEW IS ABOUT, PAINT THAT BEFORE THE FIRST NETWORK AWAIT.**
+The Store is a local relay and every screen paints into one shared `#feed`, so the failure shape
+repeats: `feed.innerHTML='<div class="spinner">'`, a serial chain of awaits, and the real render at
+the very bottom. Nothing logs, nothing breaks, and the user gets a blank screen for as long as the
+radio takes. It bit a POST OPENED FROM A NOTIFICATION — `renderThread` waited on the socket, fetched
+the event, walked the ancestors, fetched the root and ran up to four rounds of reply expansion (each
+retrying an incomplete answer) before painting a pixel, while the event sat in the Store the whole
+time *because the notification was built from it* ("it's like all the content is empty" → "takes
+forever to load but it does") — and a PROFILE, which additionally retried an empty notes query twice
+with backoff. Both now paint from cache first (`_paintThreadHead`, `renderProfileView`'s `_cached`
+branch) and refresh behind it (`_patchProfileHeader`). **The COLD paths are deliberately unchanged**:
+with nothing cached, an early paint is a header reading "anon" that rewrites itself, or a thread
+claiming a reply count it has not counted — an empty answer dressed up as an answer, which is worse
+than a spinner. So the split is on *having something real to show*, never on a timeout, and the early
+paint states nothing it has not checked. `tests/client/test_cache_first_paint.py`.
+
 **A VIEW THAT QUERIES ON ENTRY MUST WAIT FOR A SOCKET THAT CAN ANSWER — `await Relay.ready()`.** A REQ
 written to a CONNECTING socket is silently dropped (`relay.js _send`), and the moment a view is most
 likely to be opened against one is right after somebody logs in. `renderProfileView` and `flushEvents`

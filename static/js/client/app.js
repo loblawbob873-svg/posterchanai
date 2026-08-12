@@ -21118,31 +21118,48 @@
     // render path, so opening a profile straight from AI chat inherited feed-ai → the page couldn't
     // scroll ("stuck"). Clear them here so #feed scrolls again.
     _feedScrollable(feed);
-    feed.innerHTML='<div class="spinner"></div>';
-    // Opening a profile COLD — a pasted poster.place/<npub> link, a mention tap, a fresh launch — fired both
-    // reads below at a still-CONNECTING socket, which silently drops them (relay.js `_send`): the header
-    // rendered as "anon" and the notes retry loop below burned all 3 attempts against a dead socket.
-    try{ await Relay.ready(); }catch(_){}
-    if(myGen!==_profGen) return;   // a newer profile opened while we waited for the socket
-    { const e=await Relay.query([{authors:[pk],kinds:[0],limit:1}]); for(const x of e)Store.saveProfile(x); }   // always refetch newest kind-0 so a renamed / re-avatar'd profile updates live (not just first view)
-    if(myGen!==_profGen) return;   // a newer profile opened during the kind-0 fetch
-    const p=Store.profile(pk)||{}; const mine=pk===ME.pubkey;
-    // Only the author's recent notes block the first paint. following/followers/pinned are loaded
-    // in the BACKGROUND below — the followers query alone can pull up to 1000 kind-3 events, which
-    // was the multi-second stall on every profile open.
-    // Retry an EMPTY result: over a high-latency link (Thailand→US) the first REQ can EOSE empty before
-    // the relay serves this author's notes → the profile showed "0 posts" for an active account. Retry a
-    // couple times with backoff (only when we got nothing AND have nothing cached, so a genuinely-empty
-    // profile still resolves fast).
-    let notes=[];
-    for(let attempt=0; attempt<3; attempt++){
-      try{ notes=await Relay.query([{authors:[pk],kinds:[1,1068,6],limit:80}]); }catch(_){ notes=[]; }   // polls + reposts
-      if(VIEW!=='profile' || myGen!==_profGen) return;   // navigated away / a newer profile opened during the notes fetch
-      if(notes.length || Store.feed(e=>e.pubkey===pk).length) break;
-      await new Promise(r=>setTimeout(r, 450*(attempt+1)));
+    /* THE HEADER GOES UP FROM CACHE, and only the network waits are conditional on not having one.
+     *
+     * Everything that used to sit between the spinner and the first paint is a round trip: the socket
+     * connect, a kind-0 refetch, and a notes query that RETRIES twice with backoff when it comes back
+     * empty. On a phone that is seconds of blank screen for a profile the client can already draw —
+     * your own, anyone you have read today, anyone whose post you just tapped through from.
+     *
+     * The cold path below is unchanged, deliberately. With nothing cached, painting early would mean
+     * a header reading "anon" with no avatar for a second and then rewriting itself, which is worse
+     * than a spinner — an empty answer must not be dressed up as an answer. So the split is on
+     * whether there is anything real to show, not on a timeout. */
+    const _cached = !!(Store.profile(pk) || Store.feed(e=>e.pubkey===pk).length);
+    /* One notes fetch, used by both paths. Retries an EMPTY result: over a high-latency link
+     * (Thailand→US) the first REQ can EOSE empty before the relay serves this author's notes → the
+     * profile showed "0 posts" for an active account. Only when we got nothing AND have nothing
+     * cached, so a genuinely-empty profile still resolves fast. */
+    const _loadNotes = async () => {
+      let notes=[];
+      for(let attempt=0; attempt<3; attempt++){
+        try{ notes=await Relay.query([{authors:[pk],kinds:[1,1068,6],limit:80}]); }catch(_){ notes=[]; }   // polls + reposts
+        if(VIEW!=='profile' || myGen!==_profGen) return false;   // navigated away / a newer profile opened
+        if(notes.length || Store.feed(e=>e.pubkey===pk).length) break;
+        await new Promise(r=>setTimeout(r, 450*(attempt+1)));
+      }
+      notes.forEach(n=>Store.saveEvent(n));
+      return VIEW==='profile' && myGen===_profGen;
+    };
+    if(!_cached){
+      feed.innerHTML='<div class="spinner"></div>';
+      // Opening a profile COLD — a pasted poster.place/<npub> link, a mention tap, a fresh launch — fired both
+      // reads below at a still-CONNECTING socket, which silently drops them (relay.js `_send`): the header
+      // rendered as "anon" and the notes retry loop below burned all 3 attempts against a dead socket.
+      try{ await Relay.ready(); }catch(_){}
+      if(myGen!==_profGen) return;   // a newer profile opened while we waited for the socket
+      { const e=await Relay.query([{authors:[pk],kinds:[0],limit:1}]); for(const x of e)Store.saveProfile(x); }   // always refetch newest kind-0 so a renamed / re-avatar'd profile updates live (not just first view)
+      if(myGen!==_profGen) return;   // a newer profile opened during the kind-0 fetch
+      // Only the author's recent notes block the first paint. following/followers/pinned are loaded
+      // in the BACKGROUND below — the followers query alone can pull up to 1000 kind-3 events, which
+      // was the multi-second stall on every profile open.
+      if(!await _loadNotes()) return;
     }
-    notes.forEach(n=>Store.saveEvent(n));
-    if(VIEW!=='profile' || myGen!==_profGen) return;
+    const p=Store.profile(pk)||{}; const mine=pk===ME.pubkey;
     const npub=NT().nip19.npubEncode(pk);
     feed.innerHTML=`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
@@ -21279,6 +21296,27 @@
         '<div class="muted small">⚠ part of this profile didn’t load — '
         + enc(String((e&&e.message)||e).slice(0,140)) + '</div>');
     }
+    /* …and when that header came out of the CACHE, go and check it — the same two reads the cold path
+     * makes before painting, made after. A rename or a new avatar has to land without a reload, which
+     * is exactly what _patchProfileHeader exists for, and fresh notes fill the list in place.
+     *
+     * `oldest` is re-taken afterwards because it is the scroll-back cursor: it was computed from what
+     * the cache held, and paging from there would re-request notes the refresh has already brought
+     * in. Every step re-checks the generation token — this is now a second async path through the
+     * same view, and the one thing it must never do is patch a profile the user has left. */
+    if(_cached) (async()=>{
+      try{ await Relay.ready(); }catch(_){}
+      if(VIEW!=='profile' || _prof.pk!==pk || myGen!==_profGen) return;
+      try{ const e=await Relay.query([{authors:[pk],kinds:[0],limit:1}]); for(const x of e) Store.saveProfile(x); }catch(_){}
+      if(VIEW!=='profile' || _prof.pk!==pk || myGen!==_profGen) return;
+      _patchProfileHeader(pk);
+      if(!await _loadNotes()) return;
+      if(_prof.pk!==pk) return;
+      const an=Store.feed(e=>e.pubkey===pk);
+      if(an.length) _prof.oldest=an[an.length-1].created_at;
+      fillList(_prof.tab); hydrate(feed);
+      if(_prof.tab==='streams') _wireProfStreamClicks();
+    })();
     // Background: following / followers / pinned — fetched in PARALLEL after the first paint and
     // patched in, so the profile opens instantly instead of waiting on (esp.) the 1000-event
     // followers query. Re-checks _prof.pk so a fast navigation away doesn't patch the wrong profile.
@@ -25362,11 +25400,57 @@
     try{ _navUrl('/'+NT().nip19.neventEncode(hints.length?{ id, relays:hints }:{ id })); }catch(_){ try{ _navUrl('/'+NT().nip19.noteEncode(id)); }catch(__){} }
     renderThread(id, hints);
   }
+  /* THE THREAD'S FIRST PAINT — the post you tapped, on screen before the conversation is resolved.
+   *
+   * renderThread's real render is at the very BOTTOM of a long serial network path: Relay.ready(), a
+   * fetch for the clicked event, the ancestor walk up to the root, a fetch for the root, then up to
+   * FOUR rounds of reply expansion, each of which fires a REQ, waits for EOSE, and repeats the whole
+   * query when the answer came back incomplete. On a phone radio that is seconds to tens of seconds,
+   * and every one of them used to be spent on a spinner.
+   *
+   * The case that makes it worst is the one people hit: a post opened from a NOTIFICATION is already
+   * in the Store — the notification was built from it — so the app held the thing the user tapped for
+   * the entire time it showed them nothing. Reported as "the same problem is happening when I open a
+   * post on a notification, it's like all the content is empty", then "takes forever to load but it
+   * does", which is what rules out a rendering failure and names it as a wait.
+   *
+   * It deliberately does NOT try to be the final render in miniature. No ancestor chain, no
+   * missing-parent notice, no reply count: every one of those is a CLAIM that needs the network this
+   * paint exists not to wait for, and a wrong claim early is worse than a right one late. */
+  const _THREAD_TOP = `<div class="thread-top"><button class="btn btn-ghost small" id="th-back" title="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button></div>`;
+  /* Back, bound the same way by both paints — a spinner you cannot leave is the other half of the
+   * complaint, and two copies of this binding is how one of them goes stale.
+   *
+   * Pop real history when we pushed an entry; a cold deep link pushed none, and history.back() there
+   * would leave the app rather than return to it. The other destination is the timeline the USER
+   * opens the app on, never a hardcoded Home ("opening a post and clicking back always brings you
+   * back to the Home tab instead of obeying Timeline the app opens on" — reported, and true down
+   * BOTH branches: this one named Home, and the history pop lands on the root path, which
+   * routeFromPath used to answer with Nostrverse). */
+  function _bindThreadBack(feed){
+    const tb=$('#th-back',feed); if(!tb) return;
+    tb.onclick=()=>{ if(_navPushed>0){ try{ history.back(); return; }catch(_){} } switchView(_startTimeline()); };
+  }
+  function _paintThreadHead(feed, ev){
+    if(!feed || !ev) return;
+    feed.innerHTML = _THREAD_TOP
+      + `<div class="thread-node thread-hl" data-tid="${enc(ev.id)}">${noteHtml(ev)}</div>`
+      + `<div class="search-section-title"><span class="spinner spinner-inline"></span>Loading the rest of this conversation…</div>`;
+    hydrate(feed); _bindThreadBack(feed);
+  }
   async function renderThread(id, hints){
     renderThread._tok = id;   // guards the async expansion below against a newer thread opening mid-flight
     VIEW='thread'; _hidePill(); _clearNav(); $('#view-title').textContent='Thread';
     const feed=_feedScrollable();   // scrollable view — clear the chat/AI overflow:hidden (see _feedScrollable)
     feed.innerHTML='<div class="spinner"></div>';
+    /* WHAT WE ALREADY HOLD GOES UP BEFORE ANY SOCKET IS WAITED ON.
+     *
+     * This is above `await Relay.ready()` on purpose, and the reason is the exact case that gets
+     * reported: a notification tap on a COLD app is "the event is already in the Store (the
+     * notification was built from it) and the relay has not finished connecting". Waiting for the
+     * socket first spends that entire connect on a spinner, for a post the client could have drawn
+     * before the first packet left the phone. */
+    { const have=Store.get(id); if(have && have.kind!==42) _paintThreadHead(feed, have); }
     // A REQ fired at a still-CONNECTING socket is silently DROPPED (relay.js `_send`), so a thread opened
     // COLD — a pasted nevent link, a notification tap, a fresh launch — queried into a dead socket and
     // rendered whatever partial set came back: the "only 1 reply, correct after refresh" bug. Waiting for a
@@ -25383,10 +25467,14 @@
       let chan=root ? (Store.get(root)||await fetchEvent(root, [...(hints||[]), ...eTagRelays(ev)])) : null;
       if(chan){ Store.saveEvent(chan); openChannel(chan, id); return; }
     }
+    // The post we hold, painted now if the Store did not already have it above (a link opened cold,
+    // where fetchEvent had to go and get it). Same helper either way — see _paintThreadHead.
+    _paintThreadHead(feed, ev);
     // Resolve the thread ROOT (+ the ancestor chain from the clicked post up to it) so a click on ANY
     // reply opens the whole conversation root-first. Then render it as a tree with the clicked post
     // highlighted + scrolled into view.
     const { rootId, chain } = await _threadRoot(ev, hints);
+    if(VIEW!=='thread' || renderThread._tok!==id) return;   // navigated away while the ancestors resolved
     let root = chain.find(x=>x.id===rootId) || Store.get(rootId) || await fetchEvent(rootId, [...(hints||[]), ...eTagRelays(ev)]) || ev;
     Store.saveEvent(root);
     // Two reply queries in PARALLEL: descendants that root-tag the root, AND direct replies to the CLICKED
@@ -25452,20 +25540,13 @@
     // was the one that never did, which is why an issue opened from a repo had no visible way out. Bare
     // "←", not "← Repos": a thread is reached from a feed, a notification, a profile or a repo, so it
     // cannot name one destination — it walks the history it came through instead.
-    let html = `<div class="thread-top"><button class="btn btn-ghost small" id="th-back" title="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button></div>`;
+    let html = _THREAD_TOP;
     html+= missingParent ? `<div class="thread-node thread-missing"><div class="empty">↩ Replying to a post that couldn't be loaded from any connected relay.</div></div>` : '';
     html+=`<div class="thread-node${id===root.id?' thread-hl':''}" data-tid="${enc(root.id)}">${noteHtml(root)}</div>`;
     html+=`<div class="search-section-title">${nReplies} repl${nReplies===1?'y':'ies'}</div>`;
     html+= nReplies ? (kids.get(root.id)||[]).sort((a,b)=>a.created_at-b.created_at).map(c=>renderNode(c,1)).join('') : '<div class="empty">No replies yet.</div>';
     feed.innerHTML=html; hydrate(feed);
-    { const tb=$('#th-back',feed);
-      // Pop real history when we pushed an entry; a cold deep link pushed none, and history.back() there
-      // would leave the app rather than return to it.
-      // ...and the destination is the timeline the USER opens the app on, never a hardcoded Home.
-      // "Opening a post and clicking back always brings you back to the Home tab instead of obeying
-      // Timeline the app opens on" — reported, and true down BOTH branches: this one named Home, and
-      // the history pop lands on the root path, which routeFromPath used to answer with Nostrverse.
-      if(tb) tb.onclick=()=>{ if(_navPushed>0){ try{ history.back(); return; }catch(_){} } switchView(_startTimeline()); }; }
+    _bindThreadBack(feed);   // the same binder the early paint used — see _paintThreadHead
     // Reveal + flash the clicked post (when it isn't the root).
     if(id!==root.id){ const el=feed.querySelector(`.thread-node[data-tid="${CSS.escape(id)}"]`);
       if(el) _revealThreadNode(feed, el, id); }

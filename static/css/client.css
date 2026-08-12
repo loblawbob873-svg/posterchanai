@@ -2593,6 +2593,11 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 
 .empty{text-align:center;color:var(--muted);padding:60px 20px;font-size:17px}
 .spinner{width:26px;height:26px;border:3px solid var(--line);border-top-color:var(--neon);border-radius:50%;animation:spin .7s linear infinite;margin:40px auto}
+/* The same spinner, sitting IN a line of text rather than owning a screen — the thread's "loading the
+ * rest of this conversation" label, where the post above it has already been painted. The base rule's
+ * `margin:40px auto` is what makes the block version centre itself, and it has to go here or the
+ * label is pushed a screen and a half down the page away from the post it belongs to. */
+.spinner-inline{width:13px;height:13px;border-width:2px;margin:0 8px 0 0;display:inline-block;vertical-align:-2px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .badge{display:inline-grid;place-items:center;min-width:21px;height:21px;padding:0 6px;border-radius:11px;background:var(--neon);color:#fff;font-size:12px;font-weight:700;margin-left:6px;box-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 
