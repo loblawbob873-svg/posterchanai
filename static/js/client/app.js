@@ -186,6 +186,29 @@
     setTimeout(()=>{ el.src = base + (base.includes('?')?'&':'?') + '_r=' + Date.now(); if(el.tagName==='VIDEO') el.load(); }, Math.min(700 * (n + 1), 4000));
   };
 
+  /* HAS THE USER ALREADY GONE SOMEWHERE? Asked by the boot's landing, which otherwise overwrites it.
+   *
+   * The search box and the nav are in the shell HTML and are bound by bindGlobalsOnce, so they are
+   * live LONG before startApp reaches its "land on the user's timeline" line. Anything the user does
+   * in that window sets VIEW, and then the landing set it straight back — and because every one of
+   * these renderers re-checks VIEW after its first `await` (correctly: it is how they avoid painting
+   * over a view the user navigated to), the clobber does not just lose the navigation, it aborts the
+   * render HALFWAY:
+   *
+   *   SEARCH   runSearch sets VIEW='search', awaits Relay.ready, finds VIEW==='global' and returns.
+   *            No results, no "no matches", no spinner, no error — nothing. You search again, the
+   *            boot is over by then, and it works. That is "I have to search twice to see results".
+   *   PROFILE  renderProfileView paints the header, awaits Relay.ready + the kind-0 fetch, then
+   *            _loadNotes() returns false on the same check and the function returns — AFTER the
+   *            header and BEFORE fillList and every binding under it. The result reads as three
+   *            unrelated bugs: no posts, the ⋯ menu does nothing, "Copy npub" does nothing. It is
+   *            the same triad a THROW in noteHtml used to cause, which is why guarding that (and
+   *            fillList) did not stop it coming back — this one is an early `return`, not a throw.
+   *
+   * So the landing yields instead. It is a DEFAULT — "where to put you if you haven't said" — and a
+   * default must never beat an answer. Deep links are unaffected: they route through routeFromPath,
+   * which is the user having said. */
+  let _viewChosen = false;
   // Timeline pause/resume while backgrounded — set by watchTimeline for the CURRENT view.
   let _tlPause = null, _tlResume = null, _tlPaused = false, _tlHideTimer = null;
   // Short enough to get the CLOSE frame out before the OS freezes the socket (after that the relay
@@ -2676,7 +2699,11 @@
     if(_deepLink){ VIEW='thread'; $('#feed').innerHTML='<div class="spinner"></div>'; }
     // PWA shortcut/share, else land on the user's chosen timeline (Nostrverse by default, Home if set).
     // _onLandingView is set AFTER the switch — switchView clears it, so it must be armed last.
-    else if(!_consumeLaunchParams()){ switchView(_startTimeline()); _onLandingView = true; }
+    // …unless the user got in first. Searching or opening a profile while this was still booting used
+    // to be overwritten here, which ABORTED that render mid-way rather than merely losing it — see
+    // _viewChosen for the two shapes that produced ("search twice", and a profile with no posts, a
+    // dead ⋯ menu and a dead Copy npub).
+    else if(!_consumeLaunchParams() && !_viewChosen){ switchView(_startTimeline()); _onLandingView = true; }
     // Drain a file/text shared IN from another app (a fresh OS-share launch, OR a guest who has just
     // logged in with a share still waiting). Self-guards on GUEST (prompts + keeps the stash) and on an
     // empty stash (no-op). Runs AFTER a view is set, so the composer opens over a real backdrop — never a
@@ -4159,6 +4186,7 @@
 
   function switchView(v, quiet){
     _onLandingView = false;   // an explicit navigation — a late pref restore must not move them now
+    _viewChosen = true;       // …and the boot landing must not overwrite it (see _viewChosen)
     if(window.PC_NOSTR_ONLY && (v==='ai' || v==='markets')) v='home';   // AI-backed views disabled in Nostr-only deployments
     // Deep links, a restored last-view and the keyboard can all name a view the nav no longer shows —
     // hiding the button is not the same as closing the door.
@@ -21147,6 +21175,7 @@
     cleanupInlineStream();   // e.g. tapping the host's name from a stream
     _hidePill();
     try{ _navUrl('/'+NT().nip19.npubEncode(pk)); }catch(_){}   // shareable URL: poster.place/<npub>
+    _viewChosen = true;   // claim the boot landing before the first await (see _viewChosen)
     if(VIEW!=='profile'){ VIEW='profile'; $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view==='profile')); $('#view-title').textContent='Profile'; _syncRightbar(); }
     const myGen = ++_profGen;   // this render's token — every async step below bails if a newer profile opened
     const feed=$('#feed');
@@ -25477,6 +25506,7 @@
   }
   async function renderThread(id, hints){
     renderThread._tok = id;   // guards the async expansion below against a newer thread opening mid-flight
+    _viewChosen = true;   // same as the profile: a thread opened mid-boot must not be landed over
     VIEW='thread'; _hidePill(); _clearNav(); $('#view-title').textContent='Thread';
     const feed=_feedScrollable();   // scrollable view — clear the chat/AI overflow:hidden (see _feedScrollable)
     feed.innerHTML='<div class="spinner"></div>';
@@ -25731,6 +25761,9 @@
     return f;
   }
   async function runSearch(q){
+    // Sets VIEW itself rather than going through switchView, so it has to claim the boot landing too
+    // — without this the whole function silently returns at its own VIEW re-check below.
+    _viewChosen = true;
     VIEW='search'; _clearNav(); $('#view-title').textContent='Search';
     const feed=_feedScrollable(); feed.innerHTML='<div class="spinner"></div>';
     // People naturally type a handle as "@name@domain" — strip the leading @ so it matches the NIP-05
