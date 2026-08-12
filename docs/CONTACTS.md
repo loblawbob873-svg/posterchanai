@@ -269,6 +269,42 @@ arrives in the client inside a `catch` and is therefore indistinguishable from n
 and a write that was accepted and **stored nothing**. Neither is signed off in the push signature, so
 they are retried rather than remembered as done.
 
+### "Is the account there" is measured ONE way, and the contradiction is why
+
+The report above is not decoration; it is the instrument that found the fault that stopped this
+feature writing a single contact on a real phone. Verbatim, both lines from the same panel seconds
+apart:
+
+```
+Last sync · 23:21 · cards=51 · sent=0 · landed=0 · phone ?→? · no contacts account on this phone
+phone: permission=yes account=yes rows=0
+```
+
+One phone, two answers. The sweep aborted claiming there was no account while the probe beneath it
+reported the account was present — which located the defect in the **sweep's account check** without
+another blind APK build, since permissions, the relay and the write were all plainly fine.
+
+What was wrong: `ContactWriter.ensureAccount()` computed "the account exists" from whether the calls
+it *attempted* succeeded. It takes the account off Android's sync framework with
+`ContentResolver.setIsSyncable` / `setSyncAutomatically`, both of which **require
+`WRITE_SYNC_SETTINGS` and throw `SecurityException` without it** — and the app did not declare it. So
+they threw on every call, the catch turned that into `false`, `begin()` answered `account:false`, and
+every sweep since the feature shipped stopped before writing anything. (`addAccountExplicitly` has the
+same shape of trap one line above: it returns **false for an account that already exists**, which is
+"nothing to do", not a failure.)
+
+Two rules came out of it, and both are tested:
+
+* **Existence is decided by `getAccountsByType()`, never by what an attempt returned or threw.**
+  `ensureAccount()` tries to create the account, tries to take it off the sync framework — each
+  best-effort, in its own guard — and then *measures*. Taking an account off the sync framework is
+  not what makes it exist, so it cannot be allowed to say it does not.
+* **One measurement, so the two lines can never disagree again.** Every surface that reports
+  `account` — the probe, the sweep's abort, `enable()`, `put()`'s diagnostic — reads
+  `ContactWriter.hasAccount()`. That contradiction is only a diagnostic while there is one source for
+  it; `WRITE_SYNC_SETTINGS` is declared now as well, so the sync-framework calls also do what they
+  were always meant to.
+
 ### What is not covered
 
 Nothing is synced when the app is closed, and nothing can be. Groups, and any vCard property the

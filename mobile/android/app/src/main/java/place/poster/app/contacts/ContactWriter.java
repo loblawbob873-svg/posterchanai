@@ -115,20 +115,49 @@ public final class ContactWriter {
     return false;
   }
 
+  /**
+   * Make sure the account exists, and answer the ONE question everything above depends on: is it
+   * there NOW.
+   *
+   * THE ANSWER IS ALWAYS hasAccount(), NEVER THE RETURN VALUE OF SOMETHING WE ATTEMPTED. That
+   * distinction is not pedantry — it is this method's entire history, and it cost the feature every
+   * contact it was ever asked to write:
+   *
+   *  · `addAccountExplicitly` returns FALSE for an account that ALREADY EXISTS. That is "nothing to
+   *    do", not "it failed", and read as failure it reports "no account" on every run after the
+   *    first — while getAccountsByType, one line away, correctly says it is there.
+   *  · `setIsSyncable`/`setSyncAutomatically` require WRITE_SYNC_SETTINGS, which this app did not
+   *    declare. They therefore threw SecurityException on EVERY call, the catch below turned that
+   *    into `false`, and begin() answered `account:false` to a phone whose account plainly existed —
+   *    printed on screen directly above the probe's `account=yes`, which is what found this. Not one
+   *    card was ever written on that device. The permission is declared now, but the shape of the
+   *    code is the real fix: TUNING THE SYNC FRAMEWORK IS NOT WHAT MAKES AN ACCOUNT EXIST, so it
+   *    cannot be allowed to say the account does not.
+   *
+   * So: try to create it, try to take it off the sync framework, then MEASURE. Nothing an attempt
+   * returns or throws is the verdict — the account list is.
+   */
   public static boolean ensureAccount(Context ctx) {
     Account a = account();
-    try {
-      if (!hasAccount(ctx)) {
-        if (!AccountManager.get(ctx).addAccountExplicitly(a, null, null)) return false;
+    if (!hasAccount(ctx)) {
+      try {
+        // The return value is deliberately ignored: `false` here means "already there", which is
+        // indistinguishable from success for our purposes and is settled by hasAccount() below.
+        AccountManager.get(ctx).addAccountExplicitly(a, null, null);
+      } catch (Throwable t) {
+        Log.w(TAG, "contacts: could not create the account", t);
       }
-      // Off the sync framework entirely — see the class comment.
+    }
+    // Off the sync framework entirely — see the class comment. BEST EFFORT, in its own guard: an OEM
+    // that refuses this leaves a sync toggle we did not want, which is a cosmetic wart. Letting it
+    // decide whether the account exists is a phone book that never receives anybody.
+    try {
       ContentResolver.setIsSyncable(a, ContactsContract.AUTHORITY, 0);
       ContentResolver.setSyncAutomatically(a, ContactsContract.AUTHORITY, false);
-      return true;
     } catch (Throwable t) {
-      Log.w(TAG, "contacts: could not create the account", t);
-      return false;
+      Log.w(TAG, "contacts: could not take the account off the sync framework", t);
     }
+    return hasAccount(ctx);
   }
 
   /**

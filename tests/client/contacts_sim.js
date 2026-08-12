@@ -22,9 +22,21 @@ const fetched = [];
 /* ---- the stub phone ------------------------------------------------------------------------- */
 let phoneRows = (opt.phone || []).slice();          // uids ContactsContract holds for our account
 
+/* ONE ANSWER TO "IS THE ACCOUNT THERE", because the phone has one.
+ *
+ * This stub used to answer `account:true` from status() while begin() answered `account:false` for
+ * the same `noAccount` phone — which is EXACTLY the contradiction a real handset printed, two lines
+ * apart, and it went unasserted here because nothing compared them. The plugin now measures it once
+ * (ContactSyncPlugin.haveAccount → getAccountsByType), so the stub does too, and the test below
+ * checks the two lines of the panel agree. */
+const hasAccount = () => !opt.noAccount;
+
 const PLUGIN = {
-  async status(){ return { granted:true, account:true, owner:opt.owner || 'me', count:phoneRows.length }; },
-  async enable(){ calls.push(['enable']); return { granted:true, account: !opt.noAccount }; },
+  async status(){
+    return { granted:true, account:hasAccount(), owner:opt.owner || 'me',
+             count: hasAccount() ? phoneRows.length : 0 };
+  },
+  async enable(){ calls.push(['enable']); return { granted:true, account: hasAccount() }; },
   async disable(){ calls.push(['disable']); phoneRows = []; return {}; },
   async begin(a){
     calls.push(['begin', a]);
@@ -34,8 +46,9 @@ const PLUGIN = {
     // `account:false` is the phone that could not create the PosterChan account. Every row hangs off
     // it, so this is "nothing will ever be written" — and it used to arrive here as a rejected call
     // the client swallowed into silence.
-    if(opt.noAccount) return { granted:true, account:false, count:0 };
-    return { granted: opt.revoked ? false : true, account:true, hashes, count: phoneRows.length };
+    if(!hasAccount()) return { granted:true, account:false, count:0 };
+    return { granted: opt.revoked ? false : true, account:hasAccount(), hashes,
+             count: phoneRows.length };
   },
   async put(a){
     calls.push(['put', (a.cards || []).map(c => c.uid)]);
@@ -72,8 +85,8 @@ const PLUGIN = {
   },
   async pull(a){
     calls.push(['pull', a]);
-    if(opt.noAccount) return { granted:true, account:false, rows:[] };
-    return { granted:true, account:true, rows:(opt.pullRows || []), pushed:{} };
+    if(!hasAccount()) return { granted:true, account:false, rows:[] };
+    return { granted:true, account:hasAccount(), rows:(opt.pullRows || []), pushed:{} };
   },
   async taken(a){ calls.push(['taken', a]); return {}; },
 };
@@ -143,5 +156,10 @@ require(path.join(ROOT, 'static', 'js', 'client', 'contacts.js'));
   // `diag` is the line the phone-book panel puts on screen. It exists because this feature was
   // debugged blind across four APK builds and its failure mode reports success — see contacts.js.
   const diag = (C && C.lastSweep) ? C.lastSweep() : '';
-  console.log(JSON.stringify({ calls, toasts, fetched, phoneRows, settings, diag }));
+  // The OTHER line of the panel: `phone: permission=… account=… rows=…`, which the client draws from
+  // status(). It is in the transcript so a test can hold the two lines up against each other — the
+  // one thing nobody did while a handset printed "no contacts account on this phone" above
+  // "account=yes" for four builds.
+  const probe = await PLUGIN.status();
+  console.log(JSON.stringify({ calls, toasts, fetched, phoneRows, settings, diag, probe }));
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });

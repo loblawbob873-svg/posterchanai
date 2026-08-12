@@ -326,6 +326,14 @@
          instead of living on in the dialer. Both are in the CONTACTS group, so Android asks once. -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.WRITE_CONTACTS" />
+    <!-- ContentResolver.setIsSyncable / setSyncAutomatically REQUIRE this, and throw SecurityException
+         without it. ContactWriter calls both to take our account OFF the sync framework (there is no
+         sync adapter to run — see its class comment), and undeclared they threw on every call: the
+         verdict "the account exists" was computed from whether those two calls succeeded, so a phone
+         with the account plainly present was told it had none and NOT ONE CONTACT WAS EVER WRITTEN.
+         ensureAccount no longer conflates the two, but the calls are meant to work, so: declared.
+         It is a NORMAL permission — granted at install, no prompt, no runtime request. -->
+    <uses-permission android:name="android.permission.WRITE_SYNC_SETTINGS" />
 
     <!-- required="false" so tablets / camera-less devices can still install and run. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />

@@ -451,6 +451,18 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   much as the write half — matching `.ics` unconditionally meant an addressbook's `.vcf` files were
   never reconciled, so a contact deleted in the web UI stayed on the phone and could be edited back
   into existence; (3) a `.vcf` has no envelope (it IS a concatenation), unlike iCalendar.
+  **"DOES THE ACCOUNT EXIST" IS ANSWERED BY `getAccountsByType()`, NEVER BY WHAT AN ATTEMPT RETURNED
+  OR THREW** — and that one line is why the phone half wrote **zero** contacts for its whole life.
+  `ensureAccount` took the account off the sync framework with `ContentResolver.setIsSyncable` /
+  `setSyncAutomatically`, which **require `WRITE_SYNC_SETTINGS` and throw `SecurityException`
+  without it** (undeclared until now); the catch turned that into "no account", `begin()` answered
+  `account:false`, and every sweep aborted before writing. `addAccountExplicitly` is the same trap
+  one line up: **`false` means "already there"**, not failure. Both attempts are best-effort in their
+  own guard now and the verdict is a fresh `hasAccount()`. The bug was found in ONE round only
+  because the panel printed `no contacts account on this phone` directly above `account=yes` — so
+  every surface that reports `account` reads the SAME measurement (`ContactSyncPlugin.haveAccount`),
+  which is what keeps that contradiction meaningful. Android-only: a `sync.sh` deploy ships the JS
+  half, the fix itself needs the **CI APK build**.
   See `docs/CONTACTS.md`; `tests/test_contacts.py` + `tests/test_vcard.py` +
   `scripts/check_contacts_mobile.py` (the generic and calendar checks never open this screen).
 - **Web Search** (`static/js/client/websearch.js` + `app/routers/websearch.py`; sidebar → Web Search):

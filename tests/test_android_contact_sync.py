@@ -193,6 +193,94 @@ def test_both_contacts_permissions_are_declared():
     assert "@PermissionCallback" in PLUGIN
 
 
+def test_an_account_that_already_exists_does_not_abort_the_sweep():
+    """THE ONE THAT MADE THE FEATURE WRITE NOTHING, EVER, on a real phone. Two shapes, both of which
+    answer "is the account there?" with something that is not the account list:
+
+      · addAccountExplicitly() returns FALSE for an account that ALREADY EXISTS. Read as failure that
+        is "no account" on every run after the first.
+      · setIsSyncable()/setSyncAutomatically() require WRITE_SYNC_SETTINGS and throw
+        SecurityException without it — which this app did not declare, so they threw on EVERY call.
+        ensureAccount() caught it and returned false, begin() aborted, and the diagnostic printed
+        `no contacts account on this phone` directly above the probe's `account=yes`. 51 cards ready,
+        0 sent, 0 rows.
+
+    Both are RUN, not grepped: the stub AccountManager keeps real accounts and refuses a duplicate,
+    and the stub ContentResolver can be denied the permission. The verdict must be the account list
+    in every one of these cases, which is the whole point — and it is the same list status() reads."""
+    out = _run_java("""
+    android.accounts.AccountManager am = android.accounts.AccountManager.get(null);
+
+    // A phone with the permission, where nothing has ever run.
+    android.accounts.AccountManager.reset();
+    android.content.ContentResolver.syncSettingsDenied = false;
+    boolean first = ContactWriter.ensureAccount(null);
+    // …and the SECOND sweep, where the account is already there and the add returns false.
+    boolean dupAdd = am.addAccountExplicitly(ContactWriter.account(), null, null);
+    boolean again = ContactWriter.ensureAccount(null);
+
+    // The phone in the report: WRITE_SYNC_SETTINGS refused, account present.
+    android.content.ContentResolver.syncSettingsDenied = true;
+    boolean denied = ContactWriter.ensureAccount(null);
+    boolean probe = ContactWriter.hasAccount(null);
+
+    // Denied AND starting from nothing: the account still gets created, and is still reported.
+    android.accounts.AccountManager.reset();
+    boolean cold = ContactWriter.ensureAccount(null);
+
+    // Genuinely absent: the one case that must answer false. Nothing can create an account for an
+    // authenticator this phone does not have, and saying "fine" there is the other silent failure.
+    android.accounts.AccountManager.reset();
+    android.accounts.AccountManager.wedged = true;
+    boolean none = ContactWriter.ensureAccount(null);
+    android.accounts.AccountManager.wedged = false;
+
+    System.out.println("" + (first ? 1 : 0) + (dupAdd ? 1 : 0) + (again ? 1 : 0)
+                     + (denied ? 1 : 0) + (probe ? 1 : 0) + (cold ? 1 : 0) + (none ? 1 : 0));
+    """, "Ensure")
+    #          first  dupAdd  again  denied  probe  cold  none
+    assert out == "1" + "0" + "1" + "1" + "1" + "1" + "0", out
+
+    # …and the shape that keeps it that way. Neither an attempt's return value nor its exception may
+    # be the verdict: the account LIST is.
+    body = re.search(r"public static boolean ensureAccount\(Context ctx\) \{(.*?)\n  \}", WRITER, re.S)
+    assert body, "ensureAccount not found"
+    assert body.group(1).rstrip().endswith("return hasAccount(ctx);"), \
+        "ensureAccount must answer with the account list, not with what an attempt returned"
+    for line in body.group(1).splitlines():
+        if "addAccountExplicitly" in line and not line.lstrip().startswith("//"):
+            assert not re.search(r"\bif\s*\(|\breturn\b|=", line), \
+                f"addAccountExplicitly's return value is 'already there', never a verdict: {line!r}"
+
+    # The permission those two calls need. They are meant to WORK — the account is deliberately taken
+    # off the sync framework — and undeclared they only ever threw.
+    assert 'android:name="android.permission.WRITE_SYNC_SETTINGS"' in MANIFEST, \
+        "setIsSyncable/setSyncAutomatically throw SecurityException without WRITE_SYNC_SETTINGS"
+
+
+def test_the_sweep_and_the_probe_cannot_disagree_about_the_account():
+    """The contradiction on screen — `no contacts account on this phone` above `account=yes` — is
+    what found the bug above in one round instead of another four blind APK builds. It is only a
+    diagnostic while the two verdicts are ONE measurement, so: everything that reports `account`
+    reads hasAccount(), and the sweep's abort does too (ensureAccount ends in hasAccount)."""
+    said = re.findall(r'(?:put|\.put)\(\s*"account"\s*,\s*([^)]*?)\)\s*[;.\n]', PLUGIN)
+    assert said, "the plugin stopped reporting `account` at all"
+    for expr in said:
+        assert expr.strip() in ("haveAccount()", "acct", "true", "false"), \
+            f"`account` reported from {expr.strip()!r} — it must be the one measurement"
+    assert "boolean acct = haveAccount();" in PLUGIN
+    assert "private boolean haveAccount() {\n    return ContactWriter.hasAccount(getContext());" \
+        in PLUGIN
+    # The abort paths report it too, rather than asserting false about a phone they did not ask.
+    for m in re.finditer(r"if \(!ContactWriter\.ensureAccount\(getContext\(\)\)\) \{(.*?)\n    \}",
+                         PLUGIN, re.S):
+        assert 'out.put("account", haveAccount());' in m.group(1), \
+            "an abort must report the measured account, not a hardcoded false"
+    # And the client only believes an explicit denial — an older APK reports nothing and is not
+    # accused of having no account.
+    assert "st.account === false" in CONTACTS_JS
+
+
 def test_every_write_goes_through_the_sync_adapter_uri():
     """Without CALLER_IS_SYNCADAPTER the provider treats our writes as user edits — and a DELETE
     becomes a tombstone (DELETED=1) rather than a delete, so a contact removed in the web UI stays on

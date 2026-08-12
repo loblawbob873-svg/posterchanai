@@ -75,12 +75,29 @@ public class ContactSyncPlugin extends Plugin {
     return getPermissionState("contacts") == PermissionState.GRANTED;
   }
 
+  /**
+   * IS THE ACCOUNT THERE — asked in exactly one way, by everything.
+   *
+   * The sweep's verdict and the switch's probe used to be measured differently: the sweep aborted on
+   * `ensureAccount()`, whose `false` also meant "a sync-framework call threw", while the probe asked
+   * the account list. The screen therefore showed, two lines apart and seconds apart, "no contacts
+   * account on this phone" above "account=yes" — a contradiction about one phone, which is the only
+   * reason the real fault was found in one round instead of another four blind APK builds.
+   *
+   * That property is worth keeping, and it only holds while there is ONE measurement. Every surface
+   * that reports `account` reads this, and ensureAccount() itself returns hasAccount(), so the two
+   * can be out of date with each other but they can never DISAGREE.
+   */
+  private boolean haveAccount() {
+    return ContactWriter.hasAccount(getContext());
+  }
+
   /** What the client shows on the switch: whether this build can do it, and whether it is on. */
   @PluginMethod
   public void status(PluginCall call) {
     JSObject out = new JSObject();
     boolean ok = granted();
-    boolean acct = ContactWriter.hasAccount(getContext());
+    boolean acct = haveAccount();
     out.put("granted", ok);
     out.put("account", acct);
     out.put("owner", prefs().getString(KEY_OWNER, ""));
@@ -117,9 +134,9 @@ public class ContactSyncPlugin extends Plugin {
       call.resolve(out);
       return;
     }
-    boolean made = ContactWriter.ensureAccount(getContext());
+    ContactWriter.ensureAccount(getContext());
     out.put("granted", true);
-    out.put("account", made);
+    out.put("account", haveAccount());
     call.resolve(out);
   }
 
@@ -175,9 +192,10 @@ public class ContactSyncPlugin extends Plugin {
     JSObject out = new JSObject();
     if (!granted()) { out.put("granted", false); call.resolve(out); return; }
     // See begin(): an account that will not exist is a fact to report, not an exception to swallow.
+    // ensureAccount() answers with the account LIST, the same measurement haveAccount() makes.
     if (!ContactWriter.ensureAccount(getContext())) {
       out.put("granted", true);
-      out.put("account", false);
+      out.put("account", haveAccount());
       out.put("rows", new JSONArray());
       call.resolve(out);
       return;
@@ -262,10 +280,17 @@ public class ContactSyncPlugin extends Plugin {
      * A rejected plugin call arrives in the client as an exception inside a `catch(_){ return; }`,
      * i.e. as silence: the sweep stops, nothing is written, nothing is said, and the switch keeps
      * claiming it is on. Every raw contact hangs off this account, so this is the one condition
-     * under which the feature cannot work at all, and it is exactly the one that must be visible. */
+     * under which the feature cannot work at all, and it is exactly the one that must be visible.
+     *
+     * AND IT IS THE SAME MEASUREMENT THE PROBE MAKES — see haveAccount(). This abort used to be the
+     * only place in the feature that decided "no account" from something other than the account
+     * list: ensureAccount() returned false whenever a sync-framework call threw, which it did on
+     * every single call, so this line stopped every sweep on a phone that had the account all
+     * along. `account` is reported from haveAccount() here too, so a future divergence would have to
+     * be introduced deliberately. */
     if (!ContactWriter.ensureAccount(getContext())) {
       out.put("granted", true);
-      out.put("account", false);
+      out.put("account", haveAccount());
       out.put("count", 0);
       call.resolve(out);
       return;
@@ -283,7 +308,7 @@ public class ContactSyncPlugin extends Plugin {
       if (have.containsKey(uid)) hashes.put(uid, stored.optString(uid, ""));
     }
     out.put("granted", true);
-    out.put("account", ContactWriter.hasAccount(getContext()));
+    out.put("account", haveAccount());
     out.put("hashes", hashes);
     out.put("count", have.size());
     out.put("wiped", wiped);
@@ -337,7 +362,7 @@ public class ContactSyncPlugin extends Plugin {
                                .put("held", rep.held)
                                .put("before", have.size())
                                .put("after", after.size())
-                               .put("account", ContactWriter.hasAccount(getContext()))
+                               .put("account", haveAccount())
                                .put("ops", rep.ops)
                                .put("applied", rep.applied)
                                .put("noop", rep.noop)

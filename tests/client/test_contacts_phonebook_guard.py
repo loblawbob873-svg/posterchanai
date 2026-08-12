@@ -248,6 +248,27 @@ class TheSweepMustMeasureWhatItDidTests(unittest.TestCase):
         self.assertEqual(res["phoneRows"], [])
         self.assertIn("no contacts account", res["diag"])
 
+    def test_the_two_lines_of_the_panel_never_disagree_about_the_account(self):
+        """THE CONTRADICTION THAT SOLVED THIS ONE, kept as a property.
+
+        A handset printed `… no contacts account on this phone` and, directly beneath it, `phone:
+        permission=yes account=yes rows=0` — seconds apart, about one phone. That is what proved the
+        fault was in the sweep's account check rather than in permissions, the relay or the write
+        (ContactWriter.ensureAccount was returning false because setIsSyncable threw for want of
+        WRITE_SYNC_SETTINGS, while getAccountsByType said the account was plainly there).
+
+        Both lines now come from the SAME measurement, so they can be stale together but they cannot
+        contradict each other. Asserted in both directions — a test that only checked the broken
+        phone would pass against a probe hardwired to `false`."""
+        for no_account in (False, True):
+            res = run(books=[BOOK], cards={"default": TEN}, phone=[], noAccount=no_account)
+            said_none = "no contacts account" in res["diag"]
+            self.assertEqual(said_none, no_account, res["diag"])
+            # …and the probe line beneath it agrees, which is the whole point.
+            self.assertEqual(res["probe"]["account"], not said_none,
+                             f"the sweep said {said_none and 'no account' or 'account'} while the "
+                             f"probe said account={res['probe']['account']}: {res['diag']}")
+
     def test_a_healthy_sweep_still_reports_its_numbers(self):
         """ON SUCCESS TOO. A diagnostic that only appears when something looks wrong would have said
         nothing about the build this exists for: nothing looked wrong."""
