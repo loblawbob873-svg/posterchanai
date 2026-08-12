@@ -783,7 +783,22 @@
        * user activation. That is a phishing surface, and it is the price of the feature working in
        * Firefox at all — noted in docs/WEBXDC.md rather than discovered later. */
       f.setAttribute('referrerpolicy', 'no-referrer');
-      f.setAttribute('allow', 'autoplay; fullscreen; gamepad');
+      /* `pointer-lock` is what makes MOUSE-LOOK work, and leaving it out breaks every first-person
+       * game in the gallery — Doom, Quake, the Half-Life port.
+       *
+       * Pointer lock is a permissions-policy feature, and a CROSS-ORIGIN frame has it disabled unless
+       * the embedder delegates it here. The app runs on xdc.<instance> precisely so it is cross-origin
+       * (that is the whole security model), so this is not an edge case — it is guaranteed. The
+       * failure is loud in the console and silent on screen: the game asks on mousedown, the promise
+       * rejects, and the player just cannot turn.
+       *
+       *   Uncaught (in promise) DOMException: The document is not focused.
+       *     requestPointerLock ← _emscripten_request_pointerlock ← handlerFunc (mousedown)
+       *
+       * That message names the OTHER half, and it needs fixing too: a frame the user has not clicked
+       * into is not the focused document, and pointer lock is refused for that reason as well — which
+       * is why it can fail even where the policy is granted. See the focus handling below. */
+      f.setAttribute('allow', 'autoplay; fullscreen; gamepad; pointer-lock');
       /* `__reset` is handled by the loader BEFORE it boots anything, and it is not passed on to the
        * app's own frame: the app must not be able to ask for it, and must not see it in its URL. */
       f.src = this.origin + '/__sandbox__/?__xdc=' + encodeURIComponent(this.token)
@@ -800,6 +815,25 @@
       };
       window.addEventListener('message', this._onMsg);
       host.appendChild(f);
+
+      /* FOCUS THE FRAME, or pointer lock is refused with "The document is not focused" even with the
+       * policy granted above. Opening a mini app from a card leaves focus on the CLIENT's document —
+       * the app is on screen and filling it, but as far as the browser is concerned nobody has
+       * clicked into it. The game then asks for the pointer on the very first mousedown and is turned
+       * down, which reads as "the mouse does nothing".
+       *
+       * Once on load, and again on pointerdown: a WebView or a re-parented window (the desktop's
+       * windowed mode re-appends the frame, which reloads it) can land focus back on the parent, and
+       * the press that starts the game is the natural moment to take it. Both are best-effort —
+       * `contentWindow.focus()` is permitted cross-origin, but a browser is free to ignore it, so
+       * nothing here may throw into the mount path. */
+      const _focusApp = () => { try{ f.focus(); }catch(_){}
+                                try{ f.contentWindow && f.contentWindow.focus(); }catch(_){} };
+      f.addEventListener('load', _focusApp);
+      // On the PARENT, because a pointerdown inside a cross-origin frame is not visible to us — this
+      // fires for the press that lands on the frame's own box before the app sees it.
+      f.addEventListener('pointerdown', _focusApp, true);
+      setTimeout(_focusApp, 250);
     };
 
     Session.prototype.reply = function(id, result, transfer){

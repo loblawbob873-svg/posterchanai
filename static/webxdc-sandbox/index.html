@@ -205,12 +205,24 @@
        * why it is a uuid rather than a counter. */
       var f = document.createElement('iframe');
       f.id = 'f';
-      f.setAttribute('allow', 'autoplay; fullscreen; gamepad');
+      /* pointer-lock must be delegated at EVERY level. Permissions Policy is not inherited past a
+       * frame that does not name the feature, so granting it on the OUTER frame (webxdc.js) and not
+       * here would stop the chain right where the app actually is — the grant would look correct in
+       * the client and mouse-look would still be refused. This is the inner half of that pair. */
+      f.setAttribute('allow', 'autoplay; fullscreen; gamepad; pointer-lock');
       var tok = '';
       try{ tok = new URLSearchParams(location.search).get('__xdc') || ''; }catch(_){}
       f.src = '/' + (params && params.entry ? String(params.entry).replace(/^\/+/, '') : '')
             + (tok ? '?__xdc=' + encodeURIComponent(tok) : '');
       document.body.appendChild(f);
+      /* …and hand it focus. Pointer lock is refused for an unfocused document even when the policy
+       * allows it, and the app frame starts unfocused because the user clicked a card in the client,
+       * two documents up. Best-effort at every level; none of it may throw into the boot path. */
+      var _focusInner = function(){ try{ f.focus(); }catch(_){}
+                                    try{ f.contentWindow && f.contentWindow.focus(); }catch(_){} };
+      f.addEventListener('load', _focusInner);
+      window.addEventListener('focus', _focusInner);
+      setTimeout(_focusInner, 250);
       /* THE STATUS LINE STAYS UNTIL THE APP HAS ACTUALLY ASKED FOR SOMETHING.
        *
        * It used to be removed the instant the frame was appended, which meant every failure after
@@ -313,9 +325,15 @@
           var page = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
           var f2 = document.createElement('iframe');
           f2.id = 'f';
-          f2.setAttribute('allow', 'autoplay; fullscreen; gamepad');
+          // Same delegation as the frame above — this is the blob-page variant of the same app frame.
+          f2.setAttribute('allow', 'autoplay; fullscreen; gamepad; pointer-lock');
           f2.src = page;
           document.body.appendChild(f2);
+          var _focusF2 = function(){ try{ f2.focus(); }catch(_){}
+                                     try{ f2.contentWindow && f2.contentWindow.focus(); }catch(_){} };
+          f2.addEventListener('load', _focusF2);
+          window.addEventListener('focus', _focusF2);
+          setTimeout(_focusF2, 250);
           say('starting the app…');
           f2.addEventListener('load', function(){ if(msg) msg.remove(); });
           post({ jsonrpc:'2.0', method:'sandbox.running' });
