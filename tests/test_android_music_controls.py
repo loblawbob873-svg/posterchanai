@@ -619,3 +619,59 @@ def test_the_standby_session_publishes_no_false_state():
     somebody's dashboard."""
     code = _code(STAY)
     assert "STATE_PAUSED" in code, "standby must not claim to be playing"
+
+
+# ---- the home-screen widget's markup ------------------------------------------------------------
+
+import xml.etree.ElementTree as _ET
+
+RES = os.path.join(ANDROID, "src", "main", "res")
+
+
+def _res_xml():
+    for root, _dirs, files in os.walk(RES):
+        for f in files:
+            if f.endswith(".xml"):
+                yield os.path.join(root, f)
+
+
+def test_every_android_resource_xml_parses():
+    """A malformed resource is a BUILD failure, and the way it happens here is not obvious: XML
+    forbids `--` inside a comment, and this app's palette is written `--neon` / `--neon2` in the CSS
+    these drawables are copied from. Pasting those names into an explanatory comment is enough to
+    break aapt, which is exactly what happened while restyling the widget."""
+    for path in _res_xml():
+        try:
+            _ET.parse(path)
+        except _ET.ParseError as e:
+            raise AssertionError(f"{os.path.relpath(path, ROOT)} does not parse: {e}")
+
+
+def test_the_widget_keeps_the_ids_the_code_drives():
+    """RemoteViews binds by id. A restyle that renames or drops one leaves a widget that inflates
+    fine and does nothing — no crash, no log, just dead buttons."""
+    layout = _read(RES, "layout", "widget_music.xml")
+    for wid in ("mw_body", "mw_title", "mw_artist", "mw_prev", "mw_play", "mw_next"):
+        assert f'@+id/{wid}"' in layout, f"widget_music.xml lost {wid}, which MusicWidget binds"
+        assert f"R.id.{wid}" in WIDGET, f"MusicWidget no longer drives {wid}"
+
+
+def test_the_widget_uses_only_view_types_a_launcher_can_inflate():
+    """RemoteViews supports a fixed handful. Anything else throws in the LAUNCHER's process, so the
+    widget shows 'Problem loading widget' and nothing in this app's log says why."""
+    allowed = {"LinearLayout", "FrameLayout", "RelativeLayout", "ImageView", "TextView",
+               "ProgressBar", "Chronometer", "ViewFlipper", "GridLayout", "Space", "View"}
+    used = {el.tag for el in _ET.parse(os.path.join(RES, "layout", "widget_music.xml")).iter()}
+    bad = used - allowed
+    assert not bad, f"widget uses view types RemoteViews cannot inflate: {sorted(bad)}"
+
+
+def test_the_widget_touch_targets_stay_big_enough():
+    """A widget sits among home-screen icons; anything under ~44dp is hit by accident on the wrong
+    control, which on a transport row means skipping a track when you meant to pause."""
+    layout = _read(RES, "layout", "widget_music.xml")
+    for wid in ("mw_prev", "mw_play", "mw_next"):
+        block = layout[layout.index(f'@+id/{wid}"'):]
+        block = block[:block.index("/>")]
+        m = re.search(r'android:layout_width="(\d+)dp"', block)
+        assert m and int(m.group(1)) >= 44, f"{wid} is smaller than 44dp"

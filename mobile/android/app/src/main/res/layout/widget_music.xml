@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The home-screen widget. Deliberately plain RemoteViews: a widget is drawn by the LAUNCHER's
-     process, which supports a fixed handful of view types and no custom drawing at all.
-     Colours are baked rather than themed for the same reason — the launcher does not carry this
-     app's theme, so an attribute reference here resolves to whatever the launcher happens to use. -->
+     process, which supports a fixed handful of view types (LinearLayout, FrameLayout, ImageView,
+     TextView …) and no custom drawing at all. Colours are baked rather than themed for the same
+     reason — the launcher does not carry this app's theme, so an attribute reference here resolves
+     to whatever the launcher happens to use.
+
+     Everything below is built from shape drawables for that reason: gradients, corners and strokes
+     are the only "styling" a launcher will render for us. The ids (mw_body, mw_title, mw_artist,
+     mw_prev, mw_play, mw_next) are the contract with MusicWidget.java and must not change. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/mw_body"
     android:layout_width="match_parent"
@@ -10,19 +15,32 @@
     android:orientation="horizontal"
     android:gravity="center_vertical"
     android:background="@drawable/widget_bg"
-    android:padding="10dp">
+    android:paddingStart="12dp"
+    android:paddingEnd="6dp"
+    android:paddingTop="10dp"
+    android:paddingBottom="10dp">
 
-    <ImageView
-        android:layout_width="28dp"
-        android:layout_height="28dp"
-        android:layout_marginEnd="10dp"
-        android:src="@drawable/ic_music_note"
-        android:contentDescription="@string/app_name" />
+    <!-- Album tile. The icon sits ON a gradient square rather than alone on the background: a bare
+         28dp glyph on a wide dark bar reads as a status line, not as a player. -->
+    <FrameLayout
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/widget_art">
+
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_music_note"
+            android:contentDescription="@string/app_name" />
+    </FrameLayout>
 
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
+        android:layout_marginEnd="4dp"
         android:orientation="vertical">
 
         <TextView
@@ -31,44 +49,55 @@
             android:layout_height="wrap_content"
             android:maxLines="1"
             android:ellipsize="end"
-            android:textSize="14sp"
+            android:textSize="15sp"
             android:textStyle="bold"
-            android:textColor="#E8FBFF"
+            android:letterSpacing="0.01"
+            android:textColor="#EAFCFF"
             android:text="@string/app_name" />
 
+        <!-- Tighter to the title than the old layout, and dimmer: a two-line block reads as one
+             thing when the second line is clearly subordinate, and as two competing labels when it
+             is not. -->
         <TextView
             android:id="@+id/mw_artist"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
             android:maxLines="1"
             android:ellipsize="end"
             android:textSize="12sp"
-            android:textColor="#7FD8E8" />
+            android:textColor="#8FD6E6"
+            android:alpha="0.92" />
     </LinearLayout>
 
     <!-- 48dp touch targets: a widget sits on the home screen among icons, and anything smaller is
-         hit by accident on the wrong control. -->
+         hit by accident on the wrong control. The padding is what sizes the GLYPH inside that
+         target, so prev/next stay visually smaller than play without being harder to hit. -->
     <ImageView
         android:id="@+id/mw_prev"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
-        android:padding="12dp"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:padding="13dp"
         android:src="@drawable/ic_media_prev"
         android:contentDescription="Previous" />
 
+    <!-- The disc is on the ImageView's own background rather than a wrapping FrameLayout: the click
+         target MusicWidget binds is this view, and a wrapper would put the visible circle on one
+         view and the tap on another. -->
     <ImageView
         android:id="@+id/mw_play"
         android:layout_width="48dp"
         android:layout_height="48dp"
-        android:padding="10dp"
+        android:padding="12dp"
+        android:background="@drawable/widget_play_bg"
         android:src="@drawable/ic_media_play"
         android:contentDescription="Play" />
 
     <ImageView
         android:id="@+id/mw_next"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
-        android:padding="12dp"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:padding="13dp"
         android:src="@drawable/ic_media_next"
         android:contentDescription="Next" />
 </LinearLayout>

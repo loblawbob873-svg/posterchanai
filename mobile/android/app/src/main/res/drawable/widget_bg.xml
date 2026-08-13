@@ -1,8 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The app's own dark/cyan, hardcoded: a widget is inflated by the LAUNCHER, which does not carry
-     this app's theme, so ?attr colours resolve to the launcher's palette instead of ours. -->
+     this app's theme, so ?attr colours resolve to the launcher's palette instead of ours.
+
+     A GRADIENT, not a flat fill, and the angle is the point: 135 degrees runs corner to corner, so
+     the cyan end sits under the album tile and the magenta end under the transport buttons. Same
+     cyan/magenta identity the app uses (neon #3ce8ff, neon2 #ff5cf0), read across the widget rather
+     than applied as a tint nobody can see. Alpha ~0.90 so a home-screen wallpaper still shows
+     through, which is what makes it look placed rather than pasted.
+
+     (No double-hyphen anywhere in these comments: XML forbids it inside a comment, and writing the
+     CSS variable names verbatim is what made this file fail to parse the first time.) -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-  <solid android:color="#E60B1420"/>
-  <corners android:radius="18dp"/>
-  <stroke android:width="1dp" android:color="#3300F0FF"/>
+  <gradient
+      android:type="linear"
+      android:angle="135"
+      android:startColor="#E60C1A2A"
+      android:centerColor="#E60B1420"
+      android:endColor="#E6180E24" />
+  <corners android:radius="22dp"/>
+  <!-- Brighter than the old #3300F0FF: at 20% on a dark wallpaper that edge was invisible, so the
+       widget read as a floating rectangle with no shape to it. -->
+  <stroke android:width="1dp" android:color="#553CE8FF"/>
 </shape>
