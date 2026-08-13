@@ -132,10 +132,11 @@ public class GamepadPlugin extends Plugin {
     if (ev == null || !fromPad(ev.getSource())) return false;
     if (ev.getAction() != MotionEvent.ACTION_MOVE) return false;
     motionEvents++;
-    axes[0] = ev.getAxisValue(MotionEvent.AXIS_X);
-    axes[1] = ev.getAxisValue(MotionEvent.AXIS_Y);
-    axes[2] = ev.getAxisValue(MotionEvent.AXIS_Z);
-    axes[3] = ev.getAxisValue(MotionEvent.AXIS_RZ);
+    InputDevice dev = ev.getDevice();
+    axes[0] = centred(ev, dev, MotionEvent.AXIS_X);
+    axes[1] = centred(ev, dev, MotionEvent.AXIS_Y);
+    axes[2] = centred(ev, dev, MotionEvent.AXIS_Z);
+    axes[3] = centred(ev, dev, MotionEvent.AXIS_RZ);
     // The hat IS the d-pad on the pads that report it that way. Folded into the button slots so the
     // page never has to know which kind of controller it is talking to.
     float hx = ev.getAxisValue(MotionEvent.AXIS_HAT_X);
@@ -145,13 +146,71 @@ public class GamepadPlugin extends Plugin {
     down[14] = hx < -0.5f;
     down[15] = hx > 0.5f;
     // Analogue triggers, for the pads that report them as axes rather than as L2/R2 keys.
-    float lt = Math.max(ev.getAxisValue(MotionEvent.AXIS_LTRIGGER), ev.getAxisValue(MotionEvent.AXIS_BRAKE));
-    float rt = Math.max(ev.getAxisValue(MotionEvent.AXIS_RTRIGGER), ev.getAxisValue(MotionEvent.AXIS_GAS));
+    float lt = Math.max(unit(ev, dev, MotionEvent.AXIS_LTRIGGER), unit(ev, dev, MotionEvent.AXIS_BRAKE));
+    float rt = Math.max(unit(ev, dev, MotionEvent.AXIS_RTRIGGER), unit(ev, dev, MotionEvent.AXIS_GAS));
     if (lt > 0.01f) down[6] = lt > 0.5f;
     if (rt > 0.01f) down[7] = rt > 0.5f;
     named(ev.getDevice());
     push();
     return true;
+  }
+
+  /**
+   * A STICK'S REST POSITION IS NOT ZERO, AND ITS RANGE IS NOT ALWAYS -1..1.
+   *
+   * `getAxisValue` returns whatever the driver reports, in the DEVICE's own units. The Gamepad API
+   * this feeds promises -1..1 with a centred rest position, and a desktop browser supplies both —
+   * which is exactly why the same pad is perfect in Firefox and drifts here. Both corrections come
+   * from the device's own declared MotionRange:
+   *
+   *   flat     the manufacturer's rest region. Inside it the stick IS centred; passed through raw, a
+   *            resting stick walks the character across the screen for ever.
+   *   min/max  a pad reporting 0..255 (plenty of HID descriptors do) is not slightly miscalibrated,
+   *            it is pinned to one corner.
+   *
+   * Rescaled outside the deadzone rather than clipped, so the first movement past `flat` starts from
+   * zero instead of jumping to it — clipping alone trades drift for a lurch.
+   *
+   * NO RANGE MEANS PASS THROUGH. A driver that declines to describe an axis is not a reason to
+   * invent a calibration for it: the raw value is the best information available, and it is what
+   * every pad that reports a sane -1..1 was already giving.
+   */
+  private static float centred(MotionEvent ev, InputDevice dev, int axis) {
+    float v = ev.getAxisValue(axis);
+    if (Float.isNaN(v) || Float.isInfinite(v)) return 0f;
+    InputDevice.MotionRange r = dev == null ? null : dev.getMotionRange(axis, ev.getSource());
+    if (r == null) return clamped(v);
+    float half = (r.getMax() - r.getMin()) / 2f;
+    if (half <= 0f) return clamped(v);
+    float n = (v - (r.getMin() + r.getMax()) / 2f) / half;
+    float flat = r.getFlat() / half;
+    // A driver claiming the whole travel is deadzone would otherwise divide by zero and report NaN,
+    // which JSONArray.put refuses — one bad descriptor would cost every frame, not one axis.
+    if (flat >= 1f) return 0f;
+    float m = Math.abs(n);
+    if (m <= flat) return 0f;
+    return clamped(Math.signum(n) * (m - flat) / (1f - flat));
+  }
+
+  /**
+   * A TRIGGER RESTS AT ITS MINIMUM, NOT AT ITS CENTRE, so it must never go through `centred` — that
+   * would read an untouched trigger as fully pulled in the negative direction. Normalised to 0..1
+   * against its own range instead, which leaves the usual 0..1 pads bit-identical and fixes the ones
+   * reporting 0..255, where the 0.5 threshold below is otherwise crossed by a feather touch.
+   */
+  private static float unit(MotionEvent ev, InputDevice dev, int axis) {
+    float v = ev.getAxisValue(axis);
+    if (Float.isNaN(v) || Float.isInfinite(v)) return 0f;
+    InputDevice.MotionRange r = dev == null ? null : dev.getMotionRange(axis, ev.getSource());
+    if (r == null) return v;
+    float span = r.getMax() - r.getMin();
+    if (span <= 0f) return v;
+    float n = (v - r.getMin()) / span;
+    return n < 0f ? 0f : (n > 1f ? 1f : n);
+  }
+
+  private static float clamped(float v) {
+    return v < -1f ? -1f : (v > 1f ? 1f : v);
   }
 
   private static void named(InputDevice d) {

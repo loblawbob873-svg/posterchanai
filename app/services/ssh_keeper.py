@@ -83,6 +83,29 @@ def is_up() -> bool:
 # server side
 
 
+# THE PROTOCOL IS NEWLINE-DELIMITED JSON, AND asyncio's READER GIVES UP AT 64 KiB BY DEFAULT.
+# `readline()` does not truncate a line longer than its limit — it raises `ValueError: Separator is
+# not found, and chunk exceed the limit`. A replay frame is up to REPLAY_MAX (256 KiB) of raw
+# terminal bytes, and JSON escaping multiplies that: every escape sequence a TUI draws is a control
+# character that becomes ``, six characters for one byte. Measured against a real session,
+# a 256 KiB buffer came out as a 401 KB line.
+#
+# So the DEFAULT reader dies on exactly the operation this process exists to provide — reattaching
+# to a session that has scrolled. The attach itself succeeds, the keeper answers `ready`, and only
+# THEN does the relay throw, inside a task, where nothing is watching: the log says "reattached"
+# and the browser gets a closed socket with no error and nothing on screen. A brand-new session
+# works, because its buffer is still small, which is what kept this hidden until sessions had been
+# running a while.
+#
+# Both ends are raised, and the app→keeper direction needs it just as much: a >64 KiB PASTE into
+# the terminal is one `{"t":"in"}` frame.
+SOCK_LIMIT = 8 * 1024 * 1024
+
+# Frames are bounded independently of that limit, so the headroom above is a second line of defence
+# rather than the thing holding the line. Raw bytes per frame — a 256 KiB replay becomes four sends.
+OUT_CHUNK = 64 * 1024
+
+
 async def _send(w: asyncio.StreamWriter, obj) -> None:
     w.write((json.dumps(obj) + "\n").encode("utf-8"))
     await w.drain()
@@ -92,7 +115,9 @@ async def _stream(sess, w: asyncio.StreamWriter, cursor: int, stop: asyncio.Even
     """Push everything the session produces past `cursor` until it ends or the caller detaches."""
     while not stop.is_set():
         if cursor < sess.seq:
-            data = sess.since(cursor)
+            # Truncating here is safe: `utf8_take` holds back a trailing partial character, and the
+            # `continue` below comes straight back for the rest.
+            data = sess.since(cursor)[:OUT_CHUNK]
             take = ssh_service.utf8_take(data)
             if take:
                 cursor += take
@@ -230,7 +255,7 @@ async def _serve() -> None:
         pass
     except Exception:
         pass
-    _server = await asyncio.start_unix_server(_client, path=path)
+    _server = await asyncio.start_unix_server(_client, path=path, limit=SOCK_LIMIT)
     try:
         os.chmod(path, 0o600)          # this user only: the socket is authority to open a shell
     except Exception:
@@ -296,7 +321,7 @@ def stop_ssh_keeper() -> None:
 
 async def open_conn():
     """Connect to the keeper. Raises if it is not there; callers fall back to in-process."""
-    return await asyncio.open_unix_connection(path=socket_path())
+    return await asyncio.open_unix_connection(path=socket_path(), limit=SOCK_LIMIT)
 
 
 async def request(obj, timeout: float = 5.0):

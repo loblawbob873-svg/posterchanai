@@ -124,7 +124,10 @@ async def keeper(monkeypatch=None):
 
     real = ssh_service.SshSession.connect
     ssh_service.SshSession.connect = fake_connect
-    server = await asyncio.start_unix_server(ssh_keeper._client, path=sock)
+    # The SAME limit `_serve` uses. A fixture on the default would be a harness that cannot see the
+    # bug the production server is configured to avoid.
+    server = await asyncio.start_unix_server(ssh_keeper._client, path=sock,
+                                             limit=ssh_keeper.SOCK_LIMIT)
     try:
         yield sock
     finally:
@@ -595,6 +598,65 @@ def test_the_terminal_settings_are_declared_so_they_hydrate():
               "ssh_terminal_detach_min"):
         assert k in SettingsResponse.model_fields, f"{k} is read at runtime but never declared"
         assert f'id="{k}" name="{k}"' in tab, f"{k} has no input in Admin → Nodes"
+
+
+def test_reattaching_to_a_scrolled_session_replays_it_instead_of_killing_the_relay():
+    """THE BUG THIS FILE EXISTS FOR, AND IT REPORTED ITSELF AS SUCCESS.
+
+    A replay frame is up to REPLAY_MAX (256 KiB) of raw terminal bytes on ONE newline-delimited JSON
+    line, and asyncio's StreamReader stops at 64 KiB by default — `readline()` does not truncate an
+    over-long line, it RAISES. So the attach succeeded, the keeper answered `ready`, the app logged
+    "reattached … via the keeper", and then the relay task threw where nothing was watching: a closed
+    socket, no console error, a blank screen. Measured in production on eight live sessions at once.
+
+    The buffer here is ESCAPE SEQUENCES on purpose. A control character costs six bytes once
+    JSON-escaped (``), which is what turns 256 KiB of scrollback into a ~400 KB line —
+    filling it with printable ASCII would keep the frame under the default limit and this test would
+    pass against the unfixed code. A TUI is nothing but these.
+    """
+    async def _bodytest_reattaching_to_a_scrolled_session_replays_it_instead_of_killing_the_relay():
+        async with keeper():
+            sess = _fake_session()
+            sess.chan.feed(b"\x1b[0m" * (ssh_service.REPLAY_MAX // 4 + 4096))
+            await _settle(sess)
+            for _ in range(400):                       # let the real reader drain the whole blob
+                if len(sess.buf) >= ssh_service.REPLAY_MAX:
+                    break
+                await asyncio.sleep(0.01)
+            assert len(sess.buf) == ssh_service.REPLAY_MAX, "the buffer never filled; test is unarmed"
+
+            r, w = await ssh_keeper.open_conn()
+            try:
+                w.write((json.dumps({"op": "attach", "user_id": sess.user_id, "sid": sess.sid,
+                                     "cursor": 0, "cols": 80, "rows": 24}) + "\n").encode("utf-8"))
+                await w.drain()
+                ready = json.loads(await asyncio.wait_for(r.readline(), timeout=5))
+                assert ready.get("t") == "ready" and ready.get("resumed") is True
+
+                # `ready` was never the problem — everything after it was.
+                got = bytearray()
+                while len(got) < ssh_service.REPLAY_MAX:
+                    line = await asyncio.wait_for(r.readline(), timeout=5)
+                    m = json.loads(line)
+                    if m.get("t") != "out":
+                        break
+                    got.extend(m["d"].encode("utf-8"))
+                assert bytes(got) == bytes(sess.buf), "the scrollback did not survive the reattach"
+            finally:
+                try:
+                    w.close()
+                except Exception:
+                    pass
+
+    _run(_bodytest_reattaching_to_a_scrolled_session_replays_it_instead_of_killing_the_relay)
+
+
+def test_no_frame_the_keeper_sends_can_outgrow_the_reader_that_must_parse_it():
+    """The two numbers are related and live in different files, so assert the relationship rather
+    than the values: whatever REPLAY_MAX becomes, a chunk of it must still fit with escaping."""
+    assert ssh_keeper.OUT_CHUNK <= ssh_service.REPLAY_MAX
+    assert ssh_keeper.SOCK_LIMIT >= ssh_keeper.OUT_CHUNK * 6 + 4096, \
+        "a control character JSON-escapes to six bytes; the limit must clear the worst case"
 
 
 def test_the_remote_multiplexer_degrades_instead_of_failing():

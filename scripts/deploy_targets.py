@@ -59,7 +59,13 @@ UNITS = ALL + (SHELL,)
 _OWNED = (
     # The keeper's own code, and the session code it runs. These DO restart it — the alternative is
     # a fix to the terminal that is running nowhere.
-    ("app/services/ssh_keeper.py", (SHELL,)),
+    # BOTH, for the same reason ssh_service is: this module is not only the keeper's SERVER, it is
+    # also the CLIENT half the app talks to it with — `ssh_term.py` imports it at module scope and
+    # calls `open_conn`/`is_up`/`sessions_for` in the app process. Mapped to SHELL alone, a fix to
+    # the client half restarted the keeper (destroying every open shell) and left the app running the
+    # old code, so the deploy went green and the terminal stayed broken — under-restarting, which is
+    # exactly what this file's header says is the hard one to notice. Found doing that fix.
+    ("app/services/ssh_keeper.py", (APP, SHELL)),
     ("app/services/ssh_service.py", (APP, SHELL)),
     ("app/routers/ssh_term.py", (APP,)),
     ("app/routers/", (APP, WORKER)),

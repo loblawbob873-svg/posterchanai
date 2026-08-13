@@ -39,6 +39,7 @@
   var cat = null;         // English source string → translation, for `cur`
   var obs = null;         // the MutationObserver, only while a non-English locale is on
   var queued = null;      // rAF handle: mutations are batched, never handled one at a time
+  var pendingQ = [];      // nodes awaiting that frame — module state so a busy tick cannot lose them
 
   /* Nodes whose TEXT is somebody's, not ours. Membership already covers the ordinary case; this is
    * for the collision — a note, a DM or a profile field whose whole content happens to equal a UI
@@ -125,38 +126,67 @@
     node.nodeValue = raw.replace(key, cat[key]);
   }
 
+  /* MEMBERSHIP FIRST, THEN THE SELECTOR — the same order `subText` uses, and it matters far more
+   * here. `skipped` is a `closest()` against an eight-selector compound carrying descendant
+   * combinators, and `walk` calls this for EVERY element in a redrawn subtree that has any of these
+   * attributes: a timeline post has a `title` on its timestamp, an `alt` on its avatar and an
+   * `aria-label` on each of its buttons. Running that selector before knowing whether there was
+   * anything to translate made the cost proportional to the FEED rather than to the interface, on
+   * every mutation batch — so the interface got slower the longer the timeline ran, which is not a
+   * shape anybody connects to a translation feature. The catalogue lookup is a hash miss for feed
+   * content and settles it without touching the DOM. */
   function subAttrs(el){
     if(!el || el.nodeType !== 1 || !el.getAttribute) return;
-    if(skipped(el, SKIP_ATTR_SEL)) return;
+    var hits = null;
     for(var i = 0; i < ATTRS.length; i++){
       var a = ATTRS[i], v;
       try{ v = el.getAttribute(a); }catch(e){ continue; }
       if(!v) continue;
       var k = v.trim();
       if(!cat[k]) continue;
-      try{ el.setAttribute(a, cat[k]); }catch(e){}
+      /* A WRITE THAT CHANGES NOTHING STILL WAKES THE OBSERVER, AND THAT IS AN INFINITE LOOP.
+       * `setAttribute` queues a mutation record whether or not the value differs, and `onMutations`
+       * answers an `attributes` record by calling this function again — so an entry whose translation
+       * EQUALS its source spins the main thread for ever, synchronously. Those entries are not a
+       * mistake in the catalogue: 130 of Arabic's strings and 155 of Japanese's are proper nouns and
+       * technical labels that must stay as they are ('API Hash', 'CPU', 'Android', 'Blob TTL'), and
+       * they cluster on the SETTINGS screen — which is why the report was "change to Japanese, go to
+       * social, then back to settings, firefox unresponsive" and why it needed no RTL to happen. */
+      if(v === cat[k]) continue;
+      (hits || (hits = [])).push(a);
+      (hits).push(cat[k]);
+    }
+    if(!hits) return;
+    if(skipped(el, SKIP_ATTR_SEL)) return;
+    for(var j = 0; j < hits.length; j += 2){
+      try{ el.setAttribute(hits[j], hits[j + 1]); }catch(e){}
     }
   }
 
   /* Mutations are batched into one rAF. The feed rebuilds itself in bursts — a timeline draw is
    * hundreds of records in one tick — and translating per-record would walk the same subtree
    * repeatedly for no benefit. */
+  /* The queue is MODULE state, not a local. `if(queued) return` used to drop the records it had just
+   * collected on the floor: anything the feed added while a frame was already pending was never
+   * walked and stayed in English for the life of the page — worst exactly when the timeline is busy,
+   * which is when the most nodes arrive. Accumulating instead means the coalescing still happens (one
+   * walk per frame, which is the point) without losing what it coalesced. */
   function onMutations(recs){
     if(!cat) return;
-    var pending = [];
     for(var i = 0; i < recs.length; i++){
       var r = recs[i];
       if(r.type === 'childList'){
-        for(var j = 0; j < r.addedNodes.length; j++) pending.push(r.addedNodes[j]);
+        for(var j = 0; j < r.addedNodes.length; j++) pendingQ.push(r.addedNodes[j]);
       }else if(r.type === 'attributes' && r.target){
         subAttrs(r.target);
       }
     }
-    if(!pending.length) return;
-    if(queued) return;
+    if(!pendingQ.length || queued) return;
     queued = requestAnimationFrame(function(){
       queued = null;
-      for(var k = 0; k < pending.length; k++) walk(pending[k]);
+      var batch = pendingQ;
+      pendingQ = [];
+      for(var k = 0; k < batch.length; k++) walk(batch[k]);
     });
   }
 
@@ -172,6 +202,7 @@
     if(!obs) return;
     try{ obs.disconnect(); }catch(e){}
     obs = null;
+    pendingQ = [];        // nothing is going to walk these now; holding them leaks the whole subtree
     if(queued){ try{ cancelAnimationFrame(queued); }catch(e){} queued = null; }
   }
 
@@ -229,7 +260,10 @@
     rtlSheet(L.dir === 'rtl');
   }
 
-  function setLang(lang){
+  /* `catalogue` is a TEST SEAM and nothing else: the cost of translating a feed can only be measured
+   * against a real DOM, and a check page served from file:// cannot fetch /static/i18n/<lang>.json.
+   * Production always calls this with one argument. */
+  function setLang(lang, catalogue){
     if(!LOCALES[lang]) lang = 'en';
     cur = lang;
     try{ localStorage.setItem(KEY, lang); }catch(e){}
@@ -244,7 +278,7 @@
       return Promise.resolve(true);
     }
 
-    return load(lang).then(function(strings){
+    return (catalogue ? Promise.resolve(catalogue) : load(lang)).then(function(strings){
       if(!strings) throw new Error('empty catalogue');
       cat = strings;
       walk(document.body);

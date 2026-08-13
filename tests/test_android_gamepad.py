@@ -50,6 +50,24 @@ public class Driver {
     public int getSource(){ return s; }
     public InputDevice getDevice(){ return null; }
   }
+  /* A pad that DESCRIBES its axes, which is what every real one does. The stub's getDevice() returns
+     null, so without this the calibration path is never entered and a passthrough test passes while
+     the deadzone and range normalisation go unchecked. */
+  static class Pad extends InputDevice {
+    float min, max, flat;
+    Pad(float min, float max, float flat){ this.min=min; this.max=max; this.flat=flat; }
+    public InputDevice.MotionRange getMotionRange(int axis, int source){
+      return new InputDevice.MotionRange(min, max, flat);
+    }
+  }
+  static class Ranged extends MotionEvent {
+    float v; int s; InputDevice d;
+    Ranged(float v, int s, InputDevice d){ this.v=v; this.s=s; this.d=d; }
+    public int getAction(){ return MotionEvent.ACTION_MOVE; }
+    public int getSource(){ return s; }
+    public float getAxisValue(int axis){ return axis == MotionEvent.AXIS_X ? v : 0f; }
+    public InputDevice getDevice(){ return d; }
+  }
   static class Motion extends MotionEvent {
     float x, y, hx, hy; int s;
     Motion(float x, float y, float hx, float hy, int s){ this.x=x; this.y=y; this.hx=hx; this.hy=hy; this.s=s; }
@@ -82,6 +100,18 @@ public class Driver {
     GamepadPlugin.onMotion(new Motion(-0.8f, 0.6f, 0f, 0f, JOY));
     System.out.println("axis0=" + GamepadPlugin.probeAxis(0));
     System.out.println("axis1=" + GamepadPlugin.probeAxis(1));
+    // CALIBRATION. A stick resting slightly off centre, inside the flat the driver declares, is
+    // CENTRED — reported raw it walks the character across the screen for ever.
+    GamepadPlugin.onMotion(new Ranged(0.06f, JOY, new Pad(-1f, 1f, 0.12f)));
+    System.out.println("rest=" + GamepadPlugin.probeAxis(0));
+    // …and a pad reporting 0..255 is not slightly off, it is pinned to a corner. Mid-travel is 0.
+    GamepadPlugin.onMotion(new Ranged(127.5f, JOY, new Pad(0f, 255f, 0f)));
+    System.out.println("mid255=" + GamepadPlugin.probeAxis(0));
+    GamepadPlugin.onMotion(new Ranged(255f, JOY, new Pad(0f, 255f, 0f)));
+    System.out.println("max255=" + GamepadPlugin.probeAxis(0));
+    // A driver claiming the whole travel is deadzone must not divide by zero into NaN.
+    GamepadPlugin.onMotion(new Ranged(0.9f, JOY, new Pad(-1f, 1f, 4f)));
+    System.out.println("allflat=" + GamepadPlugin.probeAxis(0));
     // A KEYBOARD key must not be claimed: consuming it would eat ordinary typing.
     System.out.println("keyboard=" + GamepadPlugin.onKey(new Key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_A, 0x101)));
   }
@@ -135,6 +165,23 @@ class NativeGamepad(unittest.TestCase):
         o = _compile_and_run()
         self.assertAlmostEqual(float(o["axis0"]), -0.8, places=4)
         self.assertAlmostEqual(float(o["axis1"]), 0.6, places=4)
+
+    def test_a_declared_deadzone_is_applied_so_a_resting_stick_reads_zero(self):
+        o = _compile_and_run()
+        self.assertEqual(float(o["rest"]), 0.0,
+                         "a stick inside the driver's declared flat must read centred, not drift")
+
+    def test_an_axis_is_normalised_to_the_gamepad_apis_range_whatever_the_driver_reports(self):
+        o = _compile_and_run()
+        self.assertAlmostEqual(float(o["mid255"]), 0.0, places=3,
+                               msg="mid-travel on a 0..255 pad is centre, not hard-over")
+        self.assertAlmostEqual(float(o["max255"]), 1.0, places=3)
+
+    def test_a_broken_range_costs_one_axis_not_a_NaN(self):
+        o = _compile_and_run()
+        v = float(o["allflat"])
+        self.assertEqual(v, 0.0)
+        self.assertFalse(v != v, "NaN would be refused by JSONArray and cost every frame")
 
     def test_a_keyboard_key_is_never_claimed(self):
         """The overrides consume what they handle, and consuming a keyboard event would eat typing
