@@ -109,12 +109,28 @@ setup_searxng() {
 
     # Its runtime deps live in the app's requirements.txt, so a normal install already has them. A
     # venv that predates that does not — and the symptom is `import searx` raising ModuleNotFoundError
-    # for something like msgspec, which reads as "SearXNG is broken" rather than "deps are old". Try
-    # once, from the app's own requirements file, so the version ranges stay in ONE place.
+    # for something like msgspec, which reads as "SearXNG is broken" rather than "deps are old".
+    #
+    # ONLY the block between the markers, never `-r requirements.txt`. On a GPU node that whole file
+    # is a full resolve across torch, transformers and diffusers — an operator adding SEARCH must not
+    # get image generation moved under them as a side effect. Read from requirements.txt rather than
+    # copied here, so the version ranges still live in exactly one place.
     if ! "$py" -c "import searx" >/dev/null 2>&1; then
-        print_step "Installing SearXNG's runtime dependencies from requirements.txt ..." 2>/dev/null \
+        print_step "Installing SearXNG's runtime dependencies ..." 2>/dev/null \
             || echo "Installing SearXNG's runtime dependencies ..."
-        "$venv/bin/pip" install -q -r "$repo_root/requirements.txt" || true
+        local dep_file
+        dep_file="$(mktemp)"
+        sed -n '/^# >>> searxng-deps$/,/^# <<< searxng-deps$/p' "$repo_root/requirements.txt" \
+            | grep -vE '^#' > "$dep_file"
+        if [ -s "$dep_file" ]; then
+            "$venv/bin/pip" install -q -r "$dep_file" || true
+        else
+            # The markers are how this stays in one place; losing them silently would send the next
+            # node down the `-r requirements.txt` path this exists to avoid.
+            print_warning "searxng-deps markers missing from requirements.txt — skipping dep install" 2>/dev/null \
+                || echo "WARNING: searxng-deps markers missing from requirements.txt"
+        fi
+        rm -f "$dep_file"
     fi
     if ! "$py" -c "import searx" >/dev/null 2>&1; then
         print_error "SearXNG installed but will not import:" 2>/dev/null || echo "ERROR: searx will not import:"

@@ -213,6 +213,12 @@ a2wsgi>=1.10
 # DECLARED now because SearXNG imports them directly (typer in `searx/enginelib`, i.e. on the engine
 # path, not just its CLI) — an undeclared transitive dep that some other package stops pulling in is
 # a fresh install where `import searx` fails and the node quietly has no bundled instance.
+#
+# THE MARKERS BELOW ARE READ BY scripts/install/searxng.sh. On a venv that predates this block, the
+# installer has to install these — and it must install THESE, not `-r requirements.txt`, which on a
+# GPU node is a full resolve that can move torch, transformers or diffusers while the operator was
+# only adding search. Keep every SearXNG dep between the markers, and nothing else.
+# >>> searxng-deps
 babel>=2.18
 flask>=3.1
 flask-babel>=4.0
@@ -227,6 +233,7 @@ pyyaml>=6.0
 pygments>=2.17
 markdown-it-py>=3.0
 certifi
+# <<< searxng-deps
 
 # SSH terminal (the client's Terminal app). Optional at runtime: ssh_service.available()
 # reports its absence rather than 500ing, because sync.sh deploys code and not packages.
