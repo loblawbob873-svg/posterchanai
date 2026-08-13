@@ -154,8 +154,9 @@ A companion **browser extension** (Firefox, and Chrome / Brave via MV3) makes yo
   both calendar and contacts on a phone. Cards are stored **exactly as your phone wrote them**
   (photos, labels and all), with search, `.vcf` import/export, and reuse in the mail composer. See
   **[docs/CONTACTS.md](docs/CONTACTS.md)**
-- **Web search**: a **SearXNG instance bundled with your node** (installed by default, branded and
-  dark-themed) behind a search screen with AI overviews and citations, Save to Notes, and a reader
+- **Web search**: a **SearXNG instance bundled with your node** — installed by default, branded and
+  dark-themed, and running *inside* the app rather than as a container beside it — behind a search
+  screen with AI overviews and citations, Save to Notes, and a reader
   that opens the page *inside* the app. Your node can also be added as your browser's own search
   engine. See **[docs/WEBSEARCH.md](docs/WEBSEARCH.md)**
 - **News**: LLM news summaries from chat (`news` / `dailynews`), plus a full **RSS reader** in the web client (see [Nostr web client](#nostr-web-client))

@@ -109,6 +109,29 @@ def mount_url() -> str:
     return f"http://127.0.0.1:{port}{MOUNT_PATH}"
 
 
+def request_is_local(scope) -> bool:
+    """May this ASGI request reach the mount?
+
+    The container this replaces was bound to 127.0.0.1 and reachable only by this node. A mount on
+    the app's own port inherits the app's PUBLIC TLS instead, and this instance has its limiter
+    disabled on purpose (the limiter is what makes public instances 429 a server, which is why a node
+    runs its own) — so unguarded it would be an open metasearch proxy making outbound requests on
+    demand with this node's IP on them.
+
+    BOTH conditions, and the second is the one that is easy to miss: behind nginx the peer IS
+    127.0.0.1, so a loopback check alone admits the entire internet on every node with a reverse
+    proxy in front of it — which is every node that serves the client over TLS. A forwarded-for
+    header is what separates this app's own subprocesses from traffic that came in off the wire.
+    """
+    peer = (scope.get("client") or ("", 0))[0]
+    if peer not in ("127.0.0.1", "::1", "localhost"):
+        return False
+    for name, _value in scope.get("headers") or []:
+        if name.lower() in (b"x-forwarded-for", b"x-real-ip", b"x-forwarded-host", b"forwarded"):
+            return False
+    return True
+
+
 def _import():
     """Import searx.webapp with this node's settings, without letting it take over our logging.
 

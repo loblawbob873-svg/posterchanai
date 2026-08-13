@@ -81,7 +81,16 @@ def _local_port() -> str:
 
 
 def local_searxng_urls() -> tuple:
-    """Where a bundled instance could be: this host (systemd/docker), or a sibling compose service."""
+    """Where a SEPARATE bundled instance could be listening.
+
+    First `posterchanai-searxng.service` on this host — which runs natively now, but the address it
+    answers on is unchanged, so this probe works across the upgrade in both directions.
+
+    Then the compose sibling, which no longer exists: the app image serves SearXNG itself. It is
+    still probed because an upgraded deployment can have the old container still running, and while
+    it does, IT is what holds `searxng:8080`. Probing it means such a node keeps working exactly as
+    before instead of running two instances and using the one nothing configures any more.
+    """
     return (f"http://127.0.0.1:{_local_port()}", "http://searxng:8080")
 
 

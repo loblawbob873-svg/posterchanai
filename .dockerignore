@@ -21,6 +21,10 @@ models/
 # Secrets / local config
 .env
 botframework/bots_config_export.json
+# The HOST SearXNG's generated config: this node's settings.yml, its .secret and its cache DBs.
+# The image bakes its own at /etc/searxng (Dockerfile) and points SEARXNG_SETTINGS_PATH there, so
+# copying these in would achieve nothing except baking one node's cookie-signing key into an image.
+searxng/
 
 # Editor / OS cruft
 .vscode/

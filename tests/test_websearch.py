@@ -135,6 +135,10 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(len(calls), 2, "one /healthz + one /config, then the cache")
 
+    # The two probe tests below pin `searxng_native.available()` to False, which is what a node
+    # WITHOUT the bundled SearXNG installed looks like. Without that pin they pass or fail depending
+    # on whether the machine running the suite happens to have it — and what they are about is the
+    # PROBE rejecting an impostor, not what the app falls back to afterwards.
     def test_probe_rejects_something_that_is_not_searxng(self):
         """A 404 from an unrelated listener used to pass (`status < 500`), and the node then adopted
         it as its search backend for five minutes with the public fallback never tried."""
@@ -142,7 +146,8 @@ class ResolveTests(unittest.TestCase):
             if url.endswith("/healthz"):
                 return _StubResponse({}, status=404)
             return _StubResponse({}, status=200, headers={"content-type": "application/json"})
-        with mock.patch.object(S.httpx, "get", side_effect=_get):
+        with mock.patch.object(S.httpx, "get", side_effect=_get), \
+             mock.patch("app.services.searxng_native.available", return_value=False):
             self.assertEqual(S.local_searxng_url(), "")
 
     def test_probe_rejects_a_health_endpoint_without_a_searxng_behind_it(self):
@@ -150,8 +155,20 @@ class ResolveTests(unittest.TestCase):
             if url.endswith("/healthz"):
                 return _StubResponse({}, status=200)
             return _StubResponse({}, status=200, headers={"content-type": "text/html"})
-        with mock.patch.object(S.httpx, "get", side_effect=_get):
+        with mock.patch.object(S.httpx, "get", side_effect=_get), \
+             mock.patch("app.services.searxng_native.available", return_value=False):
             self.assertEqual(S.local_searxng_url(), "")
+
+    def test_a_rejected_probe_does_not_adopt_the_impostor_via_the_mount_either(self):
+        """The mount is a fallback for "nothing is listening", never a way for a listener the probe
+        just REFUSED to be used anyway: what comes back must be our own URL, not the impostor's."""
+        def _get(url, **kw):
+            return _StubResponse({}, status=404)
+        with mock.patch.object(S.httpx, "get", side_effect=_get), \
+             mock.patch("app.services.searxng_native.available", return_value=True), \
+             mock.patch("app.services.searxng_native.mount_url",
+                        return_value="http://127.0.0.1:3051/searxng"):
+            self.assertEqual(S.local_searxng_url(), "http://127.0.0.1:3051/searxng")
 
     def test_probe_port_comes_from_the_file_the_installer_wrote(self):
         """An env var set at INSTALL time never reaches the app's systemd service."""

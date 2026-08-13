@@ -1,13 +1,19 @@
 # PosterChanAI's bundled SearXNG — ONE settings file for both install paths:
 #
 #   * host install  — scripts/install/searxng.sh copies this to searxng/settings.yml (once), fills in
-#                     a generated secret and the outgoing-proxy line, and the systemd unit mounts it.
-#   * compose       — mounted read-only at /etc/searxng/settings.yml by the `searxng` service.
+#                     a generated secret and the outgoing-proxy line; the unit points at it.
+#   * docker        — COPYed to /etc/searxng/settings.yml in the image and pointed at by
+#                     SEARXNG_SETTINGS_PATH. There is no `searxng` container any more: the app image
+#                     runs SearXNG in-process (app/services/searxng_native.py).
 #
-# It is a FILE and not a set of environment variables because this image maps exactly ONE setting to
-# an env var (`secret_key` ← SEARXNG_SECRET, searx/settings_defaults.py). `SEARXNG_SEARCH_FORMATS`
-# and friends do nothing — verified by reading the image, after a first version of this shipped
-# relying on them, which would have left the JSON API off (i.e. every search 403ing) on every compose
+# The path lives in this directory, and not somewhere less container-shaped, because it is still the
+# file the IMAGE bakes and because moving it would mean two copies during the transition — which is
+# the one thing a settings file this load-bearing must not have.
+#
+# It is a FILE and not a set of environment variables because SearXNG maps exactly ONE setting to an
+# env var (`secret_key` ← SEARXNG_SECRET, searx/settings_defaults.py). `SEARXNG_SEARCH_FORMATS` and
+# friends do nothing — verified by reading the source, after a first version of this shipped relying
+# on them, which would have left the JSON API off (i.e. every search 403ing) on every container
 # install while the app happily selected the instance.
 use_default_settings: true
 
@@ -19,16 +25,18 @@ general:
   enable_metrics: false
 
 server:
-  # Replaced by the installer on a host install; supplied as SEARXNG_SECRET by compose. It signs
-  # preference cookies for an instance that only this node talks to.
+  # Replaced by the installer on a host install, and by docker-entrypoint.sh in a container. It signs
+  # preference cookies for an instance that only this node talks to — but a value COMMITTED here
+  # would be a known key on every deployment, which is why it is an obvious placeholder and why both
+  # install paths overwrite it.
   secret_key: "ultrasecretkey"
-  # NO bind_address here. This image serves through granian, which binds from GRANIAN_HOST/
-  # GRANIAN_PORT and ignores both `server.bind_address` and SEARXNG_BIND_ADDRESS — measured: a
-  # settings file saying 0.0.0.0 and an env var saying 127.0.0.1 produced `*:8899`, i.e. the host
-  # install was listening on every interface of the box with the limiter off. The host unit sets
-  # GRANIAN_HOST=127.0.0.1; compose leaves the image's default (reachable by sibling containers only,
-  # since the service publishes no host port). Two places claiming to set the bind address is how one
-  # of them silently loses.
+  # NO bind_address here, and it would not be read if there were one: nothing serves this file's
+  # SearXNG from SearXNG's own server any more. The unit runs uvicorn bound to 127.0.0.1 and the app
+  # mounts the WSGI app at /searxng, so the bind address is the app's. That is the fix for a real
+  # bug rather than a tidy-up — the container this replaced read its bind address from GRANIAN_HOST
+  # while ignoring BOTH `server.bind_address` and SEARXNG_BIND_ADDRESS, and the first version of it
+  # listened on `*:8899`: an unauthenticated, limiter-disabled metasearch instance on every
+  # interface of the box.
   # OFF deliberately: the only client is this node's app. The limiter is exactly what makes PUBLIC
   # instances answer a server with 429, which is the problem a bundled instance exists to solve.
   limiter: false

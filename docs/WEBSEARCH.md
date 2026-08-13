@@ -49,17 +49,27 @@ web-search tool, the news digests, the bots (`bot_manager_service` hands them th
 0. **Admin → Tools → "Web search enabled"**. Off = this node makes no search requests at all. It is a
    real switch because *clearing the URL is not one* — that falls through to the steps below.
 1. **Admin → Tools → SearXNG URL**, if set.
-2. **The SearXNG bundled with this node**, if one answers — `http://127.0.0.1:8899` (host install) or
-   `http://searxng:8080` (compose). The probe requires **200 on `/healthz` AND JSON from `/config`**:
-   `status < 500` alone let an unrelated listener's 404 pass, and the node then adopted it as its
-   search backend with the public fallback never tried. Cached for 5 minutes. The port comes from
-   `searxng/port`, which the installer writes — an env var set at install time never reaches the
-   app's own systemd service.
-3. **A public instance** (`https://searx.tiekoetter.com`), as a last resort.
+2. **`posterchanai-searxng.service`**, if it answers — `http://127.0.0.1:8899`. (Also
+   `http://searxng:8080`, the compose sibling that no longer exists; still probed so a deployment
+   upgrading with the old container still running keeps working.) The probe requires **200 on
+   `/healthz` AND JSON from `/config`**: `status < 500` alone let an unrelated listener's 404 pass,
+   and the node then adopted it as its search backend with the public fallback never tried. Cached
+   for 5 minutes. The port comes from `searxng/port`, which the installer writes — an env var set at
+   install time never reaches the app's own systemd service.
+3. **The same SearXNG, mounted inside the app process** at `/searxng`. Not probed — it is a question
+   about our own imports, so it is asked directly, where an HTTP probe of ourselves would have to
+   survive the app not accepting connections yet (startup, which is when the bot manager builds every
+   bot's environment).
+4. **A public instance** (`https://searx.tiekoetter.com`), as a last resort.
 
-Step 3 is a fallback, not a plan: measured from a server, it answers **429 Too Many Requests** to
+2 before 3 although they are the same code: with the unit running, that copy is already loaded and
+warm, so the app process never imports SearXNG's engine catalogue at all. 3 is what keeps search
+working when the unit is stopped, masked or crashed — which used to mean falling straight through to
+the public instance.
+
+Step 4 is a fallback, not a plan: measured from a server, it answers **429 Too Many Requests** to
 both its JSON and its HTML endpoint, because public instances rate-limit clients that don't look like
-a browser. Which is why step 2 exists.
+a browser. Which is why steps 2 and 3 exist.
 
 This replaced a hardcoded `https://search.poster.place` default — so every node that never filled the
 field in was silently searching through one particular deployment's box, with nothing to say so, and
@@ -68,25 +78,59 @@ that box was a single point of failure for everyone's AI web search, news digest
 ### Run one
 
 ```
-./install.sh --searxng                 # host install: a systemd service on 127.0.0.1:8899
-docker compose --profile cpu up -d     # compose: comes up with every AI backend profile
+./install.sh --searxng                 # host: into the app's venv + posterchanai-searxng.service
+docker compose --profile cpu up -d     # docker: it is inside the app image, nothing to add
 ```
 
-It runs as **`posterchanai-searxng.service`**, like every other service here — `systemctl status
-posterchanai-searxng`, `journalctl -u posterchanai-searxng -f`, one restart policy — rather than a
-detached container no unit file knows about. The container runs with `--network host`, which is not a
-shortcut: it has to reach this node's HTTP proxy on `127.0.0.1` (see Tor below), and that proxy binds
-to loopback. It is also installed by default on a **fresh install** and re-run on **upgrade**
-(`./install.sh` → option 6).
+**It is not a container any more.** It used to be the upstream Docker image, on the reasoning that
+"SearXNG upstream ships a container, and its bare-metal path is a uwsgi/nginx build against system
+Python". That is true of upstream's *deployment* docs and false of the package: `searx.webapp.app` is
+an ordinary WSGI (Flask) app, so it is installed into the app's venv like any other dependency and
+served two ways from one implementation (`app/services/searxng_native.py`):
+
+* **`posterchanai-searxng.service`** — still a real unit (`systemctl status posterchanai-searxng`,
+  `journalctl -u posterchanai-searxng -f`, one restart policy), now running `python -m
+  app.services.searxng_native`: uvicorn + a2wsgi, bound to `127.0.0.1:8899`, out of the app's venv.
+* **The app itself, at `/searxng`** — the same WSGI app mounted with a2wsgi, exactly like Radicale at
+  `/caldav`. LAZY: importing SearXNG loads its whole engine catalogue, so nothing is imported until a
+  request arrives. This is the fallback when the unit isn't running, and it is all the Docker image
+  uses — there is no `searxng` service in `docker-compose.yml` any more.
+
+Installed by default on a **fresh install** and re-run on **upgrade** (`./install.sh` → option 6).
+Docker builds it in unless `--build-arg INSTALL_SEARXNG=0`; the `nostr` image skips it (no AI to
+search for, and its lean requirements don't carry SearXNG's deps, so the mount just reports itself
+unavailable).
+
+**The mount is not public**, and the check that makes that true is not the obvious one. The container
+was bound to loopback; a mount on the app's own port inherits the app's public TLS, and this instance
+has its limiter *disabled* on purpose. Behind nginx the peer address is `127.0.0.1` for internet
+traffic too — so loopback alone would hand anyone an unauthenticated metasearch instance that makes
+outbound requests on demand with this node's IP on them. The gate is loopback **and** no
+`X-Forwarded-For`/`X-Real-IP`/`Forwarded` header (`searxng_native.request_is_local`).
+`POSTERCHANAI_SEARXNG_EXPOSE=1` opts out, deliberately.
+
+Three packaging facts, each of which fails in a way that does not look like its cause:
+
+* **SearXNG is not on PyPI** (`pip index versions searxng` → "No matching distribution found"), so
+  its source is cloned (`~/searxng`, `/opt/searxng` in the image) and installed `--no-deps` — the
+  ACE-Step pattern. Its runtime deps are in the app's `requirements.txt` at **ranges, not its exact
+  pins**: upstream pins `typing-extensions`, `certifi`, `lxml` and `httpx` exactly, and torch and
+  pydantic depend on those too. Measured, the ranges resolve against this venv with **no
+  downgrades**.
+* **`--no-build-isolation` is required.** Its `setup.py` does `from searx.version import ...`, which
+  imports `searx/__init__.py`, which imports `msgspec` — absent from pip's isolated build env, so the
+  build dies with `ModuleNotFoundError` before any dependency is consulted.
+* **The clone ships its built static assets** (`searx/static/themes/simple/*.min.css` and friends are
+  committed), so there is no node/webpack step. Don't add one.
+
+And one runtime fact: **importing `searx` reconfigures the root logger** —
+`logging.basicConfig(level=WARNING)` plus `logging.root.setLevel(WARNING)`, at import time, in
+`searx/__init__.py`. Left alone, the first search a node ever makes silences every INFO line the app
+emits, node-wide, and nothing says so. `searxng_native._import()` saves and restores the root level
+and handlers around the import; `tests/test_searxng_native.py` asserts it against the real import.
 
 The page is branded — PosterChan logo, "PosterChan Search", dark theme (`ui.theme_args.simple_style`)
 — because `http://127.0.0.1:8899` is what an operator sees when they go looking.
-
-**Binding is set with `GRANIAN_HOST`/`GRANIAN_PORT`, not `SEARXNG_BIND_ADDRESS` or
-`server.bind_address`** — this image serves through granian, which reads neither of the latter two.
-Measured, not assumed: with `SEARXNG_BIND_ADDRESS=127.0.0.1` set and the settings file saying
-`0.0.0.0`, `ss -ltn` showed `*:8899` — in the host namespace that is an unauthenticated,
-limiter-disabled metasearch instance listening on every interface of the box.
 
 Then leave Admin → Tools **empty** — that is what selects it. Both paths generate from ONE template,
 `docker/searxng/settings.yml`, so they cannot drift. Two things it gets right and a hand-rolled
@@ -95,13 +139,17 @@ instance usually doesn't:
 * **`search.formats: [html, json]`.** SearXNG ships JSON **off**, and with it off every search here
   gets a 403 with an HTML body — which every caller reads as "no results" rather than as a
   misconfiguration. This is the single most likely reason an instance "doesn't work" with PosterChan.
+  It is also why `searxng_native.available()` requires the settings FILE and not just the package: a
+  node with SearXNG installed and no `settings.yml` is not a working instance.
 * **`server.limiter: false`.** The only client is this node's app over loopback; the limiter is what
   makes public instances 429 us in the first place.
 
-Note that **`secret_key` is the only setting this image maps to an environment variable** (checked in
+Note that **`secret_key` is the only setting SearXNG maps to an environment variable** (checked in
 `searx/settings_defaults.py`) — `SEARXNG_SEARCH_FORMATS` and friends do nothing, which is why both
 paths ship a settings *file*. The host copy lives in `searxng/settings.yml` (gitignored, per node,
-never overwritten once written — `SEARXNG_FORCE_SETTINGS=1` regenerates it).
+never overwritten once written — `SEARXNG_FORCE_SETTINGS=1` regenerates it); the image bakes it at
+`/etc/searxng/settings.yml` and `docker-entrypoint.sh` replaces the placeholder secret with
+`SEARXNG_SECRET` or a random one on first start, so a committed key is never the key in use.
 
 ## Tor
 
@@ -127,6 +175,12 @@ Two different hops, each proxied where it belongs:
 
   Opt in with `SEARXNG_TOR=1 ./install.sh --searxng`, which probes the proxy and writes
   `outgoing.proxies` into `settings.yml`.
+
+  This hop is also what used to make the container awkward: reaching a proxy bound to `127.0.0.1`
+  from a container meant `--network host` (a bridge network has nothing at that address, and the
+  first attempt pointed it at `host.docker.internal`, which would have failed every engine request
+  while `/healthz` kept answering — an instance that looks healthy and returns nothing). Running in
+  the app's own process, `127.0.0.1` is simply `127.0.0.1`.
 
 That second listener exists because the main `:8118` is **Tor-only by design** — torrent traffic
 shares it and a silent direct connection there would be an IP leak. SearXNG has no fallback of its

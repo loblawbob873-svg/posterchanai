@@ -73,7 +73,7 @@ setup_searxng() {
         return 1
     fi
 
-    mkdir -p "$conf_dir/brand"
+    mkdir -p "$conf_dir/brand" "$conf_dir/cache"
     # Historical: the container chowned this directory to its own user (uid 977) on every start, so
     # from the second run onward this script could not write its own files. Nodes upgrading from that
     # still have those permissions, and the failure is a stray traceback in the middle of an
@@ -276,6 +276,12 @@ User=$(id -un)
 WorkingDirectory=$repo_root
 Environment=POSTERCHANAI_SEARXNG_PORT=${port}
 Environment=SEARXNG_SETTINGS_PATH=${conf_dir}/settings.yml
+# TMPDIR, because SearXNG's engine/data caches are SQLite files it puts in
+# tempfile.gettempdir() — there is no cache_dir setting, TMPDIR is the only lever. On a node where
+# /tmp is a tmpfs (this deployment's server1 is, and it has no swap) those files are RAM that
+# free/MemAvailable do not report as reclaimable. Here they are ordinary files, which also means the
+# 7-day engine cache survives a restart instead of being rebuilt on the next search.
+Environment=TMPDIR=${conf_dir}/cache
 # uvicorn + a2wsgi out of the app's own venv — no container, no granian, no second server to install.
 # 127.0.0.1 ONLY: this instance has its limiter disabled (the limiter is what makes public instances
 # 429 a server, which is the whole reason a node runs its own), so anything but loopback would be an

@@ -204,7 +204,9 @@ Ollama-only settings:
 
 ### Optional Services
 
-- **SearXNG URL**: URL to SearXNG instance for web search
+- **SearXNG URL**: an EXTERNAL SearXNG to search through. Leave empty to use the one bundled
+  with this node (`./install.sh --searxng`, or built into the Docker image) — see
+  [WEBSEARCH.md](WEBSEARCH.md)
 - **Upload Path**: Directory to store uploads (default: `/var/lib/posterchanai`)
 - **TTS Settings**: Voice, rate, and pitch for text-to-speech
 
@@ -1932,7 +1934,9 @@ This helps diagnose:
 - **For OCR (image text extraction):**
   - Tesseract OCR (`apt install tesseract-ocr` or `emerge app-text/tesseract`)
 - ComfyUI instance (optional, for image generation)
-- SearXNG instance (optional, for web search)
+- SearXNG — bundled: `./install.sh --searxng` installs it into the app's own venv (no
+  container, no separate service to find). Only needed as an EXTERNAL requirement if you want the
+  node to search through an instance you already run.
 
 ### Python Dependencies (auto-installed by setup.sh)
 

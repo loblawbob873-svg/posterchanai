@@ -104,6 +104,27 @@ if [ "${SOURCE_ONEAPI:-0}" = "1" ] && [ -f /opt/intel/oneapi/setvars.sh ]; then
 fi
 
 # ---------------------------------------------------------------------------------------------
+# THE BUNDLED SearXNG'S SECRET
+#
+# The settings file is baked into the image (docker/searxng/settings.yml → /etc/searxng), so its
+# `secret_key` is committed — and a committed key is the SAME key on every deployment. It only signs
+# this instance's preference cookies, and the mount refuses anything that arrived through a reverse
+# proxy, so it is not a hole; it is just free to close. SEARXNG_SECRET if the operator set one, a
+# random value otherwise, and only while the placeholder is still there — a rewrite on every start
+# would invalidate every preference cookie on every restart.
+_sx_settings="${SEARXNG_SETTINGS_PATH:-/etc/searxng/settings.yml}"
+if [ -w "$_sx_settings" ] && grep -q 'secret_key: "ultrasecretkey"' "$_sx_settings" 2>/dev/null; then
+    _sx_secret="${SEARXNG_SECRET:-$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
+    if sed -i "s|secret_key: \"ultrasecretkey\"|secret_key: \"${_sx_secret}\"|" "$_sx_settings" 2>/dev/null; then
+        echo "[entrypoint] SearXNG: generated this node's secret_key"
+    else
+        echo "[entrypoint] SearXNG: could not write $_sx_settings — keeping the placeholder secret"
+    fi
+    unset _sx_secret
+fi
+unset _sx_settings
+
+# ---------------------------------------------------------------------------------------------
 # DOES THIS NODE WANT MODEL WEIGHTS AT ALL?
 #
 # The DOWNLOAD_* defaults below are ENV in the shared final image stage, so they are 1 in EVERY

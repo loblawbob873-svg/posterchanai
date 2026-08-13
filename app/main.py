@@ -314,19 +314,10 @@ try:
 
     _sx_asgi = {"app": None}
 
-    def _sx_is_local(scope) -> bool:
-        peer = (scope.get("client") or ("", 0))[0]
-        if peer not in ("127.0.0.1", "::1", "localhost"):
-            return False
-        for name, _v in scope.get("headers") or []:
-            if name in (b"x-forwarded-for", b"x-real-ip", b"x-forwarded-host", b"forwarded"):
-                return False
-        return True
-
     async def _searxng_entry(scope, receive, send):
         from app.services import search_service as _ss
         from app.services import searxng_native as _sx
-        if not (_sx_is_local(scope) or os.getenv("POSTERCHANAI_SEARXNG_EXPOSE", "") == "1"):
+        if not (_sx.request_is_local(scope) or os.getenv("POSTERCHANAI_SEARXNG_EXPOSE", "") == "1"):
             await _SxText("Not found", status_code=404)(scope, receive, send)
             return
         if not _ss.search_enabled():

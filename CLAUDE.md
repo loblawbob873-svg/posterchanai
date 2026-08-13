@@ -629,22 +629,45 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   **bundled with this node** → a public instance. That last one is a fallback, not a plan — measured,
   it 429s a server on both its JSON and HTML endpoints. It replaced a hardcoded `search.poster.place`,
   so every node that never filled the field in was silently searching through one deployment's box.
-  The bundled instance is `posterchanai-searxng.service` (a systemd unit like every other service
-  here, `--network host`, branded + dark-themed, on 127.0.0.1:8899), installed by DEFAULT on a fresh
-  install, re-run on upgrade, and available as `./install.sh --searxng`; compose gets it from every AI
-  backend profile.
+  **The bundled instance is NOT A CONTAINER — it runs in the app's own venv** (`searxng` cloned and
+  installed `--no-deps`, its runtime deps in `requirements.txt`), served two ways from ONE
+  implementation (`app/services/searxng_native.py`): `posterchanai-searxng.service`, still a real unit
+  but running `python -m app.services.searxng_native` (uvicorn + a2wsgi on 127.0.0.1:8899, branded +
+  dark-themed); and the SAME WSGI app mounted inside the app at **`/searxng`**, exactly like Radicale
+  at `/caldav`. Resolution puts the unit first (already warm — the app then never imports the engine
+  catalogue) and the mount second, so a stopped/masked/crashed unit no longer means falling through to
+  a public instance. Installed by DEFAULT on a fresh install, re-run on upgrade, `./install.sh
+  --searxng`; the Docker image builds it in (`INSTALL_SEARXNG=1`, skipped for `GPU=nostr`) and
+  **docker-compose no longer has a `searxng` service at all**.
+  **The mount is gated on loopback AND no forwarded-for header**, which is the non-obvious half:
+  behind nginx the peer IS 127.0.0.1, so a loopback-only check would publish an unauthenticated,
+  limiter-disabled metasearch instance — one that makes outbound requests on demand carrying this
+  node's IP — on every node that terminates TLS. `POSTERCHANAI_SEARXNG_EXPOSE=1` opts out.
+  **Three packaging facts, each silent:** SearXNG is **not on PyPI**, so it is cloned (the ACE-Step
+  pattern) and its deps are declared as RANGES, never its exact pins — it pins typing-extensions,
+  certifi, lxml and httpx, which torch and pydantic also depend on (measured: the ranges resolve here
+  with no downgrades). **`--no-build-isolation` is required** — its setup.py imports `searx`, which
+  imports msgspec, which pip's isolated build env does not have. And the clone **ships its built
+  static assets**, so there is no node/webpack step; don't add one.
+  **Importing `searx` reconfigures the ROOT logger** (`basicConfig(WARNING)` + `root.setLevel(WARNING)`
+  at import time), so the first search a node ever made would silence every INFO line the app emits,
+  node-wide, with nothing to say so. `_import()` saves and restores the root level and handlers;
+  `tests/test_searxng_native.py` asserts it against the real import.
   **Gotchas, each of which fails silently:** (1) SearXNG ships its **JSON API off**, and with it off
   every search here is a 403 with an HTML body that every caller reads as "no results" —
   `search.formats: [html, json]` is the load-bearing line, and it must come from a settings FILE:
-  `secret_key` is the ONLY setting this image maps to an env var, so a `SEARXNG_SEARCH_FORMATS=…`
-  compose service configures nothing at all. Both paths generate from `docker/searxng/settings.yml`.
+  `secret_key` is the ONLY setting SearXNG maps to an env var, so a `SEARXNG_SEARCH_FORMATS=…`
+  compose service configured nothing at all. Both paths generate from `docker/searxng/settings.yml`
+  (the image bakes it and the entrypoint replaces its placeholder secret). It is also why
+  `searxng_native.available()` demands the settings FILE and not just the package.
   (2) The bundled instance's ENGINE requests CAN go through the proxy's **fallback listener**
   (`proxy_fallback_port`, default 8119: Tor1 → Tor2 → direct) — never the main `:8118`, which is
   Tor-only because torrents share it — but it is **off by default**: MEASURED, the default engines
   answer a Tor exit with "too many requests"/"access denied"/CAPTCHA and SearXNG suspends them for an
   hour, giving 0 results vs 25 direct. `SEARXNG_TOR=1` opts in (and needs `request_timeout: 12.0`;
-  the 3s default times out over Tor on its own). Never send torrent traffic to 8119. That is also why the container is `--network host`: from a bridge
-  network there is nothing at the proxy's loopback address. (3) **Only LOOPBACK being exempt from the
+  the 3s default times out over Tor on its own). Never send torrent traffic to 8119. This hop is what
+  made a container awkward — reaching a loopback-bound proxy from one needed `--network host` — and is
+  simply `127.0.0.1` now that it runs in the app's process. (3) **Only LOOPBACK being exempt from the
   Tor transport is not enough** — Tor cannot route RFC1918 and the proxy returns a 502 *response*,
   which `afallback_transport` never retries (it falls back on connect errors only), so an ordinary LAN
   instance (`http://192.168.0.85:8888`) would fail every request; `_is_local_base` resolves the host
