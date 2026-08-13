@@ -136,14 +136,24 @@ def local_searxng_url() -> str:
             found = base
             break
     if not found:
-        # Nothing listening — but this app can serve SearXNG itself (see searxng_native). Asked
-        # rather than probed: the answer is about our own imports and this same process is what would
-        # have to answer the probe, so a probe here would be a request to ourselves that fails
-        # whenever it is made before the server is accepting connections (startup, and the bot
-        # manager builds every bot's environment there).
+        # Nothing listening on its own port — but this app serves SearXNG itself at /searxng, and
+        # the two callers of this function are in DIFFERENT positions to know that:
+        #
+        #   * THE APP PROCESS mounted it, so it answers from the flag and never probes. A probe here
+        #     would be a request to ourselves, which fails whenever it is made before this server
+        #     accepts connections — startup, which is exactly when the bot manager builds every
+        #     bot's environment.
+        #   * ANYONE ELSE (the worker, a bot) must PROBE, because "SearXNG is importable in this
+        #     venv" is not "something is serving it at this address". Bare metal they coincide (the
+        #     worker is a subprocess on the app's host); in the compose `split` profile the worker is
+        #     its own container and 127.0.0.1:3051 is itself, serving nothing. Answering from the
+        #     flag there would hand every news digest a URL that cannot answer — worse than the
+        #     public fallback, because it never gets to try one.
         try:
             from app.services import searxng_native
-            if searxng_native.available():
+            if searxng_native.MOUNTED:
+                found = searxng_native.mount_url()
+            elif searxng_native.available() and _is_searxng(searxng_native.mount_url()):
                 found = searxng_native.mount_url()
         except Exception:
             pass

@@ -107,12 +107,46 @@ class ResolutionTests(unittest.TestCase):
         """Before this, a stopped unit meant falling through to a PUBLIC instance — which 429s a
         server — on a node perfectly capable of searching for itself."""
         with mock.patch.object(S, "_is_searxng", return_value=False), \
+             mock.patch.object(N, "MOUNTED", True), \
+             mock.patch.object(N, "mount_url", return_value="http://127.0.0.1:3051/searxng"):
+            self.assertEqual(S.local_searxng_url(), "http://127.0.0.1:3051/searxng")
+
+    def test_the_app_process_never_probes_itself(self):
+        """It would be a request to ourselves, and it is asked during startup — before this server
+        accepts connections — because that is when the bot manager builds every bot's environment."""
+        with mock.patch.object(S, "_is_searxng", return_value=False) as probe, \
+             mock.patch.object(N, "MOUNTED", True), \
+             mock.patch.object(N, "mount_url", return_value="http://127.0.0.1:3051/searxng"):
+            S.local_searxng_url()
+            probed = [c.args[0] for c in probe.call_args_list]
+            self.assertNotIn("http://127.0.0.1:3051/searxng", probed,
+                             "the process that MOUNTED it must answer from the flag, not a request "
+                             "to itself")
+
+    def test_a_process_that_does_not_serve_the_mount_must_probe_it(self):
+        """THE compose `split` case: the worker is its own container, so 127.0.0.1:3051 is itself and
+        serves nothing. "SearXNG is importable in this venv" is not "something is serving it here",
+        and answering from availability alone hands every news digest a URL that cannot answer —
+        worse than the public fallback, which it then never gets to try."""
+        with mock.patch.object(S, "_is_searxng", return_value=False), \
+             mock.patch.object(N, "MOUNTED", False), \
+             mock.patch.object(N, "available", return_value=True), \
+             mock.patch.object(N, "mount_url", return_value="http://127.0.0.1:3051/searxng"):
+            self.assertEqual(S.local_searxng_url(), "",
+                             "an unanswered mount must not be adopted")
+
+    def test_a_worker_beside_a_live_app_DOES_get_the_mount(self):
+        """Bare metal, where the worker is a subprocess on the app's own host: the probe answers, so
+        the worker searches through the app's mount rather than a public instance."""
+        with mock.patch.object(S, "_is_searxng", side_effect=lambda b: b.endswith("/searxng")), \
+             mock.patch.object(N, "MOUNTED", False), \
              mock.patch.object(N, "available", return_value=True), \
              mock.patch.object(N, "mount_url", return_value="http://127.0.0.1:3051/searxng"):
             self.assertEqual(S.local_searxng_url(), "http://127.0.0.1:3051/searxng")
 
     def test_nothing_bundled_still_falls_through_to_the_public_instance(self):
         with mock.patch.object(S, "_is_searxng", return_value=False), \
+             mock.patch.object(N, "MOUNTED", False), \
              mock.patch.object(N, "available", return_value=False), \
              mock.patch.object(S, "search_enabled", return_value=True), \
              mock.patch.object(S.settings_store, "get", return_value=""):
@@ -125,6 +159,7 @@ class ResolutionTests(unittest.TestCase):
 
     def test_a_broken_searxng_import_never_breaks_resolution(self):
         with mock.patch.object(S, "_is_searxng", return_value=False), \
+             mock.patch.object(N, "MOUNTED", False), \
              mock.patch.object(N, "available", side_effect=RuntimeError("boom")):
             self.assertEqual(S.local_searxng_url(), "")
 

@@ -165,7 +165,7 @@ class ResolveTests(unittest.TestCase):
         def _get(url, **kw):
             return _StubResponse({}, status=404)
         with mock.patch.object(S.httpx, "get", side_effect=_get), \
-             mock.patch("app.services.searxng_native.available", return_value=True), \
+             mock.patch("app.services.searxng_native.MOUNTED", True), \
              mock.patch("app.services.searxng_native.mount_url",
                         return_value="http://127.0.0.1:3051/searxng"):
             self.assertEqual(S.local_searxng_url(), "http://127.0.0.1:3051/searxng")

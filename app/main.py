@@ -335,6 +335,14 @@ try:
         await _sx_asgi["app"](scope, receive, send)
 
     app.mount("/searxng", _searxng_entry)
+    # Tell the resolver that THIS process serves the mount, so it can answer with the mount URL
+    # instead of making an HTTP request to itself (which fails whenever it is asked before this
+    # server accepts connections — startup, which is exactly when the bot manager builds every bot's
+    # environment). Any OTHER process — the worker, a bot — has to probe it like any other instance,
+    # because "the package is installed here" does not mean "something is serving it here": in the
+    # compose `split` profile the worker is its own container and 127.0.0.1:3051 is not the app.
+    from app.services import searxng_native as _sx_mod
+    _sx_mod.mark_mounted()
 except Exception as _sx_err:          # never let search stop the app from starting
     logging.getLogger(__name__).warning("[searxng] not mounted: %s", _sx_err)
 
