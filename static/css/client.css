@@ -6699,7 +6699,16 @@ body.os-on #os-root{pointer-events:auto}
 /* A finished appointment is DIMMED, never removed — a day whose entries disappear as it goes on
    reads as a calendar that is losing things. */
 .wgt-calrow.gone{opacity:.42}
-.wgt-calt{flex:none;width:3.6em;font-size:11px;color:var(--muted)}
+/* THE FIRST COLUMN HOLDS TWO DIFFERENT KINDS OF THING, and a fixed width only ever fitted one of
+   them. Today's rows put a time there ("09:00", "all day"); the "Coming up" rows put a DAY LABEL
+   there — "Tomorrow", a weekday, or a date. At 3.6em "Tomorrow" does not fit, and a too-narrow
+   flex:none box does not clip, it OVERFLOWS: the word painted straight over the calendar's colour
+   swatch and the title beside it. `min-width` keeps the times aligned in a column exactly as before
+   (every time is narrower than 3.6em, so they all sit at 3.6em) while letting a long label take the
+   room it needs, and the ellipsis bounds a locale whose weekday or date is longer still — several
+   spell it out. */
+.wgt-calt{flex:none;min-width:3.6em;max-width:7em;font-size:11px;color:var(--muted);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wgt-calx{flex:none;width:3px;align-self:stretch;border-radius:2px;min-height:12px}
 .wgt-caln{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 

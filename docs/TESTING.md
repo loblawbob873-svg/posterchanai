@@ -101,26 +101,43 @@ small model *gathers* reliably and *retells* badly. It called a healthy 3-of-3 R
 and dropped a drive from a list it had been handed. So `--brief` renders the report **in Python**,
 from what was measured, between two markers — and the prompt asks for the markers.
 
-### On the node, not in the agent sandbox
+### On the node, or in the sandbox — and the difference is not isolation
 
-Run it **on the node**. The per-user agent sandbox (`sandbox_service.py`, `pcai-sbx-<uid>`) cannot
-run this suite, and that is by design rather than an omission: the sandbox exists so an agent can do
-anything *inside* a throwaway container "without ever touching the host filesystem" — so it cannot
-see the checkout it would be checking. Its image also has no Chrome and no node. Mounting the repo
-in to fix that would delete the one property the sandbox is for, so don't.
+Both work. `posterchanai-sandbox:3` carries chromium, node and the app's non-AI dependencies, so an
+agent can run the suite inside its own throwaway container:
 
-The sandbox is **off by default** (`node_exec_sandbox_enabled`, Admin → Nodes), so an admin's agent
-already runs on the host and `./test.sh` works as written. If you turn it on for a user, that user's
-agent cannot run the suite — send it to a node instead.
+```
+git clone --depth 1 https://github.com/loblawbob873-svg/posterchanai /tmp/pc
+cd /tmp/pc && ./test.sh --brief
+```
 
-If what you want is isolation while testing, that is what `--docker` is:
+The sandbox has no host filesystem by design, so it clones the **public mirror** rather than reading
+the node's checkout. That is the real difference, and it is not in the sandbox's favour: a sandbox
+run reports on `main`, not on what the node is serving. If the node is behind, or carries
+uncommitted work, the sandbox will report PASS for code that is not running anywhere. The `commit:`
+line exists to make that visible — read it every time.
+
+Running on the node checks the tree that is actually serving:
+
+```
+cd ~/posterchanai && ./test.sh --brief
+```
+
+…and if what you wanted from the sandbox was isolation, that is `--docker`, which gives its own
+container and its own Chrome **while still checking the node's real tree**:
 
 ```
 cd ~/posterchanai && ./test.sh --brief --docker
 ```
 
-Own container, own Chrome, no ports published, repo bind-mounted so it still checks the real tree.
-That is the sandboxed form of this suite, and it works from the agent on any node with Docker.
+So: sandbox for a clean room, node for the truth about that node.
+
+Baking the toolchain in was measured, not assumed: a bare `:2` container can fetch the repo with
+nothing but stdlib and run the browser checks — after ~4 minutes of `apt-get` and `pip` on every
+run, which is longer than the checks. The cost is image size, ~250MB → ~2.3GB. Bumping that tag
+means editing all five places at once (`sandbox_service._DEFAULT_IMAGE`, `schemas`,
+`scripts/install/sandbox.sh` ×2, the `Dockerfile.sandbox` comment), and the running app holds the
+old name in memory — set `node_exec_sandbox_image` live in Admin → Services, or restart.
 
 ### The prompt
 

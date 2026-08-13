@@ -80,6 +80,16 @@ _lock = threading.Lock()
 _app = None            # the built WSGI app, once
 _build_failed = False  # a failed build is remembered; retrying it per request is a 200-engine import
 
+# Set by app/main.py when the mount is registered — i.e. THIS process is the one that serves
+# /searxng. Only the app process imports main, so nothing else can set it by accident.
+MOUNTED = False
+
+
+def mark_mounted() -> None:
+    """Called by app/main.py once the /searxng mount is registered."""
+    global MOUNTED
+    MOUNTED = True
+
 
 def settings_path() -> Path:
     """This node's settings.yml — generated once by the installer, then the operator's file."""

@@ -66,7 +66,7 @@ def agent_node_name() -> str:
 # websockets/requests), not a bare registry image. Bump this tag whenever Dockerfile.sandbox changes so a
 # node rebuilds instead of reusing a stale layer. A registry image name in the setting still works — this
 # is only the default.
-_DEFAULT_IMAGE = "posterchanai-sandbox:2"
+_DEFAULT_IMAGE = "posterchanai-sandbox:3"
 
 
 def _image() -> str:

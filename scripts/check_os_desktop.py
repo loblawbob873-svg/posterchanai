@@ -153,6 +153,10 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   <div class="main"><div id="feed" class="feed">CLASSIC</div></div>
 </div>
 <script src="/static/js/client/sprite.js"></script>
+<!-- The Today widget expands real recurrence rules through this. Loading the SHIPPED parser (rather
+     than handing the widget pre-expanded objects) is what makes the row geometry below mean
+     something: the widget builds its own rows from its own data, exactly as it does in the app. -->
+<script src="/static/js/client/ical.js"></script>
 <script>
 // A stub of the one contract os.js depends on: switchView paints the named view into #feed.
 window.__rendered = [];
@@ -205,6 +209,31 @@ Object.assign(window.__PC, {
   mailUnread: () => 0,
   osNotifyState: () => 'granted',
   openThread: () => {}, reactTo: () => {},
+  /* The calendar API, as the Today widget reaches it. Two calendars with DIFFERENT colours, because
+     the bug this exists for is a day label painting over the colour swatch — one colour would still
+     draw a swatch, but two is what the user was looking at ("over the Green and Red"). One event
+     today and one TOMORROW: the "Coming up" rows are the ones whose first column holds a word
+     rather than a time, and they are the rows that overflowed. */
+  authFetch: async (url) => {
+    const pad = (n) => String(n).padStart(2, '0');
+    const stamp = (d, h) => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}T${pad(h)}0000`;
+    const now = new Date();
+    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const vevent = (uid, d, h, title) =>
+      `BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:${uid}\r\nDTSTART:${stamp(d, h)}\r\n` +
+      `DTEND:${stamp(d, h + 1)}\r\nSUMMARY:${title}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n`;
+    const body =
+      url.indexOf('/api/calendar/config') >= 0 ? { enabled: true } :
+      url.indexOf('/api/calendar/calendars') >= 0
+        ? { calendars: [{ id: 'work', name: 'Work', color: '#22c55e' },
+                        { id: 'home', name: 'Home', color: '#ef4444' }] } :
+      url.indexOf('cal=work') >= 0
+        ? { items: [{ id: 'a', ics: vevent('a', now, 9, 'Stand-up') }] } :
+      url.indexOf('cal=home') >= 0
+        ? { items: [{ id: 'b', ics: vevent('b', tomorrow, 18, 'Dentist') }] } :
+      {};
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  },
 });
 window.ClientSettings = { _v:{}, get(k,d){ return k in this._v ? this._v[k] : d; }, set(k,v){ this._v[k]=v; } };
 
@@ -920,6 +949,43 @@ LAYOUT = r"""(async () => {
           out.musicHasSeek = !!mw.querySelector('.wgt-mseek');
         }
       }
+      /* THE TODAY WIDGET'S FIRST COLUMN HOLDS TWO DIFFERENT KINDS OF THING. Today's rows put a time
+       * there; the "Coming up" rows put a day LABEL — "Tomorrow", a weekday, a date. The column was
+       * a fixed 3.6em, which fits a time and not the word "Tomorrow", and a too-narrow flex:none box
+       * does not clip — it OVERFLOWS, painting the word straight over the calendar colour swatch and
+       * the title. Reported as "the Tomorrow / Fri / Sun text is going over the Green and Red".
+       *
+       * Measured as real geometry against the real stylesheet, per row: does the label's box reach
+       * past where the swatch begins? A stylesheet assertion would have passed on any width that
+       * merely LOOKED plausible, and a screenshot cannot say which element won. */
+      {
+        const pick3 = (addRow.click(), await sleep(120), document.querySelector('.os-wgtpick'));
+        const cal = pick3 && pick3.querySelector('.os-wgt-pick[data-t="calendar"]');
+        if (cal) { cal.click(); await sleep(900); }
+        const cw = document.querySelector('.os-wgt[data-type="calendar"]');
+        out.calWidget = !!cw;
+        if (cw) {
+          const rows = [...cw.querySelectorAll('.wgt-calrow')];
+          out.calRows = rows.length;
+          out.calLabels = rows.map(r => ((r.querySelector('.wgt-calt') || {}).textContent || '').trim());
+          let worst = 0, culprit = '';
+          for (const r of rows) {
+            const t = r.querySelector('.wgt-calt'), x = r.querySelector('.wgt-calx');
+            if (!t || !x) continue;
+            const tr = t.getBoundingClientRect(), xr = x.getBoundingClientRect();
+            // How far the label's own box runs past the start of the swatch beside it.
+            const over = Math.round(tr.right - xr.left);
+            if (over > worst) { worst = over; culprit = t.textContent.trim(); }
+            // …and the text must not be wider than the box that is supposed to hold it, which is
+            // what overflow looks like from the inside when the box itself is not clipping.
+            const spill = Math.round(t.scrollWidth - t.clientWidth);
+            if (spill > 1 && spill > worst) { worst = spill; culprit = t.textContent.trim() + ' (clipped text)'; }
+          }
+          out.calOverlap = worst;
+          out.calOverlapBy = culprit;
+        }
+      }
+
       if (el) {
         const dr = desk.getBoundingClientRect(), r = el.getBoundingClientRect();
         out.widgetInside = (r.right <= dr.right + 2) && (r.bottom <= dr.bottom + 2)
@@ -1579,6 +1645,20 @@ async def drive(url):
                                          "missing from the picker cannot be added at all, and the "
                                          "picker is generated from the registry, so this means the "
                                          f"registry entry is gone: {q.get('widgetTypes')}"))
+                    if q.get("calWidget") and (q.get("calOverlap") or 0) > 0:
+                        problems.append((label, "widget-text-overlap",
+                                         "the Today widget's first column overflows onto the "
+                                         f"calendar colour swatch by {q.get('calOverlap')}px — "
+                                         f"{q.get('calOverlapBy')!r} of {q.get('calLabels')}. That "
+                                         "column holds a TIME on today's rows and a day LABEL "
+                                         "('Tomorrow') under Coming up; a fixed flex:none width "
+                                         "fits one and overflows with the other."))
+                    elif q.get("calWidget") and not any(
+                            l in ("Tomorrow",) for l in (q.get("calLabels") or [])):
+                        # Without a Coming-up row the overlap probe above proved nothing.
+                        problems.append((label, "widget-text-overlap",
+                                         "the Today widget drew no 'Coming up' row, so the column "
+                                         f"that overflows was never exercised: {q.get('calLabels')}"))
                     elif not q.get("widgetPickerOpens") or len(q.get("widgetTypes") or []) < 3:
                         problems.append((label, "widget-picker-empty",
                                          f"the widget picker offered {q.get('widgetTypes')}"))

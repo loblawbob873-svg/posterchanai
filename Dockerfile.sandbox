@@ -5,11 +5,30 @@
 # an nsec is Bech32-encoded but kept feeding it straight to a hex parser instead of running
 # `pip install bech32` itself. Pre-installing it puts the decode library in front of the model.
 #
-# Kept deliberately lean — Debian underneath, so `apt-get`/`pip install` still work for anything else a
-# task needs at runtime. To add a package: add it here and bump the tag (sandbox_service._DEFAULT_IMAGE,
-# schemas.node_exec_sandbox_image, scripts/install/sandbox.sh) so nodes rebuild instead of reusing a
-# stale layer. Current tag: posterchanai-sandbox:2 (added PYTHONPATH + the nostr-post tool).
+# Debian underneath, so `apt-get`/`pip install` still work for anything else a task needs at runtime.
+# To add a package: add it here and bump the tag (sandbox_service._DEFAULT_IMAGE,
+# schemas.node_exec_sandbox_image, scripts/install/sandbox.sh TWO spots) so nodes rebuild instead of
+# reusing a stale layer. Current tag: posterchanai-sandbox:3 (added the check suite's toolchain).
+#
+# :3 makes the sandbox able to RUN ./test.sh — chromium, node and the app's non-AI dependencies.
+# Measured before baking any of it: a bare :2 container CAN fetch the repo from the public mirror
+# with nothing but stdlib and then run the browser checks, but only after ~4 minutes of apt-get and
+# pip on EVERY run, which is longer than the checks themselves. The cost is image size (~1.5GB
+# against ~250MB); the alternative was paying that four minutes every time an agent was asked to
+# test something. Nothing here is AI (no torch, no llama-cpp) — the checks test the client, the
+# routers and the services.
 FROM python:3.12-slim
+
+# chromium: the 20+ browser checks. nodejs: tests/client/ runs the SHIPPED client js under node.
+# ffmpeg + fonts: the media checks, and a browser with no fonts measures the wrong text metrics —
+# which matters here, because several checks assert GEOMETRY.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        chromium fonts-liberation fonts-noto-color-emoji \
+        nodejs \
+        git ffmpeg curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/chromium /usr/local/bin/google-chrome-stable \
+    && ln -sf /usr/bin/chromium /usr/local/bin/google-chrome
 
 # --no-cache-dir keeps the image small; one layer so a rebuild is a single cached step.
 RUN pip install --no-cache-dir \
@@ -17,6 +36,13 @@ RUN pip install --no-cache-dir \
         coincurve \
         websockets \
         requests
+
+# The app's own dependencies, so `pytest tests/` imports rather than skipping half of itself. These
+# are the NOSTR requirements (no AI stack) plus the test tooling — the same pair Dockerfile.test
+# installs, so the two images cannot drift on what a check is allowed to assume.
+COPY requirements-nostr.txt requirements-test.txt /tmp/
+RUN pip install --no-cache-dir -r /tmp/requirements-nostr.txt -r /tmp/requirements-test.txt \
+    && rm -f /tmp/requirements-nostr.txt /tmp/requirements-test.txt
 
 # Make the pre-installed packages importable EVEN INSIDE a venv the agent creates by hand. A fresh
 # `python -m venv` does NOT inherit system site-packages — that is exactly what kept hiding `bech32`

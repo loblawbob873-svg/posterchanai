@@ -434,13 +434,15 @@ class SettingsResponse(BaseModel):
     # in the `docker` group. Off by default.
     node_exec_sandbox_enabled: str = "false"
     node_exec_agent_node: str = ""  # pin ALL sandbox/agentic runs to ONE node (a node name from Agentic Node Management); empty = run on this host. Funnels agentic GPU work through a single worker, serialized by its 1-at-a-time agent lock.
-    # posterchanai-sandbox:2 is BUILT from Dockerfile.sandbox (python:3.12-slim + bech32/coincurve/
+    # posterchanai-sandbox:3 is BUILT from Dockerfile.sandbox (python:3.12-slim + bech32/coincurve/
     # websockets/requests). python:3.12-slim already saved the apt-get-python steps; baking in bech32
     # then removed the recurring nsec-decode failure — the model diagnosed it needed bech32 but would not
     # `pip install` it. :2 adds PYTHONPATH (so the baked libs survive a hand-made venv) + an on-PATH
-    # `nostr-post` tool (zero-dep decode+sign+publish+confirm). Built by install.sh --sandbox and
-    # self-built on first use (sandbox_service).
-    node_exec_sandbox_image: str = "posterchanai-sandbox:2"  # per-user container image (built locally)
+    # `nostr-post` tool (zero-dep decode+sign+publish+confirm). :3 adds the check suite's toolchain
+    # (chromium, node, the app's non-AI deps) so an agent can run ./test.sh in its container without
+    # four minutes of apt-get and pip on every run — see docs/TESTING.md. Built by install.sh
+    # --sandbox and self-built on first use (sandbox_service).
+    node_exec_sandbox_image: str = "posterchanai-sandbox:3"  # per-user container image (built locally)
     node_exec_sandbox_workspace: str = "true"  # persistent /workspace volume per user (survives the
     # throwaway container, so an agent can keep a checkout between runs)
     node_exec_sandbox_network: str = "bridge"  # "bridge" (internet for apt) or "none" (fully isolated)

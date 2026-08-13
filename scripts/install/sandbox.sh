@@ -25,7 +25,7 @@ setup_sandbox() {
     svc_user="${SUDO_USER:-$(whoami)}"
     # Default is the locally-BUILT image (Dockerfile.sandbox). Override with SANDBOX_IMAGE=<registry image>
     # to skip the build and just pull a plain image instead.
-    image="${SANDBOX_IMAGE:-posterchanai-sandbox:2}"
+    image="${SANDBOX_IMAGE:-posterchanai-sandbox:3}"
     repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
     dockerfile="$repo_root/Dockerfile.sandbox"
 
@@ -67,7 +67,7 @@ setup_sandbox() {
     # SANDBOX_IMAGE that is a registry reference is pulled instead. `docker` may need sudo until the
     # group membership from step 3 takes effect on the next login, so try both.
     _dock() { sudo docker "$@" 2>&1 || docker "$@" 2>&1; }
-    if [ "$image" = "posterchanai-sandbox:2" ] && [ -f "$dockerfile" ]; then
+    if [ "$image" = "posterchanai-sandbox:3" ] && [ -f "$dockerfile" ]; then
         echo "   Building the sandbox image ($image) from Dockerfile.sandbox…"
         if _dock build -t "$image" -f "$dockerfile" "$repo_root" >/dev/null; then
             print_success "Built $image"
