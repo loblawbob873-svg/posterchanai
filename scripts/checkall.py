@@ -110,6 +110,7 @@ CHECKS = {
     "check_extension_popup":           dict(group="ui", secs=420),
 
     # --- no browser at all: they read the source / the stylesheet --------------------------------
+    "check_button_themes":             dict(group="ui", secs=420),
     "check_client_icons":              dict(group="ui", secs=180),
     "check_stream_chat":               dict(group="ui", secs=180),
 

@@ -2223,11 +2223,17 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .dm-peer:hover,.dm-peer.active{background:rgba(var(--accent-rgb),.1)}
 .dm-peer img{width:36px;height:36px;border-radius:50%;border:1px solid var(--line)}
 .dm-peer b{font-size:20px}.dm-peer .muted.small{font-size:15px}
-/* "New message" row: the .ic span sits where peer rows show a 36px avatar, so render it as a SOLID
-   cyan disc with a dark ＋ (a clear icon, not a bare character) — without this .ic is unstyled and the
-   button looks like loose text/"no image". */
-#dm-new .ic{flex:none;width:36px;height:36px;border-radius:50%;background:var(--cyan);color:#0a0712;display:inline-flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;line-height:1;box-shadow:0 0 10px rgba(var(--accent-rgb),.4)}
-#dm-new b{color:var(--cyan)}
+/* NOTHING HERE STYLES #dm-new's INSIDES, and that is the fix rather than an omission.
+   These two rules described markup that no longer exists. "New message" used to be a ROW in the
+   peer list, where its .ic sat in the 36px slot the other rows fill with an avatar — so it was
+   painted as a solid --cyan disc to keep the column aligned, and its label was a <b> tinted to
+   match. It is now a pill BUTTON in the header (`btn btn-neon small dm-newbtn`) with an inline
+   `svg.ic.b-ic` and a bare text label: no avatar column to line up with, and no <b> at all.
+   The disc survived the move and became a 36px cyan circle inside a 42px themed pill — the one
+   element on the button that ignored the theme entirely, which is exactly how it was reported
+   ("there is cyan still in the Messages New button on professional", whose accent is blue).
+   With the rules gone, `.b-ic` sizes the glyph and it inherits .btn-neon's white — the same
+   contract every other primary button in the app is already built on, on every theme. */
 .dm-thread{display:flex;flex-direction:column;height:100%;min-height:0}
 /* When the feed holds the DM thread, the feed must NOT scroll too — otherwise the unsquished
    (flex:none) bubbles overflow and the inner .dm-msgs never gets to scroll. Make .dm-msgs the
