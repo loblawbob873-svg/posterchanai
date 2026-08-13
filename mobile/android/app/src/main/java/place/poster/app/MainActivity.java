@@ -6,12 +6,15 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebView;
 import android.widget.Toast;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.WebViewListener;
 
+import place.poster.app.gamepad.GamepadPlugin;
 import place.poster.app.nip55.Nip55Plugin;
 import place.poster.app.screenshare.ScreenSharePlugin;
 import place.poster.app.share.ShareTargetPlugin;
@@ -44,6 +47,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(place.poster.app.call.CallPlugin.class);
         registerPlugin(place.poster.app.calendar.CalendarPlugin.class);
         registerPlugin(place.poster.app.sync.FolderSyncPlugin.class);
+        registerPlugin(place.poster.app.gamepad.GamepadPlugin.class);
         registerPlugin(place.poster.app.contacts.ContactSyncPlugin.class);
         if (isSend(getIntent())) shareNonce++;   // cold-started BY a share
         super.onCreate(savedInstanceState);
@@ -143,5 +147,29 @@ public class MainActivity extends BridgeActivity {
         setIntent(intent);
         if (isSend(intent)) shareNonce++;   // a genuinely new share → new nonce
         super.onNewIntent(intent);
+    }
+
+    /* THE CONTROLLER'S WAY IN, and the reason it needs one: a webxdc game driven by a Bluetooth pad
+     * works in Firefox on the same tablet and does nothing in this app. The Gamepad API's platform
+     * data on Android is fed from generic-motion and key events routed through the content view, and
+     * those events arrive HERE first — at the Activity — whether or not the WebView ever makes
+     * anything of them. Forwarding is therefore the one thing this side can do that settles it.
+     *
+     * Both overrides observe and then fall through to super, so nothing that already worked changes:
+     * if the WebView does deliver gamepads to the page, the page prefers the real ones and these
+     * events are simply counted. The exception is a CONSUMED key — GamepadPlugin.onKey returns true
+     * only for a controller button, and swallowing those is deliberate: an unconsumed KEYCODE_DPAD_*
+     * moves Android's focus between views, so pressing "up" in a game would walk the focus ring
+     * around the page instead. Ordinary keyboard input is never claimed, because it never matches. */
+    @Override
+    public boolean dispatchGenericMotionEvent(MotionEvent ev) {
+        try { GamepadPlugin.onMotion(ev); } catch (Throwable t) { /* never break input */ }
+        return super.dispatchGenericMotionEvent(ev);
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent ev) {
+        try { if (GamepadPlugin.onKey(ev)) return true; } catch (Throwable t) { /* never break input */ }
+        return super.dispatchKeyEvent(ev);
     }
 }

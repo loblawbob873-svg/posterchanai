@@ -329,6 +329,11 @@
      * It speaks JSON-RPC to `parent` — the sandbox loader — which forwards to this document. */
     const BRIDGE = `(function(){
   var nextId = 1, pending = {}, listener = null, ready = null, rtListener = null;
+  /* A controller read by ANDROID and handed in, for the engine that will not hand one to the page.
+     Same shape as a Gamepad (standard-mapping buttons + axes) so the shim below cannot tell the
+     difference; 'padAt' is what makes a stale one fall back to the real API rather than pinning the
+     player to the last state a dying bridge sent. */
+  var padNative = null, padAt = 0;
   /* SHARED-ORIGIN STORAGE, NAMESPACED. Every app on this instance runs on one sandbox origin (see
      sandboxOrigin), so two games that both keep their save under "state" would overwrite each
      other. Keys are prefixed per app. This is a COLLISION guard, not a security boundary — the real
@@ -388,6 +393,10 @@
     }
     if(d.method === 'webxdc.realtime' && rtListener){
       try{ rtListener(unb64(d.params && d.params.b64)); }catch(e){}
+    }
+    if(d.method === 'webxdc.padstate'){
+      padNative = d.params || null;
+      padAt = Date.now();
     }
   });
   function b64(bytes){
@@ -585,8 +594,22 @@
       // A backgrounded app must not be left holding a key: it would still be walking into a wall
       // when whoever put the phone down comes back.
       if(document.hidden){ release(); return; }
-      var pads = poll() || [], p = null, i;
-      for(i = 0; i < pads.length; i++) if(pads[i] && pads[i].connected){ p = pads[i]; break; }
+      /* NATIVE FIRST, then the real API. In the APK the WebView hands the page no gamepad at all —
+         the same game with the same pad on the same tablet works in Firefox and does nothing here —
+         so Android reads the controller and passes it in (see GamepadPlugin). A snapshot older than
+         a second is treated as gone, or a bridge that stops reporting would pin the player to
+         whatever it last said. When both exist the native one wins simply because it is the one
+         proven to arrive; they carry identical shapes, so nothing below can tell. */
+      var p = null, i;
+      if(padNative && (Date.now() - padAt) < 1000){
+        p = { buttons: padNative.buttons || [], axes: padNative.axes || [],
+              id: padNative.id || 'native', mapping: 'standard', connected: true };
+        stat.src = 'native';
+      }else{
+        var pads = poll() || [];
+        for(i = 0; i < pads.length; i++) if(pads[i] && pads[i].connected){ p = pads[i]; break; }
+        stat.src = p ? 'webapi' : 'none';
+      }
       stat.pads = p ? 1 : 0;
       if(!p){ release(); return; }
       if(!stat.id) stat.id = String(p.id || '').slice(0, 60) + ' [' + (p.mapping || 'no mapping') + ']';
@@ -1688,6 +1711,30 @@
                         pad: (on) => { try{ localStorage.setItem('pc_xdc_pad', on === false ? '0' : '1'); }catch(e){}
                                        return on !== false; },
                         MIME, KIND_UPDATE, Session };
+
+    /* THE APK'S CONTROLLER, PATCHED IN FROM ANDROID.
+     *
+     * Measured: the same webxdc game, the same pad, the same tablet — works in Firefox, dead in the
+     * app. The engine is the only variable, and a WebView embedded in someone else's Activity is not
+     * on anyone's list of Gamepad API implementers. So GamepadPlugin reads the controller natively
+     * and this forwards each snapshot into whichever mini app is open; the shim inside the app frame
+     * prefers it over navigator.getGamepads(). On every other platform this listener finds no plugin
+     * and nothing changes — a real pad keeps being read the ordinary way.
+     *
+     * Broadcast to every live session rather than to a tracked "current" one: only one game is on
+     * screen at a time, a backgrounded session ignores it anyway (the shim releases on hidden), and
+     * a stale idea of which is current is a controller that stops working after the second game. */
+    try{
+      const GP = PC.capPlugin && PC.capPlugin('Gamepad', 'status');
+      if(GP && GP.addListener){
+        GP.addListener('padstate', (st) => {
+          for(const s of _live.values()){
+            if(s && !s.dead) try{ s.post({ jsonrpc:'2.0', method:'webxdc.padstate', params:st }); }catch(e){}
+          }
+        });
+        window.PCWebxdc.padNative = () => GP.status();   // what ANDROID measured, vs padStats()'s page view
+      }
+    }catch(e){}
   }
   init();
 })();

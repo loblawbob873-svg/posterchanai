@@ -72,7 +72,10 @@ SYSTEM = (
     "hostnames, file paths, CLI commands, or anything inside backticks.\n"
     "6. These are BUTTONS and LABELS. Keep them short — a translation twice the length of the "
     "English breaks the layout. Prefer the wording a native speaker would meet in an app.\n"
-    "7. If a string is a sentence fragment, translate it as a fragment; do not complete it."
+    "7. If a string is a sentence fragment, translate it as a fragment; do not complete it.\n"
+    "8. Answer ONLY in {lang}. Some strings NAME a language ('Vietnamese', 'Arabic', 'Japanese') "
+    "because this app has a language menu — translate the NAME into {lang}. Never switch your "
+    "output language to match a language mentioned in the text."
 )
 
 
@@ -104,7 +107,36 @@ def parse_obj(text: str) -> dict:
     return json.loads(t[i : j + 1])
 
 
-def acceptable(src: str, dst: str) -> bool:
+# The script each language is actually written in. A translation that carries Latin WORDS and none
+# of its target script is either untranslated or in the wrong language entirely.
+SCRIPT = {
+    "ar": re.compile(r"[؀-ۿݐ-ݿ]"),
+    "ja": re.compile(r"[぀-ヿ㐀-䶿一-鿿ｦ-ﾟ]"),
+}
+LATIN_WORD = re.compile(r"[A-Za-zÀ-ỹ]{2,}")
+
+
+def acceptable(src: str, dst: str, lang: str = "") -> bool:
+    """…and the check that a translation is in the LANGUAGE THAT WAS ASKED FOR.
+
+    Measured, not anticipated: the Japanese catalogue came back with a run of Vietnamese in it —
+    "View on GitHub" as "Xem trên GitHub", "VRAM Mode" as "Chế độ VRAM". The cause is visible in the
+    alphabetical ordering of the batches: this app has a language list, so one batch contained the
+    string "Vietnamese", and the model took it as an instruction and switched output language for
+    everything after it. 37 of 3,469 entries, every one of them fluent, confident and wrong — and
+    invisible to an acceptance-rate check, which counted them as successes.
+
+    Rejecting is the right response rather than repairing: an unaccepted string stays in the todo
+    list and is retried on the next run, and if it never lands it falls back to English, which is the
+    graceful failure this whole design rests on.
+    """
+    rx = SCRIPT.get(lang)
+    if rx and dst.strip() != src.strip() and LATIN_WORD.search(dst) and not rx.search(dst):
+        return False
+    return _shape_ok(src, dst)
+
+
+def _shape_ok(src: str, dst: str) -> bool:
     if not isinstance(dst, str) or not dst.strip():
         return False
     # Entities must survive exactly — a mangled one renders as literal text mid-sentence.
@@ -200,7 +232,7 @@ def translate_batch(model: str, lang: str, batch: list[str]) -> dict:
             # Legitimate for a proper noun ("Nostr"), so it is counted rather than rejected — an
             # ECHOED BATCH is the failure, not an untranslated string.
             echoed += 1
-        if acceptable(english, restored):
+        if acceptable(english, restored, lang):
             out[english] = restored
     if out and echoed == len(out) and len(out) > 2:
         print(f"    batch came back identical to the input ({echoed}) — treating as an echo", flush=True)
@@ -214,6 +246,9 @@ def main() -> int:
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--batch", type=int, default=25, help="strings per request")
     ap.add_argument("--redo", action="store_true", help="discard existing translations")
+    ap.add_argument("--verify", action="store_true",
+                    help="re-check the existing catalogue and DROP entries that fail validation, "
+                         "so a later run retranslates them. Use after tightening a rule.")
     args = ap.parse_args()
 
     src_path = I18N / "en.json"
@@ -229,6 +264,18 @@ def main() -> int:
             have = json.load(out_path.open())
         except json.JSONDecodeError:
             have = {}
+
+    if args.verify:
+        # A validation rule is only worth tightening if it can be applied to what was already
+        # written — otherwise the bad entries from before the rule stay for ever, and they are
+        # exactly the ones nobody will notice, because they are fluent.
+        bad = {k: v for k, v in have.items() if k in english and not acceptable(k, v, args.lang)}
+        for k in bad:
+            del have[k]
+        out_path.write_text(json.dumps(have, ensure_ascii=False, indent=1, sort_keys=True) + "\n")
+        print(f"{args.lang}: dropped {len(bad)} entries that fail the current rules")
+        for k, v in list(bad.items())[:10]:
+            print(f"    {k[:40]!r:44} -> {str(v)[:40]!r}")
 
     todo = [s for s in english if s not in have]
     # Technical tokens are answered here rather than by the model — see the header.

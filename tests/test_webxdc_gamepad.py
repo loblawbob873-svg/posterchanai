@@ -75,6 +75,10 @@ global.__XDC = { pad: PAD_ENABLED };
 // object made every recorded sample read as the LAST one — the test equivalent of the reference bug
 // the music panel hit, and it would have hidden exactly the transitions this is here to check.
 global.send = (m) => { if(m && m.method === 'webxdc.padstat') padstats.push(JSON.parse(JSON.stringify(m.params))); };
+// Bridge-scope state the shim reads: a controller Android handed in. Declared here because the test
+// extracts the shim IIFE alone, while in the real bridge these live one scope up.
+global.padNative = null;
+global.padAt = 0;
 let statFn = null;
 global.setInterval = (fn) => { statFn = fn; return 0; };
 let pending = null;
@@ -130,6 +134,8 @@ for(const s of steps){
   if(s.pads !== undefined) pads = s.pads.map(p => p && ({ connected:true, mapping:'standard',
       buttons:(p.buttons || []).map(v => ({ pressed: v > 0.5, value:v })), axes:p.axes || [] }));
   if(s.hidden !== undefined) document.hidden = s.hidden;
+  if(s.native !== undefined){ padNative = s.native; padAt = s.native ? Date.now() : 0; }
+  if(s.nativeStale){ padAt = Date.now() - 5000; }
   if(s.focus !== undefined) document.activeElement = s.focus === 'body' ? bodyEl : null;
   if(s.emit) emit(s.emit);
   if(s.appPolls) appGetGamepads();
@@ -313,6 +319,39 @@ class WebxdcGamepadShim(unittest.TestCase):
         bridge = whole[whole.index("const BRIDGE = `"):whole.index("})();`")]
         self.assertIn(START, bridge)
 
+
+    def test_a_controller_handed_in_by_android_drives_the_game(self):
+        """THE APK CASE. The same game, pad and tablet works in Firefox and does nothing in the app —
+        one variable, the engine. Rather than keep trying to settle whether WebView implements the
+        Gamepad API, Android reads the controller and hands a Gamepad-shaped snapshot in. No pad is
+        visible to navigator.getGamepads() in this test at all, which is exactly the APK's situation."""
+        out = run([
+            {"pads": [], "native": {"buttons": [0]*12 + [1, 0, 0, 0], "axes": [0, 0, 0, 0]},
+             "frames": 2, "record": "keys", "recordStat": "stat"},
+        ])
+        self.assertEqual(sorted(self.codes(out["keys"], "keydown")), ["ArrowUp", "KeyW"])
+        self.assertEqual(out["stat"]["src"], "native")
+
+    def test_a_stale_native_pad_is_not_believed(self):
+        """A bridge that stops reporting must not pin the player to the last thing it said — holding
+        'up' for ever is worse than losing the controller, because it is indistinguishable from the
+        game being stuck."""
+        out = run([
+            {"pads": [], "native": {"buttons": [0]*12 + [1, 0, 0, 0], "axes": [0, 0, 0, 0]},
+             "frames": 2, "drain": True},
+            {"nativeStale": True, "frames": 2, "record": "after", "recordStat": "stat"},
+        ])
+        self.assertEqual(sorted(self.codes(out["after"], "keyup")), ["ArrowUp", "KeyW"])
+        self.assertEqual(out["stat"]["src"], "none")
+
+    def test_a_real_gamepad_still_works_when_no_native_one_is_handed_in(self):
+        """Firefox and the desktop already work; the native path must not regress them."""
+        out = run([
+            {"pads": [pad(buttons=[A_BTN])], "native": None, "frames": 2,
+             "record": "keys", "recordStat": "stat"},
+        ])
+        self.assertEqual(self.codes(out["keys"], "keydown"), ["Space"])
+        self.assertEqual(out["stat"]["src"], "webapi")
 
 if __name__ == "__main__":
     unittest.main()
