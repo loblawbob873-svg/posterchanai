@@ -15240,6 +15240,8 @@
             + (s.stayConnected ? 'Bluetooth autoplay IS armed via “stay connected”'
                                : 'and “stay connected” is OFF, so nothing is listening for your car')
             + ' · bluetooth '+(s.btConnects||0)+' connect/s, '+(s.btAutoplays||0)+' autoplay/s'
+            + ' · listener '+(s.listening?'armed':'NOT ARMED')+', '+(s.audioEvents||0)+' audio-device event/s'
+            + (s.lastDevices ? ' (last types: '+s.lastDevices+')' : '')
             + ((s.btRefused||0) ? ', '+s.btRefused+' refused by Android' : '')
             + ((s.blocked||0) ? ' · '+s.blocked+' playback(s) REFUSED by the WebView (no user gesture)' : '')
             + (s.note ? ' · last: '+s.note : '');

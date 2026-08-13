@@ -182,6 +182,12 @@ public class MusicPlugin extends Plugin {
     /* A play() the page could not start — the difference between "the car was never seen"
      * and "everything worked and the WebView said no", which look identical from a seat. */
     r.put("blocked", MusicService.blocked);
+    /* Every audio-device arrival, whether or not it looked like Bluetooth, plus whether the
+     * listener registration actually took and what device types were delivered. Without these a
+     * zero in btConnects answers two different questions with one number. */
+    r.put("audioEvents", MusicService.audioEvents);
+    r.put("listening", MusicService.listening);
+    r.put("lastDevices", MusicService.lastDevices);
     /* Autoplay with the app CLOSED rides StayAwakeService, so the panel has to be able to say when
      * the listener is simply not there — otherwise "stay connected is off" reads as a broken car. */
     r.put("stayConnected", place.poster.app.push.StayAwakeService.running);

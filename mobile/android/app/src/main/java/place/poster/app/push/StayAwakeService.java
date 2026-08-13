@@ -85,6 +85,19 @@ public class StayAwakeService extends Service {
    */
   private final AudioDeviceCallback deviceCb = new AudioDeviceCallback() {
     @Override public void onAudioDevicesAdded(AudioDeviceInfo[] added) {
+      /* RECORDED BEFORE ANY TEST, including the first sweep. `btConnects` counts Bluetooth matches,
+       * so a zero there cannot distinguish "this never fired" from "it fired and nothing matched" —
+       * measured in a real car as `bluetooth 0 connect/s` with the listener confirmed armed, which
+       * left both possibilities open and no way to choose but to guess. */
+      StringBuilder types = new StringBuilder();
+      if (added != null) {
+        for (AudioDeviceInfo d : added) {
+          if (d == null) continue;
+          if (types.length() > 0) types.append(',');
+          types.append(d.getType()).append(d.isSink() ? "" : "(src)");
+        }
+      }
+      MusicService.onAudioDevicesSeen(types.length() == 0 ? "none" : types.toString());
       if (firstDeviceSweep) { firstDeviceSweep = false; return; }
       if (added == null) return;
       for (AudioDeviceInfo d : added) {
@@ -138,7 +151,11 @@ public class StayAwakeService extends Service {
         if (am != null) {
           // Main looper: a car connecting is not a hot path, and MusicService's own callback runs
           // there too, so the two can never race over the same debounce.
-          try { am.registerAudioDeviceCallback(deviceCb, handler); audioCbOn = true; } catch (Exception ignored) {}
+          // …and say whether it took. A registration that threw left `stayConnected: true` beside a
+          // listener that does not exist — the panel then reports the service, not the listener.
+          try { am.registerAudioDeviceCallback(deviceCb, handler); audioCbOn = true; }
+          catch (Exception ignored) {}
+          MusicService.setListening(audioCbOn);
         }
       }
     } catch (Throwable t) {

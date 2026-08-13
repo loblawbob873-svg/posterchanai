@@ -210,6 +210,27 @@ public class MusicService extends Service {
    *  the same reason the counters are: the case it explains ends with nothing running. */
   static volatile int blocked = 0;
 
+  /* WHY THESE EXIST, and the mistake they correct. `btConnects` counts Bluetooth MATCHES, so a zero
+   * there answers two completely different questions with the same number: the audio callback never
+   * fired, or it fired and nothing in it looked like a Bluetooth sink. Measured in a car with the
+   * listener confirmed armed — `bluetooth 0 connect/s` — and there was no way to tell which, so the
+   * next step would have been a guess and another build.
+   *
+   * `audioEvents` counts EVERY onAudioDevicesAdded, matched or not. `listening` says whether the
+   * registration itself succeeded. `lastDevices` records the device types actually delivered, which
+   * is the only thing that can say "the car arrived as a type this code does not recognise". */
+  static volatile int audioEvents = 0;
+  static volatile boolean listening = false;
+  static volatile String lastDevices = "";
+
+  /** Every audio-device arrival, before any Bluetooth test. Types are recorded verbatim. */
+  public static void onAudioDevicesSeen(String types) {
+    audioEvents++;
+    lastDevices = types == null ? "" : types;
+  }
+
+  public static void setListening(boolean on) { listening = on; }
+
   /** The page could not start playback — recorded, never toasted (nobody is looking at a phone in a
    *  car). `NotAllowedError` here means the WebView's autoplay policy refused a play() that no tap
    *  asked for, which is the difference between "frozen" and "never tried". */
