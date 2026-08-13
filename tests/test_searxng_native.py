@@ -22,6 +22,7 @@ tested (it is a packaging choice), but every consequence of the move is:
   it off every search here is a 403 with an HTML body that each caller reads as "no results". A node
   with the package and no settings.yml is not a working instance and must not be advertised as one.
 """
+import ipaddress
 import logging
 import os
 import unittest
@@ -54,9 +55,32 @@ class GateTests(unittest.TestCase):
         a server that passes them through verbatim would walk straight past a `==` on the raw bytes."""
         self.assertFalse(N.request_is_local(_scope(headers=[(b"X-Forwarded-For", b"203.0.113.9")])))
 
-    def test_a_remote_peer_is_refused(self):
-        for peer in ("192.168.0.9", "10.0.0.4", "203.0.113.9", ""):
-            self.assertFalse(N.request_is_local(_scope(peer)))
+    def test_a_public_peer_is_refused(self):
+        """The app binds 0.0.0.0, so this is the shape of a request that reached :3051 straight off
+        the internet.
+
+        NOT 203.0.113.x, the conventional "example public address" — Python's ipaddress calls
+        TEST-NET-3 **private** (it is not globally reachable), so a test written with it asserts the
+        opposite of what it reads as, and passes for the wrong reason. This one caught it.
+        """
+        for peer in ("8.8.8.8", "1.1.1.1", "2606:4700::1111", "", "not-an-ip"):
+            self.assertFalse(N.request_is_local(_scope(peer)), f"{peer!r} must not be served")
+        self.assertTrue(ipaddress.ip_address("203.0.113.9").is_private,
+                        "if this ever becomes False, the docstring above needs revisiting")
+
+    def test_a_LAN_peer_is_allowed_because_loopback_is_not_observable_here(self):
+        """MEASURED on server1: `curl http://127.0.0.1:3051` arrives with a peer of 192.168.0.2, the
+        box's own LAN address — the same thing the live-stream clamp documents ("never authorize the
+        clamp's publish by IP"). Written as loopback-only, this refused EVERY request on that node
+        and the fallback was silently unreachable on the node most likely to need it."""
+        for peer in ("192.168.0.2", "10.0.0.4", "172.16.5.5", "fd00::1"):
+            self.assertTrue(N.request_is_local(_scope(peer)), f"{peer!r} is this LAN")
+
+    def test_a_LAN_peer_WITH_a_forwarded_header_is_still_refused(self):
+        """Which is the whole reason the header check carries the weight: once the address floor
+        admits the LAN, the header is the only thing left that says "this came off the wire"."""
+        self.assertFalse(N.request_is_local(
+            _scope("192.168.0.2", [(b"x-forwarded-for", b"203.0.113.9")])))
 
     def test_a_scope_with_no_client_is_refused(self):
         self.assertFalse(N.request_is_local({"type": "http", "headers": []}))

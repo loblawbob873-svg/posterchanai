@@ -63,8 +63,10 @@ served from.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
+import tempfile
 import threading
 from importlib.util import find_spec
 from pathlib import Path
@@ -128,18 +130,43 @@ def request_is_local(scope) -> bool:
     runs its own) — so unguarded it would be an open metasearch proxy making outbound requests on
     demand with this node's IP on them.
 
-    BOTH conditions, and the second is the one that is easy to miss: behind nginx the peer IS
-    127.0.0.1, so a loopback check alone admits the entire internet on every node with a reverse
-    proxy in front of it — which is every node that serves the client over TLS. A forwarded-for
-    header is what separates this app's own subprocesses from traffic that came in off the wire.
+    THE HEADER IS THE REAL GATE; THE ADDRESS IS ONLY A FLOOR. Behind nginx the peer is a local
+    address for internet traffic too, so no address test can separate the two — a forwarded-for
+    header is what does, and every reverse proxy in front of this app sets one.
+
+    AND "LOOPBACK" IS NOT OBSERVABLE ON EVERY NODE. Measured on server1: `curl http://127.0.0.1:3051`
+    reaches the app with a peer address of **192.168.0.2**, the box's own LAN IP. That is the same
+    trap the live-stream clamp already hit and documented ("never authorize the clamp's publish by IP
+    — MediaMTX reports a LAN address for a connection made to a 127.0.0.1-bound listener"), and
+    written as a loopback-only test this refused every request on that node — the fallback silently
+    unreachable on the node most likely to need it. So the floor is loopback OR private, which is
+    what "this machine or this LAN" actually looks like from inside the app.
+
+    That floor is not doing nothing: it still refuses a public peer, which is the shape of a request
+    that reached :3051 directly from the internet (the app binds 0.0.0.0). What it no longer claims
+    is the ability to tell a loopback client from a LAN one, because on this deployment it cannot.
     """
     peer = (scope.get("client") or ("", 0))[0]
-    if peer not in ("127.0.0.1", "::1", "localhost"):
+    if not _is_private_peer(peer):
         return False
     for name, _value in scope.get("headers") or []:
         if name.lower() in (b"x-forwarded-for", b"x-real-ip", b"x-forwarded-host", b"forwarded"):
             return False
     return True
+
+
+def _is_private_peer(peer: str) -> bool:
+    """Is this address this machine or this LAN? An unparseable or empty address is never private."""
+    peer = (peer or "").strip()
+    if not peer:
+        return False
+    if peer == "localhost":
+        return True
+    try:
+        ip = ipaddress.ip_address(peer)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_private or ip.is_link_local
 
 
 def _import():
@@ -154,12 +181,44 @@ def _import():
     os.environ.setdefault("SEARXNG_SETTINGS_PATH", str(settings_path()))
     root = logging.getLogger()
     level, handlers = root.level, list(root.handlers)
+    tmp = tempfile.tempdir
     try:
+        tempfile.tempdir = _cache_dir() or tmp
         import searx.webapp as webapp  # noqa: PLC0415 — deliberately lazy; see the module docstring
         return webapp.app
     finally:
+        tempfile.tempdir = tmp
         root.setLevel(level)
         root.handlers[:] = handlers
+
+
+def _cache_dir():
+    """Where SearXNG's SQLite caches go — beside its settings, never in /tmp. None if unusable.
+
+    SearXNG has no cache_dir setting: `ExpireCacheCfg` and the favicon cache take
+    `tempfile.gettempdir()` as their default db path, and they do it AT IMPORT TIME, which is why
+    this is set around the import and put straight back (the rest of the app keeps the real /tmp).
+
+    TWO measured reasons, either one sufficient:
+
+      * /tmp CARRIES THE RETIRED CONTAINER'S FILES. It ran --network host with no private tmp, so it
+        wrote /tmp/sxng_cache_*.db as uid 977 (`searxng`). The app runs as the service user, so after
+        the cutover the very first search in-process died on `attempt to write a readonly database` —
+        a SearXNG that imports, reports itself available, and cannot answer. Found on nas within
+        minutes of the deploy, and it would have outlived the container by however long /tmp does.
+      * /tmp IS A tmpfs ON THIS DEPLOYMENT (server1, and no swap), so these files are RAM that
+        free/MemAvailable do not report as reclaimable. The unit already avoids that with TMPDIR;
+        this is the same fix for the in-process copy, and it also means the 7-day engine cache
+        survives a restart instead of being rebuilt by the next search.
+    """
+    try:
+        d = settings_path().parent / "cache"
+        d.mkdir(parents=True, exist_ok=True)
+        if not os.access(d, os.W_OK):
+            return None
+        return str(d)
+    except Exception:                       # unwritable config dir: /tmp beats not starting
+        return None
 
 
 def wsgi_app():
