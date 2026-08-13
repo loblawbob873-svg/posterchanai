@@ -194,6 +194,33 @@ async def _exists(name: str) -> bool:
     return rc == 0 and name in out.split()
 
 
+async def _container_image(name: str) -> str:
+    """What image this container was actually CREATED from — which is not the same question as what
+    `_image()` says it should be."""
+    rc, out = await _docker("inspect", "-f", "{{.Config.Image}}", name, timeout=15)
+    return out.strip() if rc == 0 else ""
+
+
+async def _stale_image(name: str) -> bool:
+    """A CONTAINER OUTLIVES THE IMAGE IT WAS MADE FROM, and nothing here used to notice.
+
+    `ensure()` asked only whether a container of this name exists, so the first one a user ever got
+    was reused for the life of that user — a box created back when the default was `debian:stable-slim`
+    was still being handed out long after the default became a purpose-built image. Bumping the tag,
+    or setting `node_exec_sandbox_image`, changed nothing for anybody who had already run one command,
+    which is everybody. The symptom is whatever the new image added being MISSING: `git: command not
+    found` in a container that is supposed to have git, with the setting plainly reading :3.
+
+    Compared as written, not resolved through the daemon: an image reference is what `docker run` was
+    given, and that is the string we want to know has changed. An unreadable answer is NOT treated as
+    stale — failing to inspect must never become a reason to destroy somebody's container.
+    """
+    if not _is_builtin_image(_image()):
+        return False                      # a registry image can be re-pulled/re-tagged; not our call
+    was = await _container_image(name)
+    return bool(was) and was != _image()
+
+
 async def ensure(uid) -> str:
     """Create + start this user's container if it isn't already running; return its name. Called lazily
     by the first command. `_last_use` is stamped BEFORE `docker run` so the container is 'tracked' the
@@ -203,6 +230,15 @@ async def ensure(uid) -> str:
     name = container_name(uid)
     _last_use[key] = time.time()          # atomic; track immediately so the reaper/orphan-sweep never grabs it
     async with _lock_for(uid):
+        # Replace a container built from a DIFFERENT image before deciding it is reusable. Only while
+        # nothing is running in it — a refcount above zero means somebody's command is mid-flight, and
+        # pulling the box out from under it is worse than one more run on the old image (the next
+        # idle run picks it up). The workspace is a named volume, so a replaced container comes back
+        # to the same files.
+        if int(_active.get(key, 0)) == 0 and await _exists(name) and await _stale_image(name):
+            logger.info("[sandbox] %s was built from %r, image is now %r — recreating",
+                        name, await _container_image(name), _image())
+            await _docker("rm", "-f", name, timeout=60)
         if not await _running(name):
             if await _exists(name):
                 await _docker("start", name, timeout=30)
