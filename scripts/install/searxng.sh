@@ -73,12 +73,22 @@ setup_searxng() {
         return 1
     fi
 
-    mkdir -p "$conf_dir/brand" "$conf_dir/cache"
-    # Historical: the container chowned this directory to its own user (uid 977) on every start, so
-    # from the second run onward this script could not write its own files. Nodes upgrading from that
-    # still have those permissions, and the failure is a stray traceback in the middle of an
-    # installer that then reports success.
-    if [ ! -w "$conf_dir" ] || { [ -e "$conf_dir/settings.yml" ] && [ ! -w "$conf_dir/settings.yml" ]; }; then
+    # OWNERSHIP FIRST, THEN mkdir — in that order, which is not the obvious one and was measured the
+    # hard way on the first node upgraded: the container chowned this directory to its own user
+    # (uid 977) on every start, so on any node that ever ran it, even `mkdir -p` fails here. Written
+    # the other way round the installer dies at its first line with a bare "Permission denied" and
+    # never reaches the repair that exists for exactly this.
+    if [ -d "$conf_dir" ] && [ ! -w "$conf_dir" ]; then
+        sudo chown -R "$(id -u):$(id -g)" "$conf_dir" 2>/dev/null || true
+    fi
+    mkdir -p "$conf_dir/brand" "$conf_dir/cache" || {
+        print_error "cannot write $conf_dir" 2>/dev/null || echo "ERROR: cannot write $conf_dir"
+        echo "  sudo chown -R $(id -un) $conf_dir"
+        return 1
+    }
+    # The FILES too, not just the directory: a writable dir with a root-owned settings.yml in it is
+    # the shape that lets the installer report success having refreshed nothing.
+    if [ -e "$conf_dir/settings.yml" ] && [ ! -w "$conf_dir/settings.yml" ]; then
         sudo chown -R "$(id -u):$(id -g)" "$conf_dir" 2>/dev/null || true
     fi
 
