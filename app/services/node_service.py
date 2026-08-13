@@ -410,6 +410,54 @@ async def await_job(job: Job, wait: float = 8.0) -> Job:
     return job
 
 
+# How often a still-running agent step says so. 30s is short enough that a human does not conclude
+# the thing is dead, long enough that a 15-minute command posts ~30 lines rather than a scroll.
+_STEP_PING_SECONDS = 30.0
+
+
+async def _run_step_with_progress(db: Session, node: str, target: str, command: str,
+                                  user: "User", notify: Optional[Callable],
+                                  timeout: Optional[float]) -> Job:
+    """Run one agent step, saying so while it runs.
+
+    WHY THIS IS NOT JUST run_to_completion. The agent notifies on each COMPLETED step, so a command
+    that takes ten minutes shows the user nothing for ten minutes — and silence is indistinguishable
+    from a hang. The documented check-suite run was reported as "hung at the git clone step" twice
+    while it was working normally (the clone had finished in five seconds; pytest was running). Both
+    times the run was cancelled a few minutes into a command that would have succeeded.
+
+    The output itself cannot be streamed usefully: `./test.sh --brief` deliberately prints one block
+    at the very end, so there is nothing to show until it finishes. What CAN be shown is that the
+    step is alive and how long it has been going — plus the last line of whatever it has emitted,
+    which is exactly why checkall's --brief now writes a per-suite heartbeat to stderr (jobs run with
+    stderr=STDOUT, so it lands in job.output as it happens).
+
+    Ping only; the completed-step message is unchanged, so nothing here alters what the model sees.
+    """
+    job = start_job(db, node, target, command, user_id=user.id, timeout=timeout)
+    waited = 0.0
+    while True:
+        await await_job(job, wait=_STEP_PING_SECONDS)
+        if job.status != "running":
+            return job
+        waited += _STEP_PING_SECONDS
+        if notify is None:
+            continue
+        # The last non-blank line of what it has produced so far — a checkall heartbeat when there is
+        # one, otherwise whatever the command last said. Never the whole tail: this fires repeatedly.
+        last = ""
+        for line in reversed((job.output or "").splitlines()):
+            if line.strip():
+                last = line.strip()[:120]
+                break
+        mins = waited / 60.0
+        try:
+            await notify(f"⏳ still running ({mins:.0f}m) — `{command[:60]}`"
+                         + (f"\n   {last}" if last else ""))
+        except Exception:
+            pass                       # a failed progress ping must never kill the step
+
+
 async def run_to_completion(db: Session, node: str, target: str, command: str,
                             user_id: Optional[int] = None, timeout=_USE_JOB_TIMEOUT) -> Job:
     """Start a job and wait for it to fully finish (respecting the configured/overridden timeout)."""
@@ -1101,8 +1149,8 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                     transcript.append(f"\n**⏹️ Stopped:** {_msg}{_footer()}")
                     return "\n".join(transcript)
                 # Bounded per-step: an unbounded command would deadlock the agent + caller.
-                job = await run_to_completion(db, node, target, cmd, user_id=user.id,
-                                              timeout=_agent_step_timeout(db))
+                job = await _run_step_with_progress(db, node, target, cmd, user, notify,
+                                                    _agent_step_timeout(db))
                 out = job.output.strip() or "(no output)"
                 # Emit each COMPLETED step (command + output) via `notify`. For a node-agent run the web
                 # notify PERSISTS each of these to the relay as its own chat message (like a DM), so leaving

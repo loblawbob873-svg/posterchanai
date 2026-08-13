@@ -82,5 +82,59 @@ class AdminFieldTests(unittest.TestCase):
         self.assertEqual(ids, names, "id and name must be the same key")
 
 
+
+class StepProgressTests(unittest.IsolatedAsyncioTestCase):
+    """A long step has to SAY it is alive.
+
+    The agent notifies on completed steps only, so a ten-minute command showed the user nothing for
+    ten minutes — and silence is indistinguishable from a hang. The documented check-suite run was
+    reported as "hung at the git clone step" twice and cancelled both times, while it was working
+    normally (the clone had finished in 5s; pytest was running). Nothing was broken except what the
+    user could see.
+    """
+
+    async def test_a_long_step_pings_while_it_runs(self):
+        pings = []
+
+        async def notify(msg):
+            pings.append(str(msg))
+
+        with mock.patch.object(N, "_STEP_PING_SECONDS", 0.3):
+            job = await N._run_step_with_progress(
+                mock.MagicMock(), "local", "local",
+                "echo first-line; sleep 1.2; echo done", mock.MagicMock(id=1), notify, 30)
+
+        self.assertEqual(job.status, "done", job.output)
+        self.assertTrue(pings, "a step that outlives the ping interval must report that it is alive")
+        self.assertTrue(any("still running" in p for p in pings), pings)
+        # The ping carries the command and the last thing it printed — which for the check suite is
+        # checkall's per-suite stderr heartbeat, the only progress that exists before the final block.
+        self.assertTrue(any("first-line" in p for p in pings),
+                        f"the ping should show the newest output line: {pings}")
+
+    async def test_a_fast_step_pings_nothing(self):
+        """A one-second command must not grow a progress log."""
+        pings = []
+
+        async def notify(msg):
+            pings.append(str(msg))
+
+        with mock.patch.object(N, "_STEP_PING_SECONDS", 5.0):
+            job = await N._run_step_with_progress(
+                mock.MagicMock(), "local", "local", "echo quick", mock.MagicMock(id=1), notify, 30)
+        self.assertEqual(job.status, "done")
+        self.assertEqual(pings, [])
+
+    async def test_a_failing_notify_never_kills_the_step(self):
+        async def notify(_msg):
+            raise RuntimeError("channel gone")
+
+        with mock.patch.object(N, "_STEP_PING_SECONDS", 0.3):
+            job = await N._run_step_with_progress(
+                mock.MagicMock(), "local", "local", "sleep 1; echo survived",
+                mock.MagicMock(id=1), notify, 30)
+        self.assertEqual(job.status, "done")
+        self.assertIn("survived", job.output)
+
 if __name__ == "__main__":
     unittest.main()
