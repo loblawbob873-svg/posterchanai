@@ -7899,3 +7899,39 @@ body.popout .stream-layout.chat-hidden .stream-chat{ display:none !important; }
   body.popout .stream-chat{ flex:1 1 auto; max-width:none; border-left:0;
     border-top:1px solid var(--line, rgba(255,255,255,.10)); }
 }
+
+/* ── CHAT-ONLY POPOUT (`?popout=1&chat=1`) ──────────────────────────────────────────────────────
+ * The chat on its own, for the second monitor. The player is not hidden as a styling preference —
+ * it must not be RUNNING: a second decode of the same broadcast is the bandwidth and CPU the full
+ * popout's teardown exists to avoid, and here the user is still watching in the original tab.
+ *
+ * THE CHAT IS FLUID, and that is the whole ask: it fills whatever the window is and grows when the
+ * window is dragged bigger. Everything below is undoing a fixed size that is correct in the other
+ * popout and wrong in this one — `flex:0 0 340px` with `max-width:38vw` is a COLUMN BESIDE A VIDEO,
+ * so at 420px wide it would sit at 340px with dead space, and at 1200px it would still be 340px.
+ * These come after the `body.popout` rules and match with equal specificity, so they win on order;
+ * the `!important`s are only there to beat the `!important`s above, not to win a fight with a tier.
+ *
+ * The big title and byline are hidden because they are sized for a page and would eat the top third
+ * of a narrow window; the stream is identified in the WINDOW TITLE instead (see _chatPopout's
+ * document.title), which is what a user reads when the window is one of several on a monitor. */
+/* `.stream-view` keeps the height `body.popout` already gives it (100dvh, flex column). Two other
+ * shapes were tried here and both are wrong, recorded so they are not tried again: `height:100%`
+ * needs a definite parent height and #feed has none, so it resolves to CONTENT height — a
+ * 200-message backlog put the composer at y=5326; and `position:fixed; inset:0` was chasing a 6px
+ * overflow that does not exist. That 6px is `@keyframes fade{from{transform:translateY(6px)}}` on
+ * `.stream-view`, frozen at its first keyframe because headless --dump-dom never presents a frame.
+ * A layout measured through an in-flight entry animation is measuring the animation. */
+body.popout-chat .stream-main{ display:none !important; }
+body.popout-chat .stream-view > h1.av-title,
+body.popout-chat .stream-view > .av-by{ display:none !important; }
+body.popout-chat .stream-layout{ flex-direction:column !important; gap:0 !important; height:100% !important; }
+body.popout-chat .stream-chat{
+  flex:1 1 auto !important; width:100% !important; height:100% !important;
+  max-width:none !important; min-width:0 !important; min-height:0 !important;
+  border:0 !important; border-radius:0 !important; }
+/* The list takes the slack and the composer stays pinned: without `min-height:0` a flex item will
+ * not shrink below its content, so a long backlog pushes the input off the bottom of the window —
+ * the one control the chat popout exists to reach. */
+body.popout-chat .scm-list{ flex:1 1 auto !important; min-height:0 !important; overflow-y:auto !important; }
+body.popout-chat .scm-input{ flex:0 0 auto !important; }

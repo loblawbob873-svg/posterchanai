@@ -2410,6 +2410,12 @@
     try{
       if(new URLSearchParams(location.search).get('popout')==='1'){
         document.body.classList.add('popout');
+        /* `&chat=1` — the CHAT on its own, without the player. Same window, same stream view, one
+         * more class: the video half is hidden and the chat column fills the window. A second
+         * monitor showing only the chat is the common setup, and popping the whole stream to get it
+         * meant decoding the video twice for a picture nobody is looking at. */
+        if(new URLSearchParams(location.search).get('chat')==='1')
+          document.body.classList.add('popout-chat');
         /* ...and set the same thing INLINE. The class relies on a stylesheet rule, and a stylesheet
          * is the one part of this that can be served from a stale cache — in which case the window
          * silently keeps the app's desktop shrink (body{zoom:.67} between 821 and 1920px) and every
@@ -7630,7 +7636,7 @@
       <div class="row" style="justify-content:space-between"><button class="btn btn-ghost small" id="st-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Streams</button><span style="display:flex;gap:6px">${isMine?'':`<button class="btn btn-neon small" id="st-tip"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Tip</button>`}<button class="btn btn-cyan small" id="st-chat-toggle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chat"></use></svg>Chat</button>${isDesktop()?`<button class="btn btn-cyan small" id="st-window" title="Open this stream and its live chat in a separate window you can drag to another monitor">🗔 Window</button>`:''}${isMine?`<button class="btn btn-ghost small" id="st-del" style="color:var(--danger,#e0245e)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}</span></div>
       <h1 class="av-title">${enc(title)}${st==='live'?' <span class="live-badge">● LIVE</span>':''}</h1>
       <div class="av-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${st?`<span class="muted small">· ${enc(st)}</span>`:''}<span class="muted small" id="st-viewers">${_viewersTag(e)?` · 👁 ${enc(_viewersTag(e))} watching`:''}</span></div>
-      <div class="stream-layout${ClientSettings.get('streamChatHidden',false)?' chat-hidden':''}">
+      <div class="stream-layout${(!_chatPopout() && ClientSettings.get('streamChatHidden',false))?' chat-hidden':''}">
         <div class="stream-main">
           ${selfLive?`<div class="st-self">
             <div class="st-selfhd"><span class="live-badge">● LIVE</span> You’re broadcasting</div>
@@ -7654,11 +7660,23 @@
       </div>
     </div>`;
     $('#st-back').onclick=()=>{ _closeStreamChat(); switchView('streams'); };
-    { const ct=$('#st-chat-toggle'); if(ct) ct.onclick=()=>{ const lay=feed.querySelector('.stream-layout'); if(!lay) return;
-        const hidden=lay.classList.toggle('chat-hidden'); ClientSettings.set('streamChatHidden', hidden);
-        // Actually stop the kind-1311 sub + poll when hidden (not just CSS-hide it) so 'hidden' means 'off'
-        // — no background relay traffic — and re-open it when shown again.
-        if(hidden) _closeStreamChat(); else _streamChat(saddr, haddr, sRelays); }; }
+    /* Chat → the chat in its OWN window, player untouched. On a desktop the chat is always on
+     * screen beside the video anyway, so a show/hide toggle was solving a problem nobody had; what
+     * people actually want is the chat on the second monitor. Popping the WHOLE stream to get that
+     * decoded the video twice.
+     *
+     * Still the toggle on a phone and inside a popout: there is no second window worth opening on a
+     * handset, and a chat popout offering to pop its own chat out again is a loop. */
+    { const ct=$('#st-chat-toggle'); if(ct){
+        const canWindow = isDesktop() && !document.body.classList.contains('popout');
+        if(canWindow){
+          ct.title = 'Open the live chat in its own window — the stream keeps playing here';
+          ct.onclick = () => openStreamWindow(e, true);
+        } else ct.onclick=()=>{ const lay=feed.querySelector('.stream-layout'); if(!lay) return;
+          const hidden=lay.classList.toggle('chat-hidden'); ClientSettings.set('streamChatHidden', hidden);
+          // Actually stop the kind-1311 sub + poll when hidden (not just CSS-hide it) so 'hidden' means 'off'
+          // — no background relay traffic — and re-open it when shown again.
+          if(hidden) _closeStreamChat(); else _streamChat(saddr, haddr, sRelays); }; } }
     { const db=$('#st-del'); if(db) db.onclick=()=>_deleteStream(e); }
     // Tip the stream creator — ⚡ Lightning / ɱ Monero / 🟢 BCH chooser (doTip picks by what the host advertises).
     { const tb=$('#st-tip'); if(tb) tb.onclick=()=>doTip(e.id, hpk); }
@@ -7716,7 +7734,13 @@
     { const cl=$('#st-selflink'); if(cl) cl.onclick=()=> copyValue(watchLink, 'watch link copied', 'Your watch link:'); }
     { const pb=$('#st-pop'); if(pb) pb.onclick=()=>popOutStream(e); }
     { const wb=$('#st-window'); if(wb) wb.onclick=()=>openStreamWindow(e); }
-    if(!ClientSettings.get('streamChatHidden',false)) _streamChat(saddr, haddr, sRelays);   // don't start the sub if chat is hidden
+    // …but a CHAT POPOUT always starts it: the whole window is the chat, and a remembered "hidden"
+    // from the main tab would otherwise open an empty window with no sub running.
+    if(_chatPopout() || !ClientSettings.get('streamChatHidden',false)) _streamChat(saddr, haddr, sRelays);
+    /* Name the WINDOW after the stream. The chat popout hides the page title to give the messages
+     * the whole window, so without this a user with two chats open has two windows both labelled
+     * with the app name and no way to tell which is which from the taskbar. */
+    if(_chatPopout()){ try{ document.title = '💬 ' + (title || 'Live chat'); }catch(_){} }
   }
 
   /* The MediaMTX publish token behind a 30311 `d` tag.
@@ -9943,7 +9967,10 @@
    *
    * The window NAME is per stream: clicking twice focuses the window you already have instead of
    * opening a second copy of the same broadcast, which would also be a second HLS pull. */
-  function openStreamWindow(ev){
+  // This window IS a chat popout (`?popout=1&chat=1`) — the player is hidden and the chat owns the
+  // whole window. Read off the class rather than the query so it is one answer everywhere.
+  function _chatPopout(){ try{ return document.body.classList.contains('popout-chat'); }catch(_){ return false; } }
+  function openStreamWindow(ev, chatOnly){
     let naddr='';
     try{
       naddr = NT().nip19.naddrEncode({ identifier:(ev.tags.find(t=>t[0]==='d')||[])[1]||'',
@@ -9980,16 +10007,32 @@
      * step: a shared root link leaves location.pathname at "/" for the rest of the session. */
     if(BUNDLED) doc = /\.html?$/i.test(location.pathname) ? location.pathname : '/index.html';
     else if(!doc) doc = '/client';
-    const url = location.origin + doc + '?popout=1&e=' + encodeURIComponent(naddr);
-    const name = 'pcstream_' + naddr.slice(-24);
+    const url = location.origin + doc + '?popout=1' + (chatOnly ? '&chat=1' : '')
+                + '&e=' + encodeURIComponent(naddr);
+    /* A DIFFERENT window name for the chat, or the two buttons fight over one window: `window.open`
+     * with an existing name REPLACES that window's document, so popping the chat would close the
+     * stream you are watching and vice versa. They are meant to be open together. */
+    const name = (chatOnly ? 'pcchat_' : 'pcstream_') + naddr.slice(-24);
     /* Sized to the SCREEN, not to a fixed guess: at zoom 1 the chat needs real width beside the
-     * player, and a 1180px cap on a 4K monitor is a small window on a big screen for no reason. */
-    const w = Math.max(900, Math.round(screen.availWidth * 0.7));
+     * player, and a 1180px cap on a 4K monitor is a small window on a big screen for no reason.
+     * The chat alone is a COLUMN — it wants height, not width — so it gets a narrow window instead
+     * of two thirds of the monitor with the message list stretched across it. */
+    const w = chatOnly ? 420 : Math.max(900, Math.round(screen.availWidth * 0.7));
     const h = Math.max(600, Math.round(screen.availHeight * 0.8));
     let win=null;
     try{ win = window.open(url, name, 'width='+w+',height='+h+',menubar=no,toolbar=no'); }catch(_){}
     if(!win){ toast('your browser blocked the window — allow pop-ups for this site'); return; }
     try{ win.focus(); }catch(_){}
+    /* THE CHAT POPOUT KEEPS THIS PAGE PLAYING. Only the chat moved — tearing the player down here
+     * would stop the video the user is still watching, which is the opposite of what the button is
+     * for. Just drop this page's chat sub (the new window opens its own) and collapse the column. */
+    if(chatOnly){
+      try{ _closeStreamChat(); }catch(_){}
+      const lay=$('#feed') && $('#feed').querySelector('.stream-layout');
+      if(lay) lay.classList.add('chat-hidden');
+      toast('chat opened in its own window');
+      return;
+    }
     /* Stop THIS page pulling the same stream. Two windows decoding one broadcast is double the
      * bandwidth and double the CPU for a picture nobody is looking at, and on a laptop that is the
      * difference between quiet and loud. The chat sub goes with it; the popup has its own. */

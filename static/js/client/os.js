@@ -4539,6 +4539,19 @@
    * been made narrow must not strand somebody in a UI they cannot use, so the size check applies to
    * the restore as well as to the click. */
   function restore(){
+    /* A POPOUT IS NOT A DESKTOP, and the size check cannot tell the difference.
+     *
+     * "🗔 Open in a window" opens ONE view — a stream — drawn without sidebar, nav or rightbar, at
+     * `max(900, availWidth*0.7)`. That is over MIN_WIDTH on any ordinary monitor, and the window is
+     * the SAME ORIGIN, so it reads the same remembered `osMode` and the desktop claims it: the
+     * stream never draws, and what is left is the shell with its chrome already hidden by
+     * `body.popout`. Reported as "the Streams window button launches a new window with an empty
+     * desktop". Screen-dependent, which is what makes it look intermittent — at 1280 wide the
+     * popout is 900px, under MIN_WIDTH, and none of this happens.
+     *
+     * Deliberately a RETURN and not a `settings().set(KEY,false)`: the flag is shared with the tab
+     * that opened this window, so turning it off here would exit desktop mode over there too. */
+    try{ if(new URLSearchParams(location.search).get('popout') === '1') return; }catch(_){}
     try{ if(settings().get(KEY, false) && fits()) enter(); }catch(_){}
   }
 
