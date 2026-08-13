@@ -23955,6 +23955,14 @@
     const t=[...btn.childNodes].find(n=>n.nodeType===3 && n.nodeValue.trim()!=='');
     if(t) t.nodeValue=text; else btn.appendChild(document.createTextNode(text));
   }
+  // …and what it said BEFORE, so a failed handler can put back the label it actually found. The
+  // artifact button's label is the FILE NAME (`sandbox-workspace.tar.gz`), so restoring a hardcoded
+  // 'Download' renames the button for the rest of the conversation.
+  function _btnLabel(btn){
+    if(!btn) return '';
+    const t=[...btn.childNodes].find(n=>n.nodeType===3 && n.nodeValue.trim()!=='');
+    return t ? t.nodeValue : '';
+  }
   // Save an /api/files/ artifact to Blossom (the same re-upload Copy link does, minus the clipboard).
   async function saveFileToBlossom(u, btn, kind, name){
     if(btn){ btn.disabled=true; _btnText(btn,'saving…'); }
@@ -24027,18 +24035,23 @@
     }
   }
   async function downloadFileUrl(u, btn, name){
+    const was=_btnLabel(btn);
     if(btn){ btn.disabled=true; _btnText(btn,'downloading…'); }
     try{
       const blob=await fetch(u, { credentials:'include' }).then(r=>{ if(!r.ok) throw new Error('fetch '+r.status); return r.blob(); });
       const ext=((u.split(/[?#]/)[0].split('.').pop())||'bin').toLowerCase();
-      const o=URL.createObjectURL(blob); const a=document.createElement('a');
-      // The song's own name when the label carried one (see _artName) — a downloads folder full of
-      // `posterchan-1786…mp3` is a folder you have to play to identify.
-      a.href=o; a.download=name||('posterchan-'+Date.now()+'.'+ext);
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(()=>URL.revokeObjectURL(o), 10000);
-      if(btn){ _btnText(btn,'✓ downloaded'); btn.disabled=false; }
-    }catch(e){ toast('download failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn,'Download'); } }
+      /* saveBlobAs, NEVER a bare <a download>. The APK's WebView IGNORES a programmatic download
+       * (MainActivity registers no DownloadListener) and reports nothing back, so this claimed
+       * "✓ downloaded" over a file that never left the page — measured on the agent's
+       * `sandbox-workspace.tar.gz`, the one artifact a user has no other way to get at. On-device
+       * the bytes go out through the OS share sheet instead, which is its own confirmation, so the
+       * button says SHARED there rather than claiming a save the user has not made yet.
+       *
+       * The song's own name when the label carried one (see _artName) — a downloads folder full of
+       * `posterchan-1786…mp3` is a folder you have to play to identify. */
+      const how=await saveBlobAs(blob, name||('posterchan-'+Date.now()+'.'+ext));
+      if(btn){ _btnText(btn, how==='shared'?'✓ shared':'✓ downloaded'); btn.disabled=false; }
+    }catch(e){ toast('download failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn, was||'Download'); } }
   }
   // Branded MP4 artifact → MP3, via the same `extractaudio` command a user could type.
   async function mp3FromFileUrl(u, btn){
@@ -24223,20 +24236,19 @@
     const reply=_ai.replyTo?`<button class="btn btn-cyan small ai-reply-fx" data-mid="${mid}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg>Send the Reply</button>`:'';
     return `<div class="fx-reply-row">${reply}${mp3}${post}${save}${nt}${mb}${dl}${copy}</div>`;
   }
-  // ⬇ Save the bytes to the device. Chat media is base64 in the message, so build a Blob and click an
-  // object URL — NOT an <a href="data:…">, which Chrome blocks past a few MB (a 3-minute song or a
-  // 720p clip is exactly that size). Revoked on the next tick so the tab doesn't hold the buffer.
-  function downloadEffectMedia(mid, btn){
+  // ⬇ Save the bytes to the device. Chat media is base64 in the message, so build a Blob and hand it
+  // to saveBlobAs — NOT an <a href="data:…">, which Chrome blocks past a few MB (a 3-minute song or a
+  // 720p clip is exactly that size), and not a bare <a download> either: in the APK that is ignored
+  // outright, which is the same silent "✓ downloaded" over nothing that downloadFileUrl had.
+  async function downloadEffectMedia(mid, btn){
     const m=_ai.fxMedia[mid]; if(!m){ toast('nothing to download'); return; }
+    const was=_btnLabel(btn);
+    if(btn){ btn.disabled=true; _btnText(btn,'downloading…'); }
     try{
       const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0));
-      const url=URL.createObjectURL(new Blob([bin], { type:m.mime }));
-      const a=document.createElement('a');
-      a.href=url; a.download='posterchan-'+Date.now()+'.'+m.ext;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(()=>URL.revokeObjectURL(url), 10000);
-      if(btn) _btnText(btn,'✓ downloaded');
-    }catch(e){ toast('download failed: '+((e&&e.message)||e)); }
+      const how=await saveBlobAs(new Blob([bin], { type:m.mime }), 'posterchan-'+Date.now()+'.'+m.ext);
+      if(btn){ _btnText(btn, how==='shared'?'✓ shared':'✓ downloaded'); btn.disabled=false; }
+    }catch(e){ toast('download failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn, was||'Download'); } }
   }
   // 🎵 Pull the song out of the branded MP4 as an MP3. Runs the SAME `extractaudio` command a user
   // could type with the video attached (chat.py handles that case explicitly), so there is ONE

@@ -37,13 +37,33 @@ def app():
     return (ROOT / "static" / "js" / "client" / "app.js").read_text(encoding="utf-8")
 
 
+def _handler(app, start):
+    """The WHOLE of a handler, by brace counting from its first `{`.
+
+    It used to be `app[i:app.index("};", i)]` — the first `};` after the signature — and that stopped
+    at the first INNER closure the moment one was added. A later commit gave this handler a
+    `const revive=()=>{ … };` on its fourth line, so the slice ended before the landing call and the
+    test failed against code that was correct: reported by a sandbox agent as "1 failed" on a green
+    tree, which is how a suite starts being ignored."""
+    i = app.index("{", start)
+    depth, j = 0, i
+    while j < len(app):
+        if app[j] == "{":
+            depth += 1
+        elif app[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return app[start:j + 1]
+        j += 1
+    raise AssertionError("could not bound the handler at %d" % start)
+
+
 def test_every_go_live_path_lands_you_on_your_stream(app):
     """All four call the ONE helper. Counting them is the point: a new path is a new call site."""
     assert len(re.findall(r"_afterGoLive\(", app)) >= 5, (
         "a go-live path no longer routes through _afterGoLive (4 call sites + the definition)")
     # The one that used to end at the list must no longer do so on its own.
-    obs = app[app.index("$('#gl-go',root).onclick"):]
-    obs = obs[:obs.index("};")]
+    obs = _handler(app, app.index("$('#gl-go',root).onclick"))
     assert "_afterGoLive(ev" in obs and "switchView('streams')" not in obs, (
         "the OBS Go Live button still navigates to the streams LIST by hand")
 

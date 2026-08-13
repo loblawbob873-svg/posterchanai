@@ -998,6 +998,13 @@ LAYOUT = r"""(async () => {
         await sleep(320);
         out.widgetMoved = (() => { const q = document.querySelector('.os-wgt');
           return q ? Math.round(q.getBoundingClientRect().left - dr.left) : -1; })();
+        /* A FINGER has to be able to do what the drag above just did with a synthetic pointer, and
+         * no synthetic event can tell you whether it can: touch-action is enforced by the browser
+         * BEFORE any event is dispatched. So this reads the rule off the real stylesheet. Measured
+         * with real touch input, a panel without it takes three pointermoves and then a
+         * pointercancel (the browser claiming the gesture as a page scroll) — on screen, the widget
+         * starts to move and stops, which is exactly how it was reported from a tablet. */
+        out.widgetTouchAction = getComputedStyle(el).touchAction;
         try { const st = JSON.parse(localStorage.getItem('__pc_test_desktop_doc') || 'null');
               out.widgetDocX = st ? st.x : null; } catch (e) {}
       }
@@ -1678,6 +1685,14 @@ async def drive(url):
                             problems.append((label, "widget-not-draggable",
                                              "dragging a widget to the lower-left left it at "
                                              f"{q.get('widgetMoved')}px from the desk's left edge"))
+                        if q.get("widgetTouchAction") != "none":
+                            problems.append((label, "widget-not-draggable-by-finger",
+                                             "a widget's touch-action is "
+                                             f"{q.get('widgetTouchAction')!r}, not 'none' — the "
+                                             "browser claims a finger drag as a page scroll and "
+                                             "cancels the pointer a few pixels in, so on a tablet "
+                                             "the panel starts to move and then stops. The windows "
+                                             "(.osw-bar) and the desktop icons both carry the rule."))
                     if q.get("musicWidget") is False:
                         problems.append((label, "music-widget-missing",
                                          "the Now-playing widget did not draw"))

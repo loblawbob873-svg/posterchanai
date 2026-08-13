@@ -11,6 +11,21 @@ from ._common import Callable, Optional, logger
 _AGENT_BG_TASKS: set = set()
 
 
+def _archive_file_count(data: bytes) -> int:
+    """How many FILES a workspace tarball holds. `.` (the archived directory itself) is not one.
+
+    -1 means "could not tell" — an unreadable archive is still delivered, because refusing to hand
+    over bytes we merely failed to parse would lose the very thing the backup exists to keep."""
+    import io
+    import tarfile
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
+            return sum(1 for m in tf.getmembers() if m.isfile())
+    except Exception as e:
+        logger.info("[node] could not read a workspace archive to count it: %s", e)
+        return -1
+
+
 async def _agent_done_dm(npub: str, goal: str, banner: str) -> None:
     """Tell the user their background agent finished, as a NIP-17 DM from the instance's operator key.
 
@@ -176,6 +191,20 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
         # encrypted Blossom + link, Telegram → a document) — the same split the `type:files` path uses.
         for _bname, _bdata in backups:
             try:
+                # AN EMPTY WORKSPACE IS NOT A BACKUP, and it is impossible to tell from the message.
+                # An agent that worked in /tmp (a `git clone /tmp/pc` and a test run — a real one)
+                # leaves /workspace untouched, and a tar.gz of an empty directory is still ~190
+                # bytes: the line read "📦 workspace backup (191 bytes, gzipped)" with a download
+                # button beside it, so the archive downloaded to nothing and the DOWNLOAD looked
+                # broken. Say which it is instead, and name where the files would have had to be.
+                _n = _archive_file_count(_bdata)
+                if _n == 0:
+                    await notify({"type": "agent_result",
+                                  "content": f"📦 `{_bname}`: nothing to back up — `/workspace` is "
+                                             "empty. The agent built its files somewhere else (a "
+                                             "run that works in `/tmp` is the usual reason); only "
+                                             "`/workspace` survives the container and is archived."})
+                    continue
                 await notify({"type": "agent_files",
                               "content": f"📦 `{_bname}` workspace backup ({len(_bdata):,} bytes, gzipped)",
                               "files": [{"filename": f"{_bname}-workspace.tar.gz", "data": _bdata,

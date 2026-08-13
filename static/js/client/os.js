@@ -3105,10 +3105,14 @@
     const bw = el.offsetWidth, bh = el.offsetHeight;
     const maxX = Math.max(0, deskW - bw - WGT_GAP), maxY = Math.max(0, deskH - bh - WGT_GAP);
     let sx = ev.clientX, sy = ev.clientY, cx = ox, cy = oy, raf = 0, moved = false;
+    const id = ev.pointerId;
     try{ ev.preventDefault(); }catch(_){}
     el.classList.add('dragging');
     const paint = () => { raf = 0; el.style.transform = `translate(${cx - ox}px, ${cy - oy}px)`; };
     const move = (e) => {
+      // ONE finger owns the drag. These listen on `document`, so on a touch screen a second finger
+      // put down anywhere would otherwise drive the widget from wherever it happens to move.
+      if(e.pointerId !== id) return;
       if(e.pointerType !== 'touch' && (e.buttons || 0) === 0){ up(); return; }
       // Clamped in DRAWN coordinates (which carry the half-gap), matching where the widget can sit.
       cx = Math.max(WGT_GAP / 2, Math.min(maxX + WGT_GAP / 2, ox + (e.clientX - sx) / k));
@@ -3117,7 +3121,10 @@
       if(!raf) raf = requestAnimationFrame(paint);
     };
     let ended = false;
-    const up = () => {
+    const up = (e) => {
+      // …and only that finger ends it. A window `blur` carries no pointerId, and `move` calls this
+      // with nothing at all when a mouse button was released where we could not see it.
+      if(e && e.pointerId != null && e.pointerId !== id) return;
       if(ended) return;
       ended = true;
       document.removeEventListener('pointermove', move);

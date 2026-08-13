@@ -6628,10 +6628,23 @@ body.os-on #os-root{pointer-events:auto}
    section under :root:not([data-theme]). A NEW widget that uses only tokens is correct in all nine
    themes for free; one that hardcodes a colour is broken in eight of them and looks fine to whoever
    wrote it. */
+/* touch-action:none is what makes a widget draggable with a FINGER, and its absence is the whole of
+   "on a tablet the widget starts to move then stops". The windows (.osw-bar) and the desktop icons
+   (.os-icons .os-icon) both carry it; the widgets were the one draggable thing on this desktop that
+   did not, so the panel followed the finger for a few pixels and then the browser claimed the
+   gesture as a page scroll — which arrives as `pointercancel`, and startWgtDrag (correctly) treats a
+   cancel as a release. Measured with real touch input rather than reasoned about: default
+   touch-action gives 3 pointermoves → pointercancel → no pointerup and 61px of page scroll; with
+   this rule, 12 moves and a clean pointerup with nothing scrolled.
+   It does NOT cost the scrolling bodies (news, crypto, the agenda) their finger-scroll: the pan is
+   handled by the .os-wgt-body scroller itself, which is BELOW this element, and the same measurement
+   shows an overflow:auto box inside a touch-action:none panel still scrolling. A pan that lands on a
+   list is a scroll and a pan anywhere else on the panel is a drag, which is the behaviour you would
+   want anyway. */
 .os-wgt{position:absolute;z-index:6;display:flex;flex-direction:column;border-radius:14px;
   background:linear-gradient(160deg,rgba(var(--accent-rgb),.07),transparent 62%),var(--panel2);
   border:1px solid var(--line);box-shadow:0 10px 30px rgba(0,0,0,.45);overflow:hidden;
-  contain:layout style;-webkit-user-select:none;user-select:none;cursor:grab}
+  contain:layout style;-webkit-user-select:none;user-select:none;cursor:grab;touch-action:none}
 .os-wgt.dragging{cursor:grabbing;will-change:transform;box-shadow:0 18px 44px rgba(0,0,0,.6);
   border-color:var(--neon)}
 /* The remove button floats over the corner and only appears on hover or keyboard focus — the widget
