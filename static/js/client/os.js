@@ -36,6 +36,29 @@
   let root = null, bar = null, desk = null;
   let wins = [];                   // [{id, view, title, el, body, min, max, rect}]
   let seq = 0, zTop = 10, on = false, startOpen = false;
+
+  /* WINDOWS LIVE IN A BOUNDED BAND, and that bound is the whole of a bug that reads as "the start
+   * menu stopped going over windows". zTop was a plain counter that only ever went up, and it is
+   * bumped by every FOCUS — including routeView, which fires on ordinary navigation inside a single
+   * window (timeline → profile → thread → back). So it is not a hoarder's problem: measured, ~310
+   * view switches is enough, and past that a window's inline z-index climbs over the panels that
+   * are supposed to sit ABOVE the desktop — the start menu (320), the notification flyout (330),
+   * the background picker (335), the desktop toasts (345), and, inside the desk, the right-click
+   * menu (420). The panel is still built, still painted and still positioned; it is simply behind
+   * the window, so it takes no clicks and nothing is logged. Raising the panels only moves the
+   * ceiling further away — the counter reaches any number eventually.
+   * So a raise that would leave the band renumbers the open windows first, bottom to top, which
+   * preserves their stacking exactly and cannot ever collide with a panel. */
+  const Z_WIN_BASE = 10, Z_WIN_MAX = 200;
+  function nextZ(){
+    if(zTop >= Z_WIN_MAX){
+      wins.slice()
+        .sort((a, b) => (parseInt(a.el.style.zIndex, 10) || 0) - (parseInt(b.el.style.zIndex, 10) || 0))
+        .forEach((x, i) => { x.el.style.zIndex = String(Z_WIN_BASE + i); });
+      zTop = Z_WIN_BASE + wins.length - 1;
+    }
+    return ++zTop;
+  }
   let realFeed = null;             // the client's own #feed element — MOVED into the focused window
   let realHome = null;             // …and where it belongs when the desktop closes
 
@@ -996,7 +1019,7 @@
       }
     }catch(_){}
     wins.forEach(x => x.el.classList.toggle('focused', x === w));
-    w.el.style.zIndex = String(++zTop);
+    w.el.style.zIndex = String(nextZ());
     if(w.min){ w.min = false; w.el.classList.remove('minimised'); }
     if(!w.noFeed) claimFeed(w);   // a folder owns its own contents and must never take the feed
     drawBar();
@@ -1165,7 +1188,7 @@
     const r = place(wins.length, view);
     const el = document.createElement('div');
     el.className = 'osw';
-    el.style.cssText = `left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px;z-index:${++zTop}`;
+    el.style.cssText = `left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px;z-index:${nextZ()}`;
     el.innerHTML =
       `<div class="osw-bar">
          <span class="osw-ico">${iconSvg(icon)}</span>

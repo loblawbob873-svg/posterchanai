@@ -42,6 +42,10 @@ Assertions, each a way a window manager breaks:
                        alt-tab — and then nothing ends the gesture.
   snap-broken          Dragging a window to a screen edge does not snap it to that half (or does it
                        without previewing where it will land, or cannot be dragged back off).
+  startmenu-buried     The start menu opens BEHIND a window. Every focus bumps the window z-counter
+                       (routeView does it on ordinary navigation inside one window), so an unbounded
+                       counter walks over the start menu at 320 and every other panel above the
+                       desktop. Checked after 400 switches, hit-tested — the menu looks perfect.
   reminder-buried      A fired reminder's overlay renders under the desktop. It is the one surface
                        that is meant to interrupt, and it cannot be dismissed if it is behind
                        something.
@@ -545,6 +549,34 @@ DRIVE = r"""(async () => {
   if (ub) { ub.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true})); await sleep(120); ub.click(); }
   await sleep(120);
   out.clickedUnfocused = window.__clicked;
+
+  /* THE START MENU MUST STILL BE ON TOP AFTER A LONG SESSION. Windows carry an inline z-index from
+   * a counter that every focus bumps — and routeView bumps it on ordinary navigation INSIDE one
+   * window, so it climbs on its own. Once it passed the start menu's 320 the menu opened behind the
+   * window it was opened over: built, painted, positioned, and taking no clicks, with nothing in
+   * any log. Hit-tested twice, before and after the switching, because the first probe is what
+   * makes the second one mean something. */
+  {
+    const openStart = async () => {
+      document.querySelector('#os-start').click(); await sleep(120);
+      const m = document.getElementById('os-startmenu');
+      if (!m) return { ok: false, by: 'no menu' };
+      const r = m.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + 40);
+      const ok = !!(hit && (hit === m || m.contains(hit)));
+      const by = hit ? (hit.id || hit.className || hit.tagName).toString().slice(0, 40) : 'nothing';
+      document.querySelector('#os-start').click(); await sleep(60);
+      return { ok, by };
+    };
+    const a = await openStart();
+    out.startOnTop = a.ok; out.startCoveredBy = a.by;
+    for (let i = 0; i < 400; i++) PCOS.routeView(i % 2 ? 'calendar' : 'contacts');
+    await sleep(150);
+    const b = await openStart();
+    out.startOnTopLate = b.ok; out.startCoveredByLate = b.by;
+    out.winZmax = Math.max(...[...document.querySelectorAll('.osw')]
+                            .map(w => parseInt(w.style.zIndex, 10) || 0));
+  }
 
   // Window controls.
   const w = document.querySelector('.osw.focused');
@@ -1278,6 +1310,13 @@ async def drive(url):
                                      f"(feature={r.get('viewOnFeature')!r} doc={r.get('viewOnDoc')!r} "
                                      f"kept-its-dom={r.get('docFeedBack')} "
                                      f"left-open={r.get('viewWinsClosed')})"))
+                if not r.get("startOnTop") or not r.get("startOnTopLate"):
+                    problems.append((label, "startmenu-buried",
+                                     "the start menu does not render over the windows — it hits "
+                                     f"{r.get('startCoveredBy')!r} when fresh and "
+                                     f"{r.get('startCoveredByLate')!r} after 400 view switches "
+                                     f"(top window z={r.get('winZmax')}, menu is 320). Window "
+                                     "z-indexes must stay in the 10-200 band; see nextZ() in os.js."))
                 if not r.get("reminderReachable"):
                     problems.append((label, "reminder-buried",
                                      "a fired reminder is not clickable on the desktop — its Dismiss "

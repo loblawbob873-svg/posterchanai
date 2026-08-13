@@ -6602,7 +6602,8 @@ body.os-on #os-root{pointer-events:auto}
 }
 
 /* ---- desktop widgets -------------------------------------------------------------------------
-   Panels that sit ON the desktop. They are ABOVE the wallpaper and BELOW the windows (.osw is 200+),
+   Panels that sit ON the desktop. They are ABOVE the wallpaper and BELOW the windows (.osw carries an
+   inline z-index in the 10-200 band; see nextZ() in os.js),
    because a widget you can lose behind a window is one you would stop putting things on — and one
    that floats over your work is worse. `contain: layout style` keeps a widget's own repaints from
    invalidating the desktop around it: these things update forever, which is exactly the load this
@@ -7004,6 +7005,11 @@ body.os-on #os-root{pointer-events:auto}
 .os-ctx-b:hover,.os-ctx-b:focus-visible{background:rgba(255,255,255,.09)}
 
 /* Windows */
+/* Their z-index is INLINE and assigned by os.js, which is why nothing here sets one. It is bounded
+   to 10-200 (nextZ) so a window can never climb over the start menu (320), the flyouts (330/335),
+   the desktop toasts (345) or the right-click menu (420) — an unbounded focus counter did exactly
+   that after a few hundred view switches, and every one of those panels then opened invisibly
+   behind a window. Anything new that must sit over the desktop goes ABOVE 200, never in the band. */
 .osw{position:absolute;display:flex;flex-direction:column;min-width:420px;min-height:260px;
   background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;
   box-shadow:0 18px 50px rgba(0,0,0,.55)}
