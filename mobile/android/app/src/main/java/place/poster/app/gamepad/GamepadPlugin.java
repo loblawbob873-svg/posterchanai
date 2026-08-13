@@ -11,6 +11,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 
 /**
  * The controller, read at the ANDROID layer and handed to the WebView.
@@ -164,8 +165,16 @@ public class GamepadPlugin extends Plugin {
     JSObject o = new JSObject();
     JSONArray b = new JSONArray(), a = new JSONArray();
     for (int i = 0; i < BUTTONS; i++) b.put(down[i] ? 1 : 0);
-    for (int i = 0; i < axes.length; i++) {
-      try { a.put((double) axes[i]); } catch (Exception e) { a.put(0.0); }
+    // JSONArray.put(double) throws on NaN/Infinity, which an axis can legitimately never be — but a
+    // driver reporting a broken range should cost this ONE snapshot, not the whole controller. So the
+    // failure drops the frame rather than propagating: the next event brings a fresh one.
+    try {
+      for (int i = 0; i < axes.length; i++) {
+        float v = axes[i];
+        a.put(Float.isNaN(v) || Float.isInfinite(v) ? 0.0 : (double) v);
+      }
+    } catch (JSONException e) {
+      return;
     }
     o.put("buttons", b);
     o.put("axes", a);
