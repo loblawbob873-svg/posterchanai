@@ -325,6 +325,15 @@ def main():
         res["verdict"] = v
         res["detail"] = detail
         results.append(res)
+        if args.brief:
+            # --brief keeps STDOUT to exactly one block so a small model cannot garble the report.
+            # It also meant ten minutes of total silence, and silence is indistinguishable from a
+            # hang: this run was reported as "hung at the git clone step" twice while it was simply
+            # working (the clone had finished in 5s). So liveness goes to STDERR — the agent merges
+            # stderr into a job's captured output (stderr=STDOUT in node_service), a human tailing it
+            # sees progress, and the report on stdout is untouched. The prompt asks the model for the
+            # text BETWEEN the markers, so these lines cannot reach the relayed report.
+            print(f"[{time.time() - t0:5.0f}s] {v:<4} {res['name']}", file=sys.stderr, flush=True)
 
     # The pytest suites first and one at a time: they are the cheapest signal, they need no browser,
     # and a broken import there makes every browser check meaningless anyway.
