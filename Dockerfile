@@ -258,6 +258,41 @@ RUN if [ "$INSTALL_MUSIC" = "1" ] && [ "$GPU" != "nostr" ]; then \
     fi
 ENV ACESTEP_ROOT=/opt/ace-step
 
+# --- bundled SearXNG, IN-PROCESS ----------------------------------------------
+# The metasearch behind the AI's web-search tool, the news digests, the bots and the Web Search
+# screen. There is no `searxng` container beside this one any more (docker-compose's service is
+# gone): `searx.webapp.app` is an ordinary WSGI app, so the image serves it itself at /searxng, the
+# same way it serves Radicale at /caldav. See app/services/searxng_native.py.
+#
+# ON by default for every AI build — a node without one falls back to a PUBLIC instance, which 429s
+# servers, and search is used by four separate features. Skipped for GPU=nostr, which has no AI to
+# search for and exists to stay lean (its requirements-nostr.txt does not carry SearXNG's deps
+# either, so the mount simply reports itself unavailable).
+#
+# --no-deps, as everywhere here, because upstream pins its whole world exactly (typing-extensions,
+# certifi, lxml, httpx) and those are packages torch and pydantic also depend on; the RANGES that
+# actually get installed are in requirements.txt.
+#
+# --no-build-isolation is REQUIRED, and the failure without it is not obvious: setup.py does
+# `from searx.version import ...`, which imports searx/__init__.py, which imports msgspec — absent
+# from pip's isolated build env, so the build dies with ModuleNotFoundError before any dependency is
+# consulted. The clone ships its BUILT static assets, so there is no node/webpack step here.
+ARG INSTALL_SEARXNG=1
+ARG SEARXNG_REF=master
+RUN if [ "$INSTALL_SEARXNG" = "1" ] && [ "$GPU" != "nostr" ]; then \
+      set -eu; \
+      git clone --depth 1 --branch "$SEARXNG_REF" https://github.com/searxng/searxng.git /opt/searxng; \
+      pip install --no-deps --no-build-isolation -e /opt/searxng; \
+      python3 -c 'import searx' ; \
+    fi
+# The settings file the app reads. Baked at /etc/searxng/settings.yml and pointed at by
+# SEARXNG_SETTINGS_PATH, because searxng_native's default is the repo-relative searxng/settings.yml
+# that only the HOST installer writes. It is the SAME file the host install generates from, so the
+# two paths cannot drift — `search.formats: [html, json]` is the line that decides whether every
+# search in this image works or 403s with an HTML body every caller reads as "no results".
+COPY docker/searxng/settings.yml /etc/searxng/settings.yml
+ENV SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
+
 # --- voice cloning (the `voice` command), IN-PROCESS --------------------------
 # Zero-shot cloning via Chatterbox, on the torch installed above. Opt in with
 # --build-arg INSTALL_VOICE=1; the ~6GB of weights download on first use (or from Admin → Voice)

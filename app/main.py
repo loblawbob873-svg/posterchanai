@@ -293,6 +293,60 @@ except Exception as _caldav_err:      # never let the calendar stop the app from
     # taking the app down raised NameError and took the app down. Every request 502'd.
     logging.getLogger(__name__).warning("[caldav] not mounted: %s", _caldav_err)
 
+# This node's own SearXNG, mounted INSIDE this app at /searxng — the same a2wsgi trick as /caldav
+# above, and for the same reason: no container, no second port, no unit of its own. See
+# app/services/searxng_native.py for what that replaced and what was measured first.
+#
+# LAZY, unlike /caldav: importing SearXNG loads its whole engine catalogue, which is seconds of
+# startup and tens of MB on a node that may never search. The mount is registered unconditionally
+# (it costs nothing) and the import happens on the first request that gets past the gate below.
+#
+# NOT PUBLIC. The container this replaces was bound to 127.0.0.1 and reachable only by this node;
+# a mount on the app's own port inherits the app's public TLS instead, which would hand the internet
+# an unauthenticated, limiter-disabled metasearch instance that makes outbound requests on request —
+# an open proxy with this node's IP on it. So the gate is loopback AND no forwarded-for header:
+# behind nginx the peer IS 127.0.0.1, and the header is the only thing that distinguishes the app's
+# own subprocesses from the whole internet arriving through a reverse proxy on the same box.
+try:
+    from a2wsgi import WSGIMiddleware as _SxWSGI
+    from starlette.responses import PlainTextResponse as _SxText
+    from starlette.concurrency import run_in_threadpool as _sx_thread
+
+    _sx_asgi = {"app": None}
+
+    def _sx_is_local(scope) -> bool:
+        peer = (scope.get("client") or ("", 0))[0]
+        if peer not in ("127.0.0.1", "::1", "localhost"):
+            return False
+        for name, _v in scope.get("headers") or []:
+            if name in (b"x-forwarded-for", b"x-real-ip", b"x-forwarded-host", b"forwarded"):
+                return False
+        return True
+
+    async def _searxng_entry(scope, receive, send):
+        from app.services import search_service as _ss
+        from app.services import searxng_native as _sx
+        if not (_sx_is_local(scope) or os.getenv("POSTERCHANAI_SEARXNG_EXPOSE", "") == "1"):
+            await _SxText("Not found", status_code=404)(scope, receive, send)
+            return
+        if not _ss.search_enabled():
+            await _SxText("Web search is off (Admin → Tools).", status_code=404)(scope, receive, send)
+            return
+        if _sx_asgi["app"] is None:
+            # In a thread: the first import reads a few hundred engine modules off disk, and on the
+            # single uvicorn worker doing that on the event loop stalls every request in flight.
+            built = await _sx_thread(_sx.wsgi_app)
+            if built is None:
+                await _SxText("SearXNG is not installed on this node (./install.sh --searxng).",
+                              status_code=503)(scope, receive, send)
+                return
+            _sx_asgi["app"] = _SxWSGI(built)
+        await _sx_asgi["app"](scope, receive, send)
+
+    app.mount("/searxng", _searxng_entry)
+except Exception as _sx_err:          # never let search stop the app from starting
+    logging.getLogger(__name__).warning("[searxng] not mounted: %s", _sx_err)
+
 # OpenAI-compatible API: use OPENAI_API_PREFIX if app is behind a reverse proxy subpath
 _openai_prefix = os.getenv("OPENAI_API_PREFIX", "").strip().rstrip("/")
 app.include_router(openai_api.router, prefix=_openai_prefix)

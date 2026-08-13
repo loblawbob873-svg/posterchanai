@@ -49,8 +49,13 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WWW = os.path.join(ROOT, "desktop", "www")
-CDP_PORT = 9473
-HTTP_PORT = 9474
+# Two listeners, and NEITHER may be a fixed number. This check is run by scripts/checkall.py
+# alongside twenty others, and it is run ON NODES that are already serving — so a hardcoded port is
+# either a collision with a sibling check (9473 was shared by four of them) or with whatever the box
+# is really running. The debug port comes from the runner; the HTTP one is bound ephemerally and
+# read back, which cannot collide with anything by construction.
+CDP_PORT = int(os.environ.get("PC_CHECK_PORT") or 9473)
+HTTP_PORT = 0          # 0 = let the kernel pick; the real number is read off the socket below
 PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-desktop-check"
 
 WIDTHS = [(1280, 860, False), (820, 1180, True), (390, 844, True)]
@@ -303,8 +308,10 @@ SETTINGS_AUDIT = r"""(() => {
 
 
 def serve_www():
+    global HTTP_PORT
     handler = partial(SimpleHTTPRequestHandler, directory=WWW)
     httpd = ThreadingHTTPServer(("127.0.0.1", HTTP_PORT), handler)
+    HTTP_PORT = httpd.server_address[1]          # whatever the kernel just gave us
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd
 

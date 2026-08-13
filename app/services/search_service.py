@@ -21,10 +21,18 @@ logger = logging.getLogger(__name__)
 # resolved value as SEARXNG_URL, so a bot can never end up searching somewhere else):
 #
 #   1. `searxng_url` in Admin → Tools, if set.
-#   2. A SearXNG BUNDLED WITH THIS NODE, if one answers. `./install.sh --searxng` runs one, and the
-#      docker-compose `searxng` profile is the same thing for container installs. Two candidates
-#      because the app is either on the host (loopback) or in the compose network (service name).
-#   3. A public instance, as a last resort.
+#   2. A SearXNG BUNDLED WITH THIS NODE, if one answers — `posterchanai-searxng.service`, which since
+#      the native port runs `python -m app.services.searxng_native` out of the app's own venv rather
+#      than a container. The compose-sibling candidate is kept for nodes installed before that.
+#   3. THE SAME SearXNG, mounted inside this very process at /searxng (app/services/searxng_native.py).
+#      No probe: this is a question about our own imports, answered instantly and correctly, where an
+#      HTTP probe of ourselves would also have to survive the app not being up yet.
+#   4. A public instance, as a last resort.
+#
+# 2 before 3 deliberately, though they are the same code: when the unit is running, that copy is
+# already loaded and warm, and preferring it means the app process never imports SearXNG's engine
+# catalogue at all. 3 is what keeps search working when the unit is stopped, masked or crashed —
+# which used to mean falling straight through to a public instance.
 #
 # Step 3 is a fallback, not a plan: measured against this default from a server, it answers 429 Too
 # Many Requests to both its JSON and its HTML endpoint — public instances rate-limit clients that
@@ -118,6 +126,18 @@ def local_searxng_url() -> str:
         if _is_searxng(base):
             found = base
             break
+    if not found:
+        # Nothing listening — but this app can serve SearXNG itself (see searxng_native). Asked
+        # rather than probed: the answer is about our own imports and this same process is what would
+        # have to answer the probe, so a probe here would be a request to ourselves that fails
+        # whenever it is made before the server is accepting connections (startup, and the bot
+        # manager builds every bot's environment there).
+        try:
+            from app.services import searxng_native
+            if searxng_native.available():
+                found = searxng_native.mount_url()
+        except Exception:
+            pass
     _local_probe.update({"ts": now, "url": found})
     return found
 

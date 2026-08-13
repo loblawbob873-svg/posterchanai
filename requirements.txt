@@ -193,6 +193,41 @@ pyflakes>=3.0.0  # sync.sh pre-push gate: catches undefined names that py_compil
 radicale>=3.3,<4
 a2wsgi>=1.10
 
+# Bundled SearXNG — the metasearch behind the AI's web-search tool, the news digests, the bots and
+# the Web Search screen. These are SearXNG's RUNTIME dependencies; SearXNG itself is not here because
+# it is NOT ON PyPI (`pip index versions searxng` → "No matching distribution found"), so its source
+# is cloned and installed --no-deps by `./install.sh --searxng` (the ACE-Step pattern) and by the
+# Dockerfile. Without the clone the app simply has no bundled instance — nothing here breaks.
+#
+# RANGES, NOT ITS PINS, and that is the load-bearing choice. Upstream pins its whole world exactly
+# (`typing-extensions==4.16.0`, `certifi==2026.7.22`, `lxml==6.1.1`, `httpx[http2]==0.28.1`), and
+# torch, pydantic and httpx-the-app-uses all depend on those same packages — an exact pin here is
+# licence for pip to move one of them out from under image generation or the LLM path. Resolved
+# against this venv these ranges install with NO downgrades: httpx, lxml, jinja2, pygments, pyyaml,
+# markdown-it-py and python-dateutil were already at the exact versions SearXNG asks for; everything
+# below is new. The http2 extra is not optional — several engines negotiate h2 and fail without it.
+#
+# The ones already above (httpx, lxml, jinja2, python-dateutil) are NOT repeated — two specs for one
+# package is how they drift apart. `h2` rather than re-listing httpx with its http2 extra, for the
+# same reason: it is the only thing that extra installs. The rest were transitive here and are
+# DECLARED now because SearXNG imports them directly (typer in `searx/enginelib`, i.e. on the engine
+# path, not just its CLI) — an undeclared transitive dep that some other package stops pulling in is
+# a fresh install where `import searx` fails and the node quietly has no bundled instance.
+babel>=2.18
+flask>=3.1
+flask-babel>=4.0
+h2>=4.1
+httpx-socks[asyncio]>=0.10
+valkey>=6.1
+msgspec>=0.21
+isodate>=0.7
+whitenoise>=6.12
+typer>=0.15
+pyyaml>=6.0
+pygments>=2.17
+markdown-it-py>=3.0
+certifi
+
 # SSH terminal (the client's Terminal app). Optional at runtime: ssh_service.available()
 # reports its absence rather than 500ing, because sync.sh deploys code and not packages.
 paramiko>=3.4

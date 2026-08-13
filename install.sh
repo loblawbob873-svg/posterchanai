@@ -298,8 +298,9 @@ main() {
     # Step 9d2: This node's own SearXNG — the metasearch behind the AI's web-search tool, the news
     # digests, the bots and the Web Search screen. Shipped by DEFAULT (like MediaMTX and TURN) so a
     # fresh node searches for itself instead of falling back to a public instance that rate-limits
-    # servers. Non-fatal: no docker just means Admin → Tools decides where this node searches.
-    setup_searxng || print_warning "SearXNG not installed (docker missing?); set Admin → Tools → SearXNG URL, or run ./install.sh --searxng later"
+    # servers. Runs NATIVELY in the app's venv now (no docker) — non-fatal either way: a failure here
+    # just means Admin → Tools decides where this node searches.
+    setup_searxng || print_warning "SearXNG not installed; set Admin → Tools → SearXNG URL, or run ./install.sh --searxng later"
 
     # Step 9e: Build the built-in Pion TURN relay (voice/video-call NAT traversal). Shipped by DEFAULT so
     # calls are turnkey (no separate ./install.sh --turn step). Non-fatal — a missing Go toolchain just leaves

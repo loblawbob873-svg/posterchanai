@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install a SearXNG of this node's OWN, as a systemd service (add-on: ./install.sh --searxng).
+# Install a SearXNG of this node's OWN — NATIVELY, in the app's venv (add-on: ./install.sh --searxng).
 #
 # WHY THIS EXISTS. Every search this app does — the AI's web-search tool, the news digests, the bots,
 # and the Web Search screen — goes through one SearXNG instance. For a long time a node that never
@@ -8,27 +8,50 @@
 # and the obvious replacement — a public instance — answers 429 Too Many Requests to anything that
 # doesn't look like a browser. So a node runs its own.
 #
-# SHAPE. `posterchanai-searxng.service` runs the official container in the FOREGROUND under systemd,
-# like every other service here (`systemctl status posterchanai-searxng`, journald logs, one restart
-# policy), rather than a detached `--restart=always` container that no unit file knows about.
+# WHAT CHANGED. This used to run the upstream Docker image, on the reasoning that "SearXNG upstream
+# ships a container, and its bare-metal path is a uwsgi/nginx build against system Python that would
+# fight the app's own venv". That is true of upstream's *deployment* documentation and false of the
+# package: `searx.webapp.app` is an ordinary WSGI (Flask) application. So it is installed into the
+# app's venv like any other dependency, and docker is no longer required to search.
 #
-# `--network host`, which is not a shortcut: the container has to reach this node's HTTP proxy on
-# 127.0.0.1 to send its engine requests through Tor, and that proxy binds to proxy_listen_host
-# (loopback by default). From a bridge network there is nothing at that address — the first version
-# of this pointed the container at host.docker.internal and every engine request would have failed
-# while /healthz kept answering, i.e. an instance that looks healthy and returns nothing.
+# SHAPE, unchanged where it matters. `posterchanai-searxng.service` still exists and is still what
+# `systemctl status posterchanai-searxng` reports on — it now runs `python -m
+# app.services.searxng_native` (uvicorn + a2wsgi, loopback) out of the app's venv instead of a
+# container. And because the same code is importable by the app itself, the app MOUNTS it at
+# /searxng as a fallback: when this unit is stopped, masked or crashed, search keeps working instead
+# of falling through to a public instance. See app/services/searxng_native.py.
+#
+# THREE THINGS THAT BITE, each measured here rather than guessed:
+#
+#   * SearXNG is NOT ON PyPI (`pip index versions searxng` → "No matching distribution found"), so
+#     its SOURCE is cloned and installed --no-deps — the ACE-Step pattern. Its runtime deps are in
+#     the app's requirements.txt at RANGES, never its own exact pins, which would be licence for pip
+#     to move typing-extensions/certifi/lxml out from under torch and pydantic.
+#   * --no-build-isolation is REQUIRED. Its setup.py does `from searx.version import ...`, which
+#     imports searx/__init__.py, which imports msgspec — absent from pip's isolated build env, so the
+#     build dies with ModuleNotFoundError before any dependency of ours is consulted.
+#   * The clone SHIPS its built static assets (searx/static/themes/simple/*.min.css and friends are
+#     committed), so there is no node/webpack build here. Do not add one.
 #
 # WHAT THE APP DOES WITH IT. Nothing to configure: search_service probes 127.0.0.1:<port>/healthz +
 # /config and uses it whenever Admin → Tools → SearXNG URL is EMPTY (a value there always wins). The
 # port is written to searxng/port, because an env var set at install time never reaches the app's
 # systemd service.
-#
-# Docker/podman rather than a bare-metal install: SearXNG upstream ships a container, and its
-# bare-metal path is a uwsgi/nginx build against system Python that would fight the app's own venv.
 
-SEARXNG_IMAGE="${SEARXNG_IMAGE:-docker.io/searxng/searxng:latest}"
-SEARXNG_NAME="${SEARXNG_NAME:-posterchanai-searxng}"
+SEARXNG_REPO="${SEARXNG_REPO:-https://github.com/searxng/searxng.git}"
 SEARXNG_UNIT="posterchanai-searxng"
+# The RETIRED container, removed on upgrade. Left running it would keep answering on the same port —
+# the app would use it, every fix here would look like it had no effect, and the settings file the
+# two share would be edited by an installer whose changes never reached the process serving.
+SEARXNG_OLD_CONTAINER="posterchanai-searxng"
+
+_searxng_find_venv() {
+    local d
+    for d in "$SCRIPT_DIR/venv-unified" "$SCRIPT_DIR/venv" "$HOME/posterchanai/venv-unified"; do
+        [ -x "$d/bin/python" ] && { echo "$d"; return 0; }
+    done
+    echo "$SCRIPT_DIR/venv-unified"   # nothing found: report the conventional path in the error
+}
 
 setup_searxng() {
     print_banner 2>/dev/null || true
@@ -36,30 +59,57 @@ setup_searxng() {
     echo ""
 
     # 8899, not 8888: MediaMTX serves HLS on 8888 on every node that streams, which is the default.
-    local port repo_root conf_dir
+    local port repo_root conf_dir src_dir venv py
     port="${POSTERCHANAI_SEARXNG_PORT:-8899}"
     repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
     conf_dir="${SEARXNG_CONFIG_DIR:-$repo_root/searxng}"
+    src_dir="${SEARXNG_SRC_DIR:-$HOME/searxng}"
+    venv="$(_searxng_find_venv)"
+    py="$venv/bin/python"
 
-    local runner=""
-    if command -v docker >/dev/null 2>&1; then runner="$(command -v docker)"
-    elif command -v podman >/dev/null 2>&1; then runner="$(command -v podman)"
-    else
-        print_error "docker (or podman) is required to run the bundled SearXNG" 2>/dev/null \
-            || echo "ERROR: docker (or podman) is required"
-        echo "Install docker, then re-run: ./install.sh --searxng"
-        echo "Or point Admin → Tools → SearXNG URL at an instance you already run."
+    if [ ! -x "$py" ]; then
+        print_error "App venv not found at $venv — run the main install first." 2>/dev/null \
+            || echo "ERROR: app venv not found at $venv"
         return 1
     fi
 
     mkdir -p "$conf_dir/brand"
-    # The container's entrypoint CHOWNS its config directory to the searxng user (uid 977) on every
-    # start, so from the second run onward this script cannot write its own files. Take the directory
-    # back before touching anything — without this the settings rewrite fails with EACCES, and since
-    # the failure is a stray traceback in the middle of an installer that then reports success, the
-    # node keeps whatever settings.yml it had (i.e. the proxy block never refreshes).
-    if [ ! -w "$conf_dir" ] || [ -e "$conf_dir/settings.yml" -a ! -w "$conf_dir/settings.yml" ]; then
+    # Historical: the container chowned this directory to its own user (uid 977) on every start, so
+    # from the second run onward this script could not write its own files. Nodes upgrading from that
+    # still have those permissions, and the failure is a stray traceback in the middle of an
+    # installer that then reports success.
+    if [ ! -w "$conf_dir" ] || { [ -e "$conf_dir/settings.yml" ] && [ ! -w "$conf_dir/settings.yml" ]; }; then
         sudo chown -R "$(id -u):$(id -g)" "$conf_dir" 2>/dev/null || true
+    fi
+
+    # --- the source ---------------------------------------------------------------------------
+    if [ ! -d "$src_dir/.git" ]; then
+        print_step "Cloning SearXNG into $src_dir ..." 2>/dev/null || echo "Cloning SearXNG into $src_dir ..."
+        git clone --depth 1 "$SEARXNG_REPO" "$src_dir" \
+            || { print_error "git clone failed" 2>/dev/null || echo "ERROR: git clone failed"; return 1; }
+    else
+        print_step "Updating SearXNG in $src_dir ..." 2>/dev/null || echo "Updating SearXNG in $src_dir ..."
+        git -C "$src_dir" pull --ff-only 2>/dev/null || echo "  (kept the checkout as-is)"
+    fi
+
+    # --- into the venv ------------------------------------------------------------------------
+    print_step "Installing SearXNG into $venv (--no-deps) ..." 2>/dev/null || echo "Installing SearXNG (--no-deps) ..."
+    "$venv/bin/pip" install -q --no-deps --no-build-isolation -e "$src_dir" \
+        || { print_error "pip install failed" 2>/dev/null || echo "ERROR: pip install failed"; return 1; }
+
+    # Its runtime deps live in the app's requirements.txt, so a normal install already has them. A
+    # venv that predates that does not — and the symptom is `import searx` raising ModuleNotFoundError
+    # for something like msgspec, which reads as "SearXNG is broken" rather than "deps are old". Try
+    # once, from the app's own requirements file, so the version ranges stay in ONE place.
+    if ! "$py" -c "import searx" >/dev/null 2>&1; then
+        print_step "Installing SearXNG's runtime dependencies from requirements.txt ..." 2>/dev/null \
+            || echo "Installing SearXNG's runtime dependencies ..."
+        "$venv/bin/pip" install -q -r "$repo_root/requirements.txt" || true
+    fi
+    if ! "$py" -c "import searx" >/dev/null 2>&1; then
+        print_error "SearXNG installed but will not import:" 2>/dev/null || echo "ERROR: searx will not import:"
+        "$py" -c "import searx" 2>&1 | tail -3
+        return 1
     fi
 
     # --- the outgoing proxy -------------------------------------------------------------------
@@ -98,8 +148,8 @@ setup_searxng() {
         [ -n "$proxy_up" ] || print_warning "SEARXNG_TOR=1 but no proxy answered — engine requests will go DIRECT" 2>/dev/null \
             || echo "WARNING: SEARXNG_TOR=1 but no proxy answered; engine requests will go DIRECT"
     fi
-    # With --network host the container shares this namespace, so 127.0.0.1 IS the proxy. No
-    # host.docker.internal, no bridge gateway, nothing to resolve.
+    # Native, so 127.0.0.1 is simply 127.0.0.1 — no --network host, no host.docker.internal, nothing
+    # to resolve. This is the paragraph that used to be the hardest part of running it in a container.
     local proxy_block
     if [ -n "$proxy_up" ]; then
         # The TIMEOUTS ride with the proxy, and they are not padding. SearXNG's default engine
@@ -119,9 +169,9 @@ setup_searxng() {
     fi
 
     # --- settings.yml -------------------------------------------------------------------------
-    # ONE template, shared with the compose service (docker/searxng/settings.yml), so the two install
-    # paths cannot drift — the JSON API and the disabled limiter are the difference between an
-    # instance that works with this app and one that silently answers 403 to everything.
+    # ONE template for both install paths (docker/searxng/settings.yml, also baked into the image), so
+    # a host install and a container install cannot drift — the JSON API and the disabled limiter are
+    # the difference between an instance that works with this app and one that silently 403s.
     local template secret secret_file
     template="$repo_root/docker/searxng/settings.yml"
     [ -f "$template" ] || { print_error "missing $template" 2>/dev/null || echo "ERROR: missing $template"; return 1; }
@@ -156,9 +206,8 @@ pat = re.compile(r"(?ms)^#?\s?outgoing:\n(?:^[#\s].*\n?)*")
 text = pat.sub("", text).rstrip("\n")
 open(path, "w", encoding="utf-8").write(text + "\n\n" + block + "\n")
 PY
-        # A write that failed (the container chowns this directory to its own user, so it happens)
-        # must be LOUD: the installer goes on to report success, and a stale proxy block means the
-        # node queries engines from its real IP with nothing on screen to say so.
+        # A write that failed must be LOUD: the installer goes on to report success, and a stale
+        # proxy block means the node queries engines from its real IP with nothing on screen to say so.
         [ $? -eq 0 ] || print_warning "could not refresh the outgoing-proxy block in $conf_dir/settings.yml" 2>/dev/null \
             || echo "WARNING: could not refresh the outgoing-proxy block in $conf_dir/settings.yml"
     else
@@ -184,59 +233,56 @@ PY
     fi
 
     # --- branding -----------------------------------------------------------------------------
-    # The header logo and the favicon, mounted over the image's own files. Cosmetic — the only client
-    # is the app — but this page IS what an operator sees at 127.0.0.1:$port, and it may as well say
-    # whose node it is. The dark theme is in settings.yml (ui.theme_args.simple_style).
+    # The header logo and the favicon. Cosmetic — the only client is the app — but this page IS what
+    # an operator sees at 127.0.0.1:$port, and it may as well say whose node it is. Written into the
+    # CHECKOUT's static directory, which is where a read-only bind mount used to do the same job; the
+    # dark theme is in settings.yml (ui.theme_args.simple_style).
     local logo_src="$repo_root/static/posterchan-relay.png"
-    local brand_ok=""
-    if [ -f "$logo_src" ]; then
-        cp -f "$logo_src" "$conf_dir/brand/logo.png" && brand_ok="1"
-    fi
-
-    # --- the unit -----------------------------------------------------------------------------
-    echo "Pulling $SEARXNG_IMAGE …"
-    "$runner" pull "$SEARXNG_IMAGE" || { print_error "image pull failed" 2>/dev/null || echo "ERROR: pull failed"; return 1; }
-
-    # Any container left over from an earlier (detached) install, or from the last run of the unit.
-    "$runner" rm -f "$SEARXNG_NAME" >/dev/null 2>&1 || true
-
-    local brand_mounts=""
-    if [ -n "$brand_ok" ]; then
-        local img_dir="/usr/local/searxng/searx/static/themes/simple/img"
+    local img_dir="$src_dir/searx/static/themes/simple/img"
+    if [ -f "$logo_src" ] && [ -d "$img_dir" ]; then
+        cp -f "$logo_src" "$conf_dir/brand/logo.png" 2>/dev/null || true
         local f
         for f in searxng.png favicon.png 192.png 512.png; do
-            brand_mounts="$brand_mounts -v $conf_dir/brand/logo.png:$img_dir/$f:ro"
+            [ -e "$img_dir/$f" ] && cp -f "$logo_src" "$img_dir/$f" 2>/dev/null || true
         done
     fi
 
+    # --- retire the container -----------------------------------------------------------------
+    # An upgrade, not a fresh install, is where this matters: the old unit runs a container on the
+    # SAME port and would keep answering it, so the app would go on using a SearXNG that no longer
+    # reads the settings file this installer writes.
+    local runner=""
+    if command -v docker >/dev/null 2>&1; then runner="$(command -v docker)"
+    elif command -v podman >/dev/null 2>&1; then runner="$(command -v podman)"; fi
+    if [ -n "$runner" ] && "$runner" ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$SEARXNG_OLD_CONTAINER"; then
+        echo "Removing the retired SearXNG container (this now runs natively) ..."
+        sudo systemctl stop "${SEARXNG_UNIT}.service" >/dev/null 2>&1 || true
+        "$runner" rm -f "$SEARXNG_OLD_CONTAINER" >/dev/null 2>&1 || true
+    fi
+
+    # --- the unit -----------------------------------------------------------------------------
+    # WorkingDirectory is the repo, because `-m app.services.searxng_native` has to import the app
+    # package. The settings path does NOT depend on it (searxng_native derives it from __file__), so
+    # a run from anywhere still finds the right file.
     sudo tee "/etc/systemd/system/${SEARXNG_UNIT}.service" > /dev/null <<EOF
 [Unit]
 Description=PosterChan SearXNG (private metasearch for this node)
-After=network-online.target docker.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-# --network host: the container must reach this node's HTTP proxy on 127.0.0.1 (Tor1 → Tor2 →
-# direct) for its engine requests, and that proxy binds to loopback. It also puts SearXNG on
-# 127.0.0.1:${port} directly, which is where the app probes for it.
-#
-# GRANIAN_HOST/GRANIAN_PORT and NOT SEARXNG_BIND_ADDRESS/SEARXNG_PORT: this image serves through
-# granian, which reads its own variables (SEARXNG_PORT happens to be aliased by the entrypoint;
-# SEARXNG_BIND_ADDRESS is not read at all, and neither is server.bind_address in settings.yml).
-# MEASURED, not assumed: with SEARXNG_BIND_ADDRESS=127.0.0.1 set, `ss -ltn` showed *:${port} —
-# i.e. in the host namespace this was an unauthenticated, limiter-disabled metasearch instance
-# listening on every interface of the box.
-# --rm + foreground: systemd owns the lifecycle, so \`systemctl restart\` really restarts it.
-ExecStartPre=-$runner rm -f $SEARXNG_NAME
-ExecStart=$runner run --rm --name $SEARXNG_NAME \\
-    --network host \\
-    -e GRANIAN_HOST=127.0.0.1 \\
-    -e GRANIAN_PORT=${port} \\
-    -e SEARXNG_BASE_URL=http://127.0.0.1:${port}/ \\
-    -v $conf_dir:/etc/searxng:rw$brand_mounts \\
-    $SEARXNG_IMAGE
-ExecStop=-$runner stop -t 10 $SEARXNG_NAME
+User=$(id -un)
+WorkingDirectory=$repo_root
+Environment=POSTERCHANAI_SEARXNG_PORT=${port}
+Environment=SEARXNG_SETTINGS_PATH=${conf_dir}/settings.yml
+# uvicorn + a2wsgi out of the app's own venv — no container, no granian, no second server to install.
+# 127.0.0.1 ONLY: this instance has its limiter disabled (the limiter is what makes public instances
+# 429 a server, which is the whole reason a node runs its own), so anything but loopback would be an
+# open metasearch proxy on this box. An earlier, containerised version of this listened on *:${port}
+# because the image read its bind address from GRANIAN_HOST and ignored the two settings that
+# claimed to set it.
+ExecStart=$py -m app.services.searxng_native
 Restart=always
 RestartSec=5
 TimeoutStopSec=30
@@ -258,8 +304,8 @@ EOF
     printf '%s' "$port" > "$conf_dir/port"
 
     # --- verify the thing the app actually needs -----------------------------------------------
-    # Not "the container is up": a running SearXNG with the JSON API off is the failure mode that
-    # looks like success, and it is exactly what the app cannot use.
+    # Not "the process is up": a running SearXNG with the JSON API off is the failure mode that looks
+    # like success, and it is exactly what the app cannot use.
     echo -n "Waiting for SearXNG"
     local i ok=""
     for i in $(seq 1 40); do
@@ -283,7 +329,9 @@ EOF
 
     echo ""
     echo "Service:  systemctl status ${SEARXNG_UNIT}   ·   journalctl -u ${SEARXNG_UNIT} -f"
-    echo "Leave Admin → Tools → SearXNG URL EMPTY to use it; the app probes it automatically."
+    echo "Source:   $src_dir (git pull + ./install.sh --searxng to update)"
+    echo "Leave Admin → Tools → SearXNG URL EMPTY to use it; the app probes it automatically, and"
+    echo "serves the same SearXNG itself at /searxng if this unit is ever down."
     echo "Set POSTERCHANAI_SEARXNG_PORT to install on a different port (recorded in $conf_dir/port)."
     return 0
 }

@@ -101,6 +101,27 @@ small model *gathers* reliably and *retells* badly. It called a healthy 3-of-3 R
 and dropped a drive from a list it had been handed. So `--brief` renders the report **in Python**,
 from what was measured, between two markers — and the prompt asks for the markers.
 
+### On the node, not in the agent sandbox
+
+Run it **on the node**. The per-user agent sandbox (`sandbox_service.py`, `pcai-sbx-<uid>`) cannot
+run this suite, and that is by design rather than an omission: the sandbox exists so an agent can do
+anything *inside* a throwaway container "without ever touching the host filesystem" — so it cannot
+see the checkout it would be checking. Its image also has no Chrome and no node. Mounting the repo
+in to fix that would delete the one property the sandbox is for, so don't.
+
+The sandbox is **off by default** (`node_exec_sandbox_enabled`, Admin → Nodes), so an admin's agent
+already runs on the host and `./test.sh` works as written. If you turn it on for a user, that user's
+agent cannot run the suite — send it to a node instead.
+
+If what you want is isolation while testing, that is what `--docker` is:
+
+```
+cd ~/posterchanai && ./test.sh --brief --docker
+```
+
+Own container, own Chrome, no ports published, repo bind-mounted so it still checks the real tree.
+That is the sandboxed form of this suite, and it works from the agent on any node with Docker.
+
 ### The prompt
 
 Paste this into the AI Chat agent (or `node <name> agent …`). It is written flat and short on
