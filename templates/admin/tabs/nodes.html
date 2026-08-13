@@ -159,6 +159,16 @@
                 <small>Per-container CPU cap (<code>docker --cpus</code>). Default: <code>1</code>.</small>
             </div>
         </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="node_exec_sandbox_pids">Sandbox processes</label>
+                <input type="text" id="node_exec_sandbox_pids" name="node_exec_sandbox_pids" placeholder="4096">
+                <small>Per-container task cap (<code>docker --pids-limit</code>). Counts <b>threads</b>, not
+                processes — <code>./test.sh</code> in a sandbox runs six headless browsers at once and peaks
+                around 800. Too low and every browser check dies with <code>can't start new thread</code>,
+                which reads as a broken test suite. Default: <code>4096</code>.</small>
+            </div>
+        </div>
     </fieldset>
 
     <fieldset>

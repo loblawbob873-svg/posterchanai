@@ -448,6 +448,10 @@ class SettingsResponse(BaseModel):
     node_exec_sandbox_network: str = "bridge"  # "bridge" (internet for apt) or "none" (fully isolated)
     node_exec_sandbox_memory: str = "1g"       # per-container memory cap (docker --memory)
     node_exec_sandbox_cpus: str = "1"          # per-container CPU cap (docker --cpus)
+    node_exec_sandbox_pids: str = "4096"       # per-container TASK cap (docker --pids-limit). Counts
+    # THREADS, not processes: it was hardcoded at 256, and `./test.sh` in a sandbox runs six headless
+    # Chromiums at once, which peak at 782 tasks. Every browser check died with `can't start new
+    # thread` / `BlockingIOError` and read as a broken test suite.
     agent_artifact_ttl_days: str = "14"  # per-blob TTL for TRANSIENT agent artifacts (workspace backups
     # from a sandbox run): they auto-expire after this many days so a run-every-time auto-archive can't
     # fill storage. 0 = keep forever. Chat-generated images/files are NOT affected (they persist).

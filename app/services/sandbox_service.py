@@ -146,6 +146,23 @@ def _cpus() -> str:
     return _s("node_exec_sandbox_cpus", "1").strip() or "1"
 
 
+def _pids() -> str:
+    """The container's task ceiling — THREADS, not processes, which is what made 256 a bug.
+
+    It was hardcoded at 256 as a fork-bomb guard, and that number is invisible: raising the memory
+    and CPU settings (5g/5 here) says nothing about it, and nothing reports it. The suite runs its
+    browser checks six at a time (`checkall.py`), and `pids.max` counts every task in the cgroup —
+    measured on this image, six headless Chromiums on about:blank peak at 782. So `./test.sh` inside
+    a sandbox could not work, and it did not fail as "out of resources": each check died with
+    `pthread_create` → `RuntimeError: can't start new thread` / `BlockingIOError: [Errno 11]`, or
+    Chrome simply refused to start and the check reported SKIP. Seventeen failures and five skips
+    that read as a broken test suite, on a host where the same suite is fine.
+
+    Still a ceiling, just one above the workload: a fork bomb crosses 4096 as fast as it crosses
+    256, while a real check run no longer does."""
+    return _s("node_exec_sandbox_pids", "4096").strip() or "4096"
+
+
 def container_name(uid) -> str:
     return f"{_PREFIX}{uid}"
 
@@ -221,6 +238,27 @@ async def _stale_image(name: str) -> bool:
     return bool(was) and was != _image()
 
 
+async def _stale_pids(name: str) -> bool:
+    """The SAME lesson one field over: a container also outlives the LIMITS it was made from.
+
+    `--pids-limit` is fixed at create time, so a box made while it was 256 keeps 256 no matter what
+    the setting says afterwards — and unlike the image there is no tag to notice, so raising it would
+    look applied and change nothing until the container happened to be reaped. `_stale_image` would
+    not fire either: same image, different flag.
+
+    Only this limit is compared. Memory and CPU are quotas docker can be told to change on a live
+    container, and neither has produced a failure that reads as something else; `PidsLimit` has.
+    An unreadable or unparseable answer is NOT stale — the same rule as above."""
+    want = _pids()
+    rc, out = await _docker("inspect", "-f", "{{.HostConfig.PidsLimit}}", name, timeout=15)
+    if rc != 0:
+        return False
+    try:
+        return int(out.strip()) != int(want)
+    except ValueError:
+        return False
+
+
 async def ensure(uid) -> str:
     """Create + start this user's container if it isn't already running; return its name. Called lazily
     by the first command. `_last_use` is stamped BEFORE `docker run` so the container is 'tracked' the
@@ -235,9 +273,12 @@ async def ensure(uid) -> str:
         # pulling the box out from under it is worse than one more run on the old image (the next
         # idle run picks it up). The workspace is a named volume, so a replaced container comes back
         # to the same files.
-        if int(_active.get(key, 0)) == 0 and await _exists(name) and await _stale_image(name):
-            logger.info("[sandbox] %s was built from %r, image is now %r — recreating",
-                        name, await _container_image(name), _image())
+        if int(_active.get(key, 0)) == 0 and await _exists(name) and (
+                await _stale_image(name) or await _stale_pids(name)):
+            logger.info("[sandbox] %s was built from image %r / pids-limit %s, config is now %r / %s "
+                        "— recreating", name, await _container_image(name),
+                        (await _docker("inspect", "-f", "{{.HostConfig.PidsLimit}}", name, timeout=15))[1].strip(),
+                        _image(), _pids())
             await _docker("rm", "-f", name, timeout=60)
         if not await _running(name):
             if await _exists(name):
@@ -251,7 +292,7 @@ async def ensure(uid) -> str:
                        if workspace_enabled() else [])
                 rc, out = await _docker(
                     "run", "-d", "--name", name, "--hostname", "sandbox",
-                    "--memory", _mem(), "--cpus", _cpus(), "--pids-limit", "256",
+                    "--memory", _mem(), "--cpus", _cpus(), "--pids-limit", _pids(),
                     "--network", _network(), "--security-opt", "no-new-privileges",
                     "--label", "pcai-sandbox=1", *_ws,
                     _image(), "sleep", "infinity", timeout=120,

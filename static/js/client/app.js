@@ -3209,7 +3209,8 @@
   // here whose absence is INVISIBLE: left behind on the old pool, the desktop simply draws the
   // default order, which looks like a layout that was never saved rather than one that was dropped.
   const _CARRY_D = [/^pcai:note:/, /^pcai:notefolder:/, /^pcai:pw:/, /^pcai:pwfolder:/,
-                    /^pcai:pwkey$/, /^pcai:budget$/, /^pcai:playlist:/, /^pcai:desktop$/];
+                    /^pcai:pwkey$/, /^pcai:budget$/, /^pcai:playlist:/, /^pcai:desktop$/,
+                    /^pcai:agent-tasks$/];
   let _carrying = false;
 
   function _isCarryDoc(ev){
@@ -22005,10 +22006,99 @@
     if(fresh || !_ai.convId){ try{ await aiNewConversation(); }catch(_){} }
     const ta=$('#ai-input'); if(ta){ ta.value=cmd; aiSend(); }
   }
-  // Saved agent tasks — a per-user list you can re-run with one click. Stored client-side
-  // (ClientSettings/localStorage); each is {name, mode:'agent'|'cmd', node, all, text}.
-  function _agentSavedGet(){ try{ return ClientSettings.get('agentSavedTasks', [])||[]; }catch(_){ return []; } }
-  function _agentSavedSet(list){ try{ ClientSettings.set('agentSavedTasks', list||[]); }catch(_){} }
+  /* Saved agent tasks — a per-user list you can re-run with one click; each is
+   * {name, mode:'agent'|'cmd', node, all, text}.
+   *
+   * THIS WAS THE ONE THING IN THE PANEL WITH NO COPY ANYWHERE, and it was reported gone. It lived in
+   * `pc_nostr_settings` in localStorage and nowhere else: not synced, not backed up, not in the
+   * relay-change carry. Every other pref in these settings either syncs to `pcai:client-prefs` or
+   * restores from a relay list, so after any localStorage loss they all come back and this is the
+   * single visible casualty — which also makes the loss look like a targeted bug rather than what it
+   * is. And it is not one failure: a moved app origin, a corrupt blob (`Settings.all()` returns `{}`
+   * on ANY parse error, and the next `set` writes a fresh object over all 46 keys), or a quota
+   * failure inside a swallowing try/catch all end the same way.
+   *
+   * So the list now lives in an ENCRYPTED kind-30078 doc, `d=pcai:agent-tasks`, NIP-44 to the user's
+   * own key — the Notes/Budget shape, not `pcai:client-prefs`, which is published as PLAINTEXT.
+   * These are shell commands and agent goals; syncing them in the clear to relays would trade a lost
+   * task for a leaked one. localStorage stays as the local cache so the panel still opens offline
+   * and on a device that has never read the doc.
+   *
+   * The rules below are Budget's, and each is load-bearing here for the same reason:
+   *   - a read that no relay answered is NOT "no saved tasks" (`sawRelay`) — the empty-read wipe;
+   *   - nothing is published until a read has succeeded, so an unreachable pool cannot replace the
+   *     real list with the local cache's idea of it;
+   *   - writes are serialized, so a rapid save-then-delete cannot publish two events built from the
+   *     same base copy;
+   *   - and the doc is pinned in BOTH `_isPinned` (store.js) and `_CARRY_D` above, because every
+   *     private doc in this app has missed one of those at least once. */
+  const _AGT_D = 'pcai:agent-tasks';
+  let _agtDoc = null;          // null = not read yet; an array once a read has SUCCEEDED
+  let _agtChain = Promise.resolve();
+  let _agtLoading = null;
+  function _agentSavedGet(){
+    if(Array.isArray(_agtDoc)) return _agtDoc;
+    try{ return ClientSettings.get('agentSavedTasks', [])||[]; }catch(_){ return []; }   // cache, until the doc lands
+  }
+  // Read the encrypted doc once per panel open, sharing one REQ across re-entrant renders (a second
+  // would also mean a second decrypt prompt on an external signer).
+  function _agentSavedLoad(){
+    if(Array.isArray(_agtDoc)) return Promise.resolve(_agtDoc);
+    if(!ME || !ME.pubkey) return Promise.resolve(_agentSavedGet());
+    if(!_agtLoading) _agtLoading = _agentSavedRead().finally(()=>{ _agtLoading = null; });
+    return _agtLoading;
+  }
+  async function _agentSavedRead(){
+    let ev=null, sawRelay=false;
+    for(let a=0; a<3 && !ev; a++){
+      if(a) await new Promise(r=>setTimeout(r, 450*a));
+      try{
+        const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[30078], '#d':[_AGT_D], limit:1 }]);
+        sawRelay = true;
+        ev = (evs||[]).sort((x,y)=>y.created_at-x.created_at)[0] || null;
+      }catch(_){}
+    }
+    if(!sawRelay) return _agentSavedGet();      // relays silent → keep showing the cache, and do NOT arm writes
+    if(!ev){
+      /* No doc yet. A device that already has tasks in localStorage is the MIGRATION case: adopt
+       * them and publish, so the first open after this ships is what puts them somewhere durable. */
+      _agtDoc = _agentSavedGet().slice();
+      if(_agtDoc.length) _agentSavedPublish();
+      return _agtDoc;
+    }
+    // `signer`, not `PC` — inside app.js the bridge is window.__PC and `PC` is simply undefined.
+    // Budget calls PC.nip44dec because budget.js is a separate module with its own handle; lifting
+    // that line in here would have thrown on the first read and been caught by the `catch(_)` below,
+    // i.e. it would have looked exactly like an undecryptable doc and silently never synced.
+    let raw=''; try{ raw = await signer.nip44dec(ME.pubkey, ev.content||''); }
+    catch(_){ return _agentSavedGet(); }        // undecryptable → never overwrite it with the cache
+    let d=null; try{ d = JSON.parse(raw); }catch(_){ d = null; }
+    const list = Array.isArray(d) ? d : (d && Array.isArray(d.tasks) ? d.tasks : null);
+    if(!list) return _agentSavedGet();
+    _agtDoc = list;
+    try{ ClientSettings.set('agentSavedTasks', list); }catch(_){}   // refresh the offline cache
+    return _agtDoc;
+  }
+  function _agentSavedPublish(){
+    const done = _agtChain.catch(()=>{}).then(async ()=>{
+      const ct = await signer.nip44enc(ME.pubkey, JSON.stringify(_agtDoc||[]));
+      const r = await publish(30078, ct, [['d', _AGT_D]], {quiet:true});
+      if(!(r && r.ok)) throw new Error('relay rejected the write');
+    });
+    _agtChain = done.catch(()=>{});
+    done.catch(()=>toast('couldn’t sync that task — it is saved on this device only'));
+    return done;
+  }
+  function _agentSavedSet(list){
+    const next = list||[];
+    try{ ClientSettings.set('agentSavedTasks', next); }catch(_){}   // local cache first: it must work offline
+    /* Publish only once a read has SUCCEEDED. Before that `_agtDoc` is null, and writing would push
+     * this device's cache over a doc we have not seen — the replaceable-doc wipe, with somebody
+     * else's device holding the real list. */
+    if(!Array.isArray(_agtDoc) || !ME || !ME.pubkey) return;
+    _agtDoc = next;
+    _agentSavedPublish();
+  }
   function _agentTaskCmd(t){
     const tgt = t.all ? 'all' : (t.node||'local');
     return t.mode==='agent' ? `node agent ${tgt} ${t.text}` : (t.all?`node all ${t.text}`:`node ${tgt} ${t.text}`);
@@ -22140,6 +22230,10 @@
         }
       };
       renderSaved();
+      // …then again once the encrypted doc lands, so a device that has never opened this panel (or
+      // has just lost its localStorage) fills in from the account rather than showing "no saved
+      // tasks yet". Painting the cache FIRST is the cache-first rule: the list is already known.
+      _agentSavedLoad().then(()=>{ try{ if(savedBox.isConnected) renderSaved(); }catch(_){} }).catch(()=>{});
       $('#np-save-cur',root).onclick=async()=>{ const text=inp.value.trim(); if(!text){ inp.focus(); toast('Fill in the task first, then save it'); return; }
         const name=await uiPrompt('Name this task', {value:text.slice(0,40), placeholder:'e.g. Nightly disk check'}); if(name===null) return;
         const list=_agentSavedGet(); list.unshift({name:(name||text).trim(), mode:mode(), node:nodeSel.value, all:allCb.checked, text});
@@ -23611,6 +23705,24 @@
     // inline images from a command output (effects/stamps, compress/convert) → show with the same
     // copy-link / reply buttons; stash BEFORE mdToHtml so it doesn't render a plain <img>.
     src=src.replace(/!\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><img src="${enc(_absUrl(u))}" data-full="${enc(_absUrl(u))}" onerror="window.__aiMediaRetry(this)"></div>`+_aiFileActions(u,'image',a)));
+    /* A NON-MEDIA artifact arrives as a plain markdown LINK, and that is the one form of it that
+     * never worked outside a browser. The agent's `/workspace` backup is what reaches a user —
+     * `[⬇️ sandbox-workspace.tar.gz](/api/files/…)` — and mdInline renders it as `<a href="/api/…">`,
+     * a ROOT-RELATIVE href that resolves against the PAGE origin. In the bundled app that origin is
+     * https://localhost (Android) or app://posterchan (desktop), where nothing serves /api at all:
+     * the shell answers with its own not-found body and NO request ever leaves the device. Measured
+     * on the run that was reported — the instance log has no GET for the file, only the chat being
+     * opened. (mdInline cannot absolutize it either: the same renderer draws untrusted nostr
+     * markdown, where a relative href must stay inert.)
+     *
+     * So it becomes the SAME `.ai-dlfile` button the media rows already offer, whose fetch goes
+     * through the shim with credentials — one download path for every artifact, in both shells,
+     * rather than a second one that only holds up on the web. The ⬇️ the server puts in the label
+     * is stripped before the label becomes a FILENAME on somebody's disk. */
+    src=src.replace(/\[([^\]]+)\]\(\s*(\/api\/files\/[^)\s]+)\s*\)/g,(m,label,u)=>{
+      const nm=String(label||'').replace(/^[\s⬇↓️]+/,'').trim();
+      return stash(`<button class="btn btn-cyan small ai-dlfile" data-url="${enc(u)}" data-name="${enc(_artName(nm,u))}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>${enc(nm||'Download')}</button>`);
+    });
     // Torrent browse buttons: [Download](cmd:torrents download tv 1) → a command button; and
     // [Add](magnet:<url-encoded magnet>) → an add-torrent button. (cmd: hrefs contain spaces that
     // would break markdown link parsing, so stash them BEFORE mdToHtml runs.)
