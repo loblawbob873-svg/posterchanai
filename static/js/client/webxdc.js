@@ -478,27 +478,47 @@
      it is part of the injected bridge, on the app's own origin — which is the only place it can:
      the client is a different origin and cannot dispatch an event into this document.
 
-     IT DISABLES ITSELF FOR AN APP THAT SPEAKS GAMEPAD, and does it by observation rather than by a
-     per-app setting nobody would know to set: 'navigator.getGamepads' is wrapped, and an app that
-     calls it plainly does not need fake keys. The wrapper is installed before any app script runs
-     (the bridge is injected at the top of <head>), and our own polling goes through the saved
-     original so it can never trip its own flag.
+     POLLING IS NOT CONSENT, and assuming it was is what made the first version of this do NOTHING.
+     It disabled itself as soon as the app touched 'navigator.getGamepads', on the reasoning that an
+     app which reads the pad does not need fake keys. That reasoning is contradicted by the very fact
+     that justifies this shim: SDL2's emscripten joystick backend is compiled in BY DEFAULT
+     (SDL_JOYSTICK_EMSCRIPTEN is 1 in SDL_config_emscripten.h, so -sUSE_SDL=2 gets it without asking)
+     and emscripten_sample_gamepad_data() IS navigator.getGamepads(). So any port that inits the
+     joystick subsystem — SDL_INIT_EVERYTHING is enough, and it is what a lot of them pass — polls
+     the pad every frame while its input code reads only the keyboard. Exactly the game this exists
+     for, and it switched the shim off on the first frame. Reported as "no controller movement
+     worked", with the shim installed, running, and correct.
+
+     So the flag is REPORTED and no longer acted on, and the off switch is a real one the client owns
+     ('pc_xdc_pad', default on). Getting it wrong now costs a gamepad-native app some extra arrow
+     keys; getting it wrong the old way cost the whole feature, silently.
 
      WHY BOTH ARROWS AND WASD for one direction: Quake reads WASD, Doom reads the arrows, and in the
      ports that read both they are bound to the same action. Nothing here is a chord, so a game that
      knows only one of the two simply never sees the other.
 
-     The loop starts on 'gamepadconnected' rather than at load, which is not an optimisation — it is
-     the spec's own gesture rule reused. Gamepads are hidden from a document until it has seen a
-     gamepad BUTTON PRESS (an anti-fingerprinting measure; a tap or a click will not do), and that
-     flag lives on Navigator, so this frame needs its own press even if the client already had one.
-     'gamepadconnected' fires at exactly that moment, so waiting for it costs nothing and means no
-     rAF loop runs in an app nobody is holding a controller for. */
+     THE LOOP STARTS AT LOAD, not on 'gamepadconnected'. Waiting for that event was the second way
+     this could do nothing: gamepads are hidden from a document until it has seen a gamepad BUTTON
+     press, that flag is per-Navigator, and whether the event reaches a doubly-nested cross-origin
+     frame at all is exactly the thing nobody could confirm. A poll is one array read in a page that
+     is already running a game loop, so the cautious version costs nothing measurable and removes a
+     whole class of never-started.
+
+     AND IT COUNTS WHAT IT SAW. There is no controller and no phone on the machine this is written
+     on, so the difference between "no pad visible", "pad visible, no press", "keys sent, game
+     ignored them" and "the app turned it off" has to come back from the device — the same reason
+     MusicPlugin.status() exists. PC.padStats() reads it. */
   (function(){
     var poll = navigator.getGamepads && navigator.getGamepads.bind(navigator);
     if(!poll) return;
-    var appPolls = false;
-    try{ navigator.getGamepads = function(){ appPolls = true; return poll(); }; }catch(e){}
+    var stat = { on:(__XDC.pad !== false), pads:0, presses:0, keys:0, appPolls:0, frames:0, last:'' };
+    try{ navigator.getGamepads = function(){ stat.appPolls++; return poll(); }; }catch(e){}
+    // Reported to the parent, which is the only side with a UI. Throttled: this is a diagnostic, not
+    // a telemetry stream, and it rides the same postMessage channel the game's own updates use.
+    setInterval(function(){
+      try{ send({ jsonrpc:'2.0', method:'webxdc.padstat', params:stat }); }catch(e){}
+    }, 2000);
+    if(__XDC.pad === false) return;
 
     // key → [KeyboardEvent.key, .code, legacy keyCode]. emscripten reads keyCode, so it is not
     // optional: a synthetic event carrying 0 there is "no key" to every SDL build.
@@ -561,12 +581,15 @@
     }
     function tick(){
       raf = requestAnimationFrame(tick);
+      stat.frames++;
       // A backgrounded app must not be left holding a key: it would still be walking into a wall
       // when whoever put the phone down comes back.
-      if(appPolls || document.hidden){ release(); return; }
+      if(document.hidden){ release(); return; }
       var pads = poll() || [], p = null, i;
       for(i = 0; i < pads.length; i++) if(pads[i] && pads[i].connected){ p = pads[i]; break; }
+      stat.pads = p ? 1 : 0;
       if(!p){ release(); return; }
+      if(!stat.id) stat.id = String(p.id || '').slice(0, 60) + ' [' + (p.mapping || 'no mapping') + ']';
       var want = {}, b = p.buttons || [], idx, j, list, bb, on;
       for(idx in BTN){
         bb = b[idx];
@@ -584,10 +607,12 @@
       for(i = 0; i < hn.length; i++) if(!want[hn[i]]){ delete held[hn[i]]; fire('keyup', hn[i]); }
       var wn = Object.keys(want);
       for(i = 0; i < wn.length; i++) if(!held[wn[i]]){ held[wn[i]] = 1; fire('keydown', wn[i]); }
+      if(wn.length){ stat.presses++; stat.keys += wn.length; stat.last = wn.join('+'); }
     }
     function start(){ if(!raf) raf = requestAnimationFrame(tick); }
     window.addEventListener('gamepadconnected', start);
     window.addEventListener('blur', release);
+    start();   // …and at load, because the event may never reach a doubly-nested cross-origin frame
     // In case a pad is already visible to this document (a reload after the gesture was given).
     try{ var now = poll() || []; for(var n = 0; n < now.length; n++) if(now[n]) { start(); break; } }catch(e){}
   })();
@@ -667,6 +692,11 @@
         const head = 'var __XDC = ' + JSON.stringify({
           addr: this.self.addr, name: this.self.name,
           ns: String(this.app.uuid || this.app.sha || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64),
+          /* The controller shim's off switch, decided HERE because the app frame has no settings UI
+           * and no durable storage of its own worth the name. Default on: a game that reads the pad
+           * natively getting keys as well is a nuisance, while a keyboard-only game getting nothing
+           * is the entire feature failing. */
+          pad: (function(){ try{ return localStorage.getItem('pc_xdc_pad') !== '0'; }catch(e){ return true; } })(),
         }) + ';\n';
         return { status:200, contentType:'text/javascript', body:_enc.encode(head + BRIDGE) };
       }
@@ -989,6 +1019,15 @@
           toast((this.app.name || 'the app') + ': ' + m + (p.where ? ' (' + p.where + ')' : ''));
           try{ console.warn('[webxdc]', this.app.name, m, p.where || ''); }catch(_){}
         }
+        return;
+      }
+      /* WHAT THE PHONE MEASURED about the controller. There is no pad and no device on the machine
+       * this is developed on, so "the controller does nothing" has to be split into its four very
+       * different causes from the device itself: no pad visible to the frame, a pad visible but
+       * never pressed (the gesture rule), keys sent that the game ignored, or the shim switched off.
+       * Two rounds were spent guessing before this existed. PC.padStats() reads it. */
+      if(d.method === 'webxdc.padstat'){
+        this.padStat = d.params || {};
         return;
       }
       if(d.method === 'sandbox.error'){
@@ -1639,6 +1678,15 @@
                         // Games → Webxdc. `__gal` is the directory's own state, exposed so
                         // tests/test_webxdc_gallery.py can drive the merge/sort against real events.
                         gallery, __galLoad: galLoad, __galKey: _galKey, __galTile: galTile,
+                        /* The controller diagnostic, and its off switch. `padStats()` answers the
+                         * question a phone has to answer for us — see webxdc.padstat — and reads
+                         * from the LIVE session, so it is asked while the game is open. `pad(false)`
+                         * takes the shim off for an app that reads the pad itself; it applies on the
+                         * next open, because the bridge is injected once per load. */
+                        padStats: () => { for(const s of _live.values()) if(s && !s.dead && s.padStat) return s.padStat;
+                                          return null; },
+                        pad: (on) => { try{ localStorage.setItem('pc_xdc_pad', on === false ? '0' : '1'); }catch(e){}
+                                       return on !== false; },
                         MIME, KIND_UPDATE, Session };
   }
   init();

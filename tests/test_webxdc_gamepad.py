@@ -17,8 +17,13 @@ The rules asserted here are decisions, not accidents:
   * keyCode is carried, because that is the field emscripten/SDL actually reads.
   * A held button emits ONE keydown, not one per frame.
   * The stick has hysteresis, so a stick resting near the edge holds rather than chatters.
-  * An app that calls navigator.getGamepads() itself turns the shim OFF — it does not need fake keys
-    and would get double input.
+  * An app that calls navigator.getGamepads() does NOT turn the shim off. It used to, and that one
+    assumption made the whole feature do nothing — SDL2's emscripten joystick backend polls the pad
+    by default while the game reads only the keyboard. Polling is reported; the off switch is real
+    and belongs to the client.
+  * The loop does not wait for `gamepadconnected`, which may never reach a doubly-nested cross-origin
+    frame.
+  * It reports what it measured, because the failure happens on a phone that isn't here.
   * Backgrounding releases whatever was held, rather than leaving the player walking into a wall.
 """
 import json
@@ -61,7 +66,17 @@ def shim_source() -> str:
 # because the shim branches on all three.
 HARNESS = r"""
 const events = [];
+const padstats = [];
 let pads = [];
+// The bridge globals the shim now uses: `__XDC` carries the client-owned off switch, and `send` is
+// the postMessage channel it reports the diagnostic on.
+global.__XDC = { pad: PAD_ENABLED };
+// CLONED, because postMessage structured-clones and this stub does not. Holding the live `stat`
+// object made every recorded sample read as the LAST one — the test equivalent of the reference bug
+// the music panel hit, and it would have hidden exactly the transitions this is here to check.
+global.send = (m) => { if(m && m.method === 'webxdc.padstat') padstats.push(JSON.parse(JSON.stringify(m.params))); };
+let statFn = null;
+global.setInterval = (fn) => { statFn = fn; return 0; };
 let pending = null;
 let appCalls = 0;
 
@@ -122,16 +137,21 @@ for(const s of steps){
   if(s.frames) for(let i = 0; i < s.frames; i++) frame();
   if(s.record) out[s.record] = events.map(e => ({ on:e.on, type:e.type, code:e.code,
                                                   keyCode:e.keyCode, bubbles:e.bubbles }));
+  // The report rides a timer in the browser; fire it by hand so the test controls when.
+  if(s.recordStat){ if(statFn) statFn();
+    out[s.recordStat] = padstats.length ? padstats[padstats.length-1] : null; }
 }
 console.log(JSON.stringify(out));
 """
 
 
-def run(steps):
+def run(steps, pad_enabled=True):
     node = shutil.which("node")
     if not node:
         raise unittest.SkipTest("node is not installed")
-    script = HARNESS.replace("SHIM;", shim_source() + ";").replace("STEPS", json.dumps(steps))
+    script = (HARNESS.replace("SHIM;", shim_source() + ";")
+              .replace("STEPS", json.dumps(steps))
+              .replace("PAD_ENABLED", "true" if pad_enabled else "false"))
     p = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=60)
     if p.returncode != 0:
         raise AssertionError("node failed: " + (p.stderr or "")[-3000:])
@@ -206,15 +226,54 @@ class WebxdcGamepadShim(unittest.TestCase):
         self.assertEqual(out["linger"], [])
         self.assertEqual(sorted(self.codes(out["leave"], "keyup")), ["ArrowLeft", "KeyA"])
 
-    def test_an_app_that_polls_gamepads_itself_turns_the_shim_off(self):
-        """Detected by observation rather than a per-app setting nobody would know to set. An app
-        that reads the pad would otherwise get the stick AND a stream of fake keys for it."""
+    def test_an_app_polling_gamepads_does_NOT_turn_the_shim_off(self):
+        """THE BUG THAT MADE THE FIRST VERSION DO NOTHING, kept as a test so it cannot come back.
+
+        The shim used to disable itself the moment the app touched navigator.getGamepads(), reasoning
+        that an app reading the pad does not need fake keys. But SDL2's emscripten joystick backend
+        is compiled in BY DEFAULT and emscripten_sample_gamepad_data() IS navigator.getGamepads() —
+        so any port that inits the joystick subsystem (SDL_INIT_EVERYTHING is enough) polls every
+        frame while its input code reads only the keyboard. That is precisely the game this shim
+        exists for, and it switched itself off on the first frame. Polling is reported now, never
+        acted on."""
         out = run([
-            {"pads": [pad()], "emit": "gamepadconnected", "frames": 1, "drain": True},
+            {"pads": [pad()], "frames": 1, "drain": True},
             {"appPolls": True},
-            {"pads": [pad(buttons=[DPAD_UP])], "frames": 5, "record": "after"},
+            {"pads": [pad(buttons=[DPAD_UP])], "frames": 2, "record": "after", "recordStat": "stat"},
         ])
-        self.assertEqual(self.codes(out["after"], "keydown"), [])
+        self.assertEqual(sorted(self.codes(out["after"], "keydown")), ["ArrowUp", "KeyW"])
+        self.assertGreater(out["stat"]["appPolls"], 0, "the app's polling should still be REPORTED")
+
+    def test_the_client_can_switch_the_shim_off(self):
+        """The real off switch, for an app that genuinely reads the pad — owned by the client, since
+        the app frame has no settings UI of its own."""
+        out = run([
+            {"pads": [pad(buttons=[DPAD_UP])], "frames": 3, "record": "keys"},
+        ], pad_enabled=False)
+        self.assertEqual(out["keys"], [])
+
+    def test_it_runs_without_ever_seeing_gamepadconnected(self):
+        """The second way this could do nothing. Whether `gamepadconnected` reaches a doubly-nested
+        cross-origin frame is exactly what nobody could confirm, so the loop no longer waits for it —
+        note that no step here emits the event."""
+        out = run([
+            {"pads": [pad(buttons=[A_BTN])], "frames": 2, "record": "keys"},
+        ])
+        self.assertEqual(self.codes(out["keys"], "keydown"), ["Space"])
+
+    def test_it_reports_what_it_measured(self):
+        """There is no controller and no phone on the machine this is written on, so the difference
+        between "no pad", "pad but no press" and "keys sent, game ignored them" has to come back
+        from the device or the next round is another guess."""
+        out = run([
+            {"pads": [], "frames": 2, "recordStat": "empty"},
+            {"pads": [pad(buttons=[DPAD_LEFT])], "frames": 2, "recordStat": "pressed"},
+        ])
+        self.assertEqual(out["empty"]["pads"], 0)
+        self.assertEqual(out["empty"]["presses"], 0)
+        self.assertEqual(out["pressed"]["pads"], 1)
+        self.assertGreater(out["pressed"]["presses"], 0)
+        self.assertIn("left", out["pressed"]["last"])
 
     def test_backgrounding_releases_what_was_held(self):
         """Otherwise the player is still walking into a wall when they come back to the phone."""
