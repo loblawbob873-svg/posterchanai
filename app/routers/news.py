@@ -374,6 +374,38 @@ async def summarize_article(
     from bs4 import BeautifulSoup
 
     try:
+        # A VIDEO IS NOT AN ARTICLE, and scraping one here could never work.
+        #
+        # This handler fetched every URL as HTML through the news proxy, which is Tor. YouTube answers
+        # a Tor exit with a redirect to google.com/sorry — the CAPTCHA wall — so `raise_for_status`
+        # threw and the user got the raw text of a 429 against a google.com/sorry URL, which reads
+        # like the summarizer is broken rather than like the page was never going to be readable.
+        # Measured in the log: two attempts, both 429, both surfaced verbatim.
+        #
+        # The app already has the right answer for a video and AI Chat has been using it all along
+        # (`yt` → summarize_youtube → get_transcript): ask for the TRANSCRIPT. Same text the model
+        # wants, and it is not a page scrape, so the wall does not apply.
+        #
+        # NOTE ON THE PROXY, deliberately: the transcript call does NOT go through the news proxy —
+        # it is the same direct call the `yt` command already makes, so this introduces no new
+        # exposure that the app did not already have, but it IS a different path from the rest of
+        # this handler and that is worth knowing when reading it.
+        yt_text = ""
+        try:
+            from app.services import youtube_service as _yt
+            if _yt.is_youtube_url(url):
+                _vid = _yt.extract_video_id(url)
+                yt_text = (_yt.get_transcript(_vid) or "") if _vid else ""
+                if not yt_text:
+                    # Say which of the two it is. "No summary" for a video with subtitles turned off
+                    # and "no summary" for a blocked fetch are the same sentence and different bugs.
+                    return {"summary": "This is a YouTube video and it has no transcript available "
+                                       "(subtitles may be disabled for it), so there is no text to "
+                                       "summarize."}
+        except Exception as _e:
+            logger.warning(f"YouTube transcript path failed for {url}: {_e}")
+            yt_text = ""
+
         # Proxy is required for news article fetching
         proxy_config = require_proxy("News article fetching")
         
@@ -394,19 +426,31 @@ async def summarize_article(
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1",
         }
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, proxy=proxy_config) as client:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            html = response.text
+        if yt_text:
+            # The transcript IS the article body. Skipping the fetch is the point: the request that
+            # produced the 429 is the one not made.
+            html = ""
+            soup = BeautifulSoup("", "html.parser")
+            logger.info(f"YouTube transcript: {len(yt_text)} chars for {url} (no page fetch)")
+        else:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, proxy=proxy_config) as client:
+                response = await client.get(url, headers=headers)
+                response.raise_for_status()
+                html = response.text
 
-        # Parse and extract main content
-        soup = BeautifulSoup(html, "html.parser")
+            # Parse and extract main content
+            soup = BeautifulSoup(html, "html.parser")
 
-        # Log response info for debugging
-        logger.info(f"Article fetch: {url} - status={response.status_code}, content_length={len(html)}")
+        # Log response info for debugging. Guarded: there IS no response on the transcript branch,
+        # and an unguarded read here is a NameError that the outer except turns into
+        # "Error: name 'response' is not defined" — a worse message than the 429 it replaced.
+        if not yt_text:
+            logger.info(f"Article fetch: {url} - status={response.status_code}, content_length={len(html)}")
 
         # Try to extract from JSON-LD (common in JS-heavy sites like MSN)
-        text = ""
+        # …unless the transcript already IS the text, in which case every extraction step below is a
+        # no-op on an empty document and would end at "Could not extract article content".
+        text = yt_text
         json_ld_scripts = soup.find_all("script", type="application/ld+json")
         for script in json_ld_scripts:
             try:
