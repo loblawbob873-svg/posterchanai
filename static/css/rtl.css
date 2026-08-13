@@ -1,0 +1,43 @@
+/* Loaded ONLY when the interface is right-to-left — i18n.js injects the <link> when it sets
+   dir=rtl and removes it on the way back. Everything else in this client is already
+   direction-agnostic (logical properties), so this file is small by design: it is the list of
+   things that must NOT flip, which is the half a mechanical conversion cannot know.
+   Kept out of the main stylesheets so the default locale pays nothing for it. */
+/* ===== RIGHT-TO-LEFT ==========================================================================
+   Everything above this block is already direction-agnostic: the physical properties were converted
+   to logical ones (margin-inline-start, inset-inline-end, text-align:start …), which in LTR resolve
+   to exactly what they replaced. So this section is not "the RTL stylesheet" — it is the short list
+   of things that must NOT flip, which is the half a mechanical conversion cannot know.
+
+   WHAT MUST STAY LEFT-TO-RIGHT IN ARABIC. A bidirectional algorithm reorders a run by character
+   class, so a technical identifier sitting in an RTL paragraph is rendered right-to-left with its
+   punctuation redistributed — an npub, a hex id, a hostname or a file path comes out scrambled, and
+   it is scrambled ON SCREEN ONLY: copy it and the clipboard is fine, which is precisely what makes
+   it read as "the app corrupted my key" rather than as a text-direction problem. `direction:ltr`
+   plus `text-align:left` on those runs is the whole fix, and it costs nothing in LTR because that
+   is already the value.
+
+   Code is the same argument. A program is left-to-right in every human language. */
+:root.rtl code, :root.rtl pre, :root.rtl kbd, :root.rtl samp,
+:root.rtl .mono, :root.rtl .npub, :root.rtl .hex,
+:root.rtl input[type="url"], :root.rtl input[type="email"], :root.rtl input[type="password"],
+:root.rtl .term, :root.rtl .term *{
+  direction:ltr; text-align:left; unicode-bidi:isolate;
+}
+
+/* `unicode-bidi:plaintext` makes each PARAGRAPH pick its own direction from its first strong
+   character, which is what a timeline needs: an Arabic reader's feed holds Arabic posts, English
+   posts and posts that are a URL, and the container's direction is the wrong answer for two of the
+   three. This is the one place the browser should decide per item rather than us deciding once. */
+:root.rtl .txt, :root.rtl .note .body, :root.rtl .dm-msg, :root.rtl .msg-body{
+  unicode-bidi:plaintext;
+}
+
+/* An arrow means "forward", and forward is leftwards in Arabic — so the glyphs that encode
+   direction are mirrored, while everything pictorial (a gear, a camera, an avatar) must not be.
+   Scoped to the few classes that actually carry a directional arrow rather than to `.ic`, because
+   mirroring every icon is the classic RTL over-correction. */
+:root.rtl .chev, :root.rtl .i-arrow-left, :root.rtl .i-arrow-right,
+:root.rtl .back-btn .ic, :root.rtl .crumb-sep{
+  transform:scaleX(-1);
+}

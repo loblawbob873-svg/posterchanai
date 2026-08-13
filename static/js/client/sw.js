@@ -51,6 +51,7 @@ const IS_APP = self.location.pathname === '/sw.js';
 const SHELL = [
   '/client',
   '/static/css/client.css',
+  '/static/css/rtl.css',
   '/static/vendor/nostr/nostr.bundle.js',
   '/static/js/client/sprite.js',
   /* The translation layer, not the catalogues. i18n.js has to be here or an offline load throws on

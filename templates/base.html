@@ -18,6 +18,9 @@
     <link rel="icon" type="image/png" sizes="512x512" href="/static/icon-512.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
     <link rel="manifest" href="/manifest.json">
+    <!-- The same translation layer the Nostr client uses, so the admin panel and the chat UI answer
+         the language picker too. English is the default and installs nothing. -->
+    <script src="/static/js/client/i18n.js?v={{ ver|default('1') }}"></script>
     {% block head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">

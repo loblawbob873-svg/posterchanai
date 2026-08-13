@@ -222,8 +222,8 @@ select option, select optgroup { background: #14141f; color: var(--text-primary)
     content: '';
     position: absolute;
     top: 0;
-    left: 0;
-    right: 0;
+    inset-inline-start: 0;
+    inset-inline-end: 0;
     height: 2px;
     background: linear-gradient(90deg, transparent, var(--accent), transparent);
 }
@@ -282,14 +282,14 @@ select option, select optgroup { background: #14141f; color: var(--text-primary)
     background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
     display: flex;
     flex-direction: column;
-    border-right: 1px solid var(--border-color);
+    border-inline-end: 1px solid var(--border-color);
     position: relative;
 }
 .sidebar::after {
     content: '';
     position: absolute;
     top: 0;
-    right: 0;
+    inset-inline-end: 0;
     bottom: 0;
     width: 1px;
     background: linear-gradient(180deg, var(--accent), transparent, var(--accent-secondary));
@@ -331,7 +331,7 @@ select option, select optgroup { background: #14141f; color: var(--text-primary)
 .conversation-item.active {
     background: linear-gradient(90deg, rgba(0, 255, 255, 0.2), transparent);
     border-color: var(--accent);
-    border-left: 3px solid var(--accent);
+    border-inline-start: 3px solid var(--accent);
 }
 .conversation-item .title {
     flex: 1;
@@ -372,8 +372,8 @@ select option, select optgroup { background: #14141f; color: var(--text-primary)
     content: '';
     position: absolute;
     bottom: 0;
-    left: 0;
-    right: 0;
+    inset-inline-start: 0;
+    inset-inline-end: 0;
     height: 1px;
     background: linear-gradient(90deg, transparent, var(--accent), var(--accent-secondary), transparent);
     opacity: 0.5;
@@ -442,7 +442,7 @@ select option, select optgroup { background: #14141f; color: var(--text-primary)
 .speech-bubble {
     position: absolute;
     top: -60px;
-    left: 50%;
+    inset-inline-start: 50%;
     transform: translateX(-50%);
     background: white;
     color: #333;
@@ -462,7 +462,7 @@ select option, select optgroup { background: #14141f; color: var(--text-primary)
     content: '';
     position: absolute;
     bottom: -8px;
-    left: 50%;
+    inset-inline-start: 50%;
     transform: translateX(-50%);
     border: 8px solid transparent;
     border-top-color: white;
@@ -472,8 +472,8 @@ select option, select optgroup { background: #14141f; color: var(--text-primary)
 .particles {
     position: absolute;
     top: 0;
-    left: 0;
-    right: 0;
+    inset-inline-start: 0;
+    inset-inline-end: 0;
     bottom: 0;
     pointer-events: none;
     overflow: hidden;
@@ -526,13 +526,13 @@ select option, select optgroup { background: #14141f; color: var(--text-primary)
 }
 .message.user .message-content {
     background: var(--message-user);
-    border-bottom-right-radius: 2px;
+    border-end-end-radius: 2px;
     box-shadow: 0 0 15px rgba(99, 102, 241, 0.4);
     border: 1px solid rgba(139, 92, 246, 0.4);
 }
 .message.assistant .message-content {
     background: var(--message-assistant);
-    border-bottom-left-radius: 2px;
+    border-end-start-radius: 2px;
     border: 1px solid rgba(0, 255, 255, 0.2);
     box-shadow: 0 0 10px rgba(0, 255, 255, 0.1);
 }
@@ -561,7 +561,7 @@ select option, select optgroup { background: #14141f; color: var(--text-primary)
 .code-block-wrapper .code-lang {
     position: absolute;
     top: 8px;
-    left: 12px;
+    inset-inline-start: 12px;
     font-size: 11px;
     color: var(--accent);
     text-transform: uppercase;
@@ -572,7 +572,7 @@ select option, select optgroup { background: #14141f; color: var(--text-primary)
 .code-block-wrapper .code-copy-btn {
     position: absolute;
     top: 6px;
-    right: 8px;
+    inset-inline-end: 8px;
     background: transparent;
     border: 1px solid rgba(0, 255, 255, 0.3);
     color: var(--accent);
@@ -714,7 +714,7 @@ select option, select optgroup { background: #14141f; color: var(--text-primary)
     display: none;
     position: absolute;
     bottom: 100%;
-    left: 50%;
+    inset-inline-start: 50%;
     transform: translateX(-50%);
     background: var(--bg-secondary);
     border: 1px solid var(--accent);
@@ -730,10 +730,10 @@ select option, select optgroup { background: #14141f; color: var(--text-primary)
     content: '';
     position: absolute;
     bottom: -8px;
-    left: 50%;
+    inset-inline-start: 50%;
     transform: translateX(-50%);
-    border-left: 8px solid transparent;
-    border-right: 8px solid transparent;
+    border-inline-start: 8px solid transparent;
+    border-inline-end: 8px solid transparent;
     border-top: 8px solid var(--accent);
 }
 
@@ -761,7 +761,7 @@ select option, select optgroup { background: #14141f; color: var(--text-primary)
     border: none;
     color: var(--text-primary);
     font-size: 13px;
-    text-align: left;
+    text-align:start;
     cursor: pointer;
     text-transform: uppercase;
     letter-spacing: 1px;
@@ -792,8 +792,8 @@ select option, select optgroup { background: #14141f; color: var(--text-primary)
     content: '';
     position: absolute;
     top: 0;
-    left: 0;
-    right: 0;
+    inset-inline-start: 0;
+    inset-inline-end: 0;
     height: 1px;
     background: linear-gradient(90deg, transparent, var(--accent-secondary), var(--accent), transparent);
     opacity: 0.5;
@@ -1049,8 +1049,8 @@ body.admin-page {
     content: '';
     position: absolute;
     bottom: 0;
-    left: 0;
-    right: 0;
+    inset-inline-start: 0;
+    inset-inline-end: 0;
     height: 1px;
     background: linear-gradient(90deg, var(--accent), var(--accent-secondary), var(--accent));
 }
@@ -1073,8 +1073,8 @@ body.admin-page {
     content: '';
     position: absolute;
     top: 0;
-    left: 0;
-    right: 0;
+    inset-inline-start: 0;
+    inset-inline-end: 0;
     height: 2px;
     background: linear-gradient(90deg, var(--accent), var(--accent-secondary));
 }
@@ -1099,8 +1099,8 @@ fieldset::before {
     content: '';
     position: absolute;
     top: 0;
-    left: 20px;
-    right: 20px;
+    inset-inline-start: 20px;
+    inset-inline-end: 20px;
     height: 1px;
     background: linear-gradient(90deg, transparent, var(--accent), transparent);
 }
@@ -1155,7 +1155,7 @@ fieldset legend {
 .user-item-actions {
     display: flex;
     gap: 8px;
-    margin-left: auto;
+    margin-inline-start: auto;
 }
 .user-item-controls {
     display: flex;
@@ -1403,14 +1403,14 @@ fieldset legend {
 @media (max-width: 768px) {
     .sidebar {
         position: fixed;
-        left: -280px;
+        inset-inline-start: -280px;
         top: 0;
         bottom: 0;
         z-index: 1000;
-        transition: left 0.3s;
+        transition: inset-inline-start 0.3s;
     }
     .sidebar.open {
-        left: 0;
+        inset-inline-start: 0;
     }
     .sidebar-overlay {
         position: fixed;
@@ -1480,8 +1480,8 @@ fieldset legend {
     }
     /* User Settings: scrollable tab bar on mobile */
     .user-tabs {
-        padding-left: 16px;
-        padding-right: 16px;
+        padding-inline-start: 16px;
+        padding-inline-end: 16px;
     }
     .user-tab-btn {
         padding: 12px 14px;
@@ -1513,7 +1513,7 @@ fieldset legend {
 .image-actions {
     position: absolute;
     top: 8px;
-    right: 8px;
+    inset-inline-end: 8px;
     display: flex;
     gap: 4px;
     opacity: 0;
@@ -1566,7 +1566,7 @@ fieldset legend {
 .btn-copy {
     position: absolute;
     top: 4px;
-    right: 4px;
+    inset-inline-end: 4px;
     background: transparent;
     border: none;
     padding: 4px 8px;
@@ -1590,7 +1590,7 @@ fieldset legend {
     background: transparent;
     border: none;
     padding: 2px 4px;
-    margin-left: 4px;
+    margin-inline-start: 4px;
     cursor: pointer;
     font-size: 12px;
     opacity: 0.5;
@@ -1605,7 +1605,7 @@ fieldset legend {
 /* Retry button */
 .btn-retry {
     display: inline-block;
-    margin-left: 12px;
+    margin-inline-start: 12px;
     padding: 6px 12px;
     background: linear-gradient(135deg, #e74c3c, #c0392b);
     border: none;
@@ -1624,7 +1624,7 @@ fieldset legend {
 .btn-regenerate {
     position: absolute;
     top: 4px;
-    right: 32px;
+    inset-inline-end: 32px;
     background: transparent;
     border: none;
     padding: 4px 8px;
@@ -1646,7 +1646,7 @@ fieldset legend {
 .btn-edit {
     position: absolute;
     top: 4px;
-    right: 60px;
+    inset-inline-end: 60px;
     background: transparent;
     border: none;
     padding: 4px 8px;
@@ -1668,7 +1668,7 @@ fieldset legend {
 .btn-email {
     position: absolute;
     top: 4px;
-    right: 60px;
+    inset-inline-end: 60px;
     background: transparent;
     border: none;
     padding: 4px 8px;
@@ -1679,7 +1679,7 @@ fieldset legend {
     border-radius: 4px;
 }
 .message.assistant .btn-email {
-    right: 60px;
+    inset-inline-end: 60px;
 }
 .message-content:hover .btn-email {
     opacity: 0.6;
@@ -1755,7 +1755,7 @@ fieldset legend {
 .toast {
     position: fixed;
     bottom: 100px;
-    left: 50%;
+    inset-inline-start: 50%;
     transform: translateX(-50%);
     background: var(--bg-tertiary);
     color: var(--accent);
@@ -1884,8 +1884,8 @@ fieldset legend {
     content: '';
     position: absolute;
     top: 0;
-    left: 0;
-    right: 0;
+    inset-inline-start: 0;
+    inset-inline-end: 0;
     height: 2px;
     background: linear-gradient(90deg, var(--accent), var(--accent-secondary), var(--accent));
 }
@@ -1945,7 +1945,7 @@ fieldset legend {
     border-radius: 8px;
     cursor: pointer;
     font-size: 15px;
-    text-align: left;
+    text-align:start;
     transition: all 0.2s;
 }
 .news-source-btn:hover {
@@ -2045,7 +2045,7 @@ fieldset legend {
 }
 .test-result {
     font-size: 14px;
-    margin-left: 12px;
+    margin-inline-start: 12px;
     padding: 8px 12px;
     border-radius: 4px;
     font-weight: 500;
@@ -2149,7 +2149,7 @@ fieldset legend {
     display: flex;
     gap: 4px;
     padding: 0 24px;
-    padding-right: 16px;
+    padding-inline-end: 16px;
     border-bottom: 2px solid var(--border-color);
     background: var(--bg-secondary);
     flex-shrink: 0;
@@ -2364,7 +2364,7 @@ fieldset legend {
     gap: 4px;
 }
 .rss-feed-item .feed-status {
-    margin-right: 8px;
+    margin-inline-end: 8px;
 }
 .rss-feed-item .feed-url {
     color: var(--text-secondary);
@@ -2417,8 +2417,8 @@ fieldset legend {
     position: absolute;
     cursor: pointer;
     top: 0;
-    left: 0;
-    right: 0;
+    inset-inline-start: 0;
+    inset-inline-end: 0;
     bottom: 0;
     background-color: var(--border-color);
     transition: 0.3s;
@@ -2429,7 +2429,7 @@ fieldset legend {
     content: "";
     height: 14px;
     width: 14px;
-    left: 3px;
+    inset-inline-start: 3px;
     bottom: 3px;
     background-color: white;
     transition: 0.3s;
@@ -2748,7 +2748,7 @@ fieldset legend {
 }
 .user-name {
     flex: 1;
-    text-align: left;
+    text-align:start;
     font-weight: 500;
 }
 .menu-arrow {
@@ -2762,8 +2762,8 @@ fieldset legend {
 .user-menu {
     position: absolute;
     bottom: 100%;
-    left: 0;
-    right: 0;
+    inset-inline-start: 0;
+    inset-inline-end: 0;
     background: var(--bg-secondary);
     border: 1px solid rgba(0, 255, 255, 0.3);
     border-radius: 4px;
@@ -2818,8 +2818,8 @@ fieldset legend {
     content: '';
     position: fixed;
     top: 0;
-    left: 0;
-    right: 0;
+    inset-inline-start: 0;
+    inset-inline-end: 0;
     bottom: 0;
     pointer-events: none;
     background: repeating-linear-gradient(
@@ -2964,8 +2964,8 @@ fieldset legend {
     visibility: visible !important;
     position: static !important;
     top: auto !important;
-    right: auto !important;
-    left: auto !important;
+    inset-inline-end: auto !important;
+    inset-inline-start: auto !important;
     bottom: auto !important;
 }
 
@@ -2986,8 +2986,8 @@ fieldset legend {
     visibility: visible !important;
     position: static !important;
     top: auto !important;
-    right: auto !important;
-    left: auto !important;
+    inset-inline-end: auto !important;
+    inset-inline-start: auto !important;
     bottom: auto !important;
     float: none !important;
     vertical-align: middle !important;
@@ -3021,7 +3021,7 @@ fieldset legend {
     padding: 8px 12px;
     margin: 4px 0;
     background: var(--bg-secondary);
-    border-left: 2px solid var(--accent);
+    border-inline-start: 2px solid var(--accent);
     border-radius: 4px;
 }
 

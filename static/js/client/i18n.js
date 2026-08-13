@@ -195,6 +195,28 @@
    * properties this client uses resolve against it, and so do the browser's own text runs, caret
    * movement and scrollbar side. `lang` is not decoration either — it picks the font the system
    * falls back to for CJK, where the same codepoint is drawn differently in Japanese and Chinese. */
+  var RTL_CSS_ID = 'pc-rtl-css';
+
+  /* The RTL corrections are their OWN stylesheet, linked only while the interface is right-to-left.
+   * Everything else is already direction-agnostic (the physical properties were converted to
+   * logical ones, which resolve identically in LTR), so this file is only the short list of things
+   * that must not flip — technical identifiers, code, directional arrows. Keeping it out of the
+   * main stylesheet is the same rule as the rest of this module: the default locale pays nothing. */
+  function rtlSheet(on){
+    try{
+      var link = document.getElementById(RTL_CSS_ID);
+      if(on && !link){
+        link = document.createElement('link');
+        link.id = RTL_CSS_ID;
+        link.rel = 'stylesheet';
+        link.href = '/static/css/rtl.css' + (window.__VER ? ('?v=' + window.__VER) : '');
+        (document.head || document.documentElement).appendChild(link);
+      }else if(!on && link && link.parentNode){
+        link.parentNode.removeChild(link);
+      }
+    }catch(e){}
+  }
+
   function applyDir(lang){
     var L = LOCALES[lang] || LOCALES.en;
     try{
@@ -204,6 +226,7 @@
       // gradient's angle, an icon that must not mirror).
       document.documentElement.classList.toggle('rtl', L.dir === 'rtl');
     }catch(e){}
+    rtlSheet(L.dir === 'rtl');
   }
 
   function setLang(lang){
