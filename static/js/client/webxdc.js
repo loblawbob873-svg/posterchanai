@@ -463,6 +463,134 @@
     send({ jsonrpc:'2.0', method:'webxdc.crash', params:{
       message: 'WebGL probe threw: ' + ((e && e.message) || e), where:'probe' } });
   }
+  /* A GAME CONTROLLER, FOR APPS THAT ONLY SPEAK KEYBOARD.
+
+     Every layer under this one already worked, which is why it took a controller and a tester to find
+     out where the gap was: 'gamepad' is delegated to both frames (webxdc.js and the sandbox loader),
+     the sandbox origin is https so the secure-context rule is met, and Chromium enumerates the pad
+     fine — measured on an EasySMX X15 over Bluetooth, which reports axes and buttons in a browser on
+     the same phone the app was dead on. The gap is the APP: SDL2's emscripten joystick backend is
+     compiled in by default, but a port has to SDL_Init(SDL_INIT_GAMECONTROLLER) and read the events,
+     and the idTech-derived ports (the Doom and Quake family) overwhelmingly init video+audio only.
+     The controller was sitting there and nothing was asking.
+
+     So the pad is translated to the keys those games already read. This runs INSIDE the app's frame —
+     it is part of the injected bridge, on the app's own origin — which is the only place it can:
+     the client is a different origin and cannot dispatch an event into this document.
+
+     IT DISABLES ITSELF FOR AN APP THAT SPEAKS GAMEPAD, and does it by observation rather than by a
+     per-app setting nobody would know to set: 'navigator.getGamepads' is wrapped, and an app that
+     calls it plainly does not need fake keys. The wrapper is installed before any app script runs
+     (the bridge is injected at the top of <head>), and our own polling goes through the saved
+     original so it can never trip its own flag.
+
+     WHY BOTH ARROWS AND WASD for one direction: Quake reads WASD, Doom reads the arrows, and in the
+     ports that read both they are bound to the same action. Nothing here is a chord, so a game that
+     knows only one of the two simply never sees the other.
+
+     The loop starts on 'gamepadconnected' rather than at load, which is not an optimisation — it is
+     the spec's own gesture rule reused. Gamepads are hidden from a document until it has seen a
+     gamepad BUTTON PRESS (an anti-fingerprinting measure; a tap or a click will not do), and that
+     flag lives on Navigator, so this frame needs its own press even if the client already had one.
+     'gamepadconnected' fires at exactly that moment, so waiting for it costs nothing and means no
+     rAF loop runs in an app nobody is holding a controller for. */
+  (function(){
+    var poll = navigator.getGamepads && navigator.getGamepads.bind(navigator);
+    if(!poll) return;
+    var appPolls = false;
+    try{ navigator.getGamepads = function(){ appPolls = true; return poll(); }; }catch(e){}
+
+    // key → [KeyboardEvent.key, .code, legacy keyCode]. emscripten reads keyCode, so it is not
+    // optional: a synthetic event carrying 0 there is "no key" to every SDL build.
+    var K = {
+      up:['ArrowUp','ArrowUp',38], down:['ArrowDown','ArrowDown',40],
+      left:['ArrowLeft','ArrowLeft',37], right:['ArrowRight','ArrowRight',39],
+      w:['w','KeyW',87], a:['a','KeyA',65], s:['s','KeyS',83], d:['d','KeyD',68],
+      e:['e','KeyE',69], q:['q','KeyQ',81], r:['r','KeyR',82],
+      space:[' ','Space',32], ctrl:['Control','ControlLeft',17], shift:['Shift','ShiftLeft',16],
+      enter:['Enter','Enter',13], esc:['Escape','Escape',27], tab:['Tab','Tab',9] };
+    // Standard mapping button indices. 12-15 are the d-pad, which is why it is here and not with the
+    // axes — Android reports a d-pad as a hat on some pads and as buttons on others, and the browser
+    // normalises both to these four when 'mapping === "standard"'.
+    var BTN = { 0:['space'], 1:['ctrl'], 2:['enter'], 3:['e'], 4:['q'], 5:['r'], 6:['shift'],
+                7:['ctrl'], 8:['tab'], 9:['esc'],
+                12:['up','w'], 13:['down','s'], 14:['left','a'], 15:['right','d'] };
+
+    var held = {}, raf = 0;
+
+    /* WHERE THE EVENT GOES. An event dispatched on 'document' never passes through <body>, and one
+       dispatched on 'window' passes through nothing at all — so aiming at the wrong node is a shim
+       that fires perfectly and reaches no listener. The deepest plausible node is the target and
+       'bubbles' carries it up to every other: an emscripten canvas listener, a body listener, a
+       document listener and a window listener are all served by one dispatch. */
+    function target(){
+      var el = document.activeElement;
+      if(el && el !== document.body && el !== document.documentElement) return el;
+      return document.querySelector('canvas') || document.body || document;
+    }
+    function fire(type, name){
+      var k = K[name]; if(!k) return;
+      var ev;
+      try{
+        ev = new KeyboardEvent(type, { key:k[0], code:k[1], keyCode:k[2], which:k[2], charCode:0,
+                                       bubbles:true, cancelable:true, composed:true, view:window,
+                                       repeat:false, location:0 });
+      }catch(e){ return; }
+      // keyCode/which in the init dict are a LEGACY extension: Chrome honours them, and an engine
+      // that does not leaves 0 behind — which is the silent half of this, since the event still
+      // dispatches and still carries a correct 'key' nothing old reads.
+      if(ev.keyCode !== k[2]){
+        try{
+          Object.defineProperty(ev, 'keyCode', { get:function(){ return k[2]; } });
+          Object.defineProperty(ev, 'which',   { get:function(){ return k[2]; } });
+        }catch(e2){}
+      }
+      try{ target().dispatchEvent(ev); }catch(e3){}
+    }
+    function release(){
+      var ns = Object.keys(held);
+      for(var i = 0; i < ns.length; i++){ delete held[ns[i]]; fire('keyup', ns[i]); }
+    }
+    /* HYSTERESIS, not one threshold. A stick resting near the edge crosses a single threshold many
+       times a second, and each crossing is a keyup+keydown pair — which a game reads as the key
+       being tapped rather than held. Harder to leave than to enter. */
+    function axis(want, v, neg, negAlt, pos, posAlt){
+      if(typeof v !== 'number') return;
+      if(v <= (held[neg] ? -0.35 : -0.5)){ want[neg] = 1; want[negAlt] = 1; }
+      else if(v >= (held[pos] ? 0.35 : 0.5)){ want[pos] = 1; want[posAlt] = 1; }
+    }
+    function tick(){
+      raf = requestAnimationFrame(tick);
+      // A backgrounded app must not be left holding a key: it would still be walking into a wall
+      // when whoever put the phone down comes back.
+      if(appPolls || document.hidden){ release(); return; }
+      var pads = poll() || [], p = null, i;
+      for(i = 0; i < pads.length; i++) if(pads[i] && pads[i].connected){ p = pads[i]; break; }
+      if(!p){ release(); return; }
+      var want = {}, b = p.buttons || [], idx, j, list, bb, on;
+      for(idx in BTN){
+        bb = b[idx];
+        if(bb == null) continue;
+        on = (typeof bb === 'object') ? (bb.pressed || bb.value > 0.5) : (bb > 0.5);
+        if(!on) continue;
+        list = BTN[idx];
+        for(j = 0; j < list.length; j++) want[list[j]] = 1;
+      }
+      var ax = p.axes || [];
+      axis(want, ax[0], 'left', 'a', 'right', 'd');
+      axis(want, ax[1], 'up', 'w', 'down', 's');
+      // Releases before presses, so a direction reversed inside one frame is not briefly both.
+      var hn = Object.keys(held);
+      for(i = 0; i < hn.length; i++) if(!want[hn[i]]){ delete held[hn[i]]; fire('keyup', hn[i]); }
+      var wn = Object.keys(want);
+      for(i = 0; i < wn.length; i++) if(!held[wn[i]]){ held[wn[i]] = 1; fire('keydown', wn[i]); }
+    }
+    function start(){ if(!raf) raf = requestAnimationFrame(tick); }
+    window.addEventListener('gamepadconnected', start);
+    window.addEventListener('blur', release);
+    // In case a pad is already visible to this document (a reload after the gesture was given).
+    try{ var now = poll() || []; for(var n = 0; n < now.length; n++) if(now[n]) { start(); break; } }catch(e){}
+  })();
   send({ jsonrpc:'2.0', method:'webxdc.hello' });
 })();`;
 
