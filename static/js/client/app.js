@@ -62,6 +62,19 @@
   // flagship bare-:root theme) until CFG loads or if the admin value is stale. Used wherever no
   // per-user/per-device theme is chosen.
   function siteDefaultTheme(){ return THEME_SLUGS.has(CFG&&CFG.default_theme) ? CFG.default_theme : 'cyberpunk'; }
+  /* The language picker's options, read from i18n.js rather than listed here — a second copy of the
+   * locale list is a picker that offers a language the runtime does not have (or hides one it does).
+   * Each is named IN ITSELF ("العربية", not "Arabic"), which is the one naming rule every language
+   * picker shares: somebody looking for their own language is not reading the current one. If
+   * i18n.js is missing (an older bundle, a failed load) this returns English alone, so the row
+   * degrades to a no-op instead of throwing inside the settings render — which, on this screen,
+   * would take every binding after it with it. */
+  function _langOptions(){
+    const L = (window.PCI18N && PCI18N.locales) || { en:{ name:'English' } };
+    const cur = (window.PCI18N && PCI18N.lang) || 'en';
+    return Object.keys(L).map(code =>
+      `<option value="${enc(code)}"${code===cur?' selected':''}>${enc(L[code].name)}</option>`).join('');
+  }
   function applyTheme(slug, persist){
     slug = THEME_SLUGS.has(slug) ? slug : siteDefaultTheme();   // site default when unknown/unset
     if(slug==='cyberpunk') document.documentElement.removeAttribute('data-theme');   // cyberpunk = bare :root
@@ -25021,6 +25034,9 @@
           <label class="fld">Theme <span class="muted small">(applies instantly; saved to your account)</span>
             <select class="input" id="us-theme">${THEMES.map(t=>`<option value="${t[0]}"${_curTheme===t[0]?' selected':''}>${t[1]}</option>`).join('')}</select>
           </label>
+          <label class="fld">Language <span class="muted small">(English is the default; Arabic switches the layout right-to-left)</span>
+            <select class="input" id="us-lang">${_langOptions()}</select>
+          </label>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">📉 Data saver<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Holds images &amp; videos until you tap them, skips link previews, and loads lighter feed pages — turn it on when you're low on data. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">🆕 Auto-show new posts<label class="switch"><input type="checkbox" id="set-auto-new-posts" ${AUTO_NEW_POSTS?'checked':''}><span class="slider"></span></label></label>
@@ -25608,6 +25624,21 @@
     };
     // Live theme preview: apply on change without waiting for Save (revert is a page reload / re-save).
     { const ts=$('#us-theme'); if(ts) ts.onchange=()=>applyTheme(ts.value, false); }   // PREVIEW only (no persist); Save writes it
+    /* Language applies IMMEDIATELY and persists itself, unlike the theme — which is a preview until
+     * Save. The difference is not an inconsistency: a theme repaints, while switching language can
+     * only translate what is on screen right now (see i18n.js), so everything already drawn stays in
+     * the old language until it is redrawn. Leaving that half-state sitting behind an unpressed Save
+     * button reads as "the language setting is broken". It is stored in localStorage rather than on
+     * the account on purpose — it has to work with no server and be readable before the first paint,
+     * which is the same reason the theme has its own no-flash cache. */
+    { const ls=$('#us-lang'); if(ls) ls.onchange=()=>{
+        if(!window.PCI18N) return;
+        const want = ls.value;
+        PCI18N.set(want).then(ok=>{
+          if(!ok && want!=='en'){ toast('could not load that language — staying in English'); ls.value='en'; return; }
+          if(want!=='en') toast('language changed — reload to translate everything already on screen');
+        });
+      }; }
   }
   function usRenderMail(){
     const wrap=$('#us-mail-list'); if(!wrap) return;

@@ -47,6 +47,10 @@
      static `<use>` references flash empty on first paint. Use `<svg class="ic"><use href="#i-name">
      </use></svg>` from markup, or `ICO('name')` from JS — both resolve to this one sprite. -->
 <script src="/static/js/client/sprite.js?v={{ ver }}"></script>
+<!-- Before every other client script, so `t()` exists for anything that wants to translate at the
+     call site. The DOM pass itself waits for DOMContentLoaded, and at the default locale (English)
+     this script installs nothing, fetches nothing and walks nothing. -->
+<script src="/static/js/client/i18n.js?v={{ ver }}"></script>
 <div class="scanlines" aria-hidden="true"></div>
 <div class="grid-bg" aria-hidden="true"></div>
 <div class="city-bg" aria-hidden="true"><span class="city-far"></span><span class="city-mid"></span><span class="city-near"></span></div>

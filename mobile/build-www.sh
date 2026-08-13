@@ -12,6 +12,13 @@ mkdir -p www/static/js/client www/static/css www/static/fonts
 
 cp "$SRC"/static/js/client/*.js       www/static/js/client/
 cp "$SRC"/static/css/client.css       www/static/css/
+# The translation catalogues. i18n.js fetches /static/i18n/<lang>.json at runtime, and in a bundle
+# that request is served by the bundle — so without this the language picker offers Arabic and
+# Japanese, the fetch 404s, and the client falls back to English with nothing on screen to say why.
+# Same shape as the fonts above: present on the web because the server serves them, missing in the
+# app because nobody copied them.
+mkdir -p www/static/i18n
+cp "$SRC"/static/i18n/*.json          www/static/i18n/ 2>/dev/null || true
 # client.css @font-face's Inter and Orbitron from /static/fonts. Those root-relative urls live INSIDE a
 # stylesheet, so the fetch shim never sees them — the WebView resolves them against the page origin and
 # they 404 against the bundle, silently dropping the whole app to a system font. Present on the web (the

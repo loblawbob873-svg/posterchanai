@@ -53,6 +53,13 @@ const SHELL = [
   '/static/css/client.css',
   '/static/vendor/nostr/nostr.bundle.js',
   '/static/js/client/sprite.js',
+  /* The translation layer, not the catalogues. i18n.js has to be here or an offline load throws on
+   * a missing script; the /static/i18n/*.json files deliberately are NOT, because precaching them
+   * would pull every language onto every device to serve the one a user picked. They are fetched
+   * with `cache: 'force-cache'` instead, so the locale actually in use is held after its first
+   * load and an offline switch to a language this device has never opened simply stays English —
+   * which is the same graceful failure as an incomplete catalogue. */
+  '/static/js/client/i18n.js',
   '/static/js/client/store.js',
   '/static/js/client/negentropy.js',
   '/static/js/client/relay.js',
