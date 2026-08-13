@@ -54,8 +54,8 @@ APP = os.path.join(ROOT, "static", "js", "client", "app.js")
 # 390/360: phones. 900: the narrowest desktop, where a 220px sidebar leaves least for the columns.
 # 1280: the ordinary case.
 WIDTHS = [(390, 844, True), (360, 780, True), (900, 800, False), (1280, 860, False)]
-PORT = 9489
-PROFILE = "/tmp/pc-files-explorer-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9489)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-files-explorer-check"
 
 # The functions lifted out of app.js. Each is matched from `function <name>(` to the line that closes
 # it at the same indentation — app.js indents module-level functions by two spaces, so the closing

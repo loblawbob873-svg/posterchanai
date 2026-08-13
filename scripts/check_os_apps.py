@@ -58,8 +58,9 @@ import sys
 import urllib.request
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "https://poster.place"
-PORT = 9488
-PROFILE = "/tmp/pc-os-apps"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9488)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-os-apps"
+
 VIEWPORT = (1600, 900)
 
 ENTER = r"""(async () => {

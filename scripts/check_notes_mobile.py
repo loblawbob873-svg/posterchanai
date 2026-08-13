@@ -82,8 +82,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # all — which is exactly where three labelled buttons truncated to "Fol… Imp… Bac…". 900px is the
 # 170px-sidebar tier, 1280px the 210px one.
 WIDTHS = [(390, 844, True), (360, 780, True), (900, 800, False), (1280, 860, False)]
-PORT = 9475
-PROFILE = "/tmp/pc-notes-mobile-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9475)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-notes-mobile-check"
 
 # The host page. notes.js takes every helper off window.__PC and reads window.Relay/window.Store,
 # so a stub is enough — and is the point: this tests the module, not the server.

@@ -45,8 +45,8 @@ WIDTHS = [(390, 844), (360, 780)]
 # Phone (zoom 1) and tablet (`body{zoom:.67}` — the 821-1366px tier in client.css). See the
 # mouth-misplaced note in the docstring: only the pair proves anything.
 MOUTH_WIDTHS = [(390, 844), (1024, 768)]
-PORT = 9473
-PROFILE = "/tmp/pc-meme-mobile-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9473)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-meme-mobile-check"
 
 # Per-layer controls the inspector must offer for a selected IMAGE layer. Named, because "it renders"
 # is not the check — a button that silently stopped being emitted still renders a panel.

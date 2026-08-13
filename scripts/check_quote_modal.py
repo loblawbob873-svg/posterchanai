@@ -40,8 +40,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
 CSS = os.path.join(ROOT, "static", "css", "client.css")
 SPRITE = os.path.join(ROOT, "static", "js", "client", "sprite.js")
-PORT = 9475
-PROFILE = "/tmp/pc-quote-modal-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9475)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-quote-modal-check"
 
 # (width, height, devicePixelRatio). The dPR matters: client.css shrinks the whole app with
 # `body{zoom}` between 821px and 1920px, but hands back zoom:1 to a hiDPI pointer-fine screen at

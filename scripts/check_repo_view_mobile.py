@@ -26,6 +26,7 @@ row the markup can produce, which is exactly the row the owner sees.
 
 Exit 0 = clean, 1 = regressions (printed), 2 = could not run (no Chrome / site unreachable).
 """
+import os
 import asyncio
 import json
 import shutil
@@ -39,8 +40,8 @@ BASE = sys.argv[1] if len(sys.argv) > 1 else "https://poster.place"
 NADDR = ("naddr1qqx8qmmnw3jhycmgv9hxz6gprpmhxue69uhhyetvv9ujuur0wd6x2u3wwpkxzcm9qgsyk44m7swf9evxa"
          "zyj0t9h3qmwkj0jkxzqs8hc2f39eautul2kh4srqsqqqaue7tufgk")
 WIDTHS = [(390, 844, True), (360, 780, True), (1280, 900, False)]
-PORT = 9473
-PROFILE = "/tmp/pc-repoview-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9473)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-repoview-check"
 
 AUDIT = r"""(() => {
   const out = {found:false, overflow:false, offScreen:[], overrun:[], tiny:[], rows:0, acts:0,

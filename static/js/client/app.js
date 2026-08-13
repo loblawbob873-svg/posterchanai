@@ -19185,7 +19185,14 @@
   // a fresh install seenNotif.last is 0 — so a bare `ts > seenNotif.last` would count every existing
   // follower as unread and open the app with a badge of hundreds. Only a follow recorded AFTER we started
   // tracking is genuinely unread.
-  function bumpNotif(){ const n=notifList().filter(e=>{
+  // WHAT "UNREAD" MEANS, in ONE place — because a FOURTH surface (the desktop's tray bell) computed its
+  // own answer and got it wrong in a way that could only ever go quiet. It read `notifItems(60).length -
+  // <count when the centre was last opened>`, i.e. the length of a list that is SLICED to 60: any account
+  // past 60 notifications has notifItems(60).length === 60 for ever, so the moment the centre was opened
+  // once the subtraction was 60-60 and the bell never lit again however much arrived. It lit on the first
+  // login only because nothing had been opened yet. A count is not a read-marker — unread is a comparison
+  // against seenNotif.last, and it is this function on every surface now.
+  function notifUnread(){ return notifList().filter(e=>{
       const ts=_notifTs(e);
       if(ts<=seenNotif.last) return false;
       return e.kind===3 ? ts>_notifEpoch : true;
@@ -19193,10 +19200,15 @@
     // (_newBuild || _apkUpdate) — NOT the separate _updBadge, which cleared on view and left the badge
     // showing +1 with no matching row in the rail ("a number with no notification"). Now they can't disagree:
     // the badge shows the update iff the row is there, and it clears when you actually apply the update.
-    }).length + ((_newBuild||_apkUpdate)?1:0);
+    }).length + ((_newBuild||_apkUpdate)?1:0); }
+  function bumpNotif(){ const n=notifUnread();
     // The rail's Notifications heading is painted from the SAME count as the sidebar bell and the mobile bar —
     // one computation, three surfaces, so they can't disagree about whether something is unread.
     $$('#notif-badge,#notif-badge-m,#rb-notif-badge').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');});
+    // …and the desktop's tray bell is the fourth. It has nothing to subscribe to, and the taskbar only
+    // repaints on a window focus, the 30s clock tick and an arrival TOAST — follows and everything that
+    // lands before _notifReady toast nothing, so the bell could be minutes behind the badge beside it.
+    try{ if(window.PCOS && PCOS.isOn() && PCOS.notifChanged) PCOS.notifChanged(); }catch(_){}
     // Keep the rail's notification LIST live too, not just its badge: if one lands while you're
     // looking at it, re-render now instead of leaving it stale until the 150s refresh. In-memory read (no
     // relay query); gated so it doesn't churn during the initial load burst or when the rail is hidden (mobile).
@@ -19303,6 +19315,9 @@
     seenNotif.last = Math.floor(Date.now()/1000); localStorage.setItem('pc_notif_seen', seenNotif.last);
     _updBadge=false;   // clears the one-shot update badge too (no phantom permanent +1)
     $$('#notif-badge,#notif-badge-m,#rb-notif-badge').forEach(b=>b.classList.add('hidden'));
+    // The desktop's tray bell reads the same unread count, so it clears here too — opening the
+    // Notifications app in a window has to empty the bell, not only the badge inside that window.
+    try{ if(window.PCOS && PCOS.isOn() && PCOS.notifChanged) PCOS.notifChanged(); }catch(_){}
   }
   // The updater row, shared by the Notifications VIEW and the right-column rail — the same prompt in both
   // places, so a desktop reader who lives on the timeline is not told to go and find it. Distinct ids
@@ -28834,6 +28849,10 @@
      * notification (notifList is the gate that decides that — see the comment on it). */
     notifItems: (n) => { try{ return notifGrouped(notifList().filter(_notifMatch)).slice(0, n || 30); }
                          catch(_){ return []; } },
+    /* …but the tray's COUNT must never be derived from that list's length: it is sliced, so past the
+     * slice the length is a constant and every arrival adds nothing. This is the same function the
+     * sidebar bell, the mobile bar and the rail heading are painted from. */
+    notifUnread: () => { try{ return notifUnread(); }catch(_){ return 0; } },
     notifHtml,
     notifsRead: () => { try{ markNotifsRead(); }catch(_){} },
     reactTo: (id, pk, btn) => pickEmoji(id, pk, btn),

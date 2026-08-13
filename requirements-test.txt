@@ -1,0 +1,10 @@
+# What the CHECK SUITE needs on top of the app's own dependencies.
+#
+# Deliberately tiny. Everything the tests actually exercise — httpx, websockets, Pillow, numpy,
+# sqlalchemy — is already a runtime dependency (requirements-nostr.txt), because the tests test the
+# app rather than a mock of it. This file is only the tooling that runs them.
+#
+# Used by Dockerfile.test. On a bare-metal node the venv already has these (install.sh).
+pytest>=8.0.0
+pytest-subtests>=0.11.0
+pyflakes>=3.0.0

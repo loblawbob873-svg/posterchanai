@@ -19,6 +19,7 @@ not claimed here.
 
 Exit 0 = clean, 1 = problems (printed), 2 = could not run (no Chrome / site unreachable).
 """
+import os
 import asyncio
 import json
 import shutil
@@ -27,8 +28,9 @@ import sys
 import urllib.request
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:3051"
-PORT = 9226
-PROFILE = "/tmp/pc-icon-theme-profile"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9226)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-icon-theme-profile"
+
 THEMES = ["cyberpunk", "professional", "cherryblossom", "win98", "winxp",
           "dark", "monero", "sovietgothic", "animegirl"]
 AUDIT = r"""

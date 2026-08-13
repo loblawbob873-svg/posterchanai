@@ -25,6 +25,7 @@ Assertions, each one a way "a gallery of games" fails on a phone:
 
 Exit 0 = clean, 1 = problems (printed), 2 = could not run (no Chrome / site unreachable).
 """
+import os
 import asyncio
 import json
 import shutil
@@ -34,8 +35,8 @@ import urllib.request
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:3051"
 WIDTHS = [(390, 844, "phone"), (820, 1180, "tablet"), (1400, 900, "desktop")]
-PORT = 9497
-PROFILE = "/tmp/pc-xdc-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9497)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-xdc-check"
 
 # A stub directory: one app with real cover art, one with none, and one with a name long enough to
 # find a missing ellipsis. Painted through the shipped galTile so the markup is the real markup.

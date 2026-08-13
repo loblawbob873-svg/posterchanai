@@ -39,8 +39,8 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WIDTHS = [(390, 844, True), (360, 780, True), (1280, 860, False)]
-PORT = 9483
-PROFILE = "/tmp/pc-calendar-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9483)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-calendar-check"
 
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

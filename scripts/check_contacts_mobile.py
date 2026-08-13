@@ -38,8 +38,8 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WIDTHS = [(390, 844, True), (360, 780, True), (1280, 860, False)]
-PORT = 9484
-PROFILE = "/tmp/pc-contacts-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9484)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-contacts-check"
 
 # Cards shaped like the real ones this was built against: a DAVx5 export with a folded base64 photo,
 # an Apple-style grouped email with its label, and a card whose only handle is a phone number.

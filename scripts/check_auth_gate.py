@@ -25,6 +25,7 @@ Run against a live instance, in BOTH modes (the desktop-mode pass is the one tha
 
 Exit 0 = clean, 1 = regressions (printed), 2 = could not run (no Chrome / site unreachable).
 """
+import os
 import asyncio
 import json
 import shutil
@@ -33,8 +34,8 @@ import sys
 import urllib.request
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:3051"
-PORT = 9479
-PROFILE = "/tmp/pc-auth-gate-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9479)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-auth-gate-check"
 
 # id -> (label, may_be_hidden). may_be_hidden covers the controls a deployment legitimately does not
 # offer: NIP-55 is Android-only, Google/Pleroma only appear when the node has them configured.

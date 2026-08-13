@@ -25,8 +25,9 @@ import sys
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PORT = 9487
-PROFILE = "/tmp/pc-drive-blob-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9487)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-drive-blob-check"
+
 ORIGIN = os.environ.get("PC_ORIGIN", "http://127.0.0.1:3051")
 
 

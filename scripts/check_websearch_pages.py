@@ -39,8 +39,9 @@ import sys
 import urllib.parse
 import urllib.request
 
-PORT = 9479
-PROFILE = "/tmp/pc-ws-pages"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9479)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-ws-pages"
+
 # A deliberately awkward spread: a JS-heavy marketing site with webfonts (the one that produced the
 # CORS/MIME reports), a big CMS, a docs site, a plain site, and one that redirects.
 DEFAULT_URLS = [

@@ -1,0 +1,441 @@
+#!/usr/bin/env python3
+"""PosterChanAI — RUN EVERYTHING, and say plainly what passed and what did not.
+
+    ./test.sh                          # everything this machine can check on its own
+    ./test.sh --live https://poster.place    # …plus the checks that need a running instance
+    ./test.sh --docker                 # all of it inside a container, nothing published
+
+Why this exists
+---------------
+The checks were already here — 36 browser-driven `scripts/check_*.py` and ~2600 tests — and that is
+exactly the problem: nobody can be expected to remember 40 command lines, so in practice two or
+three got run before a deploy and the rest were discovered broken by a user. A suite that is not ONE
+command is not a suite.
+
+Three rules it is built on, each one learned the hard way in this repo:
+
+  A SKIP IS NOT A PASS. A check that could not run — no Chrome, no instance URL, missing websockets
+  — is printed in its own colour, counted separately, and named in the summary with the reason. The
+  failure mode this exists to prevent is a green board that quietly covered nothing.
+
+  NOTHING IS SILENTLY LEFT OUT. The check list is DISCOVERED from the filesystem, not typed here.
+  A new `scripts/check_*.py` joins the suite the moment it is written; the table below carries only
+  what cannot be inferred (does it need a live instance, how long to allow), and anything discovered
+  without an entry is run anyway and reported as UNREGISTERED. Every hand-maintained parallel list
+  in this codebase has been out of date at least once — see MEDIA_TOOL_COMMANDS, _TRAY_KEEP,
+  notifList — so this one is not hand-maintained.
+
+  A FAILURE MUST BE RE-RUNNABLE. Every failed row prints the exact command, so the next step is a
+  copy-paste and not an archaeology session.
+
+Groups
+------
+  unit    pytest tests/          — services, routers, media, relay. No browser.
+  client  pytest tests/client/   — the shipped client JS run under node against stubs.
+  ui      the self-contained browser checks. They serve the real static/ over a throwaway HTTP
+          server and drive headless Chrome. No instance, no network, no keys.
+  lint    advisory. Real findings, but not "does the app work" — reported, never fatal (--strict).
+  live    browser checks that need a REAL running instance (--live URL). They log in with throwaway
+          keys and talk to real relays, so they are the slowest and the only ones that can fail for
+          reasons outside this checkout.
+
+Exit code: 0 only if nothing failed. Skips do not fail the run, but they are impossible to miss.
+"""
+import argparse
+import concurrent.futures
+import json
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+PY = str(ROOT / "venv-unified" / "bin" / "python")
+if not os.path.exists(PY):
+    PY = sys.executable
+
+# ---------------------------------------------------------------------------------------------
+# What cannot be inferred from the filename. Everything absent from here is assumed to be a
+# self-contained `ui` check with the default timeout — which is the common case, and which means a
+# new check needs no edit here to be RUN. It is only listed when it needs an instance, needs longer,
+# or has to be told something.
+#
+#   group    'ui' (self-contained) | 'live' (needs --live URL) | 'skip' (with a reason)
+#   secs     timeout. Generous: a check killed by the clock reports as a failure, which is a lie
+#            about the code, and the one thing worse than a slow suite is a suite nobody trusts.
+#   why      printed when the check is skipped, so a skip always says what would make it run.
+# ---------------------------------------------------------------------------------------------
+CHECKS = {
+    # --- need a live instance -------------------------------------------------------------------
+    "check_auth_gate":                 dict(group="live", secs=300),
+    "check_client_icon_themes":        dict(group="live", secs=600),
+    "check_client_mobile":             dict(group="live", secs=600),
+    "check_dm_video_live":             dict(group="live", secs=420),
+    "check_drive_blob_fetch":          dict(group="live", secs=420),
+    "check_music_mobile":              dict(group="live", secs=420),
+    "check_nip46_signer":              dict(group="live", secs=420),
+    "check_os_apps":                   dict(group="live", secs=900),
+    "check_repo_view_mobile":          dict(group="live", secs=420),
+    "check_search_profile_stability":  dict(group="live", secs=1800),
+    "check_timeline_ghosts":           dict(group="live", secs=600),
+    "check_websearch_pages":           dict(group="live", secs=420),
+    "check_webxdc_gallery":            dict(group="live", secs=420),
+    "check_url_reading":               dict(group="live", secs=900),
+    # Bundles the desktop app's www/ and then wants an instance for the non-standalone half.
+    "check_desktop_standalone":        dict(group="live", secs=600),
+
+    # --- self-contained, but slower than the default ---------------------------------------------
+    "check_os_desktop":                dict(group="ui", secs=900),
+    "check_meme_mobile":               dict(group="ui", secs=600),
+    "check_meme_render_match":         dict(group="ui", secs=600),
+    "check_calendar_mobile":           dict(group="ui", secs=600),
+    "check_contacts_mobile":           dict(group="ui", secs=600),
+    "check_vault_mobile":              dict(group="ui", secs=600),
+    "check_websearch_mobile":          dict(group="ui", secs=600),
+    "check_notes_mobile":              dict(group="ui", secs=600),
+    "check_files_explorer":            dict(group="ui", secs=600),
+    "check_mail_mobile":               dict(group="ui", secs=600),
+    "check_article_editor":            dict(group="ui", secs=600),
+
+    # --- browser checks that drive a page they build themselves ----------------------------------
+    "check_composer_toolbar":          dict(group="ui", secs=420),
+    "check_quote_modal":               dict(group="ui", secs=420),
+    "check_meme_timeline":             dict(group="ui", secs=420),
+    "check_terminal_mobile":           dict(group="ui", secs=420),
+    "check_terminal_resize":           dict(group="ui", secs=420),
+    "check_extension_autofill":        dict(group="ui", secs=420),
+    "check_extension_popup":           dict(group="ui", secs=420),
+
+    # --- no browser at all: they read the source / the stylesheet --------------------------------
+    "check_client_icons":              dict(group="ui", secs=180),
+    "check_stream_chat":               dict(group="ui", secs=180),
+
+    # --- ADVISORY. Reported, never fatal (unless --strict) ----------------------------------------
+    # This one is a design-scale lint over a stylesheet that has ~330 accumulated drifts. It is real
+    # and worth paying down, but it says nothing about whether the app WORKS — and a check that is
+    # red on every single run is a check everybody learns to scroll past, which is the same disease
+    # as a green board that covered nothing. It gets its own verdict so the number is visible and
+    # the deploy signal stays meaningful.
+    "check_css_scale":                 dict(group="lint", secs=180),
+}
+
+# The pytest suites. Split because one is 3 minutes of pure Python and the other is 5 minutes of
+# node subprocesses, and knowing WHICH half went red is most of the diagnosis.
+SUITES = [
+    dict(name="tests", group="unit", secs=2700,
+         argv=["-m", "pytest", "tests/", "-q", "--ignore=tests/client", "-p", "no:cacheprovider"],
+         detail="services, routers, relay, media — no browser"),
+    dict(name="tests/client", group="client", secs=2700,
+         argv=["-m", "pytest", "tests/client/", "-q", "-p", "no:cacheprovider"],
+         detail="the shipped client JS, run under node against stubs"),
+]
+
+DEFAULT_SECS = 420
+# Each browser check opens its own Chrome on its own debugging port. They used to be hardcoded and
+# four of them shared 9473, so two running at once attached to one browser. The runner hands every
+# check a unique port and a unique profile directory instead (PC_CHECK_PORT / PC_CHECK_PROFILE),
+# which is also what lets this run on a host that already has something on those ports.
+PORT_BASE = 18400
+
+C = dict(dim="\033[2m", red="\033[31m", grn="\033[32m", yel="\033[33m",
+         cya="\033[36m", bold="\033[1m", off="\033[0m")
+if not sys.stdout.isatty() or os.environ.get("NO_COLOR"):
+    C = {k: "" for k in C}
+
+
+def discover():
+    """Every check on disk, whether or not anyone remembered to register it."""
+    found = []
+    for p in sorted((ROOT / "scripts").glob("check_*.py")):
+        meta = dict(CHECKS.get(p.stem) or {})
+        found.append(dict(name=p.stem, path=p, group=meta.get("group", "ui"),
+                          secs=meta.get("secs", DEFAULT_SECS), why=meta.get("why", ""),
+                          registered=p.stem in CHECKS))
+    return found
+
+
+def have_chrome():
+    return (shutil.which("google-chrome-stable") or shutil.which("google-chrome")
+            or shutil.which("chromium") or shutil.which("chromium-browser"))
+
+
+def have_node():
+    return shutil.which("node")
+
+
+def git_head():
+    """Which tree was checked. On a node this is the whole question — a green board for a commit
+    two behind production is worse than no board (see the sync.sh drift note in CLAUDE.md)."""
+    try:
+        r = subprocess.run(["git", "log", "-1", "--format=%h %s"], cwd=ROOT,
+                           capture_output=True, text=True, timeout=10)
+        return (r.stdout or "").strip()[:90] or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def run_one(job, live, tmp, idx):
+    """Run one check in its own process, with its own port, profile and clock."""
+    env = dict(os.environ)
+    env["PC_CHECK_PORT"] = str(PORT_BASE + idx)
+    env["PC_CHECK_PROFILE"] = str(tmp / job["name"])
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    argv = [PY, str(job["path"])]
+    if job["group"] == "live":
+        argv.append(live)
+    t0 = time.time()
+    try:
+        r = subprocess.run(argv, cwd=ROOT, env=env, capture_output=True, text=True,
+                           timeout=job["secs"])
+        out = (r.stdout or "") + (r.stderr or "")
+        code = r.returncode
+    except subprocess.TimeoutExpired as e:
+        out = ((e.stdout or b"").decode("utf8", "replace") if isinstance(e.stdout, bytes)
+               else (e.stdout or ""))
+        out += f"\n[checkall] killed after {job['secs']}s"
+        code = 124
+    return dict(job, secs_took=time.time() - t0, code=code, out=out.strip(),
+                cmd=" ".join(argv[1:]))
+
+
+def run_suite(suite, tmp):
+    t0 = time.time()
+    argv = [PY] + suite["argv"]
+    try:
+        r = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, timeout=suite["secs"])
+        out = (r.stdout or "") + (r.stderr or "")
+        code = r.returncode
+    except subprocess.TimeoutExpired:
+        out, code = f"[checkall] killed after {suite['secs']}s", 124
+    return dict(suite, secs_took=time.time() - t0, code=code, out=out.strip(),
+                cmd=" ".join(argv[1:]), name=suite["name"], registered=True)
+
+
+def summarise(res):
+    """The ONE line under a check: what it actually said, not a restatement of the exit code.
+
+    Every check here prints its own verdict — `OK …`, `FAIL 3 problem(s):`, `2 passed` — and that
+    sentence is more use than anything this runner could invent, so it is quoted rather than
+    replaced. A check that failed silently is reported as exactly that, which is itself a finding.
+    """
+    out = res["out"]
+    if not out:
+        return "(no output)"
+    lines = [l.rstrip() for l in out.split("\n") if l.strip()]
+    # pytest's own summary line is the most informative thing it prints.
+    for l in reversed(lines):
+        if re.search(r"\d+ (passed|failed|error)", l):
+            return re.sub(r"\s+", " ", l.strip("= ")).strip()
+    for l in reversed(lines):
+        if re.match(r"^(OK|FAIL|SKIP|PASS)\b", l):
+            return l
+    # A failure with no verdict line: show the last thing it said before dying.
+    return lines[-1][:160]
+
+
+def verdict(res):
+    """PASS / FAIL / LINT / SKIP — and for anything but a pass, the reason, always."""
+    if res["code"] == 0:
+        return "PASS", ""
+    # Advisory: reported with its real number, but it does not decide whether you may deploy.
+    if res["group"] == "lint":
+        return "LINT", summarise(res)
+    # Exit 2 is this repo's convention for "could not run": no Chrome, no site, nothing to test
+    # against. It is NOT a failure of the code, and calling it one trains people to ignore red.
+    if res["code"] == 2:
+        return "SKIP", summarise(res)
+    if res["code"] == 124:
+        return "FAIL", f"timed out after {res['secs']}s"
+    return "FAIL", summarise(res)
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Run every PosterChanAI check and report.")
+    ap.add_argument("--live", metavar="URL",
+                    help="a running instance to drive (e.g. https://poster.place). Without it the "
+                         "live checks are SKIPPED and said to be skipped.")
+    ap.add_argument("--group", action="append", choices=["unit", "client", "ui", "lint", "live"],
+                    help="only these groups (repeatable). Default: all but live, unless --live.")
+    ap.add_argument("--strict", action="store_true",
+                    help="advisory lint counts as a failure too")
+    ap.add_argument("--only", help="comma-separated check names (substring match)")
+    ap.add_argument("--jobs", type=int, default=0,
+                    help="browser checks to run at once (default: cpus/2, capped at 6). Each one "
+                         "is a Chrome, so this is a memory setting as much as a speed one.")
+    ap.add_argument("--list", action="store_true", help="print what would run, and stop")
+    ap.add_argument("--brief", action="store_true",
+                    help="print ONLY a short fixed-format report between BEGIN/END markers, for a "
+                         "small model to relay verbatim (see docs/TESTING.md)")
+    ap.add_argument("--json", metavar="FILE", help="also write the full result as JSON")
+    ap.add_argument("--tmp", default="", help="scratch dir for chrome profiles")
+    args = ap.parse_args()
+
+    checks = discover()
+    suites = list(SUITES)
+    groups = set(args.group or (["unit", "client", "ui", "lint"]
+                                + (["live"] if args.live else [])))
+    if args.only:
+        want = [w.strip() for w in args.only.split(",") if w.strip()]
+        checks = [c for c in checks if any(w in c["name"] for w in want)]
+        suites = [s for s in suites if any(w in s["name"] for w in want)]
+        groups = {"unit", "client", "ui", "lint", "live"}
+    checks = [c for c in checks if c["group"] in groups]
+    suites = [s for s in suites if s["group"] in groups]
+
+    chrome, node = have_chrome(), have_node()
+    tmp = pathlib.Path(args.tmp or os.environ.get("PC_CHECK_TMP")
+                       or f"/tmp/pc-checkall-{os.getpid()}")
+    tmp.mkdir(parents=True, exist_ok=True)
+
+    if args.brief:                       # the model's copy must not be coloured
+        for k in C:
+            C[k] = ""
+    # --brief prints ONE fixed block and nothing else, so a small model relaying it cannot
+    # accidentally summarise, reorder or drop a line. Everything the humans read is silenced.
+    say = (lambda *a, **k: None) if args.brief else print
+    say(f"{C['bold']}PosterChanAI — full check suite{C['off']}")
+    say(f"  python  {PY}")
+    say(f"  chrome  {chrome or C['yel'] + 'NOT FOUND — every browser check will SKIP' + C['off']}")
+    say(f"  node    {node or C['yel'] + 'NOT FOUND — tests/client will fail' + C['off']}")
+    say(f"  live    {args.live or C['dim'] + '(not given — live checks will SKIP)' + C['off']}")
+    say(f"  running {len(suites)} suite(s) + {len(checks)} check(s)\n")
+
+    if args.list:
+        for s in suites:
+            say(f"  {s['group']:<7} {s['name']}")
+        for c in checks:
+            mark = "" if c["registered"] else "  (UNREGISTERED — defaults applied)"
+            say(f"  {c['group']:<7} {c['name']}{mark}")
+        return 0
+
+    t0 = time.time()
+    results = []
+
+    def report(res):
+        v, why = verdict(res)
+        col = {"PASS": C["grn"], "FAIL": C["red"], "SKIP": C["yel"], "LINT": C["cya"]}[v]
+        detail = why or summarise(res)
+        mark = "" if res.get("registered", True) else f" {C['yel']}[unregistered]{C['off']}"
+        say(f"  {res['group']:<7} {res['name']:<34} {col}{v}{C['off']} "
+              f"{res['secs_took']:6.0f}s  {C['dim']}{detail[:110]}{C['off']}{mark}")
+        res["verdict"] = v
+        res["detail"] = detail
+        results.append(res)
+
+    # The pytest suites first and one at a time: they are the cheapest signal, they need no browser,
+    # and a broken import there makes every browser check meaningless anyway.
+    for s in suites:
+        report(run_suite(s, tmp))
+
+    runnable = [c for c in checks]
+    if not chrome:
+        # Say it once, per check, rather than letting 30 browsers fail to start.
+        for c in runnable:
+            report(dict(c, secs_took=0.0, code=2, cmd=str(c["path"]),
+                        out="SKIP no Chrome on this machine — install chromium, or use ./test.sh --docker"))
+        runnable = []
+    if runnable and not args.live:
+        for c in [c for c in runnable if c["group"] == "live"]:
+            report(dict(c, secs_took=0.0, code=2, cmd=str(c["path"]),
+                        out="SKIP needs a running instance — re-run with --live <URL>"))
+        runnable = [c for c in runnable if c["group"] != "live"]
+
+    jobs = args.jobs or max(1, min(6, (os.cpu_count() or 4) // 2))
+    if runnable:
+        say(f"  {C['dim']}…{len(runnable)} browser check(s), {jobs} at a time{C['off']}")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+            futs = {pool.submit(run_one, c, args.live, tmp, i): c
+                    for i, c in enumerate(runnable)}
+            for f in concurrent.futures.as_completed(futs):
+                report(f.result())
+
+    took = time.time() - t0
+    passed = [r for r in results if r["verdict"] == "PASS"]
+    failed = [r for r in results if r["verdict"] == "FAIL"]
+    skipped = [r for r in results if r["verdict"] == "SKIP"]
+    lint = [r for r in results if r["verdict"] == "LINT"]
+    if args.strict:
+        failed, lint = failed + lint, []
+    unreg = [r for r in results if not r.get("registered", True)]
+
+    say("\n" + "─" * 78)
+    say(f"  {len(results)} checks   "
+          f"{C['grn']}{len(passed)} passed{C['off']}   "
+          f"{(C['red'] if failed else C['dim'])}{len(failed)} failed{C['off']}   "
+          f"{(C['yel'] if skipped else C['dim'])}{len(skipped)} skipped{C['off']}   "
+          f"{(C['cya'] if lint else C['dim'])}{len(lint)} advisory{C['off']}"
+          f"      {took/60:.1f} min")
+
+    if failed:
+        say(f"\n{C['red']}{C['bold']}FAILED{C['off']}")
+        for r in failed:
+            say(f"  {C['red']}✗{C['off']} {r['name']} — {r['detail']}")
+            say(f"      {C['dim']}rerun:{C['off']} {PY} {r['cmd']}")
+    if skipped:
+        # Loud on purpose. A suite that skipped half of itself and printed a green total is the
+        # thing this file exists to make impossible.
+        say(f"\n{C['yel']}{C['bold']}SKIPPED — these were NOT run{C['off']}")
+        for r in skipped:
+            say(f"  {C['yel']}–{C['off']} {r['name']} — {r['detail']}")
+    if lint:
+        say(f"\n{C['cya']}{C['bold']}ADVISORY — worth fixing, does not block a deploy{C['off']}"
+              f" {C['dim']}(--strict makes these fail){C['off']}")
+        for r in lint:
+            say(f"  {C['cya']}~{C['off']} {r['name']} — {r['detail']}")
+            say(f"      {C['dim']}rerun:{C['off']} {PY} {r['cmd']}")
+    if unreg:
+        say(f"\n{C['yel']}Not in scripts/checkall.py's table (run with defaults):{C['off']} "
+              + ", ".join(r["name"] for r in unreg))
+        say("  Add an entry if it needs a live instance or longer than "
+              f"{DEFAULT_SECS}s, or it will fail here for the wrong reason.")
+
+    if args.json:
+        pathlib.Path(args.json).write_text(json.dumps(
+            [{k: v for k, v in r.items() if k != "path"} for r in results], indent=2, default=str))
+        say(f"\n  json → {args.json}")
+
+    if args.brief:
+        # THE AGENT REPORT. Rendered HERE, in Python, from what was measured — never described by a
+        # model. This repo's whole experience with the /logs health board is that a small model
+        # gathers reliably and RETELLS badly: it called a healthy 3-of-3 array degraded, invented a
+        # swap partition on a host with none, and silently dropped a drive it had been given. So the
+        # node agent's only job is to run one command and paste what comes back between these two
+        # markers, and the prompt in docs/TESTING.md asks for exactly that and nothing else.
+        print("=== POSTERCHAN CHECK REPORT BEGIN ===")
+        print(f"result: {'FAIL' if failed else 'PASS'}")
+        print(f"host: {os.uname().nodename}")
+        print(f"commit: {git_head()}")
+        print(f"totals: {len(passed)} passed, {len(failed)} failed, "
+              f"{len(skipped)} skipped, {len(lint)} advisory, {took/60:.1f} min")
+        for r in failed:
+            print(f"FAILED: {r['name']} — {r['detail'][:150]}")
+        for r in skipped:
+            print(f"SKIPPED: {r['name']} — {r['detail'][:150]}")
+        for r in lint:
+            print(f"ADVISORY: {r['name']} — {r['detail'][:150]}")
+        if not failed and not skipped:
+            print("no failures, nothing skipped")
+        print("=== POSTERCHAN CHECK REPORT END ===")
+        return 1 if failed else 0
+
+    print()
+    if failed:
+        print(f"{C['red']}{C['bold']}FAIL{C['off']} — {len(failed)} check(s) went red. "
+              f"Do not deploy.")
+        return 1
+    if skipped:
+        print(f"{C['grn']}PASS{C['off']} — everything that RAN is green, "
+              f"{C['yel']}but {len(skipped)} check(s) never ran{C['off']}.")
+        return 0
+    if not passed:
+        print(f"{C['yel']}nothing ran.{C['off']}")
+        return 0
+    print(f"{C['grn']}{C['bold']}PASS{C['off']} — all {len(passed)} checks green.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

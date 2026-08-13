@@ -41,7 +41,8 @@ import urllib.request
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:3051"
 CHROME = (shutil.which("google-chrome-stable") or shutil.which("chromium")
           or shutil.which("chrome"))
-PORT = 9477
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9477)
+
 W, H = 390, 844
 # A box narrower than this in a 390px phone bubble is the failure, whatever produced it. The healthy
 # numbers are 191-271px wide; the bug measured 69px and 128px.

@@ -105,7 +105,12 @@ def test_the_watch_link_survives_a_refused_clipboard(app):
     navigator.clipboard is refused outright on an insecure origin and in some WebViews."""
     i = app.index("const cl=$('#st-selflink')")
     body = app[i:i + 400]
-    assert "_copyFallback(" in body, "a refused clipboard silently copies nothing"
+    # copyValue() IS the fallback chain now — native bridge → execCommand → _copyFallback, which puts
+    # the value on screen when every one of those is refused. This used to name _copyFallback
+    # directly; when the ~30 hand-rolled copy sites were unified behind copyValue the assertion went
+    # red against code that had just been made MORE correct, and it stayed red, which is how a suite
+    # stops meaning anything. Assert the shared helper, never one branch inside it.
+    assert "copyValue(" in body, "a refused clipboard silently copies nothing"
 
 
 def test_opening_a_stream_tells_the_desktop_what_the_window_holds(app):

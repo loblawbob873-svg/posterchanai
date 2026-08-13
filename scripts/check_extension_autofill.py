@@ -39,7 +39,7 @@ import sys
 import tempfile
 import urllib.request
 
-PORT = 9483
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9483)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXT = os.path.join(ROOT, "extension")

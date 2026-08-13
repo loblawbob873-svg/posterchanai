@@ -45,9 +45,8 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
 WIDTHS = [(390, 844, True), (360, 780, True), (900, 800, False), (1280, 860, False)]
-PORT = 9491
-PROFILE = "/tmp/pc-article-editor-check"
-
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9491)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-article-editor-check"
 
 def editor_markup():
     """The editor's own template literal, out of app.js, with its ${...} holes filled in."""

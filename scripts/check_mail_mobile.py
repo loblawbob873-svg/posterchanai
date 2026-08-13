@@ -38,8 +38,8 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WIDTHS = [(390, 844, True), (360, 780, True), (1280, 860, False)]
-PORT = 9485
-PROFILE = "/tmp/pc-mail-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9485)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-mail-check"
 
 # Long, unbounded strings on purpose: a real inbox is full of them and they are what breaks a phone
 # layout. One contact card carries a grouped email, the shape DAVx5 writes.

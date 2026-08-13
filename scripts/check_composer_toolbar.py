@@ -42,8 +42,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
 CSS = os.path.join(ROOT, "static", "css", "client.css")
 SPRITE = os.path.join(ROOT, "static", "js", "client", "sprite.js")
-PORT = 9473
-PROFILE = "/tmp/pc-composer-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9473)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-composer-check"
+
 # 360 is the documented budget; 390 is the other common phone; 1280 is the desktop modal.
 WIDTHS = [(360, 780), (390, 844), (1280, 900)]
 MIN_TAP = 28

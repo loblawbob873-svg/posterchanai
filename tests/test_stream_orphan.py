@@ -25,17 +25,19 @@ from app.services import stream_service
 
 
 @pytest.fixture(autouse=True)
-def _restore():
-    pid = stream_service._PIDFILE
-    had = pid.read_text() if pid.exists() else None
+def _restore(tmp_path, monkeypatch):
+    """POINT THE PIDFILE AT A TEMP DIR — never at the one the running service owns.
+
+    This used to write and delete `streamserver/mediamtx.pid` in the checkout itself, which on any
+    node that is actually SERVING is root-owned by the live MediaMTX: every test in this file then
+    died with PermissionError, on the machine where the code matters most. Worse, on a box where the
+    file happened to be writable it was reaching into the running deployment's state to run a test.
+    A test that behaves differently depending on who owns a file in the working tree cannot tell
+    anyone anything about the code — and it is exactly the kind of standing red that teaches people
+    to ignore the suite.
+    """
+    monkeypatch.setattr(stream_service, "_PIDFILE", tmp_path / "mediamtx.pid")
     yield
-    if had is None:
-        try:
-            pid.unlink()
-        except FileNotFoundError:
-            pass
-    else:
-        pid.write_text(had)
 
 
 def test_a_stale_mediamtx_is_killed_before_we_bind_its_ports():

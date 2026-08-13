@@ -39,8 +39,9 @@ import subprocess
 import sys
 import urllib.request
 
-PORT = 9499
-PROFILE_DIR = "/tmp/pc-stability-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9499)
+PROFILE_DIR = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-stability-check"
+
 SESSIONS = int(sys.argv[1]) if len(sys.argv) > 1 else 5
 BASE = sys.argv[2] if len(sys.argv) > 2 else "https://poster.place"
 # A throwaway identity: these flows must work for a logged-in user, and a guest exercises different

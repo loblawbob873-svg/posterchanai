@@ -3780,18 +3780,27 @@
   // rows (PC.notifHtml), not a second rendering of the same data: notifList is the single gate that
   // decides what counts as a notification, and a re-implementation here would drift from it silently
   // — exactly how kinds 1621/1617/42/1111 once got fetched, toasted and then never shown.
-  let notiOpen = false, notiSeen = 0, mailAck = 0;
+  let notiOpen = false, mailAck = 0;
   let barQuery = '', barFocused = false;   // the taskbar search box survives a drawBar() rebuild
 
+  /* UNREAD IS ASKED FOR, NOT RECONSTRUCTED, and that is the whole of "the bell lights when you log in
+   * and never again". This used to be `notifItems(60).length` minus a `notiSeen` snapshot taken when
+   * the centre was last opened — but that list is SLICED TO 60, so on any account past 60
+   * notifications its length is the constant 60: the first login (notiSeen still 0) showed 60 and
+   * every open thereafter pinned notiSeen at 60, leaving 60-60=0 for the rest of the session however
+   * much arrived. The bell was measuring the length of a capped list, which is not a quantity that
+   * can grow. PC().notifUnread() is the same computation the sidebar badge is painted from — one
+   * definition of unread, four surfaces — and the centre clears it by MARKING READ (notifsRead),
+   * which is a thing the whole app agrees about rather than a number this file remembered. */
   function notiCount(){
-    try{ return (PC().notifItems && PC().notifItems(60).length) || 0; }catch(_){ return 0; }
+    try{ return (PC().notifUnread && PC().notifUnread()) || 0; }catch(_){ return 0; }
   }
 
   /* What the bell is for, in words — the tooltip and the screen-reader label. "Notifications" on a
    * bell showing 3 says nothing the icon did not. */
   function notiTitle(){
     let n = 0, mail = 0;
-    try{ n = Math.max(0, notiCount() - notiSeen); }catch(_){}
+    try{ n = Math.max(0, notiCount()); }catch(_){}
     try{ mail = Math.max(0, ((PC().mailUnread && PC().mailUnread()) || 0) - mailAck); }catch(_){}
     if(!n && !mail) return 'Notifications';
     const bits = [];
@@ -3802,7 +3811,7 @@
 
   function notiDot(){
     let n = 0, mail = 0;
-    try{ n = notiCount() - notiSeen; }catch(_){}
+    try{ n = notiCount(); }catch(_){}
     try{ mail = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){}
     // The tray count means "new since you last looked", not "unread forever" — opening Messages or
     // the centre acknowledges what is there. Without this the number sat on the clock after you had
@@ -3910,9 +3919,33 @@
       });
     });
 
-    notiSeen = notiCount();
+    // Looking at the centre IS reading them — and it is recorded where the whole app can see it
+    // (seenNotif.last), never as a private count in this file.
     try{ PC().notifsRead && PC().notifsRead(); }catch(_){}
     drawBar();
+  }
+
+  /* Repaint the BELL IN PLACE. Same reason as paintNetButton: drawBar() rebuilds bar.innerHTML,
+   * which destroys and recreates the Search Nostr input — and a notification arriving is not
+   * something the user did, so it must not eat the caret of whoever is mid-word. */
+  function paintBell(){
+    const b = bar && $('#os-bell', bar);
+    if(!b) return;                       // no bar/button yet — the next drawBar() paints it
+    const t = notiTitle();
+    b.className = 'os-bell' + (notiOpen ? ' on' : '');
+    b.title = t;
+    b.setAttribute('aria-label', t);
+    b.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-bell"></use></svg>' + notiDot();
+  }
+
+  /* app.js calls this whenever the unread count can have moved (an arrival, or marking them read).
+   * DEBOUNCED because it is called once per event, and the opening flood is hundreds — one repaint
+   * after the burst says exactly what a repaint per event would. */
+  let _bellT = null;
+  function notifChanged(){
+    if(!on) return;
+    clearTimeout(_bellT);
+    _bellT = setTimeout(() => { _bellT = null; if(on) paintBell(); }, 200);
   }
 
   // ---- network status --------------------------------------------------------------------------
@@ -4089,8 +4122,13 @@
    * network flyout never opened, and the icon read as dead.
    *
    * So every tray TRIGGER is excluded here, not just this panel's own — a click on a sibling button
-   * must reach that button, which cross-closes on its open path. */
-  const _TRAY_KEEP = '#os-noti,#os-net-panel,#os-clock,#os-net,.modal-bg';
+   * must reach that button, which cross-closes on its open path.
+   *
+   * The BELL was missing from this list, and that is the same bug with a newer button: it was added
+   * to the tray two days after this handler was written, so clicking it while the network flyout was
+   * open closed the flyout, rebuilt the bar, and swallowed the click that was supposed to open the
+   * notification centre. The bell read as dead. Anything new in the tray goes in here. */
+  const _TRAY_KEEP = '#os-noti,#os-net-panel,#os-clock,#os-bell,#os-net,.modal-bg';
   function _trayAway(e){
     if(!notiOpen && !netOpen) return;
     if(e.target.closest(_TRAY_KEEP)) return;
@@ -4395,6 +4433,7 @@
     // against a torn-down taskbar for the rest of the session, and re-entering would add a second.
     clearInterval(_netT); _netT = null;
     clearTimeout(_netPaintT); _netPaintT = null;
+    clearTimeout(_bellT); _bellT = null;
     // The layout subscription outlives the desktop otherwise — it would go on calling refreshIcons
     // against a torn-down desk, and re-entering would add a second one.
     unwatchLayout(); hideCtx();
@@ -4562,6 +4601,11 @@
                   // nothing to subscribe to, and polling an element we could be told about is the
                   // mistake the games were just fixed for.
                   musicChanged, noteView,
+                  /* …and this one when the unread count moves. Same reason: the tray bell has
+                   * nothing to subscribe to, and the taskbar otherwise repaints only on a window
+                   * focus, the 30s clock tick and an arrival toast — none of which a follow, or
+                   * anything landing before the notification sub reaches EOSE, produces. */
+                  notifChanged,
                   /* app.js calls this when Settings → 🧭 Sidebar changes. refreshIcons, not refresh:
                    * the LIST changed, the document did not, so re-reading the layout off the relay
                    * would cost a round trip per switch flip. It also closes a folder window whose

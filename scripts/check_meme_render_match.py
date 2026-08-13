@@ -42,8 +42,8 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-PORT = 9476
-PROFILE = "/tmp/pc-meme-match-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9476)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-meme-match-check"
 
 PROJ_W, PROJ_H = 720, 1280
 # Desktop and tablet, i.e. both `body{zoom}` tiers, plus a phone (where _fitStage owns the box).

@@ -54,9 +54,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:3051"
-PORT = 9489
-PROFILE = "/tmp/pc-nip46-check"
-
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9489)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-nip46-check"
 
 # --------------------------------------------------------------------------------------------
 # A minimal NIP-01 relay: enough to carry a signer handshake and nothing else.

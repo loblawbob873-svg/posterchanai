@@ -82,6 +82,14 @@ Assertions, each a way a window manager breaks:
   no-noti-bell         The taskbar has no notification bell (or it does not open the centre, or the
                        unread count is still riding on the clock, where a number reads as part of
                        the time and nothing says it can be pressed).
+  tray-count-stuck     The bell lights once and then never moves again. Its count was the LENGTH of
+                       the sliced notifItems list minus a snapshot — and a sliced list's length is a
+                       constant on any account past the slice, so the subtraction was 0 for the rest
+                       of the session. Driven as arrivals, because one reading of "60" looks fine.
+                       Also fails if the repaint rebuilds the taskbar under a half-typed search.
+  tray-click-swallowed A tray button does nothing because the OTHER flyout was open: the one
+                       click-away handler closes by rebuilding the bar, which detaches the button
+                       the pointerdown landed on, so its click never fires. _TRAY_KEEP.
   icon-not-placed      An icon dragged to empty desktop space does not land there, does not
                        persist, moves OTHER icons with it, or cannot be put back into a grid.
   no-wallpaper         Right-clicking the desktop does not offer a background from the drive's
@@ -113,8 +121,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # runs the last rows under the taskbar, which reads as "the icons are cut off".
 WIDTHS = [(1600, 900, True, False), (1280, 800, True, True), (1024, 600, True, True),
           (800, 1280, False, True)]
-PORT = 9486
-PROFILE = "/tmp/pc-os-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9486)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-os-check"
 
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="/static/css/client.css">
@@ -179,6 +187,25 @@ window.__PC = {
     }
   },
 };
+/* NOTIFICATIONS, as the tray bell reaches them. Two numbers on purpose: what is UNREAD, and how many
+ * rows the centre can show. They are different quantities — the list is sliced — and the bell once
+ * counted the list, so it stopped moving for good on any account past the slice. */
+window.__unread = 0;
+window.__read = 0;
+Object.assign(window.__PC, {
+  notifUnread: () => window.__unread,
+  /* SATURATED, which is the ordinary state of a real account: the list is sliced to what the centre
+     can show, so its LENGTH is a constant and says nothing about how much is new. */
+  notifItems: (n) => Array.from({ length: Math.min(n || 30, 60) },
+                                (_, i) => ({ id: 'n' + i, kind: 1, pubkey: 'bb'.repeat(32) })),
+  notifHtml: (e) => '<div class="notif" data-open="' + e.id + '">a notification</div>',
+  // Reading them is recorded where the whole app can see it — the bell must not keep its own count.
+  notifsRead: () => { window.__unread = 0; window.__read++;
+                      try{ PCOS.notifChanged(); }catch(_){} },
+  mailUnread: () => 0,
+  osNotifyState: () => 'granted',
+  openThread: () => {}, reactTo: () => {},
+});
 window.ClientSettings = { _v:{}, get(k,d){ return k in this._v ? this._v[k] : d; }, set(k,v){ this._v[k]=v; } };
 
 /* Enough of a signer and a relay for the DESKTOP LAYOUT — the arrangement of the icons, which is
@@ -669,6 +696,68 @@ LAYOUT = r"""(async () => {
     // …and the clock is a clock again: it must not carry the count any more.
     const clk = document.querySelector('#os-clock');
     out.clockHasBadge = !!(clk && clk.querySelector('.os-dot')); }
+
+  /* THE COUNT ON THE BELL MUST BE ABLE TO GROW, and it has to grow WITHOUT the taskbar being
+   * rebuilt under whoever is typing in it.
+   *
+   * Reported as "the bell changes colour when you first log in and never again". The tray count was
+   * `notifItems(60).length` minus a snapshot taken when the centre was last opened — the length of a
+   * SLICED list, i.e. a constant on any account past the slice, so the subtraction was 60-60 for the
+   * rest of the session. A single reading proves nothing here (60 looks like a working badge), so
+   * this drives arrivals and asserts the number MOVES, and moves again after the centre is opened. */
+  {
+    const dot = () => { const b = document.querySelector('#os-bell .os-dot');
+                        return b ? b.textContent.trim() : ''; };
+    window.__unread = 3; PCOS.notifChanged(); await sleep(320);
+    out.bellDot3 = dot();
+    window.__unread = 9; PCOS.notifChanged(); await sleep(320);
+    out.bellDot9 = dot();
+    // Opening the centre marks them READ through the app, not by remembering a number here.
+    document.querySelector('#os-bell').click(); await sleep(120);
+    out.bellReadCalls = window.__read;
+    document.querySelector('#os-bell').click(); await sleep(120);
+    out.bellDotAfterRead = dot();
+    // …and the next arrival still lights it. THIS is the one that was broken.
+    window.__unread = 4; PCOS.notifChanged(); await sleep(320);
+    out.bellDotAfterArrival = dot();
+
+    /* The repaint must be IN PLACE. drawBar() rebuilds bar.innerHTML, which destroys and recreates
+     * the Search Nostr input — and an arriving notification is not something the user did, so it
+     * must never take the caret out of a half-typed search. */
+    const q = document.querySelector('#os-q-bar');
+    q.focus(); q.value = 'half a query'; q.dispatchEvent(new Event('input', { bubbles: true }));
+    // Below 1080px the box is display:none and cannot take focus at all — so the focus half of this
+    // is asserted only where there is a box to focus. The NODE-identity half always applies: it is
+    // the direct measurement of "painted in place", and it is what the caret depends on.
+    out.barFocusBefore = document.activeElement === q;
+    window.__unread = 5; PCOS.notifChanged(); await sleep(320);
+    out.barSameNode = document.querySelector('#os-q-bar') === q;
+    out.barKeptFocus = document.activeElement === document.querySelector('#os-q-bar');
+    out.barKeptText = (document.querySelector('#os-q-bar') || {}).value;
+    q.blur(); q.value = ''; q.dispatchEvent(new Event('input', { bubbles: true }));
+
+    /* AND THE BELL MUST TAKE A CLICK WHILE THE OTHER TRAY PANEL IS OPEN. One capture-phase
+     * click-away handler closes both flyouts by calling drawBar(), which detaches the very button
+     * the pointerdown landed on — so a tray trigger missing from its keep-list is a button that
+     * does nothing at all. The bell was added to the tray after that list was written. */
+    document.querySelector('#os-net').click(); await sleep(100);
+    out.netOpenFirst = !!document.querySelector('#os-net-panel');
+    const bell2 = document.querySelector('#os-bell');
+    bell2.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    await sleep(30);
+    /* SURVIVING THE POINTERDOWN IS THE MEASUREMENT. A click dispatched at a fresh #os-bell would
+       pass whatever happened — and calling .click() on the DETACHED original would pass too, since
+       JS runs a listener on a node whether or not it is in the document. The browser does neither:
+       with the mousedown target gone it fires click on an ancestor, and the button never hears it.
+       So ask whether the node the press landed on is still there. */
+    out.bellSurvivedPointerdown = bell2.isConnected;
+    if (bell2.isConnected) bell2.click();
+    await sleep(120);
+    out.bellOpensOverNet = !!document.querySelector('#os-noti');
+    try{ document.querySelector('#os-bell').click(); }catch(_){}
+    await sleep(80);
+    window.__unread = 0; PCOS.notifChanged(); await sleep(260);
+  }
 
   /* HOW BIG WINDOWS OPEN. Six of them, cascaded, on this screen: every one must land fully inside
    * the desktop (a window opening under the taskbar or off the right edge has to be dragged back
@@ -1639,6 +1728,39 @@ async def drive(url):
                     if q.get("clockHasBadge"):
                         problems.append((label, "no-noti-bell",
                                          "the unread count is still on the clock; it belongs on the bell"))
+                    if (q.get("bellDot3") != "3" or q.get("bellDot9") != "9"
+                            or q.get("bellDotAfterRead") not in ("", None)
+                            or q.get("bellDotAfterArrival") != "4"
+                            or not q.get("bellReadCalls")):
+                        problems.append((label, "tray-count-stuck",
+                                         "the bell's unread count does not track what arrives — "
+                                         f"3→{q.get('bellDot3')!r} 9→{q.get('bellDot9')!r} "
+                                         f"after-read→{q.get('bellDotAfterRead')!r} "
+                                         f"next-arrival→{q.get('bellDotAfterArrival')!r} "
+                                         f"(notifsRead calls={q.get('bellReadCalls')}). It must ask "
+                                         "PC().notifUnread() — the same count the sidebar badge is "
+                                         "painted from — never the LENGTH of the sliced notifItems "
+                                         "list, which is a constant on any real account."))
+                    elif (not q.get("barSameNode") or q.get("barKeptText") != "half a query"
+                          or (q.get("barFocusBefore") and not q.get("barKeptFocus"))):
+                        problems.append((label, "tray-count-stuck",
+                                         "repainting the bell rebuilt the taskbar and took the caret "
+                                         "out of the search box "
+                                         f"(focus kept={q.get('barKeptFocus')} text="
+                                         f"{q.get('barKeptText')!r} focus-before="
+                                         f"{q.get('barFocusBefore')} same-node={q.get('barSameNode')}). "
+                                         "Paint the button in place; "
+                                         "drawBar() destroys the input."))
+                    if q.get("netOpenFirst") and not (q.get("bellSurvivedPointerdown")
+                                                      and q.get("bellOpensOverNet")):
+                        problems.append((label, "tray-click-swallowed",
+                                         "the bell does nothing while the network flyout is open — "
+                                         "the click-away handler closed the flyout and rebuilt the "
+                                         f"bar (button survived the press="
+                                         f"{q.get('bellSurvivedPointerdown')}, centre opened="
+                                         f"{q.get('bellOpensOverNet')}), detaching the button the "
+                                         "pointerdown was aimed at. Every tray trigger belongs in "
+                                         "_TRAY_KEEP (os.js)."))
                     # `x or 99` would read a PERFECT landing (0px off) as a miss — the falsy zero.
                     _dx = q.get("freeDx"); _dy = q.get("freeDy")
                     if _dx is None or _dy is None or abs(_dx) > 12 or abs(_dy) > 12 \

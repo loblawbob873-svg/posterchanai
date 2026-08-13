@@ -20,6 +20,24 @@ image gen, TTS/STT, email/news/torrents, a file manager, a **Nostr client + rela
 - Logs: `journalctl -u posterchanai.service` (the fediverse `[PROXY] CONNECT ... SOCKS5`
   errors are unrelated federation noise — ignore when debugging features).
 
+## Test — `./test.sh`, before the deploy and after it
+
+One command runs everything: `pytest tests/`, `pytest tests/client/`, and all 20+ browser-driven
+`scripts/check_*.py` (mobile layout, Meme Builder, the windowed desktop, Notes/Calendar/Contacts/
+Mail/vault/Web Search/Files, the composer and quote modals, the terminal, the extension). ~10 min.
+`--live URL` adds the checks that need a running instance; `--docker` runs the lot in a container
+that **publishes no ports**, so it is safe on a node already serving 3051. `--brief` prints a fixed
+report between markers for the node agent to paste verbatim — the format is rendered in Python, for
+the same reason `/logs` is: a small model gathers reliably and retells badly.
+
+**The list of checks is DISCOVERED, not typed** — a new `scripts/check_*.py` joins the suite the
+moment it is written, and one that is unregistered runs anyway and says so. **Exit 2 means "could
+not run"** and is reported as a SKIP with its reason, never as a pass. Two rules for a new check,
+both because they run concurrently: read the chrome port from `PC_CHECK_PORT` and the profile from
+`PC_CHECK_PROFILE` (four scripts used to share 9473), and never write into the working tree's live
+state — a test that touched `streamserver/mediamtx.pid` passed on a laptop and PermissionError'd on
+every node that was actually serving. See `docs/TESTING.md`.
+
 ## Deploy — always via `sync.sh`
 
 `./sync.sh` does `git commit -a -m fix && git push`, then restarts local services and

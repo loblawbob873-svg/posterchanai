@@ -51,7 +51,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WWW = os.path.join(ROOT, "desktop", "www")
 CDP_PORT = 9473
 HTTP_PORT = 9474
-PROFILE = "/tmp/pc-desktop-check"
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-desktop-check"
+
 WIDTHS = [(1280, 860, False), (820, 1180, True), (390, 844, True)]
 
 sys.path.insert(0, ROOT)

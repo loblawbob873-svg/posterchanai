@@ -24,6 +24,7 @@ a reachable node:
 Exit 0 = clean, 1 = regressions (printed), 2 = could not run (no Chrome / no websockets / no replies
 to test against).
 """
+import os
 import asyncio
 import json
 import shutil
@@ -32,8 +33,8 @@ import sys
 import urllib.request
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "https://poster.place"
-PORT = 9483
-PROFILE = "/tmp/pc-ghost-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9483)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-ghost-check"
 
 # Every reply card on screen, and whether its post half is there and drew anything.
 SURVEY = r"""(() => {

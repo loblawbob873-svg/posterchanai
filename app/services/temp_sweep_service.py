@@ -51,6 +51,10 @@ _APP_TEMP_PREFIXES: Tuple[str, ...] = (
     "media_musicvid_", "media_muxaudio_", "media_outro_", "media_overlay_", "media_paudio_",
     "media_paudio_ss_", "media_recolor_", "media_slideshow_", "media_vmotion_",
     "memetalk_",
+    # Web Search's reader fetches a page in a throwaway Chrome profile (page_render.py). A profile
+    # is a DIRECTORY of several MB, one per page opened, so this is the fastest-leaking family here
+    # — and it escaped the sweep from the day it was written, which is what the drift test caught.
+    "pagerender_",
     "parallax_",
     # `pcai_` ones are the prefixes THIS change introduced, on call sites that previously had none.
     # They are namespaced where the obvious name would have been generic enough to collide with

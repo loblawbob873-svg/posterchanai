@@ -54,8 +54,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Two phone widths, plus a desktop width — the results list is one column everywhere, but the sticky
 # search bar and the chip row behave differently once the sidebar takes its share.
 WIDTHS = [(390, 844, True), (360, 780, True), (1280, 860, False)]
-PORT = 9477
-PROFILE = "/tmp/pc-websearch-mobile-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9477)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-websearch-mobile-check"
 
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

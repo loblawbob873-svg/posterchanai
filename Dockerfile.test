@@ -1,0 +1,48 @@
+# syntax=docker/dockerfile:1.7
+# =============================================================================
+# PosterChanAI — the CHECK SUITE in a container.
+# =============================================================================
+# Built and run by ./test.sh --docker (scripts/test-docker.sh). Nothing here serves the app: this
+# image exists so that `./test.sh` gives the same answer on a laptop, on a node and in CI, without
+# anyone installing Chrome, node and a Python venv by hand first.
+#
+#   docker build -f Dockerfile.test -t posterchanai-test .
+#   docker run --rm --shm-size=1g -v "$PWD:/app" posterchanai-test
+#
+# It PUBLISHES NO PORTS, on purpose. Every check binds inside the container — its throwaway static
+# server on an ephemeral port, and Chrome's debugging port, which the runner assigns per check
+# (PC_CHECK_PORT). So this can run on a host that is already serving PosterChanAI on 3051 and
+# already has something on 9473, and neither can collide with it or be reached by it.
+#
+# The AI stack is deliberately NOT installed (no torch, no llama-cpp): the checks are about the
+# client, the routers and the services. That is what keeps this image small enough to rebuild.
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PC_IN_TEST_CONTAINER=1 \
+    # Chrome refuses to run as root without this, and everything in here IS root.
+    CHROME_DEVEL_SANDBOX=/opt/chrome-sandbox
+
+# Chromium for the browser checks, node for the client suites (tests/client/ runs the SHIPPED js),
+# git because a few checks read the repo, ffmpeg/fonts because the media and screenshot checks do.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        chromium fonts-liberation fonts-noto-color-emoji \
+        nodejs npm \
+        git ffmpeg curl ca-certificates \
+        build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# The check scripts look for these names.
+RUN ln -sf /usr/bin/chromium /usr/local/bin/google-chrome-stable \
+    && ln -sf /usr/bin/chromium /usr/local/bin/google-chrome
+
+WORKDIR /app
+# Only the requirement files, so a code change does not re-resolve every dependency.
+COPY requirements-nostr.txt requirements-test.txt /tmp/
+RUN pip install --no-cache-dir -r /tmp/requirements-nostr.txt -r /tmp/requirements-test.txt
+
+# The repo itself is BIND-MOUNTED at run time, not copied: the whole point is to check the tree you
+# are about to deploy, including uncommitted work. Nothing is baked in.
+ENV PC_CHECK_TMP=/tmp/pc-checks
+ENTRYPOINT ["python", "scripts/checkall.py"]

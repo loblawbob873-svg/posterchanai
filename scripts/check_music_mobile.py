@@ -26,6 +26,7 @@ Assertions, each one a way "use it as your music player on a phone" fails:
 
 Exit 0 = clean, 1 = problems (printed), 2 = could not run (no Chrome / site unreachable).
 """
+import os
 import asyncio
 import json
 import shutil
@@ -35,8 +36,8 @@ import urllib.request
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:3051"
 WIDTHS = [(390, 844, "phone"), (820, 1180, "tablet"), (1400, 900, "desktop")]
-PORT = 9494
-PROFILE = "/tmp/pc-music-check"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9494)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-music-check"
 
 # The player mounts itself on demand; nothing in a guest session opens it, so the harness builds the
 # real markup through the client's own MusicPlayer and inspects what the CSS does to it.
