@@ -7998,6 +7998,7 @@
   let _liveStream=null;   // { token, title, hls } while this device is announcing a live stream
   let _phoneStream=null;  // { pc, local, token } while streaming from the phone camera via WHIP
   let _goingLive=false;   // re-entrancy guard while a phone go-live is mid-handshake (before _phoneStream is set)
+  let _glOpening=false;   // …and while the Go Live SHEET is being fetched, so a slow open can't stack two of them
   // Tokens we've explicitly ENDED (or deleted) this session. _adoptOwnLive must never re-adopt these: after
   // End, the still-'live' 30311 lingers in cache and comes back from the external stream relays for a while
   // (the ended event hasn't federated there yet), so without this the next render silently re-adopts it and
@@ -8311,8 +8312,21 @@
   async function _goLive(){
     if(GUEST){ _guestPrompt(); return; }
     if(_liveStream || _phoneStream || _goingLive){ toast('you’re already live'); switchView('streams'); return; }
-    try{ await ensureAiSession(); }catch(_){}
-    let info; try{ info=await fetch('/api/streams/ingest',{headers:_aiToken?{'Authorization':'Bearer '+_aiToken}:{}}).then(r=>r.json()); }catch(_){ }
+    // Opening this sheet is two network round trips, so it is a button that can be slow — which is a
+    // button that looks broken, and gets clicked again (stacking a second Go Live sheet on top of the
+    // first). Say it's working, refuse to run twice, and BOUND the request: a stalled fetch has no
+    // timeout of its own, so without this the entry can hang for minutes with nothing on screen.
+    if(_glOpening) return; _glOpening=true;
+    const _navGl=$('#nav-golive'); if(_navGl) _navGl.classList.add('gl-busy');
+    let info, reached=true;
+    try{
+      try{ await ensureAiSession(); }catch(_){ }
+      try{ info=await _fetchTimeout('/api/streams/ingest',{headers:_aiToken?{'Authorization':'Bearer '+_aiToken}:{}}, 20000).then(r=>r.json()); }
+      catch(_){ reached=false; }
+    } finally { _glOpening=false; if(_navGl) _navGl.classList.remove('gl-busy'); }
+    // "I couldn't ask" is not "the server said no" — the old code reported an unreachable server as
+    // "streaming isn't enabled on this server", which sends you to look at settings that are fine.
+    if(!info && !reached){ toast('couldn’t reach the server — try again in a moment'); return; }
     // The server is the authority on permission: the sidebar/More gate can only hide the entry when
     // the session is already known (_aiAuth is null until ensureAiSession resolves, which for a
     // non-admin may not have happened yet), so the refusal has to read well on its own.
@@ -8383,7 +8397,8 @@
         <button class="btn btn-ghost small hidden" id="gl-img-clear"><svg class="ic b-ic" aria-hidden="true"><use href="#i-close"></use></svg>Clear</button></div>
       <input type="hidden" id="gl-img">
       <p class="muted small">Start OBS, then tap below to announce it on Nostr (Discover → Streams).</p>
-      <div class="row gl-actions"><button class="btn btn-neon" id="gl-go" disabled><svg class="ic b-ic" aria-hidden="true"><use href="#i-live"></use></svg>Announce and Stream</button><button class="btn btn-ghost" id="gl-cancel">Close</button></div>`, root=>{
+      <div class="row gl-actions"><button class="btn btn-neon" id="gl-go" disabled><svg class="ic b-ic" aria-hidden="true"><use href="#i-live"></use></svg>Announce and Stream</button><button class="btn btn-ghost" id="gl-cancel">Close</button></div>
+      <p class="muted small hidden" id="gl-need">↑ Pick what you want to broadcast first — the button turns on once you have.</p>`, root=>{
       const title=()=>($('#gl-title',root).value||'').trim()||'Live stream';
       const announce=()=>!!($('#gl-announce',root)||{}).checked;
       const cover=()=>($('#gl-img',root).value||'').trim();
@@ -8433,7 +8448,12 @@
         // No radios at all = a browser that can't capture (no WHIP/getUserMedia), so OBS is the ONLY
         // route and the button must stay live — gating on an unrendered choice locked those users out
         // of announcing entirely.
-        $('#gl-go',root).disabled = hasSrc() ? (!s || (s==='cam' && !facing())) : false;
+        const off = hasSrc() ? (!s || (s==='cam' && !facing())) : false;
+        $('#gl-go',root).disabled = off;
+        // …and SAY why it's off. A disabled neon button reads as a broken one: the sheet opens with no
+        // source selected, so the first thing anyone does — type a title, hit Announce — is a click that
+        // does nothing and explains nothing ("announce and stream button also does nothing").
+        { const n=$('#gl-need',root); if(n) n.classList.toggle('hidden', !off); }
       };
       $$('input[name="gl-src"], input[name="gl-facing"]',root).forEach(r=> r.addEventListener('change', sync));
       sync();
@@ -8442,14 +8462,23 @@
       $('#gl-title',root).addEventListener('keydown',e=>{
         if(e.key==='Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey){ e.preventDefault(); $('#gl-go',root).click(); }
       });
-      $('#gl-go',root).onclick=async()=>{
+      // Announcing is a relay round trip (sign → publish → the relay must have STORED it), so it is
+      // never instant and can be slow. Without a busy state that is another button that "does nothing":
+      // you click it again, and again, and each click signs and publishes another 30311. It says what
+      // it's doing, refuses to run twice, and comes back to life if it fails.
+      let _going=false;
+      $('#gl-go',root).onclick=async(e)=>{
+        if(_going) return; _going=true;
+        const btn=e.currentTarget, was=btn.innerHTML;
+        btn.disabled=true; btn.textContent='Announcing…';
+        const revive=()=>{ _going=false; btn.innerHTML=was; sync(); };
         const t=title(), a=announce(), c=cover(), s=src()||'obs';
         if(s==='cam'){ const f=facing(); closeModal(); return _phoneGoLive(info, t, a, c, { facing:f }); }
         if(s==='screen'){ closeModal(); return _screenGoLive(info, t, a, c); }
         try{ const ev=await _publishLive(info, t, c); _startLiveHb();   // OBS path: HLS heartbeat detects OBS stopping
           if(a) await _announceStreamPost(info, t);
           closeModal(); toast('🔴 you’re live — announced on Nostr'); _afterGoLive(ev, false);
-        }catch(_){ toast('couldn’t announce the stream'); }
+        }catch(_){ revive(); toast('couldn’t announce the stream — try again'); }
       };
     });
   }
@@ -8457,68 +8486,103 @@
   // generic (takes a callback) so anything else needing "choose one of my images" can reuse it.
   // Filters to images by mime, newest first — the drive also holds encrypted app data and media the
   // user never picked as a picture, and showing those would be noise.
+  //
+  // THE SHEET OPENS BEFORE THE FIRST NETWORK AWAIT, and that is the whole point of the shape below.
+  // It used to run the Files-index pull AND the /list fetch — neither of them time-bounded — and only
+  // then call subModal(), so on a slow link "Choose from your drive" was a button that did NOTHING for
+  // as long as those two took: no sheet, no spinner, no error. Reported as "the button no longer
+  // works", which is exactly what it looks like, and it "eventually worked after many retries" because
+  // the retry that landed was the one whose fetch came back. Now the sheet is up on the first frame and
+  // the loading, the empty drive and the unreachable drive are three DIFFERENT things it says out loud.
   async function _pickBlossomImage(onPick){
+    // One picker at a time. The sheet now opens instantly, so a double-click used to be a double SHEET
+    // (the second one hiding a live first one). Asked of the DOM rather than a flag, because Escape and
+    // the backdrop close the layer without telling us.
+    if(($('#modal-root')||document).querySelector('.bp-modal')) return;
     const server=mediaServer();
-    // Folder names live in the encrypted Files index, which is only pulled when you open Files — pull
-    // it here too or the picker would always show a flat, folderless drive.
-    FilesIdx.loadLocal();
-    if(!FilesIdx._pulled){ FilesIdx._pulled=true; try{ await FilesIdx.pull(); }catch(_){ } }
-
-    let list=[];
-    try{ const r=await fetch(server+'/list/'+ME.pubkey); if(r.ok) list=await r.json(); }catch(_){ }
-    // Only real images, and NEVER anything in an encrypted folder: those blobs are ciphertext, so a
-    // viewer on another client would render a broken thumbnail. Newest first.
-    const imgs=(list||[])
-      .filter(b=> /^image\//.test(b.type||''))
-      .filter(b=>{ const m=FilesIdx.meta(b.sha256)||{}; return !m.enc && !FilesIdx.isEncFolder(FilesIdx.folderOf(b.sha256)); })
-      .sort((a,b)=>(b.uploaded||0)-(a.uploaded||0));
-
-    if(!imgs.length){
-      subModal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-image"></use></svg>Choose a cover</h3>
-        <p class="muted">There are no images on your Blossom drive yet. Upload one from
-        <b>Files</b> (the 📁 group in the sidebar) and it'll show up here.</p>
-        <div class="row gl-actions"><button class="btn btn-ghost" id="bp-x">Close</button></div>`,
-        (root, close)=>{ $('#bp-x',root).onclick=close; });
-      return;
-    }
-
-    const urlOf=b=> b.url || (server+'/'+b.sha256);
-    // Folders that actually contain a usable image (plus All), so you never tap into an empty one.
-    const used=new Set(imgs.map(b=>FilesIdx.folderOf(b.sha256)||''));
-    const folders=[['','🗂 All']].concat(
-      FilesIdx.folders().filter(f=>!FilesIdx.isEncFolder(f) && used.has(f)).map(f=>[f,'📁 '+f]));
-    let cur='';
-
+    let imgs=[], cur='', ui=null;
     subModal(`<div class="bp-head"><h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-image"></use></svg>Choose a cover</h3>
-      <p class="muted small" id="bp-count"></p>
-      ${folders.length>1?`<div class="bp-folders"><label class="bp-folderlbl">📁<select class="input bp-folder-sel" id="bp-fsel">${
-        folders.map(([v,l])=>`<option value="${enc(v)}">${enc(l)}</option>`).join('')}</select></label></div>`:''}</div>
-      <div class="bp-grid" id="bp-grid"></div>
+      <p class="muted small" id="bp-count">Reading your drive…</p>
+      <div class="bp-folders hidden" id="bp-fwrap"><label class="bp-folderlbl">📁<select class="input bp-folder-sel" id="bp-fsel"></select></label></div></div>
+      <div class="bp-grid" id="bp-grid"><div class="muted small">Loading your images…</div></div>
       <div class="row gl-actions"><button class="btn btn-ghost" id="bp-x">Cancel</button></div>`, (root, close)=>{
-      const grid=$('#bp-grid',root), cnt=$('#bp-count',root);
-      const draw=()=>{
-        const shown=imgs.filter(b=> cur==='' || (FilesIdx.folderOf(b.sha256)||'')===cur);
-        cnt.textContent = `${shown.length} image${shown.length===1?'':'s'}${cur?` in ${cur}`:' on your drive'} — tap one.`;
-        grid.innerHTML = shown.slice(0,180).map(b=>{
-          const u=urlOf(b), nm=(FilesIdx.meta(b.sha256)||{}).name||'';
-          return `<button type="button" class="bp-cell" data-url="${enc(u)}"${nm?` title="${enc(nm)}"`:''}>
-            <img loading="lazy" src="${enc(u)}" alt="" onerror="this.closest('.bp-cell').remove()"></button>`;
-        }).join('') || '<div class="muted small">Nothing in this folder.</div>';
-        root.classList.add('bp-modal');   // drops the modal's top padding so the sticky head can't jump
-      $$('.bp-cell',grid).forEach(c=> c.onclick=()=>{ close(); try{ onPick(c.dataset.url); }catch(_){ } });
-
-      };
-      { const sel=$('#bp-fsel',root); if(sel) sel.onchange=()=>{ cur=sel.value||''; draw(); }; }
+      root.classList.add('bp-modal');   // drops the modal's top padding so the sticky head can't jump
+      ui={ root, close, grid:$('#bp-grid',root), cnt:$('#bp-count',root), fwrap:$('#bp-fwrap',root), fsel:$('#bp-fsel',root) };
       $('#bp-x',root).onclick=close;
-      draw();
+      ui.fsel.onchange=()=>{ cur=ui.fsel.value||''; draw(); };
       // The cover grid is a grid like the emoji/effects pickers, so give it the SAME cursor: arrows (and
       // hjkl with Vim keys on) to move, Enter/Space to pick, Escape to close. It was mouse-only — Tab
       // reached the cells one at a time with no cursor to show where you were, across up to 180 of them.
-      // `items()` is re-queried per keypress, so switching folder and redrawing the grid is handled.
+      // `items()` is re-queried per keypress, so switching folder and redrawing the grid is handled
+      // (including the cells not existing yet while the drive is still being read).
       // The folder <select> keeps the arrows for itself (_popKeys already exempts text fields and
       // selects), so ↑/↓ still changes folder while it has focus.
       _popKeys(root, '.bp-cell', el=>el.click(), close);
     });
+    const alive=()=> !!(ui && ui.root && ui.root.isConnected);
+    const say=(msg, count)=>{ if(!alive()) return; ui.cnt.textContent=count||''; ui.grid.innerHTML=`<div class="muted small">${enc(msg)}</div>`; };
+    const urlOf=b=> b.url || (server+'/'+b.sha256);
+    const draw=()=>{
+      if(!alive()) return;
+      const shown=imgs.filter(b=> cur==='' || (FilesIdx.folderOf(b.sha256)||'')===cur);
+      ui.cnt.textContent = `${shown.length} image${shown.length===1?'':'s'}${cur?` in ${cur}`:' on your drive'} — tap one.`;
+      ui.grid.innerHTML = shown.slice(0,180).map(b=>{
+        const u=urlOf(b), nm=(FilesIdx.meta(b.sha256)||{}).name||'';
+        return `<button type="button" class="bp-cell" data-url="${enc(u)}"${nm?` title="${enc(nm)}"`:''}>
+          <img loading="lazy" src="${enc(u)}" alt="" onerror="this.closest('.bp-cell').remove()"></button>`;
+      }).join('') || '<div class="muted small">Nothing in this folder.</div>';
+      $$('.bp-cell',ui.grid).forEach(c=> c.onclick=()=>{ ui.close(); try{ onPick(c.dataset.url); }catch(_){ } });
+    };
+
+    // Folder names live in the encrypted Files index, which is only pulled when you open Files — pull
+    // it here too or the picker would always show a flat, folderless drive. BOUNDED: a pull that hasn't
+    // answered in 12s is treated exactly like one that failed (which this code already tolerated — it
+    // falls back to the last index this device stored), because the alternative is the dead button.
+    try{ FilesIdx.loadLocal(); }catch(_){ }
+    if(!FilesIdx._pulled){ FilesIdx._pulled=true;
+      try{ await Promise.race([ FilesIdx.pull(), new Promise(r=>setTimeout(r, 12000)) ]); }catch(_){ } }
+    if(!alive()) return;   // closed while we were reading
+
+    let list=null;
+    try{ const r=await _fetchTimeout(server+'/list/'+ME.pubkey, {}, 20000); if(r.ok) list=await r.json(); }catch(_){ }
+    if(!alive()) return;
+    // "I could not ask" is not "you have nothing" — saying "no images yet" over an unreachable drive
+    // sends you off to upload a picture you already have. Offer the retry instead.
+    if(!list){
+      say('Couldn’t reach your drive just now. Check your connection and try again.', '');
+      const btn=document.createElement('button'); btn.className='btn btn-ghost small'; btn.textContent='Retry';
+      btn.onclick=()=>{ ui.close(); _pickBlossomImage(onPick); };
+      ui.grid.appendChild(btn);
+      return;
+    }
+    // Only real images, and NEVER anything in an encrypted folder: those blobs are ciphertext, so a
+    // viewer on another client would render a broken thumbnail. Newest first.
+    imgs=(list||[])
+      .filter(b=> /^image\//.test(b.type||''))
+      .filter(b=>{ const m=FilesIdx.meta(b.sha256)||{}; return !m.enc && !FilesIdx.isEncFolder(FilesIdx.folderOf(b.sha256)); })
+      .sort((a,b)=>(b.uploaded||0)-(a.uploaded||0));
+    if(!imgs.length){
+      say('There are no images on your Blossom drive yet. Upload one from Files (the 📁 group in the sidebar) and it’ll show up here.', '');
+      return;
+    }
+    // Folders that actually contain a usable image (plus All), so you never tap into an empty one.
+    const used=new Set(imgs.map(b=>FilesIdx.folderOf(b.sha256)||''));
+    const folders=[['','🗂 All']].concat(
+      FilesIdx.folders().filter(f=>!FilesIdx.isEncFolder(f) && used.has(f)).map(f=>[f,'📁 '+f]));
+    if(folders.length>1){
+      ui.fsel.innerHTML=folders.map(([v,l])=>`<option value="${enc(v)}">${enc(l)}</option>`).join('');
+      ui.fwrap.classList.remove('hidden');
+    }
+    draw();
+  }
+  // fetch with a deadline. A fetch has NO timeout of its own — Chromium will sit on a stalled request
+  // for minutes — so anything a click waits on before it can paint needs one, or the click is a dead
+  // button for that whole time. Rejects like a network error, which is what every caller already
+  // handles. (AbortSignal.timeout is not in the older WebViews/Electron this ships to.)
+  function _fetchTimeout(url, opts, ms){
+    const ac = (typeof AbortController!=='undefined') ? new AbortController() : null;
+    const t = setTimeout(()=>{ try{ ac && ac.abort(); }catch(_){ } }, ms||15000);
+    return fetch(url, Object.assign({}, opts||{}, ac?{signal:ac.signal}:{})).finally(()=>clearTimeout(t));
   }
 
   // Publish the NIP-53 kind-30311 "live" event + track it locally. Sets _liveStream FIRST so a relay

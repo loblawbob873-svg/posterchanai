@@ -4697,6 +4697,10 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .gl-opt input{margin:0;flex:none;width:16px;height:16px}   /* flex:none — the radio must never squash */
 .gl-sub{margin:2px 0 6px 22px;padding-left:10px;border-left:2px solid var(--border,#2a2c48)}
 .gl-actions .btn[disabled]{opacity:.45;cursor:not-allowed}
+/* The Go Live entry while its sheet is being fetched. Opening it is two round trips, and an entry that
+   looks untouched for the length of them is one you click again — which used to stack a second sheet. */
+.gl-busy{opacity:.55;pointer-events:none}
+#gl-need{text-align:center;margin:8px 0 0}
 
 /* Live stream chat (NIP-53 kind-1311) — beside the player on desktop, below on mobile */
 /* Chat sits BELOW the player, not beside it: the 330px side rail squeezed the video into the leftover
