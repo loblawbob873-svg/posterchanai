@@ -103,35 +103,42 @@ setup_searxng() {
     fi
 
     # --- into the venv ------------------------------------------------------------------------
+    # DEPENDENCIES FIRST, THEN THE PACKAGE, and that order is forced by --no-build-isolation:
+    # without build isolation setup.py runs in THIS venv, and SearXNG's setup.py does
+    # `from searx.version import ...` — which imports searx/__init__.py, which imports msgspec. So a
+    # venv missing the deps cannot even build the package: it dies with ModuleNotFoundError during
+    # metadata generation, long before any "now install the deps" step could run. (Measured on nas,
+    # whose venv predated the dependency block; server1 only worked because its deps were already in.)
+    # Build isolation is not the way out — that is what the msgspec error is, an isolated env that
+    # has none of this.
+    #
+    # ONLY the marked block, never `-r requirements.txt`. On a GPU node that whole file is a full
+    # resolve across torch, transformers and diffusers — an operator adding SEARCH must not get image
+    # generation moved under them as a side effect. Read from requirements.txt rather than copied
+    # here, so the version ranges still live in exactly one place. Run unconditionally: pip is a
+    # couple of seconds when everything is satisfied, and the alternative is deciding whether they
+    # are satisfied by importing a package that cannot be installed yet.
+    print_step "Installing SearXNG's runtime dependencies ..." 2>/dev/null \
+        || echo "Installing SearXNG's runtime dependencies ..."
+    local dep_file
+    dep_file="$(mktemp)"
+    sed -n '/^# >>> searxng-deps$/,/^# <<< searxng-deps$/p' "$repo_root/requirements.txt" \
+        | grep -vE '^#' > "$dep_file"
+    if [ -s "$dep_file" ]; then
+        "$venv/bin/pip" install -q -r "$dep_file" \
+            || print_warning "some SearXNG dependencies did not install" 2>/dev/null \
+            || echo "WARNING: some SearXNG dependencies did not install"
+    else
+        # The markers are how this stays in one place; losing them silently would leave every node
+        # trying to build SearXNG against a venv with none of its imports.
+        print_warning "searxng-deps markers missing from requirements.txt — skipping dep install" 2>/dev/null \
+            || echo "WARNING: searxng-deps markers missing from requirements.txt"
+    fi
+    rm -f "$dep_file"
+
     print_step "Installing SearXNG into $venv (--no-deps) ..." 2>/dev/null || echo "Installing SearXNG (--no-deps) ..."
     "$venv/bin/pip" install -q --no-deps --no-build-isolation -e "$src_dir" \
         || { print_error "pip install failed" 2>/dev/null || echo "ERROR: pip install failed"; return 1; }
-
-    # Its runtime deps live in the app's requirements.txt, so a normal install already has them. A
-    # venv that predates that does not — and the symptom is `import searx` raising ModuleNotFoundError
-    # for something like msgspec, which reads as "SearXNG is broken" rather than "deps are old".
-    #
-    # ONLY the block between the markers, never `-r requirements.txt`. On a GPU node that whole file
-    # is a full resolve across torch, transformers and diffusers — an operator adding SEARCH must not
-    # get image generation moved under them as a side effect. Read from requirements.txt rather than
-    # copied here, so the version ranges still live in exactly one place.
-    if ! "$py" -c "import searx" >/dev/null 2>&1; then
-        print_step "Installing SearXNG's runtime dependencies ..." 2>/dev/null \
-            || echo "Installing SearXNG's runtime dependencies ..."
-        local dep_file
-        dep_file="$(mktemp)"
-        sed -n '/^# >>> searxng-deps$/,/^# <<< searxng-deps$/p' "$repo_root/requirements.txt" \
-            | grep -vE '^#' > "$dep_file"
-        if [ -s "$dep_file" ]; then
-            "$venv/bin/pip" install -q -r "$dep_file" || true
-        else
-            # The markers are how this stays in one place; losing them silently would send the next
-            # node down the `-r requirements.txt` path this exists to avoid.
-            print_warning "searxng-deps markers missing from requirements.txt — skipping dep install" 2>/dev/null \
-                || echo "WARNING: searxng-deps markers missing from requirements.txt"
-        fi
-        rm -f "$dep_file"
-    fi
     if ! "$py" -c "import searx" >/dev/null 2>&1; then
         print_error "SearXNG installed but will not import:" 2>/dev/null || echo "ERROR: searx will not import:"
         "$py" -c "import searx" 2>&1 | tail -3
