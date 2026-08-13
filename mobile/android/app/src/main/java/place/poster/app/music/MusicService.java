@@ -206,6 +206,18 @@ public class MusicService extends Service {
 
   private static void note(String s) { MusicService.note = s; }
 
+  /** Playback the page asked for and the platform refused. Static and readable with no service, for
+   *  the same reason the counters are: the case it explains ends with nothing running. */
+  static volatile int blocked = 0;
+
+  /** The page could not start playback — recorded, never toasted (nobody is looking at a phone in a
+   *  car). `NotAllowedError` here means the WebView's autoplay policy refused a play() that no tap
+   *  asked for, which is the difference between "frozen" and "never tried". */
+  public static void playBlocked(String reason) {
+    blocked++;
+    note("playback refused by the page: " + (reason == null || reason.isEmpty() ? "unknown" : reason));
+  }
+
   /** Debounce for the BACKGROUND entry point below. Static, because the whole point of that path is
    *  that there is no instance to hold it. */
   private static long lastBgAutoplayAt = 0;

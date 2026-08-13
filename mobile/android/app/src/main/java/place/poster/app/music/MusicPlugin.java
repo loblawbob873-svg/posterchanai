@@ -143,6 +143,20 @@ public class MusicPlugin extends Plugin {
   }
 
   /**
+   * The page could not start playback. Recorded on the SERVICE, not shown as a toast: the case this
+   * exists for is a car, with the app in the background and nobody looking at the screen.
+   *
+   * Autoplay's failure looked exactly like success from every side — the listener fired, the press
+   * arrived, the track loaded — and then a WebView refused audio.play() because no tap had asked for
+   * it. That refusal is the ONLY thing that distinguishes "frozen" from "we never tried".
+   */
+  @PluginMethod
+  public void playBlocked(PluginCall call) {
+    MusicService.playBlocked(call.getString("reason", "unknown"));
+    call.resolve();
+  }
+
+  /**
    * WHAT THE PHONE ACTUALLY MEASURED. This feature fails by reporting success from every side — the
    * notification is up, the emit returned, and no sound comes out — and there is no device here to
    * watch it happen on. So the counters the service keeps are readable from the app: whether the
@@ -165,6 +179,9 @@ public class MusicPlugin extends Plugin {
      * device here, so this is how that possibility is told apart from "the car sent nothing" and
      * "the switch is off" — all three look identical from the driver's seat. */
     r.put("btRefused", MusicService.btRefused);
+    /* A play() the page could not start — the difference between "the car was never seen"
+     * and "everything worked and the WebView said no", which look identical from a seat. */
+    r.put("blocked", MusicService.blocked);
     /* Autoplay with the app CLOSED rides StayAwakeService, so the panel has to be able to say when
      * the listener is simply not there — otherwise "stay connected is off" reads as a broken car. */
     r.put("stayConnected", place.poster.app.push.StayAwakeService.running);

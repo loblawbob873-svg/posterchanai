@@ -559,3 +559,32 @@ def test_the_switch_names_what_it_depends_on():
     i = APPJS.index("Bluetooth autoplay on")
     assert "stay connected" in APPJS[i:i + 300], \
         "the autoplay toast must name its dependency on 'stay connected'"
+
+
+MAIN_ACT = _read(JAVA, "MainActivity.java")
+
+
+def test_the_webview_may_start_audio_without_a_tap():
+    """AUTOPLAY'S ACTUAL BLOCKER, measured in a car: the track loaded and never played.
+
+    `setMediaPlaybackRequiresUserGesture` defaults to TRUE and nothing had ever set it. Every other
+    way this app starts audio follows a touch, so it never mattered — until a feature whose entire
+    job is to start a song when nobody is touching the phone. play() returned a rejected promise and
+    the player sat there looking frozen.
+    """
+    code = _code(MAIN_ACT)
+    assert "setMediaPlaybackRequiresUserGesture(false)" in code, (
+        "the WebView will refuse audio.play() that no tap asked for — Bluetooth autoplay loads the "
+        "track and never plays it, with nothing on screen and nothing in any log")
+    assert code.index("super.onCreate") < code.index("setMediaPlaybackRequiresUserGesture"), \
+        "the bridge and its WebView do not exist before super.onCreate()"
+
+
+def test_a_refused_play_is_reported_not_swallowed():
+    """`r.catch(()=>{})` is why this looked frozen rather than broken. The report has to reach the
+    SERVICE: the failure happens with the app backgrounded, where a toast reaches nobody."""
+    assert "_nativeBlocked" in APPJS, "a rejected play() is still being swallowed"
+    assert "playBlocked" in PLUGIN and "playBlocked" in SERVICE, \
+        "the refusal never reaches the half that outlives the page"
+    assert "blocked" in APPJS and "blocked" in PLUGIN, \
+        "Details cannot show a refused playback, so 'frozen' stays indistinguishable from 'never tried'"

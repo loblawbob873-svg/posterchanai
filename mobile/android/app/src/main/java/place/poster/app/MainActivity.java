@@ -47,7 +47,33 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(place.poster.app.contacts.ContactSyncPlugin.class);
         if (isSend(getIntent())) shareNonce++;   // cold-started BY a share
         super.onCreate(savedInstanceState);
+        allowMediaWithoutAGesture();
         surviveRenderProcessDeath();
+    }
+
+    /**
+     * A WEBVIEW REFUSES audio.play() THAT NO TAP ASKED FOR, and that is what broke Bluetooth autoplay.
+     *
+     * `setMediaPlaybackRequiresUserGesture` defaults to TRUE, and nothing here had ever set it. Every
+     * other way this app starts audio follows a touch, so it never mattered — until autoplay, whose
+     * entire job is to start a song when NOBODY is touching the phone. Measured in a car: the track
+     * was selected and loaded, play() returned a rejected promise, and the player sat there looking
+     * frozen. The rejection was swallowed (`r.catch(()=>{})` in _resumeOrPlay), so there was nothing
+     * on screen and nothing in any log — the app had done everything right and then been told no.
+     *
+     * The clue was already in the codebase: `_narrateAudio.play().catch(… // autoplay blocked …)`.
+     *
+     * Safe here because this WebView loads exactly one page — the bundled client. There is no third
+     * party that could use it to make noise; the "user gesture" rule exists to stop web pages doing
+     * that, and this is the app's own player being asked by the app's own service.
+     */
+    private void allowMediaWithoutAGesture() {
+        try {
+            // After super.onCreate(): the bridge and its WebView do not exist before it.
+            getBridge().getWebView().getSettings().setMediaPlaybackRequiresUserGesture(false);
+        } catch (Throwable ignored) {
+            // Never fatal. Worst case is the behaviour that shipped before this line existed.
+        }
     }
 
     // THE "app just closes, no error" BUG. The UI runs in the WebView's RENDER process, which Android

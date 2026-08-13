@@ -15241,6 +15241,7 @@
                                : 'and “stay connected” is OFF, so nothing is listening for your car')
             + ' · bluetooth '+(s.btConnects||0)+' connect/s, '+(s.btAutoplays||0)+' autoplay/s'
             + ((s.btRefused||0) ? ', '+s.btRefused+' refused by Android' : '')
+            + ((s.blocked||0) ? ' · '+s.blocked+' playback(s) REFUSED by the WebView (no user gesture)' : '')
             + (s.note ? ' · last: '+s.note : '');
           return;
         }
@@ -18398,7 +18399,14 @@
      * this device played is what makes the press work anyway, with the app still in the background. */
     _resumeOrPlay(){
       this.ensure();
-      if(_audioEl && _audioEl.src){ const r=_audioEl.play(); if(r&&r.catch) r.catch(()=>{}); return true; }
+      /* A REFUSED play() MUST NOT LOOK LIKE A FROZEN PLAYER. This used to swallow the rejection, and
+       * the one caller that cannot survive that is autoplay: a WebView refuses audio.play() with no
+       * user gesture unless setMediaPlaybackRequiresUserGesture(false) is set (it now is, in
+       * MainActivity) — so in a car the track loaded, the promise rejected into nothing, and the
+       * player just sat there. Reported as "I seen song load, never played, just looked frozen".
+       * Now it says which, in the one place that survives the app being closed. */
+      if(_audioEl && _audioEl.src){ const r=_audioEl.play();
+        if(r&&r.catch) r.catch(e=>this._nativeBlocked(e)); return true; }
       /* The library, before asking it anything. Nothing else on a freshly-loaded page has hydrated
        * the files index yet — renderMusicApp is what normally does it, and the whole point of this
        * path is that nobody has opened a screen. Synchronous (localStorage), so it costs a read. */
@@ -18408,6 +18416,18 @@
       const q=musicTracks(null);
       if(q.length){ this.play(q[0].sha,{force:true}); return true; }
       return false;
+    },
+    /* Tell the SERVICE a play() was refused. The service is the half that outlives the page, and the
+     * failure this exists for happens with nobody looking at the screen — a toast in a backgrounded
+     * WebView is a message to an empty room. Details reads it back afterwards.
+     * NotAllowedError is the autoplay-policy refusal specifically; anything else is passed through
+     * by name rather than flattened, since "the file would not decode" is a different bug. */
+    _nativeBlocked(e){
+      try{
+        const why=(e && (e.name||e.message)) ? String(e.name||e.message) : 'unknown';
+        const P=_capPlugin('MusicControls','playBlocked');
+        if(P){ const r=P.playBlocked({ reason:why }); if(r&&r.catch) r.catch(()=>{}); }
+      }catch(_){}
     },
     _lastTrack(){ try{ const j=JSON.parse(localStorage.getItem('pc_music_last')||'null');
       return (j && j.sha) ? j : null; }catch(_){ return null; } },
