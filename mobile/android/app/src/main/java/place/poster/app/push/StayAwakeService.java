@@ -16,6 +16,9 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.support.v4.media.MediaMetadataCompat;
+import android.support.v4.media.session.MediaSessionCompat;
+import android.support.v4.media.session.PlaybackStateCompat;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.ServiceCompat;
@@ -50,6 +53,8 @@ public class StayAwakeService extends Service {
 
   public static final String ACTION_START = "place.poster.app.STAY_START";
   public static final String ACTION_STOP = "place.poster.app.STAY_STOP";
+  /** MusicService took over with a real session — drop the standby one. */
+  public static final String ACTION_DROP_STANDBY = "place.poster.app.STAY_DROP_STANDBY";
 
   private static final String CHANNEL = "pcai_stay_connected";
   private static final int NOTIF_ID = 4712;
@@ -111,6 +116,73 @@ public class StayAwakeService extends Service {
     }
   };
 
+  /**
+   * A STANDBY MEDIA SESSION — the thing every other media player has and this app did not.
+   *
+   * Android routes a car's PLAY button to an ACTIVE MediaSession, and a head unit reads its "now
+   * playing" line from that session's metadata. This app only ever created a session once a track
+   * was already playing, so before the first song there was no session at all: the car showed no
+   * song info, and its play button had nowhere to go. Both reported, and both are this.
+   *
+   * Spotify and the rest "just work" because they keep a session alive whether or not sound is
+   * coming out. This is that. It is held by the service that is up with the app closed, it declares
+   * PLAY/PAUSE/NEXT/PREVIOUS so the car offers those controls, and every press is handed to the same
+   * cold path a media button already used (`MusicService` ACTION_PLAY → revive the page and perform
+   * it). It publishes no false state: STATE_PAUSED with no position is exactly what it is.
+   *
+   * It gets out of the way the moment there is a real one. `MusicService` builds its own session
+   * when a track plays, and two active sessions in one app means the car can pick the wrong one —
+   * so this releases as soon as that exists.
+   */
+  private MediaSessionCompat standby = null;
+
+  private void openStandbySession() {
+    if (standby != null || MusicService.INSTANCE != null) return;
+    if (!MusicService.autoplayBluetooth(this)) return;   // opt-in: no switch, no session
+    try {
+      standby = new MediaSessionCompat(this, "PosterChanStandby");
+      standby.setCallback(new MediaSessionCompat.Callback() {
+        @Override public void onPlay() { handOff(MusicService.ACTION_PLAY); }
+        @Override public void onPause() { /* nothing is playing; a pause here is a no-op, not a wake */ }
+        @Override public void onSkipToNext() { handOff(MusicService.ACTION_NEXT); }
+        @Override public void onSkipToPrevious() { handOff(MusicService.ACTION_PREV); }
+      });
+      /* The actions are what the car DRAWS. Declaring none leaves a head unit with a media app it
+       * can see and cannot operate, which is indistinguishable from the app being absent. */
+      standby.setPlaybackState(new PlaybackStateCompat.Builder()
+          .setActions(PlaybackStateCompat.ACTION_PLAY | PlaybackStateCompat.ACTION_PLAY_PAUSE
+                    | PlaybackStateCompat.ACTION_SKIP_TO_NEXT
+                    | PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS)
+          .setState(PlaybackStateCompat.STATE_PAUSED, 0, 0f)
+          .build());
+      // Something for the head unit to show. Deliberately not a song title — no song is loaded, and
+      // naming one would put a lie on the dashboard.
+      standby.setMetadata(new MediaMetadataCompat.Builder()
+          .putString(MediaMetadataCompat.METADATA_KEY_TITLE, "PosterChan")
+          .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Ready to play")
+          .build());
+      standby.setActive(true);
+      MusicService.setStandbySession(true);
+    } catch (Throwable t) {
+      standby = null;
+      MusicService.setStandbySession(false);
+    }
+  }
+
+  /** Hand a press to the existing cold path rather than growing a second one. */
+  private void handOff(String action) {
+    try {
+      startService(new Intent(this, MusicService.class).setAction(action));
+    } catch (Throwable ignored) {}
+  }
+
+  void closeStandbySession() {
+    if (standby == null) return;
+    try { standby.setActive(false); standby.release(); } catch (Throwable ignored) {}
+    standby = null;
+    MusicService.setStandbySession(false);
+  }
+
   @Override
   public IBinder onBind(Intent intent) { return null; }
 
@@ -128,9 +200,16 @@ public class StayAwakeService extends Service {
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
     String action = intent != null ? intent.getAction() : null;
+    if (ACTION_DROP_STANDBY.equals(action)) {
+      // Handled BEFORE the foreground/re-arm block below: this is a message, not a restart, and
+      // running the whole start path for it would re-open the very session it is asking us to close.
+      closeStandbySession();
+      return START_STICKY;
+    }
     if (ACTION_STOP.equals(action)) {
       running = false;
       setWanted(this, false);
+      closeStandbySession();   // the switch is off: stop being a media app the car can see
       ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
       stopSelf();
       return START_NOT_STICKY;
@@ -158,6 +237,13 @@ public class StayAwakeService extends Service {
           MusicService.setListening(audioCbOn);
         }
       }
+      /* The session the car actually talks to — OUTSIDE the audioCbOn guard, because it is a
+       * different thing with a different lifetime: the listener is registered once for the life of
+       * the service, while the session must be reopened whenever a real one has come and gone
+       * (MusicService releases its own on close, and openStandbySession is a no-op while one
+       * exists). Without it the head unit sees no media app at all: nothing to display, and a PLAY
+       * button with nowhere to route. */
+      openStandbySession();
     } catch (Throwable t) {
       running = false;
       stopSelf();
@@ -208,6 +294,7 @@ public class StayAwakeService extends Service {
   @Override
   public void onDestroy() {
     running = false;
+    closeStandbySession();
     if (audioCbOn) {
       AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
       if (am != null) { try { am.unregisterAudioDeviceCallback(deviceCb); } catch (Exception ignored) {} }

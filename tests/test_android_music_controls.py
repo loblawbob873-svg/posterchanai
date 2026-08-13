@@ -588,3 +588,34 @@ def test_a_refused_play_is_reported_not_swallowed():
         "the refusal never reaches the half that outlives the page"
     assert "blocked" in APPJS and "blocked" in PLUGIN, \
         "Details cannot show a refused playback, so 'frozen' stays indistinguishable from 'never tried'"
+
+
+def test_a_media_session_exists_before_anything_plays():
+    """WHY THE CAR SAW NOTHING AND ITS PLAY BUTTON DID NOTHING.
+
+    Android routes a car's PLAY to an ACTIVE MediaSession and a head unit reads its "now playing"
+    line from that session's metadata. This app built one only when a track started, so before the
+    first song there was no session at all — no metadata to show, and a button with nowhere to route.
+    Every other media player keeps a session alive whether or not sound is coming out.
+    """
+    code = _code(STAY)
+    assert "MediaSessionCompat" in code and "setActive(true)" in code, (
+        "no standby session — the car has no media app to talk to until something has already "
+        "played, which is the state a car is never in")
+    assert "ACTION_PLAY" in code and "ACTION_SKIP_TO_NEXT" in code, (
+        "a session that declares no actions gives a head unit a media app it cannot operate")
+
+
+def test_the_standby_session_stands_down_for_a_real_one():
+    """Two active sessions in one app lets the car route to the wrong one — and the wrong one here
+    is the one with no track in it."""
+    assert "ACTION_DROP_STANDBY" in _code(STAY), "nothing tells the standby session to release"
+    assert "releaseStandby" in _code(SERVICE), \
+        "MusicService takes over without dropping the standby session"
+
+
+def test_the_standby_session_publishes_no_false_state():
+    """A head unit shows whatever the metadata says. Naming a song that is not loaded puts a lie on
+    somebody's dashboard."""
+    code = _code(STAY)
+    assert "STATE_PAUSED" in code, "standby must not claim to be playing"

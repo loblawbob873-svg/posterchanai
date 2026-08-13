@@ -231,6 +231,22 @@ public class MusicService extends Service {
 
   public static void setListening(boolean on) { listening = on; }
 
+  /** Whether a STANDBY session is currently published (StayAwakeService owns it). Reported so the
+   *  panel can say whether the car has anything to talk to before a track exists. */
+  static volatile boolean standbySession = false;
+  public static void setStandbySession(boolean on) { standbySession = on; }
+
+  /** Called when THIS service takes over with a real session, so the standby one stands down: two
+   *  active sessions in one app means a head unit can pick the wrong one, and the wrong one here is
+   *  the one that is not playing anything. */
+  private static void releaseStandby(Context ctx) {
+    if (!standbySession) return;
+    try {
+      ctx.startService(new Intent(ctx, place.poster.app.push.StayAwakeService.class)
+          .setAction(place.poster.app.push.StayAwakeService.ACTION_DROP_STANDBY));
+    } catch (Throwable ignored) {}
+  }
+
   /** The page could not start playback — recorded, never toasted (nobody is looking at a phone in a
    *  car). `NotAllowedError` here means the WebView's autoplay policy refused a play() that no tap
    *  asked for, which is the difference between "frozen" and "never tried". */
@@ -675,7 +691,12 @@ public class MusicService extends Service {
         .setState(playing ? PlaybackStateCompat.STATE_PLAYING : PlaybackStateCompat.STATE_PAUSED,
                   positionMs, playing ? 1f : 0f, SystemClock.elapsedRealtime())
         .build());
-    if (!session.isActive()) session.setActive(true);
+    if (!session.isActive()) {
+      session.setActive(true);
+      // A real session now exists, so the standby one must go: two active sessions in one app lets a
+      // head unit route to the wrong one, and the wrong one here is the one with no track in it.
+      releaseStandby(this);
+    }
 
     Notification n = notification();
     if (!foreground) {
