@@ -15211,7 +15211,16 @@
     if(cb) cb.onchange=()=>{ MusicPlayer.setAutoplayBT(cb.checked);
       // Said out loud, because the limitation is not guessable: the service only exists while the
       // player does, so a phone with music CLOSED has nothing to resume when the car connects.
-      toast(cb.checked ? 'Bluetooth autoplay on — the player has to be open (paused is fine)'
+      /* The old wording was "the player has to be open (paused is fine)", which was true and was the
+       * whole complaint: a car finds the app CLOSED, so the feature could never fire when it was
+       * wanted. With the listener moved to StayAwakeService it works closed — but only while "stay
+       * connected" is on, and that is off by default. Naming the dependency is the difference
+       * between a feature and a silent no-op. */
+      /* Stated unconditionally rather than branched on the live state: the honest way to read that
+       * is the async plugin call, and a toast that GUESSES would tell half the users the opposite of
+       * their situation. Details reports the real answer (`stayConnected` in status()). */
+      toast(cb.checked ? 'Bluetooth autoplay on — needs “stay connected” on too, or nothing is '
+                       + 'listening while the app is closed'
                        : 'Bluetooth autoplay off'); };
     const out=$('#ma-carnote',row), d=$('#ma-cardiag',row);
     if(d) d.onclick=()=>{
@@ -15220,7 +15229,21 @@
       out.textContent='reading…';
       Promise.resolve(S.status()).then(s=>{
         s=s||{};
-        if(!s.running){ out.textContent='media controls: not running — nothing has played yet this session'; return; }
+        /* "not running" is NOT the same as "autoplay is dead", and conflating them is what made this
+         * panel useless in a car: the media-control service is created by something PLAYING, so with
+         * the app closed it is ALWAYS absent — which is exactly the state autoplay has to work in.
+         * What matters when it is absent is whether the listener that survives a closed app is there,
+         * which is StayAwakeService. So say that, and keep the Bluetooth counters visible either way,
+         * since they are the only record of what the car actually did. */
+        if(!s.running){
+          out.textContent='media controls: not running (nothing playing) — '
+            + (s.stayConnected ? 'Bluetooth autoplay IS armed via “stay connected”'
+                               : 'and “stay connected” is OFF, so nothing is listening for your car')
+            + ' · bluetooth '+(s.btConnects||0)+' connect/s, '+(s.btAutoplays||0)+' autoplay/s'
+            + ((s.btRefused||0) ? ', '+s.btRefused+' refused by Android' : '')
+            + (s.note ? ' · last: '+s.note : '');
+          return;
+        }
         const sil=s.webSilenceMs;
         out.textContent='media controls: running · '+(s.playing?'playing':'paused')
           + ' · player last answered '+(sil==null||sil<0 ? 'never' : Math.round(sil/1000)+'s ago')

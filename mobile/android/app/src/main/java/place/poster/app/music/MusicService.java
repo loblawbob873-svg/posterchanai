@@ -206,6 +206,68 @@ public class MusicService extends Service {
 
   private static void note(String s) { MusicService.note = s; }
 
+  /** Debounce for the BACKGROUND entry point below. Static, because the whole point of that path is
+   *  that there is no instance to hold it. */
+  private static long lastBgAutoplayAt = 0;
+  /** Set when a background autoplay could not start the service, so Details can say so. */
+  static volatile int btRefused = 0;
+
+  /**
+   * A Bluetooth sink connected while THIS SERVICE WAS NOT RUNNING — the case the feature was missing.
+   *
+   * `deviceCb` above only exists once MusicService has been created, and MusicService is created by
+   * something PLAYING. So autoplay required the exact action it is meant to replace: you had to open
+   * the player and start a song to arm the thing that starts a song for you. Reported as "I still
+   * have to manually play the song", with Details reading `media controls: not running`.
+   *
+   * The listener that fixes it cannot live here, so it lives in the service that IS alive with the
+   * app closed — StayAwakeService, the "stay connected" foreground service — which calls this. All
+   * the POLICY stays in this class on purpose: one debounce, one opt-in check, one place where the
+   * counters move. StayAwakeService only contributes the one thing it has that we do not: being
+   * awake.
+   *
+   * No new permission. An AudioDeviceInfo TYPE is readable without BLUETOOTH_CONNECT, which is the
+   * same reason `deviceCb` uses this API rather than the ACL/A2DP broadcasts.
+   */
+  public static void onBluetoothSinkConnected(Context ctx) {
+    btConnects++;
+    long now = SystemClock.elapsedRealtime();
+    // One connection reports the A2DP sink, sometimes an SCO one, sometimes both twice — and if the
+    // service IS up, its own callback is debouncing the same event on its own clock.
+    if (now - lastBgAutoplayAt < AUTOPLAY_GAP_MS) return;
+    lastBgAutoplayAt = now;
+    if (!autoplayBluetooth(ctx)) { note("bluetooth connected (app closed) — autoplay is off"); return; }
+    MusicService svc = INSTANCE;
+    if (svc != null) {
+      // The service is up after all: its own deviceCb has this, and firing here as well would be a
+      // second press for one car door.
+      note("bluetooth connected — the player was already running");
+      return;
+    }
+    btAutoplays++;
+    /* ACTION_PLAY into a service with no state lands in the `!foreground` branch of onStartCommand,
+     * which is the COLD path that already exists for a head unit's media button: it hands a live
+     * page the press, or `revive()`s the app when there is none, and gets out of the way. Nothing
+     * new to maintain — a car that sends KEYCODE_MEDIA_PLAY and a car that sends nothing now arrive
+     * at the same code.
+     *
+     * startService, not startForegroundService: that cold branch deliberately never calls
+     * startForeground (it has nothing to publish), and a startForegroundService that does not is
+     * killed with a crash five seconds later. A plain start is allowed here because the caller is a
+     * running foreground service, which keeps the app out of the background for this purpose. If the
+     * platform refuses anyway, SAY SO in the counter rather than failing the way this whole feature
+     * has been failing — silently.
+     */
+    Intent i = new Intent(ctx, MusicService.class).setAction(ACTION_PLAY);
+    try {
+      ctx.startService(i);
+      note("bluetooth connected (app closed) — asked the player to start");
+    } catch (Throwable t) {
+      btRefused++;
+      note("bluetooth connected (app closed) — Android refused the start: " + t.getClass().getSimpleName());
+    }
+  }
+
   /**
    * A press that is supposed to produce SOUND, sent with a receipt check.
    *

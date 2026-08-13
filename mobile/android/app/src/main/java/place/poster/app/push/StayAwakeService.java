@@ -9,14 +9,20 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
+import android.media.AudioDeviceCallback;
+import android.media.AudioDeviceInfo;
+import android.media.AudioManager;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.ServiceCompat;
 
 import place.poster.app.MainActivity;
 import place.poster.app.R;
+import place.poster.app.music.MusicService;
 
 /**
  * "Stay connected" — the persistent notification other messaging apps show.
@@ -51,6 +57,47 @@ public class StayAwakeService extends Service {
 
   public static boolean running = false;
 
+  private final Handler handler = new Handler(Looper.getMainLooper());
+  private boolean audioCbOn = false;
+  /** registerAudioDeviceCallback fires immediately with everything ALREADY connected. That is this
+   *  service starting — at boot, most often — not a car door, and treating it as one would autoplay
+   *  every time the phone reboots near a paired speaker. Same rule as MusicService's own sweep. */
+  private boolean firstDeviceSweep = true;
+
+  /**
+   * BLUETOOTH AUTOPLAY WITH THE APP CLOSED, which is the only state a car actually finds it in.
+   *
+   * MusicService has had this listener for a while, and it could never fire for the case it was
+   * written for: that service is created by something PLAYING, so arming autoplay required the very
+   * action autoplay exists to replace. Details said `media controls: not running` and the answer was
+   * "I still have to manually play the song".
+   *
+   * This service is the one that is up with the app closed — it is a foreground service, BootReceiver
+   * restarts it, and it already owns a permanent notification — so the listener belongs here and the
+   * decision stays in MusicService.onBluetoothSinkConnected. Nothing new is spent: no permission (a
+   * device TYPE is readable without BLUETOOTH_CONNECT, which is why this API was chosen over the
+   * ACL/A2DP broadcasts), no second notification, no boot changes.
+   *
+   * THE COST IS THE COUPLING, and it has to be said out loud in the UI: autoplay now depends on
+   * "stay connected" being on. It is off by default, so for anyone who has not turned it on this
+   * changes nothing — which is exactly the silent no-op the feature has been all along, and the
+   * switch's description is where that gets fixed, not here.
+   */
+  private final AudioDeviceCallback deviceCb = new AudioDeviceCallback() {
+    @Override public void onAudioDevicesAdded(AudioDeviceInfo[] added) {
+      if (firstDeviceSweep) { firstDeviceSweep = false; return; }
+      if (added == null) return;
+      for (AudioDeviceInfo d : added) {
+        if (d == null || !d.isSink()) continue;
+        int t = d.getType();
+        boolean bt = t == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
+            || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                && (t == AudioDeviceInfo.TYPE_BLE_HEADSET || t == AudioDeviceInfo.TYPE_BLE_SPEAKER));
+        if (bt) { MusicService.onBluetoothSinkConnected(StayAwakeService.this); return; }
+      }
+    }
+  };
+
   @Override
   public IBinder onBind(Intent intent) { return null; }
 
@@ -82,6 +129,18 @@ public class StayAwakeService extends Service {
       ServiceCompat.startForeground(this, NOTIF_ID, build(), type);
       running = true;
       setWanted(this, true);
+      /* Only AFTER going foreground, and only once: onStartCommand runs again on every restart and
+       * on the STICKY relaunch, and registering a second time would deliver every connection twice
+       * (the debounce would absorb it, which is precisely why a duplicate registration would go
+       * unnoticed until it did not). */
+      if (!audioCbOn) {
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (am != null) {
+          // Main looper: a car connecting is not a hot path, and MusicService's own callback runs
+          // there too, so the two can never race over the same debounce.
+          try { am.registerAudioDeviceCallback(deviceCb, handler); audioCbOn = true; } catch (Exception ignored) {}
+        }
+      }
     } catch (Throwable t) {
       running = false;
       stopSelf();
@@ -132,6 +191,11 @@ public class StayAwakeService extends Service {
   @Override
   public void onDestroy() {
     running = false;
+    if (audioCbOn) {
+      AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+      if (am != null) { try { am.unregisterAudioDeviceCallback(deviceCb); } catch (Exception ignored) {} }
+      audioCbOn = false;
+    }
     super.onDestroy();
   }
 }

@@ -161,6 +161,13 @@ public class MusicPlugin extends Plugin {
      * running, nothing has played this session" about the very press being investigated. */
     r.put("btConnects", MusicService.btConnects);
     r.put("btAutoplays", MusicService.btAutoplays);
+    /* Autoplay attempted with the app closed and the platform refused the service start. There is no
+     * device here, so this is how that possibility is told apart from "the car sent nothing" and
+     * "the switch is off" — all three look identical from the driver's seat. */
+    r.put("btRefused", MusicService.btRefused);
+    /* Autoplay with the app CLOSED rides StayAwakeService, so the panel has to be able to say when
+     * the listener is simply not there — otherwise "stay connected is off" reads as a broken car. */
+    r.put("stayConnected", place.poster.app.push.StayAwakeService.running);
     r.put("unanswered", MusicService.unanswered);
     r.put("revived", MusicService.revived);
     r.put("note", MusicService.note);

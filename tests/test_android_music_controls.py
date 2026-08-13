@@ -456,3 +456,106 @@ def test_the_phone_reports_what_it_measured():
     for key in ("webSilenceMs", "webGone", "btConnects", "btAutoplays", "unanswered", "revived", "note"):
         assert f'"{key}"' in PLUGIN, f"status() does not report {key}"
         assert key in APPJS, f"nothing on screen reads {key}"
+
+
+# ---- Bluetooth autoplay with the app CLOSED ----------------------------------------------------
+#
+# The feature existed and could never fire for the case it was written for. `MusicService.deviceCb`
+# is registered inside that service's startup, and the service is created by something PLAYING — so
+# arming autoplay required the exact action autoplay replaces. A car finds the app closed, Details
+# read `media controls: not running`, and the report was "I still have to manually play the song".
+#
+# The listener now lives in StayAwakeService — the foreground service that IS alive with the app
+# closed, restarted by BootReceiver, already owning a permanent notification — while every decision
+# stays in MusicService. These assert that split, because each half is silent on its own: a listener
+# with no policy autoplays on every reboot, and policy with no listener is what shipped.
+
+STAY = _read(JAVA, "push", "StayAwakeService.java")
+
+def _code(java):
+    """Java with comments removed.
+
+    Two of the guards below assert that a token is ABSENT, or that one appears before another — and
+    both tripped on the file's own prose, which names the very APIs it explains why it is not using.
+    A guard that reads comments is asserting on documentation.
+    """
+    java = re.sub(r"/\*.*?\*/", "", java, flags=re.S)
+    return re.sub(r"//[^\n]*", "", java)
+
+
+
+
+def test_the_closed_app_listener_exists_where_something_is_actually_running():
+    assert "registerAudioDeviceCallback" in STAY, (
+        "StayAwakeService does not listen for a Bluetooth sink — autoplay is then back to needing "
+        "MusicService, which only exists once something has already played")
+    assert "MusicService.onBluetoothSinkConnected" in STAY, (
+        "the listener must hand the decision to MusicService, not re-implement the policy")
+
+
+def test_the_listener_is_unregistered_when_the_service_stops():
+    assert "unregisterAudioDeviceCallback" in STAY, \
+        "an AudioDeviceCallback outliving its service leaks it for the life of the process"
+
+
+def test_the_listener_is_registered_once_and_only_after_going_foreground():
+    """onStartCommand runs again on every restart and on the STICKY relaunch. A second registration
+    delivers each connection twice — which the debounce would absorb, so it would go unnoticed
+    until it did not."""
+    code = _code(STAY)
+    # The GATE, not just the token: `audioCbOn` also appears at its assignment and in onDestroy, so
+    # asserting the name is present passed with the guard deleted (verified).
+    i = code.index("registerAudioDeviceCallback")
+    assert "if (!audioCbOn)" in code[:i], (
+        "the registration is not gated on audioCbOn — onStartCommand runs again on every restart "
+        "and on the STICKY relaunch, so the callback would be registered again each time")
+    assert code.index("startForeground") < i, \
+        "register only after the service is foreground, or the start can be refused mid-setup"
+
+
+def test_the_first_sweep_is_not_a_car_door():
+    """registerAudioDeviceCallback fires immediately with everything already connected. At boot,
+    with a paired speaker in range, that is not somebody getting into a car."""
+    assert "firstDeviceSweep" in STAY, \
+        "without the first-sweep guard the phone autoplays every time it reboots near a speaker"
+
+
+def test_the_background_entry_point_does_not_double_fire():
+    """If MusicService IS up, its own deviceCb already has this connection; firing again would be a
+    second press for one car door."""
+    fn = SERVICE[SERVICE.index("public static void onBluetoothSinkConnected"):]
+    fn = fn[:fn.index("\n  }")]
+    assert "INSTANCE" in fn, "the background path must stand down when the player is already running"
+    assert "autoplayBluetooth(ctx)" in fn, "the opt-in must be checked on the background path too"
+    assert "lastBgAutoplayAt" in fn, \
+        "one connection reports several devices — without a debounce that is several presses"
+
+
+def test_the_background_start_is_not_a_foreground_service_start():
+    """The cold branch of onStartCommand deliberately never calls startForeground (it has nothing to
+    publish), and a startForegroundService that does not is killed with a crash five seconds later."""
+    fn = _code(SERVICE)
+    fn = fn[fn.index("public static void onBluetoothSinkConnected"):]
+    fn = fn[:fn.index("\n  }")]
+    assert "ctx.startService(" in fn, "background autoplay must use a plain start"
+    assert "startForegroundService" not in fn, \
+        "startForegroundService here crashes the app 5s later — the cold path never goes foreground"
+
+
+def test_a_refused_start_is_counted_rather_than_swallowed():
+    """There is no device here, and 'the car sent nothing', 'the switch is off' and 'Android refused
+    the start' are indistinguishable from the driver's seat unless the phone says which."""
+    assert "btRefused" in SERVICE and "btRefused" in PLUGIN, \
+        "a refused background start must reach MusicPlugin.status(), or it fails the silent way"
+    assert "stayConnected" in PLUGIN, \
+        "status() must report whether the closed-app listener is even running"
+    assert "stayConnected" in APPJS, \
+        "the Details panel must say when 'stay connected' is off, or that reads as a broken car"
+
+
+def test_the_switch_names_what_it_depends_on():
+    """Autoplay now rides 'stay connected', which is off by default. An unstated dependency is the
+    same silent no-op this feature already was."""
+    i = APPJS.index("Bluetooth autoplay on")
+    assert "stay connected" in APPJS[i:i + 300], \
+        "the autoplay toast must name its dependency on 'stay connected'"
