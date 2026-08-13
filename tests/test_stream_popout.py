@@ -91,8 +91,18 @@ def test_only_one_row_in_stream_main():
 # ---- 3. the desktop window's URL --------------------------------------------------------------
 
 def test_popout_url_carries_the_entity_as_a_query():
-    assert "'?popout=1&e=' + encodeURIComponent(naddr)" in APP_JS, \
-        "the popout entity must travel as a query — a bundle has no router to resolve a path segment"
+    """The INVARIANT is that the entity is a query parameter, not a path segment.
+
+    This used to assert one exact source literal, `'?popout=1&e=' + encodeURIComponent(naddr)`, and
+    that broke the moment the chat popout added `&chat=1` between the two halves — the URL was still
+    a perfectly good query, the string just was not contiguous any more. A guard that fails on a
+    correct refactor teaches people to edit the guard, which is the opposite of the job. So it
+    asserts the two things that actually matter: the entity is appended as `&e=`/`?e=` and encoded,
+    and the old path-segment form is nowhere."""
+    assert re.search(r"[?&]e=' \+ encodeURIComponent\(naddr\)", APP_JS), \
+        "the popout entity must travel as an ENCODED query param — a bundle has no router to " \
+        "resolve a path segment"
+    assert "'?popout=1'" in APP_JS, "the popout marker itself is gone from the URL"
     assert "+ '/' + naddr + '?popout=1'" not in APP_JS, \
         "path-segment form 404s in the desktop bundle (app:// reads a file off disk)"
 
