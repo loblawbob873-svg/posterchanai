@@ -18,6 +18,7 @@ Two defects lived here, both invisible on the box they were written on:
 
 No GPU, model, network or database needed — everything is stubbed.
 """
+import importlib.util
 import os
 import shutil
 import tempfile
@@ -83,6 +84,11 @@ class MusicDownloadTest(unittest.TestCase):
             mds._download_music(db=object())
         return mds.status("music")
 
+    @unittest.skipUnless(importlib.util.find_spec("huggingface_hub"),
+                         "huggingface_hub is not installed here — `mock.patch` cannot resolve a "
+                         "target in a module that will not import, so this cannot RUN. A skip that "
+                         "says why, never a failure: on a machine without the AI extras this test "
+                         "failing looked exactly like the download code being broken.")
     def test_does_not_treat_the_checkpoint_dir_as_a_hub_repo(self):
         """`music_model` is a local directory name; snapshot_download 401s on it, always."""
         with mock.patch("huggingface_hub.snapshot_download") as snap:

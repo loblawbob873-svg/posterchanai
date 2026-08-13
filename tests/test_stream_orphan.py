@@ -101,6 +101,30 @@ def test_the_child_is_asked_to_die_with_the_parent():
         "the stale instance must be gone BEFORE we try to bind the same ports"
 
 
+def _still_running(pid):
+    """Is this pid a LIVE process — as opposed to a zombie?
+
+    `os.kill(pid, 0)` cannot tell the difference: a dead-but-unreaped child keeps its pid until
+    somebody wait()s for it, and the signal probe succeeds the whole time. Whether anybody does is a
+    property of the ENVIRONMENT, not of the thing under test. On a normal host the init system reaps
+    orphans immediately, so the probe was right by luck; inside a container whose pid 1 is `sleep
+    infinity` — which never calls wait() — nothing ever reaps, and this test reported "the child
+    outlived a SIGKILLed parent" on a kernel that had killed it in milliseconds.
+
+    That was measured, not assumed: /proc/<pid>/stat read `Z` a second after the parent died, while
+    os.kill kept succeeding. So PDEATHSIG works in a container and the probe was the bug — worth
+    stating plainly, because the obvious reading of that failure is "PDEATHSIG does not work in
+    Docker", which would have sent the next person to disable the guard the fix depends on.
+    """
+    try:
+        with open("/proc/%d/stat" % pid) as fh:
+            # Field 3 is the state. Split after "(comm)" — a process name can contain spaces and
+            # parentheses, so splitting the whole line on whitespace picks the wrong field.
+            return fh.read().rsplit(") ", 1)[1].split()[0] != "Z"
+    except (FileNotFoundError, ProcessLookupError, IndexError):
+        return False
+
+
 def test_pdeathsig_actually_fires_in_a_child():
     """Run the real hook in a forked child and confirm the kernel honours it.
 
@@ -124,9 +148,7 @@ def test_pdeathsig_actually_fires_in_a_child():
         parent.wait(timeout=5)
         for _ in range(50):
             time.sleep(0.1)
-            try:
-                os.kill(child_pid, 0)
-            except ProcessLookupError:
+            if not _still_running(child_pid):
                 return              # died with its parent: correct
         pytest.fail("the child outlived a SIGKILLed parent — PDEATHSIG did not take effect")
     finally:
