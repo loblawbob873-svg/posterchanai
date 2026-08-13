@@ -135,10 +135,17 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(len(calls), 2, "one /healthz + one /config, then the cache")
 
-    # The two probe tests below pin `searxng_native.available()` to False, which is what a node
-    # WITHOUT the bundled SearXNG installed looks like. Without that pin they pass or fail depending
-    # on whether the machine running the suite happens to have it — and what they are about is the
-    # PROBE rejecting an impostor, not what the app falls back to afterwards.
+    # The two probe tests below pin BOTH halves of "this node has no bundled SearXNG":
+    #
+    #   available() — else they pass or fail depending on whether the machine running the suite
+    #                 happens to have SearXNG installed;
+    #   MOUNTED     — a process-global that app/main.py sets at import (mark_mounted()). Any test
+    #                 that imports the app — tests/test_admin_login_redirect.py does — flips it True
+    #                 for every test that runs AFTER it in the same process. Pinned only on
+    #                 available(), these two passed alone and failed in the full suite, which is the
+    #                 worst way for a test to be wrong.
+    #
+    # What they are about is the PROBE rejecting an impostor, not what the app falls back to.
     def test_probe_rejects_something_that_is_not_searxng(self):
         """A 404 from an unrelated listener used to pass (`status < 500`), and the node then adopted
         it as its search backend for five minutes with the public fallback never tried."""
@@ -147,6 +154,7 @@ class ResolveTests(unittest.TestCase):
                 return _StubResponse({}, status=404)
             return _StubResponse({}, status=200, headers={"content-type": "application/json"})
         with mock.patch.object(S.httpx, "get", side_effect=_get), \
+             mock.patch("app.services.searxng_native.MOUNTED", False), \
              mock.patch("app.services.searxng_native.available", return_value=False):
             self.assertEqual(S.local_searxng_url(), "")
 
@@ -156,6 +164,7 @@ class ResolveTests(unittest.TestCase):
                 return _StubResponse({}, status=200)
             return _StubResponse({}, status=200, headers={"content-type": "text/html"})
         with mock.patch.object(S.httpx, "get", side_effect=_get), \
+             mock.patch("app.services.searxng_native.MOUNTED", False), \
              mock.patch("app.services.searxng_native.available", return_value=False):
             self.assertEqual(S.local_searxng_url(), "")
 
