@@ -193,16 +193,34 @@ def _cmd_signature(cmd: str) -> str:
 _USE_JOB_TIMEOUT = object()
 
 
+def _agent_default_step_timeout() -> float:
+    """The declared default, read from SettingsResponse — never a second copy of the number.
+
+    It WAS a second copy ("600" here, "600" there), and that is not a tidiness point: the value in
+    production is BLANK, so every run took this fallback and the schema's value was decorative.
+    Raising the documented default would have changed nothing at all."""
+    from app.schemas import SettingsResponse
+    try:
+        return float(SettingsResponse.model_fields["node_exec_agent_step_timeout"].default)
+    except Exception:
+        return 1800.0
+
+
 def _agent_step_timeout(db: Session) -> Optional[float]:
     """Per-command bound for the AGENT loop. Unlike fire-and-forget jobs (which return after ~8s
     and notify on completion), the agent AWAITS each command, so an unbounded command would
-    deadlock the whole loop and the caller. Default 600s; 0 -> fall back to the global job timeout
-    (which may itself be unbounded - an explicit admin choice). Truly long fire-and-forget tasks
-    should use the non-agentic `node <name> <cmd>` instead."""
+    deadlock the whole loop and the caller. 0 -> fall back to the global job timeout (which may
+    itself be unbounded - an explicit admin choice). Truly long fire-and-forget tasks should use the
+    non-agentic `node <name> <cmd>` instead.
+
+    The default has to outlast the longest command this repo asks an agent to run. That is the check
+    suite, which MEASURES 10m22s; at the old 600s the agent killed it 22 seconds short, and since
+    `./test.sh --brief` prints one block at the very end, what came back was empty."""
+    fallback = _agent_default_step_timeout()
     try:
-        secs = float(_get(db, "node_exec_agent_step_timeout", "600"))
+        secs = float(_get(db, "node_exec_agent_step_timeout", str(fallback)))
     except ValueError:
-        secs = 600.0
+        secs = fallback
     return secs if secs > 0 else _job_timeout(db)
 
 

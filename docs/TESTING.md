@@ -144,6 +144,21 @@ old name in memory — set `node_exec_sandbox_image` live in Admin → Services,
 Paste this into the AI Chat agent (or `node <name> agent …`). It is written flat and short on
 purpose: no branching, no judgement, no formatting decisions.
 
+**Mind the agent's step timeout.** The agent AWAITS each command, so `node_exec_agent_step_timeout`
+(Admin → Nodes → Agent Step Timeout) is a hard ceiling on this one. The suite MEASURES **10m22s** on
+server1, and the old 600s default killed it 22 seconds short — with `--brief` printing one block at
+the very end and nothing before it, what came back was **empty**. Ten minutes of apparently nothing,
+then nothing, and an idle GPU throughout (the model only runs between steps). The default is 1800s
+now; if you shorten it, shorten it to more than the suite takes.
+
+For a run you don't want to sit inside the agent loop at all, the non-agentic form has **no** step
+timeout, returns a job id after ~8s and posts the result back to the channel when it finishes —
+which is what `node_service` itself recommends for long tasks:
+
+```
+node local cd ~/posterchanai && ./test.sh --brief
+```
+
 ```
 Run this command on the node and wait for it to finish. It takes up to 15 minutes.
 

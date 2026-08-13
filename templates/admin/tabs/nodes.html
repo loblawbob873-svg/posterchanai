@@ -91,6 +91,14 @@
                 <input type="number" id="node_exec_job_timeout" name="node_exec_job_timeout" value="0" min="0">
                 <small>Kill a job after this many seconds. 0 = no timeout (use <code>node kill &lt;id&gt;</code>).</small>
             </div>
+            <div class="form-group">
+                <label for="node_exec_agent_step_timeout">Agent Step Timeout (seconds)</label>
+                <input type="number" id="node_exec_agent_step_timeout" name="node_exec_agent_step_timeout" value="1800" min="0">
+                <small>Kill a single command inside <code>node agent</code> after this many seconds (0 = use the job
+                timeout above). The agent <em>waits</em> for each command, so this is what stops one hung command
+                deadlocking the run. It had no field here at all, which mattered the day a command that takes
+                10m22s met the old 600s default: the operator's obvious fix was invisible.</small>
+            </div>
         </div>
 
         <hr>

@@ -457,7 +457,12 @@ class SettingsResponse(BaseModel):
     # results are shrunk and the oldest exchanges dropped; sized for the smallest node in the fleet
     node_exec_agent_model: str = "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"  # legacy per-feature override for
     # `node agent`; prefer the unified llm_tools_model. Falls back to Model Path when the gguf is absent.
-    node_exec_agent_step_timeout: str = "600"  # max seconds per command in `node agent` (0 = use job timeout); bounds long/hung commands so the loop can't deadlock
+    # Max seconds per command in `node agent` (0 = use job timeout); bounds long/hung commands so the
+    # loop can't deadlock. 1800 and not 600: the check suite is the longest command this repo asks an
+    # agent to run and it MEASURES 10m22s, so the old default killed it 22 seconds from the finish —
+    # and since `./test.sh --brief` prints one block at the very end and nothing before it, what came
+    # back was empty. Ten minutes of apparently nothing, then nothing. See docs/TESTING.md.
+    node_exec_agent_step_timeout: str = "1800"
     node_exec_job_timeout: str = "0"  # per-job timeout in seconds (0 = no timeout)
     # Nostr transport for node/agent tasks — reuses the DVM (nostr_dvm.py): a command is an encrypted
     # NIP-90 event p-tagged to a worker node's npub; the worker runs it LOCALLY and returns an encrypted
