@@ -594,7 +594,7 @@ public class MusicService extends Service {
     }
 
     // The widget carries no clock, so it only ever changes when the track or the play state does.
-    String key = title + " " + artist + " " + playing;
+    String key = title + "\0" + artist + "\0" + playing;
     if (!key.equals(widgetKey)) {
       widgetKey = key;
       MusicWidget.render(this, title, artist, playing, true);
