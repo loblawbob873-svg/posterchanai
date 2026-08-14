@@ -237,10 +237,11 @@ RESPOND WITH THE COMMAND ONLY!"""
             }
 
         except asyncio.TimeoutError:
-            logger.warning(f"Intent detection timed out after {INTENT_TIMEOUT}s for message: {user_message[:50]}")
+            logger.warning(f"Intent detection timed out after {INTENT_TIMEOUT}s "
+                           f"({len(user_message or '')} chars)")
             return None
         except Exception as e:
-            logger.error(f"Intent detection failed for '{user_message[:50]}': {e}")
+            logger.error(f"Intent detection failed ({len(user_message or '')} chars): {e}")
             return None
 
     async def execute_intent(self, intent_result: dict) -> Optional[dict]:

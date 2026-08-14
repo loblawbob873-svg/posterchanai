@@ -87,11 +87,11 @@ async def _generate_image_local(db: Session, settings: dict, prompt: str, negati
     # parent corrupts the child's GPU state. Use the configured device, not detect_device().
     image_cpu_mode = settings.get("image_gpu_device", "auto") == "cpu"
     from app.services.locks import GPUResourceLock, image_generation_lock
-    async with GPUResourceLock("Image", f"prompt={prompt[:30]}...", cpu_mode=image_cpu_mode):
+    async with GPUResourceLock("Image", f"prompt={len(prompt or '')} chars", cpu_mode=image_cpu_mode):
         async with image_generation_lock:
             prepare_vram_for_image(db)
             backend = get_image_backend(db)
-            logger.info(f"[IMAGE] local backend generating: {prompt[:50]}...")
+            logger.info(f"[IMAGE] local backend generating ({len(prompt or '')} chars)")
             return await backend.generate_image(
                 prompt=prompt, negative_prompt=negative_prompt,
                 width=width, height=height, steps=steps, cfg=cfg,

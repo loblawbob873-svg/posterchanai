@@ -82,7 +82,7 @@ async def _generate_local(db: Session, cfg: dict, prompt: str, negative: str) ->
     from app.services.vram_manager import prepare_for_video
     from app.services import media_service
     cpu_mode = cfg["device"] == "cpu"
-    async with GPUResourceLock("Video", f"prompt={prompt[:30]}...", cpu_mode=cpu_mode):
+    async with GPUResourceLock("Video", f"prompt={len(prompt or '')} chars", cpu_mode=cpu_mode):
         prepare_for_video(db)
         service = get_video_service(db)
         frames, fps = await asyncio.to_thread(service.generate, db, prompt, negative)

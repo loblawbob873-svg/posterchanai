@@ -188,7 +188,7 @@ def imageposter():
             prompt = f"{prompt}, {random.choice(RANDOM_SCENE_ELEMENTS)}".strip(", ")
         except Exception:
             pass
-    print(f"[nostr] image poster generating: {prompt[:80]}", flush=True)
+    print(f"[nostr] image poster generating ({len(prompt or '')} chars)", flush=True)
     image_bytes = generate_image_bytes_with_retries(prompt, max_retries=10, retry_delay=30)
     if image_bytes:
         _nk.post_image_to_fediverse(IMAGE_POSTER_TEXT, image_bytes=image_bytes)
@@ -501,7 +501,8 @@ def process_mentions():
         if _root in _rr_threads and _rr_threads[_root] >= _RR_MAX_THREAD:
             print(f"[nostr] random-reply thread {_root[:12]} hit {_RR_MAX_THREAD}-reply cap — bowing out", flush=True)
             continue
-        print(f"[nostr] processing {nid[:12]} from {user.get('username')}: {prompt_text[:80]}", flush=True)
+        print(f"[nostr] processing {nid[:12]} from {user.get('username')} "
+              f"({len(prompt_text or '')} chars)", flush=True)
         try:
             thread_history = get_thread_history(nid)
             _dispatch(note, prompt_text, own, thread_history)

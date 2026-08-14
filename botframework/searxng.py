@@ -38,7 +38,7 @@ def search_web(query, limit=5, categories=None, time_range=None):
             params["time_range"] = time_range
 
         scope = f" [{categories}]" if categories else ""
-        print(f"[SearXNG] Web search: {query}{scope}")
+        print(f"[SearXNG] Web search ({len(query or '')} chars){scope}")
         response = requests.get(search_url, params=params, timeout=SEARXNG_TIMEOUT)
         response.raise_for_status()
 
@@ -57,7 +57,7 @@ def search_web(query, limit=5, categories=None, time_range=None):
         ]
 
     except requests.exceptions.Timeout:
-        print(f"[SearXNG] Timeout searching for: {query}")
+        print(f"[SearXNG] Timeout on a {len(query or '')}-char web search")
         return []
     except requests.exceptions.RequestException as e:
         print(f"[SearXNG] Request error: {e}")
@@ -160,7 +160,7 @@ def search_images(query, limit=10):
             "safesearch": "0"  # Disable safe search filter
         }
 
-        print(f"[SearXNG] Image search: {query}")
+        print(f"[SearXNG] Image search ({len(query or '')} chars)")
         response = requests.get(search_url, params=params, timeout=SEARXNG_TIMEOUT)
         response.raise_for_status()
 
@@ -179,7 +179,7 @@ def search_images(query, limit=10):
         ]
 
     except requests.exceptions.Timeout:
-        print(f"[SearXNG] Timeout searching images for: {query}")
+        print(f"[SearXNG] Timeout on a {len(query or '')}-char image search")
         return []
     except requests.exceptions.RequestException as e:
         print(f"[SearXNG] Request error: {e}")
@@ -400,7 +400,8 @@ def search_and_download_images(query, max_images=4):
     Returns:
         Tuple of (text_response, list_of_tuples) where each tuple is (image_bytes, mime_type)
     """
-    print(f"[SearXNG] search_and_download_images called with query='{query}', max_images={max_images}")
+    print(f"[SearXNG] search_and_download_images called with a {len(query or '')}-char query, "
+          f"max_images={max_images}")
     results = search_images(query, limit=max_images * 2)  # Get extra in case some fail
 
     if not results:

@@ -331,7 +331,7 @@ async def search_torrents(db: Session, query: str, limit: int = 15) -> list[Torr
     results = []
 
     try:
-        logger.info(f"Searching torrents via proxy: {proxy_config} for query: {query}")
+        logger.info(f"Searching torrents via proxy: {proxy_config} ({len(query or '')}-char query)")
         async with httpx.AsyncClient(timeout=15, follow_redirects=True, proxy=proxy_config) as client:
             logger.info(f"Searching torrents: {search_url}")
             response = await client.get(search_url, headers=headers)

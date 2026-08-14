@@ -563,6 +563,20 @@ class LlamaService:
         if configured_changed:
             logger.info(f"Configured context size changed from {self._configured_num_ctx} to {self.num_ctx}, reloading model...")
 
+        # THE VRAM SWAP BELONGS HERE — under whichever GPU lock the caller is holding, and next to
+        # the load it exists to make room for. It used to be the CALLER's job (`prepare_vram_for_llm`
+        # in chat_service), where it ran with no lock at all and unloaded the image model out from
+        # under a diffusers run that held one: image job dead, llama.cpp aborted on the wreckage,
+        # whole service core-dumped (2026-08-14 09:13). Here it is reached only from
+        # chat_completion / chat_completion_stream / stream_chat_content, all of which hold the lock
+        # across this call — and only on the branch that is ACTUALLY going to load, so a warm model
+        # still costs nothing. Never raises: a swap that fails must not take inference with it.
+        try:
+            from app.services.vram_manager import prepare_for_llm
+            prepare_for_llm(self.db)
+        except Exception as e:
+            logger.warning(f"VRAM prepare for LLM failed, loading anyway: {e}")
+
         # Unload previous model
         if self._model is not None:
             logger.info(f"Unloading previous model: {self._model_path}")
@@ -1177,10 +1191,6 @@ class LlamaService:
         with _request_counter_lock:
             _pending_requests += 1
 
-        self._ensure_model_loaded(target_path)
-        params = self._get_sampling_params(**kwargs)
-        # Embed system message into first user message for Mistral (chat_handler ignores system role).
-        messages = self._embed_system_for_mistral(messages)
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
         model_name = model or self.default_model
@@ -1194,6 +1204,19 @@ class LlamaService:
         request_id = f"LLAMA-STREAM-{uuid.uuid4().hex[:8]}"
         try:
             async with GPUResourceLock("LLM", request_id, cpu_mode=self.cpu_mode):
+                # MOVED INSIDE THE LOCK. These three ran BEFORE it, and the first of them loads a
+                # model — which on a shared GPU means unloading whatever else is resident. So a chat
+                # request arriving mid-image-generation tore the image model out from under a run
+                # that HELD the lock, and the half-torn-down SYCL context took the whole process
+                # with it (ggml_abort → core dump, 2026-08-14 09:13). The lock's entire purpose is
+                # that only one model touches the GPU at a time, and a LOAD is exactly the moment
+                # that matters. `_ensure_model_loaded`'s own docstring already says it is
+                # "serialized by the GPU lock" — on this path it was not.
+                self._ensure_model_loaded(target_path)
+                params = self._get_sampling_params(**kwargs)
+                # Embed system message into first user message for Mistral (chat_handler ignores system role).
+                messages = self._embed_system_for_mistral(messages)
+
                 def run_streaming():
                     """Run synchronous generation in thread, put SSE chunks in queue"""
                     token_timeout = self.token_timeout

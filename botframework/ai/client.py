@@ -23,8 +23,8 @@ from config import (
 _is_personality = len(_RAW_PROMPT) > 200 or "Your name is" in _RAW_PROMPT or "You are" in _RAW_PROMPT
 PROMPT = _RAW_PROMPT + " /no_think" if _RAW_PROMPT and not _is_personality else _RAW_PROMPT
 
-# Log PROMPT at module load time for debugging
-print(f"[AI CLIENT] PROMPT loaded: {PROMPT[:100] if PROMPT else 'EMPTY/NONE'}...")
+# Whether a personality is loaded, never WHAT it is — the journal is not the place for it.
+print(f"[AI CLIENT] PROMPT loaded: {len(PROMPT) if PROMPT else 0} chars")
 if not PROMPT or len(PROMPT.strip()) < 10:
     print(f"[AI CLIENT] WARNING: PROMPT is empty or too short! This will cause the bot to use default behavior.")
     print(f"[AI CLIENT] Check that bots_config.py has 'prompt' set and botctl.py is setting PROMPT env var.")
@@ -176,12 +176,12 @@ def _generate_reply_inner(user_content, previous_content, ping, thread_history, 
             print(f"[ERROR]   1. bots_config.py has 'prompt' set for this bot")
             print(f"[ERROR]   2. botctl.py is setting PROMPT env var (check botctl.py build_env function)")
             print(f"[ERROR]   3. The bot process was restarted after config changes")
-            print(f"[ERROR] Current PROMPT value: '{system_prompt}'")
+            print(f"[ERROR] Current PROMPT value is {len(system_prompt) if system_prompt else 0} chars")
             # Don't use empty prompt - this will cause issues
             if not system_prompt:
                 system_prompt = "Generate a reply to the user. Only send the reply. Do not say who you are. /no_think"
         else:
-            print(f"[DEBUG] Using PROMPT for regular mention: {system_prompt[:150]}...")
+            print(f"[DEBUG] Using PROMPT for regular mention ({len(system_prompt)} chars)")
         if narrate_mode and system_prompt:
             system_prompt = system_prompt + " Do not use emojis, hashtags, or special characters. Write in plain text only, suitable for text-to-speech."
         elif narrate_mode:
@@ -290,22 +290,22 @@ def _generate_reply_inner(user_content, previous_content, ping, thread_history, 
         "max_tokens": 500
     }
 
-    # Log full request for debugging
+    # The SHAPE of the request, never its text. This used to print the final system prompt in
+    # full, every message's first 150 characters and the user's content — i.e. every private thing
+    # anyone said to a bot, into the journal, on every single call. Sizes answer the questions this
+    # was actually used for (is a personality loaded, did the history come through, is it near the
+    # context limit) and none of the ones it should never have been able to answer.
     print(f"\n{'='*60}")
     print("OpenAI API Request:")
     print(f"Endpoint: {OPENAI_ENDPOINT}")
     print(f"Model: {MODEL}")
-    print(f"PROMPT (base personality): {PROMPT[:100] if PROMPT else 'NONE'}...")
-    print(f"custom_system_prompt: {custom_system_prompt[:100] if custom_system_prompt else 'NONE'}...")
-    print(f"System prompt (final, FULL):")
-    print(f"{system_prompt}")
-    print(f"{'='*60}")
+    print(f"PROMPT (base personality): {len(PROMPT) if PROMPT else 0} chars")
+    print(f"custom_system_prompt: {len(custom_system_prompt) if custom_system_prompt else 0} chars")
+    print(f"System prompt (final): {len(system_prompt) if system_prompt else 0} chars")
     print(f"Messages count: {len(messages)}")
     for i, msg in enumerate(messages):
-        role = msg.get('role', 'unknown')
-        content_preview = msg.get('content', '')[:150]
-        print(f"  Message {i+1} ({role}): {content_preview}...")
-    print(f"User content: {user_content[:200]}...")
+        print(f"  Message {i+1} ({msg.get('role', 'unknown')}): {len(msg.get('content') or '')} chars")
+    print(f"User content: {len(user_content or '')} chars")
     print(f"{'='*60}\n")
 
     # Log request info (without sensitive content)
@@ -338,7 +338,7 @@ def _generate_reply_inner(user_content, previous_content, ping, thread_history, 
 
             content = _extract_content(result)
             print(f"Raw AI response content (FULL): {content}")
-            print(f"Raw AI response content (preview): {content[:300] if content else 'NONE'}...")
+            print(f"Raw AI response content: {len(content) if content else 0} chars")
             if content:
                 cleaned = clean_ai_response(content, debug_mode=DEBUG_MODE)
                 if cleaned:

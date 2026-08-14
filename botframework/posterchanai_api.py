@@ -109,7 +109,7 @@ def generate_image_bytes(prompt):
         img_data = json.dumps(_payload).encode('utf-8')
         
         print(f"[POSTERCHANAI] Connecting to: {POSTERCHANAI_API_ENDPOINT}")
-        print(f"[POSTERCHANAI] Generating image with prompt: {clean_prompt[:100]}...")
+        print(f"[POSTERCHANAI] Generating image ({len(clean_prompt or '')} chars)")
         
         # Try with API key first (if available)
         headers = _get_auth_headers()

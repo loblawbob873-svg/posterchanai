@@ -17,7 +17,7 @@ class _GenMixin:
         # Lock is handled inside image_factory for local generation only
         # Remote requests (load balanced or custom user endpoint) run in parallel
         try:
-            logger.info(f"Generating image with prompt: {prompt[:100]}...")
+            logger.info(f"Generating image ({len(prompt or '')} chars)")
             image_data = await generate_image_for_user(
                 db=self.db,
                 user=self.user,
@@ -38,7 +38,7 @@ class _GenMixin:
             error_msg += "- Generation failed (check logs)\n"
             error_msg += "- GPU/XPU not available\n"
             error_msg += "\n**Prompt:** " + prompt
-            logger.warning(f"Image generation returned None for prompt: {prompt[:100]}...")
+            logger.warning(f"Image generation returned None ({len(prompt or '')} chars)")
             
             return {"type": "text", "content": error_msg}
 
@@ -138,7 +138,7 @@ class _GenMixin:
             return {"type": "text", "content": "Generation cancelled."}
 
         try:
-            logger.info(f"Generating music with style: {prompt[:100]}... (lyrics: {len(lyrics)} chars)")
+            logger.info(f"Generating music (style: {len(prompt or '')} chars, lyrics: {len(lyrics)} chars)")
             audio_bytes, ext = await music_factory.generate_music_for_user(
                 db=self.db, prompt=prompt, lyrics=lyrics,
             )
@@ -400,7 +400,7 @@ class _GenMixin:
             return {"type": "text", "content": "Generation cancelled."}
 
         try:
-            logger.info(f"Generating video: {prompt[:100]}...")
+            logger.info(f"Generating video ({len(prompt or '')} chars)")
             video_bytes = await video_factory.generate_video_for_user(
                 db=self.db, prompt=prompt, negative_prompt=negative,
             )

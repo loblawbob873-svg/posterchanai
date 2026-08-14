@@ -2,10 +2,11 @@ import json
 import os
 import asyncio
 import logging
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator, Optional, TYPE_CHECKING
 from sqlalchemy.orm import Session
-from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
+from app.services.inference_factory import get_inference_service
 from app.services.load_balancer import LoadBalancer, NoHealthyServersError, parse_server_urls
 
 if TYPE_CHECKING:
@@ -183,8 +184,9 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
                 except Exception as e:
                     logger.warning(f"Load balancer error in chat(): {e}, falling back to local", exc_info=True)
 
-            # Use the server's default AI service
-            prepare_vram_for_llm(self.db)
+            # Use the server's default AI service. The VRAM swap is NOT done here: it happens
+            # inside `_ensure_model_loaded`, under the GPU lock `chat_completion` takes. Doing it
+            # here meant swapping with no lock held at all.
             service = get_inference_service(self.db)
             result = await service.chat_completion(
                 messages=messages,
@@ -286,65 +288,85 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
                     logger.warning(f"Load balancer error: {e}, falling back to local", exc_info=True)
 
             # Use server's default AI service
-            prepare_vram_for_llm(self.db)
             service = get_inference_service(self.db)
 
             # Use direct content streaming for native backend
             if hasattr(service, 'stream_chat_content'):
-                queue = asyncio.Queue()
-                loop = asyncio.get_event_loop()
+                """THE GPU LOCK COVERS THE VRAM SWAP AND THE WHOLE GENERATION, and it used to cover
+                neither. This is the web UI's chat path — `prepare_vram_for_llm` ran here, outside
+                any lock, and `stream_chat_content` is a plain generator that takes none either. So
+                a chat message sent while a `geni` was rendering unloaded the image model out from
+                under a generation that HELD the lock: the image job died with
+                UR_RESULT_ERROR_OUT_OF_HOST_MEMORY and llama.cpp aborted on the wreckage, taking the
+                whole service down with it (2026-08-14 09:13 — one core dump, one lost chat, one
+                lost geni). The same shape is written up in GPUResourceLockSync's docstring for the
+                download path; this is that bug on the hottest path in the app.
 
-                def run_streaming():
-                    """Run synchronous generator in thread, put results in queue"""
-                    try:
-                        for content in service.stream_chat_content(
-                            messages=messages,
-                            temperature=self.temperature,
-                            top_p=self.top_p,
-                            max_tokens=self.num_predict
-                        ):
-                            loop.call_soon_threadsafe(queue.put_nowait, content)
-                    except Exception as e:
-                        loop.call_soon_threadsafe(queue.put_nowait, f"Error: {e}")
-                    finally:
-                        loop.call_soon_threadsafe(queue.put_nowait, None)  # Signal end
+                The lock is held across the yields ON PURPOSE — it is released when this generator
+                finishes or the client disconnects and it is closed, exactly like
+                `chat_completion_stream`. And nothing inside may take it again: `flock` blocks a
+                second acquisition from the SAME process on a different fd, so adding a lock to
+                `stream_chat_content` as well would deadlock every web-UI chat."""
+                from app.services.locks import GPUResourceLock
+                _req_id = f"CHAT-{uuid.uuid4().hex[:8]}"
+                async with GPUResourceLock("LLM", _req_id,
+                                           cpu_mode=getattr(service, "cpu_mode", False)):
+                    queue = asyncio.Queue()
+                    loop = asyncio.get_event_loop()
 
-                # Start streaming in background thread
-                _stream_executor.submit(run_streaming)
+                    def run_streaming():
+                        """Run synchronous generator in thread, put results in queue"""
+                        try:
+                            for content in service.stream_chat_content(
+                                messages=messages,
+                                temperature=self.temperature,
+                                top_p=self.top_p,
+                                max_tokens=self.num_predict
+                            ):
+                                loop.call_soon_threadsafe(queue.put_nowait, content)
+                        except Exception as e:
+                            loop.call_soon_threadsafe(queue.put_nowait, f"Error: {e}")
+                        finally:
+                            loop.call_soon_threadsafe(queue.put_nowait, None)  # Signal end
 
-                # Stream with thinking tag filtering (same logic as load balancer path)
-                buffer = ""
-                thinking_done = False
-                while True:
-                    content = await queue.get()
-                    if content is None:
-                        break
+                    # Start streaming in background thread
+                    _stream_executor.submit(run_streaming)
 
-                    if content.startswith("Error:"):
-                        yield content
-                        return
+                    # Stream with thinking tag filtering (same logic as load balancer path)
+                    buffer = ""
+                    thinking_done = False
+                    while True:
+                        content = await queue.get()
+                        if content is None:
+                            break
 
-                    if not thinking_done:
-                        buffer += content
-                        match = THINKING_CLOSE_PATTERN.search(buffer)
-                        if match:
-                            thinking_done = True
-                            after_think = buffer[match.end():]
-                            buffer = ""
-                            if after_think.strip():
-                                yield after_think
-                        elif len(buffer) >= 50 and not has_thinking_open(buffer):
-                            thinking_done = True
-                            yield buffer
-                            buffer = ""
-                    else:
-                        yield content
+                        if content.startswith("Error:"):
+                            yield content
+                            return
 
-                if buffer:
-                    clean = self.strip_thinking_tags(buffer)
-                    if clean:
-                        yield clean
+                        if not thinking_done:
+                            buffer += content
+                            match = THINKING_CLOSE_PATTERN.search(buffer)
+                            if match:
+                                thinking_done = True
+                                after_think = buffer[match.end():]
+                                buffer = ""
+                                if after_think.strip():
+                                    yield after_think
+                            elif len(buffer) >= 50 and not has_thinking_open(buffer):
+                                thinking_done = True
+                                yield buffer
+                                buffer = ""
+                        else:
+                            yield content
+
+                    if buffer:
+                        clean = self.strip_thinking_tags(buffer)
+                        if clean:
+                            yield clean
             else:
+                # `chat_completion_stream` takes the GPU lock itself and swaps inside it
+                # (`_ensure_model_loaded`), so there is deliberately nothing to do here.
                 # Fallback to SSE parsing for Ollama - with thinking tag filtering
                 buffer = ""
                 thinking_mode = None  # None=unknown, True=in thinking, False=no thinking

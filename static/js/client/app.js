@@ -1282,7 +1282,17 @@
       return new Promise((res,rej)=>{
         let done=false; const ws=new WebSocket(relay); this.ws=ws;
         ws.onopen=()=>{ this._subId='ns'+Math.random().toString(36).slice(2,8);
-          ws.send(JSON.stringify(['REQ', this._subId, { kinds:[24133], '#p':[ME.pubkey], since: Math.floor(Date.now()/1000)-5 }]));
+          /* NIP46_SINCE_SKEW, not the 5 seconds this had — for the reason written at that constant,
+           * which applies to THIS side just as much and was only ever fixed on the other one. The
+           * two ends of a QR pairing are two machines with two clocks by definition, the relay
+           * applies `since` server-side, and the desktop stamps its requests with ITS clock: a
+           * desktop a minute behind this phone had every request dropped before it arrived. The
+           * phone says "now logged in", the desktop sits on "waiting for the signer to approve…"
+           * until it times out, and nothing anywhere raises an error, because from this side nothing
+           * ever came. Nothing stale can be replayed in: the client's app key is minted fresh per
+           * attempt, so no 24133 addressed to it can predate the pairing.
+           * scripts/check_qr_device_login.py pairs two real browsers with a skewed clock. */
+          ws.send(JSON.stringify(['REQ', this._subId, { kinds:[24133], '#p':[ME.pubkey], since: Math.floor(Date.now()/1000)-NIP46_SINCE_SKEW }]));
           if(!done){ done=true; res(); } };
         ws.onmessage=(e)=>this._recv(e.data);
         ws.onerror=()=>{ if(!done){ done=true; rej(new Error('cannot reach the relay in the QR')); } };

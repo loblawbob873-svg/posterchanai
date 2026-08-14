@@ -526,7 +526,7 @@ class _TorrentsMixin:
                 formatted = format_torrent_results(results, category="search", title=f"SEARCH: {query.upper()}")
                 return {"type": "text", "content": formatted}
             except asyncio.TimeoutError:
-                logger.error(f"Torrent search timed out for query: {query}")
+                logger.error(f"Torrent search timed out ({len(query or '')}-char query)")
                 return {"type": "text", "content": f"Search timed out. The torrent site may be slow or unavailable."}
             except ValueError as e:
                 msg = str(e)

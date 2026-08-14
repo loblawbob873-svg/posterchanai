@@ -87,7 +87,7 @@ async def _generate_local(db: Session, cfg: dict, prompt: str, lyrics: str, dura
     # diffusers pipeline; `music_api_base`/`music_native=false` still force the HTTP path.
     use_native = (music_local.is_available() and not explicit_server
                   and str(settings_store.get("music_native", "true")).lower() in ("1", "true", "yes", "on"))
-    async with GPUResourceLock("Music", f"prompt={prompt[:30]}...", cpu_mode=cpu_mode):
+    async with GPUResourceLock("Music", f"prompt={len(prompt or '')} chars", cpu_mode=cpu_mode):
         prepare_for_music(db)
         if use_native:
             logger.info("[music] generating natively (in-process ACE-Step)")

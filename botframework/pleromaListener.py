@@ -408,11 +408,12 @@ def process_notifications():
                 # Check if the first mention is this bot (with or without domain)
                 is_mentioned = first_mention == username_bare or first_mention.startswith(username_bare + "@")
             if not is_mentioned:
-                print(f"[DEBUG] Bot not first mention. Username: {PLEROMA_USERNAME}, Content: {user_content[:100]}", flush=True)
+                print(f"[DEBUG] Bot not first mention. Username: {PLEROMA_USERNAME}, "
+                      f"content: {len(user_content or '')} chars", flush=True)
         if is_mentioned:
             # Remove all @mentions to get the actual prompt text
             prompt_text = re.sub(r'@[\w@.]+', '', user_content).strip()
-            print(f"[DEBUG] Matched mention, prompt: {prompt_text[:100]}..., visibility: {visibility}", flush=True)
+            print(f"[DEBUG] Matched mention ({len(prompt_text or '')} chars), visibility: {visibility}", flush=True)
             if not prompt_text:
                 print("[DEBUG] Empty prompt after removing mentions, skipping")
                 continue
@@ -504,7 +505,7 @@ def process_notifications():
                 if search_match:
                     query = search_match.group(1).strip()
                     if query:
-                        print(f"[DEBUG] Web search for: {query}")
+                        print(f"[DEBUG] Web search ({len(query or '')} chars)")
                         results, categories = smart_search(query)
                         if results:
                             reply_text = summarize_search_results(results, query, categories)
@@ -525,10 +526,11 @@ def process_notifications():
                     if query:
                         # Check for bad words in the query
                         if contains_bad_words(query.lower()):
-                            print(f"[DEBUG] BLOCKED: Image search query contains bad words: {query}")
+                            print(f"[DEBUG] BLOCKED: image search query contains bad words "
+                                  f"({len(query or '')} chars)")
                             send_reply(status, "I cannot search for images with that content.", own_acct=own_acct, visibility=visibility)
                             continue
-                        print(f"[DEBUG] Image search for: {query}")
+                        print(f"[DEBUG] Image search ({len(query or '')} chars)")
                         reply_text, image_list = search_and_download_images(query, max_images=4)
                         if image_list:
                             send_reply(status, reply_text, own_acct=own_acct, visibility=visibility, image_bytes=image_list)
@@ -575,7 +577,7 @@ def process_notifications():
                     )
                 else:
                     try:
-                        print(f"Starting image generation for prompt: {prompt_text[:100]}...")
+                        print(f"Starting image generation ({len(prompt_text or '')} chars)")
                         image_bytes = generate_image(prompt_text)
                         if image_bytes:
                             print(f"Image generation successful ({len(image_bytes)} bytes)")

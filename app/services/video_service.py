@@ -221,7 +221,8 @@ class VideoService:
             nf = max(5, nf - ((nf - 1) % 4))
             st = int(steps or cfg["steps"])
             gs = float(guidance if guidance is not None else cfg["guidance"])
-            logger.info(f"Generating video {w}x{h} {nf}f steps={st} on {self._device}: {prompt[:60]}")
+            logger.info(f"Generating video {w}x{h} {nf}f steps={st} on {self._device} "
+                        f"({len(prompt or '')} chars)")
             t0 = time.time()
             try:
                 result = self._pipe(

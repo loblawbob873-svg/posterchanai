@@ -338,7 +338,7 @@ class DiffusersService:
     def _get_model_for_prompt(self, prompt: str) -> str:
         """Select appropriate model based on prompt content"""
         if self.anime_model_path and self._is_anime_prompt(prompt):
-            logger.debug(f"Using anime model for prompt: {prompt[:50]}...")
+            logger.debug("Using anime model for this prompt")
             return self.anime_model_path
         return self.model_path
 
@@ -687,7 +687,7 @@ class DiffusersService:
                 if attempt > 0:
                     logger.info(f"Retry {attempt}/{max_retries} with new seed: {current_seed}")
                 else:
-                    logger.info(f"Generating: {prompt[:50]}... (seed={current_seed}, steps={steps})")
+                    logger.info(f"Generating ({len(prompt or '')} chars, seed={current_seed}, steps={steps})")
 
                 # Update last used at START of generation to prevent idle timeout during long generations
                 self._last_used = time.time()
@@ -860,7 +860,7 @@ class DiffusersService:
                 python_path = _p
                 break
 
-        logger.info(f"Subprocess generation: {prompt[:50]}... (device={self._device})")
+        logger.info(f"Subprocess generation ({len(prompt or '')} chars, device={self._device})")
 
         try:
             # Inherit environment, especially LD_LIBRARY_PATH for oneAPI/XPU

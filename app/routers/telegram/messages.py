@@ -304,7 +304,8 @@ async def _handle_message(update, db):
             # Video / animation (GIF) attachments — used by the compress command
             video = message.get("video") or message.get("animation")
             
-            logger.warning(f"TELEGRAM: text='{text}', reply_to='{reply_text[:50] if reply_text else ''}', photos={len(photos) if photos else 0}")
+            logger.warning(f"TELEGRAM: text={len(text or '')} chars, reply_to={len(reply_text or '')} chars, "
+                           f"photos={len(photos) if photos else 0}")
             
             # Strip /no_think prefix — it's a Qwen3 control token, not a user query.
             # If it appears verbatim in the message the model describes it instead of obeying it.
@@ -416,7 +417,7 @@ async def _handle_message(update, db):
 
             # If it's a reply and translate command, handle it
             if reply_text and command == "translate":
-                logger.warning(f"TRANSLATE: Processing reply with text: {reply_text[:100]}...")
+                logger.warning(f"TRANSLATE: Processing reply ({len(reply_text or '')} chars)")
                 # Use the replied text for translation. Language = 1-2 words after an optional
                 # leading "to", dropping any trailing instruction ("... and explain"). (Plain
                 # arg.replace("to","") mangled words like "Esperanto".)
@@ -487,7 +488,7 @@ async def _handle_message(update, db):
 
                 url_to_append = _extract_url_from_msg(reply_to or {}) or _extract_url_from_msg(message)
                 source_text = reply_text or url_to_append or text
-                logger.info(f"post command: url={url_to_append!r}, source_text={source_text[:80] if source_text else ''}...")
+                logger.info(f"post command: url={url_to_append!r}, source_text={len(source_text or '')} chars")
 
                 # If the reply contains a photo but no URL, share the image directly
                 # instead of generating an AI post with no real content
@@ -694,7 +695,7 @@ async def _handle_message(update, db):
                 
                 if ocr_text:
                     language = arg.replace("to", "").strip() or "Thai"
-                    logger.warning(f"TRANSLATE: Translating OCR text to {language}, text: {ocr_text[:50]}...")
+                    logger.warning(f"TRANSLATE: Translating OCR text to {language} ({len(ocr_text or '')} chars)")
                     
                     # Create a fresh chat service WITHOUT user context for translation
                     from app.services.chat_service import ChatService as FreshChatService
@@ -880,7 +881,7 @@ async def _handle_message(update, db):
             if command == "translate" and ocr_text:
                 language = arg.replace("to", "").strip() or "Thai"
                 logger.warning(f"TRANSLATE: Final check - Using OCR text ({len(ocr_text)} chars) to translate to '{language}'")
-                logger.warning(f"TRANSLATE: ocr_text content: {ocr_text[:100]}...")
+                logger.warning(f"TRANSLATE: ocr_text is {len(ocr_text or '')} chars")
                 
                 # Build messages for translation
                 translate_messages = [
@@ -888,7 +889,7 @@ async def _handle_message(update, db):
                     {"role": "user", "content": ocr_text}
                 ]
                 
-                logger.warning(f"TRANSLATE: Calling chat_service.chat with messages: {translate_messages}")
+                logger.warning(f"TRANSLATE: Calling chat_service.chat with {len(translate_messages)} message(s)")
                 
                 try:
                     translated = await chat_service.chat(translate_messages)

@@ -420,7 +420,8 @@ class LoadBalancer:
                                         if content or delta.get("tool_calls"):
                                             content_chunk_count += 1
                                             if content_chunk_count == 1:
-                                                logger.info(f"[LOAD BALANCER] First content chunk from {server}: {repr((content or 'tool_call')[:50])}")
+                                                logger.info(f"[LOAD BALANCER] First content chunk from {server} "
+                                                            f"({len(content or '')} chars{'' if content else ', tool_call'})")
                                     # Log errors from remote server and raise exception to trigger fallback
                                     if "error" in data:
                                         error_msg = data.get('error', {})

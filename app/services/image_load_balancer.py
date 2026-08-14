@@ -267,7 +267,7 @@ class ImageLoadBalancer:
 
             tried_servers.add(server)
             start_time = time.time()
-            logger.info(f"IMAGE REQUEST to {server} | prompt={prompt[:50]}...")
+            logger.info(f"IMAGE REQUEST to {server} | prompt={len(prompt or '')} chars")
 
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 try:

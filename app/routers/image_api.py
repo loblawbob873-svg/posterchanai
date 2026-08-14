@@ -120,7 +120,7 @@ async def generate_image(
     Remote requests run in parallel; local requests are serialized.
     """
     try:
-        logger.info(f"[IMAGE-API] Generating image: {request.prompt[:50]}...")
+        logger.info(f"[IMAGE-API] Generating image ({len(request.prompt or '')} chars)")
 
         # Server-to-server (load-balanced) requests must generate LOCALLY here, not re-balance —
         # the unified chat_server_urls list is on every node, so re-balancing would ping-pong the

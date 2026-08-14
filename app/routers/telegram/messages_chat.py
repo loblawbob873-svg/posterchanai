@@ -416,10 +416,11 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                     messages = validated_messages
                     logger.info(f"Validated message sequence: {[m['role'] for m in messages]}")
                     
-                    # Log messages for debugging
+                    # The shape of the conversation, never its text.
                     for i, m in enumerate(messages):
-                        content_preview = str(m.get('content', ''))[:50] if not isinstance(m.get('content'), list) else '[vision content]'
-                        logger.info(f"  Message {i}: role={m.get('role')}, content={content_preview}...")
+                        _c = m.get('content')
+                        _size = '[vision content]' if isinstance(_c, list) else f"{len(str(_c or ''))} chars"
+                        logger.info(f"  Message {i}: role={m.get('role')}, content={_size}")
                     
                     try:
                         result = {"type": "text", "content": await chat_service.chat(messages)}
@@ -429,8 +430,9 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                         if "Conversation roles must alternate" in error_msg:
                             logger.error(f"ROLE ERROR - Messages that caused error:")
                             for i, m in enumerate(messages):
-                                content_preview = str(m.get('content', ''))[:100] if not isinstance(m.get('content'), list) else '[vision content]'
-                                logger.error(f"  Message {i}: role={m.get('role')}, content={content_preview}...")
+                                _c = m.get('content')
+                                _size = '[vision content]' if isinstance(_c, list) else f"{len(str(_c or ''))} chars"
+                                logger.error(f"  Message {i}: role={m.get('role')}, content={_size}")
                         result = {"type": "text", "content": f"Sorry, I encountered an error: {error_msg}"}
 
                     # Save user message + bot response to the Telegram conversation so

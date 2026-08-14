@@ -290,7 +290,7 @@ class MusicService:
             dur = float(duration or cfg["duration"])
             n_steps = int(steps or cfg["steps"])
             gscale = float(guidance if guidance is not None else cfg["guidance"])
-            logger.info(f"[music] generating {dur:.0f}s, {n_steps} steps — {prompt[:60]!r}")
+            logger.info(f"[music] generating {dur:.0f}s, {n_steps} steps ({len(prompt or '')} chars)")
             t0 = time.time()
             # thinking=False: our own LLM already wrote the lyrics/style (see _music_write_lyrics),
             # so ACE-Step's chain-of-thought LM is not needed and llm_handler stays None — that is

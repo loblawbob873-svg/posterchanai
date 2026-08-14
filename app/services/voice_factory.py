@@ -100,7 +100,7 @@ async def _generate_local(db: Session, text: str, reference_path: str) -> bytes:
     async with _queue_lock:
         _queued += 1
     try:
-        async with GPUResourceLock("Voice", f"text={text[:30]}...", cpu_mode=cpu_mode):
+        async with GPUResourceLock("Voice", f"text={len(text or '')} chars", cpu_mode=cpu_mode):
             prepare_for_voice(db)
             svc = voice_local.get_voice_service()
             # to_thread, not the event loop: generate() is a blocking multi-second torch call, and

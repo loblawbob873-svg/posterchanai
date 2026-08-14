@@ -713,7 +713,7 @@ def search_messages(user_id: int, db: Session, account_email: str, query: str, l
                         continue
 
                 logger.info(f"Found folders: {folders}")
-                logger.info(f"Searching {len(folders)} folders for '{query}'")
+                logger.info(f"Searching {len(folders)} folders ({len(query or '')}-char query)")
 
                 for folder in folders:
                     try:
