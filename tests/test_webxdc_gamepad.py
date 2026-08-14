@@ -243,25 +243,32 @@ class WebxdcGamepadShim(unittest.TestCase):
         self.assertEqual(moves[0]["movementY"], 0)
 
     def test_the_aim_answers_a_small_push_instead_of_resisting_it(self):
-        """A quarter-stick must produce roughly a quarter of the motion. Two curves shipped before
-        this — squared, then a 1.5 power — and both put a quarter-stick under 6px a frame out of 45,
-        which does not read as "precise", it reads as the stick RESISTING until you shove it. The
-        response is linear now; the game applies its own sensitivity on top."""
+        """The response must be LINEAR — but linear in the travel that is actually used, which is
+        the travel ABOVE the deadzone. Two curves shipped before this (squared, then a 1.5 power)
+        and both put a quarter-stick under 6px a frame out of 45, which does not read as "precise",
+        it reads as the stick RESISTING until you shove it.
+
+        Measured at half the USABLE range rather than half the stick: with a deadzone of 0.15 the
+        usable travel is 0.15..1.0, so its midpoint is 0.575. Asserting against raw stick fractions
+        instead would make this test fail every time the deadzone is tuned, which is a test measuring
+        the wrong thing."""
         out = run([
             {"pads": [pad()], "emit": "gamepadconnected", "frames": 1, "drain": True},
             # `record` does not clear the log, so the second reading must drain the first or it
             # reads the full-stick move and the ratio is silently 1.0.
-            {"pads": [pad(axes=[0.0, 0.0, 1.0, 0.0])], "frames": 1, "record": "full"},
-            {"pads": [pad()], "frames": 1, "drain": True},
-            {"pads": [pad(axes=[0.0, 0.0, 0.25, 0.0])], "frames": 1, "record": "quarter"},
+            {"pads": [pad(axes=[0.0, 0.0, 1.0, 0.0])], "frames": 20, "drain": True,
+             "record": "full"},
+            {"pads": [pad()], "frames": 2, "drain": True},
+            {"pads": [pad(axes=[0.0, 0.0, 0.575, 0.0])], "frames": 20, "drain": True,
+             "record": "half"},
         ])
-        full = [e for e in out["full"] if e["type"] == "mousemove"][0]["movementX"]
-        quarter = [e for e in out["quarter"] if e["type"] == "mousemove"][0]["movementX"]
+        full = sum(e["movementX"] for e in out["full"] if e["type"] == "mousemove")
+        half = sum(e["movementX"] for e in out["half"] if e["type"] == "mousemove")
         self.assertGreater(full, 0)
-        # Linear within rounding: a quarter of the stick, a quarter of the motion.
-        self.assertAlmostEqual(quarter / full, 0.25, delta=0.05,
-                               msg=f"a quarter-stick gave {quarter} of {full} — that is a curve, "
-                                   f"and it reads as resistance")
+        # Summed over frames so the sub-pixel remainder cannot skew a single sample.
+        self.assertAlmostEqual(half / full, 0.5, delta=0.06,
+                               msg=f"half the usable travel gave {half} of {full} — that is a "
+                                   f"curve, and it reads as resistance")
 
     def test_the_aim_carries_a_cursor_that_moves_the_way_the_stick_was_pushed(self):
         """movementX/Y only means anything to an engine holding the pointer lock. One that is NOT
@@ -305,6 +312,40 @@ class WebxdcGamepadShim(unittest.TestCase):
             moves = [e for e in out[phase] if e["type"] == "mousemove"]
             self.assertEqual(moves, [],
                              f"the {phase} after release moved the aim backwards: {moves}")
+
+    def test_a_gentle_push_gives_gentle_movement_and_not_a_lurch(self):
+        """WHAT "RUINS PRECISION" MEANT. Gating at 0.15 and then using the RAW value made the
+        smallest available movement 0.15 x 45 = ~7px a frame — 400px a second, as the FINEST
+        adjustment possible. Rescaling out of the deadzone makes the output start at zero just
+        outside it, so the bottom of the range is usable instead of being a cliff."""
+        out = run([
+            {"pads": [pad()], "emit": "gamepadconnected", "frames": 1, "drain": True},
+            # Just outside the deadzone: barely-there movement, not a quarter of the screen.
+            {"pads": [pad(axes=[0.0, 0.0, 0.20, 0.0])], "frames": 30, "drain": True,
+             "record": "gentle"},
+            {"pads": [pad(axes=[0.0, 0.0, 1.0, 0.0])], "frames": 30, "drain": True,
+             "record": "full"},
+        ])
+        gentle = sum(e["movementX"] for e in out["gentle"] if e["type"] == "mousemove")
+        full = sum(e["movementX"] for e in out["full"] if e["type"] == "mousemove")
+        self.assertGreater(gentle, 0, "a gentle push produced nothing at all")
+        self.assertGreater(full, gentle * 5,
+                           f"a gentle push moved {gentle}px against {full}px at full stick — the "
+                           f"bottom of the range is a cliff, not a ramp")
+
+    def test_slow_aim_is_smooth_rather_than_quantised(self):
+        """A mouse delta is an integer, so rounding each frame throws away everything under half a
+        pixel and a slow turn arrives as a stutter. The remainder is carried instead — a tenth of a
+        pixel a frame becomes one pixel every ten frames, rather than nothing."""
+        out = run([
+            {"pads": [pad()], "emit": "gamepadconnected", "frames": 1, "drain": True},
+            {"pads": [pad(axes=[0.0, 0.0, 0.16, 0.0])], "frames": 60, "drain": True,
+             "record": "crawl"},
+        ])
+        moved = sum(e["movementX"] for e in out["crawl"] if e["type"] == "mousemove")
+        self.assertGreater(moved, 0,
+                           "a stick held just past the deadzone for a second moved nothing — the "
+                           "sub-pixel remainder is being discarded")
 
     def test_a_deliberate_push_the_other_way_still_works(self):
         """The deadzone must reject a SPRING, not a decision — reversing aim on purpose has to keep

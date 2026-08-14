@@ -626,12 +626,34 @@
     var DEAD = (typeof __XDC.dead === 'number' && __XDC.dead >= 0 && __XDC.dead < 0.9)
                  ? __XDC.dead : 0.15;
     var lookX = -1, lookY = -1;      // virtual cursor; -1 until the first aim seeds it at the centre
+    var accX = 0, accY = 0;          // sub-pixel remainder, so slow aim is smooth rather than steppy
+    /* -1..1, reaching 0 AT the deadzone edge and 1 at full deflection. */
+    function _scale(v){
+      if(typeof v !== 'number') return 0;
+      var a = Math.abs(v);
+      if(a <= DEAD) return 0;
+      return (v < 0 ? -1 : 1) * (a - DEAD) / (1 - DEAD);
+    }
     function look(x, y){
       if(typeof x !== 'number' || typeof y !== 'number') return;
-      var ax2 = Math.abs(x) > DEAD ? x : 0;
-      var ay2 = Math.abs(y) > DEAD ? y : 0;
-      if(!ax2 && !ay2) return;
-      var dx = Math.round(ax2 * LOOK_PX), dy = Math.round(ay2 * LOOK_PX);
+      /* RESCALED OUT OF THE DEADZONE, NOT CLIFF-EDGED OVER IT. Gating at 0.15 and then using the
+         RAW value meant the aim jumped from nothing to 0.15 x 45 = ~7px a frame the instant the
+         stick crossed the line — 400px a second as the SMALLEST movement available. There was no
+         fine aim to be had: it was off, or it was fast. Rescaling makes the output start at zero
+         just outside the deadzone and still reach full rate at full deflection, so the whole range
+         is usable and the discontinuity is gone. */
+      var ax2 = _scale(x), ay2 = _scale(y);
+      if(!ax2 && !ay2){ accX = accY = 0; return; }
+      /* SUB-PIXEL ACCUMULATION, because a mouse delta is an INTEGER. Rounding each frame threw away
+         everything below half a pixel, so a slow turn was emitted as a stutter of 0,1,0,1 — motion
+         quantised into visible steps, which is what "ruins precision" describes. The remainder is
+         carried instead, so a tenth of a pixel a frame becomes one pixel every ten frames rather
+         than nothing at all. Cleared when the stick returns to neutral, so a fraction from the last
+         turn cannot leak into the next one. */
+      accX += ax2 * LOOK_PX;
+      accY += ay2 * LOOK_PX;
+      var dx = Math.trunc(accX), dy = Math.trunc(accY);
+      accX -= dx; accY -= dy;
       if(!dx && !dy) return;
       stat.look = (stat.look || 0) + 1;
       var t = document.pointerLockElement || document.body || document.documentElement;
