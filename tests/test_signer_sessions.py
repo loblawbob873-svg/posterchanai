@@ -190,22 +190,46 @@ def test_the_pairings_are_visible_and_revocable():
     assert "data-revoke" in src, "the settings card offers no revoke"
 
 
-def test_background_signing_reuses_the_existing_service():
-    """No second foreground service, and no switching one on behind the user's back.
+def test_background_signing_no_longer_depends_on_the_webview_being_alive():
+    """This test used to assert the OPPOSITE, and keeping the reversal on the record is the point.
 
-    `StayAwakeService` already keeps this app's process — and therefore its WebView, and therefore
-    the signer's socket — alive with the screen off. A service of its own would be the same code, a
-    second permanent notification and a second battery story. And "Stay connected" is a documented
-    opt-in that costs battery: turning it on because an app paired would spend someone's battery for
-    them. It offers; it does not decide.
+    It said: no second foreground service, because `StayAwakeService` already keeps the process — and
+    therefore the WebView, and therefore the signer's socket — alive with the screen off. That
+    reasoning was wrong in the one way that mattered. StayAwake keeps the PROCESS off the freezer; it
+    makes no promise about the RENDERER, and Chromium throttles a hidden page's timers to about one a
+    minute regardless. So a dropped socket was not redialled until the screen came on, and turning
+    "stay connected" on did not help — which is precisely what was reported, and is the observation
+    that finally separated the two: "I have to wake the phone for events to actually send from
+    desktop."
+
+    The signer is now `SignerRelayService`, native, with no WebView in the path. What this asserts is
+    that the hint reports the SERVICE's own measurement rather than this page's intention — a panel
+    that says "signing in the background" because the page asked for it is how a dead signer sat
+    behind a reassuring line for hours.
     """
     src = _src()
     seg = src[src.index("  async function _signerBackgroundHint(box){"):]
     seg = seg[:seg.index("\n  }\n") + 4]
-    assert "setStayConnected" in seg, "the hint cannot actually turn background signing on"
-    assert re.search(r"setStayConnected\(\{\s*on:true\s*\}\)", seg.replace(" ", "") or seg) or \
-        "setStayConnected({ on:true })" in seg, "the offer does not enable it"
-    assert "b.onclick" in seg, "it enables it without being asked"
+    assert "_capPlugin('Signer', 'status')" in seg, (
+        "the hint no longer asks the signer plugin anything")
+    assert "s.serviceRunning" in seg, (
+        "the hint must report what the service measured, not what this page intended")
+    assert "setStayConnected" not in seg, (
+        "the signer is back to riding StayAwakeService, which cannot keep a WebView socket redialling")
+
+
+def test_the_signer_service_is_started_by_pairing_rather_than_offered():
+    """Unlike "stay connected", this is not a background convenience to be opted into.
+
+    Pairing an app IS the request to answer that app, and a signer that only answers while you are
+    looking at it is not a signer. The cost still ends when the reason does — the service stops
+    itself once nothing is paired (asserted in tests/test_android_signer_service.py).
+    """
+    src = _src()
+    for hook in ("async start(uri, onStatus)", "async resume()"):
+        seg = src[src.index("    " + hook):]
+        seg = seg[:4000]
+        assert "_pushNative" in seg, f"{hook} does not hand the pairing to the service"
 
 
 if __name__ == "__main__":
@@ -296,3 +320,214 @@ def test_the_prompt_says_which_login_it_will_replace():
     assert "last used" in seg or "never used" in seg, \
         "the prompt does not identify the pairing it is about to remove"
     assert "Keep them all" in seg, "replacing is forced rather than offered"
+
+
+# --------------------------------------------------------------------------------------------
+# bunker:// — the OTHER direction, and the reason nostrudel could not log in at all
+# --------------------------------------------------------------------------------------------
+#
+# `nostrconnect://` is the flow this signer was built around: the APP publishes a QR and this phone
+# scans it. jumble.social and primal.net work that way. nostrudel does not — its "login with a
+# signer" screen is one text field whose placeholder is `bunker://<pubkey>?relay=wss://…`, so there
+# is nothing to scan and a signer that only speaks nostrconnect cannot log into it at all. Handing it
+# anything else gets a bech32 error from the client rather than an explanation ("unknown letter b" is
+# a hex key being decoded as an npub), which is why this read as a broken signer instead of a missing
+# feature.
+#
+# What is checked here is the ACCEPT rule, because it is the only part that decides anything: the
+# subscription was already right (every kind-24133 addressed to us), so the whole feature is "when do
+# we answer a pubkey we have never met". The answer is "when it presents the secret we just minted",
+# which in this flow IS the credential — so every way of getting that wrong hands the user's key to
+# whoever asked.
+
+def _bunker_source():
+    """`_acceptBunker` and the `_grants` it calls, lifted out of app.js and made runnable."""
+    src = open(APP_JS, encoding="utf-8").read()
+    g0 = src.index("    _grants(qs){")
+    g1 = src.index("    _allowed(sess, method, params){")
+    a0 = src.index("    _acceptBunker(ev, req){")
+    a1 = src.index("    /* Reads BOTH schemes", a0)
+    body = src[g0:g1] + src[a0:a1]
+    assert "this._pending" in body, "the bunker accept rule moved out of this slice"
+    return ("const S = {\n" + body + "\n"
+            "  BUNKER_WINDOW: 10*60*1000,\n"
+            "  sessions: new Map(), _pending: null, _lastEnc: 'nip44',\n"
+            "  _persist(){}, _sync(){}, _pushNative(){ return Promise.resolve(false); },\n"
+            "};\n")
+
+
+def _accept(pending, req, *, pubkey="ff" * 32):
+    """Run the real rule against one stranger's request. Returns [accepted, sessions, pendingLeft]."""
+    prog = _bunker_source() + (
+        f"S._pending = {json.dumps(pending)};\n"
+        f"const got = S._acceptBunker({{pubkey:{json.dumps(pubkey)}}}, {json.dumps(req)});\n"
+        "console.log(JSON.stringify([!!got, S.sessions.size, S._pending !== null]));\n")
+    r = subprocess.run(["node", "-e", prog], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        raise AssertionError(r.stderr.strip()[:800])
+    return json.loads(r.stdout.strip())
+
+
+def _live(secret="s3cret"):
+    return {"secret": secret, "relay": "wss://relay.poster.place", "at": 10 ** 13}
+
+
+def test_a_stranger_is_ignored_when_no_link_is_outstanding():
+    """The default has to be silence. This subscription receives every kind-24133 addressed to this
+    key, so without a live link an unknown peer is simply somebody else's traffic."""
+    ok, n, _ = _accept(None, {"id": "1", "method": "connect", "params": ["x", "s3cret"]})
+    assert ok is False and n == 0
+
+
+def test_a_stranger_with_the_wrong_secret_is_refused():
+    """The secret IS the credential in this flow — there is nothing else standing between a stranger
+    and a key that signs."""
+    ok, n, _ = _accept(_live(), {"id": "1", "method": "connect", "params": ["x", "guess"]})
+    assert ok is False and n == 0
+
+
+def test_the_right_secret_pairs_the_app():
+    ok, n, left = _accept(_live(), {"id": "1", "method": "connect", "params": ["x", "s3cret"]})
+    assert ok is True and n == 1
+
+
+def test_the_link_works_once():
+    """A bunker secret is a bearer token printed on a screen. Leaving it live would let a second app
+    attach off the same screenshot, long after the person who displayed it stopped looking."""
+    ok, n, left = _accept(_live(), {"id": "1", "method": "connect", "params": ["x", "s3cret"]})
+    assert ok is True
+    assert left is False, "the link is still live after being used"
+
+
+def test_an_expired_link_is_refused():
+    """Ten minutes, so a link shown once and forgotten cannot be redeemed days later."""
+    stale = {"secret": "s3cret", "relay": "wss://r", "at": 0}
+    ok, n, _ = _accept(stale, {"id": "1", "method": "connect", "params": ["x", "s3cret"]})
+    assert ok is False and n == 0
+
+
+def test_only_connect_can_open_a_session():
+    """A stranger holding the secret still cannot jump straight to signing.
+
+    Anything other than `connect` from an unknown pubkey is dropped without a reply — answering at
+    all would confirm to an unpaired peer that this key is listening on this relay.
+    """
+    for method in ("sign_event", "get_public_key", "nip44_decrypt", "ping"):
+        ok, n, _ = _accept(_live(), {"id": "1", "method": method, "params": ["x", "s3cret"]})
+        assert ok is False, f"{method} from a stranger opened a session"
+        assert n == 0
+
+
+def test_the_secret_is_found_wherever_the_client_put_it():
+    """Clients disagree about whether `connect`'s first argument is present.
+
+    Reading only index 1 silently rejects every client that omits the signer pubkey — which looks
+    exactly like a wrong secret, i.e. like the user's fault.
+    """
+    for params in (["x", "s3cret"], ["s3cret"], ["x", "s3cret", "sign_event:1"]):
+        ok, _, _ = _accept(_live(), {"id": "1", "method": "connect", "params": params})
+        assert ok is True, f"the secret was not found in {params}"
+
+
+def test_a_connect_carrying_no_params_is_refused():
+    """The empty case must not fall through to "no restriction" the way an empty `perms` does."""
+    for params in ([], None, [""]):
+        req = {"id": "1", "method": "connect"}
+        if params is not None:
+            req["params"] = params
+        ok, n, _ = _accept(_live(), req)
+        assert ok is False and n == 0
+
+
+def test_the_paired_app_is_held_to_the_perms_it_asked_for():
+    """`connect`'s third argument is the app's declared needs, and it has to reach the session or the
+    permission gate has nothing to check against."""
+    prog = _bunker_source() + (
+        "S._pending = " + json.dumps(_live()) + ";\n"
+        "S._acceptBunker({pubkey:'ff'.repeat(32)}, {id:'1',method:'connect',"
+        "params:['x','s3cret','sign_event:1,nip44_decrypt']});\n"
+        "console.log(JSON.stringify([...S.sessions.values()][0].perms));\n")
+    r = subprocess.run(["node", "-e", prog], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr[:800]
+    assert json.loads(r.stdout.strip()) == ["sign_event:1", "nip44_decrypt"]
+
+
+def test_the_bunker_link_screen_only_calls_helpers_that_exist():
+    """A modal added to a 29k-line IIFE fails at CLICK time, not at load time.
+
+    `node --check` passes, the page loads, the settings screen renders — and the button throws
+    ReferenceError the first time somebody presses it, which is the one moment they are trying to log
+    into another app. Each of these has a specific reason to be checked rather than assumed:
+    `copyValue` because ~30 call sites once used `navigator.clipboard` directly, which the APK's
+    WebView and the desktop's app:// origin both refuse; `qrImg` because a desktop client can scan
+    nothing and a phone cannot paste into another phone, so both halves have to be there.
+    """
+    src = _src()
+    seg = src[src.index("  async function _showBunkerLink(){"):]
+    seg = seg[:seg.index("\n  }\n") + 4]
+    for helper in ("qrImg", "_sheet", "copyValue", "Nip46Signer.bunkerUri"):
+        assert helper in seg, f"the bunker screen does not use {helper}"
+    for helper in ("function copyValue", "function qrImg", "function _sheet"):
+        assert helper in src, f"{helper} is gone — the bunker screen throws on click"
+    assert "navigator.clipboard" not in seg, (
+        "the copy must go through copyValue: navigator.clipboard is refused in both shells")
+
+
+def test_the_bunker_link_is_offered_even_with_no_apps_paired():
+    """The empty state is exactly when somebody is trying to connect their first app.
+
+    The pairing list used to `return` early when it was empty, so a button appended after it would
+    never be drawn for the only people who need it.
+    """
+    src = _src()
+    seg = src[src.index("  function _renderSignerApps(){"):]
+    seg = seg[:seg.index("\n  }\n") + 4]
+    assert "signer-bunker" in seg
+    # The two returns above it are the honest ones — no element to draw into, and no local key to
+    # sign with, which makes a bunker link meaningless. What must NOT happen is the empty-APPS case
+    # returning, since that is exactly when somebody is connecting their first app.
+    between = seg[seg.index("No apps are signed in with this device."):seg.index("signer-bunker")]
+    assert "return" not in between, (
+        "the empty-apps branch returns before the bunker button, hiding it from the only people who "
+        "have not paired anything yet")
+
+
+def test_the_page_answers_nothing_the_service_is_already_answering():
+    """The subtlest rule in the split, and it was wrong in the first draft.
+
+    Minting a bunker link REOPENS this half's socket, because only this half holds the pending secret
+    and can recognise a stranger. But the native service still holds its own socket for the apps
+    already paired — so without a guard, both halves receive every request from those apps and both
+    reply, publishing two signed events for one request. That is precisely what the confirmed
+    one-way handover exists to prevent, reintroduced by the feature that reopens the socket.
+
+    So: a known session, with the service running, is not this half's to answer.
+    """
+    src = _src()
+    # Anchored on bunkerUri, NOT on `async _recv(raw){` — there are TWO of those. `Nip46` (the half
+    # that ASKS a remote signer) and `Nip46Signer` (the half that ANSWERS) both define _recv/_send/
+    # _open, the client one first. Slicing from the first match silently reads the wrong object,
+    # which is how this test passed against code it had never looked at.
+    seg = src[src.index("    async bunkerUri(){"):]
+    seg = seg[:seg.index("\n    async _handle(")]
+    assert seg.count("async _recv(raw){") == 1, "the signer's _recv left this slice"
+    assert "_acceptBunker" in seg, "the stranger path is gone from _recv"
+    assert "this.nativeOn" in seg, (
+        "_recv does not check whether the service already owns this session — a bunker link would "
+        "make every paired app answered twice")
+    # The guard must sit on the KNOWN-session branch, not on the stranger branch: guarding the
+    # stranger would disable the very flow that needs this socket.
+    known = seg[seg.index("sess = this._acceptBunker"):]
+    assert re.search(r"\}elseif\(this\.nativeOn\)\{", re.sub(r"\s+", "", known)), (
+        "the nativeOn guard is not on the else branch, so it either fires for strangers too or "
+        "never fires at all")
+
+
+def test_closing_the_link_screen_ends_the_offer_and_the_socket():
+    """A bearer token left live, plus an idle socket for the life of the app, both from one dialog."""
+    src = _src()
+    seg = src[src.index("  async function _showBunkerLink(){"):]
+    seg = seg[:seg.index("\n  }\n") + 4]
+    done = seg[seg.index("bunker-done"):]
+    assert "_pending = null" in done, "closing the screen leaves the bunker secret redeemable"
+    assert "_standDown" in done, "closing the screen leaves this half's socket open"

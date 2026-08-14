@@ -1537,6 +1537,71 @@
       });
     },
 
+    /* ---- the OTHER direction: a link the app connects TO ---------------------------------------
+     *
+     * WHY BOTH EXIST. `nostrconnect://` is the flow this signer was built around: the APP publishes a
+     * QR, this phone scans it and dials out. That is what jumble.social and primal.net show, and it
+     * works. But a large part of the ecosystem does the reverse — nostrudel's "login with a signer"
+     * screen has one field, and its placeholder is `bunker://<pubkey>?relay=wss://…`. There is no QR
+     * to scan there, so a signer that only speaks nostrconnect cannot log into it at all. Handing it
+     * anything else produces a bech32 error from the client rather than an explanation ("unknown
+     * letter b" — a hex key being decoded as an npub), which is how this looked like a broken signer
+     * rather than a missing feature.
+     *
+     * It costs almost nothing to support, because the subscription is already the right one: this
+     * signer subscribes to every kind-24133 addressed to it, and a bunker connect is exactly that
+     * from a pubkey it has not met yet. So the only new rule is when to accept a stranger — and the
+     * answer is "when it presents the secret we just minted", which IS the credential in this flow.
+     *
+     * The window is deliberately short and the link is not stored. A bunker secret is a bearer token
+     * printed on screen; leaving one live for the life of the session would mean anyone who saw it
+     * over your shoulder could attach an app days later. */
+    _pending: null,
+    BUNKER_WINDOW: 10 * 60 * 1000,
+
+    /* Mint a link. The relay is THIS INSTANCE'S, the same default the QR flow uses — the app being
+     * connected has no say here, which is the point: with nostrconnect the relay comes from somebody
+     * else's QR, and with this one it does not. */
+    async bunkerUri(){
+      if(!ME || ME.mode !== 'local') throw new Error('this device does not hold a key to sign with');
+      const relay = (CFG && CFG.relay_url) || '';
+      if(!relay) throw new Error('this instance has no relay to be reached on');
+      const b = new Uint8Array(16); crypto.getRandomValues(b);
+      const secret = Array.from(b, x => x.toString(16).padStart(2,'0')).join('');
+      this._pending = { secret, relay, at: Date.now() };
+      this.active = true;
+      await this._open(relay);
+      return 'bunker://' + ME.pubkey + '?relay=' + encodeURIComponent(relay) + '&secret=' + secret;
+    },
+
+    /* An app we have never met just said hello. Accept it ONLY as a `connect` carrying the live
+     * secret; anything else from a stranger is dropped without a reply, because answering would
+     * confirm to an unpaired peer that this key is listening here. */
+    _acceptBunker(ev, req){
+      const p = this._pending;
+      if(!p) return null;
+      if(req.method !== 'connect') return null;
+      if(Date.now() - p.at > this.BUNKER_WINDOW){ this._pending = null; return null; }
+      const params = req.params || [];
+      // NIP-46 `connect` is [remote_signer_pubkey, secret, perms]. The secret is checked wherever it
+      // landed rather than only at index 1: clients disagree about whether the first argument is
+      // present, and a signer that reads one position silently rejects the ones that do not match it.
+      if(!params.some(x => typeof x === 'string' && x === p.secret)) return null;
+
+      const perms = this._grants(new URLSearchParams(
+        'perms=' + encodeURIComponent(String(params[2] || ''))));
+      const sess = { relay: p.relay, secret: p.secret, name: 'an app', perms,
+                     enc: this._lastEnc || '', created: Math.floor(Date.now()/1000),
+                     last: Math.floor(Date.now()/1000) };
+      this.sessions.set(ev.pubkey, sess);
+      this._persist();
+      // One link, one app: leaving it live would let a second app attach off the same screenshot.
+      this._pending = null;
+      this._pushNative().then(ok => { if(ok) this._standDown(); }).catch(()=>{});
+      this._sync();
+      return sess;
+    },
+
     /* Reads BOTH schemes, and records which one this peer speaks.
      *
      * `?iv=` is NIP-04's own marker, so it decides the order rather than being discovered by a
@@ -1547,7 +1612,11 @@
         try{
           const pt = JSON.parse((await Relay.worker.call(op,{ peer:clientPk, ct })).pt);
           const sess = this.sessions.get(clientPk);
-          if(sess) sess.enc = (op === 'nip04dec') ? 'nip04' : 'nip44';
+          /* Recorded even with NO session, because the bunker flow decodes a stranger's `connect`
+           * before there is one to record it on — and the reply to that very message has to go back
+           * in the scheme it arrived in. */
+          this._lastEnc = (op === 'nip04dec') ? 'nip04' : 'nip44';
+          if(sess) sess.enc = this._lastEnc;
           return pt;
         }catch(_){}
       }
@@ -1577,9 +1646,23 @@
       let m; try{ m=JSON.parse(raw); }catch(_){ return; }
       if(m[0]!=='EVENT' || m[1]!==this._subId) return;
       const ev=m[2]; if(!ev || ev.kind!==24133) return;
-      const sess=this.sessions.get(ev.pubkey);
-      if(!sess) return;                       // not an app we are signing for
+      let sess=this.sessions.get(ev.pubkey);
+      /* Decoded BEFORE the "do we know this app" check, because with a bunker link outstanding the
+       * answer can be "not yet": the whole point of that flow is that the app introduces itself. Any
+       * other unknown peer still costs one failed decrypt and is dropped by _acceptBunker. */
       const req=await this._decode(ev.pubkey, ev.content); if(!req || !req.id || !req.method) return;
+      if(!sess){
+        sess = this._acceptBunker(ev, req);
+        if(!sess) return;                     // not an app we are signing for
+      }else if(this.nativeOn){
+        /* THE SERVICE OWNS STEADY STATE, so this half answers nothing it is not uniquely able to
+         * answer. It matters because minting a bunker link REOPENS this socket while the service
+         * still holds its own: without this line both halves would receive every request from the
+         * already-paired apps and both would reply, publishing two signed events for one request —
+         * exactly what the confirmed one-way handover exists to prevent. A stranger's `connect`
+         * above is the one thing only this half can do, because only it holds the pending secret. */
+        return;
+      }
       /* `last` is bookkeeping, NOT a reason to redraw. Sending one DM is several requests — encrypt,
        * wrap, sign — and repainting the list on each of them made the Settings card flicker while
        * the user was looking at it. Persisted at most once a minute, too: the timestamp is only ever
@@ -24273,35 +24356,88 @@
   function _renderSignerApps(){
     const box = $('#set-signer-apps'); if(!box) return;
     const apps = (window.Nip46Signer ? Nip46Signer.list() : (typeof Nip46Signer !== 'undefined' ? Nip46Signer.list() : []));
-    if(!apps.length){ box.innerHTML = ME.mode === 'local'
-      ? 'No apps are signed in with this device.' : ''; return; }
-    box.innerHTML = '<div style="margin:6px 0 4px"><b>Signed in with this device</b></div>'
-      + apps.map(a => `<div class="row" style="justify-content:space-between;align-items:center;gap:8px;margin:3px 0">
-          <span>${enc(a.name || 'an app')}
-            <span class="muted">· ${a.perms ? enc(String(a.perms.length)) + ' permissions' : 'all permissions'}${
-              a.last ? ' · last used ' + enc(timeAgo(a.last)) + ' ago' : ''}</span></span>
-          <button class="mini" data-revoke="${enc(a.pk)}">revoke</button></div>`).join('');
+    if(ME.mode !== 'local'){ box.innerHTML = ''; return; }
+
+    box.innerHTML = (apps.length
+        ? '<div style="margin:6px 0 4px"><b>Signed in with this device</b></div>'
+          + apps.map(a => `<div class="row" style="justify-content:space-between;align-items:center;gap:8px;margin:3px 0">
+              <span>${enc(a.name || 'an app')}
+                <span class="muted">· ${a.perms ? enc(String(a.perms.length)) + ' permissions' : 'all permissions'}${
+                  a.last ? ' · last used ' + enc(timeAgo(a.last)) + ' ago' : ''}</span></span>
+              <button class="mini" data-revoke="${enc(a.pk)}">revoke</button></div>`).join('')
+        : 'No apps are signed in with this device.')
+      /* THE SECOND WAY IN, and it is not a nicety. Scanning the app's QR only works for apps that
+       * SHOW one; nostrudel's signer login is a single text field wanting `bunker://…`, so without
+       * this there is no way to log into it at all. One line, because space is tight on a phone. */
+      + '<div class="row" style="margin-top:8px"><button class="mini" id="signer-bunker">'
+      + 'Connect an app with a link</button></div>';
+
     $$('[data-revoke]', box).forEach(b => b.onclick = () => {
       Nip46Signer.revoke(b.dataset.revoke); toast('signed that app out'); _renderSignerApps(); });
+    const bk = $('#signer-bunker', box);
+    if(bk) bk.onclick = () => _showBunkerLink();
     _signerBackgroundHint(box);
   }
 
-  /* SIGNING IN THE BACKGROUND, on the phone — and why there is no signer service of its own.
+  /* Hand out a bunker link: the QR for anything that can scan, the text for anything that cannot.
    *
-   * The signing happens in the WebView, because that is where the key is. Android takes the WebView
-   * away: the renderer is killed under memory pressure and a backgrounded Activity is destroyed, so
-   * a paired app asking for a signature while PosterChan is closed gets silence. That is the real
-   * gap against Amber, which is a separate process with a service of its own.
+   * Both are shown because the two clients that need this need different halves — a desktop app can
+   * scan nothing, and a phone cannot easily paste into another phone. The copy goes through
+   * `copyValue`, never `navigator.clipboard`, which is refused outright by the APK's WebView and by
+   * the desktop build's app:// origin. */
+  async function _showBunkerLink(){
+    let uri;
+    try{ uri = await Nip46Signer.bunkerUri(); }
+    catch(e){ toast(String((e && e.message) || 'could not make a link')); return; }
+    const img = qrImg(uri, 'bunker link');
+    _sheet(
+      '<h3 style="margin:0 0 6px">Connect an app</h3>'
+      + '<div class="muted small" style="margin-bottom:8px">Paste this into the app’s “login with a '
+      + 'signer” box, or scan it. It works once, and only for the next 10 minutes.</div>'
+      + (img ? '<div style="text-align:center;margin-bottom:8px">' + img + '</div>' : '')
+      + '<input id="bunker-uri" readonly value="' + enc(uri) + '" '
+      + 'style="width:100%;font-size:11px;box-sizing:border-box">'
+      + '<div class="row" style="gap:8px;margin-top:10px;justify-content:flex-end">'
+      + '<button class="btn btn-ghost small" id="bunker-copy">Copy link</button>'
+      + '<button class="btn btn-ghost small" id="bunker-done">Done</button></div>',
+      (b, close) => {
+        const f = b.querySelector('#bunker-uri');
+        if(f) f.onclick = () => { try{ f.select(); }catch(_){} };
+        b.querySelector('#bunker-copy').onclick = () => { copyValue(uri); toast('link copied'); };
+        /* Closing the screen ends the offer AND the socket it needed. Minting a link reopens this
+         * half's connection so it can hear a stranger; leaving it open after the window would be a
+         * second idle socket on a phone for as long as the app lives, and would keep this half
+         * listening to traffic the service is already handling. */
+        b.querySelector('#bunker-done').onclick = () => {
+          Nip46Signer._pending = null;
+          if(Nip46Signer.nativeOn) Nip46Signer._standDown();
+          close();
+        };
+      });
+  }
+
+  /* SIGNING IN THE BACKGROUND, on the phone. THERE IS NOW A SERVICE OF ITS OWN, and this comment
+   * used to argue at length that there should not be. Both halves of that argument were wrong, so
+   * the reasoning is kept rather than deleted — it is the reason the bug survived several rounds of
+   * "fixed".
    *
-   * The capability to fix it ALREADY EXISTS here: `StayAwakeService` is a specialUse foreground
-   * service whose whole job is keeping this app's process — and therefore its WebView and its relay
-   * sockets — alive when the screen is off. A second service would be the same code, a second
-   * permanent notification and a second battery story, for no capability the first one lacks.
+   * It said the WebView was where the signing happened "because that is where the key is". The key
+   * moved to the Keystore when the NIP-55 signer was built (`SignerKey`), so the native side has had
+   * everything it needs to sign for a while — nothing was left in the WebView but the socket.
    *
-   * So this does NOT switch it on by itself. "Stay connected" is documented as an explicit opt-in
-   * that costs battery and says so in its own notification; turning it on because an app paired
-   * would be spending someone's battery on their behalf and quietly contradicting that. It offers,
-   * once, in the place where the consequence is legible. */
+   * It also said `StayAwakeService` already had the capability, so a second service would be "the
+   * same code for no capability the first one lacks". That is the expensive mistake. StayAwake keeps
+   * the PROCESS off the freezer so the WebView keeps its socket — a promise about the process, not
+   * about the renderer. Chromium throttles a hidden page's timers to about one a minute regardless,
+   * so a dropped socket was not redialled until the screen came on. Turning "stay connected" on did
+   * not help, which is exactly what was reported, and pointed at the difference: "I have to wake the
+   * phone for events to actually send from desktop."
+   *
+   * So the signer is `SignerRelayService` now — a foreground service holding its own WebSocket, with
+   * no WebView in the path. It is started by the pairing itself rather than offered as an opt-in,
+   * because unlike "stay connected" it is not a background convenience: pairing an app IS the
+   * request to answer that app, and a signer that only answers while you are looking at it is not a
+   * signer. It stops itself when nothing is paired, so the cost ends when the reason does. */
   /* SIGN FOR OTHER APPS ON THIS PHONE — the NIP-55 half, and the reason any of this is efficient.
    *
    * Another Nostr app fires an Intent at `nostrsigner:`; Android starts SignerActivity, it answers,
@@ -24355,25 +24491,45 @@
   }
 
   async function _signerBackgroundHint(box){
-    const P = _capPlugin('PosterChanPush', 'stayConnected');
-    if(!P) return;                                    // browser or desktop: nothing to keep awake
-    let on = false;
-    try{ on = !!((await P.stayConnected()) || {}).on; }catch(_){ return; }
-    if(on){
+    const P = _capPlugin('Signer', 'status');
+    if(!P) return;                                    // browser or desktop: no service to report on
+    let s = null;
+    try{ s = await P.status(); }catch(_){ return; }
+    if(!s) return;
+
+    /* REPORT WHAT THE SERVICE MEASURED, never what this page intended. A panel that says "signing in
+     * the background" because the page asked for it is how a dead signer sat behind a reassuring
+     * line for hours. `serviceRunning` is read off the service itself. */
+    if(s.serviceRunning){
+      const n = Number(s.connected || 0);
       box.insertAdjacentHTML('beforeend',
-        '<div class="muted small" style="margin-top:6px">These keep working while PosterChan is in '
-        + 'the background, because “Stay connected” is on.</div>');
+        '<div class="muted small" style="margin-top:6px">These keep signing while PosterChan is '
+        + 'closed' + (n ? '' : ' — reconnecting to the relay now') + '.'
+        + (s.answered ? ' ' + enc(String(s.answered)) + ' requests answered.' : '')
+        + '</div>');
+      /* The honest limit of a foreground service, and the one thing left that can still delay a
+       * request. Doze defers an unexempted app's network while the screen is off, so a signature can
+       * wait for the next maintenance window. Offered, not taken: a signer that quietly grants itself
+       * battery exemptions is a signer that deserves suspicion. */
+      if(s.batteryExempt === false){
+        box.insertAdjacentHTML('beforeend',
+          '<div class="muted small" style="margin-top:4px">Android may still delay requests while '
+          + 'the screen is off. <button class="mini" id="signer-batt">allow it to run anytime</button></div>');
+        const b = $('#signer-batt', box);
+        if(b) b.onclick = () => { try{ P.openBatterySettings(); }catch(_){}
+                                  toast('find PosterChan in the list and allow it'); };
+      }
       return;
     }
     box.insertAdjacentHTML('beforeend',
-      '<div class="muted small" style="margin-top:6px">These only sign while PosterChan is open — '
-      + 'Android stops the app when it is in the background. '
-      + '<button class="mini" id="signer-stay">sign in the background</button></div>');
-    const b = $('#signer-stay', box);
+      '<div class="muted small" style="margin-top:6px">The background signer is not running'
+      + (s.lastError ? ' (' + enc(String(s.lastError)) + ')' : '')
+      + ' — these only sign while PosterChan is open. '
+      + '<button class="mini" id="signer-start">start it</button></div>');
+    const b = $('#signer-start', box);
     if(b) b.onclick = async () => {
-      try{ await P.setStayConnected({ on:true });
-           toast('staying connected — see the permanent notification'); _renderSignerApps(); }
-      catch(e){ toast('could not turn it on: ' + ((e && (e.message||e.errorMessage)) || 'refused')); }
+      try{ await Nip46Signer._pushNative(); toast('background signer started'); _renderSignerApps(); }
+      catch(e){ toast('could not start it: ' + ((e && (e.message||e.errorMessage)) || 'refused')); }
     };
   }
 

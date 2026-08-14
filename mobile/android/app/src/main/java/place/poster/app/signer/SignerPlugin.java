@@ -83,6 +83,12 @@ public class SignerPlugin extends Plugin {
         Context ctx = getContext();
         SignerRelayService.publishSessions(ctx, json == null ? "[]" : json);
         boolean on = call.getBoolean("enabled", Boolean.TRUE);
+        /* An empty list is a stop, not a start. The service would work this out for itself and stop
+         * immediately (see reload), but starting it first means going foreground and posting a
+         * notification just to tear both down — a visible flash of "PosterChan signer" on every
+         * sign-in for someone who has never paired anything. */
+        String trimmed = json == null ? "" : json.trim();
+        if (trimmed.isEmpty() || "[]".equals(trimmed)) on = false;
         if (Boolean.FALSE.equals(on)) {
             SignerRelayService.kick(ctx, SignerRelayService.ACTION_STOP);
         } else {
