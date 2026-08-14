@@ -104,11 +104,17 @@ public class Driver {
     // CENTRED — reported raw it walks the character across the screen for ever.
     GamepadPlugin.onMotion(new Ranged(0.06f, JOY, new Pad(-1f, 1f, 0.12f)));
     System.out.println("rest=" + GamepadPlugin.probeAxis(0));
-    // …and a pad reporting 0..255 is not slightly off, it is pinned to a corner. Mid-travel is 0.
-    GamepadPlugin.onMotion(new Ranged(127.5f, JOY, new Pad(0f, 255f, 0f)));
-    System.out.println("mid255=" + GamepadPlugin.probeAxis(0));
-    GamepadPlugin.onMotion(new Ranged(255f, JOY, new Pad(0f, 255f, 0f)));
-    System.out.println("max255=" + GamepadPlugin.probeAxis(0));
+    // …and a stick that straddles zero in the driver's own units is normalised to the API's range.
+    GamepadPlugin.onMotion(new Ranged(0f, JOY, new Pad(-128f, 127f, 4f)));
+    System.out.println("midWide=" + GamepadPlugin.probeAxis(0));
+    GamepadPlugin.onMotion(new Ranged(127f, JOY, new Pad(-128f, 127f, 4f)));
+    System.out.println("maxWide=" + GamepadPlugin.probeAxis(0));
+    // A TRIGGER SITTING UNTOUCHED. Its range does not straddle zero, so it must NOT be centred:
+    // doing so reports a resting trigger as hard-over and pins the stick that shares the axis.
+    GamepadPlugin.onMotion(new Ranged(0f, JOY, new Pad(0f, 1f, 0f)));
+    System.out.println("restTrigger=" + GamepadPlugin.probeAxis(0));
+    GamepadPlugin.onMotion(new Ranged(0f, JOY, new Pad(0f, 255f, 0f)));
+    System.out.println("restTrigger255=" + GamepadPlugin.probeAxis(0));
     // A driver claiming the whole travel is deadzone must not divide by zero into NaN.
     GamepadPlugin.onMotion(new Ranged(0.9f, JOY, new Pad(-1f, 1f, 4f)));
     System.out.println("allflat=" + GamepadPlugin.probeAxis(0));
@@ -171,11 +177,21 @@ class NativeGamepad(unittest.TestCase):
         self.assertEqual(float(o["rest"]), 0.0,
                          "a stick inside the driver's declared flat must read centred, not drift")
 
-    def test_an_axis_is_normalised_to_the_gamepad_apis_range_whatever_the_driver_reports(self):
+    def test_a_stick_that_straddles_zero_is_normalised_to_the_gamepad_apis_range(self):
         o = _compile_and_run()
-        self.assertAlmostEqual(float(o["mid255"]), 0.0, places=3,
-                               msg="mid-travel on a 0..255 pad is centre, not hard-over")
-        self.assertAlmostEqual(float(o["max255"]), 1.0, places=3)
+        self.assertAlmostEqual(float(o["midWide"]), 0.0, places=2,
+                               msg="mid-travel is centre, not hard-over")
+        self.assertAlmostEqual(float(o["maxWide"]), 1.0, places=2)
+
+    def test_a_trigger_is_never_centred_because_it_rests_at_its_minimum(self):
+        """THE REGRESSION THIS EXISTS FOR. AXIS_Z/AXIS_RZ are the right stick on some pads and the
+        triggers on others; only the declared range tells them apart. Centring a resting 0..1 trigger
+        reports -1 — the stick pinned to a corner for the whole session, worse than the raw
+        passthrough it replaced. Reported from a real device as "joystick movement even worse now"."""
+        o = _compile_and_run()
+        self.assertEqual(float(o["restTrigger"]), 0.0,
+                         "an untouched trigger must read centred, not hard-over")
+        self.assertEqual(float(o["restTrigger255"]), 0.0)
 
     def test_a_broken_range_costs_one_axis_not_a_NaN(self):
         o = _compile_and_run()

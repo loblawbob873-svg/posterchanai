@@ -39,6 +39,9 @@
     let term = null, fit = null, ws = null, host = null, ro = null;
     let hosts = [], connected = false, ctrl = false, mounted = null;
     let sid = '', cursor = 0, retry = 0, retryT = null, want = false, live = [];
+    // Set on `ready`, fires once the socket has HELD. Only then does a reconnect count as
+    // having worked — see the ready handler.
+    let provenT = null;
 
     /* The session id is kept PER INSTANCE — sessions live in one node's process, so carrying an id
      * from another instance can only ever produce a "that session is no longer running". */
@@ -244,7 +247,16 @@
             return;
           }
           if(m.t === 'ready'){
-            connected = true; retry = 0;
+            connected = true;
+            /* RESETTING THE COUNTER HERE IS WHAT MADE A BROKEN TERMINAL SILENT.
+             * `ready` says the server accepted us, not that the connection WORKS — and the failure
+             * that hid for a whole afternoon happened immediately after it, when the replay frame
+             * killed the relay. Every cycle therefore went: reattach, ready, retry=0, socket dies,
+             * reconnect — so the backoff never climbed, `gave up reconnecting` below was
+             * unreachable, and clicking Attach did nothing at all, for ever, with nothing on screen
+             * and nothing in the console. A connection has to HOLD to count as one. */
+            if(provenT) clearTimeout(provenT);
+            provenT = setTimeout(function(){ provenT = null; retry = 0; }, 5000);
             _remember(m.sid || '');
             if(m.host) host = m.host;
             _state((m.resumed ? 'reattached to ' : 'connected to ') + host, 'ok');
@@ -269,7 +281,12 @@
              * Retrying into it would silently open a BRAND NEW login on the remote host, which looks
              * from here exactly like a reattach and is not one. */
             want = false; _remember(''); cursor = 0;
-            if(m.m) _state(m.m); 
+            /* SAY SOMETHING, ALWAYS. `closed_reason` is empty for most ordinary endings, so
+             * `if(m.m)` meant the session tore itself down in total silence — the screen simply
+             * stopped being a terminal, which reads as "it did nothing". */
+            const why = m.m || 'the session ended';
+            _state(why);
+            try{ term.write('\r\n\x1b[33m' + why + '\x1b[0m\r\n'); }catch(_){}
             _drop(); _sessions();
           }
         };
@@ -282,6 +299,8 @@
      * than reporting a disconnection, as long as we still have a session id to reattach to. */
     function _drop(){
       if(ws){ try{ ws.onclose = null; ws.close(); }catch(_){} ws = null; }
+      // The socket is gone, so it never held: cancelling this is what lets `retry` keep climbing.
+      if(provenT){ clearTimeout(provenT); provenT = null; }
       connected = false;
       if(want && sid){ _chrome(true); return _later(); }
       _chrome(false);
@@ -314,6 +333,7 @@
     function _bye(){
       want = false;
       if(retryT){ clearTimeout(retryT); retryT = null; }
+      if(provenT){ clearTimeout(provenT); provenT = null; }
       if(ws){ try{ ws.onclose = null; ws.close(); }catch(_){} ws = null; }
       connected = false; _chrome(false);
     }

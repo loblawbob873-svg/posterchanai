@@ -180,6 +180,16 @@ public class GamepadPlugin extends Plugin {
     if (Float.isNaN(v) || Float.isInfinite(v)) return 0f;
     InputDevice.MotionRange r = dev == null ? null : dev.getMotionRange(axis, ev.getSource());
     if (r == null) return clamped(v);
+    /* AN AXIS THAT CANNOT GO NEGATIVE IS NOT A CENTRED STICK — it is a trigger, and centring one
+     * reads it as HARD OVER while it sits untouched. AXIS_Z and AXIS_RZ are the right stick on many
+     * pads and the two analogue triggers on many others, and nothing in the event says which; the
+     * declared range is the only thing that tells them apart, because a stick straddles zero and a
+     * trigger rests at its minimum. Getting this wrong is not a small error: normalising a resting
+     * 0..1 trigger to -1 pins the right stick to a corner for the whole session, which is worse than
+     * the raw passthrough this replaced — measured on a real pad, "joystick movement even worse now".
+     * Passing it through unchanged is exactly the old behaviour for these axes, so the calibration
+     * can only help the axes it understands and can never damage one it has misread. */
+    if (r.getMin() >= 0f) return clamped(v);
     float half = (r.getMax() - r.getMin()) / 2f;
     if (half <= 0f) return clamped(v);
     float n = (v - (r.getMin() + r.getMax()) / 2f) / half;
@@ -262,6 +272,28 @@ public class GamepadPlugin extends Plugin {
     return i >= 0 && i < axes.length ? axes[i] : 0f;
   }
 
+  /**
+   * WHAT THE PAD ACTUALLY DECLARES, because the same controller is perfect in Firefox and wrong
+   * here, and the difference is information Android does not give us.
+   *
+   * A browser reads the HID descriptor and therefore KNOWS which axis is a stick and which is a
+   * trigger. Android hands over `getAxisValue` and leaves that judgement to us, and AXIS_Z/AXIS_RZ
+   * are the right stick on some pads and the two triggers on others. Guessing it wrong pinned a
+   * stick to a corner for a whole session. So rather than guess a fourth time, this reports the
+   * declared range of every axis this code reads plus its live value: `min`/`max` say whether an
+   * axis straddles zero (a stick) or rests at its minimum (a trigger), and `flat` is the deadzone
+   * the manufacturer asked for. Read it from Games → the controller panel.
+   */
+  private static final int[] READ_AXES = {
+    MotionEvent.AXIS_X, MotionEvent.AXIS_Y, MotionEvent.AXIS_Z, MotionEvent.AXIS_RZ,
+    MotionEvent.AXIS_RX, MotionEvent.AXIS_RY, MotionEvent.AXIS_HAT_X, MotionEvent.AXIS_HAT_Y,
+    MotionEvent.AXIS_LTRIGGER, MotionEvent.AXIS_RTRIGGER,
+    MotionEvent.AXIS_BRAKE, MotionEvent.AXIS_GAS,
+  };
+  private static final String[] READ_NAMES = {
+    "X", "Y", "Z", "RZ", "RX", "RY", "HAT_X", "HAT_Y", "LTRIGGER", "RTRIGGER", "BRAKE", "GAS",
+  };
+
   @PluginMethod
   public void status(PluginCall call) {
     JSObject o = new JSObject();
@@ -270,6 +302,43 @@ public class GamepadPlugin extends Plugin {
     o.put("motion", motionEvents);
     o.put("key", keyEvents);
     o.put("emits", emits);
+    // The four slots the page is being handed right now, so a wrong one can be seen rather than
+    // described. A stick at rest reads 0 here; anything else is the bug.
+    JSONArray live = new JSONArray();
+    try {
+      // put(double) refuses NaN/Infinity — the same refusal `push` guards against. A driver
+      // reporting one must cost this row, never the whole panel, which exists to explain such a pad.
+      for (int i = 0; i < axes.length; i++) live.put((double) axes[i]);
+    } catch (JSONException e) {
+      o.put("axesError", String.valueOf(e));
+    }
+    o.put("axes", live);
+
+    JSONArray ranges = new JSONArray();
+    try {
+      for (int id : InputDevice.getDeviceIds()) {
+        InputDevice d = InputDevice.getDevice(id);
+        if (d == null || !fromPad(d.getSources())) continue;
+        for (int i = 0; i < READ_AXES.length; i++) {
+          InputDevice.MotionRange r = d.getMotionRange(READ_AXES[i], InputDevice.SOURCE_JOYSTICK);
+          if (r == null) r = d.getMotionRange(READ_AXES[i], InputDevice.SOURCE_GAMEPAD);
+          if (r == null) continue;
+          JSObject a = new JSObject();
+          a.put("axis", READ_NAMES[i]);
+          a.put("min", (double) r.getMin());
+          a.put("max", (double) r.getMax());
+          a.put("flat", (double) r.getFlat());
+          // The rule this code applies, spelled out, so the report says what was DECIDED and not
+          // only what was read.
+          a.put("treatedAs", r.getMin() >= 0f ? "trigger (not centred)" : "stick (centred)");
+          ranges.put(a);
+        }
+      }
+    } catch (Exception e) {
+      // A device that will not describe itself must not cost the whole panel.
+      o.put("rangeError", String.valueOf(e));
+    }
+    o.put("ranges", ranges);
     call.resolve(o);
   }
 }

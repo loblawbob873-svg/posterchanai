@@ -234,14 +234,28 @@ async def _via_keeper(websocket: WebSocket, uid, who: str, first: dict, cols: in
             logger.info("[ssh] %s opened a terminal on %s via the keeper", who, h.name)
 
         async def _down():
-            while True:
-                line = await r.readline()
-                if not line:
-                    break
-                try:
-                    await websocket.send_json(json.loads(line.decode("utf-8")))
-                except Exception:
-                    break
+            """Keeper -> browser.
+
+            THE EXCEPT IS THE POINT. This runs as a task, so anything raised here ends the relay
+            with no traceback and no log line: the attach had already succeeded and said so, and the
+            browser just saw its socket close. That is exactly how a 64 KiB reader limit against a
+            256 KiB replay buffer stayed invisible — "reattached … via the keeper" in the log, a
+            blank screen on the phone, and no console error at either end, because the throw was
+            here. Whatever fails next, it says so."""
+            try:
+                while True:
+                    line = await r.readline()
+                    if not line:
+                        break
+                    try:
+                        await websocket.send_json(json.loads(line.decode("utf-8")))
+                    except Exception:
+                        break                     # the browser hung up; ordinary
+            except asyncio.CancelledError:
+                raise                             # a normal teardown, not a failure
+            except Exception as e:
+                logger.warning("[ssh] relay from the keeper died for %s (%s): %s",
+                               who, type(e).__name__, e)
 
         down = asyncio.create_task(_down())
         try:

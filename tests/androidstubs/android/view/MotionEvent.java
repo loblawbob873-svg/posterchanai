@@ -7,6 +7,8 @@ public class MotionEvent {
   public static final int AXIS_X = 0;
   public static final int AXIS_Y = 1;
   public static final int AXIS_Z = 11;
+  public static final int AXIS_RX = 12;
+  public static final int AXIS_RY = 13;
   public static final int AXIS_RZ = 14;
   public static final int AXIS_HAT_X = 15;
   public static final int AXIS_HAT_Y = 16;
