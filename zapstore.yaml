@@ -21,31 +21,47 @@ license: GPL-3.0-or-later
 # The APK the workflow just built and signed (the job copies it here before publishing).
 release_source: ./posterchan.apk
 
-summary: Nostr client with a password manager, AI chat, media generation and live streaming
+summary: A Nostr-powered personal cloud and self-hosted AI — notes, calendar, contacts, files, passwords
 description: |
-  PosterChan is the Android client for a self-hosted PosterChanAI instance — a Nostr social client with a
-  built-in AI assistant and an end-to-end encrypted password manager.
+  PosterChan is the Android half of a **Nostr-powered personal cloud** and a **self-hosted AI powerhouse**
+  that runs on hardware you own. Your notes, calendar, contacts, files, passwords and mail live as encrypted
+  Nostr events on a relay you run — no account with anybody, no subscription, no vendor holding the keys.
 
-  - **Password manager**: logins, one-time codes (TOTP) and a password generator, with **Android autofill**
-    offering them in your other apps and browsers. Every entry is encrypted on your device — the relay
-    stores ciphertext and nothing else, so no server can read your passwords.
-  - **Password sync**: your vault follows you across devices through your own relay, with no account and no
-    third-party service in the middle.
-  - **Browser bookmark sync**: the companion browser add-on (Firefox, Chrome, Edge, Brave) keeps your
-    bookmarks in sync across browsers, sealed with the same vault key, and fills these logins into web pages.
-  - **Nostr social**: feeds, threads, profiles, DMs, communities and a web-of-trust relay.
-  - **AI chat**: streaming LLM chat, with image, music and video generation.
-  - **Live streaming**: go live from your camera or share your screen (NIP-53), and watch other people's streams.
-  - **Voice and video calls**: 1:1 and group calls over WebRTC.
-  - **Self-hostable**: point the app at your own instance — the default is poster.place.
+  **The personal cloud**
+
+  - **Notes**: private, offline-first, encrypted to your own key. Write with no signal; it syncs when you have one.
+  - **Calendar and contacts**: real **CalDAV/CardDAV**, so your phone's own calendar and contacts apps sync
+    with your node like any other server — one account for both.
+  - **Files and folder sync**: keep Documents and Pictures in step between phone and desktop through your own
+    node. Contents are encrypted before they leave the device, so your server stores a folder it cannot read.
+  - **Password manager**: logins, one-time codes (TOTP) and a generator, with **Android autofill** offering
+    them in your other apps and browsers. Every entry is encrypted on your device — the relay holds ciphertext.
+  - **Bookmark sync**: the companion add-on (Firefox, Chrome, Edge, Brave) keeps bookmarks in step across
+    browsers, sealed with the same vault key.
+  - **Mail**: your own IMAP/SMTP accounts, mirrored as encrypted events so search works without a round trip.
+
+  **The AI powerhouse**
+
+  - **Chat**: streaming LLM conversations against your own models or any OpenAI-compatible API.
+  - **Generation**: images, music and video, produced on your own GPU rather than someone's rented one.
+  - **Private search**: a metasearch engine bundled with your node, with AI overviews and citations.
+  - **Live streaming**: go live from your camera or screen (NIP-53), and watch other people's streams.
+  - **Voice and video calls**: 1:1 and group, over WebRTC.
+
+  **And a full Nostr client**: feeds, threads, profiles, DMs, communities, mini apps and a web-of-trust relay.
+
+  Self-hostable by design — point the app at your own instance; the default is poster.place.
 
 tags:
   - nostr
-  - social
+  - personal-cloud
+  - self-hosted
+  - notes
+  - calendar
   - passwords
   - bookmarks
   - ai
-  - chat
+  - social
   - streaming
 
 icon: ./static/icon-512.png
