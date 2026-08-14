@@ -137,8 +137,16 @@ public class SignerActivity extends Activity {
                 out.putExtra("result", ev.toString());
                 out.putExtra("signature", sig);
             } else {
+                /* THREE SPELLINGS, because the ecosystem uses three. NIP-55 documents `pubKey`
+                 * for the encryption verbs; this app's OWN client sends `pubkey` (Nip55Plugin);
+                 * and `current_user` is what several signers and clients fall back to. Reading one
+                 * of them works perfectly with whichever client you happened to test and fails
+                 * silently with the rest — the verb returns an error about a bad peer key for a
+                 * request that named it correctly, just not in the spelling we looked for. */
                 String peer = str(in.getStringExtra("pubKey"));
+                if (peer.isEmpty()) peer = str(in.getStringExtra("pubkey"));
                 if (peer.isEmpty()) peer = str(in.getStringExtra("current_user"));
+                if (peer.length() != 64) { deny("that request has no usable peer public key"); return; }
                 byte[] peerPk = Nostr.unhex(peer);
                 String res;
                 if ("nip04_encrypt".equals(type)) res = Crypt.nip04Encrypt(sec, peerPk, body);

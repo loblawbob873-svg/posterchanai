@@ -171,6 +171,29 @@ def test_minsdk_is_what_this_check_assumes():
         "minSdk changed; the _TOO_NEW list in this test is calibrated to 23"
 
 
+def test_every_spelling_of_the_peer_key_is_read():
+    """The ecosystem uses three, and reading one fails silently with the other two.
+
+    NIP-55 documents `pubKey` for the encryption verbs; this app's own client (Nip55Plugin) sends
+    `pubkey`; `current_user` is a common fallback. Get it wrong and nip04/nip44 return an error about
+    a bad peer key for a request that named it correctly — just not in the spelling we looked for.
+    """
+    src = _code(os.path.join(SIG, "SignerActivity.java"))
+    for spelling in ('"pubKey"', '"pubkey"', '"current_user"'):
+        assert spelling in src, f"the signer never reads {spelling}"
+    # And our own client really does send the lowercase one, which is why it is not optional.
+    client = _code(os.path.join(ROOT, "mobile", "android", "app", "src", "main", "java",
+                                "place", "poster", "app", "nip55", "Nip55Plugin.java"))
+    assert 'putIfSet(intent, "pubkey"' in client, \
+        "Nip55Plugin no longer sends `pubkey`; re-check which spellings the signer must accept"
+
+
+def test_a_missing_peer_key_is_refused_rather_than_guessed():
+    src = _code(os.path.join(SIG, "SignerActivity.java"))
+    assert "peer.length() != 64" in src, \
+        "a malformed peer key reaches the crypto, where the failure is less legible"
+
+
 def test_the_event_id_is_not_built_with_org_json():
     """Android's JSONObject escapes `/` as `\\/` — legal JSON, different sha256, wrong event id."""
     src = _code(os.path.join(SIG, "SignerActivity.java"))
