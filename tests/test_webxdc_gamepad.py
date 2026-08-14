@@ -238,24 +238,47 @@ class WebxdcGamepadShim(unittest.TestCase):
         real role is mouse look, which is opt-in."""
         out = run([
             {"pads": [pad()], "emit": "gamepadconnected", "frames": 1, "drain": True},
-            # Walking left on the LEFT stick while aiming right on the RIGHT one.
+            # Walking left on the LEFT stick while turning right on the RIGHT one — the exact
+            # combination that pressed both arrows at once.
             {"pads": [pad(axes=[-0.9, 0.0, 0.9, 0.0])], "frames": 3, "drain": True,
              "record": "both"},
         ], look=0)
         down = self.codes(out["both"], "keydown")
-        self.assertIn("ArrowLeft", down, "the left stick must still steer")
-        self.assertNotIn("ArrowRight", down,
-                         "the right stick pressed the opposite key to the one the player is "
-                         "walking with — that is a contradiction, not aim")
+        # THE INVARIANT: never both directions of one axis in a single frame.
+        self.assertFalse("ArrowLeft" in down and "ArrowRight" in down,
+                         f"pressed both directions of one axis at once: {down} — that is a "
+                         f"contradiction, not aim")
+        self.assertFalse("KeyA" in down and "KeyD" in down, f"same, on WASD: {down}")
+        # …and BOTH sticks still do their job: the left one moves, the right one turns.
+        self.assertIn("KeyA", down, "the left stick stopped moving the player")
+        self.assertIn("ArrowRight", down, "the right stick stopped turning")
 
-    def test_the_right_stick_presses_nothing_on_its_own(self):
+    def test_the_right_stick_turns(self):
+        """What it is FOR. WASD moves, the arrows turn — Quake's own layout, and the reason the right
+        stick exists on a pad at all."""
         out = run([
             {"pads": [pad()], "emit": "gamepadconnected", "frames": 1, "drain": True},
-            {"pads": [pad(axes=[0.0, 0.0, 0.9, 0.9])], "frames": 3, "drain": True,
-             "record": "solo"},
+            {"pads": [pad(axes=[0.0, 0.0, 0.9, 0.0])], "frames": 3, "drain": True, "record": "r"},
+            {"pads": [pad()], "frames": 2, "drain": True},
+            {"pads": [pad(axes=[0.0, 0.0, -0.9, 0.0])], "frames": 3, "drain": True, "record": "l"},
+            {"pads": [pad()], "frames": 2, "drain": True},
+            {"pads": [pad(axes=[0.0, 0.0, 0.0, -0.9])], "frames": 3, "drain": True, "record": "u"},
         ], look=0)
-        self.assertEqual(self.codes(out["solo"], "keydown"), [],
-                         "with mouse look off the right stick is inert, not a second d-pad")
+        self.assertIn("ArrowRight", self.codes(out["r"], "keydown"))
+        self.assertIn("ArrowLeft", self.codes(out["l"], "keydown"))
+        self.assertIn("ArrowUp", self.codes(out["u"], "keydown"))
+
+    def test_the_left_stick_is_untouched_while_the_right_one_is_idle(self):
+        """The half that works must keep working EXACTLY as it did. With the right stick at rest the
+        left one still sends both sets, which is what makes it play an arrows-only game and a WASD
+        game alike."""
+        out = run([
+            {"pads": [pad()], "emit": "gamepadconnected", "frames": 1, "drain": True},
+            {"pads": [pad(axes=[-0.9, 0.0, 0.0, 0.0])], "frames": 3, "drain": True, "record": "l"},
+        ], look=0)
+        down = self.codes(out["l"], "keydown")
+        self.assertIn("ArrowLeft", down, "the left stick lost the arrows an arrows-only game needs")
+        self.assertIn("KeyA", down)
 
     def test_the_aim_does_nothing_until_it_is_switched_on(self):
         """Mouse look is opt-in after five regressions. It must be genuinely inert by default, not

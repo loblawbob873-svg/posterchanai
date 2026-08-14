@@ -735,8 +735,25 @@
         for(j = 0; j < list.length; j++) want[list[j]] = 1;
       }
       var ax = p.axes || [];
-      axis(want, ax[0], 'left', 'a', 'right', 'd');
-      axis(want, ax[1], 'up', 'w', 'down', 's');
+      /* THE ARROWS HAVE ONE OWNER PER FRAME, AND THE RIGHT STICK WINS THEM.
+         The classic dual-stick keyboard split is WASD to move and the arrows to turn — which is
+         Quake's own layout, and what the right stick is for. The catch is that the LEFT stick has
+         always sent BOTH sets, and that is exactly why it works in every game: one stick covers a
+         WASD game and an arrows-only game alike. Simply handing the arrows to the right stick would
+         break every arrows-only game; sending them from BOTH pressed ArrowLeft and ArrowRight in the
+         same frame and fought the player, which is what "jerking against my movement" was.
+         So: while the right stick is idle the left one behaves EXACTLY as it always has, arrows and
+         WASD together. The moment the right stick asks for an arrow it takes them, and the left one
+         falls back to WASD for that frame. No frame can ever carry both directions of one axis, and
+         the half that works is untouched whenever the half being added is not in use. */
+      var rWant = {};
+      axis(rWant, ax[2], 'left', 'left', 'right', 'right');
+      axis(rWant, ax[3], 'up', 'up', 'down', 'down');
+      var rTurn = false;
+      for(var rk in rWant){ rTurn = true; break; }
+      axis(want, ax[0], rTurn ? 'a' : 'left', 'a', rTurn ? 'd' : 'right', 'd');
+      axis(want, ax[1], rTurn ? 'w' : 'up', 'w', rTurn ? 's' : 'down', 's');
+      for(var rk2 in rWant) want[rk2] = 1;
       /* THE RIGHT STICK SENDS NOTHING BY DEFAULT, and that is the correct answer rather than a
          retreat from a hard one.
 
