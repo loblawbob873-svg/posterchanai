@@ -126,6 +126,51 @@ def test_the_client_can_turn_it_on_and_off():
         "offered to sessions whose key lives in an extension or a remote signer, which have nothing to give"
 
 
+# APIs that exist on a desktop JDK and NOT at this app's minSdk (23). Each one compiles cleanly
+# against compileSdk 35 and throws at runtime on an older phone — and the crypto tests run on a JDK,
+# so they are structurally blind to every entry here.
+_TOO_NEW = {
+    "BigInteger.TWO": 31,          # Java 9; Android API 31
+    "BigInteger.ZERO.TWO": 31,
+    "java.util.Base64": 26,        # which is why Crypt has its own encoder
+    "String.chars(": 24,
+    "Objects.requireNonNullElse": 30,
+    "List.of(": 30,
+    "Map.of(": 30,
+    "Set.of(": 30,
+    "Optional.isEmpty": 30,
+    "String.isBlank": 30,
+    "String.repeat(": 30,
+    "String.strip(": 30,
+}
+
+
+def test_nothing_in_the_signer_needs_a_newer_android_than_we_support():
+    """A green CI build and a dead signer on a third of devices is the failure this prevents.
+
+    `BigInteger.TWO` was exactly that: Java 9, Android API 31, minSdk 23. It compiled against
+    compileSdk 35 and would have thrown NoSuchFieldError at the first signature on anything older
+    than Android 12. The JDK-based crypto tests pass either way, which is the point — they cannot
+    see the platform this actually runs on.
+    """
+    import glob
+    bad = []
+    for f in sorted(glob.glob(os.path.join(SIG, "*.java"))):
+        code = _code(f)
+        for api, since in _TOO_NEW.items():
+            if api in code:
+                bad.append(f"{os.path.basename(f)}: {api} (Android API {since}, minSdk 23)")
+    assert not bad, "APIs newer than minSdk:\n  " + "\n  ".join(bad)
+
+
+def test_minsdk_is_what_this_check_assumes():
+    """If minSdk rises, the list above is too strict and should be revisited rather than obeyed."""
+    gradle = _read(os.path.join(ROOT, "mobile", "android", "variables.gradle"))
+    m = re.search(r"minSdkVersion\s*=\s*(\d+)", gradle)
+    assert m and int(m.group(1)) == 23, \
+        "minSdk changed; the _TOO_NEW list in this test is calibrated to 23"
+
+
 def test_the_event_id_is_not_built_with_org_json():
     """Android's JSONObject escapes `/` as `\\/` — legal JSON, different sha256, wrong event id."""
     src = _code(os.path.join(SIG, "SignerActivity.java"))

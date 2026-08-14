@@ -45,6 +45,13 @@ public final class Nostr {
         Pt(BigInteger x, BigInteger y) { this.x = x; this.y = y; }
     }
 
+    /* NOT `BigInteger.TWO`. That constant exists in the JDK from Java 9 and on ANDROID only from
+     * API 31 — this app's minSdk is 23. It compiles happily against compileSdk 35 and then throws
+     * NoSuchFieldError on every phone older than Android 12, at the first signature. The unit tests
+     * here run on a desktop JDK, so they cannot see it either: a green CI build and a dead signer on
+     * a third of devices. Anything referenced from this package has to exist at API 23. */
+    private static final BigInteger TWO = BigInteger.valueOf(2);
+
     private static final Pt G = new Pt(GX, GY);
 
     private static Pt add(Pt p1, Pt p2) {
@@ -54,11 +61,11 @@ public final class Nostr {
         BigInteger lam;
         if (p1.x.equals(p2.x) && p1.y.equals(p2.y)) {
             lam = BigInteger.valueOf(3).multiply(p1.x).multiply(p1.x)
-                    .multiply(BigInteger.TWO.multiply(p1.y).modPow(P.subtract(BigInteger.TWO), P))
+                    .multiply(TWO.multiply(p1.y).modPow(P.subtract(TWO), P))
                     .mod(P);
         } else {
             lam = p2.y.subtract(p1.y)
-                    .multiply(p2.x.subtract(p1.x).modPow(P.subtract(BigInteger.TWO), P)).mod(P);
+                    .multiply(p2.x.subtract(p1.x).modPow(P.subtract(TWO), P)).mod(P);
         }
         BigInteger x3 = lam.multiply(lam).subtract(p1.x).subtract(p2.x).mod(P);
         BigInteger y3 = lam.multiply(p1.x.subtract(x3)).subtract(p1.y).mod(P);
@@ -138,7 +145,7 @@ public final class Nostr {
         if (x.compareTo(P) >= 0) return null;
         BigInteger c = x.modPow(BigInteger.valueOf(3), P).add(BigInteger.valueOf(7)).mod(P);
         BigInteger y = c.modPow(P.add(BigInteger.ONE).divide(BigInteger.valueOf(4)), P);
-        if (!y.modPow(BigInteger.TWO, P).equals(c)) return null;
+        if (!y.modPow(TWO, P).equals(c)) return null;
         return new Pt(x, y.testBit(0) ? P.subtract(y) : y);
     }
 
