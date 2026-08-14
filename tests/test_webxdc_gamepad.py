@@ -125,8 +125,15 @@ global.document = {
   querySelector(sel){ return sel === 'canvas' ? canvas : null; },
 };
 const listeners = {};
+/* dispatchEvent is REAL here, not omitted: the shim announces a gamepadconnected so engines that
+   only poll after one will start, and a window without dispatchEvent sends that straight into the
+   shim's own catch — the announcement silently never happens and the test passes on a stub that is
+   weaker than the platform. */
 global.window = { addEventListener(t, fn){ (listeners[t] = listeners[t] || []).push(fn); },
+                  dispatchEvent(ev){ (listeners[ev && ev.type] || []).forEach(fn => fn(ev));
+                                     return true; },
                   innerWidth: 1280, innerHeight: 800 };
+global.Event = class Event { constructor(type){ this.type = type; } };
 // `navigator` is a read-only built-in global from node 21 on, so a plain assignment silently does
 // nothing and the shim sees the REAL navigator (no getGamepads), returns early, and every assertion
 // here fails for a reason that has nothing to do with the shim.
@@ -138,6 +145,8 @@ global.requestAnimationFrame = (fn) => { pending = fn; return 1; };
 SHIM;
 
 const appGetGamepads = navigator.getGamepads.bind(navigator);
+let connectEvents = 0;
+(listeners['gamepadconnected'] = listeners['gamepadconnected'] || []).push(() => { connectEvents++; });
 
 function emit(type){ (listeners[type] || []).forEach(fn => fn()); }
 function frame(){ const fn = pending; pending = null; if(fn) fn(); }
@@ -162,6 +171,13 @@ for(const s of steps){
                                                   movementX:e.movementX, movementY:e.movementY,
                                                   clientX:e.clientX, clientY:e.clientY }));
   // The report rides a timer in the browser; fire it by hand so the test controls when.
+  if(s.poll){ const g = appGetGamepads() || [];
+              const p0 = g[0] || null;
+              out[s.poll] = p0 ? { id:p0.id, mapping:p0.mapping, connected:p0.connected,
+                                   axes:p0.axes,
+                                   buttons:(p0.buttons||[]).map(b => (b && typeof b === 'object')
+                                     ? { pressed:b.pressed, value:b.value } : b) } : null; }
+  if(s.recordConnects) out[s.recordConnects] = connectEvents;
   if(s.recordStat){ if(statFn) statFn();
     out[s.recordStat] = padstats.length ? padstats[padstats.length-1] : null; }
 }
@@ -454,6 +470,47 @@ class WebxdcGamepadShim(unittest.TestCase):
         self.assertEqual(sorted(self.codes(out["enter"], "keydown")), ["ArrowLeft", "KeyA"])
         self.assertEqual(out["linger"], [])
         self.assertEqual(sorted(self.codes(out["leave"], "keyup")), ["ArrowLeft", "KeyA"])
+
+    def test_the_game_is_handed_the_native_pad_exactly_as_a_browser_would(self):
+        """THE ONE THAT MATTERED. The same game with the same controller is perfect in Firefox,
+        because Firefox implements the Gamepad API and the game reads all four axes as ANALOG values
+        and runs its own aim code. The APK's WebView implements nothing, so getGamepads() returned an
+        empty list and the game was blind — and this shim only ever answered by synthesising KEYS,
+        which substitute fine for a movement stick and not at all for an aim stick.
+
+        Answering with the real pad is what makes the APK behave like the browser. Shape matters:
+        standard mapping, GamepadButton objects with .pressed and .value, axes as floats."""
+        out = run([
+            {"native": {"buttons": [1, 0, 0, 0], "axes": [0.0, 0.0, 0.62, -0.37], "id": "Pro"},
+             "frames": 1, "poll": "seen", "recordConnects": "connects"},
+        ], look=0)
+        seen = out["seen"]
+        self.assertIsNotNone(seen, "the app polled and was handed nothing — it is still blind")
+        self.assertEqual(seen["mapping"], "standard")
+        self.assertTrue(seen["connected"])
+        # The RIGHT stick's analog values, unaltered — the game does its own aim with these.
+        self.assertAlmostEqual(seen["axes"][2], 0.62, places=3)
+        self.assertAlmostEqual(seen["axes"][3], -0.37, places=3)
+        self.assertEqual(seen["buttons"][0]["pressed"], True)
+        self.assertEqual(seen["buttons"][1]["pressed"], False)
+        self.assertGreaterEqual(out["connects"], 1,
+                                "no gamepadconnected was announced, and many engines only start "
+                                "polling after one")
+
+    def test_keys_stop_once_the_game_is_reading_the_pad_itself(self):
+        """Doubling every input is the failure this prevents: walking at twice the speed, or turning
+        by axis and by arrow key at once. Polling is only evidence now BECAUSE the call is answered —
+        when it returned nothing, polling proved only that the app had asked."""
+        out = run([
+            {"native": {"buttons": [0] * 16, "axes": [-0.9, 0.0, 0.0, 0.0]},
+             "frames": 1, "drain": True},
+            {"frames": 2, "poll": "seen", "drain": True},
+            {"frames": 3, "record": "after"},
+        ], look=0)
+        self.assertIsNotNone(out["seen"])
+        self.assertEqual(self.codes(out["after"], "keydown"), [],
+                         "the shim kept pressing keys while the game was reading the pad — every "
+                         "input counted twice")
 
     def test_an_app_polling_gamepads_does_NOT_turn_the_shim_off(self):
         """THE BUG THAT MADE THE FIRST VERSION DO NOTHING, kept as a test so it cannot come back.

@@ -521,7 +521,56 @@
     var poll = navigator.getGamepads && navigator.getGamepads.bind(navigator);
     if(!poll) return;
     var stat = { on:(__XDC.pad !== false), pads:0, presses:0, keys:0, appPolls:0, frames:0, last:'' };
-    try{ navigator.getGamepads = function(){ stat.appPolls++; return poll(); }; }catch(e){}
+
+    /* HAND THE GAME THE PAD. THIS IS THE WHOLE THING, and everything below it is a fallback.
+       In Firefox the same game with the same controller is perfect, because Firefox implements the
+       Gamepad API and the game reads all four axes as ANALOG values and runs its own aim code. In
+       the APK the WebView implements nothing, so getGamepads() returned an empty list and the game
+       was blind — which is why this shim exists at all. But the shim only ever synthesised KEYS,
+       and a key is a fine substitute for a movement stick and a hopeless one for an aim stick.
+       Nights went into faking analog aim with keys and mouse events instead of simply giving the
+       game the pad Android had already measured.
+       So getGamepads() now answers with the native controller in the exact shape the API specifies —
+       standard mapping, GamepadButton-like objects, the axes as floats. A game that polls it gets in
+       the APK precisely what it gets in Firefox, and its own aim code, which is already correct,
+       does the work. */
+    var STALE_MS = 4000;
+    function _nativePad(){
+      if(!padNative || (Date.now() - padAt) >= STALE_MS) return null;
+      var raw = padNative.buttons || [], btns = [], i, v;
+      for(i = 0; i < raw.length; i++){
+        v = (typeof raw[i] === 'number') ? raw[i] : ((raw[i] && raw[i].value) || 0);
+        // GamepadButton objects, not bare numbers: an engine reads .pressed and .value.
+        btns.push({ pressed: v > 0.5, touched: v > 0, value: v });
+      }
+      return { index: 0, id: padNative.id || 'PosterChan controller (native)',
+               mapping: 'standard', connected: true, timestamp: padAt,
+               axes: (padNative.axes || []).slice(), buttons: btns };
+    }
+    try{
+      navigator.getGamepads = function(){
+        stat.appPolls++;
+        stat.appPolledAt = Date.now();
+        var nat = _nativePad();
+        return nat ? [nat] : poll();
+      };
+    }catch(e){}
+
+    /* Many engines only begin polling after a gamepadconnected event, and the WebView never fires
+       one, because as far as it is concerned there is no pad. Announced once, when the native
+       controller first reports. (No backticks in this file: it is a template literal.) */
+    var _announced = false;
+    function _announce(){
+      if(_announced) return;
+      var nat = _nativePad();
+      if(!nat) return;
+      _announced = true;
+      try{
+        var ev = new Event('gamepadconnected');
+        try{ Object.defineProperty(ev, 'gamepad', { value: nat }); }catch(_){}
+        window.dispatchEvent(ev);
+      }catch(e){}
+    }
     // Reported to the parent, which is the only side with a UI. Throttled: this is a diagnostic, not
     // a telemetry stream, and it rides the same postMessage channel the game's own updates use.
     setInterval(function(){
@@ -702,6 +751,23 @@
       // A backgrounded app must not be left holding a key: it would still be walking into a wall
       // when whoever put the phone down comes back.
       if(document.hidden){ release(); return; }
+      _announce();
+      /* IF THE GAME IS READING THE PAD, GET OUT OF ITS WAY.
+         Now that getGamepads() answers with the real controller, an app that polls it is doing
+         exactly what it does in Firefox — reading analog axes and running its own aim and movement
+         code. Synthesising keys as well would double every input: walking at twice the speed, or
+         turning by axis and by arrow key at once.
+         This reverses an earlier decision deliberately, and the reason it reverses is that the
+         FACTS changed. The shim used to switch itself off the moment an app touched getGamepads,
+         which broke the exact games it existed for — because back then the call returned NOTHING, so
+         polling proved only that the app had asked, not that it had been answered. It is answered
+         now, so polling is real evidence. A second and a half of grace, because an engine polls
+         every frame while it runs and stops the moment it is paused. */
+      if(stat.appPolledAt && (Date.now() - stat.appPolledAt) < 1500 && _nativePad()){
+        stat.src = 'app-reads-pad';
+        release();
+        return;
+      }
       /* NATIVE FIRST, then the real API. In the APK the WebView hands the page no gamepad at all —
          the same game with the same pad on the same tablet works in Firefox and does nothing here —
          so Android reads the controller and passes it in (see GamepadPlugin). A stale snapshot is
