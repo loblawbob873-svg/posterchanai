@@ -27,10 +27,15 @@
      to /client in twenty minutes — one client retrying for ever behind a backoff, against a URL that
      could never work, while the relay list showed nothing wrong.
 
-     `new URL()` with no base throws on anything relative, which is precisely the test wanted. */
+     Matched with a REGEX rather than `new URL()`, deliberately. `URL` is a global, and a global is
+     a dependency: this file runs in a browser, in an APK WebView, in a desktop shell and inside a
+     `vm` sandbox in the tests — and the sandbox did not provide it, so the first version threw
+     ReferenceError on every relay, refused all of them, and hung seven tests. A predicate this small
+     should not be able to fail because of what is missing around it. The host must be non-empty, or
+     a bare "wss://" would pass. */
+  var _WSURL = /^wss?:\/\/[^\s/?#]+/i;
   function _isRelayUrl(u){
-    try{ var p = new URL(String(u || '')).protocol; return p === 'ws:' || p === 'wss:'; }
-    catch(_){ return false; }
+    return _WSURL.test(String(u || '').trim());
   }
 
   // ---- one socket to one relay; reports up to the pool ----

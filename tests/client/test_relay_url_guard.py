@@ -38,11 +38,15 @@ CASES = {
 
 
 def _predicate():
+    """The shipped predicate AND the pattern it uses — extracting the function alone left `_WSURL`
+    undefined and the run died on a ReferenceError, which is the same shape as the bug this guard
+    exists for: a small thing failing because of what was missing around it."""
     src = RELAY.read_text(encoding="utf-8")
-    m = re.search(r"function _isRelayUrl\(u\)\{.*?\n  \}", src, re.S)
-    if not m:
-        raise AssertionError("_isRelayUrl is gone from relay.js; this test needs updating")
-    return m.group(0)
+    pat = re.search(r"^\s*var _WSURL = .*?;$", src, re.M)
+    fn = re.search(r"function _isRelayUrl\(u\)\{.*?\n  \}", src, re.S)
+    if not (pat and fn):
+        raise AssertionError("_isRelayUrl or its pattern is gone from relay.js; update this test")
+    return pat.group(0) + "\n" + fn.group(0)
 
 
 class RelayUrlGuard(unittest.TestCase):
