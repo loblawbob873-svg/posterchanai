@@ -28,9 +28,17 @@
 (function(){
   'use strict';
 
+  /* `dir` is a FACT about the language. `mirror` is this app's POLICY about its layout, and the two
+   * are deliberately separate: Arabic is right-to-left and the usual convention mirrors the whole
+   * interface, but that is not wanted here — "arabic should not move the left navbar to the right
+   * and flip all the settings to the right". The TEXT still reads right-to-left wherever it appears,
+   * because the browser's bidi algorithm resolves an Arabic run correctly inside a left-to-right
+   * block; it is only the CHROME that stays where it is. Set `mirror: true` to get the conventional
+   * behaviour back — everything needed for it is still here (rtl.css, the .rtl class, the logical
+   * properties), it is simply not switched on. */
   var LOCALES = {
     en: { name: 'English',  dir: 'ltr' },
-    ar: { name: 'العربية',  dir: 'rtl' },
+    ar: { name: 'العربية',  dir: 'rtl', mirror: false },
     ja: { name: '日本語',    dir: 'ltr' },
   };
   var KEY = 'pc_lang';
@@ -190,6 +198,28 @@
     });
   }
 
+  /* The catalogue the other way round, so "back to English" is just another translation pass.
+   * FIRST WRITER WINS: two English strings can share one translation, and letting the later one win
+   * would silently rename whichever came first. */
+  function reverse(map){
+    var out = {}, k, v;
+    for(k in map){
+      if(!Object.prototype.hasOwnProperty.call(map, k)) continue;
+      v = map[k];
+      if(v && typeof v === 'string' && !out[v]) out[v] = k;
+    }
+    return out;
+  }
+
+  /* Put the document back into the strings this app actually ships. Called before every switch,
+   * including to English, and a no-op when nothing is translated. */
+  function revert(){
+    if(!cat) return;
+    cat = reverse(cat);
+    try{ walk(document.body); }catch(e){}
+    cat = null;
+  }
+
   function observe(){
     if(obs || !document.body) return;
     try{
@@ -250,14 +280,17 @@
 
   function applyDir(lang){
     var L = LOCALES[lang] || LOCALES.en;
+    // Mirroring is opt-IN per locale (see LOCALES). `lang` is still set whatever we decide, because
+    // it picks the font the system falls back to and has nothing to do with direction.
+    var mirror = L.dir === 'rtl' && L.mirror !== false;
     try{
       document.documentElement.setAttribute('lang', lang);
-      document.documentElement.setAttribute('dir', L.dir);
+      document.documentElement.setAttribute('dir', mirror ? 'rtl' : 'ltr');
       // A hook for the few rules that cannot be expressed as logical properties (a background
       // gradient's angle, an icon that must not mirror).
-      document.documentElement.classList.toggle('rtl', L.dir === 'rtl');
+      document.documentElement.classList.toggle('rtl', mirror);
     }catch(e){}
-    rtlSheet(L.dir === 'rtl');
+    rtlSheet(mirror);
   }
 
   /* `catalogue` is a TEST SEAM and nothing else: the cost of translating a feed can only be measured
@@ -269,14 +302,19 @@
     try{ localStorage.setItem(KEY, lang); }catch(e){}
     applyDir(lang);
 
-    if(lang === 'en'){
-      // Nothing to translate, and nothing left running. A reload is NOT required to go back to
-      // English — but it IS required to leave it, because switching away can only translate what is
-      // on screen now, and everything already rendered in English stays English until redrawn.
-      cat = null;
-      unobserve();
-      return Promise.resolve(true);
-    }
+    /* UNDO THE OLD LANGUAGE FIRST, whatever the new one is.
+     *
+     * Substitution overwrites the DOM in place, so simply dropping the catalogue leaves every string
+     * that was already translated exactly as it was: picking English gave an ARABIC menu that had
+     * merely moved back to the left, and going Arabic → Japanese kept the Arabic, because the new
+     * catalogue is keyed on English and matches none of what is on screen.
+     *
+     * Inverting the catalogue turns "back to English" into an ordinary translation pass, so it reuses
+     * the machinery — and its skip rules — rather than growing a second one that could disagree. */
+    unobserve();
+    revert();
+
+    if(lang === 'en') return Promise.resolve(true);
 
     return (catalogue ? Promise.resolve(catalogue) : load(lang)).then(function(strings){
       if(!strings) throw new Error('empty catalogue');

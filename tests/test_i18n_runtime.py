@@ -234,17 +234,33 @@ class I18nRuntime(unittest.TestCase):
         self.assertEqual(out["text"], "Save")
         self.assertEqual(out["dir"], "ltr")
 
-    def test_arabic_sets_rtl_and_japanese_does_not(self):
+    def test_no_language_mirrors_the_interface(self):
+        """ARABIC TRANSLATES THE WORDS AND LEAVES THE LAYOUT ALONE — a product decision, not an
+        oversight, and the reason this test reads the opposite of how it used to.
+
+        Arabic IS right-to-left and the usual convention mirrors everything, which is what shipped
+        first: "arabic should not move the left navbar to the right and flip all the settings to the
+        right". The text still reads right-to-left wherever it appears, because the browser resolves
+        an Arabic run correctly inside a left-to-right block; only the chrome stays put.
+
+        `dir` is still a fact about the language in LOCALES, so restoring the convention is one word
+        (`mirror: true`) — and this test is what would then have to be changed deliberately rather
+        than the behaviour drifting back by accident."""
         out = run("""
           const body = new El('body'); document.body = body;
           I.set('ja').then(() => {
             const ja = document.documentElement.dir;
             return I.set('ar').then(() => console.log(JSON.stringify({
-              ja, ar: document.documentElement.dir })));
+              ja, ar: document.documentElement.dir,
+              arLang: document.documentElement.lang })));
           });
         """, CAT)
         self.assertEqual(out["ja"], "ltr")
-        self.assertEqual(out["ar"], "rtl")
+        self.assertEqual(out["ar"], "ltr", "Arabic must not mirror the interface")
+        # `lang` is still set — it picks the font, and has nothing to do with direction.
+        self.assertEqual(out["arLang"], "ar")
+        # The `.rtl` class and rtl.css are asserted by scripts/check_i18n_round_trip.py against a
+        # REAL document: this harness's classList is a no-op stub and would pass either way.
 
     def test_the_shipped_catalogues_are_valid_and_cover_the_english_one(self):
         """A catalogue is data, and data rots differently from code: it goes stale rather than
