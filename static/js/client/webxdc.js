@@ -1633,10 +1633,7 @@
         const head = `<div class="xdc-gal-top">
             <div class="muted small">Mini apps — webxdc games, polls and shared editors people have posted. They run in a sandbox with no network of their own, and everyone who opens the same app is in the same game.</div>
             <button class="btn btn-ghost small" id="xdc-gal-refresh"${loading ? ' disabled' : ''}>${loading ? 'Looking…' : 'Refresh'}</button>
-            ${window.PCWebxdc && window.PCWebxdc.padNative
-               ? '<button class="btn btn-ghost small" id="xdc-pad-diag" title="What this device measured from your controller">Controller</button>' : ''}
-          </div>
-          <pre class="xdc-pad-out" id="xdc-pad-out" hidden></pre>`;
+          </div>`;
         const body = apps.length
           ? `<div class="xdc-grid">${apps.map(galTile).join('')}</div>`
           : (loading ? '<div class="spinner"></div>'
@@ -1645,22 +1642,6 @@
         try{ PC.decorateProfiles && PC.decorateProfiles(); }catch(_){}
         const rf = $('#xdc-gal-refresh', feed);
         if(rf) rf.onclick = () => { _gal.at = 0; gallery(); };
-        /* WHAT THE DEVICE MEASURED, ON THE DEVICE. `padNative()` has existed since the native pad
-         * did, and was useless where it mattered: it is a console function and the tablet has no
-         * console, so four rounds of "the right stick does nothing" were spent inferring a layout
-         * the phone could have simply reported. AXIS_Z/AXIS_RZ are the right stick on some pads and
-         * the triggers on others, and `min`/`max` per axis is the only thing that says which. */
-        const pd = $('#xdc-pad-diag', feed), pout = $('#xdc-pad-out', feed);
-        if(pd && pout) pd.onclick = async () => {
-          pout.hidden = false;
-          pout.textContent = 'reading…';
-          try{
-            const nat = await window.PCWebxdc.padNative();
-            const page = window.PCWebxdc.padStats ? window.PCWebxdc.padStats() : null;
-            pout.textContent = 'ANDROID: ' + JSON.stringify(nat, null, 1)
-                             + '\n\nPAGE: ' + JSON.stringify(page, null, 1);
-          }catch(e){ pout.textContent = 'could not read the controller: ' + (e && e.message || e); }
-        };
       };
       const warm = _gal.at && (Date.now() - _gal.at) < GAL_TTL;
       paint(_gal.apps, !warm);

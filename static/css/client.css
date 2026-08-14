@@ -7952,12 +7952,3 @@ body.popout-chat .stream-chat{
  * the one control the chat popout exists to reach. */
 body.popout-chat .scm-list{ flex:1 1 auto !important; min-height:0 !important; overflow-y:auto !important; }
 body.popout-chat .scm-input{ flex:0 0 auto !important; }
-
-
-/* The controller readout in Games → Webxdc. A <pre> because the whole point is that it is COPYABLE
-   and exact — an axis range paraphrased is an axis range guessed at, which is what this exists to
-   end. Scrolls in its own box so a long report cannot make the page scroll sideways on a tablet. */
-.xdc-pad-out{margin:8px 0 0;padding:10px 12px;max-height:44vh;overflow:auto;
-  background:var(--panel2);border:1px solid var(--line);border-radius:10px;
-  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;
-  line-height:1.45;color:var(--fg);white-space:pre;-webkit-user-select:text;user-select:text}
