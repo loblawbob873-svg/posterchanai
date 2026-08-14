@@ -622,7 +622,13 @@
        and comfortably past a spring's return swing, while everything ABOVE it still answers
        linearly — the dead region is wider, the response inside it is not weaker. Tunable with
        PCWebxdc.dead(n) for a pad with a looser or tighter return than this one. */
-    var LOOK_PX = (typeof __XDC.look === 'number' && __XDC.look > 0) ? __XDC.look : 45;
+    /* OFF BY DEFAULT, and that is a judgement about track record rather than about the idea. Mouse
+       look is right for a pointer-locked FPS and wrong for everything else, it only reaches engines
+       that read mouse movement at all, and every version of it so far has been reported worse than
+       the one before: too slow, resisting, jerking, thrown to the corner, kicked backwards on
+       release, no fine control. The keys above work. Turn this on per device with
+       PCWebxdc.look(45) when there is a game to test it against. */
+    var LOOK_PX = (typeof __XDC.look === 'number' && __XDC.look > 0) ? __XDC.look : 0;
     var DEAD = (typeof __XDC.dead === 'number' && __XDC.dead >= 0 && __XDC.dead < 0.9)
                  ? __XDC.dead : 0.15;
     var lookX = -1, lookY = -1;      // virtual cursor; -1 until the first aim seeds it at the centre
@@ -635,6 +641,7 @@
       return (v < 0 ? -1 : 1) * (a - DEAD) / (1 - DEAD);
     }
     function look(x, y){
+      if(!LOOK_PX) return;                       // opt-in; see LOOK_PX
       if(typeof x !== 'number' || typeof y !== 'number') return;
       /* RESCALED OUT OF THE DEADZONE, NOT CLIFF-EDGED OVER IT. Gating at 0.15 and then using the
          RAW value meant the aim jumped from nothing to 0.15 x 45 = ~7px a frame the instant the
@@ -730,13 +737,33 @@
       var ax = p.axes || [];
       axis(want, ax[0], 'left', 'a', 'right', 'd');
       axis(want, ax[1], 'up', 'w', 'down', 's');
-      look(ax[2], ax[3]);
+      /* THE RIGHT STICK IS A STICK, AND THIS IS THE PATH THAT WORKS. The left one has been correct
+         since the day it was written because of these three lines: a threshold with hysteresis, then
+         a key. I gave the right one a bespoke mouse-look pipeline instead — curve, deadzone,
+         sub-pixel accumulator, virtual cursor — and then spent five builds tuning my own invention
+         while the user kept saying the left stick was perfect. So the right stick now goes through
+         the same helper, onto the arrows.
+
+         It overlaps the left stick's arrows deliberately: the left one ALSO sends WASD, so a game
+         reading either still moves, and nothing about the working path changes. Overlap is a much
+         smaller cost than a second input system with its own bugs. */
+      axis(want, ax[2], 'left', 'left', 'right', 'right');
+      axis(want, ax[3], 'up', 'up', 'down', 'down');
       // Releases before presses, so a direction reversed inside one frame is not briefly both.
       var hn = Object.keys(held);
       for(i = 0; i < hn.length; i++) if(!want[hn[i]]){ delete held[hn[i]]; fire('keyup', hn[i]); }
       var wn = Object.keys(want);
       for(i = 0; i < wn.length; i++) if(!held[wn[i]]){ held[wn[i]] = 1; fire('keydown', wn[i]); }
       if(wn.length){ stat.presses++; stat.keys += wn.length; stat.last = wn.join('+'); }
+      /* AIM LAST, AND IT MAY NOT TAKE THE REST DOWN WITH IT. This used to run BEFORE the two loops
+         above, so anything thrown in here — a synthetic MouseEvent an engine refuses, a constructor
+         an older WebView lacks — skipped every keyup and keydown for that frame. Every frame. With
+         raf already re-armed at the top of tick(), that is a controller whose BUTTONS and left
+         stick go dead because of a bug in the right stick, silently and for ever. The buttons are
+         the part that has always worked; they do not get to depend on the part still being tuned.
+         (No backticks in here: this block lives inside a template literal.) */
+      try{ look(ax[2], ax[3]); }
+      catch(e){ if(!stat.lookErr){ stat.lookErr = String((e && e.message) || e); } }
     }
     function start(){ if(!raf) raf = requestAnimationFrame(tick); }
     window.addEventListener('gamepadconnected', start);
@@ -831,8 +858,8 @@
              because "too slow" and "too fast" are the same distance from right and neither can be
              judged from here — the pad, the game and the screen are all the player's. */
           look: (function(){ try{ var n = parseFloat(localStorage.getItem('pc_xdc_look'));
-                                  return (isFinite(n) && n > 0 && n <= 400) ? n : 45; }
-                             catch(e){ return 45; } })(),
+                                  return (isFinite(n) && n >= 0 && n <= 400) ? n : 0; }
+                             catch(e){ return 0; } })(),
           /* Right-stick deadzone. Sized for the SPRING's return swing, not for resting noise —
              see the aim code. */
           dead: (function(){ try{ var n = parseFloat(localStorage.getItem('pc_xdc_dead'));
@@ -1831,7 +1858,7 @@
                         /* Right-stick look speed, px/frame at full deflection (default 45). Applies
                          * on the next open — the bridge is built once per load. */
                         look: (n) => { var v = parseFloat(n);
-                                       if(!isFinite(v) || v <= 0 || v > 400) return 'give a number 1-400';
+                                       if(!isFinite(v) || v < 0 || v > 400) return 'give 0 (off) to 400';
                                        try{ localStorage.setItem('pc_xdc_look', String(v)); }catch(e){}
                                        return 'look speed ' + v + ' — reopen the game'; },
                         /* Right-stick deadzone, 0-0.89 (default 0.15). Raise it if letting go of the

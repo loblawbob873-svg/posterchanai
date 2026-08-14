@@ -70,7 +70,7 @@ const padstats = [];
 let pads = [];
 // The bridge globals the shim now uses: `__XDC` carries the client-owned off switch, and `send` is
 // the postMessage channel it reports the diagnostic on.
-global.__XDC = { pad: PAD_ENABLED };
+global.__XDC = { pad: PAD_ENABLED, look: __LOOK_SEAM__ };
 // CLONED, because postMessage structured-clones and this stub does not. Holding the live `stat`
 // object made every recorded sample read as the LAST one — the test equivalent of the reference bug
 // the music panel hit, and it would have hidden exactly the transitions this is here to check.
@@ -169,13 +169,14 @@ console.log(JSON.stringify(out));
 """
 
 
-def run(steps, pad_enabled=True):
+def run(steps, pad_enabled=True, look=45):
     node = shutil.which("node")
     if not node:
         raise unittest.SkipTest("node is not installed")
     script = (HARNESS.replace("SHIM;", shim_source() + ";")
               .replace("STEPS", json.dumps(steps))
-              .replace("PAD_ENABLED", "true" if pad_enabled else "false"))
+              .replace("PAD_ENABLED", "true" if pad_enabled else "false")
+              .replace("__LOOK_SEAM__", str(look)))
     p = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=60)
     if p.returncode != 0:
         raise AssertionError("node failed: " + (p.stderr or "")[-3000:])
@@ -225,6 +226,31 @@ class WebxdcGamepadShim(unittest.TestCase):
         ])
         self.assertEqual(self.codes(out["held"], "keydown"), ["Space"])
         self.assertEqual(self.codes(out["held"], "keyup"), [])
+
+    def test_the_right_stick_sends_keys_like_the_left_one_does(self):
+        """THE PATH THAT ACTUALLY WORKS. The left stick has been correct since it was written because
+        it goes through `axis()` — a threshold with hysteresis, then a key. The right stick was given
+        a bespoke mouse-look pipeline instead, and five builds went into tuning that invention while
+        the left one stayed perfect. It goes through the same helper now, onto the arrows."""
+        out = run([
+            {"pads": [pad()], "emit": "gamepadconnected", "frames": 1, "drain": True},
+            {"pads": [pad(axes=[0.0, 0.0, 0.8, 0.0])], "frames": 2, "drain": True,
+             "record": "right"},
+            {"pads": [pad(axes=[0.0, 0.0, 0.0, -0.8])], "frames": 2, "drain": True,
+             "record": "up"},
+        ], look=0)
+        self.assertIn("ArrowRight", self.codes(out["right"], "keydown"),
+                      "pushing the right stick right must press a key, as the left stick does")
+        self.assertIn("ArrowUp", self.codes(out["up"], "keydown"))
+
+    def test_the_aim_does_nothing_until_it_is_switched_on(self):
+        """Mouse look is opt-in after five regressions. It must be genuinely inert by default, not
+        merely quiet — an engine reading mouse movement would otherwise still be driven by it."""
+        out = run([
+            {"pads": [pad()], "emit": "gamepadconnected", "frames": 1, "drain": True},
+            {"pads": [pad(axes=[0.0, 0.0, 1.0, 0.0])], "frames": 5, "drain": True, "record": "off"},
+        ], look=0)
+        self.assertEqual([e for e in out["off"] if e["type"] == "mousemove"], [])
 
     def test_the_right_stick_aims_because_a_keyboard_has_no_aim(self):
         """THE ONE THAT MADE A TWO-STICK PAD HALF A PAD. Only ax[0]/ax[1] were ever read, so the
