@@ -606,17 +606,20 @@
 
        Squared response, deliberately: a stick is an ANALOGUE control being read once a frame, and a
        linear map makes small corrections impossible while large ones fly past the target. */
-    /* Pixels per frame at FULL deflection. The first shipped value was 18 with a squared response,
-       which put half-stick at 4.5px a frame — reported as "movement way too slow compared to the
-       left", and rightly: the left stick is a KEY, so it moves at the game's own full walking speed
-       the instant it crosses the threshold, while this one is analogue and was being asked to earn
-       every pixel. An exponent of 1.5 keeps fine aim near centre without making the middle of the
-       range useless. */
+    /* Pixels per frame at FULL deflection, LINEAR, with only enough deadzone to swallow drift.
+       Two goes at this were both wrong in the same direction. 18px with a SQUARED response put
+       half-stick at 4.5px ("way too slow"); 45px with a 1.5 power still put a quarter-stick at
+       5.6px, which reads as the stick RESISTING — you have to shove it before anything happens, and
+       then it arrives all at once. A curve is a way of buying fine aim near centre, and it is not
+       worth buying at that price: an engine applies its own sensitivity anyway, and a player who
+       wants a curve has one in the game's own settings.
+       The deadzone is 0.06 against a measured resting drift of 0.0153 — four times the noise and
+       still inside the first tenth of travel, so the stick answers as soon as it is pushed. */
     var LOOK_PX = (typeof __XDC.look === 'number' && __XDC.look > 0) ? __XDC.look : 45;
     function look(x, y){
       if(typeof x !== 'number' || typeof y !== 'number') return;
-      var ax2 = Math.abs(x) > 0.12 ? x * Math.sqrt(Math.abs(x)) : 0;
-      var ay2 = Math.abs(y) > 0.12 ? y * Math.sqrt(Math.abs(y)) : 0;
+      var ax2 = Math.abs(x) > 0.06 ? x : 0;
+      var ay2 = Math.abs(y) > 0.06 ? y : 0;
       if(!ax2 && !ay2) return;
       var dx = Math.round(ax2 * LOOK_PX), dy = Math.round(ay2 * LOOK_PX);
       if(!dx && !dy) return;
@@ -649,12 +652,16 @@
       if(document.hidden){ release(); return; }
       /* NATIVE FIRST, then the real API. In the APK the WebView hands the page no gamepad at all —
          the same game with the same pad on the same tablet works in Firefox and does nothing here —
-         so Android reads the controller and passes it in (see GamepadPlugin). A snapshot older than
-         a second is treated as gone, or a bridge that stops reporting would pin the player to
-         whatever it last said. When both exist the native one wins simply because it is the one
-         proven to arrive; they carry identical shapes, so nothing below can tell. */
+         so Android reads the controller and passes it in (see GamepadPlugin). A stale snapshot is
+         treated as gone, or a bridge that stops reporting would pin the player to whatever it last
+         said. The window is generous BECAUSE Android only sends a MotionEvent when something
+         CHANGES: a stick held at a steady angle can legitimately report nothing for a while, and at
+         one second that starved the aim mid-turn — "laggy or resisting". Backgrounding still
+         releases instantly (above), which is the case the short window was really protecting.
+         When both exist the native one wins simply because it is the one proven to arrive; they
+         carry identical shapes, so nothing below can tell. */
       var p = null, i;
-      if(padNative && (Date.now() - padAt) < 1000){
+      if(padNative && (Date.now() - padAt) < 4000){
         p = { buttons: padNative.buttons || [], axes: padNative.axes || [],
               id: padNative.id || 'native', mapping: 'standard', connected: true };
         stat.src = 'native';

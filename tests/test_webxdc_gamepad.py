@@ -237,6 +237,27 @@ class WebxdcGamepadShim(unittest.TestCase):
         self.assertGreater(moves[0]["movementX"], 0, "pushing right must aim right")
         self.assertEqual(moves[0]["movementY"], 0)
 
+    def test_the_aim_answers_a_small_push_instead_of_resisting_it(self):
+        """A quarter-stick must produce roughly a quarter of the motion. Two curves shipped before
+        this — squared, then a 1.5 power — and both put a quarter-stick under 6px a frame out of 45,
+        which does not read as "precise", it reads as the stick RESISTING until you shove it. The
+        response is linear now; the game applies its own sensitivity on top."""
+        out = run([
+            {"pads": [pad()], "emit": "gamepadconnected", "frames": 1, "drain": True},
+            # `record` does not clear the log, so the second reading must drain the first or it
+            # reads the full-stick move and the ratio is silently 1.0.
+            {"pads": [pad(axes=[0.0, 0.0, 1.0, 0.0])], "frames": 1, "record": "full"},
+            {"pads": [pad()], "frames": 1, "drain": True},
+            {"pads": [pad(axes=[0.0, 0.0, 0.25, 0.0])], "frames": 1, "record": "quarter"},
+        ])
+        full = [e for e in out["full"] if e["type"] == "mousemove"][0]["movementX"]
+        quarter = [e for e in out["quarter"] if e["type"] == "mousemove"][0]["movementX"]
+        self.assertGreater(full, 0)
+        # Linear within rounding: a quarter of the stick, a quarter of the motion.
+        self.assertAlmostEqual(quarter / full, 0.25, delta=0.05,
+                               msg=f"a quarter-stick gave {quarter} of {full} — that is a curve, "
+                                   f"and it reads as resistance")
+
     def test_a_resting_right_stick_does_not_drift_the_aim(self):
         """A stick at rest still reports small values, and an aim that creeps while nobody touches
         the pad is worse than an aim that does not work — it is unplayable rather than absent."""
