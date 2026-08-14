@@ -280,6 +280,44 @@ class WebxdcGamepadShim(unittest.TestCase):
         self.assertGreater(moves[1]["clientX"], moves[0]["clientX"],
                            "pushing right must move the cursor right, not reset it")
 
+    def test_letting_go_of_the_stick_does_not_kick_the_aim_backwards(self):
+        """THE ONE THAT ONLY EVER HIT THE RIGHT STICK. A spring-return stick released from
+        deflection swings PAST centre before settling, and at a 0.06 gate with a linear response
+        that overshoot cleared the threshold at nearly full rate — in the opposite direction: "I move
+        one way and then it follows then jerks me in opposite direction".
+
+        The left stick was immune for a reason worth keeping in mind: `axis()` gates at 0.5 with
+        hysteresis, so a return swing never reaches it. Only the aim path had a gate small enough to
+        let a spring through."""
+        out = run([
+            {"pads": [pad()], "emit": "gamepadconnected", "frames": 1, "drain": True},
+            {"pads": [pad(axes=[0.0, 0.0, 1.0, 0.0])], "frames": 2},
+            # Released: the stick swings past centre and settles. Nothing may be emitted for it.
+            # `drain` runs BEFORE this step's frames, so it clears the full-deflection moves and
+            # leaves only what the overshoot itself produces — putting it on the previous step
+            # instead scored that step's own output and reported a +45 as a backwards kick.
+            {"pads": [pad(axes=[0.0, 0.0, -0.14, 0.0])], "frames": 2, "drain": True,
+             "record": "overshoot"},
+            {"pads": [pad(axes=[0.0, 0.0, -0.05, 0.0])], "frames": 2, "drain": True,
+             "record": "settle"},
+        ])
+        for phase in ("overshoot", "settle"):
+            moves = [e for e in out[phase] if e["type"] == "mousemove"]
+            self.assertEqual(moves, [],
+                             f"the {phase} after release moved the aim backwards: {moves}")
+
+    def test_a_deliberate_push_the_other_way_still_works(self):
+        """The deadzone must reject a SPRING, not a decision — reversing aim on purpose has to keep
+        working, or the cure is worse than the jerk."""
+        out = run([
+            {"pads": [pad()], "emit": "gamepadconnected", "frames": 1, "drain": True},
+            {"pads": [pad(axes=[0.0, 0.0, -0.6, 0.0])], "frames": 1, "drain": True,
+             "record": "left"},
+        ])
+        moves = [e for e in out["left"] if e["type"] == "mousemove"]
+        self.assertTrue(moves, "a real push the other way produced nothing")
+        self.assertLess(moves[0]["movementX"], 0)
+
     def test_a_resting_right_stick_does_not_drift_the_aim(self):
         """A stick at rest still reports small values, and an aim that creeps while nobody touches
         the pad is worse than an aim that does not work — it is unplayable rather than absent."""

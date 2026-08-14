@@ -613,14 +613,23 @@
        then it arrives all at once. A curve is a way of buying fine aim near centre, and it is not
        worth buying at that price: an engine applies its own sensitivity anyway, and a player who
        wants a curve has one in the game's own settings.
-       The deadzone is 0.06 against a measured resting drift of 0.0153 — four times the noise and
-       still inside the first tenth of travel, so the stick answers as soon as it is pushed. */
+       THE DEADZONE IS ABOUT THE SPRING, NOT THE NOISE, and 0.06 was set against the wrong one. A
+       stick released from deflection does not stop at centre — it swings PAST it and settles back,
+       and at 0.06 with a linear response that overshoot clears the gate at nearly full rate, in the
+       opposite direction: "I move one way and then it follows then jerks me in opposite direction".
+       The old 1.5-power curve hid it by crushing small values, which is why it appeared only once
+       the response was straightened. Resting drift measures 0.0153, so 0.15 is ten times the noise
+       and comfortably past a spring's return swing, while everything ABOVE it still answers
+       linearly — the dead region is wider, the response inside it is not weaker. Tunable with
+       PCWebxdc.dead(n) for a pad with a looser or tighter return than this one. */
     var LOOK_PX = (typeof __XDC.look === 'number' && __XDC.look > 0) ? __XDC.look : 45;
+    var DEAD = (typeof __XDC.dead === 'number' && __XDC.dead >= 0 && __XDC.dead < 0.9)
+                 ? __XDC.dead : 0.15;
     var lookX = -1, lookY = -1;      // virtual cursor; -1 until the first aim seeds it at the centre
     function look(x, y){
       if(typeof x !== 'number' || typeof y !== 'number') return;
-      var ax2 = Math.abs(x) > 0.06 ? x : 0;
-      var ay2 = Math.abs(y) > 0.06 ? y : 0;
+      var ax2 = Math.abs(x) > DEAD ? x : 0;
+      var ay2 = Math.abs(y) > DEAD ? y : 0;
       if(!ax2 && !ay2) return;
       var dx = Math.round(ax2 * LOOK_PX), dy = Math.round(ay2 * LOOK_PX);
       if(!dx && !dy) return;
@@ -802,6 +811,11 @@
           look: (function(){ try{ var n = parseFloat(localStorage.getItem('pc_xdc_look'));
                                   return (isFinite(n) && n > 0 && n <= 400) ? n : 45; }
                              catch(e){ return 45; } })(),
+          /* Right-stick deadzone. Sized for the SPRING's return swing, not for resting noise —
+             see the aim code. */
+          dead: (function(){ try{ var n = parseFloat(localStorage.getItem('pc_xdc_dead'));
+                                  return (isFinite(n) && n >= 0 && n < 0.9) ? n : 0.15; }
+                             catch(e){ return 0.15; } })(),
         }) + ';\n';
         return { status:200, contentType:'text/javascript', body:_enc.encode(head + BRIDGE) };
       }
@@ -1798,6 +1812,13 @@
                                        if(!isFinite(v) || v <= 0 || v > 400) return 'give a number 1-400';
                                        try{ localStorage.setItem('pc_xdc_look', String(v)); }catch(e){}
                                        return 'look speed ' + v + ' — reopen the game'; },
+                        /* Right-stick deadzone, 0-0.89 (default 0.15). Raise it if letting go of the
+                         * stick kicks the view back the other way; lower it if small aim corrections
+                         * do nothing. Applies on the next open. */
+                        dead: (n) => { var v = parseFloat(n);
+                                       if(!isFinite(v) || v < 0 || v >= 0.9) return 'give a number 0-0.89';
+                                       try{ localStorage.setItem('pc_xdc_dead', String(v)); }catch(e){}
+                                       return 'deadzone ' + v + ' — reopen the game'; },
                         MIME, KIND_UPDATE, Session };
 
     /* THE APK'S CONTROLLER, PATCHED IN FROM ANDROID.
