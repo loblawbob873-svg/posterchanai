@@ -227,21 +227,35 @@ class WebxdcGamepadShim(unittest.TestCase):
         self.assertEqual(self.codes(out["held"], "keydown"), ["Space"])
         self.assertEqual(self.codes(out["held"], "keyup"), [])
 
-    def test_the_right_stick_sends_keys_like_the_left_one_does(self):
-        """THE PATH THAT ACTUALLY WORKS. The left stick has been correct since it was written because
-        it goes through `axis()` — a threshold with hysteresis, then a key. The right stick was given
-        a bespoke mouse-look pipeline instead, and five builds went into tuning that invention while
-        the left one stayed perfect. It goes through the same helper now, onto the arrows."""
+    def test_the_two_sticks_never_press_the_same_keys(self):
+        """THE FIX FOR ONE JERK THAT CAUSED THE NEXT. The right stick was briefly mapped to the
+        ARROWS, on the reasoning that the left stick's path is the one that works. But the left stick
+        ALREADY sends the arrows — so aiming right while walking left pressed ArrowLeft and
+        ArrowRight in the same frame and handed the game a contradiction: "still jerking against my
+        movement".
+
+        A keyboard has one set of directional keys. The right stick therefore sends none, and its
+        real role is mouse look, which is opt-in."""
         out = run([
             {"pads": [pad()], "emit": "gamepadconnected", "frames": 1, "drain": True},
-            {"pads": [pad(axes=[0.0, 0.0, 0.8, 0.0])], "frames": 2, "drain": True,
-             "record": "right"},
-            {"pads": [pad(axes=[0.0, 0.0, 0.0, -0.8])], "frames": 2, "drain": True,
-             "record": "up"},
+            # Walking left on the LEFT stick while aiming right on the RIGHT one.
+            {"pads": [pad(axes=[-0.9, 0.0, 0.9, 0.0])], "frames": 3, "drain": True,
+             "record": "both"},
         ], look=0)
-        self.assertIn("ArrowRight", self.codes(out["right"], "keydown"),
-                      "pushing the right stick right must press a key, as the left stick does")
-        self.assertIn("ArrowUp", self.codes(out["up"], "keydown"))
+        down = self.codes(out["both"], "keydown")
+        self.assertIn("ArrowLeft", down, "the left stick must still steer")
+        self.assertNotIn("ArrowRight", down,
+                         "the right stick pressed the opposite key to the one the player is "
+                         "walking with — that is a contradiction, not aim")
+
+    def test_the_right_stick_presses_nothing_on_its_own(self):
+        out = run([
+            {"pads": [pad()], "emit": "gamepadconnected", "frames": 1, "drain": True},
+            {"pads": [pad(axes=[0.0, 0.0, 0.9, 0.9])], "frames": 3, "drain": True,
+             "record": "solo"},
+        ], look=0)
+        self.assertEqual(self.codes(out["solo"], "keydown"), [],
+                         "with mouse look off the right stick is inert, not a second d-pad")
 
     def test_the_aim_does_nothing_until_it_is_switched_on(self):
         """Mouse look is opt-in after five regressions. It must be genuinely inert by default, not

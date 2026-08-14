@@ -737,18 +737,20 @@
       var ax = p.axes || [];
       axis(want, ax[0], 'left', 'a', 'right', 'd');
       axis(want, ax[1], 'up', 'w', 'down', 's');
-      /* THE RIGHT STICK IS A STICK, AND THIS IS THE PATH THAT WORKS. The left one has been correct
-         since the day it was written because of these three lines: a threshold with hysteresis, then
-         a key. I gave the right one a bespoke mouse-look pipeline instead — curve, deadzone,
-         sub-pixel accumulator, virtual cursor — and then spent five builds tuning my own invention
-         while the user kept saying the left stick was perfect. So the right stick now goes through
-         the same helper, onto the arrows.
+      /* THE RIGHT STICK SENDS NOTHING BY DEFAULT, and that is the correct answer rather than a
+         retreat from a hard one.
 
-         It overlaps the left stick's arrows deliberately: the left one ALSO sends WASD, so a game
-         reading either still moves, and nothing about the working path changes. Overlap is a much
-         smaller cost than a second input system with its own bugs. */
-      axis(want, ax[2], 'left', 'left', 'right', 'right');
-      axis(want, ax[3], 'up', 'up', 'down', 'down');
+         It briefly sent the ARROWS here, on the reasoning that the left stick's path is the one that
+         works so the right one should reuse it. That was wrong in a way that should have been
+         obvious while typing it: the left stick ALREADY sends the arrows. Two sticks on the same
+         four keys means aiming right while walking left presses ArrowLeft and ArrowRight in the same
+         frame, and the game is handed a contradiction — "still jerking against my movement", caused
+         by the fix for the previous jerk.
+
+         There is no second set of directional keys to give it. A keyboard has one. That is the whole
+         reason the right stick's natural role is mouse look, which is available with
+         PCWebxdc.look(45) and off by default until it has been proven on a device — see LOOK_PX.
+         Inert beats fighting the half that works. */
       // Releases before presses, so a direction reversed inside one frame is not briefly both.
       var hn = Object.keys(held);
       for(i = 0; i < hn.length; i++) if(!want[hn[i]]){ delete held[hn[i]]; fire('keyup', hn[i]); }
