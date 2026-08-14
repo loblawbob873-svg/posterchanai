@@ -99,14 +99,25 @@
              the signer costs nothing, because it is not running. The relay-based signer it replaces
              had to keep a browser engine resident to be reachable at all.
 
-             `singleTask` + `excludeFromRecents`: a signing prompt is not a place in the back stack,
-             and it must not leave what an app asked to sign sitting in the recents preview. -->
+             NOT `singleTask`, and this is the difference between a signer and a dead one: Android
+             delivers RESULT_CANCELED IMMEDIATELY when startActivityForResult targets a singleTask or
+             singleInstance activity, because those force new-task semantics and a new task cannot
+             return a result to the old one. startActivityForResult IS the NIP-55 protocol — it is
+             how every client, including this app's own Nip55Plugin, asks — so singleTask would have
+             answered every request with "rejected" before the dialog was drawn. `singleTop` launches
+             into the caller's task, where a result can come back.
+
+             NOT `noHistory` either: it finishes the activity when it stops, and the approval dialog
+             stopping (a permission prompt, the screen locking, the user glancing at another app) is
+             not the same as the user answering it. The activity finishes itself on every path.
+
+             `excludeFromRecents` stays: what another app asked to sign must not sit in the recents
+             preview afterwards. -->
         <activity
             android:name=".signer.SignerActivity"
             android:exported="true"
-            android:launchMode="singleTask"
+            android:launchMode="singleTop"
             android:excludeFromRecents="true"
-            android:noHistory="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

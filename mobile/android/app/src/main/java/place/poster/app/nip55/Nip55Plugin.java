@@ -56,6 +56,10 @@ public class Nip55Plugin extends Plugin {
                 JSObject s = new JSObject();
                 s.put("package", ri.activityInfo.packageName);
                 s.put("label", String.valueOf(ri.loadLabel(pm)));
+                // OURSELVES, since this app is a NIP-55 signer too. Marked rather than filtered out:
+                // signing with our own on-device signer is the point — the key sits in the Keystore
+                // instead of the WebView — and the login screen wants to say so by name.
+                s.put("self", getContext().getPackageName().equals(ri.activityInfo.packageName));
                 signers.put(s);
             }
         } catch (Exception ignored) {
@@ -109,6 +113,10 @@ public class Nip55Plugin extends Plugin {
         if (result == null || result.getResultCode() != android.app.Activity.RESULT_OK || data == null) {
             JSObject ret = new JSObject();
             ret.put("rejected", true);          // user hit deny, or backed out of the signer
+            // WHY it refused, when it said. Our own signer answers "no key on this device" for a
+            // phone that has not been given one yet, and that is a fixable situation the user can
+            // only act on if they are told — collapsed into a bare "declined" it reads as a bug.
+            if (data != null) ret.put("error", data.getStringExtra("error"));
             call.resolve(ret);
             return;
         }

@@ -646,7 +646,10 @@
       return this._serial(async () => {
         const p = this._p(); if(!p) throw new Error('signer bridge unavailable');
         const r = await p.request(Object.assign({ type, pkg: this.pkg, currentUser: this.npub }, opts||{}));
-        if(!r || r.rejected) throw new Error('the signer declined');
+        // Carry the signer's OWN words when it gave any. Ours says "no key on this device" for a
+        // phone that has not been handed a key yet, which is a fixable state the user can only act
+        // on if they hear it — flattened to "declined" it reads as the signer being broken.
+        if(!r || r.rejected) throw new Error((r && r.error) || 'the signer declined');
         if(r.package && !this.pkg) this.pkg = r.package;   // learn the package → unlocks the silent path
         return r;
       });
@@ -2207,7 +2210,17 @@
       ME = { mode:'nip55', pubkey: pk, npub: Nip55.npub || NT().nip19.npubEncode(pk) };
       Session.save({ mode:'nip55', pubkey: pk, pkg: Nip55.pkg, npub: ME.npub });
       startApp();
-    }catch(e){ authErr(e.message || 'the signer declined'); }
+    }catch(e){
+      /* A refusal from OUR OWN signer is usually the chicken-and-egg one: this phone can sign for
+       * other apps, but nobody has given it a key yet — and you cannot give it one from the login
+       * screen, because storing it needs a session that holds it. Reported as "the signer declined"
+       * that reads as a bug in the signer; said plainly it is one step. */
+      const msg = String((e && e.message) || '');
+      authErr(/no key on this device/i.test(msg)
+        ? 'this phone has no key yet — sign in with your key once, then turn on '
+          + '“Sign for other apps” in Settings'
+        : (msg || 'the signer declined'));
+    }
     finally{ if(b){ b.disabled=false; b.textContent=was; } }
   }
   function amberErr(m){ const el=$('#amber-error'); if(el) el.textContent=m||''; }

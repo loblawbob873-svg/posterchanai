@@ -58,7 +58,38 @@ def test_the_signing_prompt_is_not_left_lying_around():
     act = m[m.index(".signer.SignerActivity"):]
     act = act[:act.index("</activity>")]
     assert 'android:excludeFromRecents="true"' in act
-    assert 'android:noHistory="true"' in act
+
+
+def test_the_launch_mode_can_actually_return_a_result():
+    """singleTask/singleInstance make the signer answer every request with "rejected".
+
+    Android delivers RESULT_CANCELED IMMEDIATELY when startActivityForResult targets one of those,
+    because they force new-task semantics and a new task cannot return a result to the old one. And
+    startActivityForResult IS the NIP-55 protocol — it is how every client asks, including this app's
+    own Nip55Plugin. Declared singleTask, the signer would have been dead for everyone, with the
+    rejection arriving before the approval dialog was even drawn.
+    """
+    m = re.sub(r"<!--.*?-->", "", _read(MANIFEST), flags=re.S)
+    act = m[m.index(".signer.SignerActivity"):]
+    act = act[:act.index("</activity>")]
+    for fatal in ("singleTask", "singleInstance"):
+        assert fatal not in act, (
+            f"SignerActivity is {fatal}, so startActivityForResult returns RESULT_CANCELED "
+            f"before the user ever sees the prompt")
+
+
+def test_the_prompt_is_not_finished_by_being_stopped():
+    """`noHistory` finishes an activity when it stops.
+
+    A permission prompt over the top, the screen locking, or a glance at another app all stop it —
+    and none of those is the user answering the question. The activity finishes itself on every
+    path, so it does not need the platform to do it.
+    """
+    m = re.sub(r"<!--.*?-->", "", _read(MANIFEST), flags=re.S)
+    act = m[m.index(".signer.SignerActivity"):]
+    act = act[:act.index("</activity>")]
+    assert 'android:noHistory="true"' not in act, \
+        "the approval dialog is destroyed whenever anything covers it"
 
 
 def test_it_is_an_activity_not_a_service():
