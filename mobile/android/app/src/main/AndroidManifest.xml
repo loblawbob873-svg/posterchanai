@@ -91,6 +91,31 @@
         <!-- Screen sharing while live. MediaProjection may only run from a foreground service, and from
              Android 14 the service must declare BOTH types it uses: mediaProjection (the capture) and
              microphone (we stream the mic over the screen as a voiceover). -->
+        <!-- NIP-55: other Nostr apps on this phone ask US to sign, the way they ask Amber.
+             An ACTION_VIEW on a `nostrsigner:` URI; we answer with setResult and finish.
+
+             THIS IS WHY IT IS CHEAP. No service, no socket, no wakelock, no WebView — the OS starts
+             this Activity when somebody asks and the process goes away again after. Between requests
+             the signer costs nothing, because it is not running. The relay-based signer it replaces
+             had to keep a browser engine resident to be reachable at all.
+
+             `singleTask` + `excludeFromRecents`: a signing prompt is not a place in the back stack,
+             and it must not leave what an app asked to sign sitting in the recents preview. -->
+        <activity
+            android:name=".signer.SignerActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="nostrsigner" />
+            </intent-filter>
+        </activity>
+
         <service
             android:name=".screenshare.ScreenShareService"
             android:exported="false"

@@ -25066,6 +25066,58 @@
    * that costs battery and says so in its own notification; turning it on because an app paired
    * would be spending someone's battery on their behalf and quietly contradicting that. It offers,
    * once, in the place where the consequence is legible. */
+  /* SIGN FOR OTHER APPS ON THIS PHONE — the NIP-55 half, and the reason any of this is efficient.
+   *
+   * Another Nostr app fires an Intent at `nostrsigner:`; Android starts SignerActivity, it answers,
+   * it exits. No service, no socket, no WebView, nothing running in between. That is categorically
+   * cheaper than being reachable over a relay, which needs a browser engine resident and a
+   * foreground service to keep it that way.
+   *
+   * THE KEY MOVES ONE WAY. It is handed to the native side and sealed under an AndroidKeyStore key;
+   * there is no way to read it back out, deliberately (`SignerPlugin` has no `getKey`). That is a
+   * security improvement on where it lives today — WebView storage is readable by any script that
+   * gets into the page, and a Keystore key cannot be exported at all.
+   *
+   * LOCAL KEYS ONLY, for the obvious reason: with an extension or a remote signer this device does
+   * not have a secret to hand over, and pretending otherwise would produce a signer that answers
+   * every request with a failure. */
+  async function _renderNip55(){
+    const box = $('#set-nip55'); if(!box) return;
+    const P = _capPlugin('Signer', 'status');
+    if(!P){ box.innerHTML=''; return; }                 // browser or desktop: nothing to register with
+    if(ME.mode !== 'local'){
+      box.innerHTML = '<div><b>Sign for other apps</b> — available when you sign in on this device '
+        + 'with your key. Your key is in ' + (ME.mode === 'nip07' ? 'an extension' : 'a signer')
+        + ', so this phone has nothing to hand over.</div>';
+      return;
+    }
+    let st = {};
+    try{ st = (await P.status()) || {}; }catch(_){ box.innerHTML=''; return; }
+    if(st.have){
+      box.innerHTML = '<div><b>Signing for other apps</b> — other Nostr apps on this phone can ask '
+        + 'this one to sign, the way they would ask Amber. Nothing runs in the background; Android '
+        + 'starts it only when an app asks. <button class="mini" id="nip55-off">turn off</button></div>';
+      const b=$('#nip55-off',box);
+      if(b) b.onclick=async()=>{ try{ await P.disable(); toast('this phone will no longer sign for other apps'); }
+                                 catch(_){ toast('could not turn it off'); } _renderNip55(); };
+      return;
+    }
+    box.innerHTML = '<div><b>Sign for other apps on this phone</b> — let other Nostr apps use this '
+      + 'one as their signer, instead of installing Amber. Your key is sealed by Android and never '
+      + 'leaves this device. <button class="mini" id="nip55-on">turn on</button></div>';
+    const b=$('#nip55-on',box);
+    if(b) b.onclick=async()=>{
+      try{
+        const sess = Session.load();
+        const sec = sess && sess.sk;
+        if(!sec) throw new Error('no local key in this session');
+        const r = await P.enable({ sec });
+        toast('this phone can now sign for other apps' + (r && r.pubkey ? '' : ''));
+      }catch(e){ toast('could not turn it on: ' + ((e && (e.message||e.errorMessage)) || 'refused')); }
+      _renderNip55();
+    };
+  }
+
   async function _signerBackgroundHint(box){
     const P = _capPlugin('PosterChanPush', 'stayConnected');
     if(!P) return;                                    // browser or desktop: nothing to keep awake
@@ -25126,6 +25178,7 @@
                reported as one ("scanning QR code on firefox does nothing"). -->
           <button class="btn btn-neon small" id="set-scan-qr"${ME.mode === 'local' ? '' : ' disabled'}><svg class="ic b-ic" aria-hidden="true"><use href="#i-camera"></use></svg>Scan QR code</button>
           <div id="set-signer-apps" class="muted small" style="margin-top:8px"></div>
+          <div id="set-nip55" class="muted small" style="margin-top:10px"></div>
           ${ME.mode === 'local' ? '' : `<div class="muted small" style="margin-top:6px">Not available in
             this session — your key is in ${ME.mode === 'nip07' ? 'a browser extension' : 'your signer'},
             so this device has nothing to sign the other one in with.</div>`}
@@ -25155,6 +25208,7 @@
     _wireStayConnected();
     { const sq=$('#set-scan-qr'); if(sq) sq.onclick=()=>openQrScanner(); }
     _renderSignerApps();
+    _renderNip55();
     { const ab=$('#set-admin'); if(ab) ab.onclick=()=>switchView('admin'); }
     { const da=$('#set-del-account'); if(da) da.onclick=async()=>{
         if(!await uiConfirm('Permanently delete your account and all your AI chats + files on this server? This cannot be undone.')) return;

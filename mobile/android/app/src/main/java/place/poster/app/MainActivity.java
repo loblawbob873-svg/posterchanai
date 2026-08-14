@@ -55,6 +55,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(place.poster.app.sync.FolderSyncPlugin.class);
         registerPlugin(place.poster.app.gamepad.GamepadPlugin.class);
         registerPlugin(place.poster.app.contacts.ContactSyncPlugin.class);
+        registerPlugin(place.poster.app.signer.SignerPlugin.class);
         if (isSend(getIntent())) shareNonce++;   // cold-started BY a share
         super.onCreate(savedInstanceState);
         allowMediaWithoutAGesture();
