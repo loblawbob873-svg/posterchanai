@@ -232,15 +232,49 @@
          * the only route there is. */
         let r = null, direct = null, apiBase = '';
         try{ apiBase = (PC.apiBase && PC.apiBase()) || ''; }catch(_){}
+        const _try = async (u, viaUs) => {
+          const target = viaUs ? (apiBase + '/client/xdc?url=' + encodeURIComponent(u)) : u;
+          if(viaUs && !apiBase) return null;
+          try{
+            const res = await fetch(target, viaUs ? { credentials:'omit' }
+                                                  : { credentials:'omit', referrerPolicy:'no-referrer' });
+            return res.ok ? res : null;
+          }catch(_){ return null; }
+        };
         try{
           r = await fetch(app.url, { credentials:'omit', referrerPolicy:'no-referrer' });
-        }catch(e){ direct = e; }
-        if((!r || !r.ok) && apiBase){
-          try{
-            const p = await fetch(apiBase + '/client/xdc?url=' + encodeURIComponent(app.url),
-                                  { credentials:'omit' });
-            if(p.ok) r = p;
-          }catch(_){}
+          if(!r.ok) r = null;
+        }catch(e){ direct = e; r = null; }
+        /* THE HOST IS NOT THE APP. `url` is where the author happened to upload it, and it rots:
+         * measured on this gallery, one Blossom server was answering 502 for all five archives it
+         * held (Tetris, Solitaire, Pong and both Tic Tac Toes) while sending no CORS header either,
+         * so the browser reported only "Failed to fetch". All five were still on ANOTHER server,
+         * byte for byte, because a `.xdc` is content-addressed: `x` is its sha256.
+         *
+         * So a failure walks: this node (which has no CORS to fail, and fixes a host that is merely
+         * uncooperative), then the same digest on the Blossom servers this client knows about, each
+         * directly and then through us. That is exactly what Blossom mirroring is for.
+         *
+         * SAFE BY CONSTRUCTION, and only because of the check that already exists below: the bytes
+         * are verified against `x` before anything is opened, so a mirror cannot hand back a
+         * different app than the one that was posted. Without that verification this would be a way
+         * to substitute code, and it must not be copied anywhere the digest is not enforced. */
+        if(!r) r = await _try(app.url, true);
+        if(!r && _isDigest(app.sha)){
+          const seen = new URL(app.url, location.href).origin;
+          const mirrors = [];
+          try{ if(PC.mediaServer && PC.mediaServer()) mirrors.push(PC.mediaServer()); }catch(_){}
+          mirrors.push('https://blossom.ditto.pub', 'https://blossom.primal.net',
+                       'https://blossom.band', 'https://cdn.satellite.earth');
+          for(const m of mirrors){
+            const base = String(m).replace(/\/+$/, '');
+            if(base === seen) continue;                 // already tried, and it is the one that failed
+            for(const u of [base + '/' + app.sha + '.xdc', base + '/' + app.sha]){
+              r = await _try(u, false) || await _try(u, true);
+              if(r) break;
+            }
+            if(r) break;
+          }
         }
         if(!r) throw (direct || new Error('could not download the app'));
         if(!r.ok) throw new Error('could not download the app (HTTP ' + r.status + ')');

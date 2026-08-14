@@ -990,16 +990,41 @@ class XdcProxyFallback(unittest.TestCase):
         self.assertIn("/client/xdc?url=", src,
                       "the direct fetch has no same-origin fallback, so a host without CORS is fatal")
         # DIRECT FIRST is the point: the proxy costs the instance bandwidth and buys no trust (the
-        # sha256 is verified either way), so it must be the exception, not the route.
-        direct = src.index("fetch(app.url")
-        via = src.index("/client/xdc?url=")
-        self.assertLess(direct, via, "the proxy is tried before the host itself")
+        # sha256 is verified either way), so it must be the exception, not the route. Asserted on the
+        # ORDER OF THE ATTEMPTS rather than of the source, because the proxy URL now lives in a
+        # helper defined above them — a plain source-position check reads that as "proxy first".
+        seg = src[src.index("let r = null, direct = null"): src.index("if(!r) throw")]
+        plain = seg.index("fetch(app.url")
+        viaus = seg.index("_try(app.url, true)")
+        self.assertLess(plain, viaus, "this node is asked before the host that actually has the file")
 
     def test_the_fallback_is_skipped_with_no_instance(self):
-        """A standalone desktop build has no server to ask; the direct fetch is the only route."""
+        """A standalone desktop build has no server to ask; direct and the mirrors are all it has."""
         src = _src("static/js/client/webxdc.js")
-        seg = src[src.index("fetch(app.url"): src.index("/client/xdc?url=")]
-        self.assertIn("apiBase", seg, "the fallback is not gated on there being an instance")
+        helper = src[src.index("const _try = async"): src.index("try{\n          r = await fetch(app.url")]
+        self.assertIn("if(viaUs && !apiBase) return null", helper,
+                      "a proxy attempt with no instance would fetch a relative URL against the bundle")
+
+    def test_a_dead_host_falls_back_to_the_same_digest_elsewhere(self):
+        """`url` is where the author uploaded it; `x` is what the app IS.
+
+        Measured: one Blossom server was answering 502 for all five archives it held — Tetris,
+        Solitaire, Pong and both Tic Tac Toes — and every one of them was still on another server,
+        byte for byte. A proxy cannot fix a host that is down; only the digest can.
+        """
+        src = _src("static/js/client/webxdc.js")
+        seg = src[src.index("fetch(app.url"): src.index("if(!r) throw")]
+        self.assertIn("_isDigest(app.sha)", seg,
+                      "the mirror walk is not gated on there being a real digest to match")
+        self.assertIn("blossom", seg.lower(), "no mirrors are tried")
+
+    def test_the_mirror_walk_cannot_substitute_a_different_app(self):
+        """The ONE thing that makes fetching from a host the author never named safe."""
+        src = _src("static/js/client/webxdc.js")
+        walk = src.index("_isDigest(app.sha)")
+        verify = src.index("refusing to run it")
+        self.assertLess(walk, verify,
+                        "bytes from a mirror reach _openArchive before the sha256 is checked")
 
     def test_the_endpoint_guards_ssrf_and_caps_the_size(self):
         src = _src("app/routers/client.py")
