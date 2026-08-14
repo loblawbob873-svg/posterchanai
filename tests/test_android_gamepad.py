@@ -68,6 +68,27 @@ public class Driver {
     public float getAxisValue(int axis){ return axis == MotionEvent.AXIS_X ? v : 0f; }
     public InputDevice getDevice(){ return d; }
   }
+  /* A pad of the OTHER family: right stick on RX/RY, triggers on Z/RZ. Reading Z/RZ for the right
+     stick on this pad reports it dead, which is what a real one did. */
+  static class RxPad extends InputDevice {
+    public InputDevice.MotionRange getMotionRange(int axis, int source){
+      if(axis == MotionEvent.AXIS_Z || axis == MotionEvent.AXIS_RZ)
+        return new InputDevice.MotionRange(0f, 1f, 0f);          // triggers
+      return new InputDevice.MotionRange(-1f, 1f, 0.05f);        // sticks
+    }
+  }
+  static class RxMotion extends MotionEvent {
+    float rx, ry; InputDevice d = new RxPad();
+    RxMotion(float rx, float ry){ this.rx=rx; this.ry=ry; }
+    public int getAction(){ return MotionEvent.ACTION_MOVE; }
+    public int getSource(){ return InputDevice.SOURCE_JOYSTICK; }
+    public float getAxisValue(int axis){
+      if(axis == MotionEvent.AXIS_RX) return rx;
+      if(axis == MotionEvent.AXIS_RY) return ry;
+      return 0f;                                                  // Z/RZ rest at 0, being triggers
+    }
+    public InputDevice getDevice(){ return d; }
+  }
   static class Motion extends MotionEvent {
     float x, y, hx, hy; int s;
     Motion(float x, float y, float hx, float hy, int s){ this.x=x; this.y=y; this.hx=hx; this.hy=hy; this.s=s; }
@@ -115,6 +136,10 @@ public class Driver {
     System.out.println("restTrigger=" + GamepadPlugin.probeAxis(0));
     GamepadPlugin.onMotion(new Ranged(0f, JOY, new Pad(0f, 255f, 0f)));
     System.out.println("restTrigger255=" + GamepadPlugin.probeAxis(0));
+    // THE RIGHT STICK ON A PAD THAT PUTS IT ON RX/RY.
+    GamepadPlugin.onMotion(new RxMotion(0.7f, -0.5f));
+    System.out.println("rsX=" + GamepadPlugin.probeAxis(2));
+    System.out.println("rsY=" + GamepadPlugin.probeAxis(3));
     // A driver claiming the whole travel is deadzone must not divide by zero into NaN.
     GamepadPlugin.onMotion(new Ranged(0.9f, JOY, new Pad(-1f, 1f, 4f)));
     System.out.println("allflat=" + GamepadPlugin.probeAxis(0));
@@ -192,6 +217,16 @@ class NativeGamepad(unittest.TestCase):
         self.assertEqual(float(o["restTrigger"]), 0.0,
                          "an untouched trigger must read centred, not hard-over")
         self.assertEqual(float(o["restTrigger255"]), 0.0)
+
+    def test_the_right_stick_is_found_when_a_pad_puts_it_on_rx_ry(self):
+        """Z/RZ are the right stick on one family of pads and the two triggers on another. Reading
+        them unconditionally reported a DEAD right stick on the second family, with Z/RZ sitting at
+        their resting 0 — measured as "left joystick is doing everything, right joystick doing
+        nothing". The declared range is what tells the families apart."""
+        o = _compile_and_run()
+        self.assertAlmostEqual(float(o["rsX"]), 0.684, places=2,
+                               msg="the right stick must be read from RX when Z is a trigger")
+        self.assertAlmostEqual(float(o["rsY"]), -0.474, places=2)
 
     def test_a_broken_range_costs_one_axis_not_a_NaN(self):
         o = _compile_and_run()

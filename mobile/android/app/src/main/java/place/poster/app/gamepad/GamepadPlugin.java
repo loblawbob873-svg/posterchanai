@@ -54,6 +54,8 @@ public class GamepadPlugin extends Plugin {
   private static final int BUTTONS = 16;
   private static final boolean[] down = new boolean[BUTTONS];
   private static final float[] axes = new float[4];
+  // Which pair the right stick was found on, for the diagnostics panel.
+  private static String rightStick = "Z/RZ";
   private static String padName = "";
 
   // Counters, read by status(). The failure this plugin addresses reports SUCCESS from every side —
@@ -135,8 +137,23 @@ public class GamepadPlugin extends Plugin {
     InputDevice dev = ev.getDevice();
     axes[0] = centred(ev, dev, MotionEvent.AXIS_X);
     axes[1] = centred(ev, dev, MotionEvent.AXIS_Y);
-    axes[2] = centred(ev, dev, MotionEvent.AXIS_Z);
-    axes[3] = centred(ev, dev, MotionEvent.AXIS_RZ);
+    /* THE RIGHT STICK IS Z/RZ ON SOME PADS AND RX/RY ON OTHERS, and the triggers take whichever pair
+     * the sticks did not. Reading Z/RZ unconditionally is right for one family and reports a DEAD
+     * right stick for the other — measured on a real pad as "left joystick is doing everything,
+     * right joystick doing nothing", with Z/RZ sitting at their resting 0 because they were the
+     * triggers all along.
+     *
+     * The declared range settles it without a device database: a stick straddles zero, a trigger
+     * rests at its minimum. Z/RZ stay the default so a pad that describes nothing behaves exactly as
+     * it did before. */
+    int rsX = MotionEvent.AXIS_Z, rsY = MotionEvent.AXIS_RZ;
+    if (!straddles(ev, dev, MotionEvent.AXIS_Z) && straddles(ev, dev, MotionEvent.AXIS_RX)) {
+      rsX = MotionEvent.AXIS_RX;
+      rsY = MotionEvent.AXIS_RY;
+    }
+    rightStick = (rsX == MotionEvent.AXIS_RX) ? "RX/RY" : "Z/RZ";
+    axes[2] = centred(ev, dev, rsX);
+    axes[3] = centred(ev, dev, rsY);
     // The hat IS the d-pad on the pads that report it that way. Folded into the button slots so the
     // page never has to know which kind of controller it is talking to.
     float hx = ev.getAxisValue(MotionEvent.AXIS_HAT_X);
@@ -223,6 +240,13 @@ public class GamepadPlugin extends Plugin {
     return v < -1f ? -1f : (v > 1f ? 1f : v);
   }
 
+  /** Does this axis go negative? A stick does; a trigger, resting at its minimum, does not. */
+  private static boolean straddles(MotionEvent ev, InputDevice dev, int axis) {
+    if (dev == null) return false;
+    InputDevice.MotionRange r = dev.getMotionRange(axis, ev.getSource());
+    return r != null && r.getMin() < 0f;
+  }
+
   private static void named(InputDevice d) {
     if (padName.isEmpty() && d != null && d.getName() != null) padName = d.getName();
   }
@@ -302,6 +326,7 @@ public class GamepadPlugin extends Plugin {
     o.put("motion", motionEvents);
     o.put("key", keyEvents);
     o.put("emits", emits);
+    o.put("rightStick", rightStick);
     // The four slots the page is being handed right now, so a wrong one can be seen rather than
     // described. A stick at rest reads 0 here; anything else is the bug.
     JSONArray live = new JSONArray();
