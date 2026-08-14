@@ -1259,29 +1259,147 @@
   // as the remote signer for another machine: scan its nostrconnect:// QR, ack the connection, then
   // answer its get_public_key / sign_event / nipNN_(en|de)crypt requests — signing with your key,
   // which never leaves this device. The mirror image of the Nip46 *client* above.
+  /* THIS DEVICE AS A REMOTE SIGNER — the Amber side of NIP-46, for apps you sign in from here.
+   *
+   * MULTIPLE APPS AT ONCE. This held ONE pairing and `start()` began with `stop()`, so linking a
+   * second app silently killed the first: the earlier one's requests went out to a relay nobody was
+   * listening on any more and it sat waiting for a signer that had, from its point of view, simply
+   * stopped existing. Sessions are a Map keyed by the app's own pubkey now, and one subscription
+   * serves all of them — the filter is `#p: <our pubkey>`, which was never per-app to begin with,
+   * so routing is a lookup on `ev.pubkey` rather than a comparison against the single current peer.
+   *
+   * PAIRINGS ARE DEVICE-LOCAL AND DELIBERATELY NOT SYNCED. They live in localStorage under this
+   * account's pubkey, not in a kind-30078 document like Notes or the desktop layout. Two reasons,
+   * and the second is the important one: a pairing is an agreement between an APP and THIS DEVICE,
+   * so carrying it to your laptop would have both devices answering the same request and racing to
+   * publish two signatures; and a replaceable document read back empty from an unreachable relay
+   * would take every pairing with it on the next write, which is the wipe this codebase has already
+   * paid for more than once. Losing pairings when you clear site data is the correct, legible
+   * failure — you scan the QR again.
+   *
+   * PERMISSIONS ARE ENFORCED WHEN THE APP DECLARES THEM. `perms` in the nostrconnect URI is what the
+   * app says it needs; it is stored per session and checked on every request, so an app that asked
+   * for `sign_event:1` cannot later sign a kind 5 deletion. An app that declares NOTHING is granted
+   * everything, because scanning its QR is the consent and refusing a client that predates the
+   * parameter would simply break it — but one that names its needs is held to them.
+   */
   const Nip46Signer = {
-    ws:null, relay:null, clientPk:null, secret:null, _subId:null, active:false,
-    async start(uri, onStatus){
-      this.stop();   // drop any previous pairing before linking a new device
-      const m=String(uri||'').trim().match(/^nostrconnect:\/\/([0-9a-f]{64})\??(.*)$/i);
-      if(!m) throw new Error('that QR is not a nostrconnect login link');
-      this.clientPk=m[1].toLowerCase();
-      const qs=new URLSearchParams(m[2]||'');
-      this.relay=qs.getAll('relay')[0]; this.secret=qs.get('secret')||'';
-      const appName=qs.get('name')||'the app';
-      if(!this.relay) throw new Error('that QR is missing its relay');
-      await this._open(this.relay);
-      this.active=true;
-      // Unsolicited connect ACK — tells the client our pubkey (this event's author) + echoes the
-      // secret, which is exactly what its nostrconnect handshake waits for.
-      await this._send({ id:'c'+Math.random().toString(36).slice(2,8), result:this.secret });
-      onStatus && onStatus(appName);
-      return appName;
+    socks: new Map(),        // relay url -> WebSocket. One per relay, however many apps share it.
+    sessions: new Map(),     // client pubkey -> {relay, secret, name, perms, created, last}
+    _subId: null,
+    active: false,
+
+    _key(){ return 'pc_signer_v1_' + ((ME && ME.pubkey) || 'anon'); },
+    _load(){
+      try{
+        const raw = localStorage.getItem(this._key());
+        const arr = raw ? JSON.parse(raw) : [];
+        return Array.isArray(arr) ? arr : [];
+      }catch(_){ return []; }
     },
+    _persist(){
+      try{
+        const out = [];
+        this.sessions.forEach((v, k) => out.push(Object.assign({ pk: k }, v)));
+        localStorage.setItem(this._key(), JSON.stringify(out));
+      }catch(_){}                   // a full quota must not take down a working signer
+    },
+    list(){
+      const out = [];
+      this.sessions.forEach((v, k) => out.push(Object.assign({ pk: k }, v)));
+      return out.sort((a, b) => (b.last || b.created || 0) - (a.last || a.created || 0));
+    },
+
+    /* Grants, parsed from the URI's `perms`. Kept as a plain array of strings so it survives
+     * JSON round-tripping through localStorage — a Set does not. */
+    _grants(qs){
+      const raw = (qs.get('perms') || '').trim();
+      if(!raw) return null;                       // declared nothing → everything (see the header)
+      return raw.split(',').map(s => s.trim()).filter(Boolean);
+    },
+    _allowed(sess, method, params){
+      const g = sess && sess.perms;
+      if(!g) return true;                          // no declaration → no restriction
+      // Always answerable: the handshake itself, a liveness check, and the pubkey — which is public
+      // by definition and which every client asks for immediately after connecting.
+      if(method === 'connect' || method === 'ping' || method === 'get_public_key') return true;
+      if(g.indexOf(method) >= 0) return true;
+      if(method === 'sign_event'){
+        let kind = null;
+        try{
+          let tpl = params && params[0];
+          if(typeof tpl === 'string') tpl = JSON.parse(tpl);
+          kind = tpl && tpl.kind;
+        }catch(_){}
+        if(kind !== null && kind !== undefined && g.indexOf('sign_event:' + kind) >= 0) return true;
+      }
+      return false;
+    },
+
+    async start(uri, onStatus){
+      const m = String(uri||'').trim().match(/^nostrconnect:\/\/([0-9a-f]{64})\??(.*)$/i);
+      if(!m) throw new Error('that QR is not a nostrconnect login link');
+      const clientPk = m[1].toLowerCase();
+      const qs = new URLSearchParams(m[2]||'');
+      const relay = qs.getAll('relay')[0];
+      if(!relay) throw new Error('that QR is missing its relay');
+      const name = qs.get('name') || 'the app';
+      const sess = { relay, secret: qs.get('secret')||'', name, url: qs.get('url')||'',
+                     perms: this._grants(qs), created: Math.floor(Date.now()/1000), last: 0 };
+      this.active = true;
+      // Registered BEFORE the socket opens: the subscription is shared, so an ack we publish can be
+      // answered before `_open` resolves, and `_recv` must already be able to find the session.
+      this.sessions.set(clientPk, sess);
+      this._persist();
+      try{
+        await this._open(relay);
+        // Unsolicited connect ACK — tells the client our pubkey (this event's author) and echoes the
+        // secret, which is exactly what its nostrconnect handshake waits for.
+        await this._send(clientPk, { id:'c'+Math.random().toString(36).slice(2,8), result: sess.secret });
+      }catch(e){
+        this.sessions.delete(clientPk); this._persist(); this._sync();
+        throw e;
+      }
+      this._sync();
+      onStatus && onStatus(name);
+      return name;
+    },
+
+    /* Reopen everything this device was already signing for. Called on sign-in, not on scan — a
+     * pairing that survives a reload is the whole point of persisting it, and without this the
+     * paired app looks alive right up until you refresh the page. */
+    async resume(){
+      const saved = this._load();
+      if(!saved.length) return 0;
+      this.active = true;
+      saved.forEach(s => { const pk = s.pk; if(pk){ const c = Object.assign({}, s); delete c.pk;
+                                                    this.sessions.set(pk, c); } });
+      const relays = [...new Set(this.list().map(s => s.relay).filter(Boolean))];
+      await Promise.all(relays.map(r => this._open(r).catch(()=>{})));
+      this._sync();
+      return this.sessions.size;
+    },
+
+    revoke(clientPk){
+      this.sessions.delete(String(clientPk||''));
+      this._persist();
+      // Close a relay nothing needs any more; keep the ones still carrying a session.
+      const keep = new Set(this.list().map(s => s.relay));
+      this.socks.forEach((ws, url) => {
+        if(keep.has(url)) return;
+        try{ ws.onclose = null; ws.close(); }catch(_){}
+        this.socks.delete(url);
+      });
+      if(!this.sessions.size) this.active = false;
+      this._sync();
+    },
+
     _open(relay){
+      const have = this.socks.get(relay);
+      if(have && have.readyState === 1) return Promise.resolve();
       return new Promise((res,rej)=>{
-        let done=false; const ws=new WebSocket(relay); this.ws=ws;
-        ws.onopen=()=>{ this._subId='ns'+Math.random().toString(36).slice(2,8);
+        let done=false; const ws=new WebSocket(relay); this.socks.set(relay, ws);
+        ws.onopen=()=>{ this._subId = this._subId || ('ns'+Math.random().toString(36).slice(2,8));
           /* NIP46_SINCE_SKEW, not the 5 seconds this had — for the reason written at that constant,
            * which applies to THIS side just as much and was only ever fixed on the other one. The
            * two ends of a QR pairing are two machines with two clocks by definition, the relay
@@ -1289,33 +1407,56 @@
            * desktop a minute behind this phone had every request dropped before it arrived. The
            * phone says "now logged in", the desktop sits on "waiting for the signer to approve…"
            * until it times out, and nothing anywhere raises an error, because from this side nothing
-           * ever came. Nothing stale can be replayed in: the client's app key is minted fresh per
-           * attempt, so no 24133 addressed to it can predate the pairing.
-           * scripts/check_qr_device_login.py pairs two real browsers with a skewed clock. */
+           * ever came. scripts/check_qr_device_login.py pairs two real browsers with a skewed clock. */
           ws.send(JSON.stringify(['REQ', this._subId, { kinds:[24133], '#p':[ME.pubkey], since: Math.floor(Date.now()/1000)-NIP46_SINCE_SKEW }]));
           if(!done){ done=true; res(); } };
         ws.onmessage=(e)=>this._recv(e.data);
         ws.onerror=()=>{ if(!done){ done=true; rej(new Error('cannot reach the relay in the QR')); } };
-        ws.onclose=()=>{ if(this.active && this.ws===ws){ this.ws=null; setTimeout(()=>{ if(this.active && !this.ws) this._open(relay).catch(()=>{}); }, 2000); } };
+        ws.onclose=()=>{
+          if(this.socks.get(relay) === ws) this.socks.delete(relay);
+          // Reconnect only while something still needs THIS relay. A revoked pairing must not keep
+          // a socket alive for ever, and a stopped signer must genuinely stop.
+          if(!this.active) return;
+          if(!this.list().some(s => s.relay === relay)) return;
+          setTimeout(()=>{ if(this.active && !this.socks.get(relay)) this._open(relay).catch(()=>{}); }, 2000);
+        };
         setTimeout(()=>{ if(!done){ done=true; rej(new Error('relay timed out')); } }, 9000);
       });
     },
-    async _decode(ct){ for(const op of ['nip04dec','nip44dec']){ try{ return JSON.parse((await Relay.worker.call(op,{ peer:this.clientPk, ct })).pt); }catch(_){} } return null; },
-    async _send(payload){
-      const ct=(await Relay.worker.call('nip04enc',{ peer:this.clientPk, text:JSON.stringify(payload) })).ct;
-      const tpl={ kind:24133, content:ct, tags:[['p',this.clientPk]], created_at:Math.floor(Date.now()/1000), pubkey:ME.pubkey };
+
+    async _decode(clientPk, ct){
+      for(const op of ['nip04dec','nip44dec']){
+        try{ return JSON.parse((await Relay.worker.call(op,{ peer:clientPk, ct })).pt); }catch(_){}
+      }
+      return null;
+    },
+    async _send(clientPk, payload){
+      const ct=(await Relay.worker.call('nip04enc',{ peer:clientPk, text:JSON.stringify(payload) })).ct;
+      const tpl={ kind:24133, content:ct, tags:[['p',clientPk]], created_at:Math.floor(Date.now()/1000), pubkey:ME.pubkey };
       const signed=await Relay.worker.call('sign',{ event:tpl });
-      try{ this.ws && this.ws.send(JSON.stringify(['EVENT', signed])); }catch(_){}
+      // To every socket that carries this session's relay; in practice one, but a session whose
+      // relay reconnected under a different entry must still be answerable.
+      const sess=this.sessions.get(clientPk);
+      const ws=sess && this.socks.get(sess.relay);
+      try{ if(ws && ws.readyState===1) ws.send(JSON.stringify(['EVENT', signed])); }catch(_){}
     },
     async _recv(raw){
       let m; try{ m=JSON.parse(raw); }catch(_){ return; }
       if(m[0]!=='EVENT' || m[1]!==this._subId) return;
-      const ev=m[2]; if(!ev || ev.kind!==24133 || ev.pubkey!==this.clientPk) return;
-      const req=await this._decode(ev.content); if(!req || !req.id || !req.method) return;
+      const ev=m[2]; if(!ev || ev.kind!==24133) return;
+      const sess=this.sessions.get(ev.pubkey);
+      if(!sess) return;                       // not an app we are signing for
+      const req=await this._decode(ev.pubkey, ev.content); if(!req || !req.id || !req.method) return;
+      sess.last=Math.floor(Date.now()/1000); this._persist();
       let result=null, error=null;
-      try{ result=await this._handle(req.method, req.params||[]); }
-      catch(e){ error=String((e&&e.message)||e); }
-      await this._send(error ? { id:req.id, result:'', error } : { id:req.id, result });
+      if(!this._allowed(sess, req.method, req.params||[])){
+        error='not permitted: '+req.method+' was not in what this app asked for';
+      }else{
+        try{ result=await this._handle(req.method, req.params||[]); }
+        catch(e){ error=String((e&&e.message)||e); }
+      }
+      await this._send(ev.pubkey, error ? { id:req.id, result:'', error } : { id:req.id, result });
+      this._sync();
     },
     async _handle(method, params){
       switch(method){
@@ -1334,7 +1475,16 @@
         default: throw new Error('unsupported method: '+method);
       }
     },
-    stop(){ this.active=false; try{ if(this.ws){ this.ws.onclose=null; this.ws.close(); } }catch(_){} this.ws=null; },
+    /* Repaint whatever is showing the pairings. Deliberately NOT a native call: see
+     * `_signerBackgroundHint`, which explains why this reuses StayAwakeService rather than starting
+     * a foreground service of its own. */
+    _sync(){ try{ _renderSignerApps(); }catch(_){} },
+    stop(){
+      this.active=false;
+      this.socks.forEach(ws => { try{ ws.onclose=null; ws.close(); }catch(_){} });
+      this.socks.clear(); this.sessions.clear(); this._subId=null;
+      this._persist(); this._sync();
+    },
   };
 
   // Camera QR scanner (uses the native BarcodeDetector; falls back to pasting the link). On a
@@ -1411,7 +1561,11 @@
     try{
       const name=await Nip46Signer.start(uri);
       toast('✅ “'+name+'” is now logged in — your key stayed on this device');
-    }catch(e){ toast('QR sign-in failed: '+((e&&e.message)||e)); Nip46Signer.stop(); }
+    }catch(e){
+      // NOT stop(). That killed every OTHER app this device was signing for because one QR failed —
+      // start() already removes the half-made session on its own way out.
+      toast('QR sign-in failed: '+((e&&e.message)||e));
+    }
   }
 
   // ---------- boot ----------
@@ -2442,6 +2596,15 @@
 
   function startApp(){
     GUEST = !signer;   // a real login always has a signer; the guest sentinel does not
+    /* Pick the signer sessions back up. Every login path funnels through here, which is why the
+     * resume lives here and not beside the four places that set mode 'local': a pairing that only
+     * survives until the page reloads is not a pairing, it is a demo, and the app on the other end
+     * has no way to tell the difference until it next needs a signature. Local keys only — an
+     * extension or a remote signer keeps the key somewhere this page cannot reach, so there is
+     * nothing here to sign with. Fire-and-forget: a dead relay must not hold up the app. */
+    try{
+      if(!GUEST && ME && ME.mode === 'local') Nip46Signer.resume().catch(()=>{});
+    }catch(_){}
     /* Opened by "🗔 Open in a window": the same client, drawn without the sidebar, nav and rightbar
      * it has no room for. A class rather than a separate page, because the whole point is that this
      * IS the ordinary stream view — nothing here is a second implementation to fall behind. */
@@ -24825,6 +24988,66 @@
   // The running client build = the app.js ?v (mtime) the shell loaded. Lets us confirm a deploy actually
   // reached this device (the SW-cache/"not updating" class of confusion).
   function _clientBuild(){ try{ const s=document.querySelector('script[src*="/client/app.js"]'); const m=s&&s.src.match(/[?&]v=(\d+)/); return m?m[1]:'?'; }catch(_){ return '?'; } }
+  /* The apps this device signs for — visible, and revocable one at a time.
+   *
+   * Without this the pairings were invisible: nothing on screen said an app was connected, and the
+   * only way to end one was to clear site data, which ends all of them. A signer that cannot say
+   * what it is signing for is not one anybody should trust with a key. */
+  function _renderSignerApps(){
+    const box = $('#set-signer-apps'); if(!box) return;
+    const apps = (window.Nip46Signer ? Nip46Signer.list() : (typeof Nip46Signer !== 'undefined' ? Nip46Signer.list() : []));
+    if(!apps.length){ box.innerHTML = ME.mode === 'local'
+      ? 'No apps are signed in with this device.' : ''; return; }
+    box.innerHTML = '<div style="margin:6px 0 4px"><b>Signed in with this device</b></div>'
+      + apps.map(a => `<div class="row" style="justify-content:space-between;align-items:center;gap:8px;margin:3px 0">
+          <span>${enc(a.name || 'an app')}
+            <span class="muted">· ${a.perms ? enc(String(a.perms.length)) + ' permissions' : 'all permissions'}${
+              a.last ? ' · last used ' + enc(timeAgo(a.last)) + ' ago' : ''}</span></span>
+          <button class="mini" data-revoke="${enc(a.pk)}">revoke</button></div>`).join('');
+    $$('[data-revoke]', box).forEach(b => b.onclick = () => {
+      Nip46Signer.revoke(b.dataset.revoke); toast('signed that app out'); _renderSignerApps(); });
+    _signerBackgroundHint(box);
+  }
+
+  /* SIGNING IN THE BACKGROUND, on the phone — and why there is no signer service of its own.
+   *
+   * The signing happens in the WebView, because that is where the key is. Android takes the WebView
+   * away: the renderer is killed under memory pressure and a backgrounded Activity is destroyed, so
+   * a paired app asking for a signature while PosterChan is closed gets silence. That is the real
+   * gap against Amber, which is a separate process with a service of its own.
+   *
+   * The capability to fix it ALREADY EXISTS here: `StayAwakeService` is a specialUse foreground
+   * service whose whole job is keeping this app's process — and therefore its WebView and its relay
+   * sockets — alive when the screen is off. A second service would be the same code, a second
+   * permanent notification and a second battery story, for no capability the first one lacks.
+   *
+   * So this does NOT switch it on by itself. "Stay connected" is documented as an explicit opt-in
+   * that costs battery and says so in its own notification; turning it on because an app paired
+   * would be spending someone's battery on their behalf and quietly contradicting that. It offers,
+   * once, in the place where the consequence is legible. */
+  async function _signerBackgroundHint(box){
+    const P = _capPlugin('PosterChanPush', 'stayConnected');
+    if(!P) return;                                    // browser or desktop: nothing to keep awake
+    let on = false;
+    try{ on = !!((await P.stayConnected()) || {}).on; }catch(_){ return; }
+    if(on){
+      box.insertAdjacentHTML('beforeend',
+        '<div class="muted small" style="margin-top:6px">These keep working while PosterChan is in '
+        + 'the background, because “Stay connected” is on.</div>');
+      return;
+    }
+    box.insertAdjacentHTML('beforeend',
+      '<div class="muted small" style="margin-top:6px">These only sign while PosterChan is open — '
+      + 'Android stops the app when it is in the background. '
+      + '<button class="mini" id="signer-stay">sign in the background</button></div>');
+    const b = $('#signer-stay', box);
+    if(b) b.onclick = async () => {
+      try{ await P.setStayConnected({ on:true });
+           toast('staying connected — see the permanent notification'); _renderSignerApps(); }
+      catch(e){ toast('could not turn it on: ' + ((e && (e.message||e.errorMessage)) || 'refused')); }
+    };
+  }
+
   function renderSettings(){
     const feed=$('#feed');
     feed.innerHTML = `<div class="settings">
@@ -24861,6 +25084,7 @@
                key" — but a live button that opens no camera reads as a broken scanner, and was
                reported as one ("scanning QR code on firefox does nothing"). -->
           <button class="btn btn-neon small" id="set-scan-qr"${ME.mode === 'local' ? '' : ' disabled'}><svg class="ic b-ic" aria-hidden="true"><use href="#i-camera"></use></svg>Scan QR code</button>
+          <div id="set-signer-apps" class="muted small" style="margin-top:8px"></div>
           ${ME.mode === 'local' ? '' : `<div class="muted small" style="margin-top:6px">Not available in
             this session — your key is in ${ME.mode === 'nip07' ? 'a browser extension' : 'your signer'},
             so this device has nothing to sign the other one in with.</div>`}
@@ -24889,6 +25113,7 @@
     _wirePushToggle();
     _wireStayConnected();
     { const sq=$('#set-scan-qr'); if(sq) sq.onclick=()=>openQrScanner(); }
+    _renderSignerApps();
     { const ab=$('#set-admin'); if(ab) ab.onclick=()=>switchView('admin'); }
     { const da=$('#set-del-account'); if(da) da.onclick=async()=>{
         if(!await uiConfirm('Permanently delete your account and all your AI chats + files on this server? This cannot be undone.')) return;
@@ -29157,6 +29382,11 @@
     capPlugin: _capPlugin,
     // The desktop hides the sidebar, and #me-card was the only way to reach your own profile.
     openProfile: (pk) => renderProfileView(pk || (ME && ME.pubkey)),
+    /* The apps THIS DEVICE signs for, and the ability to end one. Exposed because a signer that
+     * cannot be inspected cannot be tested: scripts/check_qr_device_login.py pairs two apps and
+     * asserts BOTH survive, which is exactly the case the old single-session signer failed. */
+    signerApps: () => { try{ return Nip46Signer.list(); }catch(_){ return []; } },
+    signerRevoke: (pk) => { try{ Nip46Signer.revoke(pk); }catch(_){} },
     /* Who is signed in. os.js and the other modules live OUTSIDE this IIFE, so `window.ME` is
      * undefined for them no matter who is logged in — which silently hid the desktop's tray avatar
      * (and with it the whole account switcher) and both launcher entries gated on it. */

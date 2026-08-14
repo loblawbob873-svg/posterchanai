@@ -29,6 +29,15 @@ The scenarios are clock skew, because that is the whole failure mode here and it
                  by the desktop's window, the requests by the phone's). Both windows have to be wide,
                  and only asking in both directions proves it.
 
+  two-apps       TWO apps signed in from one phone, and both still there after it reloads. The signer
+                 could not do this at all: it held ONE pairing and `start()` began with `stop()`, so
+                 linking a second app silently ended the first — the earlier device's requests went to
+                 a relay nobody was listening on any more, and it waited on a signer that had, from
+                 its point of view, stopped existing. Verified to fail against that behaviour before
+                 the fix, with the message "the phone is signing for 1 app(s), not 2". The reload is
+                 the other half: sessions lived in memory, so refreshing the phone orphaned every app
+                 it signed for, undetectable from the app until the next signature never came.
+
 Exit 0 = clean, 1 = failures (printed), 2 = could not run (no Chrome / no instance / no websockets).
 """
 import asyncio
@@ -186,6 +195,30 @@ PHONE_SCAN = r"""(async (uri) => {
   return { ok:true };
 })"""
 
+# A SECOND app paired from the same phone. `Nip46Signer` held one session and `start()` began with
+# `stop()`, so this used to kill the first pairing outright — the earlier device's requests went to a
+# relay nobody was listening on any more, and it waited on a signer that had stopped existing.
+PHONE_SCAN_AGAIN = """(async (uri) => {
+  const sl=ms=>new Promise(r=>setTimeout(r,ms)); const $=s=>document.querySelector(s);
+  window.__PC.switchView('settings');
+  for(let i=0;i<60 && !$('#set-scan-qr'); i++) await sl(200);
+  $('#set-scan-qr').click();
+  for(let i=0;i<60 && !$('#qr-paste'); i++) await sl(200);
+  $('#qr-paste').click();
+  for(let i=0;i<60 && !$('#qr-paste-uri'); i++) await sl(200);
+  $('#qr-paste-uri').value = uri;
+  $('#qr-paste-go').click();
+  return {ok:true};})"""
+
+# What the phone thinks it is signing for, and whether it survives a reload.
+PHONE_SESSIONS = """(async () => {
+  const sl=ms=>new Promise(r=>setTimeout(r,ms));
+  for(let i=0;i<40;i++){ await sl(250);
+    try{ const n = window.__PC.signerApps().length; if(n) return {n:n, apps:window.__PC.signerApps()}; }catch(_){}
+  }
+  try{ return {n:0, apps:window.__PC.signerApps()}; }catch(e){ return {err:String(e)}; }})()"""
+
+
 # Did the desktop actually end up signed in, and AS WHOM. "the gate closed" is not the question: a
 # resumed session closes it too, and that is a pass this check must never be able to hand out.
 DESKTOP_WAIT = r"""(async () => {
@@ -252,6 +285,78 @@ async def run_case(name, desktop, phone, url, skew, problems):
     return None
 
 
+async def run_two_apps(desktop, phone, url, problems):
+    """TWO apps signed in from one phone, and both still there after it reloads.
+
+    This is the case the signer could not do at all: it held ONE pairing and `start()` began with
+    `stop()`, so linking a second app silently ended the first — the earlier device's requests went
+    to a relay nobody was listening on any more, and it waited on a signer that had, from its point
+    of view, stopped existing. Nothing errored on either side.
+
+    The reload is the other half. Sessions lived in memory, so refreshing the phone orphaned every
+    app it was signing for, with no way to tell from the app except the next signature never coming.
+    """
+    if not await phone.load(url + "/client", "#btn-nsec-login"):
+        return "SKIP the phone never finished loading"
+    await phone.js("try{localStorage.clear();sessionStorage.clear();}catch(_){}", awaited=False)
+    if not await phone.load(url + "/client", "#btn-nsec-login"):
+        return "SKIP the phone never finished loading"
+    nsec, pk = fresh_nsec()
+    r = await phone.js(f"({PHONE_LOGIN})({json.dumps(nsec)})") or {}
+    if not r.get("ok"):
+        return "SKIP " + str(r.get("err") or "the phone would not sign in")
+
+    # Two desktops in sequence, through the SAME browser: each gets its own nostrconnect link, which
+    # is its own app key, which is its own session.
+    await desktop.skew(0)
+    uris = []
+    for i in (1, 2):
+        if not await desktop.load(url + "/client", "#btn-amber"):
+            return "SKIP the desktop never finished loading"
+        await desktop.js("try{localStorage.clear();sessionStorage.clear();}catch(_){}", awaited=False)
+        if not await desktop.load(url + "/client", "#btn-amber"):
+            return "SKIP the desktop never finished loading"
+        # RETRIED ONCE, and only for a relay that did not open in time. This case runs after three
+        # pairings have already been made and torn down through the same browser, and
+        # `beginNostrConnect` resets its pool and redials on every attempt, so the fourth dial in a
+        # row occasionally times out. That is the CHECK's own impatience, not the signer's: run on
+        # its own the same code passes every time. A flaky check is worse than no check, because it
+        # teaches people to re-run until it is green. Anything that is NOT a timeout still fails
+        # immediately, because those are real.
+        q = {}
+        for attempt in (1, 2):
+            q = await desktop.js(DESKTOP_SHOW_QR) or {}
+            if q.get("uri") or "timed out" not in str(q.get("err") or ""):
+                break
+            await asyncio.sleep(3)
+        if not q.get("uri"):
+            problems.append(("two-apps", q.get("err") or "no nostrconnect link", f"app {i}"))
+            return None
+        uris.append(q["uri"])
+        s = await phone.js(f"({PHONE_SCAN_AGAIN})({json.dumps(q['uri'])})") or {}
+        if not s.get("ok"):
+            problems.append(("two-apps", "the phone could not take the link", f"app {i}"))
+            return None
+        await asyncio.sleep(3)
+
+    got = await phone.js(PHONE_SESSIONS) or {}
+    if got.get("n") != 2:
+        problems.append(("two-apps", f"the phone is signing for {got.get('n')} app(s), not 2",
+                         "pairing a second app ended the first"))
+        return None
+
+    # …and they survive a reload, which is the whole reason they are persisted.
+    if not await phone.load(url + "/client", "#feed, #btn-nsec-login"):
+        return "SKIP the phone never came back"
+    await asyncio.sleep(3)
+    back = await phone.js(PHONE_SESSIONS) or {}
+    if back.get("n") != 2:
+        problems.append(("two-apps-reload",
+                         f"{back.get('n')} app(s) survived the reload, not 2",
+                         "sessions are not being restored"))
+    return None
+
+
 async def drive(url):
     chrome = (shutil.which("google-chrome-stable") or shutil.which("google-chrome")
               or shutil.which("chromium"))
@@ -274,6 +379,11 @@ async def drive(url):
             if skipped:
                 print(skipped)
                 return 2
+        if not only or only == "two-apps":
+            skipped = await run_two_apps(desktop, phone, url, problems)
+            if skipped:
+                print(skipped)
+                return 2
     finally:
         await desktop.stop()
         await phone.stop()
@@ -283,7 +393,7 @@ async def drive(url):
         for name, err, detail in problems:
             print(f"  [{name}] {err}" + (f" — {detail}" if detail else ""))
         return 1
-    print("OK  QR device login pairs both devices, in step and with either clock ahead")
+    print("OK  QR device login: both clocks, two apps at once, and both survive a reload")
     return 0
 
 
