@@ -268,20 +268,31 @@ def test_the_app_name_is_read_before_the_prompt_that_names_it():
         "the relay prompt reads `name` before it is declared"
 
 
-def test_re_pairing_the_same_device_offers_to_replace_it():
-    """Every pairing mints a FRESH app key, so re-pairing a laptop makes a second entry.
+def test_replacing_signs_out_ONE_device_not_every_one_that_shares_a_name():
+    """Every PosterChan client announces itself as "PosterChan".
 
-    Do that a few times and the list is a wall of identical names with no way to tell which one is
-    the machine in front of you. Replacing by name alone would be wrong the other way: every
-    PosterChan client announces itself as "PosterChan", so two genuinely different devices collide
-    and pairing the second would silently sign the first out. Only the person holding both knows —
-    so they are asked, and only when there is actually a clash.
+    The first version revoked every session sharing the name, so pairing a tablet signed the desktop
+    out — reported exactly that way. "Replace" has to mean the entry the new pairing makes
+    redundant: the one nobody has used for longest. Re-pairing a laptop leaves its old row idle,
+    while the machine you are actively signing on has a recent timestamp and must survive.
     """
     src = _src()
     seg = src[src.index("  async function onQrScanned(uri){"):]
     seg = seg[:seg.index("\n  }\n")]
+    assert "clash.forEach" not in seg, \
+        "replacing revokes every session sharing the name, signing out devices you are still using"
+    assert "stalest" in seg and "Nip46Signer.revoke(stalest.pk)" in seg, \
+        "replace does not target the least-recently-used pairing"
+    assert "a.last||a.created" in seg.replace(" ", ""), \
+        "staleness is not decided by when the pairing was last used"
+
+
+def test_the_prompt_says_which_login_it_will_replace():
+    """"Replace" over a list of identical names is otherwise a guess the user authorises blind."""
+    src = _src()
+    seg = src[src.index("  async function onQrScanned(uri){"):]
+    seg = seg[:seg.index("\n  }\n")]
     assert "uiConfirm" in seg, "a repeat pairing silently adds another identical entry"
-    assert "Keep both" in seg, "replacing is forced rather than offered"
-    assert "Nip46Signer.revoke" in seg, "choosing replace does not remove the old pairing"
-    assert ".filter(" in seg and "x.name" in seg, \
-        "the prompt is not conditional on an actual name clash"
+    assert "last used" in seg or "never used" in seg, \
+        "the prompt does not identify the pairing it is about to remove"
+    assert "Keep them all" in seg, "replacing is forced rather than offered"

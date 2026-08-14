@@ -6,7 +6,7 @@ more than five tags — `maintainers` holds the hosting node's operator key, whi
 state witness and is half the push ACL, and `relays` is the advertised push endpoint. Emitting only
 the fields on screen would leave the repo looking fine and quietly break pushing to it.
 
-This runs the SHIPPED publishRepo() out of static/js/client/app.js under node, rather than a copy of
+This runs the SHIPPED publishRepo() out of static/js/client/git.js under node, rather than a copy of
 its logic — a copy is the one thing that can't catch the regression it exists to catch. The function
 is sliced out by brace-matching and given stubs for the browser it expects.
 """
@@ -18,7 +18,10 @@ from pathlib import Path
 
 import pytest
 
-APP_JS = Path(__file__).resolve().parents[1] / "static" / "js" / "client" / "app.js"
+# git.js, not app.js: the NIP-34 code was the first slice moved out of app.js (2026-08-14), and this
+# test reads the SHIPPED source rather than a copy — so it follows the code. It failed loudly when the
+# move happened, which is exactly what a test anchored on real source should do.
+APP_JS = Path(__file__).resolve().parents[1] / "static" / "js" / "client" / "git.js"
 
 EXISTING = {
     "id": "a" * 64,
@@ -67,6 +70,11 @@ def _harness(edits: dict) -> str:
 const EDITS = %s, EXISTING = %s;
 let PUBLISHED = null, MOUNT = null, OPENED = null, TOASTS = [];
 const ME = {pubkey: EXISTING.pubkey};
+/* `S` is git.js's live-state accessor. The module reads S.ME / S.CFG / S.VIEW rather than the bare
+ * bindings, because app.js REASSIGNS those and passing their values would freeze the module at boot
+ * — see project_appjs_split. The harness has to provide it or publishRepo throws "S is not defined"
+ * before it does anything, which is how this test greeted the extraction. */
+const S = { ME, CFG: {}, VIEW: 'repos', GUEST: false, LOGO: '' };
 const enc = s => String(s == null ? '' : s);
 const toast = m => TOASTS.push(m);
 const closeModal = () => {};

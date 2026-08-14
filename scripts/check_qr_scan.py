@@ -71,6 +71,9 @@ PORT = int(os.environ.get("PC_CHECK_PORT") or 9499)
 PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-qrscan-check"
 
 W, H, FRAMES = 640, 480, 60
+# The third-party scenario runs at a modern camera's resolution, because that is the whole point of
+# asking getUserMedia for one: their code is version 19 and only pixels-per-module decides.
+BIG_W, BIG_H = 1280, 720
 
 # The URI shape `beginNostrConnect` builds, including the full perms list — the thing that makes the
 # symbol dense. Built here rather than scraped from the running client so the check states plainly
@@ -78,6 +81,19 @@ W, H, FRAMES = 640, 480, 60
 _KINDS = (0, 1, 3, 4, 5, 6, 7, 1059, 9734, 10000, 10002, 10003, 10050, 27235, 30078)
 _PERMS = ("get_public_key%2Cnip04_encrypt%2Cnip04_decrypt%2Cnip44_encrypt%2Cnip44_decrypt"
           + "".join("%2Csign_event%3A" + str(k) for k in _KINDS))
+
+
+# A THIRD-PARTY code, of the shape Primal and friends print: name, url, an icon URL and the full
+# perms list. Ours is deliberately short (perms live in the tap-link, not the QR) and other apps make
+# no such choice — so their symbol is denser than anything we generate, and "I cannot scan primal's
+# QR" is a size problem on somebody else's payload that only our scanner can fix.
+def third_party_uri(app_pk: str, relay: str, secret: str) -> str:
+    import urllib.parse
+    q = urllib.parse.quote
+    return (f"nostrconnect://{app_pk}?relay={q(relay, safe='')}&secret={secret}"
+            f"&perms={_PERMS}&name={q('Primal')}"
+            f"&url={q('https://primal.net', safe='')}"
+            f"&image={q('https://primal.net/assets/primal-logo-512.png', safe='')}")
 
 
 def signer_uri(app_pk: str, relay: str, secret: str, perms: bool = False) -> str:
@@ -128,13 +144,13 @@ console.log(JSON.stringify({version:(q.size-17)/4,modules:q.size,pxPerModule:s})
 """
 
 
-def make_video(uri: str, path: str, fill: float, blur: int) -> dict:
+def make_video(uri: str, path: str, fill: float, blur: int, w: int = W, h: int = H) -> dict:
     js = os.path.join(os.path.dirname(path), "_y4m.js")
     with open(js, "w", encoding="utf-8") as fh:
         fh.write(_Y4M_JS)
     r = subprocess.run(
         ["node", js, os.path.join(ROOT, "static/js/client/qr.js"), uri, path,
-         str(W), str(H), str(FRAMES), str(fill), str(blur)],
+         str(w), str(h), str(FRAMES), str(fill), str(blur)],
         capture_output=True, text=True)
     if r.returncode != 0:
         raise RuntimeError(r.stderr.strip()[:300])
@@ -209,13 +225,18 @@ async def run(url):
     # Framings, calibrated against what a camera actually delivers (see the module docstring). The
     # last two are the ones that FAIL if the perms list ever goes back into the QR: at v18 they are
     # 1 and 2 pixels per module, which no amount of holding still recovers.
+    # (name, frame fill, blur passes, use a third-party-shaped URI)
     cases = [("filled", 0.92, 0), ("aimed", 0.40, 1), ("blurred", 0.55, 2),
              # ANDROID'S WEBVIEW, reproduced. BarcodeDetector exists and constructs, and `detect()`
              # resolves to an empty array for ever because the Play Services module behind it is not
              # installed — no error, no rejection, nothing to catch. The scanner used to commit to it
              # on sight with no way back to jsQR, so the phone could NEVER scan while Amber (native
              # ML Kit) read the same code off the same screen every time.
-             ("dead-barcodedetector", 0.92, 0)]
+             ("dead-barcodedetector", 0.92, 0),
+             # Somebody else's code, denser than any we print. Reported as "unable to scan
+             # primal.net's QR": their payload carries name, url, an icon and the whole perms list,
+             # so it lands several versions above ours and it is not ours to shorten.
+             ("third-party", 0.55, 1)]
     only = os.environ.get("PC_ONLY")
     if only:
         cases = [c for c in cases if c[0] == only]
@@ -224,8 +245,14 @@ async def run(url):
     try:
         for name, fill, blur in cases:
             lying = name == "dead-barcodedetector"
+            # A third-party payload pairs on the same relay on purpose: the point of the scenario is
+            # whether the CAMERA can read a denser code, and pairing elsewhere would additionally
+            # trip the foreign-relay prompt and test two things at once.
+            this_uri = third_party_uri(app_pk, relay_url, "k9x2m4p7qz") \
+                if name == "third-party" else uri
             video = os.path.join(tmp, f"{name}.y4m")
-            info = make_video(uri, video, fill, blur)
+            info = make_video(this_uri, video, fill, blur,
+                              *( (BIG_W, BIG_H) if name == "third-party" else (W, H) ))
             subprocess.run(["rm", "-rf", PROFILE], check=False)
             proc = subprocess.Popen(
                 [chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
