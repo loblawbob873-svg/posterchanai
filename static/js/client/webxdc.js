@@ -214,7 +214,35 @@
             try{ const c = await caches.open(CACHE); await c.delete(app.url); }catch(_){}
           }
         }
-        const r = await fetch(app.url, { credentials:'omit', referrerPolicy:'no-referrer' });
+        /* DIRECT FIRST, THEN THROUGH THIS NODE. Fetching the archive from wherever it is hosted is
+         * the right default and stays the default — it costs the instance nothing, and the bytes are
+         * checked against the `x` sha256 below either way, so a proxy buys no trust and would only
+         * spend somebody's bandwidth.
+         *
+         * But a Blossom server is free not to send `Access-Control-Allow-Origin`, and the browser
+         * reports that as a bare `TypeError: Failed to fetch` — from here, identical to the host
+         * being down, and there is nothing the reader can do about either. Measured across this
+         * gallery: 42 of 48 apps fetch directly, and every CORS failure was one host — which took
+         * Tetris, Solitaire, Pong and both Tic Tac Toes with it, i.e. the tiles anybody clicks first.
+         *
+         * So a failure retries through `/client/xdc`, which is same-origin and therefore has no CORS
+         * to fail. A REAL 404 still fails, and should: the proxy passes the upstream's emptiness
+         * through rather than inventing an archive, so "this app is gone" keeps saying so. Skipped
+         * entirely with no instance to ask (the standalone desktop build), where the direct fetch is
+         * the only route there is. */
+        let r = null, direct = null, apiBase = '';
+        try{ apiBase = (PC.apiBase && PC.apiBase()) || ''; }catch(_){}
+        try{
+          r = await fetch(app.url, { credentials:'omit', referrerPolicy:'no-referrer' });
+        }catch(e){ direct = e; }
+        if((!r || !r.ok) && apiBase){
+          try{
+            const p = await fetch(apiBase + '/client/xdc?url=' + encodeURIComponent(app.url),
+                                  { credentials:'omit' });
+            if(p.ok) r = p;
+          }catch(_){}
+        }
+        if(!r) throw (direct || new Error('could not download the app'));
         if(!r.ok) throw new Error('could not download the app (HTTP ' + r.status + ')');
         const len = Number(r.headers.get('content-length') || 0);
         if(len > MAX_XDC) throw new Error('that app is too large to open here');

@@ -1968,6 +1968,58 @@ async def client_proxy_image(url: str = Query(...)):
         raise HTTPException(status_code=502, detail="failed to fetch image")
 
 
+@router.get("/xdc")
+async def client_proxy_xdc(url: str = Query(...)):
+    """Same-origin fallback for downloading a mini app's `.xdc`.
+
+    The client fetches the archive straight from wherever it is hosted, which is right and should
+    stay the default: it costs this node nothing and the bytes are verified against the `x` sha256
+    afterwards either way. But a Blossom server is free not to send `Access-Control-Allow-Origin`,
+    and a browser turns that into a bare `TypeError: Failed to fetch` — indistinguishable, from the
+    client, from the host being down. MEASURED on this node's gallery: 48 apps, 42 fetch fine, and
+    every failure but one was a single host with no CORS header (Tetris, Solitaire, Pong and two
+    Tic Tac Toes — the tiles anybody clicks first). The remaining one was a real 404, which this
+    cannot and should not paper over.
+
+    STREAMED AND CAPPED, because these are not thumbnails: the published Half-Life port is ~178 MB,
+    so reading one into memory to hand it back would cost that per concurrent launch on the single
+    uvicorn worker. `MAX` matches the client's own MAX_XDC — a bigger file is refused here rather
+    than transferred and then rejected there.
+
+    The SSRF guard is the same one the image proxy uses, and it is the reason this takes a URL at
+    all: without it, "fetch this URL for me" is a hole straight into the LAN.
+    """
+    import httpx                       # module-local, like every other httpx user in this router
+    from fastapi.responses import StreamingResponse
+    from app.services.search_service import is_safe_url
+    ok, err = is_safe_url(url)
+    if not ok:
+        raise HTTPException(status_code=400, detail=err)
+    MAX = 256 * 1024 * 1024
+
+    async def _stream():
+        sent = 0
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0),
+                                     follow_redirects=True) as client:
+            async with client.stream("GET", url, headers={"Accept": "*/*"}) as r:
+                if r.status_code >= 400:
+                    # Raised inside the generator, so the client sees a truncated body rather than a
+                    # status — which is why the size/status check that CAN be done up front is done
+                    # by the HEAD-less content-length below instead of trusted from here.
+                    return
+                length = int(r.headers.get("content-length") or 0)
+                if length > MAX:
+                    return
+                async for chunk in r.aiter_bytes(65536):
+                    sent += len(chunk)
+                    if sent > MAX:
+                        return
+                    yield chunk
+
+    return StreamingResponse(_stream(), media_type="application/x-webxdc",
+                             headers={"Cache-Control": "public, max-age=86400"})
+
+
 @router.get("/gif")
 async def gif_search(q: str = "", db: Session = Depends(get_db)):
     """GIF picker — proxies Giphy or Tenor (key server-side, never exposed). Giphy wins if both set."""

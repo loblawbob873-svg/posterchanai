@@ -967,3 +967,45 @@ class OpeningAnApp(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _src(rel):
+    """The shipped file as text. (`_read` in this module means something else entirely — it runs a
+    script under node against a zip archive.)"""
+    return (ROOT / rel).read_text(encoding="utf-8")
+
+
+class XdcProxyFallback(unittest.TestCase):
+    """Downloading a mini app survives a Blossom host that sends no CORS header.
+
+    MEASURED on this node's gallery before it was written: 48 apps, 42 fetch directly from wherever
+    they are hosted, and every CORS failure belonged to ONE host — which took Tetris, Solitaire,
+    Pong and both Tic Tac Toes with it, i.e. the tiles anybody clicks first. The browser reports that
+    as a bare `TypeError: Failed to fetch`, which from the client is indistinguishable from the host
+    being down, so there was nothing to say and nothing to do.
+    """
+
+    def test_the_client_retries_through_this_node(self):
+        src = _src("static/js/client/webxdc.js")
+        self.assertIn("/client/xdc?url=", src,
+                      "the direct fetch has no same-origin fallback, so a host without CORS is fatal")
+        # DIRECT FIRST is the point: the proxy costs the instance bandwidth and buys no trust (the
+        # sha256 is verified either way), so it must be the exception, not the route.
+        direct = src.index("fetch(app.url")
+        via = src.index("/client/xdc?url=")
+        self.assertLess(direct, via, "the proxy is tried before the host itself")
+
+    def test_the_fallback_is_skipped_with_no_instance(self):
+        """A standalone desktop build has no server to ask; the direct fetch is the only route."""
+        src = _src("static/js/client/webxdc.js")
+        seg = src[src.index("fetch(app.url"): src.index("/client/xdc?url=")]
+        self.assertIn("apiBase", seg, "the fallback is not gated on there being an instance")
+
+    def test_the_endpoint_guards_ssrf_and_caps_the_size(self):
+        src = _src("app/routers/client.py")
+        seg = src[src.index('@router.get("/xdc")'): src.index('@router.get("/gif")')]
+        self.assertIn("is_safe_url", seg,
+                      '"fetch this URL for me" without the guard is a hole into the LAN')
+        self.assertIn("StreamingResponse", seg,
+                      "the Half-Life port is ~178MB; buffering one costs that per launch")
+        self.assertIn("MAX", seg, "no size cap")
