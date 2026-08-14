@@ -88,5 +88,5 @@ for base in libigc libigdfcl libiga64; do
 done
 
 command -v ldconfig >/dev/null && ldconfig || true
-echo "OK: IGC ${IGC_VER} installed ($installed libs). Restart the GPU services:"
-echo "  sudo systemctl restart posterchanai-xpu-image.service posterchanai.service"
+echo "OK: IGC ${IGC_VER} installed ($installed libs). Restart the GPU service:"
+echo "  sudo systemctl restart posterchanai.service"

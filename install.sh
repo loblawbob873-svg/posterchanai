@@ -336,9 +336,6 @@ main() {
         echo "  With Caddy / Traefik / another proxy: one rule — docs/WEBXDC.md"
     fi
 
-    # Step 10: Setup XPU image instance for Intel Arc
-    setup_xpu_image_instance
-
     # Step 11: Setup systemd service
     setup_systemd
 

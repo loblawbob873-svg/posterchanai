@@ -109,8 +109,9 @@ For an Intel Arc box, three layers must be in place. **You** install the first v
 | **openSUSE** | `zypper install intel-compute-runtime level-zero libze1 libigdgmm12 patchelf pax-utils` (Tumbleweed; Leap may need Intel's repo) |
 | **Arch** | `pacman -S intel-compute-runtime level-zero-loader intel-graphics-compiler patchelf pax-utils` (oneAPI from AUR `intel-oneapi-basekit`) |
 
-After layer 1 + oneAPI + `install-igc.sh`, run `./install.sh` and it builds the two venvs and the
-two systemd services (`posterchanai` :3051, `posterchanai-xpu-image` :3052). The installer
+After layer 1 + oneAPI + `install-igc.sh`, run `./install.sh` and it builds the ONE venv
+(`venv-unified`, chat + image together) and the `posterchanai` service on :3051. There is no second
+image venv or image service; :3052 is the built-in Nostr relay. The installer
 auto-detects the distro (`/etc/os-release`, incl. `ID_LIKE` for derivatives) and prints the exact
 package commands for anything still missing.
 
@@ -477,10 +478,16 @@ python run.py
 
 ## Image generation (XPU)
 
-Image gen (SDXL via `diffusers`) runs as a **separate service** (`posterchanai-xpu-image.service`,
-port 3052) in its **own venv**, on a **modern torch 2.8 XPU** stack — no IPEX, no oneAPI sourcing
-(torch 2.8 bundles its own oneAPI 2025.1 runtime via pip). It runs the actual generation in a
-subprocess (`scripts/generate_image_subprocess.py`).
+Image gen (SDXL via `diffusers`) runs **inside the main `posterchanai` service** on the unified
+venv, on a **modern torch 2.8 XPU** stack — no IPEX, no oneAPI sourcing (torch 2.8 bundles its own
+oneAPI 2025.1 runtime via pip). It can run the generation itself or fork it
+(`scripts/generate_image_subprocess.py`, the `image_subprocess_mode` setting).
+
+There is **no `posterchanai-xpu-image.service` and no port-3052 image server** — that pair was
+retired when the venvs were unified, and :3052 is the Nostr relay now. Both are still worth saying
+out loud because a stale reference to a service that no longer exists costs a real investigation:
+`systemctl is-active` reports `inactive` for a unit that was never installed, so the absence reads
+as an outage.
 
 **Setup (legacy — superseded by the unified `install.sh` flow at the top of this doc):**
 ```bash

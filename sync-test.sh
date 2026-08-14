@@ -22,7 +22,7 @@ _wait_gpu_free() {
 }
 
 _wait_gpu_free "arc" /tmp/posterchanai_locks/gpu.lock
-sudo systemctl restart posterchanai.service posterchanai-xpu-image.service
+sudo systemctl restart posterchanai.service
 
 ssh nas.lan "
 _wait_gpu_free() {

@@ -13,7 +13,11 @@ image gen, TTS/STT, email/news/torrents, a file manager, a **Nostr client + rela
 
 - Entry point: `python run.py` (uvicorn, **single worker**, port from `POSTERCHANAI_PORT`,
   default **3051**). On this deployment the Intel Arc box runs `posterchanai.service`
-  (port 3051) + `posterchanai-xpu-image.service`; `nas.lan` runs `posterchanai`.
+  (port 3051); `nas.lan` runs `posterchanai`. **There is no separate image service** — the
+  port-3052 `posterchanai-xpu-image.service` was retired when the venvs were unified, and 3052 is
+  now the RELAY (`run.py --role relay`). `systemctl is-active` answers `inactive` for a unit that
+  was never installed, which reads exactly like "stopped and should be running"; `systemctl cat`
+  (`No files found`) is the question worth asking.
 - venv at **`venv-unified/`** (`venv-unified/bin/python`) — there is no `venv/` on this deployment.
   Quick checks: `venv-unified/bin/python -m py_compile <files>`, and `-m pyflakes` for undefined
   names (what `sync.sh`'s pre-push gate runs).

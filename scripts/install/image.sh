@@ -125,10 +125,8 @@ setup_pytorch_cpu() {
     print_success "PyTorch CPU ready"
 }
 
-setup_xpu_image_instance() {
-    # No-op: superseded by the UNIFIED venv. The Intel chat (llama.cpp SYCL) + native image
-    # (diffusers torch-XPU) deps now live in ONE venv (venv-unified), installed by
-    # setup_python_env + setup_image_deps. There is no separate venv-xpu / port-3052 image
-    # service anymore. Kept as a callable stub so any existing call site stays harmless.
-    return
-}
+# (Removed) setup_xpu_image_instance — superseded by the UNIFIED venv. The Intel chat (llama.cpp
+# SYCL) + native image (diffusers torch-XPU) deps live in ONE venv (venv-unified), installed by
+# setup_python_env + setup_image_deps. There is no separate venv-xpu / port-3052 image service, and
+# its last call site (install.sh "Step 10") is gone with it. The empty stub outlived the thing it
+# replaced and read, to anyone grepping, like a service that merely wasn't running.
