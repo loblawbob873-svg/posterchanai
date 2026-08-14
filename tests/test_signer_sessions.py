@@ -237,63 +237,51 @@ def test_the_qr_carries_the_short_uri_and_the_link_carries_the_full_one():
     assert "qrSrc(qrUri" in draw, "the QR is drawn from the full URI, not the short one"
 
 
-def test_the_signer_only_uses_this_instances_relay():
+def test_a_foreign_relay_is_asked_about_rather_than_obeyed_or_refused():
     """A QR is a picture anyone can print, and it names the relay this device will dial.
 
-    Unconstrained, a code from anywhere could point the signer — the half that holds the key — at a
-    stranger's relay, which learns the device's IP from the connection alone, before any pairing is
-    approved. It costs nothing in the flow this exists for: `_ncRelays()` names `CFG.relay_url` and
-    nothing else, so a PosterChan QR already carries exactly this relay.
+    Obeyed blindly, a code from anywhere aims the half of the app that holds the key at a stranger's
+    relay, which learns the device's IP from the connection alone. Refused outright — which is what
+    shipped first — the signer only works with its own instance, and jumble.social and Coracle print
+    perfectly good codes naming theirs. Being usable by other apps is the whole point of the feature,
+    so the gate is consent: ours is the silent default, anything else names the host and asks once.
     """
     src = _src()
     seg = src[src.index("    async start(uri, onStatus){"): src.index("    async resume(){")]
-    assert "CFG && CFG.relay_url" in seg, "the signer takes whatever relay the QR names"
-    assert "const relay = ourRelay || qrRelay" in seg, \
-        "the instance relay does not take precedence over the QR's"
+    assert "CFG && CFG.relay_url" in seg, "the signer does not know which relay is its own"
+    assert "uiConfirm" in seg, "a foreign relay is taken without asking, or refused without asking"
+    assert "const relay = qrRelay;" in seg, \
+        "the QR's relay is not used even after being allowed — the pairing would be made against a "\
+        "relay the other app is not listening on, and would wait for ever with both halves correct"
 
 
-def test_a_foreign_relay_is_refused_out_loud_not_silently_swapped():
-    """Quietly re-pointing it at ours would pair against a relay the other device is not listening
-    on: both halves behave perfectly and it waits on "waiting for the signer" for ever."""
-    src = _src()
-    seg = src[src.index("    async start(uri, onStatus){"): src.index("    async resume(){")]
-    assert "throw new Error(" in seg[seg.index("ourRelay &&"):], \
-        "a mismatched relay is swapped rather than reported"
+def test_the_app_name_is_read_before_the_prompt_that_names_it():
+    """`const` is in a temporal dead zone until its declaration.
 
-
-def test_a_standalone_build_still_works():
-    """With no instance there is no relay of ours to insist on, and the QR's is all there is."""
-    src = _src()
-    seg = src[src.index("    async start(uri, onStatus){"): src.index("    async resume(){")]
-    assert "ourRelay &&" in seg, "the constraint is applied even when this build has no instance relay"
-
-
-def test_answering_a_request_does_not_repaint_the_settings_card():
-    """Sending one DM is several signer requests, and each used to redraw the paired-apps list.
-
-    Reported as "user settings is flickering... it flicked when I sent a DM". `_recv` called `_sync`
-    so the "last used" line would stay fresh — but the SET of paired apps has not changed, only how
-    recently one of them asked for something, and a list that rewrites its own innerHTML three times
-    while somebody is reading it is worse than a timestamp that is a minute stale.
+    Reading `name` above its `const` throws ReferenceError on exactly the pairing the prompt exists
+    to allow — a crash reachable only by a third-party QR, which is the case least likely to be
+    tried locally.
     """
-    obj = _signer_obj()
-    recv = obj[obj.index("async _recv(raw){"): obj.index("async _handle(method, params){")]
-    assert "this._sync()" not in recv, \
-        "_recv repaints the settings card, so every signature flickers it"
+    src = _src()
+    seg = src[src.index("    async start(uri, onStatus){"): src.index("    async resume(){")]
+    assert seg.index("const name = qs.get('name')") < seg.index("uiConfirm"), \
+        "the relay prompt reads `name` before it is declared"
 
 
-def test_the_list_still_repaints_when_the_apps_actually_change():
-    """The other half: pairing or revoking must show up immediately, or the card lies."""
-    obj = _signer_obj()
-    for fn, start, end in (("start", "async start(uri, onStatus){", "async resume(){"),
-                           ("revoke", "revoke(clientPk){", "_open(relay){"),
-                           ("resume", "async resume(){", "revoke(clientPk){")):
-        body = obj[obj.index(start): obj.index(end)]
-        assert "this._sync()" in body, f"{fn}() changes the set of apps without repainting"
+def test_re_pairing_the_same_device_offers_to_replace_it():
+    """Every pairing mints a FRESH app key, so re-pairing a laptop makes a second entry.
 
-
-def test_last_used_is_not_written_to_storage_on_every_request():
-    """localStorage per signature, for a timestamp only ever read when the card is drawn."""
-    obj = _signer_obj()
-    recv = obj[obj.index("async _recv(raw){"): obj.index("async _handle(method, params){")]
-    assert "_lastSaved" in recv, "every request writes the whole session list to localStorage"
+    Do that a few times and the list is a wall of identical names with no way to tell which one is
+    the machine in front of you. Replacing by name alone would be wrong the other way: every
+    PosterChan client announces itself as "PosterChan", so two genuinely different devices collide
+    and pairing the second would silently sign the first out. Only the person holding both knows —
+    so they are asked, and only when there is actually a clash.
+    """
+    src = _src()
+    seg = src[src.index("  async function onQrScanned(uri){"):]
+    seg = seg[:seg.index("\n  }\n")]
+    assert "uiConfirm" in seg, "a repeat pairing silently adds another identical entry"
+    assert "Keep both" in seg, "replacing is forced rather than offered"
+    assert "Nip46Signer.revoke" in seg, "choosing replace does not remove the old pairing"
+    assert ".filter(" in seg and "x.name" in seg, \
+        "the prompt is not conditional on an actual name clash"

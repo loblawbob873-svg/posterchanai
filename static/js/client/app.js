@@ -1364,33 +1364,41 @@
       if(!m) throw new Error('that QR is not a nostrconnect login link');
       const clientPk = m[1].toLowerCase();
       const qs = new URLSearchParams(m[2]||'');
-      /* THIS INSTANCE'S RELAY, AND ONLY THAT ONE.
+      /* THIS INSTANCE'S RELAY BY DEFAULT, ANOTHER ONLY IF YOU SAY SO.
        *
-       * The relay in the QR is chosen by whoever printed the QR, and this side would dial it — so a
-       * code from anywhere could point our signer at a stranger's relay and learn the device's IP
-       * from the connection alone, before any pairing is approved. The signer holds the key; it does
-       * not get to be aimed by a picture.
+       * The relay in a QR is chosen by whoever printed the QR, and this side dials it — so a code
+       * from anywhere could aim the half of the app that holds the key at a stranger's relay, which
+       * learns the device's IP from the connection alone, before any pairing is approved. That is
+       * why it is not simply obeyed.
        *
-       * It costs nothing in the flow this exists for: `_ncRelays()` on the client half names
-       * `CFG.relay_url` and nothing else, so a PosterChan QR already carries exactly this relay. A
-       * QR naming a different one is REFUSED OUT LOUD rather than quietly re-pointed at ours — a
-       * silent substitution would pair against a relay the other device is not listening on, and it
-       * would sit on "waiting for the signer" for ever with both halves behaving correctly.
+       * But refusing outright was too blunt, and broke the thing this is for: jumble.social and
+       * Coracle print perfectly good nostrconnect codes naming THEIR relay, and a signer that only
+       * works with its own instance is not a signer other apps can use. Being usable by other apps
+       * is the entire point of the feature.
        *
-       * With no instance relay (a standalone build) there is nothing of ours to insist on, so the
-       * QR's own relay is all there is and is used as before. */
+       * So the rule is consent, not ownership. Ours is the silent default — a PosterChan QR always
+       * names exactly this relay, so the common path asks nothing. Anything else names the host and
+       * asks once, and the answer decides. Silently substituting our relay would be the worst of
+       * both: the pairing would be made against a relay the other app is not listening on, both
+       * halves would behave perfectly, and it would wait for ever. */
       const qrRelay = qs.getAll('relay')[0];
       if(!qrRelay) throw new Error('that QR is missing its relay');
+      // Declared BEFORE the relay question, which names it. `const` is in a temporal dead zone until
+      // its declaration, so reading it above would throw ReferenceError on exactly the pairing this
+      // prompt exists to allow.
+      const name = qs.get('name') || 'the app';
       const ourRelay = (CFG && CFG.relay_url) || '';
       const _norm = (u) => String(u||'').trim().replace(/\/+$/,'').toLowerCase();
       if(ourRelay && _norm(qrRelay) !== _norm(ourRelay)){
         let where = qrRelay;
         try{ where = new URL(qrRelay).host; }catch(_){}
-        throw new Error('that QR wants a signer on ' + where
-          + ', but this device only signs on this instance\u2019s relay');
+        const ok = await uiConfirm(
+          '“' + name + '” wants to be signed in through ' + where + ', which is not your instance’s '
+          + 'relay. Your key stays on this device either way, but this device will connect to that '
+          + 'relay. Allow it?', { ok:'Allow', cancel:'Cancel' });
+        if(!ok) throw new Error('you declined the relay that QR asked for');
       }
-      const relay = ourRelay || qrRelay;
-      const name = qs.get('name') || 'the app';
+      const relay = qrRelay;
       const sess = { relay, secret: qs.get('secret')||'', name, url: qs.get('url')||'',
                      perms: this._grants(qs), created: Math.floor(Date.now()/1000), last: 0 };
       this.active = true;
@@ -1656,13 +1664,45 @@
   }
   async function onQrScanned(uri){
     try{
-      const name=await Nip46Signer.start(uri);
-      toast('✅ “'+name+'” is now logged in — your key stayed on this device');
+      /* REPLACE, OR KEEP BOTH — asked, not assumed.
+       *
+       * `beginNostrConnect` mints a FRESH app key for every attempt, which is right (nothing stale
+       * can be replayed into a pairing) and means re-pairing the same laptop makes a SECOND entry
+       * rather than updating the first. Do that a few times and the list is a wall of identical
+       * names with no way to tell which one is the machine in front of you.
+       *
+       * Replacing by name alone would be wrong in the other direction: every PosterChan client
+       * announces itself as "PosterChan", so two genuinely different devices collide and pairing the
+       * second would silently sign the first out. Only the person holding both knows which it is, so
+       * they are the one asked — and only when there is actually a collision. */
+      const name = _nostrconnectName(uri);
+      const clash = Nip46Signer.list().filter(x => (x.name||'') === name);
+      if(clash.length){
+        const go = await uiConfirm(
+          // uiConfirm escapes the message itself; enc() here would double-escape the name.
+          'You are already signing for “' + name + '”' +
+          (clash.length > 1 ? ' (' + clash.length + ' of them)' : '') +
+          '. Replace it, or keep both?',
+          { ok:'Replace', cancel:'Keep both' });
+        if(go) clash.forEach(x => Nip46Signer.revoke(x.pk));
+      }
+      const nm=await Nip46Signer.start(uri);
+      toast('✅ “'+nm+'” is now logged in — your key stayed on this device');
     }catch(e){
       // NOT stop(). That killed every OTHER app this device was signing for because one QR failed —
       // start() already removes the half-made session on its own way out.
       toast('QR sign-in failed: '+((e&&e.message)||e));
     }
+  }
+
+  /* The app's own name out of a nostrconnect link, for the "replace or keep both" question. Parsed
+   * rather than taken from `start()`'s return value, because the question has to be asked BEFORE the
+   * pairing is made — afterwards there are two and the answer is a deletion. */
+  function _nostrconnectName(uri){
+    try{
+      const m=String(uri||'').trim().match(/^nostrconnect:\/\/[0-9a-f]{64}\??(.*)$/i);
+      return (new URLSearchParams((m&&m[1])||'')).get('name') || 'the app';
+    }catch(_){ return 'the app'; }
   }
 
   // ---------- boot ----------
@@ -29579,6 +29619,13 @@
      * cannot be inspected cannot be tested: scripts/check_qr_device_login.py pairs two apps and
      * asserts BOTH survive, which is exactly the case the old single-session signer failed. */
     signerApps: () => { try{ return Nip46Signer.list(); }catch(_){ return []; } },
+    /* Close the signer's relay sockets, as an idle relay does. Exposed for
+     * scripts/check_qr_device_login.py: a signer is only used when something is signed, so its
+     * socket is idle by definition and the FIRST post after a quiet spell is the one that finds it
+     * gone — which is untestable without being able to take it away on purpose. */
+    signerDropSockets: () => { let n=0;
+      try{ Nip46Signer.socks.forEach(ws => { try{ ws.close(); n++; }catch(_){} }); }catch(_){}
+      return n; },
     signerRevoke: (pk) => { try{ Nip46Signer.revoke(pk); }catch(_){} },
     /* Who is signed in. os.js and the other modules live OUTSIDE this IIFE, so `window.ME` is
      * undefined for them no matter who is logged in — which silently hid the desktop's tray avatar

@@ -192,6 +192,15 @@ PHONE_SCAN = r"""(async (uri) => {
   if (!$('#qr-paste-uri')) return { ok:false, err:'no paste box' };
   $('#qr-paste-uri').value = uri;
   $('#qr-paste-go').click();
+  /* ANSWER THE "replace or keep both" QUESTION. Every PosterChan client announces itself as
+   * "PosterChan", so a second pairing from the same phone always collides by name and is asked.
+   * `data-uc="0"` is the CANCEL button, which here means "Keep both" — this check exists to prove
+   * two apps can be paired at once, so it must say so out loud rather than leave the dialog
+   * unanswered and then report the feature as broken. */
+  for (let i=0;i<40;i++){ await sleep(150);
+    const c = document.querySelector('.uiconfirm [data-uc="0"]');
+    if (c) { c.click(); break; }
+  }
   return { ok:true };
 })"""
 
@@ -208,6 +217,15 @@ PHONE_SCAN_AGAIN = """(async (uri) => {
   for(let i=0;i<60 && !$('#qr-paste-uri'); i++) await sl(200);
   $('#qr-paste-uri').value = uri;
   $('#qr-paste-go').click();
+  /* ANSWER THE "replace or keep both" QUESTION. Every PosterChan client announces itself as
+   * "PosterChan", so a second pairing from the same phone always collides by name and is asked.
+   * `data-uc="0"` is the CANCEL button, which here means "Keep both" — this check exists to prove
+   * two apps can be paired at once, so it must say so out loud rather than leave the dialog
+   * unanswered and then report the feature as broken. */
+  for (let i=0;i<40;i++){ await sl(150);
+    const c = document.querySelector('.uiconfirm [data-uc="0"]');
+    if (c) { c.click(); break; }
+  }
   return {ok:true};})"""
 
 # What the phone thinks it is signing for, and whether it survives a reload.
@@ -217,6 +235,28 @@ PHONE_SESSIONS = """(async () => {
     try{ const n = window.__PC.signerApps().length; if(n) return {n:n, apps:window.__PC.signerApps()}; }catch(_){}
   }
   try{ return {n:0, apps:window.__PC.signerApps()}; }catch(e){ return {err:String(e)}; }})()"""
+
+
+# PAIRING IS NOT THE FEATURE — SIGNING IS. Every scenario above stops at "the desktop is logged in",
+# which only exercises the handshake and `get_public_key`. The thing people actually do next is write
+# a post, and that is a `sign_event` travelling the same path in the other direction: reported as
+# "signer request timed out when trying to make a new post", with pairing working perfectly.
+DESKTOP_SIGN = """(async () => {
+  const sl=ms=>new Promise(r=>setTimeout(r,ms));
+  try{
+    const ev = await window.__PC.sign(1, 'check_qr_device_login test note', []);
+    if(!ev || !ev.sig || !ev.id) return {ok:false, err:'the signer returned no signature'};
+    return {ok:true, id:String(ev.id).slice(0,12)};
+  }catch(e){ return {ok:false, err:String((e && e.message) || e)}; }})()"""
+
+
+# THE SIGNER'S SOCKET, KILLED. A relay idle-drops a connection nobody is using, and a signer is used
+# only when something is signed — so the FIRST post after a quiet spell is the one that finds the
+# socket gone. Reported as "signer request timed out when trying to make a new post" while pairing
+# itself worked perfectly, which is exactly the shape of a reconnect that never happens.
+PHONE_DROP_SOCKETS = """(() => {
+  try{ return {closed: window.__PC.signerDropSockets()}; }
+  catch(e){ return {err:String((e&&e.message)||e)}; }})()"""
 
 
 # Did the desktop actually end up signed in, and AS WHOM. "the gate closed" is not the question: a
@@ -280,8 +320,77 @@ async def run_case(name, desktop, phone, url, skew, problems):
     elif w.get("pk") != pk:
         problems.append((name, "the desktop signed in as the wrong key",
                          f"got {str(w.get('pk'))[:12]}…, the phone holds {pk[:12]}…"))
+    else:
+        # …and it can actually SIGN, which is what a pairing is FOR.
+        sg = await desktop.js(DESKTOP_SIGN) or {}
+        if not sg.get("ok"):
+            problems.append((name + "/sign", sg.get("err") or "no signature came back",
+                             "paired fine, then could not sign a note"))
+        elif os.environ.get("PC_DEBUG"):
+            print(f"  DEBUG {name}: paired in {took:.0f}s as {pk[:12]}…, signed {sg.get('id')}",
+                  flush=True)
+    return None
+
+
+async def run_idle_socket(desktop, phone, url, problems):
+    """Pair, drop the signer's sockets as an idle relay would, then post.
+
+    A signer is used only when something is signed, so its connection is idle by definition — and
+    the first post after a quiet spell is the one that discovers the relay dropped it. Everything
+    before this scenario signs seconds after pairing, on a socket that was never allowed to go cold,
+    which is the one condition under which a missing reconnect cannot show itself.
+    """
+    if not await phone.load(url + "/client", "#btn-nsec-login"):
+        return "SKIP the phone never finished loading"
+    await phone.js("try{localStorage.clear();sessionStorage.clear();}catch(_){}", awaited=False)
+    if not await phone.load(url + "/client", "#btn-nsec-login"):
+        return "SKIP the phone never finished loading"
+    nsec, pk = fresh_nsec()
+    r = await phone.js(f"({PHONE_LOGIN})({json.dumps(nsec)})") or {}
+    if not r.get("ok"):
+        return "SKIP " + str(r.get("err") or "the phone would not sign in")
+
+    await desktop.skew(0)
+    if not await desktop.load(url + "/client", "#btn-amber"):
+        return "SKIP the desktop never finished loading"
+    await desktop.js("try{localStorage.clear();sessionStorage.clear();}catch(_){}", awaited=False)
+    if not await desktop.load(url + "/client", "#btn-amber"):
+        return "SKIP the desktop never finished loading"
+    # Retried once on a relay timeout, for the reason spelled out in run_two_apps: this browser has
+    # already opened and torn down pairings, and the next dial is occasionally slow. Anything that is
+    # not a timeout still fails immediately.
+    q = {}
+    for _attempt in (1, 2):
+        q = await desktop.js(DESKTOP_SHOW_QR) or {}
+        if q.get("uri") or "timed out" not in str(q.get("err") or ""):
+            break
+        await asyncio.sleep(3)
+    if not q.get("uri"):
+        problems.append(("idle-socket", q.get("err") or "no nostrconnect link", ""))
+        return None
+    sc = await phone.js(f"({PHONE_SCAN})({json.dumps(q['uri'])})") or {}
+    if not sc.get("ok"):
+        problems.append(("idle-socket", sc.get("err") or "the phone could not take the link", ""))
+        return None
+    w = await desktop.js(DESKTOP_WAIT) or {}
+    if not w.get("ok"):
+        problems.append(("idle-socket", w.get("err") or "the desktop never signed in", ""))
+        return None
+
+    dropped = await phone.js(PHONE_DROP_SOCKETS) or {}
+    if dropped.get("err") or not dropped.get("closed"):
+        return f"SKIP could not drop the signer's sockets ({dropped})"
+    # NO GRACE PERIOD, deliberately. Waiting for the reconnect tests the reconnect; the case that
+    # actually bites is the request arriving DURING it, because that is what pressing Post
+    # immediately after a quiet spell looks like. The reply has nowhere to go for a couple of
+    # seconds, and a reply that is dropped rather than held is a request that times out 120s later.
+    sg = await desktop.js(DESKTOP_SIGN) or {}
+    if not sg.get("ok"):
+        problems.append(("idle-socket", sg.get("err") or "no signature came back",
+                         f"closed {dropped.get('closed')} socket(s); the signer never reconnected"))
     elif os.environ.get("PC_DEBUG"):
-        print(f"  DEBUG {name}: paired in {took:.0f}s as {pk[:12]}…", flush=True)
+        print(f"  DEBUG idle-socket: dropped {dropped.get('closed')}, signed {sg.get('id')}",
+              flush=True)
     return None
 
 
@@ -376,6 +485,11 @@ async def drive(url):
             cases = [c for c in cases if c[0] == only]
         for name, skew in cases:
             skipped = await run_case(name, desktop, phone, url, skew, problems)
+            if skipped:
+                print(skipped)
+                return 2
+        if not only or only == "idle-socket":
+            skipped = await run_idle_socket(desktop, phone, url, problems)
             if skipped:
                 print(skipped)
                 return 2
