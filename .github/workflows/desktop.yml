@@ -21,6 +21,9 @@ on:
       - 'desktop/**'
       - 'static/js/client/**'
       - 'static/css/client.css'
+      # Same as android.yml: the catalogues live IN the bundle, so a language change ships only with
+      # a rebuild.
+      - 'static/i18n/**'
       - 'templates/client.html'
       - '.github/workflows/desktop.yml'
   workflow_dispatch:

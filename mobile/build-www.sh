@@ -87,14 +87,28 @@ window.__PC_APP_BUILD__ = __BUILD__;
       o.headers = h; return o;
     }catch(e){ return o; }
   }
+  // NOT EVERY ROOT-RELATIVE URL IS A SERVER CALL: the bundle serves its OWN assets at exactly those
+  // paths, and they must be read from the bundle, not from the instance. Almost everything under
+  // /static/ is pulled in by a <script>/<link>/@font-face, which the WebView resolves against the page
+  // and this shim never sees — so the omission stayed invisible until something fetch()ed one. The
+  // translation catalogues are that something: `fetch('/static/i18n/ar.json')` was rewritten to
+  // https://poster.place/static/i18n/ar.json — cross-origin from https://localhost, with no
+  // Access-Control-Allow-Origin on static files (and credentials:'include' forced below, which even a
+  // wildcard could not satisfy). It failed as a TypeError, i18n.js caught it, and the APK answered
+  // "could not load that language — staying in English" while the file sat in the bundle the whole
+  // time. The desktop shim has always had this guard; the APK's never did.
+  function isLocal(p){ return p.indexOf('/static/') === 0 || p === '/sw.js' || p === '/index.html'; }
   window.fetch = function(i, o){
     try {
       // Rewrite root-relative URLs to the server AND force credentials:'include' — these are cross-origin
       // (app origin https://localhost → poster.place), so without it the browser never sends the session
       // cookie nor stores Set-Cookie, and every authed call 401-loops (settings, etc.). Paired with the
       // server's SameSite=None cookie + CORS allow-credentials.
-      if (typeof i === 'string' && i.charAt(0) === '/'){ i = B + i; o = _auth(Object.assign({}, o, {credentials:'include'})); }
-      else if (i && i.url && i.url.charAt(0) === '/'){ o = _auth(Object.assign({}, o, {credentials:'include'})); i = new Request(B + i.url, i); }
+      var _p = (typeof i === 'string') ? i : (i && i.url) || '';
+      if (_p.charAt(0) === '/' && !isLocal(_p)){
+        if (typeof i === 'string'){ i = B + i; o = _auth(Object.assign({}, o, {credentials:'include'})); }
+        else { o = _auth(Object.assign({}, o, {credentials:'include'})); i = new Request(B + i.url, i); }
+      }
     } catch(e){}
     return _f(i, o);
   };

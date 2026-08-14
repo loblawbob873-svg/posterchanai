@@ -11,6 +11,10 @@ on:
     paths:
       - 'static/js/client/**'
       - 'static/css/client.css'
+      # The translation catalogues are COPIED INTO the bundle, so a new language (or new strings in
+      # an existing one) reaches the app only through a rebuild — on the web the server just serves
+      # the new file, which is why this was easy to miss.
+      - 'static/i18n/**'
       - 'templates/client.html'
       - 'mobile/**'
       - 'zapstore.yaml'
