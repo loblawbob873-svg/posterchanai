@@ -29,6 +29,19 @@ def _read(p):
         return fh.read()
 
 
+def _js(p):
+    """A JS file with comments removed — same reason as `_code`, and the same trap.
+
+    These files explain the rules they obey, so a search for "setKey" matches the sentence saying
+    this path deliberately never calls setKey. Three tests in this codebase have now failed against
+    correct code that way; strip first, then look.
+    """
+    src = _read(p)
+    src = re.sub(r"/\*[\s\S]*?\*/", " ", src)
+    src = re.sub(r"^\s*//[^\n]*", " ", src, flags=re.M)
+    return src
+
+
 def _code(p):
     """The file with its comments removed.
 
@@ -223,6 +236,36 @@ def test_a_missing_peer_key_is_refused_rather_than_guessed():
     src = _code(os.path.join(SIG, "SignerActivity.java"))
     assert "peer.length() != 64" in src, \
         "a malformed peer key reaches the crypto, where the failure is less legible"
+
+
+def test_the_chicken_and_egg_has_a_way_out_not_just_a_message():
+    """The signer refuses until it has a key, and Settings could only give it one from a session
+    that already held it — a closed loop reached from the login screen.
+
+    The first fix shipped an ERROR MESSAGE describing the loop, which is not a way out of it. The
+    login screen can hand the signer a key directly now.
+    """
+    js = _read(APP_JS)
+    assert "_signerAdoptKey" in js, "there is still no way to give the signer a key at login"
+    seg = js[js.index("  function _signerAdoptKey(){"):]
+    seg = seg[:seg.index("\n  }\n")]
+    assert "P.enable(" in seg, "the adopt flow never stores the key"
+    assert "loginNip55()" in seg, "it stores the key and then leaves you on the login screen"
+
+
+def test_adopting_a_key_never_writes_it_into_the_browser():
+    """The whole point of signing in this way: the key goes to the Keystore and nowhere else.
+
+    `decodeNsec` derives the pubkey WITHOUT installing the key in the worker, so this path must not
+    call `setKey` or `Session.save` — either would put in browser storage the very thing being moved
+    out of it, and the session would be `local` rather than `nip55`.
+    """
+    js = _js(APP_JS)
+    seg = js[js.index("function _signerAdoptKey(){"):]
+    seg = seg[:seg.index("\n  }\n")]
+    assert "decodeNsec" in seg, "the nsec is decoded some other way"
+    for bad in ("setKey", "Session.save", "makeSigner('local'"):
+        assert bad not in seg, f"the adopt flow calls {bad}, putting the key back in the browser"
 
 
 def test_the_event_id_is_not_built_with_org_json():

@@ -2217,17 +2217,57 @@
       Session.save({ mode:'nip55', pubkey: pk, pkg: Nip55.pkg, npub: ME.npub });
       startApp();
     }catch(e){
-      /* A refusal from OUR OWN signer is usually the chicken-and-egg one: this phone can sign for
-       * other apps, but nobody has given it a key yet — and you cannot give it one from the login
-       * screen, because storing it needs a session that holds it. Reported as "the signer declined"
-       * that reads as a bug in the signer; said plainly it is one step. */
+      /* THE CHICKEN AND THE EGG, BROKEN RATHER THAN EXPLAINED.
+       *
+       * Our own signer refuses with "no key on this device" until somebody gives it one — and the
+       * documented way to do that was Settings → "Sign for other apps", which needs a session that
+       * already holds the key. From the login screen that is a closed loop, and the first version of
+       * this shipped an ERROR MESSAGE describing the loop, which is not the same as a way out.
+       *
+       * So the signer can be handed a key here, on its own terms. It goes from the field straight
+       * into the Keystore and the session is opened in `nip55` mode — meaning the key is NEVER
+       * written to this browser's storage at all, not even briefly. That is strictly better than
+       * signing in with the same nsec normally, which does store it here. */
       const msg = String((e && e.message) || '');
-      authErr(/no key on this device/i.test(msg)
-        ? 'this phone has no key yet — sign in with your key once, then turn on '
-          + '“Sign for other apps” in Settings'
-        : (msg || 'the signer declined'));
+      if(/no key on this device/i.test(msg) && (Nip55.signers||[]).some(x => x && x.self)){
+        if(b){ b.disabled=false; b.textContent=was; }
+        return _signerAdoptKey();
+      }
+      authErr(msg || 'the signer declined');
     }
     finally{ if(b){ b.disabled=false; b.textContent=was; } }
+  }
+
+  /* Hand this device's own signer a key, then sign in through it. */
+  function _signerAdoptKey(){
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Use this device as your signer</h3>
+      <p class="muted small">Paste your key once. It is sealed by Android and kept out of this
+        browser entirely — apps ask this device to sign, and the key itself never leaves it.</p>
+      <input id="adopt-nsec" class="input" type="password" placeholder="nsec1…" autocomplete="off">
+      <button class="btn btn-neon full" id="adopt-go">Store it on this device</button>
+      <div class="auth-error" id="adopt-err"></div>`, root=>{
+      const err = m => { const el=root.querySelector('#adopt-err'); if(el) el.textContent = m||''; };
+      const go = root.querySelector('#adopt-go');
+      go.onclick = async () => {
+        err(''); const v = (root.querySelector('#adopt-nsec').value||'').trim();
+        if(!v) return err('paste your nsec');
+        go.disabled = true; go.textContent = 'storing…';
+        try{
+          // Decoded in the worker, which derives the pubkey WITHOUT installing the key — so nothing
+          // here ever calls setKey and nothing is written to Session.
+          const k = await Relay.worker.call('decodeNsec', { nsec: v });
+          const P = _capPlugin('Signer', 'enable');
+          if(!P) throw new Error('this build has no on-device signer');
+          await P.enable({ sec: k.sk });
+          closeModal();
+          toast('stored — this device is your signer now');
+          loginNip55();
+        }catch(e2){
+          go.disabled = false; go.textContent = 'Store it on this device';
+          err(((e2 && (e2.message||e2.errorMessage)) || 'could not store that key'));
+        }
+      };
+    });
   }
   function amberErr(m){ const el=$('#amber-error'); if(el) el.textContent=m||''; }
   function finishAmberLogin(pk, session){
