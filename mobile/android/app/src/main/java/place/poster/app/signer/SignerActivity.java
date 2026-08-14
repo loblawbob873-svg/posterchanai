@@ -118,8 +118,19 @@ public class SignerActivity extends Activity {
             out.putExtra("package", getPackageName());
 
             if (TextUtils.isEmpty(type) || "get_public_key".equals(type)) {
-                out.putExtra("signature", pub);
-                out.putExtra("result", pub);
+                /* THE NPUB, NOT THE HEX. NIP-55 answers get_public_key with the bech32 form — that is
+                 * what Amber returns and therefore what clients parse. Returning hex meant a client
+                 * ran nip19.decode() over it, and since hex is full of `b` while bech32's alphabet
+                 * has none, the app reported `unknown letter "b"` — a message that names the symptom
+                 * exactly and points nowhere near the cause.
+                 *
+                 * This app's own client never caught it because `Nip55.getPublicKey` accepts either
+                 * (`/^npub1/i.test(v) ? decode : v`), so our signer talking to our client worked and
+                 * only a third-party app could see it. That client's own comment already called the
+                 * contract "npub for get_public_key": the client was right, the signer was wrong. */
+                String npub = Bech32.npub(Nostr.pubkey(sec));
+                out.putExtra("signature", npub);
+                out.putExtra("result", npub);
             } else if ("sign_event".equals(type)) {
                 JSONObject ev = new JSONObject(body);
                 ev.put("pubkey", pub);

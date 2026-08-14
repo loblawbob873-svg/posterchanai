@@ -83,6 +83,7 @@ def _java(body: str) -> str:
                             + os.path.join(ANDROID, "app", "src", "main", "java"),
              os.path.join(SIGNER, "Nip46Core.java"),
              os.path.join(SIGNER, "Nostr.java"),
+             os.path.join(SIGNER, "Bech32.java"),
              os.path.join(SIGNER, "Crypt.java"), src],
             capture_output=True, text=True, timeout=300)
         assert c.returncode == 0, c.stderr[-3000:]
@@ -371,6 +372,68 @@ def test_the_check_can_fail():
 
 
 # --------------------------------------------------------------------------------------------
+# NIP-55 answers get_public_key with an npub. Ours answered hex, and said so in bech32.
+# --------------------------------------------------------------------------------------------
+
+def test_the_java_bech32_agrees_with_the_repos_python_one():
+    """The checksum is the half that is silently wrong when it is wrong.
+
+    A bad checksum still LOOKS like an npub — right prefix, right length, right alphabet — and only
+    fails in whatever app you hand it to, which is the same class of failure this whole fix is about.
+    So it is checked against `app/services/nostr/bech32.py`, a separate implementation in another
+    language, rather than against itself.
+    """
+    out = _java("""
+      String[] keys = {
+        "0000000000000000000000000000000000000000000000000000000000000001",
+        "4b56bbf41c92e586e88927acb78836eb49f2b184081ef852625cf78be7d56bd6",
+        "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      };
+      for (String k : keys) System.out.println(k + " " + Bech32.npub(Nostr.unhex(k)));
+    """)
+    from app.services.nostr import bech32 as pb
+    seen = 0
+    for line in out.strip().splitlines():
+        hexk, got = line.split()
+        assert got == pb.encode("npub", bytes.fromhex(hexk)), f"bech32 differs for {hexk}"
+        seen += 1
+    assert seen == 4
+    # NIP-19's own published vector, so a third opinion is on the record too.
+    assert "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6" in out
+
+
+def test_get_public_key_answers_with_the_npub():
+    """`unknown letter "b"`, which is what a client says when it bech32-decodes hex.
+
+    NIP-55 answers this verb with the bech32 form — Amber does, so clients parse it that way. We
+    returned hex. Our OWN client hid it by accepting either form, so only a third-party app could
+    see it; its comment already documented the contract as "npub for get_public_key".
+    """
+    src = _read(os.path.join(SIGNER, "SignerActivity.java"))
+    branch = src[src.index('if (TextUtils.isEmpty(type) || "get_public_key".equals(type))'):]
+    branch = branch[:branch.index('} else if ("sign_event"')]
+    assert "Bech32.npub" in branch, "get_public_key is answering with hex again"
+    for extra in ('putExtra("signature", npub)', 'putExtra("result", npub)'):
+        assert extra in branch, f"{extra} is missing — clients read one or the other"
+
+
+def test_the_signed_event_still_carries_a_HEX_pubkey():
+    """The npub belongs in the ANSWER to get_public_key and nowhere else.
+
+    An event whose `pubkey` field is bech32 is invalid: its id is the sha256 of a serialisation
+    containing that field, so it would be rejected by every relay and fail verification everywhere,
+    while looking fine in a log. This is the obvious over-correction and it is worth a test of its
+    own, since both values sit in the same method one branch apart.
+    """
+    src = _read(os.path.join(SIGNER, "SignerActivity.java"))
+    branch = src[src.index('} else if ("sign_event".equals(type))'):]
+    branch = branch[:branch.index("} else {")]
+    assert 'ev.put("pubkey", pub)' in branch, "the event's pubkey is no longer the hex key"
+    assert "npub" not in branch, "an npub leaked into the signed event"
+
+
+# --------------------------------------------------------------------------------------------
 # The wiring. Read as text, because the service cannot be compiled here.
 # --------------------------------------------------------------------------------------------
 
@@ -548,3 +611,46 @@ def test_the_signer_does_not_route_the_apps_http_through_okhttp():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# --------------------------------------------------------------------------------------------
+# A link in an email did nothing in the APK. Not a signer bug, but the same shape: correct web
+# code made inert by a WebView policy, failing with no error anywhere.
+# --------------------------------------------------------------------------------------------
+
+def test_a_target_blank_link_can_actually_open():
+    """Mail renders untrusted HTML in a sandboxed iframe with `<base target="_blank">`.
+
+    That is right in a browser and inert in a WebView: `target="_blank"` asks for a NEW WINDOW, and a
+    WebView refuses to make one unless multiple windows are enabled AND onCreateWindow is handled.
+    Chromium drops the request silently — no navigation, no error, no log line.
+    """
+    main = _read(os.path.join(ANDROID, "app", "src", "main", "java", "place", "poster", "app",
+                              "MainActivity.java"))
+    assert "setSupportMultipleWindows(true)" in main, (
+        "without this a target=_blank click is discarded before anything is asked")
+    assert "onCreateWindow" in main, "multiple windows are enabled with nothing to handle them"
+    assert "ACTION_VIEW" in main, "the link is never handed to the system"
+
+
+def test_the_file_picker_is_not_collateral_damage():
+    """`BridgeWebChromeClient` is what serves the file chooser and the camera/mic permission prompts.
+
+    Replacing it with a plain WebChromeClient fixes the link and silently breaks uploads — the kind
+    of trade that surfaces weeks later, in a different feature, with no connection to this change.
+    """
+    main = _read(os.path.join(ANDROID, "app", "src", "main", "java", "place", "poster", "app",
+                              "MainActivity.java"))
+    assert "BridgeWebChromeClient(getBridge())" in main, (
+        "the chrome client no longer extends Capacitor's, so the file chooser and the permission "
+        "prompts are gone")
+
+
+def test_the_throwaway_webview_is_not_destroyed_mid_callback():
+    """Tearing a WebView down while it is dispatching to you is a native crash introduced by a fix
+    for a dead link."""
+    main = _read(os.path.join(ANDROID, "app", "src", "main", "java", "place", "poster", "app",
+                              "MainActivity.java"))
+    hand = main[main.index("private void hand(final WebView v, Uri target)"):]
+    hand = hand[:hand.index("((WebView.WebViewTransport)")]
+    assert "v.post(" in hand, "destroy() is called inside the callback rather than posted"

@@ -60,7 +60,95 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
         allowMediaWithoutAGesture();
         catchWebViewDownloads();
+        openPopupsInARealBrowser();
         surviveRenderProcessDeath();
+    }
+
+    /**
+     * A LINK IN AN EMAIL DID NOTHING IN THE APK, and the web client was already doing this right.
+     *
+     * Mail renders untrusted HTML in a sandboxed iframe, which is why it also injects
+     * `<base target="_blank">` and grants `allow-popups allow-popups-to-escape-sandbox` — a comment
+     * there records that with a bare `sandbox` a click did nothing at all. That fix is correct in a
+     * browser and inert in a WebView: `target="_blank"` asks for a NEW WINDOW, and a WebView refuses
+     * to make one unless `setSupportMultipleWindows(true)` is set AND `onCreateWindow` is handled.
+     * Neither was, so Chromium dropped the request on the floor — no navigation, no error, no log
+     * line. Exactly "can't click email links", and only in the packaged app.
+     *
+     * The URL is not knowable from `onCreateWindow` itself, so the standard trick applies: hand the
+     * platform a throwaway WebView, let it start the navigation there, and read the target out of the
+     * first `shouldOverrideUrlLoading`. Then it goes to the system browser as an ordinary Intent,
+     * which is what a link out of an email should do — a mail attachment or a tracking link must not
+     * open inside the app's own privileged origin.
+     *
+     * SUBCLASSED from Capacitor's own chrome client rather than replacing it. `BridgeWebChromeClient`
+     * is what serves the file chooser, the camera and microphone permission prompts, and JS dialogs;
+     * setting a plain `WebChromeClient` here would fix the link and silently break the file picker,
+     * which is the kind of trade that gets discovered weeks later.
+     */
+    private void openPopupsInARealBrowser() {
+        try {
+            final WebView host = getBridge().getWebView();
+            host.getSettings().setSupportMultipleWindows(true);
+            host.setWebChromeClient(new com.getcapacitor.BridgeWebChromeClient(getBridge()) {
+                @Override
+                public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture,
+                                              android.os.Message resultMsg) {
+                    if (resultMsg == null || !(resultMsg.obj instanceof WebView.WebViewTransport)) {
+                        return false;
+                    }
+                    final WebView probe = new WebView(view.getContext());
+                    probe.setWebViewClient(new android.webkit.WebViewClient() {
+                        @Override
+                        public boolean shouldOverrideUrlLoading(WebView v,
+                                android.webkit.WebResourceRequest request) {
+                            hand(v, request == null ? null : request.getUrl());
+                            return true;
+                        }
+
+                        @Override
+                        public boolean shouldOverrideUrlLoading(WebView v, String url) {
+                            hand(v, url == null ? null : Uri.parse(url));
+                            return true;
+                        }
+
+                        private void hand(final WebView v, Uri target) {
+                            openExternally(target);
+                            /* Destroyed on the NEXT loop turn, never inside the callback: tearing a
+                             * WebView down while it is dispatching to you is how a native crash gets
+                             * introduced by a fix for a dead link. */
+                            v.post(new Runnable() {
+                                @Override public void run() {
+                                    try { v.destroy(); } catch (Throwable ignored) { }
+                                }
+                            });
+                        }
+                    });
+                    ((WebView.WebViewTransport) resultMsg.obj).setWebView(probe);
+                    resultMsg.sendToTarget();
+                    return true;
+                }
+            });
+        } catch (Throwable ignored) {
+            // Worst case is the behaviour that shipped before this method existed: the link does
+            // nothing. It must never be worse than that, and it must never stop the app starting.
+        }
+    }
+
+    /** Send a URL to whatever the phone uses for it — a browser, or a mail app for `mailto:`. */
+    private void openExternally(Uri target) {
+        if (target == null) return;
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, target)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (Throwable t) {
+            // A phone with nothing registered for the scheme (no mail app for a mailto:, say). Say
+            // so, because silence here is the very bug this method exists to fix.
+            try {
+                Toast.makeText(this, "Nothing on this phone can open that link",
+                               Toast.LENGTH_SHORT).show();
+            } catch (Throwable ignored) { }
+        }
     }
 
     /**
