@@ -24,6 +24,14 @@ So the scenarios are FRAMINGS, not code paths:
             another screen from arm's length looks like. Roughly ONE pixel per module at 640x480.
   blurred   Filling the frame, plus the softness of a webcam that has not focused yet.
 
+WHAT THE QR CARRIES IS NOT WHAT THE LINK CARRIES, and that is the single biggest thing that makes a
+scan work. The full URI's `perms` list is 66% of its bytes and puts the symbol at version 18 (89x89
+modules); the QR leaves it out and is version 8 (49x49). Measured across framings, that is the
+difference between needing the code to fill ~75% of the camera frame and ~40% — half the distance.
+Nothing is lost: `perms` is optional in NIP-46 and advisory to the signer, our own signer ignores it,
+Amber prompts per action anyway, and the tap/paste route still carries the full URI to the same
+session. `aimed` and `blurred` below exist to fail if it is ever put back.
+
 CALIBRATED BY MEASUREMENT, and the numbers are the useful part. A sharp frame decodes down to **one
 pixel per module** — `aimed` passes, which is far better than the code's own comments assumed. What
 kills it is SOFTNESS, and only in combination with size: at 2px/module a single 3x3 blur pass is
@@ -31,10 +39,12 @@ already unreadable, at 4px/module the same blur decodes fine. So the boundary is
 about 4 pixels per module", which is why the scanner's on-screen hint tells you to fill the frame
 rather than to hold still.
 
-A hypothesis that MEASURED FALSE, recorded so nobody spends the afternoon on it again: shortening the
-URI does not rescue the soft case. Dropped to no `perms` at all the symbol falls from version 18
-(89x89) to version 8 (49x49) — and the blurred-at-2px/module framing still failed. Density is not the
-variable; pixels-per-module is, and moving closer buys more of them than a smaller payload does.
+A CORRECTION, kept because the wrong version of it was written down first. An earlier pass concluded
+"shortening the URI does not rescue the soft case — density is not the variable", from a single
+framing where both the long and the short form happened to land below the threshold. Measured across
+framings that is simply false: the short form decodes from 40% frame fill and the long one needs 75%.
+The lesson is about the method, not the QR — one framing is one data point, and a threshold cannot be
+found from a data point on either side of it.
 
 Exit 0 = clean, 1 = failures (printed), 2 = could not run (no Chrome / no node / no instance).
 """
@@ -63,10 +73,16 @@ _PERMS = ("get_public_key%2Cnip04_encrypt%2Cnip04_decrypt%2Cnip44_encrypt%2Cnip4
           + "".join("%2Csign_event%3A" + str(k) for k in _KINDS))
 
 
-def signer_uri(app_pk: str, relay: str, secret: str) -> str:
+def signer_uri(app_pk: str, relay: str, secret: str, perms: bool = False) -> str:
+    """What the QR carries. `perms` is what the LINK carries and the QR deliberately does not.
+
+    Kept as a switch so the difference stays measurable from here: with the perms list the symbol is
+    version 18 (89x89) and needs to fill ~75% of the camera frame; without it, version 8 (49x49) and
+    ~40%. That is the whole reason the short form exists.
+    """
     import urllib.parse
     return (f"nostrconnect://{app_pk}?relay={urllib.parse.quote(relay, safe='')}"
-            f"&secret={secret}&perms={_PERMS}&name=PosterChan")
+            f"&secret={secret}" + (f"&perms={_PERMS}" if perms else "") + "&name=PosterChan")
 
 
 # The Y4M writer runs under node so the modules come from the SHIPPED encoder — a second
@@ -176,7 +192,10 @@ async def run(url):
     app_pk = bip340.pubkey_from_seckey(app_sk).hex()
     uri = signer_uri(app_pk, relay_url, "k9x2m4p7qz")
 
-    cases = [("filled", 0.92, 0), ("aimed", 0.34, 0), ("blurred", 0.92, 1)]
+    # Framings, calibrated against what a camera actually delivers (see the module docstring). The
+    # last two are the ones that FAIL if the perms list ever goes back into the QR: at v18 they are
+    # 1 and 2 pixels per module, which no amount of holding still recovers.
+    cases = [("filled", 0.92, 0), ("aimed", 0.40, 1), ("blurred", 0.55, 2)]
     only = os.environ.get("PC_ONLY")
     if only:
         cases = [c for c in cases if c[0] == only]

@@ -198,3 +198,28 @@ def test_background_signing_reuses_the_existing_service():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+def test_the_qr_carries_the_short_uri_and_the_link_carries_the_full_one():
+    """The single biggest thing that makes a scan work, and it is one character away from regressing.
+
+    `perms` is 66% of the URI's bytes and puts the symbol at version 18 (89x89 modules); without it
+    the same pairing is version 8 (49x49). Measured with a fake camera across framings: v18 needs the
+    code to fill ~75% of the frame, v8 needs ~40% — half the distance. Nothing is lost, because
+    `perms` is optional in NIP-46 and advisory to the signer (ours ignores it; Amber prompts per
+    action regardless) and the tap/paste route still carries the full URI to the SAME session.
+
+    Both must therefore exist, and the QR must be the short one. Drawing `uri` here would look
+    perfectly correct and quietly double how close a camera has to be.
+    """
+    src = _src()
+    seg = src[src.index("    async beginNostrConnect(relays, name){"):]
+    seg = seg[:seg.index("return { uri, qrUri, done };") + 40]
+    assert "const qrUri=" in seg, "there is no short form; the QR carries the whole perms list"
+    assert "perms=" not in seg[seg.index("const qrUri="):seg.index("const qrUri=") + 260], \
+        "the short form carries perms, which is the thing that makes it unscannable"
+    # …and the drawing uses it. Anchored inside loginAmberNostrConnect, because `qrSrc(` also
+    # appears in the generic qrImg helper, which has nothing to do with this screen.
+    draw = src[src.index("  async function loginAmberNostrConnect(){"):]
+    draw = draw[:draw.index("Open in Amber / scan QR")]   # to the end of that function
+    assert "qrSrc(qrUri" in draw, "the QR is drawn from the full URI, not the short one"

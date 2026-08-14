@@ -1,6 +1,9 @@
 package place.poster.app;
 
 import android.content.Intent;
+import android.app.DownloadManager;
+import android.net.Uri;
+import android.os.Environment;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -10,7 +13,10 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebView;
+import android.webkit.DownloadListener;
+import android.webkit.URLUtil;
 import android.widget.Toast;
+import org.json.JSONObject;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.WebViewListener;
 
@@ -52,7 +58,75 @@ public class MainActivity extends BridgeActivity {
         if (isSend(getIntent())) shareNonce++;   // cold-started BY a share
         super.onCreate(savedInstanceState);
         allowMediaWithoutAGesture();
+        catchWebViewDownloads();
         surviveRenderProcessDeath();
+    }
+
+    /**
+     * A WEBVIEW WITH NO DownloadListener DROPS EVERY DOWNLOAD IT STARTS, SILENTLY.
+     *
+     * This app never had one. That is not a corner case: the native video controls carry their own
+     * ⋮ → Download, and on a post's video it is the obvious thing to press. Pressed, the WebView asks
+     * its listener what to do, finds none, and does nothing at all — no file, no error, no toast.
+     * Reported exactly that way: "I try to download video from post and nothing happened."
+     *
+     * The client's own save buttons were never affected and are not changed here — they go through
+     * `saveBlobAs`, which writes the bytes itself and opens the share sheet, because a bare
+     * `<a download>` is ignored by this same WebView. That workaround is why the gap stayed hidden:
+     * everything WE render already routed around the missing listener, so only the controls Android
+     * draws for us were broken.
+     *
+     * http(s) goes to DownloadManager, which is the platform's own downloader: it survives the app
+     * being backgrounded, retries, writes into the public Downloads folder and posts its own
+     * notification. `blob:` and `data:` cannot — they are WebView-internal and DownloadManager has no
+     * way to read them — so those are handed back to the page, which already knows how to save bytes
+     * it holds. Falling through silently is what this method exists to stop.
+     */
+    private void catchWebViewDownloads() {
+        try {
+            getBridge().getWebView().setDownloadListener(new DownloadListener() {
+                @Override
+                public void onDownloadStart(String url, String userAgent, String contentDisposition,
+                                            String mimeType, long contentLength) {
+                    if (url == null) return;
+                    String low = url.toLowerCase();
+                    if (low.startsWith("blob:") || low.startsWith("data:")) {
+                        // The page holds these bytes; the platform does not. Ask it to save them the
+                        // way every button in the client already does.
+                        final String js = "window.dispatchEvent(new CustomEvent('pcNativeDownload',"
+                                + "{detail:{url:" + JSONObject.quote(url) + "}}))";
+                        getBridge().getWebView().post(new Runnable() {
+                            @Override public void run() {
+                                try { getBridge().getWebView().evaluateJavascript(js, null); }
+                                catch (Throwable ignored) { }
+                            }
+                        });
+                        return;
+                    }
+                    try {
+                        String name = URLUtil.guessFileName(url, contentDisposition, mimeType);
+                        DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
+                        req.setMimeType(mimeType);
+                        if (userAgent != null) req.addRequestHeader("User-Agent", userAgent);
+                        req.setNotificationVisibility(
+                                DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                        req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);
+                        DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                        if (dm == null) return;
+                        dm.enqueue(req);
+                        Toast.makeText(MainActivity.this, "Downloading " + name,
+                                       Toast.LENGTH_SHORT).show();
+                    } catch (Throwable t) {
+                        // SAY SO. The entire bug this fixes was a failure that produced no sign of
+                        // itself; replacing it with a different silent one would be no fix at all.
+                        Toast.makeText(MainActivity.this, "Could not start that download",
+                                       Toast.LENGTH_SHORT).show();
+                    }
+                }
+            });
+        } catch (Throwable ignored) {
+            // Never fatal: worst case is the behaviour that shipped before this method existed.
+        }
     }
 
     /**

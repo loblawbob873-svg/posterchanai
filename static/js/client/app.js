@@ -1204,9 +1204,29 @@
        * `url` is optional in NIP-46, so the fallback is the instance we actually talk to, and then
        * nothing at all. An omitted optional field is always safer than one no signer can read. */
       const origin=this._clientUrl();
+      /* TWO SPELLINGS OF THE SAME PAIRING, and the difference is only how much a camera has to read.
+       *
+       * `uri` is the full one — the tap-to-open link and the copyable text. `qrUri` drops `perms`,
+       * which is 66% of the bytes and the reason the symbol was version 18 (89x89 modules). Without
+       * it the same pairing is version 8 (49x49), so at any given size on screen every module is
+       * nearly twice as wide.
+       *
+       * That is the variable that actually decides whether a scan works. Measured with a fake camera
+       * (scripts/check_qr_scan.py): a SHARP frame decodes down to one pixel per module, but softness
+       * — a webcam that has not focused — is fatal below about four. Modules are the only term in
+       * that ratio we control.
+       *
+       * Nothing is lost by leaving `perms` out of the QR. It is optional in NIP-46 and advisory to
+       * the signer: OUR signer ignores it entirely (an app that declares nothing is granted
+       * everything, because scanning the QR is the consent), and Amber prompts per action regardless.
+       * Only a signer that PRE-authorises from the list is affected, and it still gets the full URI
+       * by tap or paste — the pubkey, relay and secret are identical, so both routes join the same
+       * session. A pairing a camera cannot read is worth nothing to anybody. */
       const uri=`nostrconnect://${this.appPk}?relay=${encodeURIComponent(relay)}&secret=${secret}`
         +`&perms=${encodeURIComponent(perms)}&name=${encodeURIComponent(name||'PosterChan')}`
         +(origin?`&url=${encodeURIComponent(origin)}`:'');
+      const qrUri=`nostrconnect://${this.appPk}?relay=${encodeURIComponent(relay)}&secret=${secret}`
+        +`&name=${encodeURIComponent(name||'PosterChan')}`;
       const done=new Promise((res,rej)=>{
         const to=setTimeout(()=>{ this._onEvent=null; rej(new Error('timed out waiting for the signer')); }, 180000);
         this._onEvent=async (ev, payload)=>{
@@ -1221,7 +1241,7 @@
           catch(e){ rej(e); }
         };
       });
-      return { uri, done };
+      return { uri, qrUri, done };
     },
     async resume(s){
       /* Reconnect to the relays this session was PAIRED on, and to this node's own as well.
@@ -2194,7 +2214,7 @@
       const relays=_ncRelays();
       amberErr('');
       { const st=$('#amber-nc-status'); if(st) st.textContent='reaching a signer relay…'; }
-      const { uri, done }=await Nip46.beginNostrConnect(relays, 'PosterChan');
+      const { uri, qrUri, done }=await Nip46.beginNostrConnect(relays, 'PosterChan');
       $('#amber-nc-uri').textContent=uri;
       const open=$('#amber-nc-open'); if(open) open.href=uri;
       /* QR of the nostrconnect:// URI → scan it with a phone signer (Primal-style mobile login).
@@ -2211,7 +2231,7 @@
        * signer has already approved. */
       const qr=$('#amber-nc-qr'), qrLbl=$('#amber-nc-qrlbl');
       if(qr){
-        const src=qrSrc(uri);
+        const src=qrSrc(qrUri || uri);   // the short form: see beginNostrConnect
         if(src){ qr.src=src; qr.classList.remove('hidden');
                  if(qrLbl) qrLbl.textContent='…or scan with a signer on another device'; }
         else{ qr.classList.add('hidden');
@@ -14964,6 +14984,27 @@
   // Save bytes we already hold (a decrypted blob, or one we just fetched) under a real filename.
   // In the APK a programmatic <a download> is ignored by the WebView, so on-device this goes out
   // through the OS share sheet (Save to Files / Photos / Send…) — the same route as image saves.
+  /* The other half of MainActivity's DownloadListener.
+   *
+   * `blob:` and `data:` URLs are WebView-internal — Android's DownloadManager has no way to read
+   * them, so the native side hands them back here, where the page that minted the blob can still
+   * fetch it. Without this listener that branch would dispatch an event nobody hears, which is the
+   * same silent nothing the listener was added to stop, one layer up.
+   *
+   * Registered unconditionally: the event only ever fires from the native shell, and a listener that
+   * exists everywhere cannot be the thing that was forgotten on the one build that needs it. */
+  try{
+    window.addEventListener('pcNativeDownload', async (e)=>{
+      const url = (e && e.detail && e.detail.url) || '';
+      if(!url) return;
+      try{
+        const r = await fetch(url);
+        const blob = await r.blob();
+        await saveBlobAs(blob, fileNameFor(url, blob, '', '', await sniffExt(blob)));
+      }catch(err){ toast('could not save that file'); }
+    });
+  }catch(_){}
+
   async function saveBlobAs(blob, name){
     name=name||'file';
     if(_isNativeApp()){
