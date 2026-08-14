@@ -145,6 +145,18 @@ def _src():
     return open(APP_JS, encoding="utf-8").read()
 
 
+def _signer_obj():
+    """Just the `Nip46Signer` object.
+
+    Anchoring on a bare method name is not enough: `Nip46` (the CLIENT half, which asks a signer)
+    has its own `_recv`, `_send` and `_open`, and it is defined FIRST — so a slice that starts at
+    the first match spans both objects and tests the wrong one.
+    """
+    src = _src()
+    start = src.index("  const Nip46Signer = {")
+    return src[start:src.index("\n  };", start)]
+
+
 def test_pairing_a_second_app_does_not_stop_the_first():
     src = _src()
     start = src.index("    async start(uri, onStatus){")
@@ -254,3 +266,34 @@ def test_a_standalone_build_still_works():
     src = _src()
     seg = src[src.index("    async start(uri, onStatus){"): src.index("    async resume(){")]
     assert "ourRelay &&" in seg, "the constraint is applied even when this build has no instance relay"
+
+
+def test_answering_a_request_does_not_repaint_the_settings_card():
+    """Sending one DM is several signer requests, and each used to redraw the paired-apps list.
+
+    Reported as "user settings is flickering... it flicked when I sent a DM". `_recv` called `_sync`
+    so the "last used" line would stay fresh — but the SET of paired apps has not changed, only how
+    recently one of them asked for something, and a list that rewrites its own innerHTML three times
+    while somebody is reading it is worse than a timestamp that is a minute stale.
+    """
+    obj = _signer_obj()
+    recv = obj[obj.index("async _recv(raw){"): obj.index("async _handle(method, params){")]
+    assert "this._sync()" not in recv, \
+        "_recv repaints the settings card, so every signature flickers it"
+
+
+def test_the_list_still_repaints_when_the_apps_actually_change():
+    """The other half: pairing or revoking must show up immediately, or the card lies."""
+    obj = _signer_obj()
+    for fn, start, end in (("start", "async start(uri, onStatus){", "async resume(){"),
+                           ("revoke", "revoke(clientPk){", "_open(relay){"),
+                           ("resume", "async resume(){", "revoke(clientPk){")):
+        body = obj[obj.index(start): obj.index(end)]
+        assert "this._sync()" in body, f"{fn}() changes the set of apps without repainting"
+
+
+def test_last_used_is_not_written_to_storage_on_every_request():
+    """localStorage per signature, for a timestamp only ever read when the card is drawn."""
+    obj = _signer_obj()
+    recv = obj[obj.index("async _recv(raw){"): obj.index("async _handle(method, params){")]
+    assert "_lastSaved" in recv, "every request writes the whole session list to localStorage"

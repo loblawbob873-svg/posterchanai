@@ -1494,7 +1494,12 @@
       const sess=this.sessions.get(ev.pubkey);
       if(!sess) return;                       // not an app we are signing for
       const req=await this._decode(ev.pubkey, ev.content); if(!req || !req.id || !req.method) return;
-      sess.last=Math.floor(Date.now()/1000); this._persist();
+      /* `last` is bookkeeping, NOT a reason to redraw. Sending one DM is several requests — encrypt,
+       * wrap, sign — and repainting the list on each of them made the Settings card flicker while
+       * the user was looking at it. Persisted at most once a minute, too: the timestamp is only ever
+       * read to render "last used", so writing localStorage per request bought nothing. */
+      sess.last=Math.floor(Date.now()/1000);
+      if(!this._lastSaved || sess.last - this._lastSaved > 60){ this._lastSaved = sess.last; this._persist(); }
       let result=null, error=null;
       if(!this._allowed(sess, req.method, req.params||[])){
         error='not permitted: '+req.method+' was not in what this app asked for';
@@ -1503,7 +1508,8 @@
         catch(e){ error=String((e&&e.message)||e); }
       }
       await this._send(ev.pubkey, error ? { id:req.id, result:'', error } : { id:req.id, result });
-      this._sync();
+      // NO _sync() here. The set of paired apps has not changed — only how recently one of them
+      // asked for something — and a repaint per request is what the flicker was.
     },
     async _handle(method, params){
       switch(method){
