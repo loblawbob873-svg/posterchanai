@@ -606,11 +606,17 @@
 
        Squared response, deliberately: a stick is an ANALOGUE control being read once a frame, and a
        linear map makes small corrections impossible while large ones fly past the target. */
-    var LOOK_PX = 18;                     // full deflection, per frame
+    /* Pixels per frame at FULL deflection. The first shipped value was 18 with a squared response,
+       which put half-stick at 4.5px a frame — reported as "movement way too slow compared to the
+       left", and rightly: the left stick is a KEY, so it moves at the game's own full walking speed
+       the instant it crosses the threshold, while this one is analogue and was being asked to earn
+       every pixel. An exponent of 1.5 keeps fine aim near centre without making the middle of the
+       range useless. */
+    var LOOK_PX = (typeof __XDC.look === 'number' && __XDC.look > 0) ? __XDC.look : 45;
     function look(x, y){
       if(typeof x !== 'number' || typeof y !== 'number') return;
-      var ax2 = Math.abs(x) > 0.12 ? x * Math.abs(x) : 0;
-      var ay2 = Math.abs(y) > 0.12 ? y * Math.abs(y) : 0;
+      var ax2 = Math.abs(x) > 0.12 ? x * Math.sqrt(Math.abs(x)) : 0;
+      var ay2 = Math.abs(y) > 0.12 ? y * Math.sqrt(Math.abs(y)) : 0;
       if(!ax2 && !ay2) return;
       var dx = Math.round(ax2 * LOOK_PX), dy = Math.round(ay2 * LOOK_PX);
       if(!dx && !dy) return;
@@ -768,6 +774,13 @@
            * natively getting keys as well is a nuisance, while a keyboard-only game getting nothing
            * is the entire feature failing. */
           pad: (function(){ try{ return localStorage.getItem('pc_xdc_pad') !== '0'; }catch(e){ return true; } })(),
+          /* Look sensitivity, in pixels of mouse motion per frame at full stick. Decided here for
+             the same reason the off switch is, and adjustable without a rebuild (PCWebxdc.look(n))
+             because "too slow" and "too fast" are the same distance from right and neither can be
+             judged from here — the pad, the game and the screen are all the player's. */
+          look: (function(){ try{ var n = parseFloat(localStorage.getItem('pc_xdc_look'));
+                                  return (isFinite(n) && n > 0 && n <= 400) ? n : 45; }
+                             catch(e){ return 45; } })(),
         }) + ';\n';
         return { status:200, contentType:'text/javascript', body:_enc.encode(head + BRIDGE) };
       }
@@ -1777,6 +1790,12 @@
                                           return null; },
                         pad: (on) => { try{ localStorage.setItem('pc_xdc_pad', on === false ? '0' : '1'); }catch(e){}
                                        return on !== false; },
+                        /* Right-stick look speed, px/frame at full deflection (default 45). Applies
+                         * on the next open — the bridge is built once per load. */
+                        look: (n) => { var v = parseFloat(n);
+                                       if(!isFinite(v) || v <= 0 || v > 400) return 'give a number 1-400';
+                                       try{ localStorage.setItem('pc_xdc_look', String(v)); }catch(e){}
+                                       return 'look speed ' + v + ' — reopen the game'; },
                         MIME, KIND_UPDATE, Session };
 
     /* THE APK'S CONTROLLER, PATCHED IN FROM ANDROID.

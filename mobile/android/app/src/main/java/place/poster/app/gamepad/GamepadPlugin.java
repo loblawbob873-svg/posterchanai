@@ -184,67 +184,32 @@ public class GamepadPlugin extends Plugin {
   }
 
   /**
-   * A STICK'S REST POSITION IS NOT ZERO, AND ITS RANGE IS NOT ALWAYS -1..1.
+   * NO CALIBRATION. The axis is handed on as the driver reports it, clamped to the range the Gamepad
+   * API promises and nothing more.
    *
-   * `getAxisValue` returns whatever the driver reports, in the DEVICE's own units. The Gamepad API
-   * this feeds promises -1..1 with a centred rest position, and a desktop browser supplies both —
-   * which is exactly why the same pad is perfect in Firefox and drifts here. Both corrections come
-   * from the device's own declared MotionRange:
+   * There WAS a deadzone and a range normalisation here, and removing them is a considered choice
+   * rather than a retreat: everything that consumes these values already applies its own threshold —
+   * the shim needs 0.5 to press a key and 0.12 to move the aim, while the largest resting drift this
+   * pad reports is 0.0153. So the deadzone was removing something nothing downstream could see,
+   * while the normalisation cost three broken builds: it read a resting 0..1 trigger as fully pulled
+   * in the negative direction, and then it did not run at all for a fortnight because the range
+   * lookup was matching a bitmask source. A correction nobody can perceive is not worth a mechanism
+   * that can be silently wrong.
    *
-   *   flat     the manufacturer's rest region. Inside it the stick IS centred; passed through raw, a
-   *            resting stick walks the character across the screen for ever.
-   *   min/max  a pad reporting 0..255 (plenty of HID descriptors do) is not slightly miscalibrated,
-   *            it is pinned to one corner.
-   *
-   * Rescaled outside the deadzone rather than clipped, so the first movement past `flat` starts from
-   * zero instead of jumping to it — clipping alone trades drift for a lurch.
-   *
-   * NO RANGE MEANS PASS THROUGH. A driver that declines to describe an axis is not a reason to
-   * invent a calibration for it: the raw value is the best information available, and it is what
-   * every pad that reports a sane -1..1 was already giving.
+   * What stays is the part that is not calibration: WHICH axes to read (see onMotion), which needs
+   * the declared ranges to tell a stick from a trigger, and the diagnostics, which is what found all
+   * of this. If a pad ever turns up that genuinely reports something other than -1..1, the panel
+   * will say so in its own numbers instead of this code guessing on its behalf.
    */
   private static float centred(MotionEvent ev, InputDevice dev, int axis) {
-    float v = ev.getAxisValue(axis);
-    if (Float.isNaN(v) || Float.isInfinite(v)) return 0f;
-    InputDevice.MotionRange r = rangeOf(ev, dev, axis);
-    if (r == null) return clamped(v);
-    /* AN AXIS THAT CANNOT GO NEGATIVE IS NOT A CENTRED STICK — it is a trigger, and centring one
-     * reads it as HARD OVER while it sits untouched. AXIS_Z and AXIS_RZ are the right stick on many
-     * pads and the two analogue triggers on many others, and nothing in the event says which; the
-     * declared range is the only thing that tells them apart, because a stick straddles zero and a
-     * trigger rests at its minimum. Getting this wrong is not a small error: normalising a resting
-     * 0..1 trigger to -1 pins the right stick to a corner for the whole session, which is worse than
-     * the raw passthrough this replaced — measured on a real pad, "joystick movement even worse now".
-     * Passing it through unchanged is exactly the old behaviour for these axes, so the calibration
-     * can only help the axes it understands and can never damage one it has misread. */
-    if (r.getMin() >= 0f) return clamped(v);
-    float half = (r.getMax() - r.getMin()) / 2f;
-    if (half <= 0f) return clamped(v);
-    float n = (v - (r.getMin() + r.getMax()) / 2f) / half;
-    float flat = r.getFlat() / half;
-    // A driver claiming the whole travel is deadzone would otherwise divide by zero and report NaN,
-    // which JSONArray.put refuses — one bad descriptor would cost every frame, not one axis.
-    if (flat >= 1f) return 0f;
-    float m = Math.abs(n);
-    if (m <= flat) return 0f;
-    return clamped(Math.signum(n) * (m - flat) / (1f - flat));
+    return clamped(ev.getAxisValue(axis));
   }
 
-  /**
-   * A TRIGGER RESTS AT ITS MINIMUM, NOT AT ITS CENTRE, so it must never go through `centred` — that
-   * would read an untouched trigger as fully pulled in the negative direction. Normalised to 0..1
-   * against its own range instead, which leaves the usual 0..1 pads bit-identical and fixes the ones
-   * reporting 0..255, where the 0.5 threshold below is otherwise crossed by a feather touch.
-   */
+  /** A trigger, as reported. Clamping is deliberately absent: 0..1 is already the shape callers want
+   *  and a pad using another range is a diagnostics question, not something to silently reshape. */
   private static float unit(MotionEvent ev, InputDevice dev, int axis) {
     float v = ev.getAxisValue(axis);
-    if (Float.isNaN(v) || Float.isInfinite(v)) return 0f;
-    InputDevice.MotionRange r = rangeOf(ev, dev, axis);
-    if (r == null) return v;
-    float span = r.getMax() - r.getMin();
-    if (span <= 0f) return v;
-    float n = (v - r.getMin()) / span;
-    return n < 0f ? 0f : (n > 1f ? 1f : n);
+    return (Float.isNaN(v) || Float.isInfinite(v)) ? 0f : v;
   }
 
   private static float clamped(float v) {
@@ -384,11 +349,12 @@ public class GamepadPlugin extends Plugin {
       o.put("rawError", String.valueOf(e));
     }
     o.put("axesRaw", raw);
-    // Whether the calibration is running AT ALL, answered from the same lookup it uses rather than
-    // from a tidier one: a panel that asks a different question than the code reports the RULE and
-    // not the RESULT, which is exactly how three fixes shipped against a calibration that was
-    // silently a no-op on every event.
-    o.put("calibrated", lastRangeFound);
+    // Whether the driver DESCRIBES its axes at all, answered from the same lookup the axis-selection
+    // uses rather than a tidier one — a panel that asks a different question than the code reports
+    // the rule and not the result, which is how three fixes shipped against a range lookup that was
+    // silently failing on every event. Nothing is calibrated any more; this says whether the code
+    // can tell a stick from a trigger, which is what still depends on it.
+    o.put("describesAxes", lastRangeFound);
 
     JSONArray ranges = new JSONArray();
     try {
@@ -405,8 +371,9 @@ public class GamepadPlugin extends Plugin {
           a.put("max", (double) r.getMax());
           a.put("flat", (double) r.getFlat());
           // The rule this code applies, spelled out, so the report says what was DECIDED and not
-          // only what was read.
-          a.put("treatedAs", r.getMin() >= 0f ? "trigger (not centred)" : "stick (centred)");
+          // only what was read. Values are passed through either way — this decides which axes are
+          // READ as the right stick, not how they are scaled.
+          a.put("readAs", r.getMin() >= 0f ? "trigger" : "stick");
           ranges.put(a);
         }
       }

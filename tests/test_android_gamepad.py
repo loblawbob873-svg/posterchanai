@@ -218,26 +218,16 @@ class NativeGamepad(unittest.TestCase):
         self.assertAlmostEqual(float(o["axis0"]), -0.8, places=4)
         self.assertAlmostEqual(float(o["axis1"]), 0.6, places=4)
 
-    def test_a_declared_deadzone_is_applied_so_a_resting_stick_reads_zero(self):
+    def test_an_axis_is_passed_through_as_the_driver_reports_it(self):
+        """THE CALIBRATION IS DELIBERATELY GONE. A deadzone and a range normalisation lived here and
+        cost three broken builds — a resting 0..1 trigger read as fully pulled, then a range lookup
+        against a bitmask source that meant none of it ran at all. Everything downstream applies its
+        own threshold (0.5 to press a key, 0.12 to move the aim) against a largest observed drift of
+        0.0153, so the correction was removing something nothing could perceive."""
         o = _compile_and_run()
-        self.assertEqual(float(o["rest"]), 0.0,
-                         "a stick inside the driver's declared flat must read centred, not drift")
-
-    def test_a_stick_that_straddles_zero_is_normalised_to_the_gamepad_apis_range(self):
-        o = _compile_and_run()
-        self.assertAlmostEqual(float(o["midWide"]), 0.0, places=2,
-                               msg="mid-travel is centre, not hard-over")
-        self.assertAlmostEqual(float(o["maxWide"]), 1.0, places=2)
-
-    def test_a_trigger_is_never_centred_because_it_rests_at_its_minimum(self):
-        """THE REGRESSION THIS EXISTS FOR. AXIS_Z/AXIS_RZ are the right stick on some pads and the
-        triggers on others; only the declared range tells them apart. Centring a resting 0..1 trigger
-        reports -1 — the stick pinned to a corner for the whole session, worse than the raw
-        passthrough it replaced. Reported from a real device as "joystick movement even worse now"."""
-        o = _compile_and_run()
-        self.assertEqual(float(o["restTrigger"]), 0.0,
-                         "an untouched trigger must read centred, not hard-over")
-        self.assertEqual(float(o["restTrigger255"]), 0.0)
+        self.assertAlmostEqual(float(o["rest"]), 0.06, places=3,
+                               msg="the driver's value must reach the page unaltered")
+        self.assertAlmostEqual(float(o["restTrigger"]), 0.0, places=3)
 
     def test_the_right_stick_is_found_when_a_pad_puts_it_on_rx_ry(self):
         """Z/RZ are the right stick on one family of pads and the two triggers on another. Reading
@@ -245,28 +235,9 @@ class NativeGamepad(unittest.TestCase):
         their resting 0 — measured as "left joystick is doing everything, right joystick doing
         nothing". The declared range is what tells the families apart."""
         o = _compile_and_run()
-        self.assertAlmostEqual(float(o["rsX"]), 0.684, places=2,
+        self.assertAlmostEqual(float(o["rsX"]), 0.7, places=3,
                                msg="the right stick must be read from RX when Z is a trigger")
-        self.assertAlmostEqual(float(o["rsY"]), -0.474, places=2)
-
-    def test_a_pad_reporting_a_combined_source_is_still_calibrated(self):
-        """THE ONE THAT MADE EVERY EARLIER FIX A NO-OP. MotionEvent.getSource() is a BITMASK
-        (SOURCE_JOYSTICK | SOURCE_GAMEPAD) and getMotionRange matches a range's single declared
-        source, so the lookup returned null on every event from every real pad and each axis fell
-        through to raw passthrough — indistinguishably from a device that publishes no ranges.
-
-        Caught by a Switch Pro Controller's own report: RZ declared flat=0.0153 while the page was
-        being handed -0.0088, a value inside that deadzone which the calibration would have zeroed
-        had it ever seen the range."""
-        o = _compile_and_run()
-        self.assertEqual(float(o["combined"]), 0.0,
-                         "0.1 sits inside the declared flat of 0.2 and must read as centred")
-
-    def test_a_broken_range_costs_one_axis_not_a_NaN(self):
-        o = _compile_and_run()
-        v = float(o["allflat"])
-        self.assertEqual(v, 0.0)
-        self.assertFalse(v != v, "NaN would be refused by JSONArray and cost every frame")
+        self.assertAlmostEqual(float(o["rsY"]), -0.5, places=3)
 
     def test_a_keyboard_key_is_never_claimed(self):
         """The overrides consume what they handle, and consuming a keyboard event would eat typing
