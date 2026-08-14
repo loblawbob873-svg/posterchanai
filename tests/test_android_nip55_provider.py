@@ -238,34 +238,28 @@ def test_a_missing_peer_key_is_refused_rather_than_guessed():
         "a malformed peer key reaches the crypto, where the failure is less legible"
 
 
-def test_the_chicken_and_egg_has_a_way_out_not_just_a_message():
-    """The signer refuses until it has a key, and Settings could only give it one from a session
-    that already held it — a closed loop reached from the login screen.
+def test_this_app_is_not_offered_as_a_signer_to_itself():
+    """It appears in its own picker now, and "sign in with PosterChan" looked like a feature.
 
-    The first fix shipped an ERROR MESSAGE describing the loop, which is not a way out of it. The
-    login screen can hand the signer a key directly now.
-    """
-    js = _read(APP_JS)
-    assert "_signerAdoptKey" in js, "there is still no way to give the signer a key at login"
-    seg = js[js.index("  function _signerAdoptKey(){"):]
-    seg = seg[:seg.index("\n  }\n")]
-    assert "P.enable(" in seg, "the adopt flow never stores the key"
-    assert "loginNip55()" in seg, "it stores the key and then leaves you on the login screen"
-
-
-def test_adopting_a_key_never_writes_it_into_the_browser():
-    """The whole point of signing in this way: the key goes to the Keystore and nowhere else.
-
-    `decodeNsec` derives the pubkey WITHOUT installing the key in the worker, so this path must not
-    call `setKey` or `Session.save` — either would put in browser storage the very thing being moved
-    out of it, and the session would be `local` rather than `nip55`.
+    It is not. There is no ContentProvider here, so NIP-55 has no silent path and EVERY signature
+    would launch an Activity — a dialog per reaction, per DM, per timeline write. That is the exact
+    cost going native was meant to remove, paid by the one app that never has to pay it, since it
+    can simply hold the key itself. Being a signer for OTHER apps is the point and is untouched.
     """
     js = _js(APP_JS)
-    seg = js[js.index("function _signerAdoptKey(){"):]
-    seg = seg[:seg.index("\n  }\n")]
-    assert "decodeNsec" in seg, "the nsec is decoded some other way"
-    for bad in ("setKey", "Session.save", "makeSigner('local'"):
-        assert bad not in seg, f"the adopt flow calls {bad}, putting the key back in the browser"
+    seg = js[js.index("Nip55.probe().then("):]
+    seg = seg[:seg.index("$('#btn-nsec-login')")]
+    assert "!x.self" in seg or "x.self" in seg, \
+        "the login picker offers this app its own signer, which is an Intent round trip to itself"
+
+
+def test_we_have_no_content_provider_so_the_self_path_would_be_an_activity_each_time():
+    """The fact the rule above depends on. If a resolver is ever added, revisit that decision."""
+    m = _read(MANIFEST)
+    providers = re.findall(r"<provider[\s\S]*?android:name=\"([^\"]+)\"", m)
+    assert all("FileProvider" in p for p in providers), (
+        "a ContentProvider was added — NIP-55 may now have a silent path, so signing to ourselves "
+        "is no longer an Activity per request and the login-picker rule should be re-examined")
 
 
 def test_the_event_id_is_not_built_with_org_json():

@@ -2155,8 +2155,23 @@
     // the OS confirms one is there. Probing is cheap (a package-manager query) and returns false instantly
     // in the browser, where the plugin does not exist.
     { const b=$('#btn-nip55'); if(b){ b.onclick = loginNip55;
-        Nip55.probe().then(ok => { if(ok){ b.classList.remove('hidden');
-          const n=(Nip55.signers[0]||{}).label; if(n) b.textContent = '📲 Sign in with '+n; } }).catch(()=>{}); } }
+        /* OTHER apps' signers only — never this one.
+         *
+         * This app is a NIP-55 signer now, so it appears in its own picker, and "sign in with
+         * PosterChan" looked like a feature. It is not: we have no ContentProvider, so the silent
+         * path does not exist and EVERY signature would launch an Activity — a dialog per reaction,
+         * per DM, per timeline write. That is the exact cost going native was meant to remove, paid
+         * by the one app that never needed to pay it, since it can simply hold the key itself.
+         *
+         * Being a signer for OTHER apps is the point and is untouched. Signing for ourselves through
+         * an Intent round trip to ourselves is a loop with a prompt in it. */
+        Nip55.probe().then(ok => {
+          const others = (Nip55.signers||[]).filter(x => x && !x.self);
+          if(!ok || !others.length) return;
+          Nip55.pkg = others.length === 1 ? (others[0].package || '') : Nip55.pkg;
+          b.classList.remove('hidden');
+          if(others[0].label) b.textContent = '📲 Sign in with '+others[0].label;
+        }).catch(()=>{}); } }
     $('#btn-nsec-login').onclick = loginNsec;
     $('#btn-amber').onclick = ()=>{ amberErr(''); $('#auth-login').classList.add('hidden'); $('#auth-amber').classList.remove('hidden'); };
     $('#btn-amber-back').onclick = ()=>{ Nip46.reset(); $('#amber-nc-box').classList.add('hidden'); $('#auth-amber').classList.add('hidden'); $('#auth-login').classList.remove('hidden'); };
@@ -2217,58 +2232,14 @@
       Session.save({ mode:'nip55', pubkey: pk, pkg: Nip55.pkg, npub: ME.npub });
       startApp();
     }catch(e){
-      /* THE CHICKEN AND THE EGG, BROKEN RATHER THAN EXPLAINED.
-       *
-       * Our own signer refuses with "no key on this device" until somebody gives it one — and the
-       * documented way to do that was Settings → "Sign for other apps", which needs a session that
-       * already holds the key. From the login screen that is a closed loop, and the first version of
-       * this shipped an ERROR MESSAGE describing the loop, which is not the same as a way out.
-       *
-       * So the signer can be handed a key here, on its own terms. It goes from the field straight
-       * into the Keystore and the session is opened in `nip55` mode — meaning the key is NEVER
-       * written to this browser's storage at all, not even briefly. That is strictly better than
-       * signing in with the same nsec normally, which does store it here. */
-      const msg = String((e && e.message) || '');
-      if(/no key on this device/i.test(msg) && (Nip55.signers||[]).some(x => x && x.self)){
-        if(b){ b.disabled=false; b.textContent=was; }
-        return _signerAdoptKey();
-      }
-      authErr(msg || 'the signer declined');
+      /* The signer's own words. Ours is not offered here any more — see the picker above for why —
+       * so a refusal now always comes from somebody else's app and theirs is the only useful
+       * explanation we have. */
+      authErr(String((e && e.message) || '') || 'the signer declined');
     }
     finally{ if(b){ b.disabled=false; b.textContent=was; } }
   }
 
-  /* Hand this device's own signer a key, then sign in through it. */
-  function _signerAdoptKey(){
-    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Use this device as your signer</h3>
-      <p class="muted small">Paste your key once. It is sealed by Android and kept out of this
-        browser entirely — apps ask this device to sign, and the key itself never leaves it.</p>
-      <input id="adopt-nsec" class="input" type="password" placeholder="nsec1…" autocomplete="off">
-      <button class="btn btn-neon full" id="adopt-go">Store it on this device</button>
-      <div class="auth-error" id="adopt-err"></div>`, root=>{
-      const err = m => { const el=root.querySelector('#adopt-err'); if(el) el.textContent = m||''; };
-      const go = root.querySelector('#adopt-go');
-      go.onclick = async () => {
-        err(''); const v = (root.querySelector('#adopt-nsec').value||'').trim();
-        if(!v) return err('paste your nsec');
-        go.disabled = true; go.textContent = 'storing…';
-        try{
-          // Decoded in the worker, which derives the pubkey WITHOUT installing the key — so nothing
-          // here ever calls setKey and nothing is written to Session.
-          const k = await Relay.worker.call('decodeNsec', { nsec: v });
-          const P = _capPlugin('Signer', 'enable');
-          if(!P) throw new Error('this build has no on-device signer');
-          await P.enable({ sec: k.sk });
-          closeModal();
-          toast('stored — this device is your signer now');
-          loginNip55();
-        }catch(e2){
-          go.disabled = false; go.textContent = 'Store it on this device';
-          err(((e2 && (e2.message||e2.errorMessage)) || 'could not store that key'));
-        }
-      };
-    });
-  }
   function amberErr(m){ const el=$('#amber-error'); if(el) el.textContent=m||''; }
   function finishAmberLogin(pk, session){
     signer = makeSigner('nip46', pk); ME = { mode:'nip46', pubkey: pk, npub: NT().nip19.npubEncode(pk) };
@@ -2373,7 +2344,7 @@
       btn.disabled=false; btn.textContent='↻ Start over';
       const { userPk, session }=await done; finishAmberLogin(userPk, session);
     }catch(e){ amberErr(e.message||'could not connect'); Nip46.reset(); $('#amber-nc-box').classList.add('hidden'); }
-    finally{ btn.disabled=false; btn.textContent='📲 Open in Amber / scan QR'; }
+    finally{ btn.disabled=false; btn.textContent='📲 Show QR / open a signer'; }
   }
   // ---------- sign in with an account (Google / fediverse) ----------
   // The node mints and holds the key for these accounts (see routers/social_login.py) — the one

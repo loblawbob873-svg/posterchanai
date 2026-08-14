@@ -93,7 +93,7 @@
                      and no relay round trip. app.js unhides it only when the OS reports a signer, and relabels
                      it with that signer's own name; in a browser it stays hidden. -->
                 <button id="btn-nip55" class="btn btn-cyan full hidden"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Amber on this device</button>
-                <button id="btn-amber" class="btn btn-cyan full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-relay"></use></svg>Amber / remote signer</button>
+                <button id="btn-amber" class="btn btn-cyan full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-relay"></use></svg>PosterChan / remote signer</button>
             </div>
             <!-- Account sign-in. Hidden unless this node has turned a provider on (Admin → Site →
                  "Sign in with an account"); _bindAccountLogins unhides only what's configured. These
@@ -168,14 +168,14 @@
         </div>
 
         <div id="auth-amber" class="auth-pane hidden">
-            <p class="muted small">Sign in with <b>Amber</b> (or any NIP-46 remote signer / bunker). In Amber, add this app and copy its <code>bunker://</code> connection string, then paste it below.</p>
+            <p class="muted small">Sign in with <b>PosterChan on another device</b>, <b>Amber</b>, or any NIP-46 remote signer. If your signer gives you a <code>bunker://</code> string, paste it below; otherwise use the QR underneath.</p>
             <input id="amber-input" class="input" type="text" placeholder="bunker://… (or nostrconnect://)" autocomplete="off">
             <button id="btn-amber-connect" class="btn btn-neon full">Connect</button>
             <div class="divider"><span>or</span></div>
-            <p class="muted small">No bunker string? Generate a connection link — <b>tap to open in Amber</b> on this phone, or <b>scan the QR</b> with a signer on another device (Amber, nsec.app, Primal…). Your key stays on your phone.</p>
-            <button id="btn-amber-nc" class="btn btn-cyan full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Open in Amber / scan QR</button>
+            <p class="muted small">Generate a connection link — <b>scan the QR</b> with PosterChan on your phone (Settings → Log in another device), or with Amber, nsec.app or Primal. On a phone, <b>tap to open</b> a signer installed here. Your key never leaves the device that holds it.</p>
+            <button id="btn-amber-nc" class="btn btn-cyan full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Show QR / open a signer</button>
             <div id="amber-nc-box" class="keybox hidden">
-                <a id="amber-nc-open" class="btn btn-neon full" href="#"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Tap to open in Amber</a>
+                <a id="amber-nc-open" class="btn btn-neon full" href="#"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Tap to open a signer on this device</a>
                 <!-- The QR is drawn in the page (static/js/client/qr.js), so it is here with no instance
                      and over Tor — which is what this screen is FOR. The label is still replaced by
                      loginAmberNostrConnect if the encoder ever declines, so it can never sit above an
