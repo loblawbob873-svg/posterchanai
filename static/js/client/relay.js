@@ -20,6 +20,19 @@
   }
   const worker = new WorkerRPC('/static/js/client/signer-worker.js?v=' + (self.__VER || ''));
 
+  /* A RELAY URL HAS TO BE ABSOLUTE AND ws(s):, and this is not pedantry — `new WebSocket(x)`
+     RESOLVES A RELATIVE STRING AGAINST THE PAGE. So a blank, half-typed or path-shaped entry does
+     not fail: it opens a socket to the app's own address, which serves no WebSocket, and the
+     rejection looks exactly like a relay being down. Measured in production as 35 refused upgrades
+     to /client in twenty minutes — one client retrying for ever behind a backoff, against a URL that
+     could never work, while the relay list showed nothing wrong.
+
+     `new URL()` with no base throws on anything relative, which is precisely the test wanted. */
+  function _isRelayUrl(u){
+    try{ var p = new URL(String(u || '')).protocol; return p === 'ws:' || p === 'wss:'; }
+    catch(_){ return false; }
+  }
+
   // ---- one socket to one relay; reports up to the pool ----
   class Conn {
     constructor(url, pool, trusted){
@@ -28,6 +41,17 @@
       this._open();
     }
     _open(){
+      /* NOT `_retry()`: a malformed URL cannot start working, and retrying one is how a typo becomes
+         an endless stream of rejected connections nobody can trace back to it. Said once, out loud,
+         because the alternative is a relay that is simply always 'off' for no stated reason. */
+      if(!_isRelayUrl(this.url)){
+        if(!this._badUrl){
+          this._badUrl = true;
+          try{ console.warn('[relay] not a ws:// or wss:// URL, so it is being ignored:', this.url); }catch(_){}
+        }
+        this._setStatus('off');
+        return;
+      }
       try { this.ws = new WebSocket(this.url); } catch(e){ this._setStatus('off'); this._retry(); return; }
       this._setStatus('connecting');
       this.ws.onopen = () => {

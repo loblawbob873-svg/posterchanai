@@ -89,7 +89,8 @@ const canvas = { __name:'canvas', dispatchEvent(e){ events.push({ on:'canvas', t
                  bubbles:e.bubbles }); return true; } };
 const bodyEl = { __name:'body', dispatchEvent(e){ events.push({ on:'body', type:e.type,
                  key:e.key, code:e.code, keyCode:e.keyCode, bubbles:e.bubbles,
-                 movementX:e.movementX, movementY:e.movementY }); return true; } };
+                 movementX:e.movementX, movementY:e.movementY,
+                 clientX:e.clientX, clientY:e.clientY }); return true; } };
 
 global.MouseEvent = class MouseEvent {
   constructor(type, init){
@@ -99,6 +100,8 @@ global.MouseEvent = class MouseEvent {
     // Honoured the way Chrome does; the shim's defineProperty path is for engines that drop them.
     this.movementX = init.movementX || 0;
     this.movementY = init.movementY || 0;
+    this.clientX = init.clientX || 0;
+    this.clientY = init.clientY || 0;
   }
 };
 global.KeyboardEvent = class KeyboardEvent {
@@ -122,7 +125,8 @@ global.document = {
   querySelector(sel){ return sel === 'canvas' ? canvas : null; },
 };
 const listeners = {};
-global.window = { addEventListener(t, fn){ (listeners[t] = listeners[t] || []).push(fn); } };
+global.window = { addEventListener(t, fn){ (listeners[t] = listeners[t] || []).push(fn); },
+                  innerWidth: 1280, innerHeight: 800 };
 // `navigator` is a read-only built-in global from node 21 on, so a plain assignment silently does
 // nothing and the shim sees the REAL navigator (no getGamepads), returns early, and every assertion
 // here fails for a reason that has nothing to do with the shim.
@@ -155,7 +159,8 @@ for(const s of steps){
   if(s.frames) for(let i = 0; i < s.frames; i++) frame();
   if(s.record) out[s.record] = events.map(e => ({ on:e.on, type:e.type, code:e.code,
                                                   keyCode:e.keyCode, bubbles:e.bubbles,
-                                                  movementX:e.movementX, movementY:e.movementY }));
+                                                  movementX:e.movementX, movementY:e.movementY,
+                                                  clientX:e.clientX, clientY:e.clientY }));
   // The report rides a timer in the browser; fire it by hand so the test controls when.
   if(s.recordStat){ if(statFn) statFn();
     out[s.recordStat] = padstats.length ? padstats[padstats.length-1] : null; }
@@ -257,6 +262,23 @@ class WebxdcGamepadShim(unittest.TestCase):
         self.assertAlmostEqual(quarter / full, 0.25, delta=0.05,
                                msg=f"a quarter-stick gave {quarter} of {full} — that is a curve, "
                                    f"and it reads as resistance")
+
+    def test_the_aim_carries_a_cursor_that_moves_the_way_the_stick_was_pushed(self):
+        """movementX/Y only means anything to an engine holding the pointer lock. One that is NOT
+        locked ignores it and reads the ABSOLUTE clientX/clientY — and this sent 0,0 on every frame,
+        telling those engines the cursor was pinned to the top-left corner. Reported as "press right
+        joystick and sometimes it sends me the other direction jerking me around"."""
+        out = run([
+            {"pads": [pad()], "emit": "gamepadconnected", "frames": 1, "drain": True},
+            {"pads": [pad(axes=[0.0, 0.0, 1.0, 0.0])], "frames": 3, "record": "right"},
+        ])
+        moves = [e for e in out["right"] if e["type"] == "mousemove"]
+        self.assertGreaterEqual(len(moves), 2, "expected several aim samples")
+        # Seeded at the centre, never the corner, and advancing in the direction pushed.
+        self.assertGreater(moves[0]["clientX"], 100,
+                           "the cursor started at the corner, which reads as being thrown there")
+        self.assertGreater(moves[1]["clientX"], moves[0]["clientX"],
+                           "pushing right must move the cursor right, not reset it")
 
     def test_a_resting_right_stick_does_not_drift_the_aim(self):
         """A stick at rest still reports small values, and an aim that creeps while nobody touches

@@ -616,6 +616,7 @@
        The deadzone is 0.06 against a measured resting drift of 0.0153 — four times the noise and
        still inside the first tenth of travel, so the stick answers as soon as it is pushed. */
     var LOOK_PX = (typeof __XDC.look === 'number' && __XDC.look > 0) ? __XDC.look : 45;
+    var lookX = -1, lookY = -1;      // virtual cursor; -1 until the first aim seeds it at the centre
     function look(x, y){
       if(typeof x !== 'number' || typeof y !== 'number') return;
       var ax2 = Math.abs(x) > 0.06 ? x : 0;
@@ -626,17 +627,30 @@
       stat.look = (stat.look || 0) + 1;
       var t = document.pointerLockElement || document.body || document.documentElement;
       if(!t) return;
+      /* A VIRTUAL CURSOR, because clientX/clientY are not decoration here.
+         movementX/Y is only meaningful to an engine holding the pointer lock; one that is NOT locked
+         ignores it and reads the ABSOLUTE position instead. Sending 0,0 every frame told those
+         engines the cursor was pinned to the top-left corner — which, mixed with any real input,
+         reads as being thrown the other way: "press right joystick and sometimes it sends me the
+         other direction jerking me around". So the position advances by the same delta and is
+         clamped to the viewport, and both kinds of engine see a cursor that moves the way the stick
+         was pushed. Seeded at the centre rather than 0,0 for the same reason. */
+      var vw = window.innerWidth || 640, vh = window.innerHeight || 480;
+      if(lookX < 0){ lookX = vw / 2; lookY = vh / 2; }
+      lookX = Math.max(0, Math.min(vw - 1, lookX + dx));
+      lookY = Math.max(0, Math.min(vh - 1, lookY + dy));
       try{
         t.dispatchEvent(new MouseEvent('mousemove', {
           bubbles: true, cancelable: true, view: window,
-          movementX: dx, movementY: dy, clientX: 0, clientY: 0, screenX: 0, screenY: 0 }));
+          movementX: dx, movementY: dy,
+          clientX: lookX, clientY: lookY, screenX: lookX, screenY: lookY }));
       }catch(e){
         /* An engine on an older WebView may not accept movementX through the constructor. Falling
            back to a plain event with the properties attached keeps it working there rather than
            losing aim entirely — read-only on the prototype, so define them on the instance. */
         try{
           var ev = document.createEvent('MouseEvents');
-          ev.initMouseEvent('mousemove', true, true, window, 0, 0, 0, 0, 0,
+          ev.initMouseEvent('mousemove', true, true, window, 0, lookX, lookY, lookX, lookY,
                             false, false, false, false, 0, null);
           Object.defineProperty(ev, 'movementX', { value: dx });
           Object.defineProperty(ev, 'movementY', { value: dy });
