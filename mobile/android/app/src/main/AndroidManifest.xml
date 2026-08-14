@@ -167,6 +167,32 @@
                                opt-in, off by default, cancellable from the notification." />
         </service>
 
+        <!-- The remote signer (NIP-46), answered natively instead of by the WebView.
+
+             WHY IT IS A SERVICE AT ALL, when SignerActivity deliberately is not: that one answers
+             OTHER APPS ON THIS PHONE over an Intent, so Android starts it on demand and it costs
+             nothing between requests. This one answers this user's OTHER DEVICES over a relay, and
+             nothing can wake a phone for that except something already listening.
+
+             It replaces a socket that lived in JavaScript inside the WebView, where Chromium throttles
+             a hidden page's timers to about one a minute — so a dropped connection was not redialled
+             until the screen came on, reported as "I have to wake the phone for events to actually
+             send from desktop". StayAwakeService could not fix that and never claimed to: it keeps the
+             PROCESS resident, not the renderer's timers running.
+
+             `specialUse` for the same reason as the service above — Android 15's six-hour dataSync cap
+             would silently stop the signer answering for most of the day. -->
+        <service
+            android:name=".signer.SignerRelayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Answers the user's own remote signing requests (NIP-46) from their
+                               other devices over a relay connection they configured. User opt-in,
+                               off by default, cancellable from the notification." />
+        </service>
+
         <!-- Voice/video calls. NOT the same reason as the music service above: since Android 11 an app
              in the BACKGROUND may not capture the microphone or camera at all unless a foreground
              service of the matching type is running. Without this, pressing Home mid-call silences

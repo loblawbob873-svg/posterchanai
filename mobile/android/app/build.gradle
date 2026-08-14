@@ -53,6 +53,17 @@ dependencies {
     // Google, or JitPack) and the build failed to resolve it. 3.x is also a different API — a
     // PushService rather than a MessagingReceiver — so PushEventService follows that shape.
     implementation 'org.unifiedpush.android:connector:3.3.3'
+    // The remote signer's WebSocket (see signer/SignerRelayService). Java has no WebSocket client
+    // below API 33 and Android never got one at all, so answering NIP-46 natively needs a library —
+    // and this is the one Android already ships inside a dozen other SDKs, so it is well-trodden
+    // rather than exotic. 4.x is Kotlin-based, which costs nothing here: kotlin-stdlib is already on
+    // the classpath through capacitor-android's kotlin-bom.
+    //
+    // It is used for ONE thing — a WebSocket per relay with a ping interval — not as a general HTTP
+    // client. Nothing else in this app routes through it, and it must stay that way: the app's own
+    // HTTP goes through the WebView so it inherits the user's proxy and Tor settings, which an OkHttp
+    // client would silently bypass.
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     // MediaSessionCompat + MediaStyle + the media-button receiver — the lock-screen/car transport for
     // the music player (see music/MusicService). androidx.media, NOT media3: media3's session is built
     // around holding a Player, and ours holds nothing — the audio is in the WebView, which is the whole

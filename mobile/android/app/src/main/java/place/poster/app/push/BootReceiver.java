@@ -45,6 +45,20 @@ public class BootReceiver extends BroadcastReceiver {
     } catch (Throwable ignored) {
     }
 
+    /* The signer, BEFORE the stay-connected early return below and not folded into it. They are two
+     * independent switches: someone can sign for their desktop without opting into a permanent relay
+     * connection for notifications, and that is the common case. Ordered after the return — as this
+     * was, the first time — a phone with the signer on and "stay connected" off came back from a
+     * reboot answering nothing, which is indistinguishable from the signer being broken and is the
+     * exact class of bug the whole service was written to remove. */
+    if (place.poster.app.signer.SignerRelayService.wanted(ctx)) {
+      try {
+        place.poster.app.signer.SignerRelayService.kick(
+            ctx, place.poster.app.signer.SignerRelayService.ACTION_START);
+      } catch (Throwable ignored) {
+      }
+    }
+
     if (!StayAwakeService.wanted(ctx)) return;
     try {
       Intent i = new Intent(ctx, StayAwakeService.class).setAction(StayAwakeService.ACTION_START);

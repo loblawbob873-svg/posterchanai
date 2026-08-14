@@ -1311,6 +1311,49 @@
     sessions: new Map(),     // client pubkey -> {relay, secret, name, perms, created, last}
     _subId: null,
     active: false,
+    /* Set once the NATIVE service confirms it is up (packaged Android only). While it is, this half
+     * holds no sockets at all — see _standDown. */
+    nativeOn: false,
+
+    /* ---- handing the job to the process, on the one platform that can take it ------------------
+     *
+     * THE DIVISION OF LABOUR, and it is the whole fix for "I have to wake the phone for events to
+     * actually send from desktop": THIS half owns PAIRING, the native service owns STEADY STATE.
+     *
+     * Pairing happens with the screen on — someone is looking at a QR code — so the page is the right
+     * place for it: it does the scan, the consent and the unsolicited ACK, exactly as it always has.
+     * Steady state is the opposite: it happens with the screen off, which is precisely when Chromium
+     * throttles this page's timers to about one a minute and a dropped socket stops being redialled.
+     * A foreground service has no such policy, so once a pairing exists it is handed over.
+     *
+     * They must never BOTH be listening — two signers answering one request is two events published
+     * for it — so the handover is explicit and one-way: publish, confirm the service is really up,
+     * and only then close these sockets. If the service does not confirm, this half carries on as it
+     * always did, which is also exactly what happens in a browser and on the desktop app, where there
+     * is no service to hand anything to. */
+    _nativePlugin(){
+      try{ const p = _capPlugin('Signer', 'sync'); return (p && p.sync) ? p : null; }catch(_){ return null; }
+    },
+    /* Publish the pairings and ask the service to match them. Answers whether it took the job.
+     * `secret` is deliberately NOT sent: it is only ever needed for the pairing ACK, which this half
+     * sends before handing over, so the service has no use for it and no reason to store it. */
+    async _pushNative(){
+      const p = this._nativePlugin();
+      if(!p){ this.nativeOn = false; return false; }
+      try{
+        const list = this.list().map(s => ({ pk:s.pk, relay:s.relay, name:s.name,
+                                             perms:(s.perms||[]).join(','), enc:s.enc||'', last:s.last||0 }));
+        const r = await p.sync({ sessions: JSON.stringify(list), enabled: !!this.active });
+        this.nativeOn = !!(r && r.running);
+      }catch(_){ this.nativeOn = false; }
+      return this.nativeOn;
+    },
+    /* Close this half's sockets, keeping the session list for the UI to draw. NOT `stop()`: the
+     * pairings are still live, they are simply somebody else's job now. */
+    _standDown(){
+      this.socks.forEach(ws => { try{ ws.onclose = null; ws.close(); }catch(_){} });
+      this.socks.clear();
+    },
 
     _key(){ return 'pc_signer_v1_' + ((ME && ME.pubkey) || 'anon'); },
     _load(){
@@ -1416,6 +1459,11 @@
         throw e;
       }
       this._sync();
+      /* Hand this pairing to the service now that the ACK is out. Awaited rather than fired off, so
+       * that by the time the caller says "logged in" the half that will actually be answering is the
+       * one holding the socket — a gap here is a window where the phone looks paired and nothing is
+       * listening. A failure leaves this half connected, which is the pre-existing behaviour. */
+      try{ if(await this._pushNative()) this._standDown(); }catch(_){}
       onStatus && onStatus(name);
       return name;
     },
@@ -1429,8 +1477,15 @@
       this.active = true;
       saved.forEach(s => { const pk = s.pk; if(pk){ const c = Object.assign({}, s); delete c.pk;
                                                     this.sessions.set(pk, c); } });
-      const relays = [...new Set(this.list().map(s => s.relay).filter(Boolean))];
-      await Promise.all(relays.map(r => this._open(r).catch(()=>{})));
+      /* Ask the service FIRST, and open nothing if it takes the job. Opening sockets and closing them
+       * again a moment later is not merely wasteful: it is a REQ per relay whose replies race the
+       * service's, which is the double-answer this split exists to prevent. */
+      let native = false;
+      try{ native = await this._pushNative(); }catch(_){}
+      if(!native){
+        const relays = [...new Set(this.list().map(s => s.relay).filter(Boolean))];
+        await Promise.all(relays.map(r => this._open(r).catch(()=>{})));
+      }
       this._sync();
       return this.sessions.size;
     },
@@ -1446,6 +1501,9 @@
         this.socks.delete(url);
       });
       if(!this.sessions.size) this.active = false;
+      /* Tell the service too, or a revoked app carries on being answered by the half that is awake —
+       * the page would show it signed out while the phone kept signing for it. */
+      this._pushNative().catch(()=>{});
       this._sync();
     },
 
@@ -1564,7 +1622,10 @@
       this.active=false;
       this.socks.forEach(ws => { try{ ws.onclose=null; ws.close(); }catch(_){} });
       this.socks.clear(); this.sessions.clear(); this._subId=null;
-      this._persist(); this._sync();
+      this._persist();
+      // `active:false` above is what tells the service to shut down rather than reload.
+      this._pushNative().catch(()=>{});
+      this._sync();
     },
   };
 
