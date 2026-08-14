@@ -54,6 +54,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -171,8 +172,17 @@ SCAN = """(async (seconds)=>{
 async def run(url):
     import websockets
     from app.services.nostr import bech32, bip340
-    sys.path.insert(0, os.path.join(ROOT, "scripts"))
-    from check_nip46_signer import MiniRelay          # the throwaway relay, already written
+
+    # THIS INSTANCE'S OWN RELAY, not a throwaway one. Since 2026-08-14 the signer refuses to pair on
+    # any relay but `CFG.relay_url` — a QR is a picture anyone can print, and it must not be able to
+    # aim the half of the app that holds the key. A MiniRelay here would therefore be refused, and
+    # the check would report a scanner failure for a scan that worked perfectly.
+    import urllib.request as _u
+    with _u.urlopen(url + "/client/config", timeout=10) as r:
+        relay_url = json.load(r).get("relay_url") or ""
+    if not relay_url:
+        print("SKIP  this instance publishes no relay_url, so there is nothing to pair on")
+        return 2
 
     if not shutil.which("node"):
         print("SKIP  node not installed")
@@ -183,8 +193,6 @@ async def run(url):
         print("SKIP  no Chrome")
         return 2
 
-    relay = MiniRelay()
-    relay_url = await relay.start()
     tmp = PROFILE + "-media"
     os.makedirs(tmp, exist_ok=True)
 
@@ -258,17 +266,36 @@ async def run(url):
                     if not who.get("ok"):
                         print(f"SKIP  {who.get('err') or 'could not sign in'}")
                         return 2
-                    before = len(relay.events)
+                    # Subscribed BEFORE the scan: the ack is published the instant the QR is read,
+                    # and a subscription opened afterwards would miss it and report a false failure.
+                    acked_evt = asyncio.Event()
+
+                    async def _watch():
+                        try:
+                            async with websockets.connect(relay_url, open_timeout=15,
+                                                          max_size=None) as w:
+                                await w.send(json.dumps(["REQ", "scanchk",
+                                                         {"kinds": [24133], "#p": [app_pk],
+                                                          "since": int(time.time()) - 60}]))
+                                while True:
+                                    m = json.loads(await w.recv())
+                                    if m[0] == "EVENT" and m[2].get("kind") == 24133:
+                                        acked_evt.set()
+                                        return
+                        except Exception:
+                            pass
+
+                    watcher = asyncio.ensure_future(_watch())
                     res = await js(f"({SCAN})(20)") or {}
-                    # The ack the client publishes after a successful decode. Kind 24133 addressed to
-                    # the app key in the QR — nothing else on this relay can produce one.
-                    acked = any(e.get("kind") == 24133
-                                and any(len(t_) >= 2 and t_[0] == "p" and t_[1] == app_pk
-                                        for t_ in e.get("tags", []))
-                                for e in relay.events[before:])
+                    try:
+                        await asyncio.wait_for(acked_evt.wait(), 10)
+                    except asyncio.TimeoutError:
+                        pass
+                    watcher.cancel()
+                    acked = acked_evt.is_set()
                     if not acked:
                         problems.append((name, res.get("err") or (
-                            "the scanner opened and read nothing" if res.get("opened")
+                            "the scanner opened but nothing reached the relay" if res.get("opened")
                             else "the scanner never opened"),
                                          f"QR v{info['version']} ({info['modules']}x"
                                          f"{info['modules']}), {info['pxPerModule']}px/module, "
@@ -278,7 +305,6 @@ async def run(url):
             finally:
                 proc.terminate()
     finally:
-        await relay.stop()
         subprocess.run(["rm", "-rf", PROFILE], check=False)
         shutil.rmtree(tmp, ignore_errors=True)
 

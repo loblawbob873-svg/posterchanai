@@ -1361,8 +1361,32 @@
       if(!m) throw new Error('that QR is not a nostrconnect login link');
       const clientPk = m[1].toLowerCase();
       const qs = new URLSearchParams(m[2]||'');
-      const relay = qs.getAll('relay')[0];
-      if(!relay) throw new Error('that QR is missing its relay');
+      /* THIS INSTANCE'S RELAY, AND ONLY THAT ONE.
+       *
+       * The relay in the QR is chosen by whoever printed the QR, and this side would dial it — so a
+       * code from anywhere could point our signer at a stranger's relay and learn the device's IP
+       * from the connection alone, before any pairing is approved. The signer holds the key; it does
+       * not get to be aimed by a picture.
+       *
+       * It costs nothing in the flow this exists for: `_ncRelays()` on the client half names
+       * `CFG.relay_url` and nothing else, so a PosterChan QR already carries exactly this relay. A
+       * QR naming a different one is REFUSED OUT LOUD rather than quietly re-pointed at ours — a
+       * silent substitution would pair against a relay the other device is not listening on, and it
+       * would sit on "waiting for the signer" for ever with both halves behaving correctly.
+       *
+       * With no instance relay (a standalone build) there is nothing of ours to insist on, so the
+       * QR's own relay is all there is and is used as before. */
+      const qrRelay = qs.getAll('relay')[0];
+      if(!qrRelay) throw new Error('that QR is missing its relay');
+      const ourRelay = (CFG && CFG.relay_url) || '';
+      const _norm = (u) => String(u||'').trim().replace(/\/+$/,'').toLowerCase();
+      if(ourRelay && _norm(qrRelay) !== _norm(ourRelay)){
+        let where = qrRelay;
+        try{ where = new URL(qrRelay).host; }catch(_){}
+        throw new Error('that QR wants a signer on ' + where
+          + ', but this device only signs on this instance\u2019s relay');
+      }
+      const relay = ourRelay || qrRelay;
       const name = qs.get('name') || 'the app';
       const sess = { relay, secret: qs.get('secret')||'', name, url: qs.get('url')||'',
                      perms: this._grants(qs), created: Math.floor(Date.now()/1000), last: 0 };
