@@ -4,9 +4,11 @@
 
 # Poster-chan AI
 
-### A self-hosted, Nostr-native AI assistant & bot platform — private, and ridiculously capable.
+### A Nostr-powered personal cloud, and a self-hosted AI powerhouse — on your hardware, under your keys.
 
-**Nostr-native at the core:** a built-in web-of-trust relay (on PostgreSQL) *is* the datastore — your settings, accounts, and AI chats are **encrypted Nostr events you own**, and the app's face is a full cyberpunk **Nostr web client**. One FastAPI backend that also does chat, image/voice/video generation, a browser **password manager & bookmark sync**, **OBS live streaming**, email, news, torrents, and runs autonomous bots on **Telegram, Pleroma & Nostr**. Cloud LLMs or the built-in native `llama.cpp`. Your hardware, your keys, your rules.
+**Replace the cloud, then put a GPU behind it.** Your notes, calendar, contacts, addressbook, files, photos, passwords, bookmarks, mail, music and folder sync — all of it living as **encrypted Nostr events on a relay you run**, reachable from a web client, a desktop app, an Android app, and from any CalDAV/CardDAV phone client you already own. No account with anybody, no per-seat billing, no vendor holding the keys.
+
+**Then the part a cloud drive can't do:** the same box runs your own models. Chat, image, voice, video and music generation, a private metasearch engine, live streaming, and autonomous bots on **Telegram, Pleroma & Nostr** — driven by cloud LLMs or the built-in native `llama.cpp` (CPU / CUDA / ROCm / **Intel Arc**). One FastAPI backend, an OpenAI-compatible `/v1/`, and a web-of-trust relay on PostgreSQL that *is* the datastore.
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -56,16 +58,23 @@ Then, when you want more:
 
 ## Why Poster-chan?
 
-- 🟣 **Nostr-native datastore** — the built-in **web-of-trust relay** (backed by PostgreSQL) is the source of truth. Settings, accounts, API keys, and AI chats live as **NIP-44-encrypted `kind-30078` events** signed by your node — not rows in some app DB. Log in with your **Nostr key** (NIP-07/NIP-46), and the web UI is a full Nostr client. No SQLite, no proprietary schema you don't control.
-- 🔐 **Passwords & bookmarks, as Nostr events** — a companion **Firefox / Chrome / Brave** extension turns your own relay into an end-to-end-encrypted **password manager** and **cross-browser bookmark sync**. Every login and bookmark is an **AES-GCM-encrypted `kind-30078` event** decrypted only on your device — the relay holds ciphertext, never your data. Autofill, **TOTP** one-time codes, a password generator, and a built-in **NIP-07 signer** so you sign into Nostr apps without pasting your `nsec`.
-- 🔴 **Go live from OBS** — stream over RTMP to the bundled **MediaMTX** (RTMP → HLS), announced on Nostr via **NIP-53** so it appears in the wider stream directories too — see [Live streaming](#nostr-web-client).
-- 🏠 **Truly self-hosted** — runs on your own box, no telemetry, single-admin multi-user. Your conversations and keys never leave your network; the only local secret is a gitignored keyfile.
-- 🔌 **Bring any model** — cloud (any OpenAI-compatible API) or the **built-in native `llama.cpp`** backend (CPU / CUDA / HIP / **Intel Arc SYCL**). Round-robin load-balance across several backends.
-- 🤖 **It's also a bot platform** — drive everything from **Telegram**, and run autonomous **Pleroma / Nostr** bots from a single admin tab.
-- 🎨 **More than chat** — image generation, TTS/STT, website screenshots, YouTube/X summarize & download, media tools, interactive study flashcards, email, news, budget, torrents — all behind one chat box.
-- 🛠️ **Hackable & honest** — thin routers, services for logic, an interactive installer, and an OpenAI-compatible `/v1/` endpoint that agentic coding clients (e.g. opencode) can drive against your local models.
+### The personal cloud
 
-> Point any OpenAI-compatible tool at `http://your-box:3051/v1/` and you've got a private, function-calling-capable model server. Open the web UI and you've got a full assistant. Link a bot and it's in your pocket.
+- ☁️ **The things you'd otherwise rent** — **Notes** (offline-first, with Joplin import), **Calendar** and **Contacts** over real **CalDAV/CardDAV** so your phone's own apps sync with them, **Files** on encrypted Blossom storage, **Folder sync** for Documents and Pictures across desktop and Android, **Mail** over your own IMAP/SMTP, **Music**, **Budget**, and a **password manager**. One node, one account, no subscription.
+- 🟣 **Encrypted events, not somebody's database** — the built-in **web-of-trust relay** (on PostgreSQL) is the source of truth. Settings, accounts, API keys, notes, calendars and AI chats are **NIP-44-encrypted `kind-30078` events** signed by your node. Log in with your **Nostr key** (NIP-07/NIP-46). No SQLite, no proprietary schema, nothing to export because you already hold it.
+- 🔐 **Passwords & bookmarks in the browser you already use** — a **Firefox / Chrome / Brave** extension turns your relay into an end-to-end-encrypted **password manager** and **cross-browser bookmark sync**. Every login is an **AES-GCM-encrypted** event decrypted only on your device — the relay holds ciphertext. Autofill, **TOTP** codes, a generator, and a built-in **NIP-07 signer** so you sign into Nostr apps without pasting your `nsec`.
+- 📱 **Every surface** — a cyberpunk **Nostr web client** and PWA, a **desktop app** (Windows/macOS/Linux, with bundled Tor), an **Android APK**, a **windowed desktop mode**, and CalDAV/CardDAV for the phone apps you already have. The native apps bundle the client and can run with **no server at all** — relays and a key are enough.
+
+### The AI powerhouse
+
+- 🔌 **Bring any model, or host it** — cloud (any OpenAI-compatible API) or the **built-in native `llama.cpp`** backend (CPU / CUDA / HIP / **Intel Arc SYCL**), round-robin load-balanced across several boxes with a shared GPU lock so one card serves chat, images, video and music without thrashing.
+- 🎨 **Generate on your own silicon** — images, **text-to-video**, **text-to-music** (ACE-Step, in-process), TTS/STT and voice cloning, talking-picture lip-sync, a meme builder, website screenshots, YouTube/X summarize & download, and interactive study flashcards.
+- 🔎 **Your own search engine** — a **SearXNG instance bundled with the node**, running inside the app, behind a search screen with AI overviews and citations. Your node can be your browser's search engine.
+- 🤖 **It's also a bot platform** — drive everything from **Telegram**, and run autonomous **Pleroma / Nostr** bots from a single admin tab.
+- 🔴 **Go live from OBS** — RTMP to the bundled **MediaMTX** (RTMP → HLS), announced on Nostr via **NIP-53**, with a bitrate clamp so one streamer doesn't cost you a viewer's worth of upload each.
+- 🛠️ **Hackable & honest** — thin routers, services for logic, an interactive installer, and an OpenAI-compatible `/v1/` that agentic coding clients (e.g. opencode) can drive against your local models.
+
+> Point any OpenAI-compatible tool at `http://your-box:3051/v1/` and you've got a private, function-calling-capable model server. Open the web UI and you've got your files, mail, calendar and assistant in one place. Link a bot and it's in your pocket.
 
 ---
 
@@ -112,7 +121,7 @@ A companion **browser extension** (Firefox, and Chrome / Brave via MV3) makes yo
 - **Website screenshots**: full-page capture with the `screenshot <url>` command (also `shot` / `ss`) — works in the web UI and Telegram. Uses headless Chrome (JS-aware, so SPAs render), Firefox fallback (see [Requirements](#requirements)).
 - **YouTube / X**: summarize a video **from its transcript** (so summaries and link-posts reflect the actual content, not the page), grab thumbnails, or **download** audio (MP3) / video with the `ytdl` command — in the web UI, Telegram, and Pleroma. A video download can be trimmed and/or shrunk in one command (`ytdl video <url> clip 0:10 0:30 compress`); Telegram also offers these as buttons after the download
 
-### PIM & productivity
+### Your personal cloud (mail, calendar, contacts, files, sync)
 
 - **Email**: a full mail client (Messages → 📧 Email) over your own IMAP/SMTP accounts. The mailbox
   is mirrored into **encrypted Nostr events** — one per message — so it is searchable without an
