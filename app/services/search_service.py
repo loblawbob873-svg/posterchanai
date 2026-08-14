@@ -415,10 +415,36 @@ class SearchService:
         time_range: Optional[str] = None,
         sort_recent: bool = False,
     ) -> list[dict]:
-        """Search the web using SearXNG.
+        """Search the web — on this node or a peer, whichever the round-robin picks.
+
+        The scarce resource in a search is not compute, it is an IP that engines still answer: one
+        node asks from one address, gets rate-limited, and SearXNG suspends that engine for an hour,
+        which reaches the user as "no results". So this fans out over the nodes in Site → Load
+        Balancing exactly as chat/image/music/video do. `search_factory` never raises and falls back
+        to this node, so every existing caller keeps its "[] means nothing found" contract.
 
         categories: optional SearXNG category (e.g. "news", "videos", "science").
         time_range: optional SearXNG time filter ("day", "week", "month", "year").
+        """
+        from app.services import search_factory
+        return await search_factory.web_search(
+            self, query, limit=limit, categories=categories,
+            time_range=time_range, sort_recent=sort_recent)
+
+    async def web_search_local(
+        self,
+        query: str,
+        limit: int = 5,
+        categories: Optional[str] = None,
+        time_range: Optional[str] = None,
+        sort_recent: bool = False,
+    ) -> list[dict]:
+        """Search on THIS node's instance, resolved by THIS node's settings. Never forwards.
+
+        That last sentence is the loop guard for the whole feature: `/api/search` (what a peer calls)
+        lands here and only here, so A→B can never become B→A→B. It is also why a peer is never told
+        WHICH instance to use — settings are per-node, and a node handed someone else's SearXNG URL
+        would be searching through a box it may not be able to reach.
         """
         base = await self.base()
         if not base:
@@ -477,8 +503,14 @@ class SearchService:
                     for r in results
                 ]
             except Exception as e:
+                # RAISE, don't swallow. This used to return [] and that was right when it was the
+                # only path — but with the load balancer in front, "" and [] are how a node says
+                # "nothing matched", and a node that could not reach its instance at all must be
+                # distinguishable from that or the search stops at the first broken node and reports
+                # an empty page. `search_factory` catches this and asks the next node; the peer
+                # endpoint turns it into a 5xx, which the calling node reads the same way.
                 logger.error(f"Search error: {e}")
-                return []
+                raise
 
     # Categories the interactive Web Search UI is allowed to ask SearXNG for. An allowlist rather
     # than a passthrough: `categories` reaches a third-party instance verbatim, and the client is

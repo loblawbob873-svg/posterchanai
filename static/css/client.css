@@ -712,7 +712,11 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
    — 89x89 modules — and 230px with 10px of padding drew those at 2.26 device px each, under the ~3px
    a phone camera needs off a screen. The QR is the whole instruction on this screen, so it gets the
    room. max-width keeps it inside a narrow phone. */
-.nc-qr{display:block;width:300px;max-width:72vw;height:auto;margin:10px auto;background:#fff;padding:10px;border-radius:12px;box-shadow:0 0 24px rgba(var(--accent-rgb),.25)}
+/* 380px, not 300. The signer URI carries a 15-entry `perms` list, so the real payload is ~556 bytes
+   → QR version 21, i.e. 101x101 modules: at 300px that was ~2.5 device pixels per module before the
+   camera's own scaling, which a webcam pointed at a screen decodes only in good light. The symbol
+   already carries the spec's 4-module quiet zone (qr.js), so the win here is purely physical size. */
+.nc-qr{display:block;width:380px;max-width:86vw;height:auto;margin:10px auto;background:#fff;padding:12px;border-radius:12px;box-shadow:0 0 24px rgba(var(--accent-rgb),.25)}
 .qr-video{display:block;width:100%;max-width:360px;aspect-ratio:1/1;object-fit:cover;margin:10px auto;background:#000;border-radius:12px;border:1px solid var(--line)}
 .keybox label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;display:block;margin:8px 0 4px}
 .keyrow{display:flex;gap:8px;align-items:center}

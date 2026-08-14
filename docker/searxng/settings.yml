@@ -60,6 +60,12 @@ ui:
     simple_style: dark
   center_alignment: true
 
-# @PC_OUTGOING@ — the installer replaces this marker with the `outgoing.proxies` block pointing at
-# this node's HTTP proxy (Tor1 → Tor2 → direct). Left as a comment when there is no proxy to use, and
-# on compose, where the app's proxy lives inside a different container's network namespace.
+# @PC_OUTGOING@ — replaced by the installer with the `outgoing.proxies` block pointing at this
+# node's HTTP proxy (Tor1 → Tor2 → direct), between the markers the APP then owns: at every start
+# `searxng_native.apply_outgoing_proxy()` rewrites what is between them from the
+# `searxng_proxy_engines` setting (Admin → Tools), so the toggle takes effect on a restart instead of
+# on a re-run of the installer. An `outgoing:` block you write yourself, OUTSIDE those markers, is
+# left alone — the app checks before it writes.
+#
+# On COMPOSE the marker stays a comment: the app's proxy listens on the app container's loopback,
+# which is a different network namespace from this one, so 127.0.0.1 here is not the proxy.

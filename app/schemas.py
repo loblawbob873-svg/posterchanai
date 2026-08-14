@@ -250,6 +250,14 @@ class SettingsResponse(BaseModel):
     # means "don't search": resolution falls through to a bundled instance and then to a public one,
     # so a blank field would send every query — the user's, the AI's, the bots' — to a third party.
     searxng_enabled: bool = True
+    # Send the BUNDLED instance's ENGINE requests through this node's own HTTP proxy
+    # (proxy_fallback_port — Tor1 → Tor2 → direct), so a search doesn't leave from this node's real
+    # IP. Separate from `searxng_url`'s transport, which is the app→instance hop and already proxied
+    # for a REMOTE instance (search_service.search_transport); this is the instance→Google/Bing hop,
+    # which SearXNG makes itself and which was going out direct.
+    searxng_proxy_engines: bool = True
+    # Spread searches over the nodes in Site → Load Balancing, the way chat/image/music/video are.
+    searxng_load_balance: bool = True
     torrent_site_url: str = ""  # TorrentGalaxy or compatible site URL
     tts_voice: str = "en-GB-SoniaNeural"
     tts_rate: str = "+5%"

@@ -63,6 +63,30 @@
                 (<code>https://searx.tiekoetter.com</code>) that rate-limits servers. Requests to a
                 remote instance go through this node's Tor proxy, falling back to direct.</small>
         </div>
+        <div class="form-group">
+            <label for="searxng_proxy_engines">
+                <input type="checkbox" id="searxng_proxy_engines" name="searxng_proxy_engines" checked>
+                Send engine requests through this node's proxy
+            </label>
+            <small>The <b>bundled</b> instance's own requests to Google/Bing/etc go through this node's
+                HTTP proxy (Tor1 → Tor2 → direct), so a search doesn't leave from this server's real IP.
+                This is a different hop from the URL above: that one is app → instance and is already
+                proxied for a remote instance; this one is instance → search engine, which SearXNG makes
+                itself. <b>Turn this off if searches start coming back empty</b> — a Tor exit is a shared
+                address, and an engine that answers it with a CAPTCHA gets suspended by SearXNG for an
+                hour, which looks exactly like "no results".</small>
+        </div>
+        <div class="form-group">
+            <label for="searxng_load_balance">
+                <input type="checkbox" id="searxng_load_balance" name="searxng_load_balance" checked>
+                Load-balance searches across nodes
+            </label>
+            <small>Spread searches over the servers in <b>Site → Load Balancing</b> (the same list that
+                balances chat, image, music and video), round-robin. Each node searches on its own
+                instance, from its own IP, with its own engine-suspension state — which is the point:
+                the rationed resource in a search is an address engines still answer, not compute. Falls
+                back to this node whenever a peer can't be reached.</small>
+        </div>
     </fieldset>
 
     <fieldset>

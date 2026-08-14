@@ -1,0 +1,46 @@
+# Posterchan AI — this node's own SearXNG (private metasearch), as its OWN unit.
+#
+# Template. scripts/install/searxng.sh writes the real file with this node's user and paths.
+#
+# WHY IT IS A UNIT AND NOT JUST THE /searxng MOUNT: both are the same implementation
+# (app/services/searxng_native.py), and `resolve_searxng_url()` prefers this one — a warm process
+# means the app never has to import SearXNG's whole engine catalogue on the first search. The mount
+# is the fallback, so a stopped, masked or crashed unit degrades to a slightly slower search instead
+# of falling through to a public instance that rate-limits servers.
+#
+# IT IMPORTS SearXNG ONCE, AT STARTUP. That is why it is in scripts/deploy_targets.py: the
+# `outgoing:` proxy block is rewritten on the way into that import (searxng_native.apply_outgoing_
+# proxy, from the `searxng_proxy_engines` setting), so the Admin → Tools toggle reaches engine
+# requests only when this process restarts. Left out of the deploy table, a deploy restarted the app,
+# reported success, and searches carried on leaving from the node's real IP.
+
+[Unit]
+Description=PosterChan SearXNG (private metasearch for this node)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=REPLACE_USER
+WorkingDirectory=/path/to/posterchanai
+Environment=POSTERCHANAI_SEARXNG_PORT=8899
+Environment=SEARXNG_SETTINGS_PATH=/path/to/posterchanai/searxng/settings.yml
+# TMPDIR, because SearXNG's engine/data caches are SQLite files it puts in tempfile.gettempdir() —
+# there is no cache_dir setting, TMPDIR is the only lever. On a node where /tmp is a tmpfs (this
+# deployment's server1 is, and it has no swap) those files are RAM that free/MemAvailable do not
+# report as reclaimable. Here they are ordinary files, which also means the 7-day engine cache
+# survives a restart instead of being rebuilt on the next search.
+Environment=TMPDIR=/path/to/posterchanai/searxng/cache
+# uvicorn + a2wsgi out of the app's own venv — no container, no granian, no second server to install.
+# 127.0.0.1 ONLY: this instance has its limiter disabled (the limiter is what makes public instances
+# 429 a server, which is the whole reason a node runs its own), so anything but loopback would be an
+# open metasearch proxy on this box. An earlier, containerised version of this listened on *:8899
+# because the image read its bind address from GRANIAN_HOST and ignored the two settings that
+# claimed to set it.
+ExecStart=/path/to/posterchanai/venv-unified/bin/python -m app.services.searxng_native
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -426,6 +426,12 @@ def init_db():
             # particular deployment's box, which then became a single point of failure for the AI's
             # web search, the news digests and the bots.
             "searxng_url": "",
+            # The bundled instance's ENGINE requests go through this node's own proxy
+            # (Tor1 → Tor2 → direct). Turn OFF if engines start answering with CAPTCHAs — a Tor exit
+            # is a shared address and some engines rate-limit it, and SearXNG suspends an engine that
+            # answers that way for an hour, which reads as "no results" rather than as a proxy problem.
+            "searxng_proxy_engines": "true",
+            "searxng_load_balance": "true",
             "torrent_site_url": "",  # TorrentGalaxy or compatible site URL
             "tts_voice": "en-GB-SoniaNeural",
             "tts_rate": "+5%",

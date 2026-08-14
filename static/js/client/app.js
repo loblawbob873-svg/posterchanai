@@ -1376,9 +1376,24 @@
       const cleanup=()=>{ stopped=true; try{ stream && stream.getTracks().forEach(t=>t.stop()); }catch(_){} };
       try{ stream=await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } }); v.srcObject=stream; await v.play(); }
       catch(e){ hint.textContent='Camera unavailable ('+((e&&e.message)||e)+'). Use “paste link instead”.'; return; }
+      /* SAY SOMETHING WHEN IT ISN'T WORKING. This loop swallowed every detector error and every
+       * non-match and then looked identical to a camera that was simply not pointed at anything —
+       * reported, accurately, as "trying to scan but nothing happens". It cannot know whether the
+       * QR is out of focus, too dense for this webcam, or not in frame at all; what it CAN do is
+       * stop pretending it is fine, and name the way out that always works.
+       *
+       * A signer QR is version ~21 (101x101 modules) because of the `perms` list, which is a lot to
+       * ask of a laptop camera aimed at a screen — so "paste the link instead" is not a fallback
+       * here, it is often the faster route, and it is one click away in this modal. */
+      let ticks = 0, told = false;
       const tick=async()=>{
         if(stopped || !document.body.contains(v)){ cleanup(); return; }   // modal closed → stop camera
         try{ const val=await detect(v); if(val && /^nostrconnect:/i.test(val)){ cleanup(); closeModal(); return onQrScanned(val); } }catch(_){}
+        if(!told && ++ticks > 24){                       // ~7s of looking, and nothing read
+          told = true;
+          hint.textContent = 'Still looking… this code is a dense one. Fill the frame with it and hold '
+            + 'steady, or use “paste link instead” — that always works.';
+        }
         setTimeout(tick, 300);
       };
       tick();
@@ -16316,7 +16331,20 @@
     const S = window.PCSync;
     if(!S || !S.accountFolders){ _syncPairs = []; return false; }
     const changed = await S.accountFolders();
-    _syncPairs = S.acct() === null ? [] : S.acct();
+    /* NULL STAYS NULL. This mapped it to [], which is the one value that means "you sync nothing"
+     * — and `_fxSyncedHTML` renders that as NOTHING AT ALL, so the whole section vanished while the
+     * answer was still on its way, indistinguishable from having no synced folders. Its "looking…"
+     * branch could never fire, because the only value that would reach it was being erased here.
+     *
+     * Whose problem that is depends entirely on the SIGNER, which is why it read as an Amber bug:
+     * `accountFolders` awaits `PC.signAuth('sync-folders')`, and with a local key or a NIP-07
+     * extension that resolves in a millisecond, so the empty window is too short to see. Over NIP-46
+     * it is a round trip to a phone that has to display a prompt and be tapped — seconds at best,
+     * and forever if the notification is missed. Same code, same account, and Files showed synced
+     * folders with the extension and none with Amber. Nothing here times out on its own: the signer's
+     * own 120s ceiling rejects, `accountFolders` catches it into 'error', and the section then says
+     * "couldn't be loaded just now" — which is the honest end state, and was also unreachable. */
+    _syncPairs = S.acct();
     return changed;
   }
   function _fxSyncedHTML(){
@@ -24826,7 +24854,16 @@
             : 'Available when you sign in on this device with your key (nsec). Extension / remote-signer sessions can’t sign for another device.'}</div>
         </div></div>
         <div class="set-body">
-          <button class="btn btn-neon small" id="set-scan-qr"><svg class="ic b-ic" aria-hidden="true"><use href="#i-camera"></use></svg>Scan QR code</button>
+          <!-- DISABLED rather than clickable-and-refusing. This device signs the other one in with
+               the key it holds, so it needs to hold one: an extension or a remote signer (Amber)
+               keeps the key somewhere this page cannot reach, and openQrScanner turned that into a
+               toast on click. The note above already said "available when you sign in with your
+               key" — but a live button that opens no camera reads as a broken scanner, and was
+               reported as one ("scanning QR code on firefox does nothing"). -->
+          <button class="btn btn-neon small" id="set-scan-qr"${ME.mode === 'local' ? '' : ' disabled'}><svg class="ic b-ic" aria-hidden="true"><use href="#i-camera"></use></svg>Scan QR code</button>
+          ${ME.mode === 'local' ? '' : `<div class="muted small" style="margin-top:6px">Not available in
+            this session — your key is in ${ME.mode === 'nip07' ? 'a browser extension' : 'your signer'},
+            so this device has nothing to sign the other one in with.</div>`}
         </div>
       </section>
       <section class="set-card">

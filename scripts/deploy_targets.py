@@ -41,7 +41,15 @@ GIT = "posterchanai-git.service"
 # runtime), so under-restarting it means it keeps running slightly older SSH code until someone
 # restarts it on purpose — visible, harmless, and recoverable, which is not true the other way round.
 SHELL = "posterchanai-shell.service"
-ALL = (APP, RELAY, WORKER, MEDIA, TOR, PROXY, GIT)
+# This node's own SearXNG. IT IMPORTS SearXNG ONCE, AT STARTUP, and that is the whole reason it
+# has to be here: `searxng_native.apply_outgoing_proxy()` rewrites the `outgoing:` block on the
+# way into that import, so the Admin → Tools proxy toggle reaches engine requests only when this
+# process restarts. Left out of the table entirely (it was), a deploy restarted the app, reported
+# success, and the searches carried on leaving from the node's real IP — code running nowhere,
+# which is the exact failure this file exists to prevent. Restarting it costs in-flight searches
+# and nothing else.
+SEARXNG = "posterchanai-searxng.service"
+ALL = (APP, RELAY, WORKER, MEDIA, TOR, PROXY, GIT, SEARXNG)
 # Every unit this file may name. `ALL` is the "restart everything" SET, which SHELL is deliberately
 # not in (see above); this is the list of units that EXIST, and it is what "a mapping must not name a
 # unit that does not exist" is checked against. Two different questions, and conflating them is what
@@ -101,6 +109,13 @@ _OWNED = (
     ("app/services/mail_notify_service.py", (WORKER,)),   # the poller runs in the worker only
     ("app/services/mail_store.py", (APP,)),
     ("app/services/mail_sync.py", (APP,)),
+    # The bundled metasearch: its own module, and the settings file it reads at import.
+    ("app/services/searxng_native.py", (APP, SEARXNG)),   # the APP serves the /searxng mount too
+    ("searxng/settings.yml", (SEARXNG,)),
+    ("docker/searxng/settings.yml", ()),                  # baked into the image; no unit here reads it
+    # The search load balancer and its peer endpoint run in the app process.
+    ("app/services/search_factory.py", (APP,)),
+    ("app/routers/search_api.py", (APP,)),
     ("relay_main.py", (RELAY,)),
     ("app/services/nostr_relay/", (RELAY,)),
     # ...except the trigger surface, which the APP calls: app/routers/nostr.py and bots.py import

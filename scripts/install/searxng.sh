@@ -146,60 +146,34 @@ setup_searxng() {
     fi
 
     # --- the outgoing proxy -------------------------------------------------------------------
-    # Engine requests go through this node's HTTP proxy, specifically its FALLBACK listener
-    # (proxy_fallback_port, default 8119: Tor1 → Tor2 → direct). NOT the main :8118, which is
-    # Tor-only by design because torrents share it — pointed there, one Tor outage turns every search
-    # into a timeout that reads as "no results".
+    # THE APP OWNS THIS BLOCK NOW, not the installer. `searxng_native.apply_outgoing_proxy()` rewrites
+    # it between our markers on every start, from the `searxng_proxy_engines` admin setting — so the
+    # operator flips it in Admin → Tools and restarts, instead of re-running an installer with an env
+    # var set. All the installer does is seed the block so a node is correct before the app has ever
+    # run, and so `SEARXNG_FORCE_SETTINGS` and a fresh install agree.
     #
-    # OFF BY DEFAULT, and that is a measurement rather than a preference. Routed through Tor, the
-    # default engine set does not merely slow down — it stops answering: Brave and Google CSE return
-    # "too many requests", DuckDuckGo "access denied", Startpage a CAPTCHA, and SearXNG then SUSPENDS
-    # each of them for up to an hour. Measured on this node, same query, same minute: 25 results
-    # direct, 0 results through Tor with all four engines suspended. Search engines block exit nodes;
-    # no amount of timeout tuning changes that (the 12s timeout below is still needed when Tor IS on,
-    # since the 3s default times out on its own).
+    # It points at the FALLBACK listener (proxy_fallback_port, default 8119), never the main :8118 —
+    # 8118 is Tor-only by design because torrents share it, so one Tor outage there turns every search
+    # into a timeout that reads as "no results". 8119 is Tor1 → Tor2 → DIRECT, which is why no probe is
+    # needed here: the chain already degrades to a direct connection by itself, and a probe that ran
+    # before the app (and therefore its proxy) had ever started would only ever answer "no proxy".
     #
-    # So: `SEARXNG_TOR=1` opts in, and the app→instance hop still goes through Tor for any REMOTE
-    # instance (search_service.search_transport) — that part costs nothing and is always on.
+    # WORTH KNOWING BEFORE YOU LEAVE IT ON: routed through Tor, some engines stop answering rather than
+    # slowing down — measured on this node, same query, same minute, 25 results direct vs 0 through Tor
+    # with Brave, Google CSE, DuckDuckGo and Startpage all suspended for the hour after replying "too
+    # many requests" / "access denied" / a CAPTCHA. That is what the toggle is for, and what the
+    # per-node load balancer (searxng_load_balance) exists to make less likely: a peer node is a
+    # different address that engines have not throttled.
     #
-    # The proxy is PROBED rather than read from settings, because the settings store only loads inside
-    # the running app and a CLI read answers None on a node that has one.
-    # 25s and two attempts, not 5s and one: the first request through a freshly started Tor waits on
-    # circuit construction, so a tight probe intermittently answers "no proxy" on a node that has a
-    # working one. (Measured: warm, this returns in 0.8s.)
-    local proxy_url="" proxy_up="" cand attempt
-    if [ "${SEARXNG_TOR:-0}" = "1" ]; then
-        for attempt in 1 2; do
-            for cand in ${SEARXNG_PROXY:+"$SEARXNG_PROXY"} \
-                        "http://127.0.0.1:${POSTERCHANAI_PROXY_FALLBACK_PORT:-8119}"; do
-                if curl -fsS -m 25 -x "$cand" "http://example.com/" >/dev/null 2>&1; then
-                    proxy_url="$cand"; proxy_up="1"; break 2
-                fi
-            done
-            sleep 2
-        done
-        [ -n "$proxy_up" ] || print_warning "SEARXNG_TOR=1 but no proxy answered — engine requests will go DIRECT" 2>/dev/null \
-            || echo "WARNING: SEARXNG_TOR=1 but no proxy answered; engine requests will go DIRECT"
-    fi
-    # Native, so 127.0.0.1 is simply 127.0.0.1 — no --network host, no host.docker.internal, nothing
-    # to resolve. This is the paragraph that used to be the hardest part of running it in a container.
-    local proxy_block
-    if [ -n "$proxy_up" ]; then
-        # The TIMEOUTS ride with the proxy, and they are not padding. SearXNG's default engine
-        # timeout is 3s; over Tor that is short enough that essentially everything times out —
-        # MEASURED on this node: 0 results with the default, 25 results (2 unresponsive engines) at
-        # 12s, same query, same circuits. Without this, "route search through Tor" reads to the user
-        # as "search is broken", which is how a privacy feature gets turned back off.
-        proxy_block=$(printf 'outgoing:\n  request_timeout: 12.0\n  max_request_timeout: 20.0\n  proxies:\n    all://:\n      - %s' "$proxy_url")
-        echo "Tor: engine requests go through this node's proxy ($proxy_url → Tor1 → Tor2 → direct)"
-    else
-        proxy_block=$(printf '# outgoing:\n#   request_timeout: 12.0   # 3s (the default) is too short over Tor\n#   max_request_timeout: 20.0\n#   proxies:\n#     all://:\n#       - %s   # Tor1 → Tor2 → direct' \
-                      "http://127.0.0.1:${POSTERCHANAI_PROXY_FALLBACK_PORT:-8119}")
-        echo "Tor: engine requests go DIRECT — search engines block Tor exits (measured: 0 results"
-        echo "     through Tor with every engine suspended, vs 25 direct). Opt in anyway with:"
-        echo "       SEARXNG_TOR=1 ./install.sh --searxng"
-        echo "     The app→instance hop uses Tor regardless, for any REMOTE instance."
-    fi
+    # The 12s timeout rides WITH the proxy and is not padding: SearXNG's default engine timeout is 3s,
+    # and over a Tor circuit essentially everything times out at 3s (measured: 0 results at the default,
+    # 25 at 12s, same circuits).
+    local proxy_url proxy_block
+    proxy_url="${SEARXNG_PROXY:-http://127.0.0.1:${POSTERCHANAI_PROXY_FALLBACK_PORT:-8119}}"
+    proxy_block=$(printf '# >>> posterchanai: outgoing proxy (managed — Admin → Tools) >>>\noutgoing:\n  # 3s (SearXNG'"'"'s default) is too short for a Tor circuit, and an engine that\n  # times out is dropped from the results with nothing said.\n  request_timeout: 12.0\n  max_request_timeout: 20.0\n  proxies:\n    all://:\n      - %s\n# <<< posterchanai: outgoing proxy <<<' "$proxy_url")
+    echo "Search: engine requests go through this node's proxy ($proxy_url -> Tor1 -> Tor2 -> direct)."
+    echo "        Turn it off in Admin -> Tools if searches start coming back empty:"
+    echo "        engines suspend Tor exits, and a suspended engine reads as 'no results'."
 
     # --- settings.yml -------------------------------------------------------------------------
     # ONE template for both install paths (docker/searxng/settings.yml, also baked into the image), so

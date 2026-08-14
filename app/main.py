@@ -21,7 +21,7 @@ logging.basicConfig(
 from app.database import init_db, get_db
 from app.auth import get_current_user_optional, get_current_user, create_access_token
 from app.models import User, VerificationToken
-from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api, voice_api, effects_api
+from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api, voice_api, effects_api, search_api
 from app.auth import NATIVE_APP_ORIGINS as _NATIVE_ORIGINS
 from app.routers import fourchan, youtube_thumb, bots, push, calls, streams, rss, markets, websearch, weather, ssh_term, mempool
 from app.routers import admin_emoji
@@ -214,6 +214,9 @@ app.include_router(admin_emoji.router)  # /api/admin/emoji/* (instance custom em
 app.include_router(tts.router)
 app.include_router(stt.router)
 app.include_router(image_api.router)
+# Node-to-node search (the peer half of the search load balancer). Must come AFTER image_api: it
+# imports that module's auth dependency.
+app.include_router(search_api.router)
 app.include_router(music_api.router)
 app.include_router(video_api.router)
 app.include_router(voice_api.router)

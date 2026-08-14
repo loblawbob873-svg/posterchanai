@@ -66,6 +66,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 import os
+import re
 import tempfile
 import threading
 from importlib.util import find_spec
@@ -169,6 +170,95 @@ def _is_private_peer(peer: str) -> bool:
     return ip.is_loopback or ip.is_private or ip.is_link_local
 
 
+# The `outgoing:` block this module owns. Delimited, because the alternative is guessing which
+# lines in the operator's settings file are ours — and getting that wrong silently changes where
+# every engine request goes.
+_PROXY_BEGIN = "# >>> posterchanai: outgoing proxy (managed — Admin → Tools) >>>"
+_PROXY_END = "# <<< posterchanai: outgoing proxy <<<"
+# The commented stub earlier versions (and scripts/install/searxng.sh) left at the end of the file.
+# Recognised so an upgrade adopts it instead of appending a second block beside it.
+_LEGACY = re.compile(r"\n*^# outgoing:\n(?:^#.*\n?)*", re.M)
+
+
+def _proxy_wanted() -> tuple[bool, str]:
+    """(enforce?, proxy url) from settings, with the port the proxy actually listens on.
+
+    The FALLBACK listener, never the main one. `proxy_port` (8118) is Tor-only because torrents
+    share it, and an engine that Tor cannot reach would simply fail; the fallback chain is
+    Tor1 → Tor2 → direct, which is what the AI's own requests get.
+    """
+    try:
+        from app.services import settings_store
+        on = settings_store.get_bool("searxng_proxy_engines", True)
+        port = settings_store.get_int("proxy_fallback_port", 8119)
+    except Exception:
+        # Settings unreadable (a bare `python -m app.services.searxng_native`, an early boot). Do
+        # NOT invent a policy: leave the file exactly as the operator/installer left it.
+        return False, ""
+    return bool(on), f"http://127.0.0.1:{int(port)}"
+
+
+def apply_outgoing_proxy() -> str:
+    """Write this node's `outgoing:` block into settings.yml before SearXNG reads it.
+
+    WHY THE FILE AND NOT AN ENV VAR: this image maps exactly ONE setting to an env var
+    (`secret_key`), so there is no SEARXNG_PROXIES to set — the block has to be in the YAML, and
+    SearXNG reads it once at import. `_import()` is the only place both entry points (the in-app
+    mount and `posterchanai-searxng.service`) pass through, so it is the one place this can be
+    kept in step with the admin toggle without re-running the installer.
+
+    Returns what it did, for the log. Never raises: a settings file we cannot rewrite is a reason
+    to search with whatever it already says, not a reason for the node to have no search at all.
+    """
+    try:
+        path = settings_path()
+        if not path.is_file():
+            return "no settings file"
+        text = path.read_text(encoding="utf-8")
+
+        # An `outgoing:` block the operator wrote by hand, outside our markers, is theirs. Touching
+        # it would silently move every engine request somewhere they did not choose.
+        stripped = _LEGACY.sub("\n", text) if _PROXY_BEGIN not in text else text
+        if _PROXY_BEGIN not in text and re.search(r"^outgoing:", stripped, re.M):
+            logger.info("[searxng] settings.yml has its own `outgoing:` block — leaving it alone")
+            return "operator-managed"
+
+        on, proxy = _proxy_wanted()
+        if not proxy:
+            return "settings unreadable — file left as-is"
+
+        if on:
+            body = (f"{_PROXY_BEGIN}\n"
+                    "outgoing:\n"
+                    "  # 3s (SearXNG's default) is too short for a Tor circuit, and an engine that\n"
+                    "  # times out is dropped from the results with nothing said.\n"
+                    "  request_timeout: 12.0\n"
+                    "  max_request_timeout: 20.0\n"
+                    "  proxies:\n"
+                    "    all://:\n"
+                    f"      - {proxy}\n"
+                    f"{_PROXY_END}\n")
+        else:
+            body = (f"{_PROXY_BEGIN}\n"
+                    "# Engine requests go DIRECT — searxng_proxy_engines is off in Admin → Tools.\n"
+                    f"{_PROXY_END}\n")
+
+        if _PROXY_BEGIN in text:
+            new = re.sub(re.escape(_PROXY_BEGIN) + r".*?" + re.escape(_PROXY_END) + r"\n?",
+                         body, text, flags=re.S)
+        else:
+            new = stripped.rstrip("\n") + "\n\n" + body
+
+        if new != text:
+            path.write_text(new, encoding="utf-8")
+            logger.info("[searxng] engine requests via %s", proxy if on else "DIRECT")
+        return proxy if on else "direct"
+    except Exception as exc:
+        logger.warning("[searxng] could not set the outgoing proxy (%s) — using the file as-is", exc)
+        return "error"
+
+
+
 def _import():
     """Import searx.webapp with this node's settings, without letting it take over our logging.
 
@@ -179,6 +269,7 @@ def _import():
     chose for them.
     """
     os.environ.setdefault("SEARXNG_SETTINGS_PATH", str(settings_path()))
+    apply_outgoing_proxy()
     root = logging.getLogger()
     level, handlers = root.level, list(root.handlers)
     tmp = tempfile.tempdir
