@@ -77,6 +77,24 @@ public class Driver {
       return new InputDevice.MotionRange(-1f, 1f, 0.05f);        // sticks
     }
   }
+  /* A pad reporting a COMBINED source, which is what every real one does: SOURCE_JOYSTICK |
+     SOURCE_GAMEPAD. getMotionRange matches a range's own single source, so the combined value
+     matches neither and the lookup returns null — silently, because null is also what a device that
+     declines to describe itself returns. That made every calibration a no-op on real hardware. */
+  static class StrictPad extends InputDevice {
+    public InputDevice.MotionRange getMotionRange(int axis, int source){
+      if(source != InputDevice.SOURCE_JOYSTICK) return null;   // publishes under ONE source only
+      return new InputDevice.MotionRange(-1f, 1f, 0.2f);
+    }
+  }
+  static class Combined extends MotionEvent {
+    float v; InputDevice d = new StrictPad();
+    Combined(float v){ this.v=v; }
+    public int getAction(){ return MotionEvent.ACTION_MOVE; }
+    public int getSource(){ return InputDevice.SOURCE_JOYSTICK | InputDevice.SOURCE_GAMEPAD; }
+    public float getAxisValue(int axis){ return axis == MotionEvent.AXIS_X ? v : 0f; }
+    public InputDevice getDevice(){ return d; }
+  }
   static class RxMotion extends MotionEvent {
     float rx, ry; InputDevice d = new RxPad();
     RxMotion(float rx, float ry){ this.rx=rx; this.ry=ry; }
@@ -140,6 +158,9 @@ public class Driver {
     GamepadPlugin.onMotion(new RxMotion(0.7f, -0.5f));
     System.out.println("rsX=" + GamepadPlugin.probeAxis(2));
     System.out.println("rsY=" + GamepadPlugin.probeAxis(3));
+    // A PAD REPORTING A COMBINED SOURCE still gets its deadzone applied.
+    GamepadPlugin.onMotion(new Combined(0.1f));
+    System.out.println("combined=" + GamepadPlugin.probeAxis(0));
     // A driver claiming the whole travel is deadzone must not divide by zero into NaN.
     GamepadPlugin.onMotion(new Ranged(0.9f, JOY, new Pad(-1f, 1f, 4f)));
     System.out.println("allflat=" + GamepadPlugin.probeAxis(0));
@@ -227,6 +248,19 @@ class NativeGamepad(unittest.TestCase):
         self.assertAlmostEqual(float(o["rsX"]), 0.684, places=2,
                                msg="the right stick must be read from RX when Z is a trigger")
         self.assertAlmostEqual(float(o["rsY"]), -0.474, places=2)
+
+    def test_a_pad_reporting_a_combined_source_is_still_calibrated(self):
+        """THE ONE THAT MADE EVERY EARLIER FIX A NO-OP. MotionEvent.getSource() is a BITMASK
+        (SOURCE_JOYSTICK | SOURCE_GAMEPAD) and getMotionRange matches a range's single declared
+        source, so the lookup returned null on every event from every real pad and each axis fell
+        through to raw passthrough — indistinguishably from a device that publishes no ranges.
+
+        Caught by a Switch Pro Controller's own report: RZ declared flat=0.0153 while the page was
+        being handed -0.0088, a value inside that deadzone which the calibration would have zeroed
+        had it ever seen the range."""
+        o = _compile_and_run()
+        self.assertEqual(float(o["combined"]), 0.0,
+                         "0.1 sits inside the declared flat of 0.2 and must read as centred")
 
     def test_a_broken_range_costs_one_axis_not_a_NaN(self):
         o = _compile_and_run()

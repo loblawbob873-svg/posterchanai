@@ -54,6 +54,11 @@ public class GamepadPlugin extends Plugin {
   private static final int BUTTONS = 16;
   private static final boolean[] down = new boolean[BUTTONS];
   private static final float[] axes = new float[4];
+  /* THE SAME FOUR SLOTS BEFORE ANY CALIBRATION. Without these the panel cannot answer the only
+     question that matters when an axis looks wrong — did the DRIVER report that, or did this code
+     compute it? A calibrated 1.0 and a raw 1.0 need opposite fixes, and three builds were spent
+     unable to tell them apart. */
+  private static final float[] rawAxes = new float[4];
   // Which pair the right stick was found on, for the diagnostics panel.
   private static String rightStick = "Z/RZ";
   private static String padName = "";
@@ -63,6 +68,8 @@ public class GamepadPlugin extends Plugin {
   // delivered an event" from "the page ignored it" is to count both ends. Static because the Activity
   // forwards events whether or not JS has ever attached a listener.
   private static int motionEvents = 0, keyEvents = 0, emits = 0;
+  // Did the LAST event's range lookup succeed? See status().calibrated.
+  private static boolean lastRangeFound = false;
 
   @Override
   public void load() {
@@ -154,6 +161,10 @@ public class GamepadPlugin extends Plugin {
     rightStick = (rsX == MotionEvent.AXIS_RX) ? "RX/RY" : "Z/RZ";
     axes[2] = centred(ev, dev, rsX);
     axes[3] = centred(ev, dev, rsY);
+    rawAxes[0] = ev.getAxisValue(MotionEvent.AXIS_X);
+    rawAxes[1] = ev.getAxisValue(MotionEvent.AXIS_Y);
+    rawAxes[2] = ev.getAxisValue(rsX);
+    rawAxes[3] = ev.getAxisValue(rsY);
     // The hat IS the d-pad on the pads that report it that way. Folded into the button slots so the
     // page never has to know which kind of controller it is talking to.
     float hx = ev.getAxisValue(MotionEvent.AXIS_HAT_X);
@@ -195,7 +206,7 @@ public class GamepadPlugin extends Plugin {
   private static float centred(MotionEvent ev, InputDevice dev, int axis) {
     float v = ev.getAxisValue(axis);
     if (Float.isNaN(v) || Float.isInfinite(v)) return 0f;
-    InputDevice.MotionRange r = dev == null ? null : dev.getMotionRange(axis, ev.getSource());
+    InputDevice.MotionRange r = rangeOf(ev, dev, axis);
     if (r == null) return clamped(v);
     /* AN AXIS THAT CANNOT GO NEGATIVE IS NOT A CENTRED STICK — it is a trigger, and centring one
      * reads it as HARD OVER while it sits untouched. AXIS_Z and AXIS_RZ are the right stick on many
@@ -228,7 +239,7 @@ public class GamepadPlugin extends Plugin {
   private static float unit(MotionEvent ev, InputDevice dev, int axis) {
     float v = ev.getAxisValue(axis);
     if (Float.isNaN(v) || Float.isInfinite(v)) return 0f;
-    InputDevice.MotionRange r = dev == null ? null : dev.getMotionRange(axis, ev.getSource());
+    InputDevice.MotionRange r = rangeOf(ev, dev, axis);
     if (r == null) return v;
     float span = r.getMax() - r.getMin();
     if (span <= 0f) return v;
@@ -240,10 +251,38 @@ public class GamepadPlugin extends Plugin {
     return v < -1f ? -1f : (v > 1f ? 1f : v);
   }
 
+  /**
+   * THE AXIS RANGE, LOOKED UP THE WAY IT IS ACTUALLY PUBLISHED — and the reason every calibration
+   * before this was a no-op.
+   *
+   * `getMotionRange(axis, source)` matches the range's OWN source exactly, while
+   * `MotionEvent.getSource()` returns a BITMASK: a pad reports SOURCE_JOYSTICK | SOURCE_GAMEPAD, and
+   * that combined value equals neither, so the lookup returned null on every event and every axis
+   * fell through to raw passthrough. Silently — a null range is also what a device that declines to
+   * describe itself returns, which is the case the fallback exists for.
+   *
+   * Measured on a Nintendo Switch Pro Controller, whose own report gave it away: RZ declares
+   * flat=0.0153 and the page was still being handed -0.0088, a value inside that deadzone which
+   * `centred` would have returned as 0 had it ever seen the range. Meanwhile `status()` asked with a
+   * plain SOURCE_JOYSTICK, found all four axes, and printed "stick (centred)" about axes nothing was
+   * centring — a panel reporting the rule rather than the result, which is how three fixes shipped
+   * against a calibration that was never running.
+   *
+   * So: the event's own source first (correct when it is a single flag), then the two sources a pad
+   * can publish under.
+   */
+  private static InputDevice.MotionRange rangeOf(MotionEvent ev, InputDevice dev, int axis) {
+    if (dev == null) return null;
+    InputDevice.MotionRange r = dev.getMotionRange(axis, ev.getSource());
+    if (r == null) r = dev.getMotionRange(axis, InputDevice.SOURCE_JOYSTICK);
+    if (r == null) r = dev.getMotionRange(axis, InputDevice.SOURCE_GAMEPAD);
+    if (r != null) lastRangeFound = true;
+    return r;
+  }
+
   /** Does this axis go negative? A stick does; a trigger, resting at its minimum, does not. */
   private static boolean straddles(MotionEvent ev, InputDevice dev, int axis) {
-    if (dev == null) return false;
-    InputDevice.MotionRange r = dev.getMotionRange(axis, ev.getSource());
+    InputDevice.MotionRange r = rangeOf(ev, dev, axis);
     return r != null && r.getMin() < 0f;
   }
 
@@ -338,6 +377,18 @@ public class GamepadPlugin extends Plugin {
       o.put("axesError", String.valueOf(e));
     }
     o.put("axes", live);
+    JSONArray raw = new JSONArray();
+    try {
+      for (int i = 0; i < rawAxes.length; i++) raw.put((double) rawAxes[i]);
+    } catch (JSONException e) {
+      o.put("rawError", String.valueOf(e));
+    }
+    o.put("axesRaw", raw);
+    // Whether the calibration is running AT ALL, answered from the same lookup it uses rather than
+    // from a tidier one: a panel that asks a different question than the code reports the RULE and
+    // not the RESULT, which is exactly how three fixes shipped against a calibration that was
+    // silently a no-op on every event.
+    o.put("calibrated", lastRangeFound);
 
     JSONArray ranges = new JSONArray();
     try {
