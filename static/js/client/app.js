@@ -1745,9 +1745,41 @@
       try{ await _loadScript('/static/vendor/qr/jsqr.js?v='+(window.__VER||'')); }catch(_){}
       if(!window.jsQR) return null;
       const cv=document.createElement('canvas'); const cx=cv.getContext('2d',{ willReadFrequently:true });
+      /* TWO PASSES, ALTERNATING, AND A FIXED DECODE BUDGET — because "just ask for a bigger camera"
+       * makes dense codes scan WORSE, which is the opposite of what everyone assumes.
+       *
+       * MEASURED with scripts/check_qr_scan.py's `third-party` case, which is primal.net's own shape
+       * (name + url + icon + the full perms list = QR version 19, 93x93 modules). At 35% frame fill:
+       * 1280x720 gives 2px/module and fails, 1920x1080 gives 3px/module and READS — and 2560x1440
+       * gives 4px/module and FAILS AGAIN. More pixels per module and a worse result, because jsQR is
+       * pure JS and cost scales with the whole frame: at 1440p one attempt chews 3.7M pixels, so the
+       * scanner gets through far fewer frames and never catches a sharp one.
+       *
+       * So the frame is never handed over whole at whatever size the sensor happens to be. Every
+       * attempt decodes at most ~900k pixels, and the two passes spend that budget differently:
+       *
+       *   full   — the entire frame scaled down to the budget. Finds a code anywhere in view,
+       *            including one held off to the side, at reduced density.
+       *   centre — the middle 60%, at the SENSOR'S OWN resolution. Someone scanning a code points
+       *            at it, so this is where a dense one actually is, and cropping keeps every pixel
+       *            the camera captured of it while staying inside the budget.
+       *
+       * Alternating rather than choosing means neither case has to be guessed at, and the cost per
+       * attempt is the same as the old full-frame path at 720p. */
+      const BUDGET = 1280 * 720;
+      let pass = 0;
       return (v)=>{ const w=v.videoWidth, h=v.videoHeight; if(!w||!h) return null;
-        cv.width=w; cv.height=h; cx.drawImage(v,0,0,w,h);
-        const r=window.jsQR(cx.getImageData(0,0,w,h).data, w, h); return (r && r.data) || null; };
+        let sx=0, sy=0, sw=w, sh=h;
+        if((pass++ & 1)){
+          const side = Math.round(Math.min(w, h) * 0.6);
+          sx = Math.round((w - side) / 2); sy = Math.round((h - side) / 2); sw = sh = side;
+        }
+        let dw = sw, dh = sh;
+        const over = (sw * sh) / BUDGET;
+        if(over > 1){ const k = Math.sqrt(over); dw = Math.max(1, Math.round(sw / k)); dh = Math.max(1, Math.round(sh / k)); }
+        cv.width=dw; cv.height=dh;
+        cx.drawImage(v, sx, sy, sw, sh, 0, 0, dw, dh);
+        const r=window.jsQR(cx.getImageData(0,0,dw,dh).data, dw, dh); return (r && r.data) || null; };
     };
     let bd=null;
     if('BarcodeDetector' in window){
@@ -1800,10 +1832,19 @@
        * still you hold it. The same code at 1920x1080 is ~6px/module and reads easily. This is the
        * only lever we have over somebody else's payload — we cannot make their QR smaller.
        *
-       * `ideal`, not `exact`: a device that cannot do 1080p should hand back its best rather than
-       * refuse the camera outright, which would turn "hard to scan" into "no scanner at all". */
+       * `ideal`, not `exact`: a device that cannot do this should hand back its best rather than
+       * refuse the camera outright, which would turn "hard to scan" into "no scanner at all".
+       *
+       * ASKING FOR MORE THAN 1080p ONLY BECAME SAFE ONCE THE DECODER STOPPED READING WHOLE FRAMES,
+       * and the order matters. Measured on the same primal-shaped code at 35% frame fill: 720p fails
+       * (2px/module), 1080p reads (3px/module), and 1440p FAILED TOO — with 4px/module — because
+       * jsQR is pure JS and its cost scales with the frame, so at 3.7M pixels an attempt the scanner
+       * got through too few frames to catch a sharp one. Raising this line alone would have made
+       * dense codes harder to scan while every number said it should have helped. With the two-pass
+       * budgeted decoder in `_qrDetector` the same 1440p case reads, so the extra pixels now land
+       * where they were always supposed to. */
       try{ stream=await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment',
-             width:{ ideal:1920 }, height:{ ideal:1080 } } }); v.srcObject=stream; await v.play(); }
+             width:{ ideal:2560 }, height:{ ideal:1440 } } }); v.srcObject=stream; await v.play(); }
       catch(e){ hint.textContent='Camera unavailable ('+((e&&e.message)||e)+'). Use “paste link instead”.'; return; }
       /* SAY SOMETHING WHEN IT ISN'T WORKING. This loop swallowed every detector error and every
        * non-match and then looked identical to a camera that was simply not pointed at anything —

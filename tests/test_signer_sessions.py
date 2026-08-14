@@ -531,3 +531,48 @@ def test_closing_the_link_screen_ends_the_offer_and_the_socket():
     done = seg[seg.index("bunker-done"):]
     assert "_pending = null" in done, "closing the screen leaves the bunker secret redeemable"
     assert "_standDown" in done, "closing the screen leaves this half's socket open"
+
+
+# --------------------------------------------------------------------------------------------
+# Scanning somebody else's QR, which is denser than any we print
+# --------------------------------------------------------------------------------------------
+
+def test_the_decoder_never_hands_jsqr_a_whole_high_res_frame():
+    """"Just ask for a bigger camera" makes dense codes scan WORSE, and every number says otherwise.
+
+    Measured with scripts/check_qr_scan.py's `third-party` case — primal.net's own shape, QR version
+    19 (93x93 modules) — at 35% frame fill: 720p gives 2px/module and fails, 1080p gives 3 and reads,
+    and 1440p gives 4 AND FAILS. jsQR is pure JS and its cost scales with the frame, so at 3.7M pixels
+    per attempt the scanner gets through too few frames to catch a sharp one. More pixels per module,
+    worse result.
+
+    So the frame is never decoded whole at whatever size the sensor happens to be. This guards the
+    budget, because the obvious "simplification" is to drop it and pass the video straight through —
+    which reads as tidier and silently reintroduces the ceiling on exactly the codes that need it.
+    """
+    src = _src()
+    seg = src[src.index("  async function _qrDetector(){"):]
+    seg = seg[:seg.index("\n    let bd=null;")]
+    assert "BUDGET" in seg, "the decode budget is gone — a 1440p frame will be decoded whole"
+    assert re.search(r"drawImage\(v,\s*sx,\s*sy,\s*sw,\s*sh,\s*0,\s*0,\s*dw,\s*dh\)", seg), (
+        "the source rectangle is gone, so the centre-crop pass cannot exist")
+    assert "Math.sqrt(over)" in seg, "the frame is no longer scaled down to fit the budget"
+    # Both passes have to survive: centre-only misses a code held off to the side, full-only is the
+    # ceiling this fixes.
+    assert "pass++" in seg, "the two passes no longer alternate"
+
+
+def test_the_camera_is_asked_for_more_than_the_decoder_used_to_survive():
+    """The resolution request and the budgeted decoder are one change in two places.
+
+    Raising this line alone made dense codes harder to scan; the decoder had to stop reading whole
+    frames first. If someone reverts the decoder, this number becomes actively harmful — so the test
+    for the budget above sits right next to it deliberately.
+    """
+    src = _src()
+    m = re.search(r"getUserMedia\(\{\s*video:\{\s*facingMode:'environment',\s*"
+                  r"width:\{\s*ideal:(\d+)\s*\},\s*height:\{\s*ideal:(\d+)\s*\}", src)
+    assert m, "the scanner's camera constraint changed shape"
+    assert int(m.group(1)) >= 1920, (
+        "a smaller frame cannot resolve a version-19 code at arm's length: measured, 720p is "
+        "2px/module on primal's QR and unreadable however still you hold it")

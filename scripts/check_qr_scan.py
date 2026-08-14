@@ -74,6 +74,12 @@ W, H, FRAMES = 640, 480, 60
 # The third-party scenario runs at a modern camera's resolution, because that is the whole point of
 # asking getUserMedia for one: their code is version 19 and only pixels-per-module decides.
 BIG_W, BIG_H = 1280, 720
+# PC_CAMW/PC_CAMH stand in for a better camera. Pixels per module is the only thing that decides
+# whether a dense code reads, and it is the product of the SENSOR resolution and how much of the
+# frame the symbol fills — so being able to move the first one is what turns "ask for a bigger
+# stream" from a plausible fix into a measured one.
+BIG_W = int(os.environ.get("PC_CAMW", BIG_W))
+BIG_H = int(os.environ.get("PC_CAMH", BIG_H))
 
 # The URI shape `beginNostrConnect` builds, including the full perms list — the thing that makes the
 # symbol dense. Built here rather than scraped from the running client so the check states plainly
@@ -240,6 +246,13 @@ async def run(url):
     only = os.environ.get("PC_ONLY")
     if only:
         cases = [c for c in cases if c[0] == only]
+    # PC_FILL overrides how much of the frame the symbol occupies, which is the ONE variable that
+    # decides whether a dense third-party code reads: pixels per module. It exists so "I cannot scan
+    # primal's QR" can be turned into a threshold ("it reads down to N% of the frame") instead of a
+    # yes/no, because the fixed 0.55 above passes and the phone in someone's hand still did not.
+    fill_override = os.environ.get("PC_FILL")
+    if fill_override:
+        cases = [(n, float(fill_override), b) for (n, f, b) in cases]
 
     problems = []
     try:
