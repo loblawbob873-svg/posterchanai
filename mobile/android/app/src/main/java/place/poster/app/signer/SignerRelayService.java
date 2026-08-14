@@ -11,8 +11,8 @@ import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.IBinder;
-import android.os.Looper;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.ServiceCompat;
@@ -92,7 +92,33 @@ public class SignerRelayService extends Service {
     public static long requestsAnswered = 0;
     public static String lastError = "";
 
-    private final Handler handler = new Handler(Looper.getMainLooper());
+    /* THIS SERVICE'S WORK IS NOT UI WORK, AND IT USED TO RUN ON THE UI THREAD ANYWAY.
+     *
+     * Reported as "buttons laggy, scrolling terrible, the app is unusable" the same day the signer
+     * went native and started answering for three apps at once — and nothing in any log, because
+     * from the service's side every request SUCCEEDED. `onMessage` posted to the main looper, so
+     * every frame a relay sent was parsed on the thread that draws. That alone is constant jank
+     * with several relays open (the kind/session filter happens AFTER `new JSONArray(raw)`), and a
+     * request that is actually FOR us then does, still on that thread: an Android Keystore load, an
+     * ECDH + NIP-44 decrypt, a pure-Java secp256k1 Schnorr signature for the event, then a second
+     * ECDH + encrypt + signature for the reply. Pure-BigInteger point multiplication is tens to
+     * hundreds of milliseconds a go, so a single signature drops frames and three apps' worth
+     * arrives whenever it likes — including mid-scroll.
+     *
+     * A HandlerThread rather than a pool, because the fix must not introduce the OTHER bug: every
+     * mutation of `sessions`/`socks`/`failures` (plain Maps) is already confined to ONE thread, and
+     * spreading this across a pool would race them. So the same confinement moves wholesale off the
+     * main looper — which is why `reload()` and `closeAll()` are POSTED below rather than called
+     * inline. `note()` is safe from here: NotificationManager is thread-safe, and `state()` only
+     * reads a size. */
+    private final HandlerThread thread = workThread();
+    private final Handler handler = new Handler(thread.getLooper());
+
+    private static HandlerThread workThread() {
+        HandlerThread t = new HandlerThread("pc-signer", android.os.Process.THREAD_PRIORITY_BACKGROUND);
+        t.start();
+        return t;
+    }
     private final Map<String, Nip46Core.Session> sessions = new LinkedHashMap<>();
     private final Map<String, WebSocket> socks = new HashMap<>();
     private final Map<String, Integer> failures = new HashMap<>();
@@ -152,7 +178,7 @@ public class SignerRelayService extends Service {
         if (ACTION_STOP.equals(action)) {
             stopping = true;
             setWanted(this, false);
-            closeAll();
+            handler.post(this::closeAll);      // `socks` belongs to the work thread — see the field
             running = false;
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
             stopSelf();
@@ -174,7 +200,9 @@ public class SignerRelayService extends Service {
         stopping = false;
         running = true;
         setWanted(this, true);
-        reload();
+        /* Posted, not called: `reload()` opens sockets and reads the Keystore, and it mutates the
+         * maps `recv` owns. `startForeground` above stays on this thread, where the 5s deadline is. */
+        handler.post(this::reload);
         return START_STICKY;   // a signer that stops answering because of memory pressure is the bug
     }
 
@@ -554,7 +582,9 @@ public class SignerRelayService extends Service {
     @Override
     public void onDestroy() {
         stopping = true;
-        closeAll();
+        /* Close on the thread that owns the sockets, then stop that thread — `quitSafely` runs the
+         * queued close first, where `quit()` would drop it and leak every open WebSocket. */
+        handler.post(() -> { closeAll(); thread.quitSafely(); });
         running = false;
         super.onDestroy();
     }

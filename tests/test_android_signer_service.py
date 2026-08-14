@@ -554,6 +554,50 @@ def test_the_only_thing_that_runs_on_a_timer_is_the_keepalive():
         f"five-minute NAT mapping this is sized against")
 
 
+def test_the_signer_never_does_its_work_on_the_ui_thread():
+    """Signing for three apps made the whole app unusable, and nothing logged a thing.
+
+    `onMessage` posted to `Looper.getMainLooper()`, so every frame a relay sent was parsed on the
+    thread that draws — the kind/session filter runs AFTER `new JSONArray(raw)`, so even traffic
+    meant for nobody cost main-thread time on every open socket. A request actually addressed to us
+    then did a Keystore load, an ECDH + NIP-44 decrypt, a pure-Java secp256k1 Schnorr signature, and
+    a second ECDH + encrypt + signature for the reply — all there. Pure-BigInteger point
+    multiplication is tens to hundreds of milliseconds, so one signature drops frames and three
+    apps' worth arrive whenever they like, including mid-scroll. Reported as "buttons laggy,
+    scrolling is terrible, the APK is unusable", with nothing in any log because from the service's
+    side every request SUCCEEDED.
+
+    The confinement matters as much as the thread: `sessions`/`socks`/`failures` are plain Maps whose
+    every mutation is single-threaded today. Moving `recv` to a pool would trade jank for corruption,
+    so the whole service moves to ONE HandlerThread — which is why `reload()` and `closeAll()` must
+    be posted rather than called inline from the lifecycle callbacks, which arrive on main.
+    """
+    svc = _read(os.path.join(SIGNER, "SignerRelayService.java"))
+    assert "getMainLooper()" not in svc, (
+        "the signer service is back on the main looper — every relay message, every decrypt and "
+        "every signature would run on the thread that draws the UI"
+    )
+    assert re.search(r"new\s+Handler\(\s*thread\.getLooper\(\)\s*\)", svc), (
+        "the service's Handler is no longer backed by its own HandlerThread"
+    )
+    assert re.search(r"new\s+HandlerThread\(", svc), "the work thread is gone"
+    # The lifecycle callbacks arrive on main, so anything they touch that `recv` also touches has to
+    # be handed to the work thread rather than run where it was called.
+    start = svc[svc.index("public int onStartCommand("):]
+    start = start[:start.index("private void reload()")]
+    assert re.search(r"handler\.post\(this::reload\)", start), (
+        "onStartCommand calls reload() inline, racing the work thread on sessions/socks"
+    )
+    assert re.search(r"handler\.post\(this::closeAll\)", start), (
+        "the STOP branch closes sockets on the main thread, racing the work thread on socks"
+    )
+    destroy = svc[svc.index("public void onDestroy()"):]
+    assert "quitSafely()" in destroy, (
+        "onDestroy does not stop the work thread safely — quit() would drop the queued close and "
+        "leak every open WebSocket"
+    )
+
+
 def test_the_signer_never_takes_a_wakelock():
     """A wakelock is how a background service becomes the thing at the top of the battery screen.
 

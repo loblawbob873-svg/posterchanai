@@ -1843,8 +1843,11 @@
        * dense codes harder to scan while every number said it should have helped. With the two-pass
        * budgeted decoder in `_qrDetector` the same 1440p case reads, so the extra pixels now land
        * where they were always supposed to. */
+      let camInfo = '';   // what the camera GRANTED (see the tick loop) — `ideal` above is only a request
       try{ stream=await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment',
-             width:{ ideal:2560 }, height:{ ideal:1440 } } }); v.srcObject=stream; await v.play(); }
+             width:{ ideal:2560 }, height:{ ideal:1440 } } }); v.srcObject=stream; await v.play();
+           try{ const st=stream.getVideoTracks()[0].getSettings()||{};
+                if(st.width && st.height) camInfo = st.width+'x'+st.height; }catch(_){} }
       catch(e){ hint.textContent='Camera unavailable ('+((e&&e.message)||e)+'). Use “paste link instead”.'; return; }
       /* SAY SOMETHING WHEN IT ISN'T WORKING. This loop swallowed every detector error and every
        * non-match and then looked identical to a camera that was simply not pointed at anything —
@@ -1855,14 +1858,36 @@
        * A signer QR is version ~21 (101x101 modules) because of the `perms` list, which is a lot to
        * ask of a laptop camera aimed at a screen — so "paste the link instead" is not a fallback
        * here, it is often the faster route, and it is one click away in this modal. */
-      let ticks = 0, told = false;
+      /* "IT NEVER SCANS" HAS THREE CAUSES AND THIS LOOP USED TO REPORT THEM IDENTICALLY.
+       *
+       * The decoder can (a) read nothing at all — too few pixels per module, out of focus, not in
+       * frame; (b) read a code that is not a pairing link — someone else's npub QR, a bunker://
+       * meant for the opposite flow, a plain URL; or (c) read the right link, in which case we are
+       * already gone. Only (a) is a camera problem, and (a) and (b) looked the same from the sofa:
+       * the hint sat on "Still looking…" for ever either way. So a build that improved the camera
+       * could not be told apart from one that changed nothing, which is exactly how the last one
+       * was reported back ("still doesn't scan").
+       *
+       * The fix is to say which. `seen` is the scheme of the last thing decoded — the SCHEME only,
+       * never the payload, because a pairing link carries a bearer secret and this text is on
+       * screen. And the resolution the camera actually GRANTED is printed with it: `ideal` is a
+       * request, not a promise, and a phone that quietly handed back 640x480 is the one case where
+       * the honest advice really is "fill more of the frame". */
+      let ticks = 0, told = false, seen = '';
       const tick=async()=>{
         if(stopped || !document.body.contains(v)){ cleanup(); return; }   // modal closed → stop camera
-        try{ const val=await detect(v); if(val && /^nostrconnect:/i.test(val)){ cleanup(); closeModal(); return onQrScanned(val); } }catch(_){}
-        if(!told && ++ticks > 24){                       // ~7s of looking, and nothing read
+        try{
+          const val=await detect(v);
+          if(val && /^nostrconnect:/i.test(val)){ cleanup(); closeModal(); return onQrScanned(val); }
+          if(val){ const m=String(val).match(/^([a-z0-9+.-]{1,20}):/i); seen = m ? m[1].toLowerCase()+':' : 'plain text'; }
+        }catch(_){}
+        if(++ticks > 24 && (!told || seen)){             // ~7s of looking, and nothing paired
           told = true;
-          hint.textContent = 'Still looking… this code is a dense one. Fill the frame with it and hold '
-            + 'steady, or use “paste link instead” — that always works.';
+          hint.textContent = seen
+            ? ('Read a code, but it is not a pairing link (' + seen + '). On the other device open '
+               + 'its remote-signer / “connect” screen — that QR starts with nostrconnect:.')
+            : ('Still looking… this code is a dense one' + (camInfo ? ' and this camera is ' + camInfo : '')
+               + '. Fill the frame with it and hold steady, or use “paste link instead” — that always works.');
         }
         setTimeout(tick, 300);
       };
