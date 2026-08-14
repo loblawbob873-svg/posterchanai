@@ -6662,7 +6662,14 @@ body.os-on #os-root{pointer-events:auto}
   display:flex;align-items:center;justify-content:center}
 .os-wgt:hover .os-wgt-x,.os-wgt-x:focus-visible{opacity:1;pointer-events:auto}
 .os-wgt-x:hover{background:#e81123;color:#fff}
-.os-wgt-body{flex:1;min-height:0;overflow:auto;padding:10px 12px;font-size:12.5px;color:var(--text)}
+/* THE PANEL'S OWN touch-action IS NOT ENOUGH, because the finger lands HERE. This is a scroller
+   (overflow:auto), and a touch starting on a scrollable descendant is handed to that scroller —
+   the browser fires pointercancel at the drag on the very first move, which startWgtDrag rightly
+   reads as a release, so the widget never moves a pixel. Icons drag on the same screen because an
+   icon has no scrollable child. Measured as an A/B with real touch input: identical panels, the one
+   whose body carried this line completed the drag and the one without it cancelled. */
+.os-wgt-body{flex:1;min-height:0;overflow:auto;padding:10px 12px;font-size:12.5px;color:var(--text);
+  touch-action:none}
 .wgt-dim{color:var(--muted);font-size:11.5px}
 
 /* Bitcoin blocks. Pending stacked on the left, confirmed on the right, meeting at the chain tip —
@@ -6717,7 +6724,8 @@ body.os-on #os-root{pointer-events:auto}
    with the date, which is the only thing in this panel meant to be read at a glance. */
 .wgt-calnext{margin:6px 0 3px;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
   color:var(--muted);border-top:1px solid var(--line);padding-top:6px}
-.wgt-calrows{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:4px}
+.wgt-calrows{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:4px;
+  touch-action:none}   /* a scroller inside a draggable widget — see .os-wgt-body */
 .wgt-calrow{display:flex;align-items:baseline;gap:7px;font-variant-numeric:tabular-nums}
 /* A finished appointment is DIMMED, never removed — a day whose entries disappear as it goes on
    reads as a calendar that is losing things. */
@@ -6769,7 +6777,11 @@ body.os-on #os-root{pointer-events:auto}
   border:1px solid var(--line);border-radius:9px;color:var(--text);padding:7px 9px;font:inherit;
   font-size:12.5px;outline:none}
 .wgt-wxq:focus,.wgt-note:focus,.wgt-sinput:focus{border-color:var(--cyan,#0ff)}
-.wgt-wxres{display:flex;flex-direction:column;gap:2px;max-height:118px;overflow:auto}
+/* Another scroller inside a widget, and it takes the gesture for the same reason .os-wgt-body did.
+   One rule per scroller rather than `.os-wgt *`, so a scrollable list somebody adds later fails
+   visibly here rather than being silently covered by a wildcard nobody remembers. */
+.wgt-wxres{display:flex;flex-direction:column;gap:2px;max-height:118px;overflow:auto;
+  touch-action:none}
 .wgt-wxhit{display:flex;flex-direction:column;align-items:flex-start;gap:1px;text-align:start;
   background:none;border:0;color:var(--text);padding:5px 7px;border-radius:7px;cursor:pointer;
   font-size:12px}
@@ -6922,7 +6934,7 @@ body.os-on #os-root{pointer-events:auto}
    takes the height it needs, scrolls when four cities do not fit, and the whole group stays centred.
    Width is pinned so the city rows are a column rather than each row being its own width. */
 .wgt-clkz{flex:0 1 auto;min-height:0;width:100%;overflow-y:auto;display:flex;flex-direction:column;
-  gap:3px;margin-top:5px;text-align:start}
+  gap:3px;margin-top:5px;text-align:start;touch-action:none}   /* see .os-wgt-body */
 .wgt-clkrow{display:flex;align-items:baseline;gap:8px;font-size:12px;cursor:pointer;
   font-variant-numeric:tabular-nums;border-radius:5px}
 .wgt-clkrow:hover{background:rgba(var(--accent-rgb),.10)}
