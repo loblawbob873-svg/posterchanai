@@ -1034,3 +1034,20 @@ class XdcProxyFallback(unittest.TestCase):
         self.assertIn("StreamingResponse", seg,
                       "the Half-Life port is ~178MB; buffering one costs that per launch")
         self.assertIn("MAX", seg, "no size cap")
+
+    def test_the_proxy_fails_with_a_status_not_an_empty_success(self):
+        """An upstream 502 must not reach the client as `200` with nothing in it.
+
+        Written the other way first, and it was worse than useless: the request lived inside the
+        streaming generator, which cannot change a status line it has already sent, so a dead host
+        became a zero-byte success. The client reads that as a working download AND never reaches
+        its own mirror fallback — so the one host that was down made five apps unopenable while the
+        copies sat on another server.
+        """
+        src = _src("app/routers/client.py")
+        seg = src[src.index('@router.get("/xdc")'): src.index('@router.get("/gif")')]
+        send = seg.index("client.send(req, stream=True)")
+        gen = seg.index("async def _stream")
+        self.assertLess(send, gen,
+                        "the upstream request is inside the generator, so its failure cannot be a status")
+        self.assertIn("status_code=502", seg, "an upstream failure is not reported as an error")

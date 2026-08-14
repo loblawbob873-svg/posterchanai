@@ -1997,24 +1997,39 @@ async def client_proxy_xdc(url: str = Query(...)):
         raise HTTPException(status_code=400, detail=err)
     MAX = 256 * 1024 * 1024
 
+    # THE UPSTREAM IS CONTACTED BEFORE THE RESPONSE STARTS, so a failure is a STATUS and not an
+    # empty success. Written the other way first — the request lived inside the streaming generator,
+    # which cannot change a status line it has already sent, so an upstream 502 became `200` with a
+    # zero-byte body. The client reads that as a working download, hands nothing to the unzipper, and
+    # (worse) never reaches its own mirror fallback, because as far as it can tell we answered. That
+    # made a dead host look like a corrupt app.
+    client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0), follow_redirects=True)
+    try:
+        req = client.build_request("GET", url, headers={"Accept": "*/*"})
+        r = await client.send(req, stream=True)
+    except Exception as exc:
+        await client.aclose()
+        raise HTTPException(status_code=502, detail=f"could not reach that host ({exc})")
+    if r.status_code >= 400:
+        await r.aclose()
+        await client.aclose()
+        raise HTTPException(status_code=502, detail=f"upstream returned {r.status_code}")
+    if int(r.headers.get("content-length") or 0) > MAX:
+        await r.aclose()
+        await client.aclose()
+        raise HTTPException(status_code=413, detail="that app is too large")
+
     async def _stream():
         sent = 0
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0),
-                                     follow_redirects=True) as client:
-            async with client.stream("GET", url, headers={"Accept": "*/*"}) as r:
-                if r.status_code >= 400:
-                    # Raised inside the generator, so the client sees a truncated body rather than a
-                    # status — which is why the size/status check that CAN be done up front is done
-                    # by the HEAD-less content-length below instead of trusted from here.
-                    return
-                length = int(r.headers.get("content-length") or 0)
-                if length > MAX:
-                    return
-                async for chunk in r.aiter_bytes(65536):
-                    sent += len(chunk)
-                    if sent > MAX:
-                        return
-                    yield chunk
+        try:
+            async for chunk in r.aiter_bytes(65536):
+                sent += len(chunk)
+                if sent > MAX:
+                    break                       # the cap; the body is already in flight by here
+                yield chunk
+        finally:
+            await r.aclose()
+            await client.aclose()
 
     return StreamingResponse(_stream(), media_type="application/x-webxdc",
                              headers={"Cache-Control": "public, max-age=86400"})
