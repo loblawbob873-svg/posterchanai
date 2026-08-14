@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+"""The built-in QR scanner, driven with a FAKE CAMERA pointed at a real signer QR.
+
+    venv-unified/bin/python scripts/check_qr_scan.py [base_url]
+
+Settings → "Log in another device" → Scan QR code opens a camera and looks for a `nostrconnect://`
+code. Chrome can be handed a video file as its camera (`--use-file-for-fake-video-capture`), so this
+renders the QR the client itself would draw — through the client's own `qr.js` — into a Y4M, points
+Chrome at it, and drives the real scanner. A throwaway relay stands in for the far side, so a
+successful scan goes all the way to a live NIP-46 signer session rather than stopping at "decoded".
+
+WHY THIS EXISTS. The scanner was reported as "the QR code never gets scanned", and every layer
+looked correct in isolation: the encoder round-trips through jsQR in `test_client_qr_encoder.py`, the
+vendored jsQR sets `window.jsQR`, and the modal, the video element and the tick loop all read fine.
+Nothing in the code says how big a QR is on a screen, or how much of the camera's frame it fills —
+and that is the whole question, because the signer URI carries a 15-entry `perms` list which puts the
+symbol at **version 18, 89x89 modules**. A test that renders it at 4 pixels per module proves the
+decoder works and nothing else; the interesting case is the one where a person is holding a laptop.
+
+So the scenarios are FRAMINGS, not code paths:
+
+  filled    The QR fills the frame — the best case anyone gets. If this fails the scanner is broken.
+  aimed     It occupies about a third of the frame's width, which is what pointing a webcam at
+            another screen from arm's length looks like. Roughly ONE pixel per module at 640x480.
+  blurred   Filling the frame, plus the softness of a webcam that has not focused yet.
+
+CALIBRATED BY MEASUREMENT, and the numbers are the useful part. A sharp frame decodes down to **one
+pixel per module** — `aimed` passes, which is far better than the code's own comments assumed. What
+kills it is SOFTNESS, and only in combination with size: at 2px/module a single 3x3 blur pass is
+already unreadable, at 4px/module the same blur decodes fine. So the boundary is "blur is fatal below
+about 4 pixels per module", which is why the scanner's on-screen hint tells you to fill the frame
+rather than to hold still.
+
+A hypothesis that MEASURED FALSE, recorded so nobody spends the afternoon on it again: shortening the
+URI does not rescue the soft case. Dropped to no `perms` at all the symbol falls from version 18
+(89x89) to version 8 (49x49) — and the blurred-at-2px/module framing still failed. Density is not the
+variable; pixels-per-module is, and moving closer buys more of them than a smaller payload does.
+
+Exit 0 = clean, 1 = failures (printed), 2 = could not run (no Chrome / no node / no instance).
+"""
+import asyncio
+import json
+import os
+import shutil
+import subprocess
+import sys
+import urllib.request
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:3051"
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9499)
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-qrscan-check"
+
+W, H, FRAMES = 640, 480, 60
+
+# The URI shape `beginNostrConnect` builds, including the full perms list — the thing that makes the
+# symbol dense. Built here rather than scraped from the running client so the check states plainly
+# what it is testing; test_client_qr_encoder.py already guards that this matches production.
+_KINDS = (0, 1, 3, 4, 5, 6, 7, 1059, 9734, 10000, 10002, 10003, 10050, 27235, 30078)
+_PERMS = ("get_public_key%2Cnip04_encrypt%2Cnip04_decrypt%2Cnip44_encrypt%2Cnip44_decrypt"
+          + "".join("%2Csign_event%3A" + str(k) for k in _KINDS))
+
+
+def signer_uri(app_pk: str, relay: str, secret: str) -> str:
+    import urllib.parse
+    return (f"nostrconnect://{app_pk}?relay={urllib.parse.quote(relay, safe='')}"
+            f"&secret={secret}&perms={_PERMS}&name=PosterChan")
+
+
+# The Y4M writer runs under node so the modules come from the SHIPPED encoder — a second
+# implementation here could be wrong in exactly the way the real one is right.
+_Y4M_JS = r"""
+const fs=require('fs'); global.window={};
+new Function(fs.readFileSync(process.argv[2],'utf8'))();
+const PCQR=global.window.PCQR;
+const uri=process.argv[3], out=process.argv[4];
+const W=+process.argv[5], H=+process.argv[6], FRAMES=+process.argv[7];
+const fill=parseFloat(process.argv[8]), blur=+process.argv[9];
+const q=PCQR.modules(uri), border=4, dim=q.size+border*2;
+const side=Math.floor(Math.min(W,H)*fill);
+const s=Math.max(1,Math.floor(side/dim)), px=s*dim, ox=(W-px)>>1, oy=(H-px)>>1;
+let Y=new Float64Array(W*H).fill(255);
+for(let y=0;y<q.size;y++)for(let x=0;x<q.size;x++){
+  if(!q.mod[y][x])continue;
+  for(let yy=0;yy<s;yy++)for(let xx=0;xx<s;xx++){
+    const X=ox+(x+border)*s+xx, Yy=oy+(y+border)*s+yy;
+    if(X>=0&&X<W&&Yy>=0&&Yy<H) Y[Yy*W+X]=0;
+  }
+}
+for(let p=0;p<blur;p++){
+  const src=Float64Array.from(Y);
+  for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
+    let a=0; for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++) a+=src[(y+dy)*W+(x+dx)];
+    Y[y*W+x]=a/9;
+  }
+}
+const yb=Buffer.alloc(W*H); for(let i=0;i<W*H;i++) yb[i]=Math.max(0,Math.min(255,Math.round(Y[i])));
+const U=Buffer.alloc((W>>1)*(H>>1),128), V=Buffer.alloc((W>>1)*(H>>1),128);
+const parts=[Buffer.from(`YUV4MPEG2 W${W} H${H} F30:1 Ip A1:1 C420\n`)];
+for(let f=0;f<FRAMES;f++) parts.push(Buffer.from('FRAME\n'),yb,U,V);
+fs.writeFileSync(out,Buffer.concat(parts));
+console.log(JSON.stringify({version:(q.size-17)/4,modules:q.size,pxPerModule:s}));
+"""
+
+
+def make_video(uri: str, path: str, fill: float, blur: int) -> dict:
+    js = os.path.join(os.path.dirname(path), "_y4m.js")
+    with open(js, "w", encoding="utf-8") as fh:
+        fh.write(_Y4M_JS)
+    r = subprocess.run(
+        ["node", js, os.path.join(ROOT, "static/js/client/qr.js"), uri, path,
+         str(W), str(H), str(FRAMES), str(fill), str(blur)],
+        capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip()[:300])
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+LOGIN = """(async (nsec)=>{
+  const sl=ms=>new Promise(r=>setTimeout(r,ms)); const $=s=>document.querySelector(s);
+  document.body.classList.remove('guest');
+  $('#auth-gate').classList.remove('hidden'); $('#app').classList.add('hidden');
+  $('#auth-login').classList.remove('hidden');
+  $('#nsec-input').value=nsec; $('#btn-nsec-login').click();
+  for(let i=0;i<150;i++){ await sl(200);
+    const m=window.__PC&&window.__PC.me&&window.__PC.me();
+    if(m&&m.pubkey) return {ok:true,pk:m.pubkey}; }
+  return {ok:false,err:'never signed in with the nsec'};})"""
+
+# THE RELAY IS THE WITNESS, not the page. A decoded QR ends in `Nip46Signer.start`, which opens the
+# relay named in the URI and publishes a kind-24133 ack — so "did the scan work" is answered by
+# whether that event arrived, on the far side, in another process. Judging from the DOM was tried and
+# is a trap twice over: the modal CLOSES on success, so its absence describes a pass and a cancel
+# identically, and `toast` cannot be intercepted at all — app.js calls its own module-local binding,
+# so wrapping `window.toast` silently observes nothing.
+SCAN = """(async (seconds)=>{
+  const sl=ms=>new Promise(r=>setTimeout(r,ms)); const $=s=>document.querySelector(s);
+  window.__PC.switchView('settings');
+  for(let i=0;i<60&&!$('#set-scan-qr');i++) await sl(200);
+  const b=$('#set-scan-qr');
+  if(!b) return {err:'Settings has no "Scan QR code" button'};
+  if(b.disabled) return {err:'the button is disabled for mode '+((window.__PC.me()||{}).mode)};
+  b.click();
+  /* Watch for the OUTCOME, not for the video element. A successful scan closes the modal, and on a
+   * clean frame that can happen before the first poll — so waiting for #qr-video to appear and
+   * calling its absence "the scanner never opened" reports a pass as a failure. Ask once whether the
+   * scanner ever existed, and otherwise judge by what the app did with what it read. */
+  let opened=false;
+  for(let i=0;i<seconds*5;i++){ await sl(200); if($('#qr-video')) opened=true; }
+  return {opened:opened, hint:(($('#qr-hint'))||{}).textContent||''};})"""
+
+
+async def run(url):
+    import websockets
+    from app.services.nostr import bech32, bip340
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    from check_nip46_signer import MiniRelay          # the throwaway relay, already written
+
+    if not shutil.which("node"):
+        print("SKIP  node not installed")
+        return 2
+    chrome = (shutil.which("google-chrome-stable") or shutil.which("google-chrome")
+              or shutil.which("chromium"))
+    if not chrome:
+        print("SKIP  no Chrome")
+        return 2
+
+    relay = MiniRelay()
+    relay_url = await relay.start()
+    tmp = PROFILE + "-media"
+    os.makedirs(tmp, exist_ok=True)
+
+    app_sk = os.urandom(32)
+    app_pk = bip340.pubkey_from_seckey(app_sk).hex()
+    uri = signer_uri(app_pk, relay_url, "k9x2m4p7qz")
+
+    cases = [("filled", 0.92, 0), ("aimed", 0.34, 0), ("blurred", 0.92, 1)]
+    only = os.environ.get("PC_ONLY")
+    if only:
+        cases = [c for c in cases if c[0] == only]
+
+    problems = []
+    try:
+        for name, fill, blur in cases:
+            video = os.path.join(tmp, f"{name}.y4m")
+            info = make_video(uri, video, fill, blur)
+            subprocess.run(["rm", "-rf", PROFILE], check=False)
+            proc = subprocess.Popen(
+                [chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
+                 "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream",
+                 f"--use-file-for-fake-video-capture={video}",
+                 f"--remote-debugging-port={PORT}", f"--user-data-dir={PROFILE}", "about:blank"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                page = None
+                for _ in range(60):
+                    try:
+                        tabs = json.load(urllib.request.urlopen(
+                            f"http://127.0.0.1:{PORT}/json/list"))
+                        page = [t for t in tabs if t["type"] == "page"][0]
+                        break
+                    except Exception:
+                        await asyncio.sleep(0.5)
+                if not page:
+                    print("SKIP  could not start Chrome")
+                    return 2
+                async with websockets.connect(page["webSocketDebuggerUrl"],
+                                              max_size=64 * 1024 * 1024) as ws:
+                    n = [0]
+
+                    async def call(m, p=None):
+                        n[0] += 1
+                        await ws.send(json.dumps({"id": n[0], "method": m, "params": p or {}}))
+                        while True:
+                            r = json.loads(await ws.recv())
+                            if r.get("id") == n[0]:
+                                return r.get("result")
+
+                    async def js(e, aw=True):
+                        r = await call("Runtime.evaluate",
+                                       {"expression": e, "returnByValue": True, "awaitPromise": aw})
+                        if r.get("exceptionDetails"):
+                            if os.environ.get("PC_DEBUG"):
+                                print("  DEBUG EXC:", json.dumps(r["exceptionDetails"])[:400])
+                            return None
+                        return r["result"].get("value")
+
+                    await call("Runtime.enable")
+                    await call("Page.enable")
+                    await call("Page.navigate", {"url": url + "/client"})
+                    for _ in range(120):
+                        await asyncio.sleep(0.25)
+                        if await js("!!document.querySelector('#btn-nsec-login')", False):
+                            break
+                    nsec = bech32.encode("nsec", os.urandom(32))
+                    who = await js(f"({LOGIN})({json.dumps(nsec)})") or {}
+                    if not who.get("ok"):
+                        print(f"SKIP  {who.get('err') or 'could not sign in'}")
+                        return 2
+                    before = len(relay.events)
+                    res = await js(f"({SCAN})(20)") or {}
+                    # The ack the client publishes after a successful decode. Kind 24133 addressed to
+                    # the app key in the QR — nothing else on this relay can produce one.
+                    acked = any(e.get("kind") == 24133
+                                and any(len(t_) >= 2 and t_[0] == "p" and t_[1] == app_pk
+                                        for t_ in e.get("tags", []))
+                                for e in relay.events[before:])
+                    if not acked:
+                        problems.append((name, res.get("err") or (
+                            "the scanner opened and read nothing" if res.get("opened")
+                            else "the scanner never opened"),
+                                         f"QR v{info['version']} ({info['modules']}x"
+                                         f"{info['modules']}), {info['pxPerModule']}px/module, "
+                                         f"fill={fill}, blur={blur}"))
+                    elif os.environ.get("PC_DEBUG"):
+                        print(f"  DEBUG {name}: decoded and acked ({info})", flush=True)
+            finally:
+                proc.terminate()
+    finally:
+        await relay.stop()
+        subprocess.run(["rm", "-rf", PROFILE], check=False)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    if problems:
+        print(f"FAIL  {len(problems)} framing(s) the scanner could not read:")
+        for name, err, detail in problems:
+            print(f"  [{name}] {err} — {detail}")
+        return 1
+    print("OK  the QR scanner reads a signer code and opens a signer session")
+    return 0
+
+
+def main():
+    try:
+        import websockets  # noqa: F401
+    except ImportError:
+        print("SKIP  websockets not installed")
+        return 2
+    try:
+        with urllib.request.urlopen(BASE + "/client", timeout=8) as r:
+            if r.status != 200:
+                raise RuntimeError(r.status)
+    except Exception as e:
+        print(f"SKIP  {BASE}/client is not reachable ({e})")
+        return 2
+    return asyncio.run(run(BASE))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

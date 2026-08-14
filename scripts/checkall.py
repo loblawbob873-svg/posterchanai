@@ -80,6 +80,9 @@ CHECKS = {
     "check_os_apps":                   dict(group="live", secs=900),
     # Two browsers, three pairings, and a clock-skew case that has to time out to prove it works.
     "check_qr_device_login":           dict(group="live", secs=900),
+    # A fake camera (Chrome's --use-file-for-fake-video-capture) pointed at a real signer QR, in
+    # three framings. Needs node, to render the video through the client's own encoder.
+    "check_qr_scan":                   dict(group="live", secs=900),
     "check_repo_view_mobile":          dict(group="live", secs=420),
     "check_search_profile_stability":  dict(group="live", secs=1800),
     "check_timeline_ghosts":           dict(group="live", secs=600),

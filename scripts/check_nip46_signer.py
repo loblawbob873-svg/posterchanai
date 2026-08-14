@@ -65,6 +65,11 @@ class MiniRelay:
         self.subs = {}       # ws -> {subid: filter}
         self.port = None
         self._srv = None
+        # Every event this relay was handed. A check that asks "did the client publish?" gets a
+        # straight answer from the far side, in another process, instead of inferring it from the
+        # page — which is what check_qr_scan.py needs, because a successful scan CLOSES the modal it
+        # would otherwise have to watch.
+        self.events = []
 
     async def start(self):
         import websockets
@@ -106,6 +111,7 @@ class MiniRelay:
                     self.subs[ws].pop(m[1], None)
                 elif m[0] == "EVENT":
                     ev = m[1]
+                    self.events.append(ev)
                     await ws.send(json.dumps(["OK", ev["id"], True, ""]))
                     for peer, subs in list(self.subs.items()):
                         for sid, filt in list(subs.items()):
