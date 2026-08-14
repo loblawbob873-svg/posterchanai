@@ -109,9 +109,36 @@ def _run(page, width=800, height=600):
 class VideoMountBehaviour(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        """One chrome run feeds all three tests, so a run that measured NOTHING must not be reported
+        as three separate failures about video mounting.
+
+        THE FLAKE THIS FIXES, and it is a harness fault rather than a product one. Every assertion
+        below reads `cls.rows`, so when the page comes back with nothing mounted at all — `initial`
+        all zeros, both node ids "none" — all three fail at once with messages that describe a broken
+        lazy-mount ("the video in view must mount", "nothing was mounted to detach"). That is exactly
+        what a real regression looks like, which is what made it expensive: it appeared only in a full
+        `pytest tests/` run and never in isolation or in `tests/client/` alone, so it read as "the
+        suite caught something the subset did not". It did not. Under whole-suite load chrome
+        occasionally spends the entire `--virtual-time-budget` starting up, and the IntersectionObserver's
+        first callback never lands before `--dump-dom` prints the page.
+
+        So a degenerate run is retried rather than believed. This does NOT weaken the test: if lazy
+        mounting is genuinely broken, every attempt is degenerate and it fails loudly below, with the
+        `initial` string from the last attempt to say so. `got.count("1") < N_VIDS` still catches the
+        opposite failure, where everything mounts eagerly.
+        """
         with open(APP) as fh:
             src = fh.read()
-        cls.rows = {r[0]: r[1:] for r in _run(_page(_extract(src, "const VideoMount = (function()")))}
+        page = _page(_extract(src, "const VideoMount = (function()"))
+        last = None
+        for _ in range(3):
+            rows = {r[0]: r[1:] for r in _run(page)}
+            last = rows
+            # "Did the observer run at all?" — the one question that separates a measurement from a
+            # browser that never got there. Any '1' means it did, and the assertions take over.
+            if "1" in rows.get("initial", [""])[0]:
+                break
+        cls.rows = last
 
     def test_offscreen_videos_never_get_a_src(self):
         got = self.rows["initial"][0]
