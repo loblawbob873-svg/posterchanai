@@ -588,6 +588,53 @@
       if(v <= (held[neg] ? -0.35 : -0.5)){ want[neg] = 1; want[negAlt] = 1; }
       else if(v >= (held[pos] ? 0.35 : 0.5)){ want[pos] = 1; want[posAlt] = 1; }
     }
+    /* THE RIGHT STICK IS LOOK, AND LOOK IS THE MOUSE — which is why mapping it to keys like the
+       left one would not have worked either. Only ax[0]/ax[1] were ever read here, so on a pad with
+       two sticks the second one did nothing at all: reported as "left joystick is doing everything,
+       right joystick doing nothing", and true in this shim long before any native plugin existed. It
+       works in Firefox because the app reads the real Gamepad API there and gets all four axes
+       itself; this shim only exists for apps that read the KEYBOARD, and a keyboard has no aim.
+
+       So the right stick is delivered as relative mouse motion. movementX/movementY is what a
+       pointer-locked engine reads — Quake, Half-Life and OpenArena all do — and pointer lock is
+       delegated to the frame by the iframe allow attribute, so the lock is real and the deltas land
+       where the engine expects them. Dispatched at the locked element when there is one, because an
+       engine holding the lock listens there rather than at the document.
+
+       NOTE FOR ANYONE EDITING THIS BLOCK: it lives inside a template literal, so a backtick here
+       ends the bridge and the syntax error lands hundreds of lines away.
+
+       Squared response, deliberately: a stick is an ANALOGUE control being read once a frame, and a
+       linear map makes small corrections impossible while large ones fly past the target. */
+    var LOOK_PX = 18;                     // full deflection, per frame
+    function look(x, y){
+      if(typeof x !== 'number' || typeof y !== 'number') return;
+      var ax2 = Math.abs(x) > 0.12 ? x * Math.abs(x) : 0;
+      var ay2 = Math.abs(y) > 0.12 ? y * Math.abs(y) : 0;
+      if(!ax2 && !ay2) return;
+      var dx = Math.round(ax2 * LOOK_PX), dy = Math.round(ay2 * LOOK_PX);
+      if(!dx && !dy) return;
+      stat.look = (stat.look || 0) + 1;
+      var t = document.pointerLockElement || document.body || document.documentElement;
+      if(!t) return;
+      try{
+        t.dispatchEvent(new MouseEvent('mousemove', {
+          bubbles: true, cancelable: true, view: window,
+          movementX: dx, movementY: dy, clientX: 0, clientY: 0, screenX: 0, screenY: 0 }));
+      }catch(e){
+        /* An engine on an older WebView may not accept movementX through the constructor. Falling
+           back to a plain event with the properties attached keeps it working there rather than
+           losing aim entirely — read-only on the prototype, so define them on the instance. */
+        try{
+          var ev = document.createEvent('MouseEvents');
+          ev.initMouseEvent('mousemove', true, true, window, 0, 0, 0, 0, 0,
+                            false, false, false, false, 0, null);
+          Object.defineProperty(ev, 'movementX', { value: dx });
+          Object.defineProperty(ev, 'movementY', { value: dy });
+          t.dispatchEvent(ev);
+        }catch(e2){}
+      }
+    }
     function tick(){
       raf = requestAnimationFrame(tick);
       stat.frames++;
@@ -625,6 +672,7 @@
       var ax = p.axes || [];
       axis(want, ax[0], 'left', 'a', 'right', 'd');
       axis(want, ax[1], 'up', 'w', 'down', 's');
+      look(ax[2], ax[3]);
       // Releases before presses, so a direction reversed inside one frame is not briefly both.
       var hn = Object.keys(held);
       for(i = 0; i < hn.length; i++) if(!want[hn[i]]){ delete held[hn[i]]; fire('keyup', hn[i]); }
