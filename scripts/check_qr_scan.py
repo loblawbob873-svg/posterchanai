@@ -23,6 +23,12 @@ So the scenarios are FRAMINGS, not code paths:
   aimed     It occupies about a third of the frame's width, which is what pointing a webcam at
             another screen from arm's length looks like. Roughly ONE pixel per module at 640x480.
   blurred   Filling the frame, plus the softness of a webcam that has not focused yet.
+  dead-barcodedetector
+            Android's WebView, reproduced: a BarcodeDetector that constructs, reports `qr_code` as
+            supported, and then resolves every `detect()` to an empty array. That is what a phone
+            without the Play Services barcode module does — silently, with nothing to catch — and the
+            scanner used to commit to it on sight with no way back to jsQR. The symptom was total:
+            the phone could NEVER scan, while Amber (native ML Kit) read the same code every time.
 
 WHAT THE QR CARRIES IS NOT WHAT THE LINK CARRIES, and that is the single biggest thing that makes a
 scan work. The full URI's `perms` list is 66% of its bytes and puts the symbol at version 18 (89x89
@@ -203,7 +209,13 @@ async def run(url):
     # Framings, calibrated against what a camera actually delivers (see the module docstring). The
     # last two are the ones that FAIL if the perms list ever goes back into the QR: at v18 they are
     # 1 and 2 pixels per module, which no amount of holding still recovers.
-    cases = [("filled", 0.92, 0), ("aimed", 0.40, 1), ("blurred", 0.55, 2)]
+    cases = [("filled", 0.92, 0), ("aimed", 0.40, 1), ("blurred", 0.55, 2),
+             # ANDROID'S WEBVIEW, reproduced. BarcodeDetector exists and constructs, and `detect()`
+             # resolves to an empty array for ever because the Play Services module behind it is not
+             # installed — no error, no rejection, nothing to catch. The scanner used to commit to it
+             # on sight with no way back to jsQR, so the phone could NEVER scan while Amber (native
+             # ML Kit) read the same code off the same screen every time.
+             ("dead-barcodedetector", 0.92, 0)]
     only = os.environ.get("PC_ONLY")
     if only:
         cases = [c for c in cases if c[0] == only]
@@ -211,6 +223,7 @@ async def run(url):
     problems = []
     try:
         for name, fill, blur in cases:
+            lying = name == "dead-barcodedetector"
             video = os.path.join(tmp, f"{name}.y4m")
             info = make_video(uri, video, fill, blur)
             subprocess.run(["rm", "-rf", PROFILE], check=False)
@@ -256,6 +269,17 @@ async def run(url):
 
                     await call("Runtime.enable")
                     await call("Page.enable")
+                    if lying:
+                        # On EVERY new document, so it is in place before a line of the client runs —
+                        # which is how the real one behaves too.
+                        await call("Page.addScriptToEvaluateOnNewDocument", {"source": """
+                            (() => {
+                              class Dead {
+                                static async getSupportedFormats(){ return ['qr_code']; }
+                                async detect(){ return []; }   // for ever, and never throws
+                              }
+                              window.BarcodeDetector = Dead;
+                            })()"""})
                     await call("Page.navigate", {"url": url + "/client"})
                     for _ in range(120):
                         await asyncio.sleep(0.25)

@@ -1539,19 +1539,63 @@
   // Build a QR detector: native BarcodeDetector (Chrome) if present, else lazy-load jsQR (Firefox /
   // iOS Safari, which have no BarcodeDetector). Returns an async fn(video)->decoded string|null, or
   // null if neither is available.
+  /* THE DETECTOR, AND WHY BarcodeDetector IS NOT TRUSTED ON ITS OWN WORD.
+   *
+   * `'BarcodeDetector' in window` used to be treated as proof it works, and once that branch was
+   * taken there was no way back to jsQR. On ANDROID'S WEBVIEW the class exists and constructs
+   * happily, but the implementation behind it is a Google Play Services module that is frequently
+   * not installed — and in that state `detect()` resolves to an EMPTY ARRAY, for ever, with no
+   * error and no rejected promise. The camera opens, every frame comes back with nothing in it, and
+   * the scanner sits there saying "still looking".
+   *
+   * That is exactly the shape of the report: the phone could NEVER scan, while Amber — which uses
+   * native ML Kit rather than the web API — read the same code off the same screen every time, and
+   * desktop Firefox (which has no BarcodeDetector at all, so it always took the jsQR path) worked
+   * too. One platform, one API, silent by design.
+   *
+   * So: ASK, then VERIFY. `getSupportedFormats()` is the documented capability probe and catches
+   * most of it. It is not enough on its own — a build can report `qr_code` and still no-op until the
+   * module downloads — so a detector that has returned nothing for a couple of seconds is abandoned
+   * and jsQR takes over permanently. jsQR is bundled, needs nothing from Play Services, and is
+   * measured to read our code down to one pixel per module.
+   */
   async function _qrDetector(){
-    if('BarcodeDetector' in window){
-      try{ const bd=new BarcodeDetector({ formats:['qr_code'] });
-        return async(v)=>{ const c=await bd.detect(v); return (c && c[0] && c[0].rawValue) || null; }; }catch(_){}
-    }
-    try{ await _loadScript('/static/vendor/qr/jsqr.js?v='+(window.__VER||'')); }catch(_){}
-    if(window.jsQR){
+    const jsqr = async () => {
+      try{ await _loadScript('/static/vendor/qr/jsqr.js?v='+(window.__VER||'')); }catch(_){}
+      if(!window.jsQR) return null;
       const cv=document.createElement('canvas'); const cx=cv.getContext('2d',{ willReadFrequently:true });
       return (v)=>{ const w=v.videoWidth, h=v.videoHeight; if(!w||!h) return null;
         cv.width=w; cv.height=h; cx.drawImage(v,0,0,w,h);
         const r=window.jsQR(cx.getImageData(0,0,w,h).data, w, h); return (r && r.data) || null; };
+    };
+    let bd=null;
+    if('BarcodeDetector' in window){
+      try{
+        const formats = await BarcodeDetector.getSupportedFormats();
+        if(formats && formats.indexOf('qr_code') >= 0) bd = new BarcodeDetector({ formats:['qr_code'] });
+      }catch(_){ bd = null; }
     }
-    return null;
+    if(!bd) return await jsqr();
+
+    /* Both, with the native one on probation. `swap` is armed lazily so a scan that works costs
+     * nothing extra, and once jsQR is loaded it is used for every later frame — a detector that has
+     * produced nothing for this long is not about to start. */
+    let fallback=null, firstAt=0;
+    return async (v)=>{
+      if(fallback) return fallback(v);
+      try{
+        const c=await bd.detect(v);
+        const val=(c && c[0] && c[0].rawValue) || null;
+        if(val) return val;
+      }catch(_){ fallback = await jsqr(); return fallback ? fallback(v) : null; }
+      if(!firstAt) firstAt=Date.now();
+      else if(Date.now()-firstAt > 2500){
+        fallback = await jsqr();
+        try{ console.warn('[qr] BarcodeDetector read nothing in 2.5s — using jsQR'); }catch(_){}
+        if(fallback) return fallback(v);
+      }
+      return null;
+    };
   }
   async function openQrScanner(){
     if(ME.mode!=='local'){ toast('Log in with your key (nsec) on this device first — extension/remote-signer logins can’t sign for another device'); return; }
