@@ -124,7 +124,10 @@
     _retry(){ clearTimeout(this._rt); const cap = this.trusted ? 2500 : 8000;   // our built-in relay is always up → reconnect fast, never wait 8s
               const d = this._backoff || 600; this._backoff = Math.min(d*1.7, cap);
               this._rt = setTimeout(()=>this._open(), d + Math.random()*300); }
-    _send(arr){ if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(arr)); }
+    // Answers whether it actually went out, so the pool can count the relays a publish reached —
+    // which is what makes "every one of them refused" a question with an answer. See publish().
+    _send(arr){ if (this.ws && this.ws.readyState === 1){ this.ws.send(JSON.stringify(arr)); return true; }
+                return false; }
     destroy(){ this.status = 'closed'; clearTimeout(this._rt); this._teardownSocket(); }
   }
 
@@ -285,7 +288,7 @@
       }
     },
 
-    _send(arr){ for (const c of this._conns.values()) c._send(arr); },
+    _send(arr){ let n = 0; for (const c of this._conns.values()) if (c._send(arr)) n++; return n; },
 
     /* `tags` is REQUIRED by NIP-01, so this rewrites nothing well-formed — but a relay is untrusted
      * input and the signature check cannot cover this: our OWN relay is `trusted`, so its events skip
@@ -327,6 +330,24 @@
       } else if (typ === 'OK'){
         const w = this._okWaiters.get(m[1]);
         if (w && m[2]){ this._okWaiters.delete(m[1]); w.settle({ ok: true, msg: m[3]||'' }); }   // first accept wins
+        /* A REFUSAL IS AN ANSWER, and it was being thrown away.
+         *
+         * Only an acceptance settled the waiter, so `["OK", id, false, "invalid: bad id or
+         * signature"]` fell on the floor and publish() reported `timeout` eight seconds later. Every
+         * caller downstream then treats a relay that REFUSED the event exactly like a relay that
+         * never spoke: the Outbox retries it for a week, the user sees "Pending" for ever, and the
+         * one sentence that says why — which the relay sent immediately — is never shown to anybody.
+         * That is what turned a wrongly-signed quote post into an unexplainable stuck post.
+         *
+         * "First accept wins" is still the rule: a refusal from one relay must not settle a publish
+         * another might accept. So the reason is REMEMBERED, and settles the promise only once every
+         * relay we sent to has refused — or, failing that, it is what the timeout reports instead of
+         * the word "timeout". */
+        else if (w){
+          w.no = (w.no || 0) + 1;
+          w.why = m[3] || 'refused';
+          if (w.sent && w.no >= w.sent){ this._okWaiters.delete(m[1]); w.settle({ ok:false, msg:w.why }); }
+        }
       } else if (typ === 'COUNT'){
         const w = this._countWaiters.get(m[1]); if (w) w((m[2] && m[2].count) || 0);   // NIP-45 reply
       } else if (typ === 'NEG-MSG'){
@@ -497,9 +518,13 @@
     publish(event, timeout=8000){
       return new Promise((res)=>{
         let settled = false;
-        const t = setTimeout(()=>{ if(!settled){ settled = true; this._okWaiters.delete(event.id); res({ ok:false, msg:'timeout' }); } }, timeout);
-        this._okWaiters.set(event.id, { settle: (r)=>{ if(!settled){ settled = true; clearTimeout(t); this._okWaiters.delete(event.id); res(r); } } });
-        this._send(['EVENT', event]);
+        const w = { settle: (r)=>{ if(!settled){ settled = true; clearTimeout(t); this._okWaiters.delete(event.id); res(r); } } };
+        // The reason, when there was one: a refused publish must not be reported as silence.
+        const t = setTimeout(()=>{ if(!settled){ settled = true; this._okWaiters.delete(event.id);
+                                                res({ ok:false, msg: w.why || 'timeout' }); } }, timeout);
+        this._okWaiters.set(event.id, w);
+        // How many relays were actually written to, so "every one of them refused" is answerable.
+        w.sent = this._send(['EVENT', event]) || 0;
       });
     },
     /* Fire-and-forget publish to ONE relay. For the webxdc realtime channel (ephemeral kind 20932),
