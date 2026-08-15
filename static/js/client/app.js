@@ -3943,6 +3943,10 @@
     // survives a logout unless it is asked to go. A handed-down phone would otherwise keep
     // autofilling the previous user's passwords into every app on it.
     try{ if(window.PCVault && PCVault.forget) PCVault.forget(); }catch(_){}
+    // The decrypted DM cache goes with it, for the same reason: a handed-down device must not leave
+    // the previous user's messages readable to whoever opens this browser next. The KEY doc stays on
+    // the relay — it is theirs, and signing back in rebuilds the cache from it.
+    try{ DmCache.forget(); }catch(_){}
  // Signing out also FORGETS this identity in the switcher. The list holds real keys, so "log out"
     // has to mean the key is gone from this device — leaving it behind under a different storage key
     // would be a quiet downgrade of what that button has always promised.
@@ -4166,7 +4170,7 @@
   // default order, which looks like a layout that was never saved rather than one that was dropped.
   const _CARRY_D = [/^pcai:note:/, /^pcai:notefolder:/, /^pcai:pw:/, /^pcai:pwfolder:/,
                     /^pcai:pwkey$/, /^pcai:budget$/, /^pcai:playlist:/, /^pcai:desktop$/,
-                    /^pcai:agent-tasks$/];
+                    /^pcai:agent-tasks$/, /^pcai:dmkey$/];
   let _carrying = false;
 
   function _isCarryDoc(ev){
@@ -19868,14 +19872,156 @@
     // Every 5, and always the first — a burst of instant skips must not hide the real ones behind it.
     if(_dmDone % 5 === 0 || _dmDone <= 1) _dmProgress(_dmDone, _dmTotal);
   }
+  /* THE DM CACHE — one signer call per session instead of two per message, for ever.
+   *
+   * MEASURED, on the relay, while three clients were "stuck": 2769 kind-24133 in 110 seconds, with
+   * requests and replies 1:1 in both directions (663 of 664, 655 of 655). Nothing was dropped and
+   * nothing was deaf — the phone answered everything. It is THROUGHPUT: one message is two decrypts,
+   * so a 400-message history is 800 round trips, and the client threw every result away on reload,
+   * so all three devices paid it again on every visit. Reported as "stuck at 1/400", "not decrypting
+   * anything", "worse than amber".
+   *
+   * So the plaintext is kept. The trade nobody should make is keeping it in the clear — these are
+   * private messages sitting in a browser profile — and the trade nobody has to make is asking the
+   * signer per message. The encrypted drive already solved exactly this: ONE key, wrapped to the
+   * user, unwrapped once per session, everything else local AES. Same shape here.
+   *
+   *   `pcai:dmkey`  a kind-30078 doc, NIP-44 to the user's own key, holding 32 random bytes. One
+   *                 nip44dec per session. PINNED in both `_isPinned` (store.js) and `_CARRY_D` —
+   *                 every private doc here has missed one of those at least once, silently.
+   *   the cache     IndexedDB `pc-dm-v1`, one record per gift-wrap id, AES-GCM under that key with
+   *                 a fresh IV each. A gift wrap is immutable, so a hit is never stale and there is
+   *                 no invalidation to get wrong.
+   *
+   * IT IS A CACHE AND IT FAILS AS ONE. Every path returns null rather than throwing: no key, no
+   * IndexedDB (a private window has none), a corrupt record — all fall through to the signer, which
+   * is exactly today's behaviour. What it must NEVER do is mint a SECOND key: a silent relay or an
+   * undecryptable doc would publish a new one over the old, and every cached message on every device
+   * becomes unreadable. Both are refused, the way the agent-task doc and the desktop layout refuse
+   * them.
+   *
+   * The key SYNCS (it is an ordinary private doc); the cache itself is per device, so a second
+   * device pays the round trips once and then never again. Mirroring the decrypted history ITSELF
+   * across devices is the next step and deliberately not started here: it is the Files shape (an
+   * index doc plus an encrypted Blossom blob, because a 30078 cannot hold it — NIP-44 stops at
+   * 65535 bytes), and it puts a second copy of the most private thing in the app on the relay. That
+   * is worth doing carefully rather than on the same afternoon as the cache. */
+  const DmCache = {
+    D: 'pcai:dmkey', _dbP: null, _key: null, _keyP: null, _offUntil: 0, _puts: 0,
+    _dead(){ return Date.now() < this._offUntil; },
+    /* One failure must not become one failure PER MESSAGE. 400 wraps calling get() while the signer
+     * is down would be 400 more requests at the thing that is already struggling. */
+    _fail(){ this._offUntil = Date.now() + 60000; this._keyP = null; return null; },
+    _idb(){
+      if(this._dbP) return this._dbP;
+      this._dbP = new Promise((res, rej) => {
+        let r; try{ r = indexedDB.open('pc-dm-v1', 1); }catch(e){ return rej(e); }
+        r.onupgradeneeded = () => { try{ r.result.createObjectStore('msgs'); }catch(_){} };
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error || new Error('indexeddb'));
+      });
+      return this._dbP;
+    },
+    // Per ACCOUNT, in the key: one device, two identities, and neither may read the other's cache.
+    _k(id){ return ((ME && ME.pubkey) || 'anon').slice(0, 16) + ':' + id; },
+    async _mk(){
+      if(this._key) return this._key;
+      if(this._dead()) return null;
+      if(!this._keyP) this._keyP = this._loadKey();
+      try{ return await this._keyP; }catch(_){ return this._fail(); }
+    },
+    async _loadKey(){
+      if(!ME || !ME.pubkey || !signer || !signer.nip44dec) throw new Error('no signer');
+      let ev = null, sawRelay = false;
+      for(let a = 0; a < 2 && !ev; a++){
+        if(a) await new Promise(r => setTimeout(r, 400));
+        try{
+          const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[30078], '#d':[this.D], limit:1 }]);
+          sawRelay = true;
+          ev = (evs || []).sort((x, y) => y.created_at - x.created_at)[0] || null;
+        }catch(_){}
+      }
+      // "Nobody answered" is not "you have no key" — minting one here is how every cached message on
+      // every other device would become unreadable.
+      if(!sawRelay) throw new Error('relays silent');
+      let hex = '';
+      if(ev){
+        hex = String(await signer.nip44dec(ME.pubkey, ev.content || '') || '').trim();
+        if(!/^[0-9a-f]{64}$/i.test(hex)) throw new Error('key doc is not a key');
+      }else{
+        const b = new Uint8Array(32); crypto.getRandomValues(b);
+        hex = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+        const ct = await signer.nip44enc(ME.pubkey, hex);
+        const r = await publish(30078, ct, [['d', this.D]], { quiet:true });
+        if(!(r && r.ok)) throw new Error('the key could not be stored');
+      }
+      const raw = new Uint8Array(hex.match(/../g).map(h => parseInt(h, 16)));
+      this._key = await crypto.subtle.importKey('raw', raw, { name:'AES-GCM' }, false,
+                                                ['encrypt', 'decrypt']);
+      return this._key;
+    },
+    async get(id){
+      if(this._dead()) return null;
+      try{
+        const key = await this._mk(); if(!key) return null;
+        const db = await this._idb();
+        const rec = await new Promise((res, rej) => {
+          const q = db.transaction('msgs', 'readonly').objectStore('msgs').get(this._k(id));
+          q.onsuccess = () => res(q.result || null); q.onerror = () => rej(q.error);
+        });
+        if(!rec || !rec.iv || !rec.ct) return null;
+        const pt = await crypto.subtle.decrypt({ name:'AES-GCM', iv:new Uint8Array(rec.iv) },
+                                               key, new Uint8Array(rec.ct));
+        const r = JSON.parse(new TextDecoder().decode(pt));
+        return (r && r.kind === 14) ? r : null;
+      }catch(_){ return null; }
+    },
+    async put(id, rumor){
+      if(this._dead()) return;
+      try{
+        const key = await this._mk(); if(!key) return;
+        const db = await this._idb();
+        const iv = new Uint8Array(12); crypto.getRandomValues(iv);
+        const ct = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, key,
+                                               new TextEncoder().encode(JSON.stringify(rumor)));
+        await new Promise((res, rej) => {
+          const q = db.transaction('msgs', 'readwrite').objectStore('msgs')
+                      .put({ iv:[...iv], ct:[...new Uint8Array(ct)] }, this._k(id));
+          q.onsuccess = () => res(); q.onerror = () => rej(q.error);
+        });
+        /* A BOUND, checked cheaply. This grows with the user's own history and each record is a few
+         * hundred bytes, so it is small for years — but "small for years" is not a limit, and the
+         * browser enforcing a quota instead would take the OTHER caches down with it. Emptying a
+         * cache costs one re-decrypt pass and nothing else, which is why the crude answer is right. */
+        if(++this._puts % 500 === 0) this._capacity(db);
+      }catch(_){}
+    },
+    _capacity(db){
+      try{
+        const st = db.transaction('msgs', 'readwrite').objectStore('msgs');
+        const c = st.count();
+        c.onsuccess = () => { if((c.result || 0) > 50000) try{ st.clear(); }catch(_){} };
+      }catch(_){}
+    },
+    forget(){
+      this._key = null; this._keyP = null; this._dbP = null; this._offUntil = 0;
+      try{ indexedDB.deleteDatabase('pc-dm-v1'); }catch(_){}
+    },
+  };
+
   async function ingestWrap(ev, live){
     if(!signer || !signer.nip17unwrap) return false;
     if(!ev || !ev.id || _wrapTried.has(ev.id)) return false;
     _wrapTried.add(ev.id);
     _dmTotal++;
-    let rumor;
-    try{ rumor=await signer.nip17unwrap(ev); }
-    catch(_){ _wrapTried.delete(ev.id); _dmDone++; _dmTick(); return false; }
+    /* THE CACHE FIRST, and that is the whole point of it: a hit costs no signer round trip at all,
+     * where a miss costs two. Never fatal — see DmCache. */
+    let rumor = await DmCache.get(ev.id);
+    if(!rumor){
+      try{ rumor=await signer.nip17unwrap(ev); }
+      catch(_){ _wrapTried.delete(ev.id); _dmDone++; _dmTick(); return false; }
+      if(rumor && rumor.kind === 14) DmCache.put(ev.id, rumor);
+    }
     _dmDone++; _dmTick();
     if(!rumor || rumor.kind!==14 || rumor.content==null) return false;
     const mine = rumor.pubkey===ME.pubkey;

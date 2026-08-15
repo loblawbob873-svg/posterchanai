@@ -84,10 +84,15 @@
     // same reason: it is self-encrypted, and evicting it means the desktop draws the DEFAULT layout
     // until a relay hands it back. That is not a blank screen, which is what makes it dangerous —
     // it looks like the layout was lost rather than like a cache miss.
+    // `pcai:dmkey` is the key the decrypted-DM cache is stored under. Evicting it does not lose a
+    // message — the gift wraps are still on the relay — it loses the CACHE, so every message is
+    // decrypted through the signer again: 800 round trips to a phone, which is the exact cost that
+    // key exists to remove.
     for (const t of ev.tags || []) if (t && t[0] === 'd' && typeof t[1] === 'string' &&
         (t[1].startsWith('pcai:note') || t[1].startsWith('pcai:pw') ||
          t[1].startsWith('pcai:playlist') || t[1] === 'pcai:budget' ||
-         t[1] === 'pcai:desktop' || t[1] === 'pcai:agent-tasks')) return true;
+         t[1] === 'pcai:desktop' || t[1] === 'pcai:agent-tasks' ||
+         t[1] === 'pcai:dmkey')) return true;
     return false;
   }
   /* ONE event with no `tags` used to take down every timeline in the app, permanently.

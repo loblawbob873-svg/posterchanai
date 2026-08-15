@@ -15,6 +15,7 @@ shipped code, no port and no mock of the thing being tested.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import textwrap
@@ -184,3 +185,58 @@ def test_the_mini_app_pin_is_capped():
     assert r["apps"] >= 300, f"the cap threw away too much ({r['apps']})"
     assert r["newestKept"], "the cap must keep the NEWEST announcements, not an arbitrary slice"
     assert r["posts"] >= 400, f"pinned announcements starved the timeline cache ({r['posts']})"
+
+# ---------------------------------------------------------------------------------------------
+# The TWO registrations, checked against each other.
+# ---------------------------------------------------------------------------------------------
+def _carry_families():
+    """The d-tags app.js carries to a new relay (`_CARRY_D`), as sample d-tag strings."""
+    src = open(os.path.join(ROOT, "static", "js", "client", "app.js")).read()
+    m = re.search(r"const _CARRY_D = \[(.*?)\];", src, re.S)
+    assert m, "_CARRY_D is gone from app.js"
+    out = []
+    for pat in re.findall(r"/\^([^/$]+)\$?/", m.group(1)):
+        out.append(pat + "x" if pat.endswith(":") else pat)
+    assert out, "no patterns parsed out of _CARRY_D"
+    return out
+
+
+def _pinned_rules():
+    """The d-tag tests inside store.js `_isPinned`, as (kind, literal) pairs."""
+    src = open(STORE).read()
+    # Brace-matched, not "up to the first `return false;`" — the function opens with a
+    # `if (!ev) return false;` guard, and slicing there yielded an EMPTY rule set that would have
+    # made this test pass vacuously for ever.
+    i = src.index("function _isPinned")
+    depth, j, started = 0, i, False
+    while j < len(src):
+        if src[j] == "{":
+            depth += 1; started = True
+        elif src[j] == "}":
+            depth -= 1
+            if started and depth == 0:
+                break
+        j += 1
+    seg = src[i:j]
+    rules = [("prefix", v) for v in re.findall(r"startsWith\('([^']+)'\)", seg)]
+    rules += [("exact", v) for v in re.findall(r"t\[1\] === '([^']+)'", seg)]
+    assert rules, "no d-tag rules parsed out of _isPinned"
+    return rules
+
+
+def test_every_carried_doc_is_also_pinned():
+    """A private doc has to be in BOTH lists, and every one of them has missed one at least once.
+
+    `_CARRY_D` (app.js) republishes it when the relay set changes; `_isPinned` (store.js) exempts it
+    from the newest-N cache eviction that is right for the firehose and fatal for a document only its
+    author can decrypt. Miss the first and the doc is left behind on the old relay; miss the second
+    and a few minutes of reading the global feed evicts it — after which the app draws its DEFAULT
+    for that feature, which reads as data loss rather than as a cache miss. Neither failure logs
+    anything, which is why this is a test and not a convention.
+    """
+    rules = _pinned_rules()
+    for d in _carry_families():
+        ok = any((k == "prefix" and d.startswith(v)) or (k == "exact" and d == v)
+                 for k, v in rules)
+        assert ok, f"{d} is carried across relays but is NOT pinned in the client cache"
+
