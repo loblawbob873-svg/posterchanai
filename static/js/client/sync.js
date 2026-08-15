@@ -32,6 +32,20 @@
   const PC = window.__PC || {};
   const S = window.PCFolderSync, RUN = window.PCSyncRun;
   const FS = () => window.pcFs || null;            // desktop only, for now — Android SAF lands next
+  /* Sizes for the humans reading this screen.
+   *
+   * Local, and NOT app.js's `_fmtBytes`. That one exists but is not on `PC` — it is passed into
+   * git.js's factory, which is easy to mistake for an export list and I did: `PC._fmtBytes is not a
+   * function` reached a user, on the confirmation dialog of an irreversible action, where a throw
+   * means the button simply reports "action failed". Six lines here cannot be broken by anything
+   * app.js does to its own internals. */
+  const _bytes = (n) => {
+    n = +n || 0;
+    const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let i = 0;
+    while(n >= 1024 && i < u.length - 1){ n /= 1024; i++; }
+    return (i === 0 ? n : n.toFixed(n < 10 ? 1 : 0)) + ' ' + u[i];
+  };
 
   /* The mapping is keyed by IDENTITY, deliberately: switching account must never silently start
    * uploading this machine's documents into a different one's manifest. The cost is that a folder
@@ -1296,7 +1310,7 @@
         let stat = null;
         try{ stat = FS().trashStat ? await FS().trashStat(id) : null; }catch(_){}
         const what = stat && stat.files
-          ? stat.files + ' file' + (stat.files === 1 ? '' : 's') + ' · ' + PC._fmtBytes(stat.bytes)
+          ? stat.files + ' file' + (stat.files === 1 ? '' : 's') + ' · ' + _bytes(stat.bytes)
           : 'everything in it';
         if(stat && !stat.files){ PC.toast('the trash is already empty'); return; }
         if(!await PC.uiConfirm('Permanently delete ' + what + ' from this folder’s .pc-trash?\n\n'
@@ -1305,8 +1319,15 @@
                                { ok: 'Delete permanently' })) return;
         try{
           const r = await FS().emptyTrash(id, 0);          // 0 = everything; see fsbridge.emptyTrash
-          PC.toast(r.bytes ? 'freed ' + PC._fmtBytes(r.bytes) + ' · ' + (r.files || 0) + ' file(s)'
-                           : 'emptied ' + (r.removed || 0) + ' day(s)');
+          /* A PARTIAL EMPTY IS NOT A FAILURE, and must not be reported as one — nor as a success.
+           * On Windows the preview pane, the search indexer, OneDrive and every antivirus hold
+           * handles on a folder of pictures, so some days really will refuse. Say how much came off
+           * AND what would not, with the reason, since "close whatever is holding it and press it
+           * again" is only actionable if the message says that is what happened. */
+          const bad = (r.failed || []).length;
+          PC.toast((r.bytes ? 'freed ' + _bytes(r.bytes) + ' · ' + (r.files || 0) + ' file(s)'
+                            : 'emptied ' + (r.removed || 0) + ' day(s)')
+                   + (bad ? ' · ' + bad + ' day(s) in use: ' + (r.failed[0].why || 'locked') : ''));
         }
         catch(e){ PC.toast('failed: ' + ((e && e.message) || e)); }
         paint();

@@ -290,8 +290,9 @@ async function emptyTrash(id, olderThanDays){
   const days = (olderThanDays === 0 || olderThanDays === '0') ? 0 : (olderThanDays || 30);
   const cutoff = Date.now() - days * 86400000;
   let removed = 0, files = 0, bytes = 0;
+  const failed = [];
   let entries;
-  try{ entries = await fsp.readdir(base, { withFileTypes: true }); }catch(_){ return { removed: 0, files: 0, bytes: 0 }; }
+  try{ entries = await fsp.readdir(base, { withFileTypes: true }); }catch(_){ return { removed: 0, files: 0, bytes: 0, failed: [] }; }
   for(const d of entries){
     if(!d.isDirectory()) continue;
     /* EVERYTHING means everything — the name is not consulted at all when days is 0.
@@ -308,10 +309,32 @@ async function emptyTrash(id, olderThanDays){
     }
     const dir = path.join(base, d.name);
     const sz = await trashSize(dir);
-    await fsp.rm(dir, { recursive: true, force: true });
+    /* ONE LOCKED FILE MUST NOT COST THE WHOLE EMPTY, and on Windows it did.
+     *
+     * `fsp.rm` was unguarded, so the first EBUSY/EPERM threw straight out of the loop: every
+     * remaining day was skipped and the caller reported "action failed" having deleted an arbitrary
+     * part of one directory. That is the likeliest single failure here, not an unlikely one — a
+     * folder of pictures is exactly what Explorer's preview pane, the Windows Search indexer,
+     * OneDrive and every antivirus hold handles on, and the user is looking at the folder while
+     * pressing the button.
+     *
+     * `maxRetries` exists in Node for precisely this and was not being used. Past that the day is
+     * recorded as failed and the sweep CARRIES ON, because emptying nine of ten days is worth far
+     * more than a clean error — and what actually came off is measured by re-walking the directory
+     * rather than assumed, so a partial removal reports the space it really freed. */
+    let err = null;
+    try{ await fsp.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 }); }
+    catch(e){ err = e; }
+    if(err){
+      const left = await trashSize(dir);              // what survived, if anything
+      files += Math.max(0, sz.files - left.files);
+      bytes += Math.max(0, sz.bytes - left.bytes);
+      failed.push({ day: d.name, why: err.code || String(err.message || err), files: left.files });
+      continue;
+    }
     removed++; files += sz.files; bytes += sz.bytes;
   }
-  return { removed, files, bytes };
+  return { removed, files, bytes, failed };
 }
 
 /* What is sitting in the trash right now, so the confirmation can state the cost rather than guess
