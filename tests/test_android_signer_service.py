@@ -598,6 +598,34 @@ def test_the_signer_never_does_its_work_on_the_ui_thread():
     )
 
 
+def test_the_work_thread_is_not_in_the_background_cgroup():
+    """Getting the crypto off the UI thread was right; taking it out of the foreground scheduler
+    with it was not, and it is the same one-word mistake either way.
+
+    THREAD_PRIORITY_BACKGROUND does not merely lower a nice value on Android — it moves the thread
+    into the background CGROUP, capped at a small share of one core and on most devices confined to
+    the little cluster. This thread does the only CPU-heavy work in the app: FOUR secp256k1 point
+    multiplications per NIP-46 request (measured 36ms per Schnorr signature on a warmed DESKTOP
+    core, because sign() also self-verifies), in pure-Java BigInteger. Inside that cap the whole of
+    it lands on the one number a person feels — how long their other device waits before its note is
+    published. Reported as "this signer is slower than amber… waiting over a min".
+    """
+    svc = _read(os.path.join(SIGNER, "SignerRelayService.java"))
+    # The CONSTRUCTOR ARGUMENT, not a search of the whole file — the comment above that line has to
+    # be free to name the constant it is warning about, and a blanket search made this fail on its
+    # own explanation.
+    m = re.search(r"new\s+HandlerThread\(([^)]*)\)", svc)
+    assert m, "the work thread is gone"
+    arg = m.group(1)
+    assert "THREAD_PRIORITY_BACKGROUND" not in arg, (
+        "the signer's work thread is in Android's background cgroup — every signature it makes is "
+        "throttled to a fraction of a core, and the other device waits for it"
+    )
+    assert "THREAD_PRIORITY_DEFAULT" in arg, (
+        "the work thread no longer states its priority; it must be DEFAULT, and deliberately so"
+    )
+
+
 def test_the_signer_never_takes_a_wakelock():
     """A wakelock is how a background service becomes the thing at the top of the battery screen.
 

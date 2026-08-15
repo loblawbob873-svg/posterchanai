@@ -117,7 +117,20 @@ public class SignerRelayService extends Service {
     private final Handler handler = new Handler(thread.getLooper());
 
     private static HandlerThread workThread() {
-        HandlerThread t = new HandlerThread("pc-signer", android.os.Process.THREAD_PRIORITY_BACKGROUND);
+        /* DEFAULT priority, NOT BACKGROUND, and the difference is not a nice value.
+         *
+         * THREAD_PRIORITY_BACKGROUND moves the thread into Android's background CGROUP, which is
+         * capped at a small share of one core and on most devices confined to the little cluster.
+         * This thread does the only CPU-heavy work in the app: four secp256k1 point multiplications
+         * per NIP-46 request (ECDH + sign for the event, ECDH + sign for the reply), in pure-Java
+         * BigInteger. Inside that cap they take an order of magnitude longer, and the whole of it
+         * lands on the one number a person can feel — how long the other device waits before its
+         * note is published. Reported as "this signer is slower than amber, waiting over a min".
+         *
+         * Getting the work OFF the main thread was right and stays; taking it out of the foreground
+         * scheduler with it was not, and was never the point. The thread is idle between requests,
+         * so default priority costs nothing when nothing is being signed. */
+        HandlerThread t = new HandlerThread("pc-signer", android.os.Process.THREAD_PRIORITY_DEFAULT);
         t.start();
         return t;
     }
