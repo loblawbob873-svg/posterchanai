@@ -1886,8 +1886,12 @@
           hint.textContent = seen
             ? ('Read a code, but it is not a pairing link (' + seen + '). On the other device open '
                + 'its remote-signer / “connect” screen — that QR starts with nostrconnect:.')
+            /* The second sentence is the one that actually works on a dense third-party code, so it
+             * is not buried as a fallback: this decoder is JavaScript on a downscaled frame, and the
+             * phone's own camera app is native and reads what we cannot. */
             : ('Still looking… this code is a dense one' + (camInfo ? ' and this camera is ' + camInfo : '')
-               + '. Fill the frame with it and hold steady, or use “paste link instead” — that always works.');
+               + '. Fill about half the frame with it and hold steady — or scan it with your phone’s '
+               + 'camera app and share the link to PosterChan, which always works.');
         }
         setTimeout(tick, 300);
       };
@@ -2229,6 +2233,30 @@
       if(type.indexOf('text/')===0){
         const txt=[res.url, res.title].map(s=>(s||'').trim()).filter(Boolean).join('\n');
         if(!txt){ try{ toast('Shared text was empty'); }catch(_){} return false; }
+        /* A PAIRING LINK IS NOT A DRAFT, AND THIS IS THE WAY IN THAT ACTUALLY WORKS.
+         *
+         * Our scanner is jsQR reading a downscaled WebView frame, and a third-party code is dense —
+         * primal.net's is version 19, 93x93 modules. Measured against the shipped scanner: it reads
+         * at 45% of the frame and fails at 35%, and on a phone that hands the WebView a small stream
+         * there is no framing that works. The comment in `_qrDetector` already names the asymmetry —
+         * Amber reads the same code off the same screen every time, because Amber is NATIVE.
+         *
+         * The phone HAS a native decoder: its camera app, or Lens. So let it do the reading and take
+         * the result through the share sheet, which already reaches us. That turns "point our camera
+         * at it and hope" into "scan it with the thing that can, then share to PosterChan", with no
+         * camera code of ours in the path at all.
+         *
+         * ONLY nostrconnect. A `bunker://` shared here is the OPPOSITE direction — an app offering
+         * to be OUR signer — and routing it into this one would sign the user in somewhere they
+         * did not ask for. That flow has its own screen. */
+        const pair = (txt.match(/nostrconnect:\/\/[0-9a-fA-F]{64}\S*/) || [])[0];
+        if(pair){
+          if(ME.mode !== 'local'){
+            toast('Log in with your key (nsec) on this device first — only the device holding the key can sign for another');
+            return true;
+          }
+          switchView('home'); onQrScanned(pair); return true;
+        }
         if(toAi && _aiShare({ text: txt })) return true;   // falls through to the composer if AI is unavailable
         switchView('home'); compose({ text: txt }); return true;
       }
