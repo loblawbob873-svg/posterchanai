@@ -4392,8 +4392,11 @@
       if(dropped.length){
         dropped.forEach(id=>{ try{ Store.removeEvent(id); }catch(_){} });
         invalidateCounts();
-        toast(dropped.length===1 ? 'gave up on 1 item the relay kept refusing'
-                                 : 'gave up on '+dropped.length+' items the relay kept refusing');
+        // …and say WHERE THE TEXT IS. It is kept (the draft above), and a message that only says
+        // something was given up on reads as "your post is gone".
+        toast(dropped.length===1 ? 'the relay kept refusing 1 post — it is still in your drafts'
+                                 : 'the relay kept refusing '+dropped.length
+                                   +' posts — they are still in your drafts');
       }
       if(sent) toast(sent===1 ? 'sent the post you made offline' : 'sent '+sent+' posts you made offline');
       renderView(true);          // clear the Pending badges now that they're gone

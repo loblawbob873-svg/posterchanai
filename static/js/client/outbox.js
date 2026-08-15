@@ -116,9 +116,26 @@
           let r = null;
           try{ r = await Relay.publish(it.ev); }catch(_){ r = null; }
           if (r && r.ok){ this.remove(it.ev.id); sent++; sentIds.push(it.ev.id); continue; }
-          it.tries = (it.tries||0) + 1;
-          if (it.tries >= MAX_TRIES){ this.remove(it.ev.id); dropped.push(it.ev.id); }
-          else _save(items);
+          /* A STRIKE IS A REFUSAL, NOT A BAD MOMENT.
+           *
+           * MAX_TRIES exists for an event the relay will never accept — the wrong kind, a bad
+           * signature, a blocked author. It counted TIMEOUTS too, and `Relay.publish` gives the
+           * relay 8 seconds: five busy moments and the user's post was deleted, having sat there
+           * marked "Pending" the whole time. That is what happened the moment the DM restore got
+           * fast enough to saturate the link ("looks like my post disappeared that was pending").
+           *
+           * A relay that SAID no is information. A relay that did not answer is weather: keep the
+           * event and try again — MAX_AGE is the backstop, and a week of a post sitting in the
+           * queue is a far better failure than throwing away something somebody wrote. */
+          const why = String((r && r.msg) || '');
+          const refused = !!why && !/timeout|closed|no relay|offline|unreach|network/i.test(why);
+          if (refused){
+            it.tries = (it.tries||0) + 1;
+            if (it.tries >= MAX_TRIES){ this.remove(it.ev.id); dropped.push(it.ev.id); }
+            else _save(items);
+          } else {
+            _save(items);            // unchanged tries: a busy relay must not spend the budget
+          }
           break;
         }
       } finally { _flushing = false; }
