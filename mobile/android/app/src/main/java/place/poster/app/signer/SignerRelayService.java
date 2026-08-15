@@ -611,7 +611,8 @@ public class SignerRelayService extends Service {
          * does not change — computing it per reply was a fifth of the work of answering. */
         String pub = myPub(sec);
         long now = System.currentTimeMillis() / 1000;
-        String tags = new JSONArray().put(new JSONArray().put("p").put(peerPk)).toString();
+        String tags = Nostr.tagsJson(java.util.Collections.singletonList(
+                          java.util.Arrays.asList("p", peerPk)));
         String eid = Nostr.eventId(pub, now, 24133, tags, ct);
 
         JSONObject ev = new JSONObject();
@@ -648,7 +649,7 @@ public class SignerRelayService extends Service {
                 if (!ev.has("tags")) ev.put("tags", new JSONArray());
                 if (!ev.has("content")) ev.put("content", "");
                 String eid = Nostr.eventId(pub, ev.getLong("created_at"), ev.getInt("kind"),
-                                           ev.getJSONArray("tags").toString(),
+                                           Nostr.tagsJson(tagList(ev.getJSONArray("tags"))),
                                            ev.optString("content", ""));
                 ev.put("id", eid);
                 ev.put("sig", Nostr.hex(Nostr.sign(Nostr.unhex(eid), sec, null)));
@@ -739,4 +740,19 @@ public class SignerRelayService extends Service {
         if (RunningNote.othersRunning(true)) RunningNote.refresh(this);
         super.onDestroy();
     }
+
+    /** org.json → plain lists, so the id is serialized by {@link Nostr#tagsJson} and never by a
+     *  JSON library that escapes a forward slash. See the comment there. */
+    private static java.util.List<java.util.List<String>> tagList(JSONArray tags) {
+        java.util.List<java.util.List<String>> out = new java.util.ArrayList<>();
+        for (int i = 0; i < tags.length(); i++) {
+            JSONArray t = tags.optJSONArray(i);
+            if (t == null) continue;
+            java.util.List<String> one = new java.util.ArrayList<>();
+            for (int j = 0; j < t.length(); j++) one.add(t.optString(j, ""));
+            out.add(one);
+        }
+        return out;
+    }
+
 }

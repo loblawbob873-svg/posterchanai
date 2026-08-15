@@ -68,6 +68,12 @@ public class Harness {
       System.out.println(Nostr.hex(Crypt.chacha20(Nostr.unhex(a[1]), Nostr.unhex(a[2]), Nostr.unhex(a[3]))));
     } else if (op.equals("eventid")) {
       System.out.println(Nostr.eventId(a[1], Long.parseLong(a[2]), Integer.parseInt(a[3]), a[4], a[5]));
+    } else if (op.equals("tagsjson")) {
+      // argv after the op: one tag's values. Built as a LIST, which is the shape both signing paths
+      // now hand to Nostr.tagsJson — the point being that no JSON library touches it.
+      java.util.List<String> one = new java.util.ArrayList<>();
+      for (int i = 1; i < a.length; i++) one.add(a[i]);
+      System.out.println(Nostr.tagsJson(java.util.Collections.singletonList(one)));
     } else if (op.equals("serialize")) {
       System.out.println(Nostr.serialize(a[1], Long.parseLong(a[2]), Integer.parseInt(a[3]), a[4], a[5]));
     } else if (op.equals("verify")) {
@@ -280,3 +286,37 @@ def test_the_serialization_itself_matches(java):
     content = 'a "quoted" / slashed \\ path'
     want = _canonical(pub, 1700000000, 1, [], content).decode("utf-8")
     assert java("serialize", pub, 1700000000, 1, "[]", content) == want
+
+def test_a_tag_with_a_url_in_it_serializes_like_every_other_client(java):
+    """QUOTE POSTS. The tags were serialized with `ev.getJSONArray("tags").toString()`, and Android's
+    org.json renders a forward slash as `\\/` — legal JSON, different bytes, different event id.
+
+    Nothing broke while no tag held a slash: `client`, `p` and `e` are names and hex. A quote post is
+    the first tag with a URL in it — `["q", <id>, "wss://poster.place/relay", <pubkey>]` — so the
+    phone hashed `wss:\\/\\/poster.place\\/relay`, signed THAT id, and the relay (which recomputes from
+    the tags as received) refused the event. Reported as "quote posts go into infinite pending state
+    and never get posted" while ordinary posts and replies were fine. `imeta`, which carries an
+    uploaded image's URL, is the same shape and was next.
+    """
+    import hashlib
+    from app.services.nostr import bip340
+    from app.services.nostr.event import _canonical
+
+    tag = ["q", "ab" * 32, "wss://poster.place/relay", "cd" * 32]
+    got = java("tagsjson", *tag)
+    assert "\\/" not in got, f"a forward slash is being escaped: {got}"
+    assert got == json.dumps([tag], separators=(",", ":"), ensure_ascii=False), got
+
+    # …and the id that comes out of it agrees with the reference implementation.
+    pub = bip340.pubkey_from_seckey(bytes.fromhex(KEYS[0])).hex()
+    want = hashlib.sha256(_canonical(pub, 1700000006, 1, [tag], "look at this")).hexdigest()
+    assert java("eventid", pub, 1700000006, 1, got, "look at this") == want
+
+
+def test_every_kind_of_tag_value_survives_the_hand_serializer(java):
+    """The serializer is hand-written, so the escapes it DOES need are worth pinning: a quote, a
+    backslash, a newline and a tab all appear in real tag values (alt text, content warnings)."""
+    tag = ["alt", 'he said "hi"', "back\\slash", "two\nlines", "a\tb", "ünï ✓ 日本語"]
+    got = java("tagsjson", *tag)
+    assert got == json.dumps([tag], separators=(",", ":"), ensure_ascii=False), got
+

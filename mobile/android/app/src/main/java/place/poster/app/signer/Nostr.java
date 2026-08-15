@@ -228,6 +228,37 @@ public final class Nostr {
                 + ",\"" + escape(content) + "\"]";
     }
 
+    /* TAGS, SERIALIZED THE SAME WAY THE CONTENT IS — BY HAND.
+     *
+     * The comment above `escape` says Android's `JSONObject.toString()` renders a forward slash as
+     * `\/`, which is legal JSON and a DIFFERENT id. It was applied to the content and NOT to the
+     * tags: both signing paths passed `ev.getJSONArray("tags").toString()` straight in.
+     *
+     * Nothing broke while no tag held a slash — `client`, `p`, `e` are names and hex. A QUOTE POST is
+     * the first tag with a URL in it: `["q", <id>, "wss://poster.place/relay", <pubkey>]`. The phone
+     * hashed `wss:\/\/poster.place\/relay`, signed that id, and the relay — which recomputes from
+     * the tags as received — got a different hash and refused the event. Reported as "quote posts go
+     * into infinite pending state and never get posted", while ordinary posts and replies were fine.
+     * `imeta` (an uploaded image's URL) is the same shape and was the next one waiting to happen.
+     *
+     * Takes the values already parsed, so the caller cannot re-introduce a JSON library between the
+     * two halves of one serialization. */
+    public static String tagsJson(java.util.List<java.util.List<String>> tags) {
+        if (tags == null || tags.isEmpty()) return "[]";
+        StringBuilder b = new StringBuilder("[");
+        for (java.util.List<String> t : tags) {
+            if (t == null) continue;
+            if (b.length() > 1) b.append(',');
+            b.append('[');
+            for (int j = 0; j < t.size(); j++) {
+                if (j > 0) b.append(',');
+                b.append('"').append(escape(t.get(j) == null ? "" : t.get(j))).append('"');
+            }
+            b.append(']');
+        }
+        return b.append(']').toString();
+    }
+
     public static String eventId(String pubHex, long createdAt, int kind, String tagsJson,
                                  String content) {
         try {

@@ -142,7 +142,7 @@ public class SignerActivity extends Activity {
                 if (!ev.has("tags")) ev.put("tags", new JSONArray());
                 if (!ev.has("content")) ev.put("content", "");
                 String eid = Nostr.eventId(pub, ev.getLong("created_at"), ev.getInt("kind"),
-                                           ev.getJSONArray("tags").toString(),
+                                           Nostr.tagsJson(tagList(ev.getJSONArray("tags"))),
                                            ev.optString("content", ""));
                 String sig = Nostr.hex(Nostr.sign(Nostr.unhex(eid), sec, null));
                 ev.put("id", eid);
@@ -190,4 +190,19 @@ public class SignerActivity extends Activity {
     }
 
     private static String str(String s) { return s == null ? "" : s; }
+
+    /** org.json → plain lists, so the id is serialized by {@link Nostr#tagsJson} and never by a
+     *  JSON library that escapes a forward slash. See the comment there. */
+    private static java.util.List<java.util.List<String>> tagList(JSONArray tags) {
+        java.util.List<java.util.List<String>> out = new java.util.ArrayList<>();
+        for (int i = 0; i < tags.length(); i++) {
+            JSONArray t = tags.optJSONArray(i);
+            if (t == null) continue;
+            java.util.List<String> one = new java.util.ArrayList<>();
+            for (int j = 0; j < t.length(); j++) one.add(t.optString(j, ""));
+            out.add(one);
+        }
+        return out;
+    }
+
 }

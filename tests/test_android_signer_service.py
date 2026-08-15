@@ -1000,3 +1000,24 @@ def test_the_keystore_is_opened_once_not_once_per_request():
         i = svc.index(stop)
         assert "sec = null" in svc[i:i + 600], f"the key is kept in memory past {stop.strip()}"
 
+def test_neither_signing_path_serializes_tags_with_a_json_library():
+    """The call sites, because the fix only holds if BOTH of them use it.
+
+    `ev.getJSONArray("tags").toString()` is org.json, which escapes a forward slash — a different
+    event id, an invalid signature over it, and a relay that refuses the event. It was in both the
+    background signer and the NIP-55 activity, and it broke exactly one thing: quote posts, whose
+    `q` tag carries a relay URL. The content had been hand-serialized for this reason since the
+    beginning; the tags had not.
+    """
+    for f in ("SignerRelayService.java", "SignerActivity.java"):
+        src = _read(os.path.join(SIGNER, f))
+        assert 'getJSONArray("tags").toString()' not in src, (
+            f"{f} serializes tags with org.json — a URL in any tag gets a wrong event id"
+        )
+        assert "Nostr.tagsJson(" in src, f"{f} does not use the hand serializer"
+    # …and the one that builds its own reply event must not hand-roll a second serialization either.
+    svc = _read(os.path.join(SIGNER, "SignerRelayService.java"))
+    assert 'new JSONArray().put(new JSONArray().put("p")' not in svc, (
+        "the reply event builds its tags a third way — one file, one serializer"
+    )
+
