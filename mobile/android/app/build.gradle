@@ -88,6 +88,14 @@ dependencies {
     // 2.3, which is why the AGP bump in the root build.gradle was needed to keep even this pin working —
     // pinning the dependency down was never going to hold on its own.)
     implementation "com.github.pedroSG94.RootEncoder:library:2.7.2"
+    // A NATIVE QR decoder (see scan/QrScanPlugin). The in-app scanner is jsQR on a downscaled canvas
+    // frame and is MEASURED to fail on a primal.net-shaped code below ~40% frame fill
+    // (scripts/check_qr_scan.py), while the same phone's own camera app reads it every time. This is
+    // the difference, and it is not one we can tune our way out of from inside a WebView.
+    // zxing-android-embedded rather than ML Kit precisely because it needs NOTHING from Play
+    // Services: it bundles the decoder and its own capture Activity, so a de-Googled phone gets the
+    // same scanner as everyone else. ~500KB.
+    implementation "com.journeyapps:zxing-android-embedded:4.3.0"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

@@ -56,6 +56,10 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(place.poster.app.gamepad.GamepadPlugin.class);
         registerPlugin(place.poster.app.contacts.ContactSyncPlugin.class);
         registerPlugin(place.poster.app.signer.SignerPlugin.class);
+        // The native QR scanner. A plugin that lives in this app is NOT auto-discovered, so without
+        // this line Capacitor.Plugins.QrScan is simply absent, the client's guarded lookup falls
+        // through to the jsQR camera modal, and the fix looks like it shipped and did nothing.
+        registerPlugin(place.poster.app.scan.QrScanPlugin.class);
         if (isSend(getIntent())) shareNonce++;   // cold-started BY a share
         super.onCreate(savedInstanceState);
         allowMediaWithoutAGesture();

@@ -1812,6 +1812,30 @@
   }
   async function openQrScanner(){
     if(ME.mode!=='local'){ toast('Log in with your key (nsec) on this device first — extension/remote-signer logins can’t sign for another device'); return; }
+    /* THE NATIVE SCANNER FIRST, WHERE THERE IS ONE.
+     *
+     * The modal below is jsQR decoding a canvas frame that has been scaled to a fixed pixel budget,
+     * and it is MEASURED to fail on a primal.net-shaped code (v19, 93x93 modules) below about 40% of
+     * the frame — while the same phone's camera app reads it every time. That gap is structural, not
+     * a tuning problem: a native decoder gets the sensor, we get a downscaled bitmap and a JS budget.
+     *
+     * So on the APK this hands off to zxing (scan/QrScanPlugin) and the modal never opens. An empty
+     * result means the user pressed back, which is not a failure — fall through to our own scanner
+     * rather than showing an error, so backing out never strands anybody. Anything else (a browser,
+     * the desktop build, an older APK) sees exactly what it saw before. */
+    try{
+      const NS = _capPlugin('QrScan', 'scan');
+      if(NS){
+        let txt = '';
+        try{ txt = ((await NS.scan()) || {}).text || ''; }catch(_){ txt = ''; }
+        txt = String(txt).trim();
+        if(txt){
+          if(/^nostrconnect:/i.test(txt)) return onQrScanned(txt);
+          toast('That code is not a pairing link — on the other device open its remote-signer screen');
+          return;
+        }
+      }
+    }catch(_){}
     if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ return qrManualPrompt('Camera needs an HTTPS connection. Paste the link instead:'); }
     const detect=await _qrDetector();
     if(!detect){ return qrManualPrompt('QR scanning isn’t supported in this browser. Paste the link instead:'); }
