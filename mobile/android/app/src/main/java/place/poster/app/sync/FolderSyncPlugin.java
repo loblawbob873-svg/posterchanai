@@ -359,11 +359,34 @@ public class FolderSyncPlugin extends Plugin {
         String partId = childId(cr, tree, dirId, name + PART);
         if (partId == null) { call.reject("nothing to commit for " + rel); return; }
 
+        /* THE COMMIT HAS TO BE CHECKED, or a failure reports as a successful download.
+         *
+         * There is no rename-over-an-existing-document in SAF, so the old file is moved to the trash
+         * FIRST. If that move fails the name is still taken, the rename then fails too, and
+         * childId/statById happily answer with the OLD file's size and mtime — which this resolved
+         * as success. syncrun then recorded `base` claiming the remote version was present, and
+         * because base matched the manifest by csum and the disk by size+mtime, the update was never
+         * retried: the newer version silently never landed on that device.
+         *
+         * Both steps are checked now, and neither is assumed from the absence of an exception. */
         String existing = childId(cr, tree, dirId, name);
-        if (existing != null) trashDoc(cr, tree, existing, rel, call.getLong("when", 0L));
-        DocumentsContract.renameDocument(cr, DocumentsContract.buildDocumentUriUsingTree(tree, partId), name);
+        if (existing != null && trashDoc(cr, tree, existing, rel, call.getLong("when", 0L)) == null) {
+          call.reject("could not clear the previous " + rel + " — refusing to report a commit that did not happen");
+          return;
+        }
+        try {
+          DocumentsContract.renameDocument(cr, DocumentsContract.buildDocumentUriUsingTree(tree, partId), name);
+        } catch (Exception e) {
+          call.reject("could not put " + rel + " in place: " + e.getMessage());
+          return;
+        }
+        if (childId(cr, tree, dirId, name + PART) != null) {
+          call.reject("could not put " + rel + " in place — the part file is still there");
+          return;
+        }
 
         String finalId = childId(cr, tree, dirId, name);
+        if (finalId == null) { call.reject("could not put " + rel + " in place"); return; }
         long[] st = finalId == null ? null : statById(cr, tree, finalId);
         JSObject ret = new JSObject();
         ret.put("size", st != null ? st[0] : 0);
@@ -462,6 +485,11 @@ public class FolderSyncPlugin extends Plugin {
         String docId = resolve(tree, rel, false);
         if (docId == null) { call.reject("not found: " + rel); return; }
         String dest = trashDoc(cr, tree, docId, rel, when == null ? 0L : when);
+        // A FAILED TRASH IS A FAILURE. Resolving {to:null} made the sweep record the file as
+        // trashed and agree a tombstone for a file still on disk — so the next sweep read it as a
+        // local edit and RE-UPLOADED it, resurrecting a file deleted on another device, while
+        // reporting "1 to trash" both times. Rejecting makes it a per-file failure that retries.
+        if (dest == null) { call.reject("could not move " + rel + " to the trash"); return; }
         JSObject ret = new JSObject();
         ret.put("to", dest);
         call.resolve(ret);
@@ -661,7 +689,18 @@ public class FolderSyncPlugin extends Plugin {
     String day = Excludes.dayName(when == 0 ? System.currentTimeMillis() : when);
     String destRel = TRASH + "/" + day + (dirName(rel).isEmpty() ? "" : "/" + dirName(rel));
     String destDir = resolve(tree, destRel, true);
-    if (destDir == null) { deleteDoc(cr, tree, docId); return destRel + "/" + baseName(rel); }
+    /* REFUSE. Do not delete.
+     *
+     * This used to unlink the user's file when the trash directory could not be created, and return
+     * a path implying it had been trashed — so the caller recorded a successful delete for a file
+     * that no longer exists anywhere. It breaks the one guarantee this feature makes ("nothing is
+     * deleted in place; .pc-trash is the recovery"), and it fires exactly when things are already
+     * wrong: a partially revoked grant, an unmounted volume, a FILE named .pc-trash shadowing the
+     * directory. Every one of those is temporary; the deletion is not.
+     *
+     * null is "I could not do it", which the sweep reports as a per-file failure and retries next
+     * time — the correct outcome for a safety net that is momentarily unavailable. */
+    if (destDir == null) return null;
     String name = baseName(rel);
     // Never overwrite what is already in the trash — a safety net that overwrites itself is not one.
     String want = name;

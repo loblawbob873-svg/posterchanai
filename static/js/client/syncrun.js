@@ -334,7 +334,14 @@
           await verifyBytes(c.path, R, bytes);
           st = await fs.write(id, c.path, bytes, R.mtime || 0);
         }
-        agree(c.path, { sha:c.sha || R.sha, csum:R.csum, chunks:R.chunks, size:st.size, mtime:st.mtime });
+        /* `cs` TRAVELS WITH `chunks`, always. An entry is only comparable to another made at the
+         * same chunk size, and same() reads `(a.cs||0) === (b.cs||0)` — so a base entry that kept
+         * the chunk list and dropped the size can never match the manifest entry it came from. A
+         * chunked upload from an incremental sweep carries no `csum` either, so the comparison then
+         * falls to size+mtime, which Android can never satisfy (SAF assigns its own last-modified).
+         * The file is re-downloaded on EVERY sweep, for ever, and each writeCommit moves the
+         * previous copy into .pc-trash — so the disk fills as well. */
+        agree(c.path, { sha:c.sha || R.sha, csum:R.csum, chunks:R.chunks, cs:R.cs, size:st.size, mtime:st.mtime });
         report.conflicted.push({ path:c.path, keptAs:c.keepAs });
         // The renamed copy is a new local file; the next sweep uploads it as one. Deliberately not
         // uploaded here — a conflict should not also become a network burst mid-sweep.
@@ -361,8 +368,21 @@
            * 95%. Only whole chunks are reused, and only alongside verifyPart below — a part file
            * left by a DIFFERENT version of this path is caught by the checksum and discarded, so a
            * bad prefix cannot be resumed onto for ever. */
+          /* RESUME ONLY WHERE THE RESULT CAN BE CHECKED. A part file is not tied to a chunk list by
+           * anything but its length, so resuming onto one left by an EARLIER generation of the same
+           * path splices two files together — and the only thing that catches that is the checksum.
+           * `verifyPart` returns early when the entry has no `csum` (routine: an incremental sweep
+           * uploads chunks and deletes csum) and on any adapter without `hashPart` (every Android
+           * build today), so in exactly those cases resuming is an unverified splice. Start from
+           * zero there: a slower download is not a bug, a silently wrong file is. */
+          const canVerify = !!(R.csum && typeof fs.hashPart === 'function');
           let have = 0;
-          try{ if(typeof fs.partSize === 'function') have = await fs.partSize(id, d.path); }catch(_){}
+          if(canVerify){
+            try{ if(typeof fs.partSize === 'function') have = await fs.partSize(id, d.path); }catch(_){}
+          } else {
+            // …and clear whatever is lying there, or it is resumed onto the moment a csum appears.
+            try{ if(typeof fs.discardPart === 'function') await fs.discardPart(id, d.path); }catch(_){}
+          }
           await store.getParts(R.chunks, (off, bytes) => fs.writePart(id, d.path, off, bytes),
                                R.size, have, R.cs || 0);
           await verifyPart(d.path, R);            // …and it must BE the file it claims to be
@@ -375,7 +395,14 @@
           await verifyBytes(d.path, R, bytes);
           st = await fs.write(id, d.path, bytes, R.mtime || 0);
         }
-        agree(d.path, { sha:d.sha, csum:R.csum, chunks:R.chunks, size:st.size, mtime:st.mtime });
+        /* `cs` TRAVELS WITH `chunks`, always. An entry is only comparable to another made at the
+         * same chunk size, and same() reads `(a.cs||0) === (b.cs||0)` — so a base entry that kept
+         * the chunk list and dropped the size can never match the manifest entry it came from. A
+         * chunked upload from an incremental sweep carries no `csum` either, so the comparison then
+         * falls to size+mtime, which Android can never satisfy (SAF assigns its own last-modified).
+         * The file is re-downloaded on EVERY sweep, for ever, and each writeCommit moves the
+         * previous copy into .pc-trash — so the disk fills as well. */
+        agree(d.path, { sha:d.sha, csum:R.csum, chunks:R.chunks, cs:R.cs, size:st.size, mtime:st.mtime });
         report.downloaded.push(d.path);
       }catch(e){ fail(d.path, e, 'download'); }
       await checkpoint();
@@ -403,9 +430,18 @@
           continue;                                     // reported, never silent — and base does NOT advance
         }
         if(canChunk){
+          /* THE PLATFORM'S CHUNK SIZE, which sync.js works out and this used to throw away.
+           *
+           * `o.chunkBytes` is FS().chunkBytes — 4 MB on Android, chosen precisely because every
+           * chunk crosses the Capacitor bridge as base64 (four bytes of string per three of data,
+           * held as UTF-16), so a 16 MB chunk is ~21 MB of string before the plaintext, the
+           * ciphertext and the Java-side copy are counted. Omitting it here fell back to
+           * _SYNC_CHUNK, 16 MB, on every device — which is the tablet reloading mid-sync that the
+           * 4 MB figure was measured to prevent. */
           const res = await store.putParts(
             (off, len) => fs.readPart(id, u.path, off, len), meta.size,
-            (done, total) => step('uploading', u.path + ' ' + Math.round(done / total * 100) + '%', ui, plan.upload.length));
+            (done, total) => step('uploading', u.path + ' ' + Math.round(done / total * 100) + '%', ui, plan.upload.length),
+            o.chunkBytes || 0);
           /* `sha` MUST KEEP MEANING "the hash of this file's content", and it is the scan that
            * computes it (streamed, in the adapter). An earlier version put the hash of the CHUNK
            * LIST here, which no scan will ever produce — so every sweep compared a whole-file hash

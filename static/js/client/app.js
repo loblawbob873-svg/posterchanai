@@ -30308,9 +30308,22 @@
       async getParts(chunks, writePart, expect, have, cs){
         let off = 0;
         let skip = 0;
-        if(have > 0 && cs > 0 && have % cs === 0){
-          skip = Math.min(Math.floor(have / cs), (chunks || []).length);
-          off = skip * cs;
+        /* EVERY CONDITION HERE IS LOAD-BEARING, and the clamp is the one that was wrong.
+         *
+         * `skip` used to be clamped to `chunks.length`, which quietly allows `off = skip*cs` to
+         * exceed the real file — the LAST chunk is short, so a stale, longer part file could push
+         * the offset past `expect`. The rebuild then fails the size check on EVERY attempt, and
+         * because that throw happens in here, the caller's verify/discard never runs: the bad part
+         * file is never cleared and that path can never be downloaded again. Resuming is an
+         * optimisation, so anything that does not add up cleanly falls back to a full download —
+         * never to a guess. */
+        const total = (chunks || []).length;
+        if(have > 0 && cs > 0 && have % cs === 0 && total > 0){
+          const whole = Math.floor(have / cs);
+          if(whole < total && (expect == null || whole * cs < +expect)){
+            skip = whole;
+            off = skip * cs;
+          }
         }
         let i = 0;
         for(const sha of (chunks || [])){

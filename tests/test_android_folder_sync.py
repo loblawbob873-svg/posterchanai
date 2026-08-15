@@ -118,3 +118,75 @@ def test_saf_cannot_set_mtime_so_the_write_reports_what_it_became():
     assert re.search(r'ret\.put\("mtime",\s*st != null \? st\[1\]', plugin), (
         "write() must report the mtime the provider actually gave the file, not the requested one"
     )
+
+
+# ---- failures must FAIL, not resolve --------------------------------------------------------
+#
+# Three findings from the folder-sync review, all the same shape: an operation that did not happen,
+# reported as one that did. On Android that is worse than on desktop, because SAF has no
+# rename-over-an-existing-document and no writable mtime, so the executor has to believe what the
+# plugin tells it about the filesystem.
+
+def _plugin():
+    return _read(JAVA, "sync", "FolderSyncPlugin.java")
+
+
+def test_a_file_is_never_unlinked_when_the_trash_is_unavailable():
+    """THE WORST ONE. trashDoc used to call deleteDoc() when the .pc-trash directory could not be
+    created, and return a path implying the file had been trashed — so the caller recorded a
+    successful delete for a file that no longer exists anywhere.
+
+    It breaks the single guarantee this feature makes, and it fires exactly when things are already
+    going wrong: a partially revoked grant, an unmounted volume, a FILE named .pc-trash shadowing the
+    directory. Every one of those is temporary. The deletion is not."""
+    src = _plugin()
+    i = src.index("private String trashDoc(")
+    body = src[i: src.index("\n  private ", i + 10)]
+    head = body[: body.index("String name = baseName(rel);")]
+    assert "if (destDir == null) return null;" in head, (
+        "trashDoc no longer refuses when the trash is unavailable")
+    assert "deleteDoc(cr, tree, docId)" not in head, (
+        "trashDoc unlinks the user's file when it cannot trash it — that is data loss, not a fallback")
+
+
+def test_a_failed_trash_rejects_instead_of_resolving():
+    """A null from trashDoc used to resolve as `{to: null}`. syncrun then pushed report.trashed and
+    agreed a TOMBSTONE for a file still on disk — so the next sweep read it as a local edit and
+    re-uploaded it, resurrecting a file deleted on another device, reporting "1 to trash" both
+    times."""
+    src = _plugin()
+    i = src.index("public void trash(PluginCall call)")
+    body = src[i: src.index("@PluginMethod", i + 10)]
+    assert 'if (dest == null) { call.reject(' in body, (
+        "a failed trash still resolves — the sweep will record a tombstone for a file that is there")
+
+
+def test_write_commit_checks_that_the_rename_actually_happened():
+    """SAF cannot rename over an existing document, so the old file is trashed FIRST. If that move
+    fails the name is still taken, the rename fails too, and childId/statById answer with the OLD
+    file's size and mtime — which resolved as success. `base` then claimed the remote version was
+    present, and since it matched the manifest by csum and the disk by size+mtime, the update was
+    never retried: the newer version silently never landed on that device."""
+    src = _plugin()
+    i = src.index("public void writeCommit(PluginCall call)")
+    body = src[i: src.index("@PluginMethod", i + 10)]
+    assert "trashDoc(cr, tree, existing, rel, call.getLong(\"when\", 0L)) == null" in body, (
+        "writeCommit does not check that the previous file was cleared")
+    assert body.count("call.reject(") >= 3, (
+        "writeCommit still has paths that report success without checking: " + str(body.count("call.reject(")))
+    assert "if (finalId == null) { call.reject(" in body, (
+        "writeCommit resolves even when the committed file cannot be found")
+
+
+def test_empty_trash_can_actually_empty_it():
+    """`getInt("days", 30)` cannot tell an explicit 0 from an absent value — the same blind spot that
+    made the desktop's Empty trash unable to remove anything newer than a month."""
+    src = _plugin()
+    i = src.index("public void emptyTrash(PluginCall call)")
+    body = src[i: src.index("@PluginMethod", i + 10)]
+    assert "call.getInt(\"days\")" in body and "daysArg == null ? 30 : daysArg" in body, (
+        "an explicit days:0 still falls back to the 30-day window")
+    assert "if (days > 0) {" in body, (
+        "with days:0 the folder NAME is still consulted — a future-dated or unparseable trash "
+        "directory then survives for ever, which is a permanent leak in the one place a user goes "
+        "to reclaim space")

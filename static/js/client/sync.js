@@ -297,9 +297,23 @@
      * touched. A read that FAILS falls back to writing our snapshot, which is what it did before —
      * worse than merging, better than not saving at all, and the collapse guard still stands behind
      * it because a merge can only ever add. */
+    /* …AND "this sweep changed nothing" IS NOT A REASON TO SKIP THE MERGE — it is the strongest
+     * reason to do it.
+     *
+     * This used to require `s.touched.length`, so the re-read was skipped by exactly the sweep that
+     * had nothing of its own to contribute: a DOWNLOAD-ONLY sweep calls `agree()` (which sets
+     * `dirty`) and never `remember()` (which fills `touched`), so it wrote its minutes-old snapshot
+     * whole. Device A joins a folder and spends twenty minutes downloading; device B uploads three
+     * files in that window; A's save erases those three keys. B then reads its own entries as
+     * `remote` gone, `base` present, local present — "deleted elsewhere" — and TRASHES the files it
+     * had just uploaded. The last-writer-wins loss this merge exists to prevent, arriving through
+     * the one door it was not watching.
+     *
+     * With an empty `touched` the merge simply resolves to whatever the manifest holds now, which is
+     * the correct thing to write back. */
     async save(id, s){
       let paths = s.manifest || {};
-      if(Array.isArray(s.touched) && s.touched.length){
+      if(Array.isArray(s.touched)){
         let fresh = null;
         try{ fresh = await this.manifest(id); }
         catch(_){ /* keep our snapshot — see above */ }

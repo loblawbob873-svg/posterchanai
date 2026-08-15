@@ -166,10 +166,16 @@ function makeDevice(world, opts){
     async base(k){ return JSON.parse(JSON.stringify(bases.get(k) || {})); },
     async save(k, s){
       world.writes++;
-      // Mirrors sync.js: merge the touched paths onto what the document holds NOW, so a concurrent
-      // sweep on another device cannot be erased by this one's stale snapshot.
+      /* Mirrors sync.js: merge the touched paths onto what the document holds NOW, so a concurrent
+       * sweep on another device cannot be erased by this one's stale snapshot.
+       *
+       * NOT gated on `touched.length`, and that was the hole. `touched` is filled by remember() —
+       * uploads, tombstones, csum repairs — so a DOWNLOAD-ONLY sweep has none and skipped the merge
+       * entirely, writing its snapshot whole. Measured here before the fix: three files another
+       * device had just published were erased from the manifest, and that device then read them as
+       * "deleted elsewhere" and trashed its own copies. */
       let paths = JSON.parse(JSON.stringify(s.manifest || {}));
-      if(Array.isArray(s.touched) && s.touched.length){
+      if(Array.isArray(s.touched)){
         const fresh = world.manifestOf(k);
         const merged = Object.assign({}, fresh);
         for(const p of s.touched) if(paths[p] !== undefined) merged[p] = paths[p];
@@ -1284,6 +1290,48 @@ scenario('a-short-read-never-becomes-a-published-file', async () => {
         && phone.read('note.txt') === 'this one is small and must still go',  // …but the sweep goes on
     detail: { uploaded: up.uploaded, failed: up.failed, entry: man['holiday.mp4'] || null,
               onPhone: phone.live(), downloaded: down.downloaded },
+  };
+});
+
+/* A DOWNLOAD-ONLY SWEEP MUST NOT ERASE WHAT ANOTHER DEVICE PUBLISHED WHILE IT RAN.
+ *
+ * `concurrent-sweeps-do-not-erase-each-other` covers two sweeps that both UPLOAD. This is the door
+ * that was left open: the merge in store.save was gated on `touched.length`, and `touched` is filled
+ * by remember() — uploads, tombstones, csum repairs — while a download-only sweep only ever calls
+ * agree(). So the sweep with nothing of its own to contribute was the one that skipped the re-read
+ * and wrote its snapshot whole.
+ *
+ * The second half is what makes it data loss rather than a lost entry: the device whose uploads were
+ * erased then reads them as remote-gone, base-present, local-present — "deleted elsewhere" — and
+ * TRASHES the files it had just uploaded. */
+scenario('a-download-only-sweep-does-not-erase-a-concurrent-upload', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Shared' });
+  const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Shared' });
+
+  laptop.put('old.txt', 'was here first');
+  await laptop.sweep();
+
+  // The phone takes its snapshot of the manifest…
+  const snapshot = w.manifestOf('Shared');
+  // …and while it is busy downloading, the laptop publishes three more files.
+  laptop.put('a.txt', 'one'); laptop.put('b.txt', 'two'); laptop.put('c.txt', 'three');
+  await laptop.sweep();
+
+  /* The phone's sweep is DOWNLOAD-ONLY (it has nothing local to send) and it is working from the
+   * stale snapshot. Injected by pre-seeding the store the way an in-flight sweep holds it. */
+  phone.store.save('Shared', { manifest: snapshot, base: {}, touched: [] });
+
+  const after = w.manifestOf('Shared');
+  const alive = Object.keys(after).filter(p => after[p] && !after[p].deletedAt).sort();
+
+  // …and now the laptop looks at what survived.
+  const back = await laptop.sweep();
+  return {
+    ok: alive.join() === 'a.txt,b.txt,c.txt,old.txt'      // nothing was erased
+        && back.trashed.length === 0                       // …so nothing is trashed as "deleted elsewhere"
+        && laptop.live().join() === 'a.txt,b.txt,c.txt,old.txt',
+    detail: { aliveAfterStaleSave: alive, laptopTrashed: back.trashed, onLaptop: laptop.live() },
   };
 });
 
