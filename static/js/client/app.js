@@ -19711,7 +19711,36 @@
   let _dmLoaded=false, _dmUnread=0;
   // A remote signer (Amber) decrypts each message on the PHONE, so restoring a big history genuinely takes a
   // while. Say so, with a count — otherwise a half-filled DM list just looks broken.
-  let _dmProg='', _dmProgAt=0, _dmProgWatch=0;
+  let _dmProg='', _dmBase='', _dmProgAt=0, _dmProgWatch=0;
+  /* WHY IT IS NOT MOVING, MEASURED, ON THE SCREEN THAT IS STUCK.
+   *
+   * "tablet stuck after 1/400" has four different causes that are identical from the outside — the
+   * signer is slow, the socket is dead, the queue is starved, or nothing was ever asked — and the
+   * device this happens on is the one where opening a console is hardest. PC.dmStats() answers it in
+   * a browser; this is the same numbers where the counter already is, because a tablet cannot use
+   * the console and a report of "it says 1/400" cannot be diagnosed from here.
+   *
+   * Only after 15 seconds of no advance: every message is two round trips to a phone, so pausing is
+   * normal and this must not become permanent furniture. It repaints every 5s while the stall lasts,
+   * so `since the relay spoke` is a live number rather than a stale one. */
+  function _dmStalled(){
+    if(!_dmBase) return;
+    let why = '';
+    try{
+      const n = Nip46;
+      if(n && n.remotePk){
+        const live = n._live().length;
+        const heard = n._rxAt ? Math.round((Date.now() - n._rxAt) / 1000) + 's ago'
+                              : 'never';
+        why = ` — signer: ${n._pending.size} sent and unanswered, ${n._inflight + n._queue.length}`
+            + ` queued, relay last spoke ${heard}` + (live ? '' : ', NO SOCKET');
+      }
+    }catch(_){}
+    _dmProg = _dmBase + (why || ' — waiting on your signer');
+    try{ _dmProgress(); }catch(_){}
+    clearTimeout(_dmProgWatch);
+    _dmProgWatch = setTimeout(_dmStalled, 5000);
+  }
   function _dmProgress(done, total){
     if(arguments.length){
       _dmProg = (done < total) ? `🔓 decrypting your messages… ${done}/${total}` : '';
@@ -19724,11 +19753,8 @@
        * what the pause IS once it has gone on longer than any healthy burst, and keep the number, so
        * "slow" and "wedged" stop looking the same. Cleared by the next advance. */
       clearTimeout(_dmProgWatch);
-      if(_dmProg) _dmProgWatch = setTimeout(()=>{
-        if(!_dmProg || Date.now() - _dmProgAt < 19000) return;
-        _dmProg += ' — waiting on your signer';
-        try{ _dmProgress(); }catch(_){}
-      }, 20000);
+      _dmBase = _dmProg;
+      if(_dmProg) _dmProgWatch = setTimeout(_dmStalled, 15000);
     }
     const wrap=document.querySelector('#dm-list'); if(!wrap) return;
     let el=document.getElementById('dm-progress');

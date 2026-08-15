@@ -146,6 +146,9 @@ public class SignerRelayService extends Service {
      * opened the app, i.e. at the one moment the cost of a redial (one handshake) is worth paying
      * for the chance that the socket is a zombie. */
     private static final long STALE_MS = 90_000L;
+    /** …and no more often than this per relay, however many reloads arrive. See redialStale. */
+    private static final long REDIAL_EVERY_MS = 300_000L;
+    private final Map<String, Long> lastRedial = new HashMap<>();
     private OkHttpClient http;
     private String subId;
     private boolean stopping = false;
@@ -398,6 +401,18 @@ public class SignerRelayService extends Service {
         for (String url : new java.util.ArrayList<>(socks.keySet())) {
             Long rx = lastRx.get(url);
             if (rx != null && now - rx <= STALE_MS) continue;
+            /* AND NOT MORE THAN ONCE EVERY FIVE MINUTES PER RELAY.
+             *
+             * A relay sends NOTHING between requests and OkHttp answers its own pings internally, so
+             * `lastRx` is stale on a perfectly healthy idle socket — which means the rule above is
+             * true on nearly every reload(), and reload() runs whenever the app is opened or the
+             * page re-publishes its pairings. Unguarded, that reconnects the socket on every one of
+             * them, and a kind-24133 published during those ~1s windows is DESTROYED rather than
+             * delayed (the relay fans ephemeral events out to whoever is subscribed at that instant
+             * and stores nothing). A fix for a deaf socket must not become a way to miss requests. */
+            Long last = lastRedial.get(url);
+            if (last != null && now - last < REDIAL_EVERY_MS) continue;
+            lastRedial.put(url, now);
             closeOne(url);          // the caller's open-what-is-missing loop dials it straight back
         }
     }
