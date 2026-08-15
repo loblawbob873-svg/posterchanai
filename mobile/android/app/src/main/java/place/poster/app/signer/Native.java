@@ -33,7 +33,11 @@ final class Native {
     /** null = not yet decided, TRUE = proven good, FALSE = unavailable or disagreed with Java. */
     private static volatile Boolean usable = null;
     private static Object ctx;
-    private static Method mSignSchnorr, mPubkeyCreate;
+    private static Class<?> api;
+    private static Method mSignSchnorr, mPubkeyCreate, mTweakMul;
+    /** ECDH is decided SEPARATELY: a build whose API has moved that one method must not lose signing
+     *  too, and vice versa. */
+    private static volatile Boolean ecdhUsable = null;
     /** Readable by the panel: why the fast path is off, when it is off. */
     static volatile String why = "";
 
@@ -42,6 +46,7 @@ final class Native {
         usable = Boolean.FALSE;
         try {
             Class<?> k = Class.forName("fr.acinq.secp256k1.Secp256k1");
+            api = k;
             ctx = k.getMethod("get").invoke(null);
             if (ctx == null) { why = "no secp256k1 instance"; return false; }
             mSignSchnorr = k.getMethod("signSchnorr", byte[].class, byte[].class, byte[].class);
@@ -105,8 +110,87 @@ final class Native {
         }
     }
 
+    /* ---------------------------------------------------------------------------------------------
+     * ECDH — the half that was left in BigInteger, and the half a MESSAGE costs.
+     *
+     * Signing was moved to C and decryption was not, which is a strange place to stop once you look
+     * at what each surface actually does. Publishing an event is ONE signature. Restoring a DM
+     * history is one ECDH per gift wrap and another per sealed message — two point multiplications
+     * per message, none of which the fast path touched. Reported as "messages take forever to
+     * decrypt on this signer, worse than amber", which is the same sentence that produced the
+     * signing fix, about the same missing C.
+     *
+     * `pubKeyTweakMul` and not `ecdh`: libsecp256k1's own ecdh() returns SHA256 of the compressed
+     * point, and both NIP-04 and NIP-44 want the RAW x coordinate. Multiplying the peer's point by
+     * our scalar and taking x is what Nostr.sharedX does in Java, exactly.
+     *
+     * Proven against that Java implementation before it is trusted, for the reason in the class
+     * header: a wrong shared secret does not throw. It produces ciphertext nobody can read and
+     * "decrypts" nothing, which on this path would look like a signer that answers with garbage.
+     * ------------------------------------------------------------------------------------------ */
+    private static synchronized boolean ecdhReady() {
+        if (ecdhUsable != null) return ecdhUsable;
+        ecdhUsable = Boolean.FALSE;
+        if (!ready()) return false;                 // no library at all — `why` already says so
+        try {
+            mTweakMul = api.getMethod("pubKeyTweakMul", byte[].class, byte[].class);
+
+            byte[] a = new byte[32], b = new byte[32];
+            for (int i = 0; i < 32; i++) { a[i] = (byte) (i + 1); b[i] = (byte) (0x40 + i); }
+            byte[] peer = Nostr.pubkey(b);
+            byte[] mine = sharedRaw(a, peer);
+            byte[] theirs = Nostr.sharedX(a, peer);
+            if (mine == null || theirs == null || !java.util.Arrays.equals(mine, theirs)) {
+                why = "native ECDH disagreed with the Java one";
+                return false;
+            }
+            /* BOTH DIRECTIONS. A shared secret that is only right when this key is the sender is
+             * not a shared secret, and every conversation has two ends. */
+            byte[] back1 = sharedRaw(b, Nostr.pubkey(a));
+            byte[] back2 = Nostr.sharedX(b, Nostr.pubkey(a));
+            if (back1 == null || !java.util.Arrays.equals(back1, back2)
+                || !java.util.Arrays.equals(back1, mine)) {
+                why = "native ECDH is not symmetric";
+                return false;
+            }
+            ecdhUsable = Boolean.TRUE;
+        } catch (Throwable t) {
+            why = String.valueOf(t.getClass().getSimpleName());
+            ecdhUsable = Boolean.FALSE;
+        }
+        return ecdhUsable;
+    }
+
+    /** The x-only pubkey is lifted to the EVEN-Y point, which is what `liftX` gives Java. */
+    private static byte[] sharedRaw(byte[] sec, byte[] pub32) {
+        try {
+            byte[] pk = new byte[33];
+            pk[0] = 2;
+            System.arraycopy(pub32, 0, pk, 1, 32);
+            byte[] out = (byte[]) mTweakMul.invoke(ctx, pk, sec);
+            // 0x04||X||Y (65) or 0x02|0x03||X (33) — x starts at 1 either way.
+            if (out == null || out.length < 33) return null;
+            byte[] x = new byte[32];
+            System.arraycopy(out, 1, x, 0, 32);
+            return x;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** The raw ECDH shared x, or null to mean "use the Java path". */
+    static byte[] sharedX(byte[] sec, byte[] pub32) {
+        if (!ecdhReady()) return null;
+        return sharedRaw(sec, pub32);
+    }
+
     /** True when signatures are being made in C rather than in BigInteger. For the panel. */
     static boolean active() {
         return ready();
+    }
+
+    /** True when DECRYPTION is too — the two can differ, so the panel must not report one as both. */
+    static boolean ecdhActive() {
+        return ecdhReady();
     }
 }

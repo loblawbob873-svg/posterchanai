@@ -292,34 +292,46 @@ def test_the_app_name_is_read_before_the_prompt_that_names_it():
         "the relay prompt reads `name` before it is declared"
 
 
-def test_replacing_signs_out_ONE_device_not_every_one_that_shares_a_name():
-    """Every PosterChan client announces itself as "PosterChan".
+def test_a_repeat_pairing_REPLACES_NOTHING():
+    """A name is a product, not a device — so nothing here may revoke on the strength of one.
 
-    The first version revoked every session sharing the name, so pairing a tablet signed the desktop
-    out — reported exactly that way. "Replace" has to mean the entry the new pairing makes
-    redundant: the one nobody has used for longest. Re-pairing a laptop leaves its old row idle,
-    while the machine you are actively signing on has a recent timestamp and must survive.
+    This used to prompt: a new pairing whose `name` matched an existing row offered to replace the
+    stalest of them. Every client of this app announces itself as "PosterChan" and primal announces
+    "PrimalWeb" for every machine somebody signs in on, so the match was between PRODUCTS and the
+    prompt asked people to choose between rows that read identically. Reported four ways in a row —
+    "i signed in 4 devices but only see 2?", "i choose keep them all and nothing goes on", "i could
+    only sign in 1 device", "it is still thinking all posterchan devices are the same" — and removed
+    in 8f26f5f7.
+
+    The two tests that guarded the old behaviour were left behind asserting it, so `./test.sh` has
+    been failing ever since on a feature that was deleted on purpose. This is what they should have
+    become: the new rule is that pairing adds a row and NEVER removes one, and telling devices apart
+    is the list's job (it prints when each was added and marks the ones never used).
     """
     src = _src()
     seg = src[src.index("  async function onQrScanned(uri){"):]
     seg = seg[:seg.index("\n  }\n")]
-    assert "clash.forEach" not in seg, \
-        "replacing revokes every session sharing the name, signing out devices you are still using"
-    assert "stalest" in seg and "Nip46Signer.revoke(stalest.pk)" in seg, \
-        "replace does not target the least-recently-used pairing"
-    assert "a.last||a.created" in seg.replace(" ", ""), \
-        "staleness is not decided by when the pairing was last used"
+    # The CALL, not the word: the comment above it explains why revoking is the list's job.
+    assert "Nip46Signer.revoke(" not in seg, \
+        "pairing a new device removes an existing one — a name is not an identity"
+    assert "uiConfirm" not in seg and "stalest" not in seg.replace("the stalest", ""), \
+        "the replace-the-stalest prompt is back; see 8f26f5f7 for why it cannot work"
+    assert "Nip46Signer.start(" in seg, "pairing no longer starts a session at all"
 
 
-def test_the_prompt_says_which_login_it_will_replace():
-    """"Replace" over a list of identical names is otherwise a guess the user authorises blind."""
+def test_the_list_is_what_tells_two_identical_names_apart():
+    """Having removed the prompt, the LIST is the only way to revoke the right row.
+
+    Both facts are needed and each was added for its own report: `created` because a pairing that
+    has never been used carries no `last` at all — and that is exactly the row somebody is hunting
+    for — and `last` because it is what says which one is the machine you are on.
+    """
     src = _src()
-    seg = src[src.index("  async function onQrScanned(uri){"):]
+    seg = src[src.index("  function _renderSignerApps(){"):]
     seg = seg[:seg.index("\n  }\n")]
-    assert "uiConfirm" in seg, "a repeat pairing silently adds another identical entry"
-    assert "last used" in seg or "never used" in seg, \
-        "the prompt does not identify the pairing it is about to remove"
-    assert "Keep them all" in seg, "replacing is forced rather than offered"
+    assert "a.created" in seg and "added " in seg, "the list cannot say WHEN a pairing was made"
+    assert "never used" in seg, "a pairing that was never used is indistinguishable from a live one"
+    assert "data-revoke" in seg, "there is no way to sign one device out"
 
 
 # --------------------------------------------------------------------------------------------

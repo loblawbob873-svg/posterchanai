@@ -854,6 +854,20 @@
    * every reply is matched by request id, where a stale one matches nothing. */
   const NIP46_SINCE_SKEW = 900;
 
+  /* When an unanswered interactive request is published AGAIN, in ms after the one before it.
+   *
+   * A ladder rather than a fixed interval, because the two things being waited for have completely
+   * different shapes. A ZOMBIE socket is discovered on the first rung (see the deaf check in _rpc)
+   * and fixed immediately. A SIGNER that is redialling comes back at a moment nobody here can know,
+   * so the early rungs are close together — a coarse interval means the request lands seconds after
+   * the signer returned and then waits out the whole gap for the next try, which is exactly what a
+   * 20s second rung did (measured: 26s to sign, where 16s was available).
+   *
+   * Bounded at four. Each rung is a duplicate request, and a signer that asks a human to approve
+   * every one of them can show a prompt for each — the event is byte-identical so approving any of
+   * them gives the same signature, but four is where "make sure it lands" stops being worth it. */
+  const _RESEND_AT = [6000, 10000, 20000, 30000];
+
   const Nip46 = {
     relay:null, appSk:null, appPk:null, remotePk:null, userPk:null,
     /* The encryption this SESSION writes with, settled once at pairing and then never changed.
@@ -1084,6 +1098,11 @@
       });
     },
     async _recv(raw){
+      /* WHEN ANYTHING LAST ARRIVED, stamped before the message is even parsed — an `OK`, an `EOSE`,
+       * a `NOTICE`, anything. It is not about this session's content; it is the only evidence a page
+       * has that its socket is REAL. A resumed machine's socket routinely reports `readyState 1`
+       * while delivering nothing, and every send() into it succeeds. See the deaf check in _rpc. */
+      this._rxAt = Date.now();
       let m; try{ m=JSON.parse(raw); }catch(_){ return; }
       if(m[0]!=='EVENT' || m[1]!==this._subId) return;
       const ev=m[2]; if(!ev || ev.kind!==24133) return;
@@ -1250,7 +1269,7 @@
         this._pending.set(id,{res,rej,enc});
         // To EVERY relay this session holds. The signer listens on the ones its bunker link named,
         // which is not necessarily the one that opened first — see _openAll.
-        const live=this._live(); let sent=0;
+        const live=this._live(); let sent=0; const sentAt=Date.now();
         for(const w of live){ try{ w.send(JSON.stringify(['EVENT', signed])); sent++; }catch(_){} }
         // The socket died between _ensure and here. Kick the reconnect so _send's one retry (600ms
         // later, through _rpc → _ensure) has something to land on instead of failing the same way.
@@ -1310,19 +1329,25 @@
           const again = async ()=>{
             if(!this._pending.has(id) || resent >= 4) return;
             resent++;
-            /* By the second go, doubt the SOCKET itself. `_ensure` can only see a socket that is
-             * gone; a resumed machine's socket is routinely a zombie — readyState 1, delivering
-             * nothing — and re-sending into one is as lost as the first time. `revive()` is the
-             * only thing that can tell them apart, by tearing it down and dialling again. Not on
-             * the first attempt: that one is usually a signer that was merely away, and a
-             * needless reconnect would spend the window this re-send is trying to use. */
-            if(resent >= 2) try{ this.revive(); }catch(_){}
+            /* DEAF: nothing at all has arrived on any socket since this request went out — not even
+             * the relay's own `OK` for the event we just published, which is the fastest and most
+             * specific evidence available that the socket is a zombie rather than the signer being
+             * away. `_ensure` cannot see this: a zombie is `readyState 1`, so it counts as live and
+             * every send() into it succeeds. `revive()` is the only thing that resolves it, by
+             * tearing the socket down and dialling again.
+             *
+             * MEASURED, on the real client through a proxy that goes silent without closing
+             * (check_nip46_reconnect.py's `zombie-socket`): waiting for the second rung of the
+             * ladder to doubt the socket recovered in 29s, and the deaf check does it in ~6s. The
+             * later rungs revive unconditionally, because by then the socket has proved nothing. */
+            const deaf = !(this._rxAt >= sentAt);
+            if(deaf || resent >= 2) try{ this.revive(); }catch(_){}
             try{ await this._ensure(4000); }catch(_){}
             if(!this._pending.has(id)) return;
             for(const w of this._live()){ try{ w.send(JSON.stringify(['EVENT', signed])); }catch(_){} }
-            setTimeout(again, 20000);
+            setTimeout(again, _RESEND_AT[resent] || 30000);
           };
-          setTimeout(again, 9000);
+          setTimeout(again, _RESEND_AT[0]);
         }
       });
     },
@@ -19701,9 +19726,26 @@
   }
   // Unwrap a NIP-17 gift wrap (kind 1059) → its inner kind-14 chat rumor (already plaintext). `live`
   // bumps the unread badge for incoming (non-self) messages.
+  /* Gift wraps this page has already TRIED to open. The dedup below (`arr.find(m => m.id===ev.id)`)
+   * happens AFTER the unwrap, which on a remote signer is two round trips to a phone — so it saves
+   * a duplicate ROW while paying the whole cost of the duplicate DECRYPTION.
+   *
+   * And there is always a duplicate: ensureDMs unwraps `Store.byKind(1059)` (the cached history) and
+   * then unwraps the query result, which on any second visit is the SAME events. Every message in
+   * the cache was decrypted twice on every load, concurrently, so the two attempts could not even
+   * see each other. On a phone signer that is the difference between one pass and two over the
+   * entire history — "messages take forever to decrypt on this signer".
+   *
+   * Keyed on the wrap id and marked BEFORE the first await, which is what makes it a guard rather
+   * than a race. A wrap whose unwrap THREW is unmarked again: that is the signer being unreachable,
+   * not the wrap being unreadable, and it must be retried when the transport comes back. One that
+   * decodes to something that is not ours stays marked — it will never become ours. */
+  const _wrapTried = new Set();
   async function ingestWrap(ev, live){
     if(!signer || !signer.nip17unwrap) return false;
-    let rumor; try{ rumor=await signer.nip17unwrap(ev); }catch(_){ return false; }
+    if(!ev || !ev.id || _wrapTried.has(ev.id)) return false;
+    _wrapTried.add(ev.id);
+    let rumor; try{ rumor=await signer.nip17unwrap(ev); }catch(_){ _wrapTried.delete(ev.id); return false; }
     if(!rumor || rumor.kind!==14 || rumor.content==null) return false;
     const mine = rumor.pubkey===ME.pubkey;
     const peer = mine ? (rumor.tags.find(t=>t[0]==='p')||[])[1] : rumor.pubkey;

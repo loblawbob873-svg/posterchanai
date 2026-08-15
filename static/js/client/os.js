@@ -217,7 +217,12 @@
   let _docAt = 0;         // created_at of the newest version we have seen
   let _wr = false;        // a relay ANSWERED, so a write cannot replace a layout we never read
   let _layWhy = '';       // why not, when not: 'relay' (nobody EOSEd) | 'signer' (would not decrypt)
-  let _signerRetried = false;   // the one automatic re-read after a signer that did not answer
+  let _signerRetried = 0;       // how many automatic re-reads have been scheduled (see the ladder)
+  /* When to re-read after a signer that did not answer, in ms. Spread over ~six minutes, because the
+   * thing being waited for is not always a human with a phone — it can be a dead relay socket that
+   * redials on its own backoff. */
+  const _SIGNER_RETRY_AT = [20000, 45000, 90000, 180000];
+  let _noticeSaid = '';         // the reason last announced, so a retry ladder says it once
   let _layLoading = null, _layLoadingPk = '', _laySub = null, _layChain = Promise.resolve();
 
   /* NEVER name a local binding `Relay` (or `Store`) in this file.
@@ -391,7 +396,8 @@
     const pk = (me() || {}).pubkey || '';
     // The signer-retry budget belongs to the ACCOUNT, not the page: switching accounts asks a
     // different key to decrypt a different document, and that deserves its own second chance.
-    if(pk !== _docPk){ _doc = null; _docAt = 0; _wr = false; _layWhy = ''; _signerRetried = false; _docPk = pk; unwatchLayout(); }
+    if(pk !== _docPk){ _doc = null; _docAt = 0; _wr = false; _layWhy = ''; _signerRetried = 0;
+                       _noticeSaid = ''; _docPk = pk; unwatchLayout(); }
     _lay = computeLayout(launchApps(), _doc);
     return _lay;
   }
@@ -496,16 +502,23 @@
        * which is a fact about that device, and the message has to be able to say which one. */
       _layWhy = !answered ? 'relay' : unreadable ? 'signer' : '';
       if(answered && !unreadable){ _wr = true; if(!_doc){ _doc = BLANK(); _docPk = pk; } }
-      /* ONE automatic retry when the signer was the problem, because the usual cause is a prompt
-       * that had not been approved YET — the phone was face down, the notification was tapped a
-       * minute later. Retrying once, quietly, means the desktop comes good on its own for the
-       * common case instead of requiring the user to know to drag something again. Once only: a
-       * signer that is genuinely unreachable must not become a prompt loop. */
-      if(_layWhy === 'signer' && !_signerRetried){
-        _signerRetried = true;
-        setTimeout(() => { if(!_wr && me()) loadLayout().catch(() => {}); }, 20000);
+      /* KEEP TRYING while the signer is the problem, on a ladder — it used to be ONE retry at 20s.
+       *
+       * The usual cause was assumed to be a prompt not approved YET (a phone face down, a
+       * notification tapped a minute later), and one retry covers that. It does not cover the case
+       * that actually happened: a NIP-46 transport that was down for the whole morning, because the
+       * page's relay socket died when the machine slept and nothing redialled it. Both retries fell
+       * inside that window, so the desktop drew the DEFAULT for the rest of the session and it was
+       * reported as "all my desktop widgets disappeared, on all devices" — with the document sitting
+       * intact on the relay the entire time.
+       *
+       * Bounded, and only while `_wr` is still false: a signer that is genuinely unreachable must
+       * not become a prompt loop, and the moment one read succeeds the ladder stops. */
+      if(_layWhy === 'signer' && _signerRetried < _SIGNER_RETRY_AT.length){
+        const at = _SIGNER_RETRY_AT[_signerRetried++];
+        setTimeout(() => { if(!_wr && me()) loadLayout().catch(() => {}); }, at);
       }
-      refreshIcons(); watchLayout(); arrangeHint();
+      refreshIcons(); watchLayout(); arrangeHint(); layoutNotice();
       return _doc;
     })();
     const p = _layLoading;
@@ -513,6 +526,29 @@
     // drawing, and a second call while it is in flight has to share the one read.
     p.catch(() => {}).then(() => { if(_layLoading === p) _layLoading = null; });
     return p;
+  }
+
+  /* AN EMPTY DESKTOP IS INDISTINGUISHABLE FROM A LOST ONE, AND THAT SILENCE IS THE WHOLE BUG.
+   *
+   * When the layout cannot be read the desktop draws the defaults: no widgets, icons back in their
+   * original order. Nothing said so. Reported as "all my desktop widgets disappeared, on ALL
+   * devices" — which is the reasonable reading of what is on screen, and completely wrong: the
+   * document was on the relay the whole time, and `_wr` had already refused every write so nothing
+   * could have overwritten it. The user spent that time believing their arrangement was gone.
+   *
+   * So say which of the two it is, and say that nothing has been changed — the second half matters
+   * more than the first. Once per reason per account: the retry ladder must not repeat it. */
+  function layoutNotice(){
+    try{
+      if(!on || _wr || !_layWhy) return;
+      if(_noticeSaid === _layWhy) return;
+      _noticeSaid = _layWhy;
+      PC().toast && PC().toast(_layWhy === 'signer'
+        ? 'Showing the default desktop — your signer did not answer, so your arrangement could not '
+          + 'be decrypted. It is still saved; nothing has been changed.'
+        : 'Showing the default desktop — no relay answered, so your arrangement could not be '
+          + 'loaded. It is still saved; nothing has been changed.');
+    }catch(_){}
   }
 
   /* Said once, to people who have never arranged anything. A desktop that CAN be rearranged and

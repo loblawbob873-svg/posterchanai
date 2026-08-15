@@ -639,6 +639,39 @@ def test_native_secp256k1_proves_itself_before_it_is_trusted_and_is_never_import
     assert "secp256k1-kmp-jni-android" in gradle, "the native dependency is missing from the build"
 
 
+def test_decryption_is_in_c_too_and_derives_the_secret_in_ONE_place():
+    """ECDH is the half a MESSAGE costs, and it was the half left in BigInteger.
+
+    Signing was moved to C and decryption was not. Publishing an event is one signature; restoring a
+    DM history is two point multiplications PER MESSAGE (the gift wrap, then the seal), and none of
+    them were touched — "messages take forever to decrypt on this signer, worse than amber".
+
+    Three assertions, each for a way this goes silently wrong:
+      * `pubKeyTweakMul`, never libsecp256k1's own `ecdh()`, which returns SHA256 of the compressed
+        point where NIP-04 and NIP-44 both want the raw x. Wrong bytes, no exception, nothing
+        decrypts.
+      * proven against `Nostr.sharedX` in BOTH directions before use — a shared secret that is only
+        right for one end of the conversation is not a shared secret.
+      * derived in ONE place in Crypt, or the fast path lands in two of the three call sites and the
+        third quietly stays slow.
+    """
+    nat = _read(os.path.join(SIGNER, "Native.java"))
+    assert "pubKeyTweakMul" in nat, "ECDH is not on the native path — every decrypt is BigInteger"
+    assert '"ecdh"' not in nat, (
+        "libsecp256k1's ecdh() hashes the point; NIP-04/44 want the raw x coordinate"
+    )
+    assert "Nostr.sharedX(" in nat, "the native ECDH is not checked against the Java one"
+    assert nat.count("Nostr.sharedX(") >= 2, "the ECDH self-proof only checks one direction"
+
+    cr = _read(os.path.join(SIGNER, "Crypt.java"))
+    assert "Native.sharedX(" in cr, "Crypt never reaches for the fast path"
+    # Exactly one fallback to the Java implementation: the shared helper. Any other occurrence is a
+    # call site that bypassed it and is still doing a point multiplication in Java.
+    assert cr.count("Nostr.sharedX(") == 1, (
+        "a call site derives the shared secret directly instead of going through Crypt.sharedX"
+    )
+
+
 def test_a_new_pairing_never_revokes_an_existing_one_by_name():
     """A name is a PRODUCT, not an identity, and this app kept mistaking one for the other.
 

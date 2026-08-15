@@ -28,10 +28,19 @@ public final class Crypt {
 
     private Crypt() { }
 
+    /* THE ONE PLACE A SHARED SECRET IS DERIVED, so the fast path cannot be wired into two of the
+     * three call sites. C when the phone has libsecp256k1 (Native proves it against this Java
+     * implementation before using it), BigInteger otherwise — and a message costs TWO of these, so
+     * this is what a DM history's decrypt time is made of. */
+    static byte[] sharedX(byte[] sec, byte[] peer) {
+        byte[] fast = Native.sharedX(sec, peer);
+        return fast != null ? fast : Nostr.sharedX(sec, peer);
+    }
+
     // ---------------------------------------------------------------- NIP-04 (legacy, still used)
     /** AES-256-CBC with the RAW ECDH shared-X as the key — not hashed. See nip04.py. */
     public static String nip04Encrypt(byte[] sec, byte[] peer, String text) throws Exception {
-        byte[] key = Nostr.sharedX(sec, peer);
+        byte[] key = sharedX(sec, peer);
         byte[] iv = new byte[16];
         new SecureRandom().nextBytes(iv);
         Cipher c = Cipher.getInstance("AES/CBC/PKCS5Padding");
@@ -46,14 +55,14 @@ public final class Crypt {
         byte[] ct = unb64(payload.substring(0, at));
         byte[] iv = unb64(payload.substring(at + 4));
         Cipher c = Cipher.getInstance("AES/CBC/PKCS5Padding");
-        c.init(Cipher.DECRYPT_MODE, new SecretKeySpec(Nostr.sharedX(sec, peer), "AES"),
+        c.init(Cipher.DECRYPT_MODE, new SecretKeySpec(sharedX(sec, peer), "AES"),
                new IvParameterSpec(iv));
         return new String(c.doFinal(ct), StandardCharsets.UTF_8);
     }
 
     // ---------------------------------------------------------------------------- NIP-44 v2
     public static byte[] conversationKey(byte[] sec, byte[] peer) throws Exception {
-        return hmac("nip44-v2".getBytes(StandardCharsets.UTF_8), Nostr.sharedX(sec, peer));
+        return hmac("nip44-v2".getBytes(StandardCharsets.UTF_8), sharedX(sec, peer));
     }
 
     private static byte[] hkdfExpand(byte[] prk, byte[] info, int length) throws Exception {

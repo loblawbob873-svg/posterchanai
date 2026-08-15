@@ -73,6 +73,72 @@ class Relay(sig.MiniRelay):
         await asyncio.sleep(0.2)
 
 
+class Blackhole:
+    """A TCP proxy that can go SILENT without closing — a carrier NAT dropping an idle mapping.
+
+    This is the state a suspended machine actually comes back to, and it is the one a test cannot
+    produce any other way: the browser still reports `readyState === 1`, `_live()` still counts the
+    socket, every send() succeeds, and nothing is ever delivered in either direction. No error is
+    raised anywhere, which is why it reads as "the signer stopped answering".
+
+    Connections opened AFTER freeze() work normally — that is the whole point of the shape. The
+    mapping for the OLD connection is gone; the network is fine. So an end that merely re-sends into
+    its existing socket is lost for ever, and only one that DOUBTS THE SOCKET recovers.
+    """
+
+    def __init__(self, host, port):
+        self.host, self.port = host, port
+        self.conns = []
+        self._srv = None
+        self.url = ""
+
+    async def start(self):
+        self._srv = await asyncio.start_server(self._accept, "127.0.0.1", 0)
+        p = self._srv.sockets[0].getsockname()[1]
+        self.url = f"ws://127.0.0.1:{p}"
+        return self.url
+
+    def freeze(self):
+        for c in self.conns:
+            c["frozen"] = True
+
+    async def _pump(self, reader, writer, conn):
+        try:
+            while True:
+                data = await reader.read(65536)
+                if not data:
+                    break
+                if conn["frozen"]:
+                    continue            # swallowed, and the socket stays open — that is the bug
+                writer.write(data)
+                await writer.drain()
+        except Exception:
+            pass
+        finally:
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+    async def _accept(self, cr, cw):
+        conn = {"frozen": False}
+        self.conns.append(conn)
+        try:
+            ur, uw = await asyncio.open_connection(self.host, self.port)
+        except Exception:
+            cw.close()
+            return
+        await asyncio.gather(self._pump(cr, uw, conn), self._pump(ur, cw, conn))
+
+    async def stop(self):
+        if self._srv:
+            self._srv.close()
+            try:
+                await self._srv.wait_closed()
+            except Exception:
+                pass
+
+
 def clone_bunker(old, relay_url):
     """The same signer, dialling back in. Same keys: to the client this is one identity throughout."""
     b = sig.Bunker(relay_url, reads="both")
@@ -235,6 +301,41 @@ async def drive(url):
                                      "the request was never re-sent while the user waited"))
                 elif os.environ.get("PC_DEBUG"):
                     print(f"  DEBUG signer-away signed in {got.get('took')}ms", flush=True)
+
+            # ---- 3. the socket is a ZOMBIE (the shape a suspend really leaves behind) ----------
+            # Everything looks connected: readyState 1, every send() succeeds, nothing is delivered.
+            # A fresh session on a proxied relay, because the session is pinned to the URL it paired
+            # on and this case needs one that can be silenced under it.
+            if not problems:
+                hole = Blackhole("127.0.0.1", relay.port)
+                hole_url = await hole.start()
+                try:
+                    if not await load():
+                        print("SKIP  the client never finished loading")
+                        return 2
+                    await js("try{ localStorage.clear(); sessionStorage.clear(); }catch(_){}")
+                    if not await load():
+                        print("SKIP  the client never finished loading")
+                        return 2
+                    uri2 = ("bunker://" + bunker.pk + "?relay="
+                            + urllib.parse.quote(hole_url, safe="") + "&secret=s3cret")
+                    r2 = await js(f"({sig.LOGIN})({json.dumps(uri2)})", awaited=True) or {}
+                    if not r2.get("ok"):
+                        print(f"SKIP  could not log in through the proxy ({r2.get('err')})")
+                        return 2
+                    await js("window.__PC_MARK = 'alive';")
+                    hole.freeze()
+                    got = await signs(70000, "zombie-socket")
+                    if not got.get("ok"):
+                        problems.append(("zombie-socket",
+                                         got.get("err") or "never recovered",
+                                         "the socket reads OPEN and delivers nothing — re-sending "
+                                         "into it is as lost as the first time; only tearing it "
+                                         "down and redialling recovers"))
+                    elif os.environ.get("PC_DEBUG"):
+                        print(f"  DEBUG zombie-socket signed in {got.get('took')}ms", flush=True)
+                finally:
+                    await hole.stop()
     finally:
         try:
             bunker.stop()
