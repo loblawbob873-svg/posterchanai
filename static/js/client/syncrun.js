@@ -355,7 +355,16 @@
           // never a half-written file under the real name.
           // `R.size` is the length the manifest recorded — see getParts. A chunk list that does not
           // rebuild to it is refused here rather than committed over a good file.
-          await store.getParts(R.chunks, (off, bytes) => fs.writePart(id, d.path, off, bytes), R.size);
+          /* RESUME what a dropped connection left behind. Uploads have always resumed (a chunk is
+           * skipped when the server already holds it); this is the receiving side finally doing the
+           * same, instead of re-fetching an 8 GB video from byte zero because the link blinked at
+           * 95%. Only whole chunks are reused, and only alongside verifyPart below — a part file
+           * left by a DIFFERENT version of this path is caught by the checksum and discarded, so a
+           * bad prefix cannot be resumed onto for ever. */
+          let have = 0;
+          try{ if(typeof fs.partSize === 'function') have = await fs.partSize(id, d.path); }catch(_){}
+          await store.getParts(R.chunks, (off, bytes) => fs.writePart(id, d.path, off, bytes),
+                               R.size, have, R.cs || 0);
           await verifyPart(d.path, R);            // …and it must BE the file it claims to be
           st = await fs.writeCommit(id, d.path, R.mtime || 0);
         } else if(R.chunks && R.chunks.length){
@@ -403,8 +412,23 @@
            * against a list hash, called the file changed, and re-uploaded it. For ever, on every
            * device. An incremental scan hashes nothing and leaves it undefined, which is correct:
            * same() then falls back to size+mtime, exactly as it does for every other file. */
-          const entry = { csum:meta.csum, chunks:res.chunks, size:meta.size, mtime:meta.mtime || now, device };
+          /* `cs` IS PART OF THE IDENTITY, and this path was dropping it.
+           *
+           * A chunk list identifies content at the size it was made with and at no other: split the
+           * same video 16 MB at a time and 4 MB at a time and the two lists have nothing in common.
+           * Android chooses 4 MB (its bridge copies every chunk as base64) and the desktop 16 MB, so
+           * that is not hypothetical — it is what happens the moment a phone and a laptop hold the
+           * same file. `same()` compares `(a.cs||0) === (b.cs||0)`, so two entries that both LOST it
+           * compare as though they were made the same way, and the differing lists then read as an
+           * edit: a conflict copy on every device, for a file nobody touched.
+           *
+           * sync.js's web-upload path has always written it (`cs: res.cs || CH`); this one, the one
+           * every actual sweep goes through, did not. It is also what lets an interrupted download
+           * resume, since resuming needs to know how big a whole chunk is. */
+          const entry = { csum:meta.csum, chunks:res.chunks, cs:res.cs || 0,
+                          size:meta.size, mtime:meta.mtime || now, device };
           if(!entry.csum) delete entry.csum;   // `chunks` is the identity when the scan did not hash
+          if(!entry.cs) delete entry.cs;       // absent means "the one size that existed before cs did"
           remember(u.path, entry);
           agree(u.path, entry);
           if(res.existed) report.alreadyStored = (report.alreadyStored || 0) + 1;

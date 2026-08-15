@@ -60,6 +60,7 @@ function makeDevice(world, opts){
   const files = new Map();               // relpath -> {bytes, mtime}
   const parts = new Map();               // relpath -> [{offset, bytes}] mid-download, like a .part file
   let shortRead = null;                  // {path, at, by} — see readPart
+  let dropChunks = 0;                    // >0 → writePart throws after this many chunks
   // A real wall-clock start, not a counter from zero: `.pc-trash/<date>/` and the "(conflict from
   // laptop, <date>)" suffix are both formatted from it, and a 1970 date in a report is a detail that
   // reads as a bug when someone eyeballs the output.
@@ -114,6 +115,7 @@ function makeDevice(world, opts){
       return full;
     },
     async writePart(_id, p, offset, bytes){
+      if(dropChunks > 0 && --dropChunks === 0) throw new Error('ECONNRESET');   // the link went
       const cur = parts.get(p) || [];
       cur.push({ offset, bytes: new Uint8Array(bytes) });
       parts.set(p, cur);
@@ -131,6 +133,12 @@ function makeDevice(world, opts){
       return sha256(buf);
     },
     async discardPart(_id, p){ parts.delete(p); return true; },
+    // How many WHOLE bytes of an interrupted download are already on disk — what lets the next
+    // attempt resume instead of re-fetching an 8 GB video from zero because the link blinked.
+    async partSize(_id, p){
+      const cur = parts.get(p) || [];
+      return cur.reduce((n, c) => Math.max(n, c.offset + c.bytes.length), 0);
+    },
     async writeCommit(_id, p, mtime){
       const cur = parts.get(p) || [];
       const total = cur.reduce((n, c) => Math.max(n, c.offset + c.bytes.length), 0);
@@ -212,10 +220,10 @@ function makeDevice(world, opts){
         return m[0];
       };
       const src = [
-        lift(/async _exactPart\(readPart, off, want\)\{[\s\S]*?\n      \},/, '_exactPart'),
-        lift(/async chunkShas\(readPart, size, chunkBytes\)\{[\s\S]*?\n      \},/, 'chunkShas'),
-        lift(/async putParts\(readPart, size, onProgress, chunkBytes\)\{[\s\S]*?\n      \},/, 'putParts'),
-        lift(/async getParts\(chunks, writePart, expect\)\{[\s\S]*?\n      \},/, 'getParts'),
+        lift(/async _exactPart\([^)]*\)\{[\s\S]*?\n      \},/, '_exactPart'),
+        lift(/async chunkShas\([^)]*\)\{[\s\S]*?\n      \},/, 'chunkShas'),
+        lift(/async putParts\([^)]*\)\{[\s\S]*?\n      \},/, 'putParts'),
+        lift(/async getParts\([^)]*\)\{[\s\S]*?\n      \},/, 'getParts'),
       ].join('\n');
       const iv = (p) => crypto.createHash('sha256').update(Buffer.from(p)).digest().subarray(0, 12);
       const enc = (plain) => {
@@ -248,6 +256,7 @@ function makeDevice(world, opts){
          const _syncBlobBytes = async (s) => {
            const b = world.blobs.get(s);
            if(!b) throw new Error('chunk ' + String(s).slice(0,8) + ' unavailable (404)');
+           world.blobFetches = (world.blobFetches || 0) + 1;   // so a RESUME can be measured
            return _dec(b);
          };
          return { ${src} };`)(world, sha256, bytesOf, enc, dec, iv, 4096);
@@ -264,6 +273,9 @@ function makeDevice(world, opts){
     put(p, text){ files.set(p, { bytes: bytesOf(text), mtime: ++clock }); },
     // Make one slice of one file come back light, the way a real adapter does under load.
     breakReadAt(p, at, by){ shortRead = { path: p, at, by: by || 7 }; },
+    // Drop the network after N chunks of the next download, the way a real one drops.
+    dropAfter(n){ dropChunks = n; },
+    partBytes(p){ const cur = parts.get(p) || []; return cur.reduce((t, c) => Math.max(t, c.offset + c.bytes.length), 0); },
     rm(p){ files.delete(p); },
     read(p){ const f = files.get(p); return f ? textOf(f.bytes) : null; },
     live(){ return [...files.keys()].filter(p => !IGNORED(p)).sort(); },
@@ -1272,6 +1284,88 @@ scenario('a-short-read-never-becomes-a-published-file', async () => {
         && phone.read('note.txt') === 'this one is small and must still go',  // …but the sweep goes on
     detail: { uploaded: up.uploaded, failed: up.failed, entry: man['holiday.mp4'] || null,
               onPhone: phone.live(), downloaded: down.downloaded },
+  };
+});
+
+/* A NETWORK DROP MID-DOWNLOAD RESUMES — it does not start the file again.
+ *
+ * Uploads have always resumed: a chunk is content-addressed and skipped when the server already
+ * holds it, so a transfer cut at 90%% re-sends 10%%. The receiving side had no equivalent —
+ * `getParts` walked the chunk list from the beginning every time — so a drop at 95%% of an 8 GB
+ * video cost the whole 8 GB again, and on a link that drops regularly it may never finish at all.
+ *
+ * Three things are asserted, and the third is the one that makes the first two safe: the interrupted
+ * attempt leaves a PART file and never a file under the real name; the retry re-fetches only what is
+ * missing; and the bytes that finally land are identical to the source. A resume that produced a
+ * plausible-but-wrong file would be worse than no resume. */
+scenario('an-interrupted-download-resumes-instead-of-restarting', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Media' });
+  const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Media' });
+
+  const clip = new Uint8Array(20 * 1024).map((_, i) => (i * 53 + 7) & 0xff);   // 5 chunks at 4096
+  laptop.files.set('film.mp4', { bytes: clip, mtime: Date.UTC(2026, 7, 1) });
+  await laptop.sweep({ hash: true });                    // hash:true → the entry carries a csum
+
+  phone.dropAfter(3);                                    // the link dies during the 3rd chunk
+  const cut = await phone.sweep();
+  const partial = phone.partBytes('film.mp4');
+  // Captured HERE, not in the detail object below — that is built after the resume has succeeded,
+  // so reading it there reports the finished file and the assertion can never fail.
+  const duringCut = phone.read('film.mp4');
+
+  const fetchedDuringCut = w.blobFetches || 0;
+  w.blobFetches = 0;
+  const back = await phone.sweep();                      // …and the network comes back
+  const fetchedOnResume = w.blobFetches || 0;
+
+  const got = phone.files.get('film.mp4');
+  const identical = !!got && got.bytes.length === clip.length
+                    && Buffer.compare(Buffer.from(got.bytes), Buffer.from(clip)) === 0;
+  return {
+    ok: (cut.failed || []).some(f => f.path === 'film.mp4')      // the drop is REPORTED…
+        && duringCut === null                                     // …nothing under the real name
+        && partial > 0 && partial < clip.length                   // …and a partial file to resume
+        && back.downloaded.indexOf('film.mp4') !== -1
+        /* MEASURED, not assumed: a full restart would fetch all 5 chunks again. Without this the
+         * scenario passes on a re-download, which is precisely the behaviour it exists to rule out. */
+        && fetchedOnResume < 5 && fetchedOnResume > 0
+        && identical,                                             // the result is byte-for-byte right
+    detail: { cutFailed: cut.failed, partialBytes: partial, ofTotal: clip.length,
+              fetchedDuringCut, fetchedOnResume,
+              onDiskDuringCut: duringCut, resumed: back.downloaded, identical },
+  };
+});
+
+/* THE CONTROL FOR THE RESUME: a part file left by a DIFFERENT version of the same path must not be
+ * spliced onto. The checksum is what catches it — and the part file is then DISCARDED, so the next
+ * attempt starts clean rather than resuming onto the same bad prefix for ever. Without that pairing,
+ * resume turns one bad interruption into a file that can never download again. */
+scenario('a-stale-part-file-is-not-resumed-onto', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Media' });
+  const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Media' });
+
+  const v1 = new Uint8Array(20 * 1024).map((_, i) => (i * 11) & 0xff);
+  laptop.files.set('film.mp4', { bytes: v1, mtime: Date.UTC(2026, 7, 1) });
+  await laptop.sweep({ hash: true });
+  phone.dropAfter(3);
+  await phone.sweep();                                   // phone now holds a part file of v1
+
+  const v2 = new Uint8Array(20 * 1024).map((_, i) => (i * 29 + 3) & 0xff);   // different bytes, same length
+  laptop.files.set('film.mp4', { bytes: v2, mtime: Date.UTC(2026, 7, 2) });
+  await laptop.sweep({ hash: true });
+
+  const staleBytes = phone.partBytes('film.mp4');
+  const one = await phone.sweep();                       // resumes onto v1's prefix → must be refused
+  const two = await phone.sweep();                       // …and the retry starts clean and succeeds
+
+  const got = phone.files.get('film.mp4');
+  const isV2 = !!got && Buffer.compare(Buffer.from(got.bytes), Buffer.from(v2)) === 0;
+  return {
+    ok: (one.failed || []).some(f => f.path === 'film.mp4' && /checksum/.test(f.error || ''))
+        && two.downloaded.indexOf('film.mp4') !== -1 && isV2,
+    detail: { staleBytes, firstTry: one.failed, firstDownloaded: one.downloaded, secondTry: two.downloaded, gotV2: isV2 },
   };
 });
 

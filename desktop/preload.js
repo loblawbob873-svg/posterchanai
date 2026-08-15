@@ -103,6 +103,8 @@ if (isOurPage) {
     trashStat: (id) => ipcRenderer.invoke('pc:fs:trash-stat', String(id || '')),
     hashPart: (id, rel) => ipcRenderer.invoke('pc:fs:hash-part', String(id || ''), String(rel || '')),
     discardPart: (id, rel) => ipcRenderer.invoke('pc:fs:discard-part', String(id || ''), String(rel || '')),
+    partSize: (id, rel) => ipcRenderer.invoke('pc:fs:part-size', String(id || ''), String(rel || '')),
+    sweepParts: (id, olderThanMs) => ipcRenderer.invoke('pc:fs:sweep-parts', String(id || ''), olderThanMs),
     power: () => ipcRenderer.invoke('pc:fs:power'),
     watch: (id, debounceMs) => ipcRenderer.invoke('pc:fs:watch', String(id || ''), debounceMs || 0),
     unwatch: (id) => ipcRenderer.invoke('pc:fs:unwatch', String(id || '')),

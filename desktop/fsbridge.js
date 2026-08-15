@@ -207,6 +207,54 @@ function hashPart(id, rel){
   return resolveIn(id, rel).then(abs => sha256(abs + PART));
 }
 
+/* How much of an interrupted download is already on disk, so the next attempt can carry on.
+ *
+ * A download used to restart at byte zero every time: getParts walks the chunk list from the
+ * beginning and re-fetches all of it. Uploads have always resumed — a chunk is content-addressed and
+ * skipped if the server already holds it — but the receiving side had no equivalent, so a network
+ * drop at 95%% of an 8 GB video cost the whole 8 GB, again, and on a link that drops it may never
+ * finish at all.
+ *
+ * 0 when there is nothing to resume, which is also the answer for a missing file. */
+async function partSize(id, rel){
+  try{
+    const abs = await resolveIn(id, rel);
+    const st = await fsp.stat(abs + PART);
+    return st.isFile() ? st.size : 0;
+  }catch(_){ return 0; }
+}
+
+/* Remove abandoned `.part` files — the ones no download is coming back for.
+ *
+ * They are invisible to everything: `ignored()` keeps them out of the scan (rightly — a half-written
+ * file must never be uploaded), so nothing ever looked at them again and an interrupted download
+ * left its bytes on the disk for good. On a folder of videos that is real money.
+ *
+ * `olderThanMs` is what makes it safe: a sweep in flight has just touched its own part file, so only
+ * ones untouched for far longer than any sweep can be running are taken. */
+async function sweepParts(id, olderThanMs){
+  const root = roots.find(r => r.id === id);
+  if(!root) throw new Error('unknown sync folder');
+  const base = await fsp.realpath(root.dir);
+  const cutoff = Date.now() - (olderThanMs || 24 * 3600000);
+  let removed = 0, bytes = 0;
+  async function walk(dir){
+    let ents;
+    try{ ents = await fsp.readdir(dir, { withFileTypes: true }); }catch(_){ return; }
+    for(const e of ents){
+      const p = path.join(dir, e.name);
+      if(e.isDirectory()){ if(!IGNORE.has(e.name)) await walk(p); continue; }
+      if(!e.isFile() || !e.name.endsWith(PART)) continue;
+      let st; try{ st = await fsp.stat(p); }catch(_){ continue; }
+      if(st.mtimeMs >= cutoff) continue;                 // something may still be writing it
+      try{ await fsp.rm(p, { force: true, maxRetries: 3, retryDelay: 100 }); removed++; bytes += st.size; }
+      catch(_){}
+    }
+  }
+  await walk(base);
+  return { removed, bytes };
+}
+
 /* Throw away a download that did not verify. Not into `.pc-trash` — this is not somebody's file, it
  * is bytes we could not confirm, and putting them in the safety net makes the net less trustworthy. */
 async function discardPart(id, rel){
@@ -415,4 +463,4 @@ function removeRoot(id){
 
 module.exports = { init, list, addRoot, removeRoot, resolveIn, scan, sha256,
                    readPart, writePart, writeCommit,
-                   read, write, move, trash, emptyTrash, trashStat, hashPart, discardPart, watch, unwatch, IGNORE };
+                   read, write, move, trash, emptyTrash, trashStat, hashPart, discardPart, partSize, sweepParts, watch, unwatch, IGNORE };

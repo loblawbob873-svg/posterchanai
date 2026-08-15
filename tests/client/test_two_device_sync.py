@@ -184,6 +184,24 @@ class TestTwoDeviceSync(unittest.TestCase):
         a success and handed to every device."""
         self.check("a-short-read-never-becomes-a-published-file")
 
+    def test_an_interrupted_download_resumes_instead_of_restarting(self):
+        """A network drop. Uploads have always resumed — a chunk is content-addressed and skipped
+        when the server already holds it — but the receiving side walked the chunk list from the
+        beginning every time, so a drop at 95% of an 8 GB video cost the whole 8 GB again, and on a
+        link that drops regularly it may never finish.
+
+        The resume is MEASURED (chunks actually fetched), not inferred from the file arriving: a full
+        restart also produces a correct file, so an assertion on the bytes alone passes on exactly
+        the behaviour this rules out. Verified — remove the resume and it reports 5 of 5 fetched."""
+        self.check("an-interrupted-download-resumes-instead-of-restarting")
+
+    def test_a_stale_part_file_is_not_resumed_onto(self):
+        """The control that makes the resume safe. A part file left by a DIFFERENT version of the
+        same path must not be spliced onto — the checksum catches it and the part is DISCARDED, so
+        the retry starts clean. Without that pairing, resume turns one bad interruption into a file
+        that can never download again."""
+        self.check("a-stale-part-file-is-not-resumed-onto")
+
     def test_a_download_that_fails_its_checksum_never_lands(self):
         """"We need to verify that files are the same." Until this, a download was recorded as agreed
         carrying the REMOTE's csum without anybody hashing what actually landed — right length, wrong

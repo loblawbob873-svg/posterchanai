@@ -30289,9 +30289,32 @@
        *
        * Throwing is the point. syncrun catches it as a per-file `fail(...)`, so the `.part` file is
        * never committed and whatever is on disk is left alone. */
-      async getParts(chunks, writePart, expect){
+      /* `have` RESUMES AN INTERRUPTED DOWNLOAD, and it is the half that never had one.
+       *
+       * An upload has always resumed: a chunk is content-addressed and skipped when the server
+       * already holds it, so a transfer cut at 90% re-sends 10%. The receiving side had no
+       * equivalent — this walked the list from the beginning every time — so a network drop at 95%
+       * of an 8 GB video cost the whole 8 GB again, and on a link that drops regularly it may never
+       * finish at all.
+       *
+       * Only WHOLE chunks are skipped, and only from a part file whose length is an exact multiple
+       * of the chunk size. writePart writes one whole chunk at a time, so any other length means
+       * something wrote that file which was not this loop, and the safe answer is to start over.
+       *
+       * Resuming onto a part file left by a DIFFERENT version of the same path would splice two
+       * generations together — which is why this is only ever reached with the csum check that
+       * follows: a mismatch discards the part file, so the next attempt starts clean rather than
+       * resuming onto the same bad prefix for ever. Do not use one without the other. */
+      async getParts(chunks, writePart, expect, have, cs){
         let off = 0;
+        let skip = 0;
+        if(have > 0 && cs > 0 && have % cs === 0){
+          skip = Math.min(Math.floor(have / cs), (chunks || []).length);
+          off = skip * cs;
+        }
+        let i = 0;
         for(const sha of (chunks || [])){
+          if(i++ < skip) continue;                       // already on disk from a previous attempt
           const bytes = await _syncBlobBytes(sha);
           await writePart(off, bytes);
           off += bytes.length;

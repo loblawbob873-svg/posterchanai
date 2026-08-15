@@ -45,8 +45,8 @@ def _harness():
     Only the LENGTH arithmetic is under test, so encrypt/decrypt are identity and the 'upload'
     returns the sha it was handed. That keeps the thing being measured — bytes in vs bytes out —
     the only thing that can make it fail."""
-    exact = _slice("_exactPart", r"async _exactPart\(readPart, off, want\)\{.*?\n      \},")
-    get = _slice("getParts", r"async getParts\(chunks, writePart, expect\)\{.*?\n      \},")
+    exact = _slice("_exactPart", r"async _exactPart\([^)]*\)\{.*?\n      \},")
+    get = _slice("getParts", r"async getParts\([^)]*\)\{.*?\n      \},")
     return "const S = {\n" + exact + "\n" + get + "\n};\n"
 
 
@@ -154,6 +154,6 @@ def test_both_upload_paths_go_through_the_guard():
     """chunkShas verifies a file, putParts stores it. A guard on only one of them means the sha
     matches a file the uploader never actually read."""
     for fn in ("chunkShas", "putParts"):
-        body = _slice(fn, r"async %s\(readPart, size.*?\n      \}," % fn)
+        body = _slice(fn, r"async %s\([^)]*\)\{.*?\n      \}," % fn)
         assert "this._exactPart(readPart" in body, f"{fn} still accepts a partial read"
         assert "!plain.length" not in body, f"{fn} still carries the old empty-only check"

@@ -56,9 +56,9 @@ def _shipped():
     """The real chunker, lifted out of app.js's IIFE."""
     import re
     return "\n".join([
-        _slice("_exactPart", r"async _exactPart\(readPart, off, want\)\{.*?\n      \},"),
-        _slice("putParts", r"async putParts\(readPart, size, onProgress, chunkBytes\)\{.*?\n      \},"),
-        _slice("getParts", r"async getParts\(chunks, writePart, expect\)\{.*?\n      \},"),
+        _slice("_exactPart", r"async _exactPart\([^)]*\)\{.*?\n      \},"),
+        _slice("putParts", r"async putParts\([^)]*\)\{.*?\n      \},"),
+        _slice("getParts", r"async getParts\([^)]*\)\{.*?\n      \},"),
     ])
 
 
