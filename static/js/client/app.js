@@ -1157,7 +1157,19 @@
         this._inflightP++;
         job.run().then(job.res, job.rej).finally(()=>{ this._inflightP--; this._pump(); });
       }
-      while(this._inflight < this._cap && this._queue.length){
+      /* THE BULK LANE YIELDS TO THE USER. While anything interactive is outstanding — a post, a
+       * follow, a reaction — no NEW background decrypt is started; the ones already in flight
+       * finish and the restore resumes a moment later.
+       *
+       * Separate lanes stopped the composer QUEUEING behind a DM restore; they did not stop it
+       * COMPETING with one. Twelve decrypts in flight is twelve more publishes on the same socket
+       * and twelve more replies to parse on the same main thread, and a publish gives the relay 8
+       * seconds to answer before the post is filed as Pending. Reported the moment the restore got
+       * fast enough to saturate: "messages is great now, now sending posts goes into pending".
+       *
+       * A restore is background work by definition — it is catching up on things already said. */
+      const userWaiting = this._inflightP > 0 || this._queueP.length > 0;
+      while(!userWaiting && this._inflight < this._cap && this._queue.length){
         const job=this._queue.shift();
         this._inflight++;
         job.run().then(job.res, job.rej).finally(()=>{ this._inflight--; this._pump(); });
