@@ -105,6 +105,12 @@
     write: (id, rel, bytes, mtime) => P.write({ id, rel, b64: toB64(bytes), when: mtime || 0 }),
     move: (id, from, to) => P.move({ id, from, to }),
     trash: (id, rel, when) => P.trash({ id, rel, when: when || 0 }).then(r => r.to),
+    /* Download verification, and therefore also resume — syncrun skips BOTH when hashPart is
+     * absent, so without these three the phone wrote every download unchecked and re-fetched from
+     * byte zero after any drop, while the desktop did neither. */
+    hashPart: (id, rel) => P.hashPart({ id, rel }).then(r => r && r.sha),
+    discardPart: (id, rel) => P.discardPart({ id, rel }).then(() => true),
+    partSize: (id, rel) => P.partSize({ id, rel }).then(r => (r && r.size) || 0),
     emptyTrash: (id, days) => P.emptyTrash({ id, days: days === 0 ? 0 : (days || 30) }),
     power: () => P.power(),
     /* Background change DETECTION, not sync — see SyncCheckWorker. It cannot upload because every

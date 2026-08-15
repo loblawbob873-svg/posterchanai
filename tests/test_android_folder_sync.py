@@ -190,3 +190,21 @@ def test_empty_trash_can_actually_empty_it():
         "with days:0 the folder NAME is still consulted — a future-dated or unparseable trash "
         "directory then survives for ever, which is a permanent leak in the one place a user goes "
         "to reclaim space")
+
+
+def test_android_can_verify_a_download_like_the_desktop_does():
+    """syncrun skips the checksum check entirely when the adapter has no `hashPart` — a deliberate
+    escape hatch for older shells. Without these three the phone and tablet wrote every download
+    unverified while the laptop checked every one, and because resume is only permitted where the
+    result can be checked, Android also re-downloaded from byte zero after any drop."""
+    src = _plugin()
+    shim = _read(CLIENT, "fs-android.js")
+    for fn in ("hashPart", "discardPart", "partSize"):
+        assert "public void %s(PluginCall call)" % fn in src, f"the plugin has no {fn}"
+        assert "%s:" % fn in shim, f"the shim does not expose {fn}, so syncrun cannot see it"
+    # discardPart must DELETE, never trash: these are bytes we could not confirm, and putting them
+    # in the safety net makes the net less trustworthy.
+    i = src.index("public void discardPart(PluginCall call)")
+    body = src[i: src.index("@PluginMethod", i + 10)]
+    assert "deleteDoc(" in body and "trashDoc(" not in body, (
+        "an unverified part file is being put in .pc-trash")

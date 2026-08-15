@@ -100,6 +100,23 @@
     const base = (await store.base(key)) || {};
     const firstEver = !Object.keys(base).length;
 
+    /* COLLECT ABANDONED `.part` FILES BEFORE SCANNING, and this needs a caller or it is decoration.
+     *
+     * They are invisible to everything else: `ignored()` keeps them out of the scan (rightly — a
+     * half-written file must never be uploaded), so nothing ever looks at them again and every
+     * interrupted download leaves its bytes on the disk for good. On a folder of videos that is real
+     * money, and it is the same shape as the trash that could not be emptied.
+     *
+     * A DAY, not an hour: a part file this sweep is about to resume from must survive, and the only
+     * safe way to say "no download is coming back for this" is an age no sweep can still be inside.
+     * Best-effort — a folder that cannot be swept is not a folder that cannot be synced. */
+    if(typeof fs.sweepParts === 'function'){
+      try{
+        const gone = await fs.sweepParts(id, 24 * 3600000);
+        if(gone && gone.removed) report.partsCollected = gone;
+      }catch(_){}
+    }
+
     step('scanning');
     /* THE SCAN MUST NOT CAP WHAT THE UPLOADER CAN CHUNK. The adapter drops anything over `maxBytes`
      * during the walk — right when a big file cannot be sent at all, and wrong the moment it can,
@@ -268,7 +285,14 @@
        * duplicated. Everything below covered the reverse case and missed this one.
        *
        * Hash it now. It is one file, already about to be read and copied, and the answer is exact. */
-      if(R0.csum && !L0.csum && store.hashBytes && L0.size && (!o.maxBytes || L0.size <= o.maxBytes)){
+      /* BOUNDED BY _VERIFY_MAX, NOT by maxBytes. `fs.read` pulls the WHOLE file into the renderer —
+       * plaintext, then ciphertext or a hash pass over it — and maxBytes() now answers 8 GB for any
+       * adapter that can slice, because that is the ceiling on what CHUNKING can carry. Reading a
+       * 6 GB file whole to avoid one conflict copy is the renderer kill that chunking exists to
+       * prevent: Chromium takes the process, which in the desktop app is a black window. The chunked
+       * verify sitting between these two already uses _VERIFY_MAX and readPart; these are the same
+       * decision and get the same bound. */
+      if(R0.csum && !L0.csum && store.hashBytes && L0.size && L0.size <= _VERIFY_MAX){
         let settled = false;
         try{
           if(await store.hashBytes(await fs.read(id, c.path)) === R0.csum){
@@ -300,7 +324,14 @@
         }catch(_){ }
         if(settled){ await checkpoint(); continue; }
       }
-      if(!R0.csum && R0.sha && store.blobSha && L0.size && (!o.maxBytes || L0.size <= o.maxBytes)){
+      /* BOUNDED BY _VERIFY_MAX, NOT by maxBytes. `fs.read` pulls the WHOLE file into the renderer —
+       * plaintext, then ciphertext or a hash pass over it — and maxBytes() now answers 8 GB for any
+       * adapter that can slice, because that is the ceiling on what CHUNKING can carry. Reading a
+       * 6 GB file whole to avoid one conflict copy is the renderer kill that chunking exists to
+       * prevent: Chromium takes the process, which in the desktop app is a black window. The chunked
+       * verify sitting between these two already uses _VERIFY_MAX and readPart; these are the same
+       * decision and get the same bound. */
+      if(!R0.csum && R0.sha && store.blobSha && L0.size && L0.size <= _VERIFY_MAX){
         let settled = false;
         try{
           const bytes = await fs.read(id, c.path);

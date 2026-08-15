@@ -345,6 +345,67 @@ public class FolderSyncPlugin extends Plugin {
     });
   }
 
+  /* THE SAME THREE THE DESKTOP EXPOSES, so a download is verified HERE too.
+   *
+   * syncrun skips the checksum check entirely when the adapter has no hashPart — a deliberate escape
+   * hatch for older shells — so without these the phone and the tablet wrote every download
+   * unverified while the laptop checked every one. And since resume is only allowed where the result
+   * can be checked, Android also re-downloaded from byte zero after any drop.
+   */
+  @PluginMethod
+  public void hashPart(PluginCall call) {
+    final String id = call.getString("id", ""), rel = call.getString("rel", "");
+    getBridge().execute(() -> {
+      try {
+        Uri tree = Uri.parse(id);
+        ContentResolver cr = getContext().getContentResolver();
+        String dirId = resolve(tree, dirName(rel), false);
+        String partId = dirId == null ? null : childId(cr, tree, dirId, baseName(rel) + PART);
+        if (partId == null) { call.reject("nothing to hash for " + rel); return; }
+        String sha = sha256(cr, DocumentsContract.buildDocumentUriUsingTree(tree, partId));
+        if (sha == null) { call.reject("could not read the part file for " + rel); return; }
+        JSObject ret = new JSObject();
+        ret.put("sha", sha);
+        call.resolve(ret);
+      } catch (Exception e) { call.reject("hashPart failed: " + e.getMessage()); }
+    });
+  }
+
+  @PluginMethod
+  public void discardPart(PluginCall call) {
+    final String id = call.getString("id", ""), rel = call.getString("rel", "");
+    getBridge().execute(() -> {
+      try {
+        Uri tree = Uri.parse(id);
+        ContentResolver cr = getContext().getContentResolver();
+        String dirId = resolve(tree, dirName(rel), false);
+        String partId = dirId == null ? null : childId(cr, tree, dirId, baseName(rel) + PART);
+        // Deleted, never trashed: this is not somebody's file, it is bytes we could not confirm, and
+        // putting those in the safety net makes the net less trustworthy.
+        if (partId != null) deleteDoc(cr, tree, partId);
+        call.resolve(new JSObject());
+      } catch (Exception e) { call.reject("discardPart failed: " + e.getMessage()); }
+    });
+  }
+
+  /** How much of an interrupted download is already on disk. 0 when there is nothing to resume. */
+  @PluginMethod
+  public void partSize(PluginCall call) {
+    final String id = call.getString("id", ""), rel = call.getString("rel", "");
+    getBridge().execute(() -> {
+      try {
+        Uri tree = Uri.parse(id);
+        ContentResolver cr = getContext().getContentResolver();
+        String dirId = resolve(tree, dirName(rel), false);
+        String partId = dirId == null ? null : childId(cr, tree, dirId, baseName(rel) + PART);
+        long[] st = partId == null ? null : statById(cr, tree, partId);
+        JSObject ret = new JSObject();
+        ret.put("size", st == null ? 0 : st[0]);
+        call.resolve(ret);
+      } catch (Exception e) { call.reject("partSize failed: " + e.getMessage()); }
+    });
+  }
+
   /** Put the finished part file in place — the tail of write(), reused so both paths land the same. */
   @PluginMethod
   public void writeCommit(PluginCall call) {

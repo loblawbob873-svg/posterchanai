@@ -276,3 +276,62 @@ class TestInFlightFiles(TestFsBridge):
             self.skipTest("the write did not land inside the hash window on this run")
         self.assertTrue(any(s["path"] == "growing.bin" for s in v["skipped"]),
                         "a file that changed mid-hash must be skipped, not uploaded")
+
+
+class TestPartFiles(TestFsBridge):
+    """Interrupted downloads: the `.part` file is the whole safety story, and it was also a leak."""
+
+    def test_part_size_reports_what_is_there_to_resume(self):
+        out = self.run_js("""
+            await attempt('empty', () => B.partSize('r1', 'v.mp4'));
+            await attempt('w', () => B.writePart('r1', 'v.mp4', 0, new Uint8Array(4096)));
+            await attempt('some', () => B.partSize('r1', 'v.mp4'));
+        """)
+        self.assertEqual(out["empty"]["value"], 0, "a missing part file must answer 0, not throw")
+        self.assertEqual(out["some"]["value"], 4096)
+
+    def test_hash_part_hashes_the_part_and_not_the_target(self):
+        """It has to run BEFORE the commit — after writeCommit the new file has already been renamed
+        over the old one, so a check there is a report, not a defence."""
+        import hashlib
+        with open(os.path.join(self.root, "v.mp4"), "wb") as fh:
+            fh.write(b"the OLD file")
+        out = self.run_js("""
+            await attempt('w', () => B.writePart('r1', 'v.mp4', 0, new Uint8Array([1,2,3,4])));
+            await attempt('h', () => B.hashPart('r1', 'v.mp4'));
+        """)
+        self.assertEqual(out["h"]["value"], hashlib.sha256(bytes([1, 2, 3, 4])).hexdigest(),
+                         "hashPart hashed the target rather than the part file")
+
+    def test_discard_part_removes_it_and_leaves_the_real_file_alone(self):
+        with open(os.path.join(self.root, "v.mp4"), "wb") as fh:
+            fh.write(b"the good copy")
+        out = self.run_js("""
+            await attempt('w', () => B.writePart('r1', 'v.mp4', 0, new Uint8Array([9,9])));
+            await attempt('d', () => B.discardPart('r1', 'v.mp4'));
+        """)
+        self.assertTrue(out["d"]["ok"], out["d"])
+        self.assertFalse(os.path.exists(os.path.join(self.root, "v.mp4.pcpart")))
+        with open(os.path.join(self.root, "v.mp4"), "rb") as fh:
+            self.assertEqual(fh.read(), b"the good copy", "discarding a part touched the real file")
+
+    def test_stale_part_files_are_collected_but_fresh_ones_are_not(self):
+        """They are invisible to everything — `ignored()` keeps them out of the scan, rightly — so
+        nothing ever looked at them again and every interrupted download left its bytes on the disk
+        for good. The age bound is what makes it safe: a part file this sweep is about to resume from
+        must survive."""
+        import time
+        old = os.path.join(self.root, "old.mp4.pcpart")
+        with open(old, "wb") as fh:
+            fh.write(b"x" * 500)
+        long_ago = time.time() - 5 * 86400
+        os.utime(old, (long_ago, long_ago))
+        with open(os.path.join(self.root, "fresh.mp4.pcpart"), "wb") as fh:
+            fh.write(b"y" * 10)
+
+        out = self.run_js("await attempt('s', () => B.sweepParts('r1', 24 * 3600000));")
+        self.assertEqual(out["s"]["value"]["removed"], 1, out["s"])
+        self.assertEqual(out["s"]["value"]["bytes"], 500)
+        self.assertFalse(os.path.exists(old), "the abandoned part file survived")
+        self.assertTrue(os.path.exists(os.path.join(self.root, "fresh.mp4.pcpart")),
+                        "a part file a sweep may still be resuming from was collected")
