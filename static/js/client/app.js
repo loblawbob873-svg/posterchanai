@@ -1944,53 +1944,26 @@
   }
   async function onQrScanned(uri){
     try{
-      /* REPLACE, OR KEEP BOTH — asked, not assumed.
+      /* EVERY PAIRING IS ITS OWN DEVICE, AND THE APP DOES NOT GET A VOTE.
        *
-       * `beginNostrConnect` mints a FRESH app key for every attempt, which is right (nothing stale
-       * can be replayed into a pairing) and means re-pairing the same laptop makes a SECOND entry
-       * rather than updating the first. Do that a few times and the list is a wall of identical
-       * names with no way to tell which one is the machine in front of you.
+       * There used to be a prompt here: a new pairing whose `name` matched an existing one asked
+       * whether to replace the stalest. It was written for THIS app's own clients, which all
+       * announce themselves as "PosterChan" — but so does every other app announce one fixed name,
+       * and primal.net announces "PrimalWeb" for every device somebody signs in. So the name is not
+       * an identity, it is a PRODUCT, and matching on it made the app treat four different machines
+       * as four attempts at the same one. Reported, in order: "i signed in 4 devices but only see
+       * 2?", "i choose keep them all and nothing goes on", "i could only sign in 1 device", "it is
+       * still thinking all posterchan devices are the same". Every one of those is this block.
        *
-       * Replacing by name alone would be wrong in the other direction: every PosterChan client
-       * announces itself as "PosterChan", so two genuinely different devices collide and pairing the
-       * second would silently sign the first out. Only the person holding both knows which it is, so
-       * they are the one asked — and only when there is actually a collision. */
-      const name = _nostrconnectName(uri);
-      const clash = Nip46Signer.list().filter(x => (x.name||'') === name);
-      if(clash.length){
-        /* REPLACE THE STALEST ONE, NEVER ALL OF THEM.
-         *
-         * The first version revoked every session sharing the name, and since every PosterChan
-         * client announces itself as "PosterChan" that meant pairing a tablet signed the DESKTOP
-         * out — reported exactly that way. "Replace" has to mean the entry this new pairing makes
-         * redundant, which is the one nobody has used for the longest: re-pairing a laptop leaves
-         * its old row idle, while the machine you are actively signing on has a recent timestamp
-         * and must survive.
-         *
-         * The prompt says WHICH one, because "replace" over a list of identical names is otherwise
-         * a guess the user is being asked to authorise blind. */
-        const stalest = clash.slice().sort(
-          (a,b) => ((a.last||a.created||0) - (b.last||b.created||0)))[0];
-        const when = stalest.last ? 'last used ' + timeAgo(stalest.last) + ' ago'
-                                  : 'never used since it was added';
-        /* KEEPING THEM IS THE DEFAULT, AND THAT IS A CORRECTION.
-         *
-         * "i signed in 4 devices but only see 2?" — this prompt is why. It was written for THIS
-         * app's own clients, which all announce themselves as "PosterChan", so replacing the stalest
-         * was usually right. Every primal.net login announces "PrimalWeb", so four genuinely
-         * different devices collide on the name every time, and the DESTRUCTIVE answer was the
-         * primary button — the one Enter picks, and the one somebody taps four times in a row while
-         * setting up four devices. Nothing about a name can tell a stale pairing from a new laptop,
-         * so the safe answer has to be the default and the deletion has to be the deliberate one.
-         *
-         * uiConfirm escapes the message itself; enc() here would double-escape the name. */
-        const go = await uiConfirm(
-          'You already have ' + clash.length + ' “' + name + '” ' +
-          (clash.length === 1 ? 'login' : 'logins') + '. Keep them all and add this one, or replace '
-          + 'the stalest (' + when + ')?',
-          { ok:'Keep them all', cancel:'Replace the stalest' });
-        if(!go) Nip46Signer.revoke(stalest.pk);
-      }
+       * Inverting the buttons (keep = default) only made the destruction less likely, which is the
+       * wrong fix for a question that should never have been asked: nothing here KNOWS whether two
+       * pairings are one laptop paired twice or two laptops, and the person answering does not know
+       * either, because both rows say the same word. Amber does not ask; it lists the connection and
+       * lets you revoke the one you mean.
+       *
+       * So every pairing is kept. Telling them apart is the LIST's job, and it now says when each
+       * was added and marks the ones never used — which is what somebody actually needs in order to
+       * revoke the right row. */
       const nm=await Nip46Signer.start(uri);
       toast('✅ “'+nm+'” is now logged in — your key stayed on this device');
     }catch(e){
@@ -1998,16 +1971,6 @@
       // start() already removes the half-made session on its own way out.
       toast('QR sign-in failed: '+((e&&e.message)||e));
     }
-  }
-
-  /* The app's own name out of a nostrconnect link, for the "replace or keep both" question. Parsed
-   * rather than taken from `start()`'s return value, because the question has to be asked BEFORE the
-   * pairing is made — afterwards there are two and the answer is a deletion. */
-  function _nostrconnectName(uri){
-    try{
-      const m=String(uri||'').trim().match(/^nostrconnect:\/\/[0-9a-f]{64}\??(.*)$/i);
-      return (new URLSearchParams((m&&m[1])||'')).get('name') || 'the app';
-    }catch(_){ return 'the app'; }
   }
 
   // ---------- boot ----------

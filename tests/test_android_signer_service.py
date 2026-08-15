@@ -598,6 +598,38 @@ def test_the_signer_never_does_its_work_on_the_ui_thread():
     )
 
 
+def test_a_new_pairing_never_revokes_an_existing_one_by_name():
+    """A name is a PRODUCT, not an identity, and this app kept mistaking one for the other.
+
+    Every PosterChan client announces itself as "PosterChan"; every primal.net login announces
+    "PrimalWeb". Matching a new pairing against existing ones BY NAME therefore treats four different
+    machines as four attempts at the same one. It was reported four ways in a row — "i signed in 4
+    devices but only see 2?", "i choose keep them all and nothing goes on", "i could only sign in 1
+    device", "it is still thinking all posterchan devices are the same" — and every one of them was
+    that match.
+
+    Inverting the prompt's buttons so KEEPING was the default only made the destruction less likely.
+    The question itself is unanswerable: nothing in the client knows whether two pairings are one
+    laptop paired twice or two laptops, and neither does the person being asked, because both rows
+    say the same word. Amber does not ask. Telling them apart is the LIST's job — which is why the
+    rows carry "added …" and mark the never-used ones.
+
+    Measured after removing it: four same-named devices pair, all four get their ACK, all four rows
+    persist, and no extra dialog appears.
+    """
+    js = _read(APP_JS)
+    body = js[js.index("async function onQrScanned(uri)"):]
+    body = body[:body.index("await Nip46Signer.start(uri)")]
+    assert "revoke(" not in body, (
+        "pairing a device revokes another one again — a new pairing must never delete an existing "
+        "session, whatever the two are called"
+    )
+    assert "already have" not in body, "the name-clash prompt is back"
+    assert not re.search(r"\.name\s*\|\|\s*''\s*\)\s*===\s*name", body), (
+        "sessions are being matched by name again"
+    )
+
+
 def test_the_battery_check_runs_at_boot_and_re_asks_on_every_new_build():
     """Android sets apps to "Optimized" by itself and OEMs re-apply it after an update.
 
