@@ -3092,6 +3092,7 @@
     try{
       if(!GUEST && ME && ME.mode === 'local') Nip46Signer.resume().catch(()=>{});
     }catch(_){}
+    try{ _signerBatteryCheck(); }catch(_){}
     /* Opened by "🗔 Open in a window": the same client, drawn without the sidebar, nav and rightbar
      * it has no room for. A class rather than a separate page, because the whole point is that this
      * IS the ordinary stream view — nothing here is a second implementation to fall behind. */
@@ -24635,6 +24636,48 @@
       }catch(e){ toast('could not turn it on: ' + ((e && (e.message||e.errorMessage)) || 'refused')); }
       _renderNip55();
     };
+  }
+
+  /* THE CHECK EVERY MESSAGING APP HAS, AND FOR THE SAME REASON THEY ALL HAVE IT.
+   *
+   * Android sets apps to "Optimized" ON ITS OWN, and OEMs re-apply it after an update. An optimized
+   * app has its NETWORK deferred by Doze while the screen is off, so a signing request sits on the
+   * relay until a maintenance window: the other device shows "waiting for your signer…", the note
+   * stays in drafts, and nothing anywhere logs a fault — the service is alive and subscribed, the
+   * packets simply do not move. Reported exactly that way, and the phone had done it by itself.
+   *
+   * The settings panel already said so, but only to somebody who went looking, which is nobody
+   * until it is already broken. So it is asked once, up front, on the one screen a person cannot
+   * miss — and only when it MATTERS:
+   *
+   *   * the signer is actually wanted. Somebody who has never paired an app is owed no dialog.
+   *   * the exemption is genuinely missing. `batteryExempt` is what the phone answered, not what we
+   *     asked for; `!== false` covers "already exempt" and "too old for this to exist".
+   *
+   * KEYED ON THE BUILD NUMBER, which is the whole trick. Remembering "asked once, ever" would go
+   * quiet for good the first time somebody says not now, and remembering a date would nag on a
+   * schedule that has nothing to do with the problem. An APK UPDATE is precisely when the phone
+   * re-applies the restriction, so re-asking exactly then is both the useful moment and the rare
+   * one. Declining is remembered for that build and never repeated inside it.
+   */
+  async function _signerBatteryCheck(){
+    const P = _capPlugin('Signer', 'status');
+    if(!P) return;                                     // browser or desktop: no Doze to fight
+    let s = null;
+    try{ s = await P.status(); }catch(_){ return; }
+    if(!s || !s.serviceWanted) return;                 // signer off: nothing to protect
+    if(s.batteryExempt !== false) return;              // already allowed, or too old to matter
+    const build = String((typeof window!=='undefined' && window.__PC_APP_BUILD__) || '0');
+    try{ if(localStorage.getItem('pc_signer_batt_asked') === build) return; }catch(_){}
+    const go = await uiConfirm(
+      'Android is set to optimise PosterChan’s battery, which stops the signer receiving '
+      + 'requests while the screen is off — your other devices will sit on “waiting for your '
+      + 'signer”. Allow it to run in the background? It holds one connection and pings every four '
+      + 'minutes; it takes no wakelock.',
+      { ok:'Allow it to run', cancel:'Not now' });
+    try{ localStorage.setItem('pc_signer_batt_asked', build); }catch(_){}
+    if(go){ try{ await P.openBatterySettings(); }catch(_){}
+            toast('choose “Unrestricted” (or “Don’t optimise”) for PosterChan'); }
   }
 
   async function _signerBackgroundHint(box){

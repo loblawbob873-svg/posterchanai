@@ -598,6 +598,36 @@ def test_the_signer_never_does_its_work_on_the_ui_thread():
     )
 
 
+def test_the_battery_check_runs_at_boot_and_re_asks_on_every_new_build():
+    """Android sets apps to "Optimized" by itself and OEMs re-apply it after an update.
+
+    An optimized app has its NETWORK deferred by Doze while the screen is off, so a request sits on
+    the relay until a maintenance window: the other device shows "waiting for your signer…", the note
+    stays in drafts, and nothing logs a fault because the service is alive and subscribed — the
+    packets simply do not move. The settings panel said so, but only to somebody already looking.
+
+    The two things that make this check useless if they rot: it stops being CALLED at boot, or its
+    memory stops being keyed on the BUILD. "Asked once, ever" goes quiet permanently the first time
+    somebody says not now — and an app update is exactly the moment the restriction comes back.
+    """
+    js = _read(APP_JS)
+    assert "_signerBatteryCheck()" in js, "the battery check is never called"
+    body = js[js.index("async function _signerBatteryCheck()"):]
+    body = body[:body.index("async function _signerBackgroundHint")]
+    assert "serviceWanted" in body, (
+        "the check is not gated on the signer being wanted — it would nag somebody who has never "
+        "paired an app"
+    )
+    assert "batteryExempt !== false" in body, (
+        "the check does not read what the PHONE answered; it must not fire when already exempt or "
+        "on a version too old for the exemption to exist"
+    )
+    assert "__PC_APP_BUILD__" in body and "pc_signer_batt_asked" in body, (
+        "the check no longer re-asks per build — declining once would silence it for ever, through "
+        "every future update that re-applies the restriction"
+    )
+
+
 def test_the_work_thread_is_not_in_the_background_cgroup():
     """Getting the crypto off the UI thread was right; taking it out of the foreground scheduler
     with it was not, and it is the same one-word mistake either way.
