@@ -72,6 +72,64 @@ import java.util.List;
 @CapacitorPlugin(name = "FolderSync")
 public class FolderSyncPlugin extends Plugin {
 
+  /**
+   * THE TICK THAT MAKES A BACKGROUNDED SWEEP POSSIBLE AT ALL.
+   *
+   * With the screen off, the client's only automatic trigger was a JS `setInterval` — and Android
+   * throttles timers in a hidden WebView into uselessness, so "Stay connected" kept the process
+   * alive and nothing ever asked it to sync. Reported exactly that way: syncing stops every time the
+   * screen goes off, with the switch already on.
+   *
+   * So the CLOCK moves native, the same division of labour the music controls use: the service owns
+   * the timer, JS performs the work. This emits an event and nothing else — it holds no key, opens
+   * no socket and reads no file (see SyncCheckWorker for why an unattended uploader is impossible);
+   * the WebView, which does hold the key, is what sweeps.
+   *
+   * IT DOES NOT DECIDE WHETHER TO SYNC, and that is why it can be this simple. `shouldSync` still
+   * runs on the other side and still declines on battery, on a metered link, or within the minimum
+   * interval — which is what the "only when plugged in" and "Wi-Fi only" switches already mean. A
+   * tick that arrives when the constraints are not met costs one policy check and nothing else.
+   *
+   * A dead or absent WebView is not an error: `INSTANCE` is null, the tick is dropped, and the
+   * WorkManager job keeps doing the one thing it can do unattended — notice and notify.
+   */
+  private static volatile FolderSyncPlugin INSTANCE = null;
+
+  @Override
+  public void load() {
+    INSTANCE = this;
+  }
+
+  @Override
+  protected void handleOnDestroy() {
+    // The page is going. Clearing this is what stops a tick being delivered into a dead bridge.
+    if (INSTANCE == this) INSTANCE = null;
+    super.handleOnDestroy();
+  }
+
+  /**
+   * @return true when a live BRIDGE existed to emit into — NOT that anything heard it.
+   *
+   * Capacitor's `notifyListeners` finds no registered listeners, logs "No listeners found", and
+   * returns normally, so this cannot tell a subscribed page from an unsubscribed one. That window is
+   * real rather than theoretical: after a renderer kill the page is back long before `startAll()`
+   * runs, so there are seconds in which the bridge is live and `fs.onTick` has not been called yet.
+   * Nothing today reads this — the caller re-arms its clock either way — and it is written down
+   * because the moment something logs or counts on it, the honest answer is the one above.
+   */
+  public static boolean tick(String why) {
+    FolderSyncPlugin p = INSTANCE;
+    if (p == null) return false;
+    try {
+      JSObject data = new JSObject();
+      data.put("why", why == null ? "native" : why);
+      p.notifyListeners("folderSyncTick", data);
+      return true;
+    } catch (Throwable t) {
+      return false;
+    }
+  }
+
   private static final String PART = ".pcpart";
   private static final String TRASH = ".pc-trash";
   private static final String[] COLS = {

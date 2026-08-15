@@ -124,6 +124,29 @@
     watch: () => Promise.resolve(false),
     unwatch: () => Promise.resolve(false),
     onChanged: () => {},
+    /* THE CLOCK, WHICH ON THIS PLATFORM CANNOT LIVE IN JAVASCRIPT.
+     *
+     * There is no watcher above and there cannot be one, so with the screen off the only automatic
+     * trigger left was `setInterval` — and Android throttles timers in a hidden WebView, so a phone
+     * with "Stay connected" on kept the process alive and was never asked to sync. StayAwakeService
+     * owns the timer now and this is where it arrives; sync.js turns it into the same nudge every
+     * other trigger produces, so the battery/Wi-Fi policy still decides whether anything runs.
+     *
+     * Absent on an APK older than that plugin, which is why sync.js checks for it — there the
+     * behaviour is exactly what it is today, not an error. */
+     * `addListener` is ASYNC — it answers a promise — so a `try/catch` around it sees a failed
+     * subscription only when the call throws synchronously, which is not how it fails. The catch is
+     * on the promise too, or a rejection lands as an unhandled rejection in the WebView and this
+     * still reports success. What is returned is "this bridge has the method", which is the question
+     * sync.js actually asks; a listener that fails to attach is silence either way. */
+    onTick: (fn) => {
+      try{
+        const p = P.addListener('folderSyncTick', () => { try{ fn(); }catch(_){} });
+        if(p && typeof p.catch === 'function') p.catch(() => {});
+        return true;
+      }
+      catch(_){ return false; }
+    },
   };
   }
 

@@ -53,6 +53,10 @@ def test_every_method_the_shim_calls_exists():
     plugin = _read(JAVA, "sync", "FolderSyncPlugin.java")
     shim = _read(CLIENT, "fs-android.js")
     called = set(re.findall(r"\bP\.(\w+)\(", shim))
+    # Capacitor puts these on EVERY plugin proxy itself, so they are not @PluginMethods and never
+    # will be. The event they carry is checked properly by test_the_native_tick_is_wired_end_to_end,
+    # which matches the emitted name against the subscribed one — exempting them here loses nothing.
+    called -= {"addListener", "removeAllListeners", "removeListener"}
     declared = set(re.findall(r"public void (\w+)\(PluginCall", plugin))
     missing = sorted(called - declared)
     assert not missing, f"the shim calls {missing}, which the plugin does not implement"
@@ -208,3 +212,90 @@ def test_android_can_verify_a_download_like_the_desktop_does():
     body = src[i: src.index("@PluginMethod", i + 10)]
     assert "deleteDoc(" in body and "trashDoc(" not in body, (
         "an unverified part file is being put in .pc-trash")
+
+
+def test_the_native_tick_is_wired_end_to_end():
+    """THE CLOCK THAT RUNS WITH THE SCREEN OFF, guarded as a chain because it fails silently at every
+    link and the failure looks identical each time: nothing syncs, nothing logs, no error anywhere.
+
+    Reported as "syncing stops every time the screen goes off" with "Stay connected" already on.
+    Android has no filesystem watcher here (SAF offers none worth having), so the client's only
+    automatic trigger was a JS setInterval — and Android throttles timers in a hidden WebView. The
+    service was keeping the process alive and nothing was ever asking it to sync.
+
+    Four links, and a break in any one of them is the same silence:
+      service ticks -> plugin emits -> shim subscribes -> sync.js nudges.
+    """
+    svc = _read(JAVA, "push", "StayAwakeService.java")
+    plugin = _read(JAVA, "sync", "FolderSyncPlugin.java")
+    shim = _read(CLIENT, "fs-android.js")
+    sync = _read(CLIENT, "sync.js")
+
+    assert "FolderSyncPlugin.tick(" in svc, (
+        "StayAwakeService never ticks — it keeps the process alive and nothing asks it to sync, "
+        "which is the screen-off bug exactly"
+    )
+    assert "setAndAllowWhileIdle" in svc, (
+        "the tick is not an alarm that fires in Doze. Handler.postDelayed is scheduled on "
+        "uptimeMillis(), which STOPS ADVANCING in deep sleep, and a foreground service keeps the "
+        "process resident without keeping the CPU awake — so a Handler fires only when something "
+        "else happens to wake the phone, which is exactly the screen-off state this exists for. It "
+        "would look like a fix and behave like the bug"
+    )
+    # USE, not the word. The javadoc above the alarm explains at length why postDelayed is wrong
+    # here, so matching the raw file makes this test fail on its own explanation — the same trap
+    # test_documentfile_is_not_used already had to step around.
+    svc_code = re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", svc, flags=re.S))
+    assert "postDelayed" not in svc_code, (
+        "a Handler is being used to schedule something in this service again. Nothing here may use "
+        "one for a delay that has to survive the screen going off — see above"
+    )
+    assert "ELAPSED_REALTIME_WAKEUP" in svc, (
+        "a non-WAKEUP alarm queues until something else wakes the phone, which is the Handler's "
+        "failure wearing a different name"
+    )
+    assert "FLAG_IMMUTABLE" in svc, "Android 12+ throws when a PendingIntent is built without it"
+    assert "am.cancel(" in svc, (
+        "the alarm is not cancelled in onDestroy — an alarm OUTLIVES the process, so it would "
+        "restart the service from a switch the user turned off"
+    )
+
+    m_ms = re.search(r"SYNC_TICK_MS\s*=\s*(\d+)\s*\*\s*60", svc)
+    assert m_ms, "the tick period is not stated in minutes"
+    minutes = int(m_ms.group(1))
+    floor = int(re.search(r"minIntervalMs:\s*(\d+)\s*\*\s*60", _read(CLIENT, "foldersync.js")).group(1))
+    assert minutes > floor, (
+        "the tick period (%d min) is not above the client's minIntervalMs (%d min). Nothing is ever "
+        "dirty on Android — there is no watcher — so shouldSync refuses any tick inside that floor, "
+        "and a shorter period simply aliases: a 10-minute alarm gives a 20-minute effective period "
+        "(sweep at 0, refused at 10, runs at 20)" % (minutes, floor)
+    )
+    m = re.search(r'notifyListeners\(\s*"([^"]+)"', plugin)
+    assert m, "FolderSyncPlugin emits no event, so the tick reaches no WebView"
+    event = m.group(1)
+    assert event in shim, (
+        "the plugin emits %r and the shim listens for something else — the two halves are wired to "
+        "different names, which is a tick that is sent and never received" % event
+    )
+    assert "onTick" in shim, "fs-android.js exposes no onTick for sync.js to subscribe to"
+    assert "fs.onTick" in sync, (
+        "sync.js never subscribes to the native tick, so the service ticks into nothing"
+    )
+    assert re.search(r"fs\.onTick\(\s*\(\)\s*=>\s*nudge\([^)]*true", sync), (
+        "the tick must nudge with force. Without it nudge() re-checks `_idle()`, which is "
+        "document.hidden on a phone with the screen off — so one failed stayConnected read swallows "
+        "every tick while the service dutifully keeps sending them"
+    )
+
+
+def test_the_tick_holds_no_key_and_opens_no_socket():
+    """The reason background sync could not simply be written in Java: every network step of a sweep
+    is signed with the user's nostr key, which with Amber/NIP-46 is not on the device at all. The
+    tick sidesteps that by doing none of it — it emits an event and the WebView, which does hold the
+    key, performs the sweep. If this ever grows a socket or a key, that decision has been reversed by
+    accident."""
+    plugin = _read(JAVA, "sync", "FolderSyncPlugin.java")
+    body = plugin[plugin.index("public static boolean tick("):]
+    body = body[:body.index("\n  }")]
+    for forbidden in ("HttpURLConnection", "OkHttp", "Socket", "nsec", "PrivateKey"):
+        assert forbidden not in body, "tick() grew a %s — it must only emit" % forbidden

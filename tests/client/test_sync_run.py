@@ -439,6 +439,48 @@ class TestSyncRun(unittest.TestCase):
         self.assertIsNone(out["refused"], "an everyday 3-file delete must not ask")
         self.assertEqual(out["left"], 40)
 
+    def test_a_real_partial_delete_reaches_the_other_device(self):
+        """THE SHAPE THAT WAS REPORTED, with the numbers off the live server: a Documents folder of
+        15,814 files, 3,930 of them deleted on another device. Measured on the relay as the manifest
+        going 15,814 -> 11,884 live entries.
+
+        It is here because the mass-delete guard added above must NOT touch it. That guard refuses a
+        sweep that deletes more than it keeps, and a partial delete — however large in absolute terms
+        — keeps far more than it removes. A guard that fired here would silently strand every delete
+        on every other device, which is the same class of silent failure it was written to prevent,
+        pointing the other way. So the two live in one file on purpose: this case and
+        test_a_sweep_that_would_empty_the_folder_trashes_nothing must both hold, and any change to
+        the threshold has to keep them both.
+        """
+        out = self.run_js("""
+          (async () => {
+            const N = 15814, GONE = 3930;
+            const files = {}, manifest = {}, base = {};
+            for(let i=0;i<N;i++){
+              const p = 'Documents/f'+i+'.txt';
+              files[p] = { sha:'C'+i, size:10, mtime:1000 };
+              base[p]  = { csum:'C'+i, size:10, mtime:1000 };
+              manifest[p] = i < GONE ? { deletedAt: 9000 }
+                                     : { sha:'S'+i, csum:'C'+i, size:10, mtime:1000 };
+            }
+            const fs = makeFs(files);
+            const store = makeStore(manifest, base);
+            const rep = await R.sweep(fs, store, {id:'r1', key:'Documents', device:'laptop', now:99000});
+            process.stdout.write(JSON.stringify({
+              trashed: rep.trashed.length, refused: rep.refusedTrash || null,
+              left: Object.keys(files).length, uploaded: rep.uploaded.length,
+            }));
+          })();
+        """)
+        self.assertIsNone(out["refused"],
+                          "the mass-delete guard fired on an ordinary partial delete — every "
+                          "deletion would then stall on every other device")
+        self.assertEqual(out["trashed"], 3930)
+        self.assertEqual(out["left"], 11884)
+        self.assertEqual(out["uploaded"], 0,
+                         "a device applying someone else's deletions must not republish them")
+
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1434,11 +1434,37 @@
   }
   const _idle = () => document.hidden && !window.pcShell && !_keptAlive;
   let _nudgeT = null;
-  function nudge(why){
+  /* `force` SKIPS THE IDLE TEST, and only the native tick may pass it.
+   *
+   * `_idle()` answers "is anybody looking at this app", which is the right question for a trigger
+   * that fires whether or not the user asked for background work — a heartbeat in a tab nobody is
+   * looking at should spend nothing. It is the WRONG question for a signal that can only be produced
+   * by a foreground service the user explicitly switched on: the tick's existence IS the answer, and
+   * re-deriving it from `_keptAlive` means one failed `stayConnected()` read (an older APK, a plugin
+   * call that threw) silently swallows every tick while the service dutifully keeps sending them.
+   *
+   * It skips the LOOKING test, not the policy: `swept` still runs `shouldSync`, so charging, metered
+   * and the minimum interval all still decide. */
+  /* …AND IT MUST SURVIVE THE COALESCING, which is where it was being lost.
+   *
+   * There is ONE timer, and a later call clears it and installs a closure carrying its OWN `force`.
+   * So an unforced nudge arriving inside the 1500ms window REPLACED a forced one and the flag was
+   * gone — not a rare race but a correlated one: the phone wakes, the pending tick fires forced,
+   * and the reconnecting radio raises `online` (or Capacitor's resume) milliseconds later. 1500ms
+   * on, `_idle()` is true — screen off, `_keptAlive` false because the stayConnected read threw,
+   * exactly the case `force` exists for — and the sweep is skipped for another whole tick period.
+   *
+   * The flag therefore belongs to the PENDING nudge, not to the call that scheduled it: once
+   * anything has asked to bypass the idle test, coalescing more triggers into it cannot un-ask. */
+  let _nudgeForce = false;
+  function nudge(why, force){
     clearTimeout(_nudgeT);
+    _nudgeForce = _nudgeForce || !!force;
     // Coalesced: resume, visible and online all fire together when a laptop lid opens.
     _nudgeT = setTimeout(() => {
-      if(_idle()) return;
+      const forced = _nudgeForce;
+      _nudgeForce = false;
+      if(!forced && _idle()) return;
       folders().forEach(f => { swept(f, {}); });
     }, 1500);
   }
@@ -1496,6 +1522,23 @@
     }catch(_){}
     _readKeptAlive();
     setInterval(() => { if(!_idle()) nudge('heartbeat'); }, HEARTBEAT_MS);
+    /* A NATIVE CLOCK, on the one platform where a JS one does not run.
+     *
+     * The interval above is the only automatic trigger Android has — there is no watcher, SAF offers
+     * no tree notification worth having — and Android throttles timers in a hidden WebView, so with
+     * the screen off it effectively never fires. "Stay connected" kept the process alive and nothing
+     * ever asked it to sync: reported as syncing stopping every time the screen goes off, with the
+     * switch already on.
+     *
+     * StayAwakeService's Handler is not throttled (it is the service's thread, not the renderer's),
+     * so the clock is native and this is the same nudge everything else raises — `shouldSync` still
+     * decides, which is what "only when plugged in" and "Wi-Fi only" already mean. Deliberately NOT
+     * a manual sweep: nobody pressed anything.
+     *
+     * FORCED past `_idle()` — see nudge(). That test asks whether anyone is looking, and this tick
+     * can only be produced by a foreground service the user switched on precisely so that work
+     * happens while nobody is. */
+    try{ if(fs.onTick) fs.onTick(() => nudge('native', true)); }catch(_){}
     // Re-assert the stored preference on every start. Scheduling is idempotent on the Android side
     // (ExistingPeriodicWorkPolicy.KEEP), so this cannot reset the period and starve a job that has
     // been waiting for a charger.

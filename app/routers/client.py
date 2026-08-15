@@ -4186,6 +4186,12 @@ async def sync_manifest(data: SyncManifestReq, db: Session = Depends(get_db)):
             # {} and proposes deleting everything. 503, never {}.
             logger.warning("[client] sync-manifest: unreadable %s: %s", key, e)
             return JSONResponse({"ok": False, "error": "manifest unavailable"}, status_code=503)
+        # WHICH FOLDER, AND HOW MANY LIVE ENTRIES WENT BACK. The access log says only that a POST
+        # happened, so "a device deleted 3,930 files and another device never applied them" is
+        # indistinguishable here from "that device never asked" — which is exactly the question that
+        # could not be answered while it was being asked. No path, no filename: `n` is the count the
+        # server already sees for the collapse guard, and nothing here reads anything else.
+        logger.info("[client] sync-manifest: read %s -> n=%s", key, _files_index_count(doc or {}))
         return JSONResponse({"ok": True, "manifest": doc or {}})
 
     try:
@@ -4231,6 +4237,11 @@ async def sync_manifest(data: SyncManifestReq, db: Session = Depends(get_db)):
     elif isinstance(doc, dict) and not new_sha:
         doc.pop("prevSha", None)          # back to an inline manifest: the chain ends here
 
+    # The other half of the same question: a write says a device SWEPT, and the before/after counts
+    # say what it concluded. A read with no write behind it is a device that looked and did nothing.
+    logger.info("[client] sync-manifest: write %s n=%s -> %s%s", key,
+                _files_index_count(prev), _files_index_count(data.manifest),
+                " (forced)" if data.force else "")
     if not await store.put_doc(port, sk, key, doc):
         logger.warning("[client] sync-manifest: relay REJECTED the write for %s %s", pk[:12], key)
         if new_sha and new_sha not in (live_sha, prev.get("prevSha")):

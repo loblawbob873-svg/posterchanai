@@ -780,9 +780,29 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   was never written and every later sweep re-proposed the same delete and was refused again. The 409
   now carries `old`/`new`, and the sweep passes `removed`: when it accounts for the shrink the store
   re-sends with `force`, otherwise it asks and honours a no.
-  **Background sync cannot upload and that is not a bug**: every network step is signed by the user's
-  Nostr key, which with Amber/NIP-46 is not on the device — so Android's WorkManager job notices
-  changes and notifies, and opening the app is what syncs. See `docs/FOLDER_SYNC.md`.
+  **The UNATTENDED background job cannot upload and that is not a bug**: every network step is signed
+  by the user's Nostr key, which with Amber/NIP-46 is not on the device — so `SyncCheckWorker` holds
+  no key, opens no socket, notices changes and notifies.
+  **"STAY CONNECTED" IS THE PATH THAT DOES SYNC IN THE BACKGROUND, AND IT WAS DEAD.** That switch's
+  foreground service keeps the WebView (which DOES hold the key) resident — but nothing ever asked it
+  to sync: there is no watcher on Android (`fs-android.watch()` answers false), so the only automatic
+  trigger was a JS `setInterval`, which Android throttles in a hidden WebView. "Syncing stops every
+  time the screen goes off", with the switch already on. The clock is native now — StayAwakeService →
+  `FolderSyncPlugin.tick()` → `folderSyncTick` → `fs-android.onTick` → `sync.js nudge(force)` — and
+  four things about it are load-bearing, each verified by a test: (1) it is an
+  **`AlarmManager.setAndAllowWhileIdle`, NEVER a `Handler`** — `postDelayed` is scheduled on
+  `uptimeMillis()`, which STOPS in deep sleep, and a foreground service keeps the process resident
+  without keeping the CPU awake, so a Handler fires only when something else happens to wake the
+  phone: it looks like a fix and behaves like the bug; (2) the period is **just OVER** the client's
+  15-minute `minIntervalMs`, because nothing is ever dirty on Android and a 10-minute alarm therefore
+  aliases into a 20-minute effective period (refused at 10, runs at 20); (3) the nudge is **forced
+  past `_idle()`** and that flag must survive nudge()'s coalescing — one shared timer meant a later
+  unforced `online`/resume nudge replaced the forced one and the sweep was skipped for another whole
+  period; (4) it skips the "is anyone looking" test and **nothing else** — `shouldSync` still decides,
+  which is what "only when plugged in" and "Wi-Fi only" mean. `tests/client/sync_tick_sim.js` drives
+  the real sync.js in a screen-off world (and reproduces the bug without the tick, so the check cannot
+  pass vacuously); `tests/test_android_folder_sync.py` guards all four Java↔JS links, since Android
+  only builds on CI. See `docs/FOLDER_SYNC.md`.
   **Files → Synced folders can now ADD/RENAME/DELETE, and what it edits is the MANIFEST, never a file**
   (`PCSync.edit` in sync.js; the browser half is `_renderSyncedRoot`). Devices apply it on their next
   sweep through the paths they already use — new entry → download, tombstone → `.pc-trash`, rename →

@@ -142,10 +142,23 @@ much* rather than yes/no: a full rehash is a plugged-in job, changed files only 
 and below the battery floor it notes what changed and uploads later. "Sync now" overrides all of it —
 refusing someone standing there because the battery is at 19% is how a feature earns a reputation.
 
-**Background sync cannot upload, and that is not a bug to fix.** Every network step is signed by your
-Nostr key, and with Amber or a remote signer that key is not on the device. Android's background job
-therefore walks the tree, hashes nothing, and *tells you* when there is something to sync — opening
-the app is what syncs.
+**The unattended background job cannot upload, and that is not a bug to fix.** Every network step is
+signed by your Nostr key, and with Amber or a remote signer that key is not on the device at all.
+Android's `SyncCheckWorker` therefore walks the tree, hashes nothing, holds no key and opens no
+socket: it *tells you* when there is something to sync.
+
+**"Stay connected" is the path that does sync in the background,** and it is off by default. That
+switch runs a foreground service which keeps the app's WebView — the half that *does* hold your key —
+resident, so a real sweep can run with the app off screen. What was missing until now is that nothing
+ever asked it to: Android has no filesystem watcher here, so the client's only automatic trigger was
+a JS timer, and Android throttles timers in a hidden WebView. Reported as *syncing stops every time
+the screen goes off*, with the switch already on.
+
+The clock is native now. The service arms an `AlarmManager.setAndAllowWhileIdle` alarm — **not** a
+`Handler`, whose delays are measured on `uptimeMillis()` and simply stop advancing in deep sleep,
+which is precisely the state this exists for — and each firing emits one event the client turns into
+an ordinary sweep request. It decides nothing: your "only when plugged in" and "Wi-Fi only" settings
+still gate whether anything runs, and a folder you have never pressed Start on stays stopped.
 
 ## Browsing a folder on a device that does not sync it
 
