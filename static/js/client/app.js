@@ -1740,9 +1740,47 @@
       if(!native){
         const relays = [...new Set(this.list().map(s => s.relay).filter(Boolean))];
         await Promise.all(relays.map(r => this._open(r).catch(()=>{})));
+        this._offerNative();          // …and keep offering: see below
       }
       this._sync();
       return this.sessions.size;
+    },
+
+    /* KEEP OFFERING THE JOB UNTIL THE SERVICE TAKES IT — because the one moment it was offered is
+     * the one moment it is guaranteed to refuse.
+     *
+     * The receipt for a hand-over is `connected`: at least one relay socket actually held by the
+     * service. That is the right receipt (a flag is not a socket). But the offer is made from
+     * `resume()`, and `kick()` is `startService` — the service then has to go foreground, read its
+     * prefs and open a socket on its work thread, all of it AFTER the plugin call has returned. So
+     * the first answer is false almost every time, the page opens its own sockets, and there was
+     * nothing anywhere to ask again. The page stays the signer for the entire session.
+     *
+     * That is not a subtle degradation. A page IS the throttled half: Chromium holds a hidden
+     * WebView's timers to about one a minute, so signing runs at full speed while the app is on
+     * screen and falls off a cliff the moment it is not — which is precisely how it was reported
+     * ("foreground instantly solves the DM problem fast"), and precisely the failure the native
+     * service was written to remove. Measured on the relay at the time: 642 replies in 55 seconds
+     * with the app in front, from a phone that had supposedly handed the job over hours earlier.
+     *
+     * A LADDER, not a timer: four tries over about a minute, stopping the moment the service takes
+     * it (or the pairings go). `_standDown` only ever runs on a TRUE receipt, so the invariant that
+     * matters — never two signers answering one request — is untouched. */
+    _offerAt: [2500, 6000, 15000, 40000],
+    _offering: false,
+    _offerNative(){
+      if(this._offering || this.nativeOn || !this.active) return;
+      this._offering = true;
+      let i = 0;
+      const tick = async () => {
+        if(!this.active || this.nativeOn){ this._offering = false; return; }
+        let ok = false;
+        try{ ok = await this._pushNative(); }catch(_){}
+        if(ok){ this._standDown(); this._sync(); this._offering = false; return; }
+        if(i < this._offerAt.length) setTimeout(tick, this._offerAt[i++]);
+        else this._offering = false;
+      };
+      setTimeout(tick, this._offerAt[i++]);
     },
 
     revoke(clientPk){
@@ -1818,7 +1856,11 @@
      * delivering nothing, so requests arrive nowhere and no error is raised on either side).
      * No-op while the native service owns the pairings — it has its own socket and its own ping. */
     revive(){
-      if(!this.active || this.nativeOn) return;
+      if(!this.active) return;
+      // Coming back to the foreground is a fresh chance for the service to take the job: it may have
+      // been started by the OS, or by this app, since the last offer was refused.
+      if(!this.nativeOn){ this._offerNative(); }
+      if(this.nativeOn) return;
       if(Date.now() - (this._revivedAt||0) < 3000) return;
       this._revivedAt = Date.now();
       const relays = [...new Set(this.list().map(s => s.relay).filter(Boolean))];
