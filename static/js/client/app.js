@@ -3718,7 +3718,28 @@
     if(_deepLink){ VIEW='thread'; $('#feed').innerHTML='<div class="spinner"></div>'; }
     // PWA shortcut/share, else land on the user's chosen timeline (Nostrverse by default, Home if set).
     // _onLandingView is set AFTER the switch — switchView clears it, so it must be armed last.
-    else if(!_consumeLaunchParams()){ switchView(_startTimeline()); _onLandingView = true; }
+    /* STARTING THE DESKTOP IS NOT OPENING AN APP.
+     *
+     * The desktop's home screen is its ICON GRID — that is what "nothing is open" looks like there.
+     * Landing on a timeline anyway meant `switchView` went through `PCOS.routeView`, which conjures
+     * a window for a view nobody asked for: every remembered desktop opened with a Social window in
+     * front of the icons and the Nostrverse firehose already streaming into it, before a single
+     * click. Classic mode has no such state — the main column is always showing something — so the
+     * landing is unchanged there, which is every phone, the APK and every browser under 1024px.
+     *
+     * Deliberately a plain `PCOS.isOn()` read at the moment of landing, and NOT a latch. The last
+     * attempt at a boot-landing guard (`_viewChosen`) was a latch, and `applyInstanceGating` can
+     * switchView during boot, which made the landing skip ITSELF and shipped a broken APK. This
+     * asks a question about the screen instead of remembering a decision, so nothing else running
+     * during boot can answer it by accident — and off the desktop it is inert by construction.
+     *
+     * `_onLandingView` stays false on purpose: there is no landing view for a late synced pref to
+     * move, and claiming one would let restoreClientPrefsNostr open a window on its own. */
+    else if(!_consumeLaunchParams()){
+      let _osHome = false;
+      try{ _osHome = !!(window.PCOS && PCOS.isOn()); }catch(_){}
+      if(!_osHome){ switchView(_startTimeline()); _onLandingView = true; }
+    }
     // Drain a file/text shared IN from another app (a fresh OS-share launch, OR a guest who has just
     // logged in with a share still waiting). Self-guards on GUEST (prompts + keeps the stash) and on an
     // empty stash (no-op). Runs AFTER a view is set, so the composer opens over a real backdrop — never a
@@ -5267,6 +5288,17 @@
      * you focus it, so the screen is already correct and only the bookkeeping above needs to agree.
      * Optional and falsy by default, so every existing caller — all of classic mode — is unchanged. */
     if(!quiet) renderView(true);
+    /* …EXCEPT a timeline whose subscription we dropped while its window was minimised.
+     *
+     * `quiet` means "the screen is already right, only the bookkeeping has to agree", and os.js means
+     * that literally: restoring a parked window puts its real DOM back and skips the repaint. That
+     * holds for every window but this one, which comes back right and FROZEN — and nothing else would
+     * ever re-arm it, because the quiet path is the one path that never reaches renderTimeline.
+     *
+     * reset=FALSE, so the restored cards are redrawn from the Store rather than replaced by a
+     * spinner, `_tl`/`_liveSince` keep their place, and os.js's restoreScroll still runs after this
+     * returns and lands the window where the user left it. */
+    else if(_TL_SUB_VIEWS.includes(v) && !subs[v]) renderView(false);
   }
   function renderView(reset){
     cleanupInlineStream();   // leaving a view tears down the inline stream player (unless popped out)
@@ -5283,6 +5315,8 @@
     if(VIEW!=='channel' && _chatReactPoll){ clearTimeout(_chatReactPoll); _chatReactPoll=null; }   // …and its reaction poll
     if(VIEW!=='group' && _groupPoll){ clearTimeout(_groupPoll); _groupPoll=null; }   // leaving a NIP-29 group → stop polling its relay
     if(VIEW!=='stream' && _streamChatSub){ _closeStreamChat(); }   // leaving a live stream → drop its 1311 chat sub (+ its buffers)
+    _parkOffscreenTimelines();   // …and leaving the timeline drops the firehose — see the function
+
     feed.classList.toggle('feed-chat', VIEW==='channel' || VIEW==='group');   // never true here (both opened directly) → clears on leave
     if(VIEW!=='home' && VIEW!=='global') _hidePill();
     // Full-height layout: the same one Messages uses. Email is a two-pane mail client with its
@@ -5427,6 +5461,10 @@
   const _NEG_MAX_FETCH = 800;      // if the delta exceeds this (cold cache), use the plain limit pull instead
   let _tlGen = 0;                  // render generation — invalidates a slow async sync from a superseded render
   const _TL_KINDS = [1,6,1068,5,30023,34550,40];
+  // The two views that hold a firehose subscription in `subs` — the whole set _parkOffscreenTimelines
+  // is allowed to touch. Named once so "which subs may be closed" is a fact of the file rather than a
+  // literal repeated at the one call site that could quietly grow to include somebody's DMs.
+  const _TL_SUB_VIEWS = ['home','global'];
   let _tlMedia = !!ClientSettings.get('tlMedia', false);   // Home/Global "media grid" toggle (image posts only)
   // Blur NIP-36 sensitive/NSFW posts behind a reveal. ON by default; User Settings → Muted toggles it.
   // Stored per-device in ClientSettings (localStorage), so the choice survives reloads/PWA restarts.
@@ -5524,7 +5562,15 @@
     if(reset){ _tl = { oldest:0, loading:false, done:false, pages:0, eosed:false }; _resetLive(); _liveSince = Math.floor(Date.now()/1000); }
     _drawTimeline(false);
     if (subs[view]) Relay.close(subs[view]);
-    const onEvent = ev => { if (Store.saveEvent(ev)){ invalidateCounts(); applySobLive(ev); needProfile(ev.pubkey);
+    /* The FIRST post that arrives for a timeline nobody can see is the one that closes it.
+     *
+     * renderView drops it the moment you navigate away, and that covers the sidebar. This is the leg
+     * that cannot be forgotten: renderThread and renderProfile set VIEW themselves without going
+     * through renderView, os.js closes a window without one, and any view added later may do the
+     * same — so the decision is also taken here, where the waste actually shows up, off the same
+     * function so the two answers cannot differ. One event is the entire cost of being late. */
+    const onEvent = ev => { if(VIEW!==view && !_parkedSlot(view)) _parkOffscreenTimelines();
+      if (Store.saveEvent(ev)){ invalidateCounts(); applySobLive(ev); needProfile(ev.pubkey);
       // Only prepend as "live" if it's genuinely new — NOT a backfilled/synced event with an old
       // created_at (those jump to the top as if new). kind-5 deletions are NOT posts (render blank) —
       // watchDeletions handles them, so keep them out of the prepend. A small grace covers skew.
@@ -5619,6 +5665,55 @@
   function _parkedSlotDom(){
     const all=document.querySelectorAll('[id="tl-notes"]');
     return all.length===1 ? all[0].closest('.osw-slot') : null;   // two open → decline rather than guess
+  }
+  /* A TIMELINE NOBODY IS LOOKING AT IS NOT SUBSCRIBED.
+   *
+   * `_tlBackground` asks "is this APP on screen?". This asks the other half of the same question —
+   * "is this TIMELINE on screen?" — and nothing was asking it. renderTimeline closes and re-opens the
+   * subscription for the view being ENTERED; nothing ever closed the one being LEFT. So one visit to
+   * the timeline left the firehose REQ open for the rest of the session, streaming every
+   * kind-1/6/1068/30023/34550/40 on the relay into a Store nothing was painting, while the user sat in
+   * Notes, the Vault, Files, Calendar or the Meme Builder. In classic mode BOTH could be open at once
+   * — Home → Nostrverse never closed Home — so the app ran two firehoses to paint neither, and every
+   * event off the parked one still cost a Store write, a count invalidation and a profile fetch.
+   *
+   * SCOPE IS THE WHOLE SAFETY ARGUMENT: this closes `subs.home`/`subs.global` and nothing else.
+   * Notifications, DMs/gift wraps, calls, the NIP-46 signer, Notes, the vault, folder sync and every
+   * other private document are their own subscriptions with their own `#p`/`authors`/`#d` filters, so
+   * a like or a reply still arrives, still badges and still toasts while you are somewhere else.
+   *
+   * The desktop is why this cannot key on VIEW alone. There a timeline lives in its own WINDOW and is
+   * still on screen while VIEW names whatever took focus — the same distinction `_flushLiveFor`
+   * makes, asked the same way (`_parkedSlot`), so the two cannot disagree about what "on screen"
+   * means. Parked is not hidden.
+   *
+   * Re-entering the view re-subscribes through renderTimeline's own `Relay.close(subs[view])` +
+   * fullSub() path, which is what already ran on every return, so nothing new can go wrong there. */
+  function _parkOffscreenTimelines(){
+    for(const v of _TL_SUB_VIEWS){
+      const id = subs[v];
+      if(!id || VIEW===v) continue;
+      if(_visibleSlot(v)) continue;
+      try{ Relay.close(id); }catch(_){}
+      subs[v] = null;
+    }
+  }
+  /* A MINIMISED window is not parked, it is PUT AWAY — and `_parkedSlot` cannot tell you which.
+   *
+   * os.js uses one mechanism for both: an unfocused window and a minimised one are each `parked`
+   * with their nodes moved into their own slot. That is right for the question `_flushLiveFor` asks
+   * — "where do this view's live posts belong?" — because a minimised window's slot is still where
+   * they belong, ready for the restore. It is the wrong question here. "Where do the posts go" and
+   * "can anybody see them" are different, and only the second decides whether a firehose is worth
+   * its radio: a minimised Social window held the whole Nostrverse open behind a taskbar button.
+   *
+   * The window element carries `.minimised` (os.js) and the slot lives inside it, so the DOM already
+   * holds the answer and neither module needs a new contract for it. */
+  function _visibleSlot(view){
+    const slot = _parkedSlot(view);
+    if(!slot) return null;
+    try{ if(slot.closest('.osw.minimised')) return null; }catch(_){}
+    return slot;
   }
   /* Is the timeline PARKED in an unfocused desktop-mode window?
    *
@@ -15982,7 +16077,7 @@
           // MIRRORED (no noMirror): every ordinary photo is DR-copied to a second host, and the one
           // file holding every filename and folder was the sole exception — backwards. It is
           // ciphertext, so the mirror learns nothing, and it is the blob worth having off-site.
-          const url=await uploadBlob(new File([await _masterEncrypt(mk, new TextEncoder().encode(json))],'files-index.enc',{type:'application/octet-stream'}), {keep:true});
+          const url=await uploadBlob(new File([await _masterEncrypt(mk, new TextEncoder().encode(json))],'files-index.enc',{type:'application/octet-stream'}), {keep:true, noCompress:true});
           ptr.indexSha=_shaFromUrl(url);
         }
         const auth=await sign(27235,'files-index',[['p',ME.pubkey]]);
@@ -17386,7 +17481,8 @@
     setS('encrypting…');
     const blob=await _masterEncrypt(mk, buf, await _contentIV(buf));
     setS('uploading…');
-    const url=await uploadBlob(new File([blob],(file.name||'file')+'.enc',{type:'application/octet-stream'}), {noMirror:true, keep:true});
+    // Encrypted drive content is a COPY OF A FILE — never media to prepare. See syncBlobs.put.
+    const url=await uploadBlob(new File([blob],(file.name||'file')+'.enc',{type:'application/octet-stream'}), {noMirror:true, keep:true, noCompress:true});
     const sha=_shaFromUrl(url); if(!sha) throw new Error('upload returned no hash');
     FilesIdx.setFile(sha,{name:file.name||'file', folder, mime:file.type||'application/octet-stream', enc:true, mk:true, size:buf.length, ts:Math.floor(Date.now()/1000)});
     return sha;   // notes.js needs it: a Notes attachment is referenced from the note by its hash
@@ -17660,7 +17756,7 @@
     const blob = await _masterEncrypt(key, buf);
     setS('uploading…');
     const url = await uploadBlob(new File([blob], (file.name||'file')+'.enc',
-                                          {type:'application/octet-stream'}), {noMirror:true, keep:true});
+                                          {type:'application/octet-stream'}), {noMirror:true, keep:true, noCompress:true});
     const meta = { k:_b64u(key), m:file.type||'application/octet-stream', n:file.name||'' };
     setS('');
     // Strip any fragment uploadBlob may have produced before appending ours, and base64url the whole
@@ -17942,7 +18038,7 @@
     const blob=await _masterEncrypt(mk, bytes, await _contentIV(bytes));   // deterministic IV → identical hash → dedup
     setS('uploading…');
     // noMirror: never DR-mirror encrypted music to the public backup servers (bandwidth/abuse).
-    const url=await uploadBlob(new File([blob],(file.name||'track')+'.enc',{type:'application/octet-stream'}), {noMirror:true, keep:true});
+    const url=await uploadBlob(new File([blob],(file.name||'track')+'.enc',{type:'application/octet-stream'}), {noMirror:true, keep:true, noCompress:true});
     const sha=_shaFromUrl(url); if(!sha) throw new Error('upload returned no hash');
     // The stored mime has to be the TRUTH — a passed-through mp3 labelled audio/ogg decodes by luck
     // rather than by contract, and the download would save it under the wrong extension.
@@ -20241,7 +20337,7 @@
                                     new TextEncoder().encode(JSON.stringify(map))));
         const body = new Uint8Array(12 + ct.length); body.set(iv, 0); body.set(ct, 12);
         const url = await uploadBlob(new File([body], 'dmcache.enc',
-                                              { type:'application/octet-stream' }), { keep:true });
+                                              { type:'application/octet-stream' }), { keep:true, noCompress:true });
         const sha = _shaFromUrl(url);
         if(!sha) return false;
         await publish(30078, JSON.stringify({ sha, n: held, at: Math.floor(Date.now()/1000) }),
@@ -30047,8 +30143,17 @@
         // nothing, a first sweep after a lost agreement is indistinguishable from the resync bug
         // that used to cause it, which is a bad thing for a progress bar to be ambiguous about.
         if(await _blobAlreadyStored(sha)) return { sha, existed:true };
+        /* `noCompress` IS NOT REDUNDANT HERE, and leaving it off was a trap waiting to spring.
+         *
+         * uploadBlob compresses OPT-OUT (`if(!(opts && opts.noCompress)) file=await compressMedia(file)`),
+         * and a synced file is the one thing that must arrive byte-identical: a folder sync stores a
+         * COPY OF YOUR FILE, not a picture for a timeline. This upload survived only because what it
+         * hands over is already ciphertext named `sync.enc` — compressImage bails on `!/^image\//`
+         * and `_isVideoFile` sees no video extension. That is an accident of naming, not a decision:
+         * anything that ever gave a chunk a truthful name or mime would silently start re-encoding
+         * people's video at JPEG q0.45, and the sha would stop matching the file it claims to be. */
         const url = await uploadBlob(new File([blob], 'sync.enc', {type:'application/octet-stream'}),
-                                     { noMirror:true, keep:true });
+                                     { noMirror:true, keep:true, noCompress:true });
         const got = _shaFromUrl(url);
         if(!got) throw new Error('upload returned no hash');
         return { sha: got, existed:false };
@@ -30081,13 +30186,36 @@
       /* The chunk addresses a file WOULD have, without uploading it. Same determinism as blobSha,
        * one chunk at a time, so verifying a large file costs its size in reads and nothing in
        * transfer — and never more than one chunk of memory. */
+      /* A CHUNK IS EXACTLY THE BYTES THAT WERE ASKED FOR, OR IT IS A FAILURE.
+       *
+       * Both adapters return a SHORT buffer when they cannot fill the request — desktop
+       * `buf.subarray(0, bytesRead)`, Android `Arrays.copyOf(buf, got)` — and this used to test only
+       * `!plain.length`, i.e. it caught an EMPTY read and waved a partial one through. What follows
+       * is silent and total: the short piece is encrypted, uploaded and recorded, `off` still
+       * advances by a whole chunk, and the bytes in the gap are never stored by anybody. The file
+       * that comes back down is the original with holes punched in it.
+       *
+       * ONLY LARGE FILES ARE CHUNKED, so this could never touch a photo and could never miss a
+       * video — reported, exactly, as "images look ok" and videos that not even VLC would open.
+       * Nothing logs, because from the sweep's point of view every step succeeded.
+       *
+       * One retry, because a provider hiccup is worth surviving; after that the file FAILS and is
+       * reported, which the sweep already knows how to do and will try again next time. A reported
+       * failure is recoverable. A file quietly stored wrong is not. */
+      async _exactPart(readPart, off, want){
+        let plain = await readPart(off, want);
+        if(!plain || plain.length !== want) plain = await readPart(off, want);
+        if(!plain || plain.length !== want){
+          throw new Error('short read at ' + off + ': wanted ' + want + ', got ' + ((plain && plain.length) || 0));
+        }
+        return plain;
+      },
       async chunkShas(readPart, size, chunkBytes){
         const mk = await FilesIdx._ensureMK();
         const CH = chunkBytes || _SYNC_CHUNK;
         const out = [];
         for(let off = 0; off < size; off += CH){
-          let plain = await readPart(off, Math.min(CH, size - off));
-          if(!plain || !plain.length) throw new Error('short read at ' + off);
+          let plain = await this._exactPart(readPart, off, Math.min(CH, size - off));
           const ct = await _masterEncrypt(mk, plain, await _contentIV(plain));
           plain = null;
           out.push(await sha256hex(ct));
@@ -30110,8 +30238,7 @@
            * a second copy of every chunk held for the length of a network round trip, for no reason.
            * On a folder of thousands of files that is the difference between a steady ~50 MB and a
            * sawtooth the collector cannot keep up with. */
-          let plain = await readPart(off, want);
-          if(!plain || !plain.length) throw new Error('short read at ' + off);
+          let plain = await this._exactPart(readPart, off, want);   // never a partial — see _exactPart
           let blob = await _masterEncrypt(mk, plain, await _contentIV(plain));
           plain = null;
           const sha = await sha256hex(blob);
@@ -30119,7 +30246,8 @@
           else {
             const file = new File([blob], 'sync.enc', {type:'application/octet-stream'});
             blob = null;
-            const url = await uploadBlob(file, { noMirror:true, keep:true });
+            // Same reason as put() above: a chunk is part of somebody's file, never media to prepare.
+            const url = await uploadBlob(file, { noMirror:true, keep:true, noCompress:true });
             const got = _shaFromUrl(url);
             if(!got) throw new Error('upload returned no hash');
             chunks.push(got); existed = false;
@@ -30130,12 +30258,27 @@
         const sha = await sha256hex(new TextEncoder().encode(chunks.join('')));
         return { sha, chunks, existed, cs: CH };
       },
-      async getParts(chunks, writePart){
+      /* …and the same rule on the way back down, because the two halves fail independently.
+       *
+       * `off` advances by what each blob actually decrypted to, so ONE short or wrong-sized chunk
+       * silently shifts every byte after it and the file lands the right shape and the wrong
+       * content. `expect` is the size the manifest recorded when the file was read, so comparing
+       * the total against it is the one check that catches a bad chunk list — including the ones
+       * ALREADY STORED by the pre-fix uploader, which is what makes this the half that protects
+       * people who are damaged today: their next sweep refuses to write the broken copy instead of
+       * handing it to another machine.
+       *
+       * Throwing is the point. syncrun catches it as a per-file `fail(...)`, so the `.part` file is
+       * never committed and whatever is on disk is left alone. */
+      async getParts(chunks, writePart, expect){
         let off = 0;
         for(const sha of (chunks || [])){
           const bytes = await _syncBlobBytes(sha);
           await writePart(off, bytes);
           off += bytes.length;
+        }
+        if(expect != null && +expect >= 0 && off !== +expect){
+          throw new Error('rebuilt ' + off + ' bytes, expected ' + expect + ' — refusing to write a damaged file');
         }
         return off;
       },

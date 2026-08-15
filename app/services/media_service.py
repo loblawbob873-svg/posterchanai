@@ -350,6 +350,78 @@ def _video_encoder_candidates(ffmpeg: str) -> list:
     return cands
 
 
+_SDR_TAGS = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]
+_HDR_TRC = {"smpte2084", "arib-std-b67", "smpte428", "bt2020-10", "bt2020-12"}
+
+
+def _probe_color(ffmpeg: str, in_path: str) -> dict:
+    """What colour space and bit depth the SOURCE is in. `{}` when it cannot be read."""
+    probe = (ffmpeg[:-6] + "ffprobe") if ffmpeg.endswith("ffmpeg") else "ffprobe"
+    try:
+        out = subprocess.run(
+            [probe, "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=pix_fmt,color_transfer,color_primaries,color_space",
+             "-of", "default=nw=1", in_path],
+            capture_output=True, timeout=20)
+        got = {}
+        for line in out.stdout.decode("utf-8", "ignore").splitlines():
+            if "=" in line:
+                k, _, v = line.partition("=")
+                got[k.strip()] = v.strip()
+        return got
+    except Exception:
+        return {}
+
+
+def _is_hdr_or_10bit(info: dict) -> bool:
+    pix = (info.get("pix_fmt") or "").lower()
+    return bool(
+        (info.get("color_transfer") or "").lower() in _HDR_TRC
+        or (info.get("color_space") or "").lower().startswith("bt2020")
+        or (info.get("color_primaries") or "").lower().startswith("bt2020")
+        or "10le" in pix or "10be" in pix or "12le" in pix or "12be" in pix or "p010" in pix
+    )
+
+
+def _sdr_filter(info: dict, have_zscale: bool) -> str:
+    """Bring HDR / 10-bit video down to something every player can actually decode.
+
+    Two different jobs, and conflating them is what made the first attempt fail outright:
+
+      * 10-BIT is a DEPTH problem. `format=yuv420p` is the whole fix, and it applies to every source
+        here — it is what stops libx264 emitting High 10, which is the half that will not play.
+      * HDR is a TRANSFER problem, and only tonemapping fixes it. `tonemap` works in LINEAR light, so
+        zscale has to convert in and back out to BT.709 around it; running it on PQ/HLG values
+        directly gives the washed-out result the filter exists to prevent. `desat=0` keeps
+        highlights from going grey.
+
+    `tin=` IS LOAD-BEARING. zscale cannot infer a transfer it was not told, and a stream whose tags
+    ffmpeg reports as `unknown` — which plenty of real files are — makes a bare `t=linear` fail with
+    EINVAL and take the ENTIRE encode with it: no video at all, which is worse than the bug. So the
+    tonemap is only built when the source states a transfer we recognise, and everything else falls
+    through to the depth fix, which is always safe and never errors.
+    """
+    trc = (info.get("color_transfer") or "").lower()
+    if have_zscale and trc in ("smpte2084", "arib-std-b67"):
+        return (f"zscale=tin={trc}:t=linear:npl=100,tonemap=tonemap=hable:desat=0,"
+                "zscale=p=bt709:t=bt709:m=bt709:r=tv,format=yuv420p")
+    return "format=yuv420p"
+
+
+_zscale_cache = None
+
+
+def _have_zscale(ffmpeg: str) -> bool:
+    global _zscale_cache
+    if _zscale_cache is None:
+        try:
+            out = subprocess.run([ffmpeg, "-hide_banner", "-filters"], capture_output=True, timeout=10)
+            _zscale_cache = " zscale " in out.stdout.decode("utf-8", "ignore")
+        except Exception:
+            _zscale_cache = False
+    return _zscale_cache
+
+
 def _video_encode_cmd(ffmpeg, encoder, in_path, out_path, scale_filter, crf, preset, input_args=None):
     """Build the ffmpeg command for a specific H.264 encoder.
 
@@ -357,18 +429,44 @@ def _video_encode_cmd(ffmpeg, encoder, in_path, out_path, scale_filter, crf, pre
     user today is the concat demuxer (`-f concat -safe 0`), which lets a multi-segment live-stream
     recording be joined and compressed in ONE pass instead of writing a full-size intermediate.
     """
+    """
+    HDR AND 10-BIT ARE FORCED DOWN TO 8-BIT BT.709, AND THAT IS NOT A QUALITY CHOICE.
+
+    ffmpeg follows its input: hand it the 10-bit HLG/PQ video every recent iPhone and Android
+    records by default and libx264 encodes H.264 **High 10**, carrying the source's bt2020 tags
+    onto the result. Both halves are fatal, and they are the two things people report:
+
+      * High 10 AVC is not decodable by Chrome, Safari, Android MediaCodec or iOS. The upload
+        succeeds, the post looks fine, and the video simply **will not play** for anybody.
+      * Where something does decode it, BT.2020/HLG content rendered as if it were BT.709 crushes
+        the blacks and blows the highlights — reported, exactly, as **"super high contrast"**.
+
+    Measured, not reasoned about: before this, a 10-bit bt2020nc clip through compress_video_file
+    came out `profile=High 10, pix_fmt=yuv420p10le, color_space=bt2020nc` — i.e. unchanged in every
+    way that mattered and smaller in the one that did not. See tests/test_video_hdr_tonemap.py.
+
+    So an HDR/10-bit source is tonemapped and retagged, and the output is ALWAYS 8-bit with explicit
+    BT.709 tags. An ordinary SDR clip probes as SDR and its command is unchanged.
+    """
+    info = _probe_color(ffmpeg, in_path)
+    hdr = _is_hdr_or_10bit(info)
     pre, vf = [], scale_filter
+    if hdr:
+        vf = scale_filter + ',' + _sdr_filter(info, _have_zscale(ffmpeg))
     if encoder == "h264_nvenc":
         venc = ['-c:v', 'h264_nvenc', '-preset', 'p5', '-cq', str(crf)]
     elif encoder == "h264_vaapi":
         pre = ['-vaapi_device', _render_node()]
-        vf = scale_filter + ',format=nv12,hwupload'      # CPU scale → upload to GPU surface
+        # The tonemap is CPU work and must happen BEFORE the frame is uploaded to a GPU surface.
+        vf = vf + ',format=nv12,hwupload'
         venc = ['-c:v', 'h264_vaapi', '-qp', str(crf)]
     elif encoder == "h264_amf":
         venc = ['-c:v', 'h264_amf', '-rc', 'cqp', '-qp_i', str(crf), '-qp_p', str(crf)]
     else:  # libx264
         venc = ['-c:v', 'libx264', '-preset', preset, '-crf', str(crf)]
-    return [ffmpeg] + pre + list(input_args or []) + ['-i', in_path, '-vf', vf] + venc + [
+    # nv12 IS 8-bit, so VAAPI needs no -pix_fmt; naming one there fights the hwupload chain.
+    depth = [] if encoder == "h264_vaapi" else ['-pix_fmt', 'yuv420p']
+    return [ffmpeg] + pre + list(input_args or []) + ['-i', in_path, '-vf', vf] + venc + depth + _SDR_TAGS + [
         '-c:a', 'aac', '-b:a', VIDEO_AUDIO_BITRATE,
         '-movflags', '+faststart', '-y', out_path,
     ]

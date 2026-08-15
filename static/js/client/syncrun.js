@@ -291,7 +291,7 @@
         const R = remote[c.path] || {};
         let st;
         if(R.chunks && R.chunks.length && store.getParts && typeof fs.writePart === 'function'){
-          await store.getParts(R.chunks, (off, bytes) => fs.writePart(id, c.path, off, bytes));
+          await store.getParts(R.chunks, (off, bytes) => fs.writePart(id, c.path, off, bytes), R.size);
           st = await fs.writeCommit(id, c.path, R.mtime || 0);
         } else {
           const bytes = await store.getBlob(c.sha || R.sha);
@@ -316,7 +316,9 @@
           // Written a chunk at a time into the same `.part` file the whole-file path uses, and only
           // renamed into place at the end — so an interrupted download leaves a partial temp file and
           // never a half-written file under the real name.
-          await store.getParts(R.chunks, (off, bytes) => fs.writePart(id, d.path, off, bytes));
+          // `R.size` is the length the manifest recorded — see getParts. A chunk list that does not
+          // rebuild to it is refused here rather than committed over a good file.
+          await store.getParts(R.chunks, (off, bytes) => fs.writePart(id, d.path, off, bytes), R.size);
           st = await fs.writeCommit(id, d.path, R.mtime || 0);
         } else if(R.chunks && R.chunks.length){
           fail(d.path, new Error('this device cannot receive a file that large'), 'download');

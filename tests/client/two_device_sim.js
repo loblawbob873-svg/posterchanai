@@ -986,7 +986,7 @@ scenario('web-delete-reaches-the-devices', async () => {
  * resurrects anything here. It is that the DOCUMENT then keeps no record of the deletion at all:
  * nothing downstream can tell a file that was deleted from one that never existed. */
 scenario('a-web-delete-behaves-exactly-like-a-device-delete', async () => {
-  const run = async (how) => {
+  const run = async (how, freshMtime) => {
     const w = makeWorld();
     const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Documents' });
     const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Documents' });
@@ -994,35 +994,65 @@ scenario('a-web-delete-behaves-exactly-like-a-device-delete', async () => {
     laptop.put('notes/todo.md', '- ship it');
     await laptop.sweep(); await phone.sweep();
 
-    if(how === 'device'){ phone.rm('report.txt'); await phone.sweep(); }
+    // One wall-clock instant for the deletion whichever way it is made — see the note below.
+    const TDEL = Date.now();
+    if(how === 'device'){ phone.rm('report.txt'); await phone.sweep({ now: TDEL }); }
     else if(how === 'web') makeWebEditor(w, 'Documents').remove('report.txt');
     else makeWebEditor(w, 'Documents').removeByDeletingTheKey('report.txt');
 
     // A device that DID agree carries the deletion out — measured BEFORE anything else touches the
     // folder, or the resurrection below is what you end up looking at.
-    const agreed = await laptop.sweep();
+    const agreed = await laptop.sweep({ now: TDEL + 1000 });
     const settled = {
       goneFromAgreed: laptop.live().indexOf('report.txt') === -1,
       trashedNotErased: laptop.trashed().length,
       restKept: laptop.live().indexOf('notes/todo.md') !== -1,
       agreedUploaded: agreed.uploaded.length,
     };
-    // Now a device with no agreement and the file still on its disk.
+    // Now a device with no agreement and the file still on its disk, at a stated age.
     const fresh = makeDevice(w, { name:'desktop', id:'ccc3', key:'Documents' });
-    fresh.put('report.txt', 'the quarterly numbers');
-    const back = await fresh.sweep({ hash:false });
+    fresh.files.set('report.txt', { bytes: bytesOf('the quarterly numbers'), mtime: freshMtime });
+    const back = await fresh.sweep({ hash:false, now: TDEL + 2000 });
 
     return Object.assign(settled, { freshResurrects: back.uploaded.indexOf('report.txt') !== -1 });
   };
-  const device = await run('device'), web = await run('web'), dropped = await run('drop');
-  const same = JSON.stringify(device) === JSON.stringify(web);
+  /* WHAT THE AGREEMENT-LESS DEVICE DOES IS DECIDED BY THE CLOCK, NOT BY THE DELETE'S SHAPE.
+   *
+   * This used to assert that all three shapes RESURRECT the file, and called it engine policy. It
+   * was policy, and it was wrong: a device that lost its agreement has not edited anything, and
+   * reading "I still have this file" as an edit republished every deleted picture over its tombstone
+   * and handed the lot back to the machine that deleted them. See
+   * `a-device-that-lost-its-agreement-does-not-resurrect-a-delete`.
+   *
+   * So the question is now asked of the timestamps, and BOTH answers are pinned here, because a fix
+   * that only ever answered "the deletion wins" would be silent data loss for anyone who put a file
+   * back. An OLDER copy is the one the device merely still had; a NEWER one it genuinely wrote after
+   * the delete.
+   *
+   * The clocks are aligned across the arms deliberately: the web editor stamps `Date.now()` while a
+   * sweep stamps the `now` it is given, and leaving those a fortnight apart made the arms differ for
+   * a reason that has nothing to do with the thing under test. */
+  const T_OLD = Date.UTC(2026, 7, 1, 9, 30);        // written long before the delete
+  const T_NEW = Date.now() + 3600000;               // put back afterwards, on purpose
+
+  const dOld = await run('device', T_OLD), wOld = await run('web', T_OLD), pOld = await run('drop', T_OLD);
+  const dNew = await run('device', T_NEW), wNew = await run('web', T_NEW), pNew = await run('drop', T_NEW);
+
+  const same = JSON.stringify(dOld) === JSON.stringify(wOld)
+            && JSON.stringify(dNew) === JSON.stringify(wNew);
 
   return {
-    ok: same && device.goneFromAgreed && device.trashedNotErased === 1 && device.restKept
-        && device.agreedUploaded === 0
-        // ...and the agreement-less device re-uploads whoever deleted it — engine policy, both ways.
-        && device.freshResurrects && web.freshResurrects && dropped.freshResurrects,
-    detail: { device, web, dropped, identical: same },
+    ok: same
+        && dOld.goneFromAgreed && dOld.trashedNotErased === 1 && dOld.restKept && dOld.agreedUploaded === 0
+        // A copy older than the tombstone is not an edit — the deletion stands, both ways.
+        && !dOld.freshResurrects && !wOld.freshResurrects
+        // A copy written AFTER it is a real edit and still wins, both ways.
+        && dNew.freshResurrects && wNew.freshResurrects
+        /* And the control that has not moved: a delete written as a REMOVED KEY instead of a
+         * tombstone resurrects either way, because there is nothing left to compare a timestamp
+         * against. That is the whole reason `drop()` writes `{deletedAt}` and never `delete next[p]`. */
+        && pOld.freshResurrects && pNew.freshResurrects,
+    detail: { dOld, wOld, pOld, dNew, wNew, pNew, identical: same },
   };
 });
 
@@ -1131,6 +1161,122 @@ scenario('a-file-cannot-be-written-where-a-directory-is', async () => {
         && phone.live().indexOf('notes') === -1
         && laptop.live().length === 2 && phone.live().length === 2,
     detail: { refusedFile, refusedDir, laptop: laptop.live(), phone: phone.live() },
+  };
+});
+
+/* A FLEET DELETE. Everything selected in Windows Explorer and deleted on ONE machine, with the
+ * other three still holding the folder. Reported as "I deleted everything in Explorer on Desktop,
+ * PosterChan says 1 file left for Pictures, and the laptop, phone and tablet never deleted them".
+ *
+ * desktop.ini is in here because it is what the real folder had left: a hidden system file Explorer
+ * does not delete with the rest, so it is the one entry that must still be ALIVE at the end. It is
+ * what makes this scenario the reported one rather than a tidy version of it. */
+scenario('a-delete-on-one-machine-reaches-the-whole-fleet', async () => {
+  const w = makeWorld(), K = 'Pictures';
+  const mk = (n, id) => makeDevice(w, { name:n, id, key:K });
+  const desktop = mk('desktop', 'win-desktop-01'), laptop = mk('laptop', 'win-laptop-02');
+  const phone   = mk('phone', 'content://tree/primary%3APictures');
+  const tablet  = mk('tablet', 'content://tree/tab%3APictures');
+
+  const PICS = ['a.jpg', 'b.jpg', 'c.jpg', 'sub/d.jpg'];
+  for(const p of PICS) desktop.put(p, 'pic ' + p);
+  desktop.put('desktop.ini', '[.ShellClassInfo]');
+  await desktop.sweep();
+  for(const d of [laptop, phone, tablet]) await d.sweep();
+  const seeded = [laptop, phone, tablet].every(d => d.live().length === 5);
+
+  for(const p of PICS) desktop.rm(p);
+  const del = await desktop.sweep({ now: Date.UTC(2026, 7, 2, 9, 30) });
+  const man = w.manifestOf(K);
+  const alive = Object.keys(man).filter(p => !man[p].deletedAt);
+
+  const after = [];
+  for(const d of [laptop, phone, tablet]){
+    const s = await d.sweep({ now: Date.UTC(2026, 7, 2, 10, 0) });
+    after.push({ name: d.name, live: d.live(), trashed: s.trashed.length, uploaded: s.uploaded });
+  }
+  return {
+    ok: seeded && del.removedRemote.length === 4
+        && alive.length === 1 && alive[0] === 'desktop.ini'
+        && after.every(a => a.live.length === 1 && a.live[0] === 'desktop.ini'
+                            && a.trashed === 4 && a.uploaded.length === 0),
+    detail: { seeded, removedRemote: del.removedRemote, alive, after },
+  };
+});
+
+/* THE ONE THAT WAS ACTUALLY HAPPENING, and the reason the scenario above is not enough.
+ *
+ * A device that lost its local agreement — a reinstall, an app update that moved the storage origin,
+ * "Stop syncing" and back — has no `base`, so a tombstone and an untouched local file BOTH read as
+ * "changed" and land in diff()'s both-moved arm. "Delete loses to edit" then treated merely HAVING
+ * the file as having edited it, and the device UPLOADED every picture back over the tombstones. The
+ * machine that did the deleting then downloads them all again: the delete un-does itself, fleet-wide,
+ * with nothing in any log.
+ *
+ * Measured before the fix: `trashed: 0, uploaded: [a,b,c]`, manifest back to four live entries. */
+scenario('a-device-that-lost-its-agreement-does-not-resurrect-a-delete', async () => {
+  const w = makeWorld(), K = 'Pictures';
+  const desktop = makeDevice(w, { name:'desktop', id:'win-desktop-01', key:K });
+  const laptop  = makeDevice(w, { name:'laptop',  id:'win-laptop-02',  key:K });
+
+  for(const p of ['a.jpg', 'b.jpg', 'c.jpg']) desktop.put(p, 'pic ' + p);
+  desktop.put('desktop.ini', '[.ShellClassInfo]');
+  await desktop.sweep();
+  await laptop.sweep();
+  const seeded = laptop.live().length === 4;
+
+  laptop.bases.clear();                       // the agreement is gone; the files are not
+
+  for(const p of ['a.jpg', 'b.jpg', 'c.jpg']) desktop.rm(p);
+  await desktop.sweep({ now: Date.UTC(2026, 7, 2, 9, 30) });
+  const s = await laptop.sweep({ now: Date.UTC(2026, 7, 2, 10, 0) });
+  const man = w.manifestOf(K);
+  const alive = Object.keys(man).filter(p => !man[p].deletedAt);
+  const back = await desktop.sweep({ now: Date.UTC(2026, 7, 2, 10, 30) });
+
+  return {
+    ok: seeded && s.uploaded.length === 0 && s.trashed.length === 3
+        && laptop.live().length === 1 && laptop.live()[0] === 'desktop.ini'
+        && alive.length === 1 && back.downloaded.length === 0
+        && laptop.trashed().length === 3,      // trashed, never unlinked — .pc-trash still holds them
+    detail: { seeded, uploaded: s.uploaded, trashed: s.trashed.length, laptop: laptop.live(),
+              alive, cameBack: back.downloaded, inTrash: laptop.trashed() },
+  };
+});
+
+/* THE CONTROL, and the reason the fix above is a tiebreak rather than "a tombstone always wins".
+ *
+ * Same lost agreement, but this device really did write the file AFTER the deletion — somebody put
+ * a new picture back. That is a genuine edit, it is newer than the tombstone, and it must survive
+ * and republish. If this scenario ever fails, the fix has become silent data loss for every device
+ * that ever loses its agreement, which is a far worse bug than the one it replaced. */
+scenario('a-file-written-after-the-delete-still-wins', async () => {
+  const w = makeWorld(), K = 'Pictures';
+  const desktop = makeDevice(w, { name:'desktop', id:'win-desktop-01', key:K });
+  const laptop  = makeDevice(w, { name:'laptop',  id:'win-laptop-02',  key:K });
+
+  desktop.put('a.jpg', 'the original');
+  await desktop.sweep();
+  await laptop.sweep();
+
+  desktop.rm('a.jpg');
+  await desktop.sweep({ now: Date.UTC(2026, 7, 2, 9, 30) });
+
+  laptop.bases.clear();                                  // agreement lost…
+  laptop.files.set('a.jpg', { bytes: bytesOf('a new photo, put back on purpose'),
+                              mtime: Date.UTC(2026, 7, 3, 12, 0) });   // …and edited AFTER the delete
+
+  const s = await laptop.sweep({ now: Date.UTC(2026, 7, 3, 12, 30) });
+  const man = w.manifestOf(K);
+  const down = await desktop.sweep({ now: Date.UTC(2026, 7, 3, 13, 0) });
+
+  return {
+    ok: s.uploaded.indexOf('a.jpg') !== -1 && s.trashed.length === 0
+        && laptop.read('a.jpg') === 'a new photo, put back on purpose'
+        && !!man['a.jpg'] && !man['a.jpg'].deletedAt
+        && desktop.read('a.jpg') === 'a new photo, put back on purpose',
+    detail: { uploaded: s.uploaded, trashed: s.trashed.length, entry: man['a.jpg'],
+              onDesktop: desktop.read('a.jpg'), downloaded: down.downloaded },
   };
 });
 

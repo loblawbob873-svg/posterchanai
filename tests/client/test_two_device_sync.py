@@ -140,10 +140,15 @@ class TestTwoDeviceSync(unittest.TestCase):
         """The risk in letting a browser write the manifest is that it becomes a SECOND way to
         delete, going round the engine and behaving subtly differently from the tested one. The same
         situation is run three ways — deleted on a device, deleted from the browser, and with the
-        key dropped instead of tombstoned — and every observable outcome has to match, including the
-        agreement-less device that re-uploads the file under diff()'s deliberate DELETE-LOSES-TO-EDIT
-        rule. That resurrection is engine policy, not something the editor introduces; what this
-        pins is that the editor inherits it rather than inventing something of its own."""
+        key dropped instead of tombstoned — and every observable outcome has to match.
+
+        What the agreement-less device does is now decided by the CLOCK, and both answers are pinned:
+        a copy older than the tombstone is not an edit and the deletion stands; a copy written after
+        it is a real edit and still wins. This used to assert that all three shapes RESURRECT the
+        file and called it engine policy — it was policy, and it was the bug that undid a whole
+        fleet's delete (see test_a_device_that_lost_its_agreement_does_not_undo_a_delete). The
+        removed-key arm still resurrects either way, because a dropped key leaves no timestamp to
+        compare against, which is exactly why a delete is written as a tombstone."""
         self.check("a-web-delete-behaves-exactly-like-a-device-delete")
 
     def test_web_rename_carries_the_bytes(self):
@@ -160,6 +165,35 @@ class TestTwoDeviceSync(unittest.TestCase):
         """A file added from the browser is downloaded by every device, byte for byte, and nobody
         uploads over it afterwards."""
         self.check("web-upload-reaches-the-devices")
+
+
+    # ---- deleting a folder, across a whole fleet -------------------------------------------------
+    #
+    # Reported: "I deleted everything in Windows Explorer on Desktop, PosterChan says 1 file left in
+    # Blossom for Pictures (desktop.ini), and the Laptop, Phone and Tablet never deleted the
+    # pictures." Three tests, because the incident had three separable halves and only one of them
+    # was the bug.
+
+    def test_a_delete_reaches_every_other_device(self):
+        """The baseline, and it always passed: with an intact agreement a delete on one machine is
+        carried out on all the others. Kept so that a fix aimed at the case below cannot quietly
+        break the case that worked."""
+        self.check("a-delete-on-one-machine-reaches-the-whole-fleet")
+
+    def test_a_device_that_lost_its_agreement_does_not_undo_a_delete(self):
+        """THE BUG. A device with no `base` — reinstall, an app update that moved the storage origin,
+        "Stop syncing" and back — read "I still have this file" as "I edited this file", so
+        diff()'s delete-loses-to-edit arm made it UPLOAD every picture back over its tombstone. The
+        machine that did the deleting then downloaded them all again. Measured before the fix:
+        trashed 0, uploaded [a,b,c], manifest back to four live entries."""
+        self.check("a-device-that-lost-its-agreement-does-not-resurrect-a-delete")
+
+    def test_a_file_put_back_after_a_delete_is_not_destroyed(self):
+        """THE CONTROL, and the one that matters most. The fix above is a TIEBREAK, not "a tombstone
+        always wins" — a copy genuinely written after the deletion is a real edit and must survive
+        and republish. If this ever fails, the fix has become silent data loss for every device that
+        loses its agreement, which is worse than the bug it replaced."""
+        self.check("a-file-written-after-the-delete-still-wins")
 
 
 @unittest.skipIf(not NODE, "no node on this node")
