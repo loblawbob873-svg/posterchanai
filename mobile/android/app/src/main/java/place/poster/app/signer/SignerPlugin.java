@@ -44,6 +44,13 @@ public class SignerPlugin extends Plugin {
         o.put("answered", SignerRelayService.requestsAnswered);
         o.put("lastRequestAt", SignerRelayService.lastRequestAt);
         o.put("lastError", SignerRelayService.lastError);
+        /* IS THE FAST PATH ACTUALLY ON. Four point multiplications per request in pure-Java
+         * BigInteger is the difference between a signer that keeps up and one nobody will use, and
+         * `Native` disables itself silently on any phone where the library is missing or disagrees
+         * with the Java implementation — which is correct, and undiagnosable without this line. */
+        o.put("fastCrypto", Native.active());
+        o.put("fastEcdh", Native.ecdhActive());
+        o.put("fastWhy", Native.why);
         o.put("batteryExempt", batteryExempt());
         call.resolve(o);
     }

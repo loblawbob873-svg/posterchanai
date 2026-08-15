@@ -290,6 +290,32 @@ public class SignerRelayService extends Service {
         note();
     }
 
+    /* THE CRYPTO POOL. Bounded at three and idle-reaped to zero, so a phone that is not signing
+     * anything holds no threads at all. Created lazily for the same reason. */
+    private java.util.concurrent.ThreadPoolExecutor cryptoPool;
+    private synchronized java.util.concurrent.ThreadPoolExecutor pool() {
+        if (cryptoPool == null) {
+            cryptoPool = new java.util.concurrent.ThreadPoolExecutor(
+                    0, 3, 30L, TimeUnit.SECONDS, new java.util.concurrent.LinkedBlockingQueue<>(),
+                    r -> {
+                        Thread t = new Thread(r, "pc-signer-crypto");
+                        // DEFAULT priority, for the reason written on the work thread: the
+                        // background cgroup would put this straight back where it started.
+                        t.setPriority(Thread.NORM_PRIORITY);
+                        return t;
+                    });
+        }
+        return cryptoPool;
+    }
+
+    /** Our own x-only pubkey, derived once per process. See send(). */
+    private volatile String myPubHex;
+    private String myPub(byte[] sec) {
+        String p = myPubHex;
+        if (p == null) { p = Nostr.hex(Nostr.pubkey(sec)); myPubHex = p; }
+        return p;
+    }
+
     private OkHttpClient http() {
         if (http == null) {
             http = new OkHttpClient.Builder()
@@ -444,45 +470,79 @@ public class SignerRelayService extends Service {
         Nip46Core.Session sess = sessions.get(from);
         if (sess == null) return;                       // not an app this phone signs for
 
-        byte[] sec = SignerKey.load(this);
+        final byte[] sec = SignerKey.load(this);
         if (sec == null) return;
 
-        String plain = decode(sec, from, ev.optString("content", ""), sess);
-        if (plain == null) return;
+        /* EVERYTHING FROM HERE IS CRYPTO, AND IT GOES TO A POOL.
+         *
+         * One NIP-46 request costs FOUR secp256k1 point multiplications: an ECDH to read it, an ECDH
+         * for whatever it asked (a decrypt is another one), an ECDH to encrypt the reply, and a
+         * signature over the reply event. All of that ran on the single work thread, strictly one
+         * request after another — MEASURED on the relay at 1.5 answered requests per second per
+         * client, against about 11 for the WebView this service replaced. A DM restore is two
+         * requests per message, so a 400-message history took nine minutes and the app was reported,
+         * fairly, as "way too slow, nobody will use it".
+         *
+         * The maps stay thread-confined: the session lookup, the socket lookup and every field this
+         * touches are read HERE, on the work thread, and the only things the pool sends back are
+         * posted to it. So the pool never reads or writes `sessions`, `socks` or `failures`, and the
+         * confinement that made this file safe is intact — it is the arithmetic that moved, not the
+         * bookkeeping.
+         *
+         * Three threads, idle-reaped: enough to overlap a request with the next one on any phone
+         * made this decade, far short of anything that would heat one up. */
+        final String peer = from;
+        final String content = ev.optString("content", "");
+        final String encNow = sess.enc, permsNow = sess.perms, peerPk = sess.pk;
+        final WebSocket ws = socks.get(sess.relay);
+        final Nip46Core.Session sref = sess;
+        pool().execute(() -> {
+            String[] learned = new String[1];
+            String plain = decode(sec, peer, content, encNow, learned);
+            if (plain == null) return;
 
-        String id, method;
-        JSONArray params;
-        try {
-            JSONObject req = new JSONObject(plain);
-            id = req.optString("id", "");
-            method = req.optString("method", "");
-            params = req.optJSONArray("params");
-            if (params == null) params = new JSONArray();
-        } catch (Throwable t) { return; }
-        if (id.isEmpty() || method.isEmpty()) return;
+            String id, method;
+            JSONArray params;
+            try {
+                JSONObject req = new JSONObject(plain);
+                id = req.optString("id", "");
+                method = req.optString("method", "");
+                params = req.optJSONArray("params");
+                if (params == null) params = new JSONArray();
+            } catch (Throwable t) { return; }
+            if (id.isEmpty() || method.isEmpty()) return;
 
-        sess.last = System.currentTimeMillis() / 1000;
-        lastRequestAt = sess.last;
+            String result = null, error = null;
+            if (!Nip46Core.allowed(permsNow, method, kindOf(method, params))) {
+                error = "not permitted: " + method + " was not in what this app asked for";
+            } else {
+                try { result = handle(sec, method, params); }
+                catch (Throwable t) { error = String.valueOf(t.getMessage()); }
+            }
 
-        String result = null, error = null;
-        if (!Nip46Core.allowed(sess.perms, method, kindOf(method, params))) {
-            error = "not permitted: " + method + " was not in what this app asked for";
-        } else {
-            try { result = handle(sec, method, params); }
-            catch (Throwable t) { error = String.valueOf(t.getMessage()); }
-        }
-
-        try {
-            JSONObject out = new JSONObject();
-            out.put("id", id);
-            out.put("result", error != null ? "" : (result == null ? "" : result));
-            if (error != null) out.put("error", error);
-            send(sec, sess, out.toString());
-            requestsAnswered++;
-        } catch (Throwable t) {
-            lastError = "could not answer";
-        }
-        note();
+            boolean sent = false;
+            try {
+                JSONObject out = new JSONObject();
+                out.put("id", id);
+                out.put("result", error != null ? "" : (result == null ? "" : result));
+                if (error != null) out.put("error", error);
+                send(sec, peerPk, learned[0] != null ? learned[0] : encNow, ws, out.toString());
+                sent = true;
+            } catch (Throwable t) {
+                lastError = "could not answer";
+            }
+            // Back to the owner thread for every piece of shared state, including the counters the
+            // panel reads — those are what tell a phone that answered from one that only tried.
+            final boolean ok = sent;
+            final String enc = learned[0];
+            handler.post(() -> {
+                if (enc != null) sref.enc = enc;
+                sref.last = System.currentTimeMillis() / 1000;
+                lastRequestAt = sref.last;
+                if (ok) requestsAnswered++;
+                note();
+            });
+        });
     }
 
     /**
@@ -502,7 +562,9 @@ public class SignerRelayService extends Service {
     }
 
     /** Try both schemes, ordered by the payload's own marker, and remember which one worked. */
-    private String decode(byte[] sec, String peerHex, String ct, Nip46Core.Session sess) {
+    /** `learned[0]` reports the scheme that worked; the CALLER writes it to the session, on the work
+     *  thread. This runs on the crypto pool and must not touch shared state. */
+    private String decode(byte[] sec, String peerHex, String ct, String encNow, String[] learned) {
         byte[] peer;
         try { peer = Nostr.unhex(peerHex); } catch (Throwable t) { return null; }
         boolean fourFirst = Nip46Core.nip04First(ct);
@@ -511,22 +573,25 @@ public class SignerRelayService extends Service {
             try {
                 String pt = four ? Crypt.nip04Decrypt(sec, peer, ct)
                                  : Crypt.nip44Decrypt(Crypt.conversationKey(sec, peer), ct);
-                if (pt != null) { sess.enc = four ? "nip04" : "nip44"; return pt; }
+                if (pt != null) { learned[0] = four ? "nip04" : "nip44"; return pt; }
             } catch (Throwable ignored) { }
         }
         return null;
     }
 
     /** Encrypt, sign and publish the reply on the socket that carries this session. */
-    private void send(byte[] sec, Nip46Core.Session sess, String payload) throws Exception {
-        byte[] peer = Nostr.unhex(sess.pk);
-        String ct = Nip46Core.replyWithNip04(sess.enc)
+    private void send(byte[] sec, String peerPk, String enc, WebSocket ws, String payload)
+            throws Exception {
+        byte[] peer = Nostr.unhex(peerPk);
+        String ct = Nip46Core.replyWithNip04(enc)
                 ? Crypt.nip04Encrypt(sec, peer, payload)
                 : Crypt.nip44Encrypt(Crypt.conversationKey(sec, peer), payload, null);
 
-        String pub = Nostr.hex(Nostr.pubkey(sec));
+        /* OUR OWN PUBKEY, ONCE. It is one more point multiplication and it derives from a key that
+         * does not change — computing it per reply was a fifth of the work of answering. */
+        String pub = myPub(sec);
         long now = System.currentTimeMillis() / 1000;
-        String tags = new JSONArray().put(new JSONArray().put("p").put(sess.pk)).toString();
+        String tags = new JSONArray().put(new JSONArray().put("p").put(peerPk)).toString();
         String eid = Nostr.eventId(pub, now, 24133, tags, ct);
 
         JSONObject ev = new JSONObject();
@@ -538,7 +603,7 @@ public class SignerRelayService extends Service {
         ev.put("content", ct);
         ev.put("sig", Nostr.hex(Nostr.sign(Nostr.unhex(eid), sec, null)));
 
-        WebSocket ws = socks.get(sess.relay);
+        // The socket was looked up on the work thread and handed in; OkHttp's send() is thread-safe.
         if (ws != null) ws.send(new JSONArray().put("EVENT").put(ev).toString());
     }
 
@@ -645,6 +710,7 @@ public class SignerRelayService extends Service {
         /* Close on the thread that owns the sockets, then stop that thread — `quitSafely` runs the
          * queued close first, where `quit()` would drop it and leak every open WebSocket. */
         handler.post(() -> { closeAll(); thread.quitSafely(); });
+        if (cryptoPool != null) try { cryptoPool.shutdownNow(); } catch (Throwable ignored) { }
         running = false;
         paired = 0;
         /* Same as the other half: killed rather than switched off, so nothing has redrawn the

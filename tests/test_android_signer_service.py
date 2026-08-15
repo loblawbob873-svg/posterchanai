@@ -920,3 +920,49 @@ def test_the_background_signer_is_given_a_key_without_exposing_the_phone():
         "the page never arms the service, so the first offer is refused for a reason no retry fixes"
     )
 
+def test_the_crypto_does_not_run_on_the_socket_thread():
+    """Four point multiplications per request, one thread, one request at a time.
+
+    MEASURED on the relay: 1.5 answered requests per second per client from the service, against
+    about 11 from the WebView it replaced. A DM restore is two requests per message, so 400 messages
+    took nine minutes — "way too slow, nobody will use it", which is a fair verdict on a signer.
+
+    The fix is NOT to spread the bookkeeping across threads: `sessions`, `socks` and `failures` are
+    plain maps whose safety comes from being touched by one thread only, and that stays. It is the
+    ARITHMETIC that moves — decode, handle, encrypt, sign — with every shared field read on the work
+    thread before dispatch and every update posted back to it.
+
+      dispatched     the crypto runs on a pool, not on the handler
+      confined       the pool never touches the maps: decode/send take values, not the session
+      posted-back    counters and the learned scheme go back through handler.post
+      idle-free      the pool reaps to zero threads, so a phone that signs nothing holds none
+    """
+    svc = _read(os.path.join(SIGNER, "SignerRelayService.java"))
+
+    assert "pool().execute(" in svc, "the crypto still runs on the single work thread"
+    # decode/send must not be handed the session object — that is what would let the pool mutate it.
+    assert "private String decode(byte[] sec, String peerHex, String ct, String encNow, String[] learned)" in svc, \
+        "decode still takes the session, so the pool writes session state off-thread"
+    assert "private void send(byte[] sec, String peerPk, String enc, WebSocket ws, String payload)" in svc, \
+        "send still reads the session and the socket map from the pool"
+    body = svc[svc.index("pool().execute("):]
+    body = body[:body.index("\n    }")]
+    for banned in ("sessions.", "socks.", "failures."):
+        assert banned not in body, f"the crypto pool touches {banned} — those maps are thread-confined"
+    assert "handler.post(" in body, "the pool updates shared state without posting back"
+    assert "requestsAnswered++" in body, "the answered counter left the request path"
+    # …and the pool must not be a permanent set of threads on a phone that signs nothing.
+    assert "0, 3, 30L" in svc, "the crypto pool no longer reaps its idle threads"
+
+
+def test_the_panel_can_see_whether_the_crypto_is_in_c():
+    """`Native` disables itself silently — a missing library, an ABI with no .so, or an answer that
+    disagreed with the Java implementation. That is the right behaviour and it is undiagnosable from
+    outside, which is how a phone can be 100x slower than it should be with nothing to show for it."""
+    plug = _read(os.path.join(SIGNER, "SignerPlugin.java"))
+    app = _read(os.path.join(ROOT, "static", "js", "client", "app.js"))
+    for k in ("fastCrypto", "fastEcdh", "fastWhy"):
+        assert k in plug, f"status() does not report {k}"
+    assert "Native.ecdhActive()" in plug, "the ECDH half is not reported separately from signing"
+    assert "Fast crypto: OFF" in app, "the panel never says when the slow path is in use"
+

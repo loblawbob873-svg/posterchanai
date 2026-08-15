@@ -19808,8 +19808,16 @@
         const live = n._live().length;
         const heard = n._rxAt ? Math.round((Date.now() - n._rxAt) / 1000) + 's ago'
                               : 'never';
+        /* WHICH RELAYS, by name. A request goes to every socket this session holds — and if the
+         * signer is not listening on any of them, a kind-24133 is fanned out to nobody and
+         * DESTROYED (it is ephemeral; nothing stores it). That failure looks exactly like a slow
+         * signer from here: the relay ACKs our publish, so "relay last spoke" stays fresh, and the
+         * reply never comes because the request never reached anyone. The only thing that tells the
+         * two apart is which room we are shouting into, so the line says it. */
+        const hosts = (n._urls || []).map(u => { try{ return new URL(u).host; }catch(_){ return u; } });
         why = ` — signer: ${n._pending.size} sent and unanswered, ${n._inflight + n._queue.length}`
-            + ` queued, relay last spoke ${heard}` + (live ? '' : ', NO SOCKET');
+            + ` queued, relay last spoke ${heard}` + (live ? '' : ', NO SOCKET')
+            + `; via ${hosts.join(', ') || 'nothing'} (${live}/${hosts.length} open)`;
       }
     }catch(_){}
     _dmProg = _dmBase + (why || ' — waiting on your signer');
@@ -25310,6 +25318,15 @@
         + (s.answered ? ' ' + enc(String(s.answered)) + ' requests answered.' : '')
         + (last ? ' Last request ' + enc(timeAgo(last)) + ' ago.'   // the service stamps it in SECONDS
                 : ' No request has reached this phone yet.')
+        /* AND WHETHER THE CRYPTO IS IN C. Four point multiplications per request: in libsecp256k1
+         * that is microseconds, in BigInteger it is most of a second, and `Native` turns itself off
+         * silently on any phone where the library is missing or disagrees with the Java code. The
+         * difference is the whole of "way too slow, nobody will use it", so it is on screen. */
+        + (s.fastCrypto === undefined ? ''
+           : (s.fastCrypto && s.fastEcdh
+              ? ' Fast crypto: on.'
+              : ' <b>Fast crypto: OFF</b>' + (s.fastWhy ? ' (' + enc(String(s.fastWhy)) + ')' : '')
+                + ' — signing is running in Java and will be slow.'))
         + '</div>');
       /* The honest limit of a foreground service, and the one thing left that can still delay a
        * request. Doze defers an unexempted app's network while the screen is off, so a signature can
