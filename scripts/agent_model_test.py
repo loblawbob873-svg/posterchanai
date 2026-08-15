@@ -316,6 +316,14 @@ def main() -> int:
     ap.add_argument("--workdir", default="")
     ap.add_argument("--report", default="")
     ap.add_argument("--flash-attn", default="")   # "true"/"false"; per-node (Arc OFF, CUDA on)
+    # THINKING IS A PROPERTY OF THE MODEL, NOT OF THIS HARNESS.
+    ap.add_argument("--thinking", action="store_true",
+                    help="Let the model think. The default injects /no_think, which is right for a "
+                         "non-thinking model (Qwen3-Coder opens <think>, never closes it, and burns "
+                         "a whole pass before the retry) and WRONG for a thinking one — measured on "
+                         "Qwen3.8-27B, which under /no_think narrated a plan for 52 minutes and "
+                         "emitted zero tool calls. A model that cannot be driven either way is the "
+                         "finding; guessing which, and reporting it as 'bad at tools', is not.")
     args = ap.parse_args()
 
     model_path = args.model if os.path.isabs(args.model) else os.path.join(ROOT, args.model)
@@ -368,7 +376,8 @@ def main() -> int:
     for step_i in range(args.steps):
         t = time.time()
         try:
-            msg, reason = generate_message(model, messages, TOOLS, params, disable_thinking=True)
+            msg, reason = generate_message(model, messages, TOOLS, params,
+                                           disable_thinking=not args.thinking)
         except Exception as exc:
             finished = f"generation failed: {exc}"
             break
