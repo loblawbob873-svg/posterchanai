@@ -1279,7 +1279,19 @@
          * physical act — but two minutes of a button that does nothing is indistinguishable from a
          * broken one, and that is exactly how it was reported ("click send, nothing happens").
          * A single nudge at 4s, only while the request is still outstanding. */
-        const ceiling=(opts && opts.timeout) || 120000;
+        /* 120s is for a HUMAN — it is how long approving a signature on a phone can take. Nothing
+         * in the bulk lane is waiting on a person: a decrypt on a reachable signer answers in well
+         * under a second, so a bulk request still outstanding at 45s is not slow, it is LOST — the
+         * relay fanned it out to nobody (kind 24133 is ephemeral) and no copy exists anywhere.
+         *
+         * Giving those the human's ceiling is what made a DM restore stop dead: six slots, each
+         * held for two minutes and then RETRIED for another two by _send, so a handful of dropped
+         * requests stalls the whole queue for the best part of ten minutes. Reported as "decrypting
+         * messages stuck at 80/400" — the counter was not stuck, it was waiting out ceilings that
+         * had nothing to do with a person. Failing at 45s hands the slot back and lets the retry
+         * (which reconnects first, via _ensure) do its job. */
+        const ceiling=(opts && opts.timeout)
+                    || (this._PRIORITY.has(method) ? 120000 : 45000);
         /* ONE nudge, and only for something a human is actually waiting on.
          *
          * Every request nudged, so a stalled transport during a DM restore covered the screen in
@@ -1324,10 +1336,24 @@
          *
          * Interactive requests only. Bulk decrypts have the queue and their own retry, and a DM
          * restore re-sending per message would be hundreds of duplicate requests. */
-        if(this._PRIORITY.has(method) && method !== 'connect'){
+        if(method !== 'connect'){
           let resent = 0;
+          const interactive = this._PRIORITY.has(method);
           const again = async ()=>{
             if(!this._pending.has(id) || resent >= 4) return;
+            /* THE DEAF CHECK IS ABOUT THE TRANSPORT, SO EVERY LANE GETS IT; the RE-SEND is about
+             * one request, so only the interactive lane does.
+             *
+             * A zombie socket is not a property of the request that happened to notice it. During a
+             * DM restore the only requests in flight are bulk decrypts — nothing interactive is
+             * outstanding to do the noticing — so gating the check on the lane meant the one
+             * situation with hundreds of requests stalled against a dead socket was the one
+             * situation nothing checked. `revive()` is debounced to one reconnect per 3s however
+             * many requests call it, which is what makes this safe to do 400 times at once. */
+            if(!interactive){
+              if(!(this._rxAt >= sentAt)) try{ this.revive(); }catch(_){}
+              return;                     // no duplicate storm: _send's own retry re-sends this one
+            }
             resent++;
             /* DEAF: nothing at all has arrived on any socket since this request went out — not even
              * the relay's own `OK` for the event we just published, which is the fastest and most
@@ -8455,8 +8481,7 @@
     // answered in 12s is treated exactly like one that failed (which this code already tolerated — it
     // falls back to the last index this device stored), because the alternative is the dead button.
     try{ FilesIdx.loadLocal(); }catch(_){ }
-    if(!FilesIdx._pulled){ FilesIdx._pulled=true;
-      try{ await Promise.race([ FilesIdx.pull(), new Promise(r=>setTimeout(r, 12000)) ]); }catch(_){ } }
+    try{ await Promise.race([ FilesIdx.ensure(), new Promise(r=>setTimeout(r, 12000)) ]); }catch(_){ }
     if(!alive()) return;   // closed while we were reading
 
     let list=null;
@@ -14890,7 +14915,7 @@
     (async()=>{
       // Folder names live in the encrypted Files index, which is only fetched when you OPEN Files —
       // so without this pull the picker showed a flat drive to anyone who hadn't been there yet.
-      if(!FilesIdx._pulled){ FilesIdx._pulled=true; try{ await FilesIdx.pull(); }catch(_){ } }
+      try{ await FilesIdx.ensure(); }catch(_){ }
       let list=[]; try{ const r=await fetch(server+'/list/'+ME.pubkey); if(r.ok) list=await r.json(); }catch(_){}
       // Same filter as the Files grid: hide the octet-stream noise (encrypted ciphertext, stale/live
       // index blobs, unnamed binaries) — none of it renders as media in a post, and it floods the picker.
@@ -15403,7 +15428,7 @@
       MusicPlayer.play(MusicPlayer.queue[Math.floor(Math.random()*MusicPlayer.queue.length)], {force:true}); };
     // Reconcile against the server before playing, so deleted songs can't be queued (and an emptied
     // library correctly shows the "add some music" guide instead of failing track by track).
-    const ready = FilesIdx._pulled ? Promise.resolve() : (FilesIdx._pulled=true, FilesIdx.pull());
+    const ready = FilesIdx.ensure();
     Promise.resolve(ready).then(_refreshBlobHave).then(go, go);
   }
   async function renderBlossom(){
@@ -15506,7 +15531,7 @@
     // proved the server has none). _pullBlocked = the server HAS an index we could not read — the one
     // state in which writing anything would destroy it. The three are not the same thing, and
     // conflating _pullDone with "we have the index" is what wiped a drive's folders: see _save/_gc.
-    data: { folders: ['Music'], files: {}, encFolders: [] }, _pulled:false, _pulling:false, _pullDone:false, _pullOk:false, _pullBlocked:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null, _indexShas:new Set(), _dirty:false, _saving:false,
+    data: { folders: ['Music'], files: {}, encFolders: [] }, _pulling:false, _ensuring:null, _pullDone:false, _pullOk:false, _pullBlocked:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null, _indexShas:new Set(), _dirty:false, _saving:false,
     // A collapsing write the user has already confirmed, and the retry that follows a failure.
     _forceOk:false, _saveFailed:false, _retryT:null, _retryN:0, _saveAgain:false, _savingP:null,
     /* When this device last AGREED with the server, in unix seconds. It is what tells a
@@ -15659,8 +15684,47 @@
                   files:this._mergeFiles(srv, loc) };
       this.saveLocal();
     },
+    /* ONE WAY TO SAY "I NEED THE INDEX", because four call sites each had their own and every one of
+     * them latched on the ATTEMPT rather than on the result:
+     *
+     *     if(!FilesIdx._pulled){ FilesIdx._pulled = true; try{ await FilesIdx.pull(); }catch(_){} }
+     *
+     * `_pulled` is set BEFORE the pull and the failure is swallowed, so ONE pull that did not
+     * materialise the index — and `pull()` begins by asking the SIGNER for a kind-27235, which with
+     * a remote signer means a phone that may be slow, busy or asleep — convinces every picker on the
+     * page, for the life of the page, that the drive has no folders. Reported in one breath as "the
+     * folder list is gone on the reply post blossom file picker", "new post is missing the blossom
+     * folder picker too" and "folder choose is broken all across blossom": one latch, every surface.
+     *
+     * The honest flag already exists. `_pullOk` means the index was actually materialised (or the
+     * server proved it has none) — it is what `_save` gates on, for the same reason: acting on an
+     * index we never read is how a drive's folders get wiped. So the latch is `_pullOk`, a failed
+     * attempt leaves nothing behind, and the next picker tries again. Concurrent callers share the
+     * one in-flight pull rather than starting four. */
+    ensure(){
+      if(this._pullOk) return Promise.resolve(true);
+      if(!this._ensuring){
+        this._ensuring = (async()=>{
+          try{ await this.pull(); }catch(_){}
+          this._ensuring = null;
+          return !!this._pullOk;
+        })();
+      }
+      return this._ensuring;
+    },
     async pull(){
       this._pulling = true;
+      /* `_pulling` is cleared in a FINALLY, not at the end of the try.
+       *
+       * Everything below is wrapped in a catch that swallows, and the very first statement asks the
+       * signer to sign — which rejects when a remote signer does not answer (after its full ceiling).
+       * On that path `_pulling` was left TRUE for ever, and it is the flag `_ensureMK` checks before
+       * deciding to pull the drive's key: one slow signer, and the drive could not be read again
+       * until the page was reloaded. Same shape as the latch above, one line further in. */
+      try{ return await this._pull(); }
+      finally{ this._pulling = false; }
+    },
+    async _pull(){
       try{ const auth=await sign(27235,'files-index',[['p',ME.pubkey]]);
         const r=await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
@@ -15749,7 +15813,7 @@
         } else if(r && r.ok){
           this._pullOk=true;                      // server has no index at all — a fresh drive, safe to save
         }
-        this._pullDone=true; this._pulling=false;
+        this._pullDone=true;
       }catch(_){}
       return this._norm();
     },
@@ -16352,7 +16416,9 @@
     if(_mkRefreshed) return false;
     _mkRefreshed = true;
     try{
-      FilesIdx.mk = null; FilesIdx._pulled = false;
+      // Force a genuine re-read: ensure() short-circuits on `_pullOk`, and this exists precisely
+      // because the index we already hold has a key that does not work.
+      FilesIdx.mk = null; FilesIdx._pullOk = false;
       await FilesIdx.pull();
       return true;
     }catch(_){ return false; }
@@ -16827,7 +16893,9 @@
     const server=mediaServer();
     if(!server){ pane.innerHTML='<div class="empty">Blossom server not configured.</div>'; return; }
     FilesIdx.loadLocal();
-    if(!FilesIdx._pulled){ FilesIdx._pulled=true; FilesIdx.pull().then(()=>{ if(VIEW==='blossom') renderBlossom(); }); }
+    // Guarded on `_pullOk` rather than on ensure()'s own latch: with the index already loaded
+    // ensure() resolves immediately, and re-rendering from that would call this line again.
+    if(!FilesIdx._pullOk) FilesIdx.ensure().then(()=>{ if(VIEW==='blossom') renderBlossom(); });
     /* A synced folder is a different SOURCE, not a different folder of the drive: its list comes from
      * the sync manifest, not from Blossom's /list. Branch BEFORE the upload probe and the listing —
      * neither is anything to do with it, and both are a round trip. */
@@ -19643,9 +19711,25 @@
   let _dmLoaded=false, _dmUnread=0;
   // A remote signer (Amber) decrypts each message on the PHONE, so restoring a big history genuinely takes a
   // while. Say so, with a count — otherwise a half-filled DM list just looks broken.
-  let _dmProg='';
+  let _dmProg='', _dmProgAt=0, _dmProgWatch=0;
   function _dmProgress(done, total){
-    if(arguments.length) _dmProg = (done < total) ? `🔓 decrypting your messages… ${done}/${total}` : '';
+    if(arguments.length){
+      _dmProg = (done < total) ? `🔓 decrypting your messages… ${done}/${total}` : '';
+      _dmProgAt = Date.now();
+      /* A COUNTER THAT STOPS IS NOT A COUNTER THAT FAILED, AND IT LOOKS IDENTICAL.
+       *
+       * Every message is two round trips to a phone, so this line advances in bursts and pausing is
+       * normal. It was reported as "decrypting messages stuck at 70/400 — this is not moving", and
+       * from the screen that is the only available reading: the number is the whole interface. Say
+       * what the pause IS once it has gone on longer than any healthy burst, and keep the number, so
+       * "slow" and "wedged" stop looking the same. Cleared by the next advance. */
+      clearTimeout(_dmProgWatch);
+      if(_dmProg) _dmProgWatch = setTimeout(()=>{
+        if(!_dmProg || Date.now() - _dmProgAt < 19000) return;
+        _dmProg += ' — waiting on your signer';
+        try{ _dmProgress(); }catch(_){}
+      }, 20000);
+    }
     const wrap=document.querySelector('#dm-list'); if(!wrap) return;
     let el=document.getElementById('dm-progress');
     if(!_dmProg){ if(el) el.remove(); return; }
@@ -19669,12 +19753,19 @@
     // tens of minutes, during which you see only the handful it has got through ("still only the same 6 DMs").
     // Fire them all and let the signer transport cap real concurrency; newest-first so the DMs you actually
     // want appear first, and _scheduleDmRefresh paints them as they land.
+    /* NOT COUNTED HERE ANY MORE — ingestWrap counts itself, and it has to.
+     *
+     * This loop only ever knew about ONE of the three places wraps are decrypted. The cached pass
+     * above it (`Store.byKind(1059)`, fired and not awaited) and the backfill drain below it were
+     * both invisible to the number on screen, and they share the same six transport slots — so the
+     * counter could sit still for a minute while the signer was working flat out on wraps this
+     * loop had never heard of, or run to 400/400 while hundreds were still going. Once a wrap that
+     * another pass already took returns instantly (_wrapTried), the two came apart completely.
+     *
+     * A progress number that is not measuring the work is worse than none: "70/400, this is not
+     * moving" is then a true statement about the counter and says nothing about the restore. */
     const wraps=evs.filter(e=>e.kind===1059).sort((a,b)=>b.created_at-a.created_at);
-    if(wraps.length) _dmProgress(0, wraps.length);
-    let _done=0;
-    await Promise.all(wraps.map(w=>ingestWrap(w, false).finally(()=>{
-      if(++_done % 10 === 0 || _done === wraps.length) _dmProgress(_done, wraps.length);
-    })));
+    await Promise.all(wraps.map(w=>ingestWrap(w, false)));
     // DRAIN THE REST OF THE HISTORY. The bulk query above caps at 400 wraps and the "unlimited" live
     // sub below is not actually unlimited: a filter with NO limit is capped by the relay (ours
     // defaults to 500), so a long history is silently truncated to the newest few hundred and older
@@ -19741,11 +19832,25 @@
    * not the wrap being unreadable, and it must be retried when the transport comes back. One that
    * decodes to something that is not ours stays marked — it will never become ours. */
   const _wrapTried = new Set();
+  /* The counter lives HERE, with the work, because three different passes do this work and only one
+   * of them used to count (see ensureDMs). `_dmTotal` grows as wraps are discovered — the backfill
+   * drain finds them a page at a time — which looks odd for a moment and is the truth: a total that
+   * stops growing while the drain is still paging is a promise the restore cannot keep. */
+  let _dmDone = 0, _dmTotal = 0;
+  function _dmTick(){
+    if(_dmDone >= _dmTotal){ _dmProgress(_dmTotal, _dmTotal); return; }
+    // Every 5, and always the first — a burst of instant skips must not hide the real ones behind it.
+    if(_dmDone % 5 === 0 || _dmDone <= 1) _dmProgress(_dmDone, _dmTotal);
+  }
   async function ingestWrap(ev, live){
     if(!signer || !signer.nip17unwrap) return false;
     if(!ev || !ev.id || _wrapTried.has(ev.id)) return false;
     _wrapTried.add(ev.id);
-    let rumor; try{ rumor=await signer.nip17unwrap(ev); }catch(_){ _wrapTried.delete(ev.id); return false; }
+    _dmTotal++;
+    let rumor;
+    try{ rumor=await signer.nip17unwrap(ev); }
+    catch(_){ _wrapTried.delete(ev.id); _dmDone++; _dmTick(); return false; }
+    _dmDone++; _dmTick();
     if(!rumor || rumor.kind!==14 || rumor.content==null) return false;
     const mine = rumor.pubkey===ME.pubkey;
     const peer = mine ? (rumor.tags.find(t=>t[0]==='p')||[])[1] : rumor.pubkey;
@@ -29309,6 +29414,28 @@
        scripts/check_timeline_ghosts.py can plant one and watch it come back, and so a report of
        "only REPLYING TO, no posts" can be answered with a number instead of a hunt. */
     healGhostPairs: _healGhostPairs, ghostStats: () => Object.assign({}, _ghosts),
+    /* WHY THE DM RESTORE IS NOT MOVING, as numbers instead of a guess.
+     *
+     * "Decrypting messages, stuck at 70/400" has at least four different causes that look identical
+     * on screen — the signer is slow, the transport is deaf, the queue is starved behind a stalled
+     * lane, or the counter has come apart from the work — and every round of guessing costs a
+     * deploy and a page reload. These are the four measurements that tell them apart:
+     *   done/total   what ingestWrap has actually finished (every pass counts itself now)
+     *   inflight/qd  the transport's bulk lane: 6 slots, and how many are waiting for one
+     *   pending      requests published and not yet answered
+     *   rxAgo        ms since ANYTHING arrived on a signer socket. Large with pending > 0 is a
+     *                deaf socket; small is a signer that is simply working.
+     *   live/urls    sockets open vs relays this session wants
+     * `PC.dmStats()` in the console, or read it off Settings when it is wedged. */
+    dmStats: () => {
+      const n = (typeof Nip46 !== 'undefined') ? Nip46 : null;
+      return { done: _dmDone, total: _dmTotal, tried: _wrapTried.size,
+               inflight: n ? n._inflight : null, qd: n ? (n._queue || []).length : null,
+               inflightP: n ? n._inflightP : null, qdP: n ? (n._queueP || []).length : null,
+               pending: n ? n._pending.size : null,
+               rxAgo: (n && n._rxAt) ? Date.now() - n._rxAt : null,
+               live: n ? n._live().length : null, urls: n ? (n._urls || []).length : null };
+    },
     runSearch,                                                // → the desktop's taskbar search box
     openExternal,                                             // → web search results, and anything else that must leave the app
     /* THE NATIVE PLUGIN LOOKUP, shared. Not a convenience: `_capPlugin` falls back to

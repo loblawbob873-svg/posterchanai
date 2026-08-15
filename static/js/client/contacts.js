@@ -413,6 +413,43 @@
     const nativeSync = (m) => (PC.capPlugin ? PC.capPlugin('ContactSync', m || 'begin') : null);
     const owner = () => { try{ const me = PC.me ? PC.me() : PC.ME; return (me && me.pubkey) || ''; }
                           catch(_){ return ''; } };
+    /* CONSENT LIVES WHERE THE DATA LIVES, and this switch did not.
+     *
+     * Reported as "the box to sync to this phone is now unchecked after every apk update" — with the
+     * contacts gone from the phone until it was noticed and ticked again. The switch is one key in
+     * `ClientSettings`, i.e. localStorage inside the WEBVIEW, and that is the wrong place for it to
+     * be the ONLY copy: it is per-origin browser storage in an app whose whole UI is replaced by
+     * every update, while the thing it grants — an account in Android's own contacts database, with
+     * this account's cards under it — is untouched by any of that and sitting right there.
+     *
+     * So the phone is asked. `status()` reports the account, the row count, and the OWNER the plugin
+     * itself recorded (SharedPreferences, written by `ownerGuard` on every sweep) — a durable record
+     * of exactly what was consented to and by whom. An account under my key means the switch was on
+     * and something lost it; restore it. Nothing is inferred and nothing is widened:
+     *   - no account → nothing to restore. Turning the switch OFF removes the account, so a
+     *     deliberate "off" can never be undone by this.
+     *   - an owner that is not mine → somebody else's phone book. Leave it alone.
+     *   - an EMPTY owner is "I don't know", never "somebody else" (the same rule ownerGuard applies,
+     *     and for the same reason it was written: reading it as a mismatch wiped a real phone book).
+     *     An account with no owner recorded predates the owner check; adopt it, as phonebookOn's own
+     *     first-use branch below already does for the same case on this side.
+     * One shot per page, on the same signal that already opens the panel or runs a sweep. */
+    let _consentChecked = false;
+    async function restoreConsent(){
+      if(_consentChecked) return false;
+      _consentChecked = true;
+      try{
+        if(CSet().get(PHONE_KEY, false)) return false;       // still set: nothing was lost
+        const me = owner(); if(!me) { _consentChecked = false; return false; }   // ask again once signed in
+        const P = nativeSync('status'); if(!P || !P.status) return false;
+        const st = await P.status();
+        if(!st || !st.account) return false;
+        const who = _s(st.owner);
+        if(who && who !== me) return false;
+        CSet().set(PHONE_KEY, true); CSet().set(PHONE_OWNER, me);
+        return true;
+      }catch(_){ return false; }
+    }
     function phonebookOn(){
       if(!CSet().get(PHONE_KEY, false)) return false;
       const me = owner();
@@ -831,6 +868,10 @@
       try{
         const st = (await P.status()) || {};
         _native = true;
+        /* Opening the panel is the other moment the switch is read, so put it back here too — this
+         * is the answer that has the account and the owner in it already. Without it the panel is
+         * where somebody SEES the box unchecked, which is the report. */
+        if(st.account && !CSet().get(PHONE_KEY, false)) await restoreConsent();
         return st;                                // asked every time: the count is on screen
       }catch(_){
         // A first call that fails is a build without the plugin. A LATER one that fails is a blip,
@@ -1110,6 +1151,10 @@
        * seconds after start, and it costs nothing at all unless this is the packaged Android app AND
        * the switch is on: only then does it fetch the books. */
       async syncTick(){
+        // …and this is where a switch that lost its localStorage copy is put back: the background
+        // tick runs a few seconds after start, before anybody opens a screen, so the phone book is
+        // restored without the user having to notice it was gone and tick the box themselves.
+        if(!phonebookOn()) await restoreConsent();
         if(!nativeSync('begin') || !phonebookOn()) return;
         if(!S.ready) return load();       // load() sweeps at its end
         return syncPhonebook();

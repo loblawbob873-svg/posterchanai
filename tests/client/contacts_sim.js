@@ -33,7 +33,10 @@ const hasAccount = () => !opt.noAccount;
 
 const PLUGIN = {
   async status(){
-    return { granted:true, account:hasAccount(), owner:opt.owner || 'me',
+    // `pluginOwner` is what the PLUGIN recorded (SharedPreferences on a real phone) — deliberately
+    // separate from `owner` (who is signed in), because the case that matters is when they differ.
+    return { granted:true, account:hasAccount(),
+             owner: ('pluginOwner' in opt) ? opt.pluginOwner : (opt.owner || 'me'),
              count: hasAccount() ? phoneRows.length : 0 };
   },
   async enable(){ calls.push(['enable']); return { granted:true, account: hasAccount() }; },

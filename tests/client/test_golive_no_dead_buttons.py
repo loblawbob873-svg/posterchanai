@@ -82,8 +82,12 @@ def test_reading_the_drive_is_time_bounded(picker):
     """A stalled fetch has no timeout of its own, so both legs need one."""
     assert "_fetchTimeout(server+'/list/'" in picker, \
         "the drive listing must go through _fetchTimeout — a bare fetch() can stall for minutes"
-    assert re.search(r"Promise\.race\(\s*\[\s*FilesIdx\.pull\(\)", picker), \
-        "FilesIdx.pull() must be raced against a timeout; a pull that never answers held the picker shut"
+    # `ensure()`, not `pull()`: the four call sites that each latched "pull once" on the ATTEMPT
+    # (so one failed pull hid every folder on the page until a reload) went through one gate that
+    # latches on the RESULT — see tests/client/test_files_index_pull_retries.py. The rule this test
+    # exists for is unchanged and still the point: whatever reads the drive here is raced.
+    assert re.search(r"Promise\.race\(\s*\[\s*FilesIdx\.ensure\(\)", picker), \
+        "the index read must be raced against a timeout; one that never answers held the picker shut"
 
 
 def test_fetchtimeout_actually_aborts():

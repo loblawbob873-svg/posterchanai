@@ -347,6 +347,48 @@ class ConsentIsPerAccountTests(unittest.TestCase):
         self.assertEqual(res["settings"]["androidPhonebookOwner"], "me",
                          "the owner must be recorded, or the next account inherits it again")
 
+    # ---- the switch surviving an APK update ------------------------------------------------------
+    # "all my contacts are gone after updating the app! the box to sync to this phone is now
+    # unchecked after every apk update!" — the consent was one key in the WEBVIEW's localStorage,
+    # which an app update is entitled to lose, while the thing it granted (an Android account with
+    # this account's cards under it) was still on the phone the whole time. The phone's own record
+    # is the durable one, so it is asked. These four cases are the whole rule.
+
+    def test_the_switch_is_restored_from_the_account_the_phone_still_has(self):
+        """THE REPORT. localStorage came back empty; the account and its rows did not."""
+        res = run(owner="me", books=[BOOK], cards={"default": [card("a", "Ann")]}, phone=["a"],
+                  settings={},                       # the update took the switch with it
+                  steps=["syncTick", "settle"])
+        self.assertIs(res["settings"].get("androidPhonebook"), True,
+                      "the switch stayed off — the phone book is gone until somebody notices")
+        self.assertEqual(res["settings"].get("androidPhonebookOwner"), "me")
+        self.assertEqual(res["phoneRows"], ["a"], "and the phone keeps its people")
+
+    def test_it_will_not_restore_somebody_elses_consent(self):
+        """A handed-down phone. The plugin recorded who it last synced for; that is not me."""
+        res = run(owner="me", books=[BOOK], cards={"default": [card("a", "Ann")]}, phone=["a"],
+                  settings={}, pluginOwner="someone-else",
+                  steps=["syncTick", "settle"])
+        self.assertNotEqual(res["settings"].get("androidPhonebook"), True,
+                            "another account's phone book was adopted without being asked")
+
+    def test_turning_it_off_is_never_undone_by_this(self):
+        """Off removes the ACCOUNT, so "no account" is the record of a deliberate no. Without this
+        the restore would turn the feature back on for somebody who switched it off on purpose."""
+        res = run(owner="me", books=[BOOK], cards={"default": [card("a", "Ann")]}, phone=[],
+                  settings={}, noAccount=True,
+                  steps=["syncTick", "settle"])
+        self.assertNotEqual(res["settings"].get("androidPhonebook"), True)
+        self.assertEqual(res["phoneRows"], [])
+
+    def test_an_account_with_no_owner_recorded_is_adopted_not_refused(self):
+        """Same upgrade path as the settings-side branch above: an EMPTY owner is "I don't know",
+        never "somebody else" — read as a mismatch it is what wiped a real phone book."""
+        res = run(owner="me", books=[BOOK], cards={"default": [card("a", "Ann")]}, phone=["a"],
+                  settings={}, pluginOwner="",
+                  steps=["syncTick", "settle"])
+        self.assertIs(res["settings"].get("androidPhonebook"), True)
+
 
 if __name__ == "__main__":
     unittest.main()
