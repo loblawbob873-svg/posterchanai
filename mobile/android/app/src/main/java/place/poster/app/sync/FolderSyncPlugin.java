@@ -472,7 +472,11 @@ public class FolderSyncPlugin extends Plugin {
   @PluginMethod
   public void emptyTrash(PluginCall call) {
     final String id = call.getString("id", "");
-    final int days = call.getInt("days", 30) == null ? 30 : call.getInt("days", 30);
+    // 0 MEANS EVERYTHING, and `getInt(k, 30)` cannot tell an explicit 0 from an absent value on its
+    // own — which is the same `|| 30` that made the desktop's Empty trash unable to empty anything
+    // newer than a month. Only a genuinely missing value falls back to the safety window.
+    final Integer daysArg = call.getInt("days");
+    final int days = daysArg == null ? 30 : daysArg;
     getBridge().execute(() -> {
       try {
         Uri tree = Uri.parse(id);
@@ -486,8 +490,13 @@ public class FolderSyncPlugin extends Plugin {
           if (c != null) {
             while (c.moveToNext()) {
               String docId = c.getString(0), name = c.getString(1);
-              long when = Excludes.dayMillis(name);
-              if (when <= 0 || when >= cutoff) continue;
+              // days == 0 is "everything", and the name is not consulted for it: a future-dated
+              // folder (a device whose clock was wrong) and one whose name is not a date at all both
+              // survive a date comparison for ever, in the one place a user goes to reclaim space.
+              if (days > 0) {
+                long when = Excludes.dayMillis(name);
+                if (when <= 0 || when >= cutoff) continue;
+              }
               if (deleteDoc(cr, tree, docId)) removed++;
             }
             c.close();

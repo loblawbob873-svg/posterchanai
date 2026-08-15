@@ -1279,10 +1279,37 @@
         }catch(e){ PC.toast('tidy failed: ' + ((e && e.message) || e)); }
         paint();
       };
+      /* EMPTY TRASH HAS TO BE ABLE TO EMPTY THE TRASH.
+       *
+       * `.pc-trash` lives INSIDE the synced root, so everything in it is still counted by Explorer,
+       * by a disk-usage tool and by a quota. Every layer of this hardcoded 30 days and there was no
+       * automatic sweep for that floor to serve, so the only caller was this button — which could
+       * therefore never reclaim anything recent. Reported after deleting a 40 GB Pictures folder:
+       * pressed Empty trash, folder still 40 GB. The only way out was deleting `.pc-trash` by hand
+       * in a file manager, i.e. the app sending the user around itself.
+       *
+       * It empties EVERYTHING now, and the confirmation states the real cost instead of naming a
+       * policy: these files are already gone from the other devices, so this copy is the last one.
+       * That is the sentence that belongs in front of an irreversible act — not a retention window,
+       * which is what somebody pressing a button called "Empty trash" is least interested in. */
       card.querySelector('.sync-trash').onclick = async () => {
-        if(!await PC.uiConfirm('Empty this folder’s .pc-trash of anything older than 30 days?')) return;
-        try{ const r = await FS().emptyTrash(id, 30); PC.toast('emptied ' + (r.removed||0) + ' day(s)'); }
+        let stat = null;
+        try{ stat = FS().trashStat ? await FS().trashStat(id) : null; }catch(_){}
+        const what = stat && stat.files
+          ? stat.files + ' file' + (stat.files === 1 ? '' : 's') + ' · ' + PC._fmtBytes(stat.bytes)
+          : 'everything in it';
+        if(stat && !stat.files){ PC.toast('the trash is already empty'); return; }
+        if(!await PC.uiConfirm('Permanently delete ' + what + ' from this folder’s .pc-trash?\n\n'
+                               + 'This includes items deleted today. They are already gone from your '
+                               + 'other devices, so this is the last copy — it cannot be undone.',
+                               { ok: 'Delete permanently' })) return;
+        try{
+          const r = await FS().emptyTrash(id, 0);          // 0 = everything; see fsbridge.emptyTrash
+          PC.toast(r.bytes ? 'freed ' + PC._fmtBytes(r.bytes) + ' · ' + (r.files || 0) + ' file(s)'
+                           : 'emptied ' + (r.removed || 0) + ' day(s)');
+        }
         catch(e){ PC.toast('failed: ' + ((e && e.message) || e)); }
+        paint();
       };
       card.querySelector('.sync-forget').onclick = async () => {
         if(!await PC.uiConfirm('Stop syncing this folder?\n\nNothing is deleted — the files stay on this '

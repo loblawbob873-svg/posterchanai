@@ -254,20 +254,74 @@ async function trash(id, rel, when){
 /* Empty trash older than N days. Deliberately explicit and NOT automatic: the whole value of the
  * trash is that it outlives the mistake, and "safe deletes" that quietly become an unbounded second
  * copy of everything you ever removed is the other failure. The caller decides. */
+/* `olderThanDays === 0` MEANS EVERYTHING, and it has to mean something.
+ *
+ * The trash lives INSIDE the synced root, so it is counted by every "how big is this folder?" anyone
+ * asks — Explorer, a disk usage tool, a quota. Every layer used to hardcode 30 and there was no
+ * automatic sweep for that floor to serve, so the only caller was a button labelled "Empty trash"
+ * that could not empty trash: delete 40 GB of pictures, press it, and it removes nothing and reports
+ * success. The space is unreclaimable from inside the app for a month, and the only way out is
+ * deleting `.pc-trash` by hand in a file manager — which is the app telling the user to go round it.
+ *
+ * `|| 30` is what did that, because it cannot tell 0 from absent. An explicit 0 is now honoured and
+ * only a MISSING value falls back to the safety window.
+ *
+ * Reports bytes as well as days, because "emptied 0 day(s)" is what made the old one look broken and
+ * "freed 40.2 GB" is the only answer to the question actually being asked. Sized before removal:
+ * a trash directory is small in file count next to the folder it belongs to, and the walk is what
+ * lets the caller state the cost before it is paid. */
+async function trashSize(base){
+  let files = 0, bytes = 0;
+  const walk = async (dir) => {
+    let ents;
+    try{ ents = await fsp.readdir(dir, { withFileTypes: true }); }catch(_){ return; }
+    for(const e of ents){
+      const p = path.join(dir, e.name);
+      if(e.isDirectory()) await walk(p);
+      else { files++; try{ bytes += (await fsp.stat(p)).size; }catch(_){} }
+    }
+  };
+  await walk(base);
+  return { files, bytes };
+}
+
 async function emptyTrash(id, olderThanDays){
   const base = await resolveIn(id, '.pc-trash');
-  const cutoff = Date.now() - (olderThanDays || 30) * 86400000;
-  let removed = 0;
-  let days;
-  try{ days = await fsp.readdir(base, { withFileTypes: true }); }catch(_){ return { removed: 0 }; }
-  for(const d of days){
+  const days = (olderThanDays === 0 || olderThanDays === '0') ? 0 : (olderThanDays || 30);
+  const cutoff = Date.now() - days * 86400000;
+  let removed = 0, files = 0, bytes = 0;
+  let entries;
+  try{ entries = await fsp.readdir(base, { withFileTypes: true }); }catch(_){ return { removed: 0, files: 0, bytes: 0 }; }
+  for(const d of entries){
     if(!d.isDirectory()) continue;
-    const when = Date.parse(d.name + 'T00:00:00Z');
-    if(!isFinite(when) || when >= cutoff) continue;
-    await fsp.rm(path.join(base, d.name), { recursive: true, force: true });
-    removed++;
+    /* EVERYTHING means everything — the name is not consulted at all when days is 0.
+     *
+     * Two directories survive a date comparison forever and both are real: one dated in the FUTURE
+     * (a device whose clock was wrong when it trashed something), and one whose name does not parse
+     * as a date at all, which `!isFinite(when)` skips on every run. Either is a permanent leak in
+     * the one place a user goes to reclaim space, and neither is visible — the folder is simply
+     * still there and still counted. Asking the name a question is only meaningful for the
+     * retention window. */
+    if(days > 0){
+      const when = Date.parse(d.name + 'T00:00:00Z');
+      if(!isFinite(when) || when >= cutoff) continue;
+    }
+    const dir = path.join(base, d.name);
+    const sz = await trashSize(dir);
+    await fsp.rm(dir, { recursive: true, force: true });
+    removed++; files += sz.files; bytes += sz.bytes;
   }
-  return { removed };
+  return { removed, files, bytes };
+}
+
+/* What is sitting in the trash right now, so the confirmation can state the cost rather than guess
+ * it. Read-only; the caller decides. */
+async function trashStat(id){
+  const base = await resolveIn(id, '.pc-trash');
+  const out = await trashSize(base);
+  let days = 0;
+  try{ days = (await fsp.readdir(base, { withFileTypes: true })).filter(d => d.isDirectory()).length; }catch(_){}
+  return Object.assign(out, { days });
 }
 
 /* A change notifier, NOT a change list. fs.watch is famously inconsistent across platforms (it
@@ -317,4 +371,4 @@ function removeRoot(id){
 
 module.exports = { init, list, addRoot, removeRoot, resolveIn, scan, sha256,
                    readPart, writePart, writeCommit,
-                   read, write, move, trash, emptyTrash, watch, unwatch, IGNORE };
+                   read, write, move, trash, emptyTrash, trashStat, watch, unwatch, IGNORE };

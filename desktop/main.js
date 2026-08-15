@@ -807,6 +807,7 @@ ipcMain.handle('pc:fs:write', (e, id, rel, bytes, mtime) => {
 ipcMain.handle('pc:fs:move', (e, id, from, to) => { fsGuard(e); return fsbridge.move(String(id || ''), String(from || ''), String(to || '')); });
 ipcMain.handle('pc:fs:trash', (e, id, rel, when) => { fsGuard(e); return fsbridge.trash(String(id || ''), String(rel || ''), when); });
 ipcMain.handle('pc:fs:empty-trash', (e, id, days) => { fsGuard(e); return fsbridge.emptyTrash(String(id || ''), days); });
+ipcMain.handle('pc:fs:trash-stat', (e, id) => { fsGuard(e); return fsbridge.trashStat(String(id || '')); });
 ipcMain.handle('pc:fs:watch', (e, id, debounceMs) => {
   fsGuard(e);
   return fsbridge.watch(String(id || ''), (which) => {

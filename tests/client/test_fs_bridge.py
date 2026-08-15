@@ -181,6 +181,56 @@ class TestFsBridge(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.root, ".pc-trash", "2020-01-01")))
         self.assertTrue(os.path.exists(os.path.join(self.root, ".pc-trash", "2099-01-01")))
 
+    def test_empty_trash_with_zero_days_takes_everything(self):
+        """"Empty trash" has to be able to empty the trash.
+
+        `.pc-trash` lives INSIDE the synced root, so everything in it is still counted by Explorer,
+        by a disk-usage tool and by a quota. Every layer hardcoded 30 days — `days || 30`, which
+        cannot tell an explicit 0 from an absent value — and there was no automatic sweep for that
+        floor to serve, so the only caller was a button that could never reclaim anything recent.
+        Reported after deleting a 40 GB Pictures folder: pressed Empty trash, folder still 40 GB,
+        and the only way out was deleting .pc-trash by hand in a file manager."""
+        for day in ("2020-01-01", "2099-01-01"):
+            os.makedirs(os.path.join(self.root, ".pc-trash", day))
+            with open(os.path.join(self.root, ".pc-trash", day, "f.txt"), "w") as fh:
+                fh.write("x" * 100)
+        out = self.run_js("await attempt('e', () => B.emptyTrash('r1', 0));")
+        self.assertEqual(out["e"]["value"]["removed"], 2, out["e"])
+        self.assertFalse(os.path.exists(os.path.join(self.root, ".pc-trash", "2020-01-01")))
+        self.assertFalse(os.path.exists(os.path.join(self.root, ".pc-trash", "2099-01-01")),
+                         "an explicit 0 still fell back to the 30-day window")
+
+    def test_empty_trash_reports_the_space_it_freed(self):
+        """"emptied 0 day(s)" is what made the old button look broken; "freed 40.2 GB" is the only
+        answer to the question actually being asked."""
+        os.makedirs(os.path.join(self.root, ".pc-trash", "2020-01-01", "nested"))
+        with open(os.path.join(self.root, ".pc-trash", "2020-01-01", "a.bin"), "wb") as fh:
+            fh.write(b"\0" * 1000)
+        with open(os.path.join(self.root, ".pc-trash", "2020-01-01", "nested", "b.bin"), "wb") as fh:
+            fh.write(b"\0" * 2500)
+        stat = self.run_js("await attempt('s', () => B.trashStat('r1'));")["s"]["value"]
+        self.assertEqual((stat["files"], stat["bytes"], stat["days"]), (2, 3500, 1), stat)
+        out = self.run_js("await attempt('e', () => B.emptyTrash('r1', 0));")["e"]["value"]
+        self.assertEqual((out["removed"], out["files"], out["bytes"]), (1, 2, 3500), out)
+
+    def test_a_missing_or_absent_days_value_still_keeps_the_safety_net(self):
+        """The other direction, and the reason this is a tiebreak rather than "always delete
+        everything": with no argument at all the 30-day window still applies, so nothing that calls
+        it without thinking can wipe a net somebody is relying on."""
+        os.makedirs(os.path.join(self.root, ".pc-trash", "2099-01-01"))
+        with open(os.path.join(self.root, ".pc-trash", "2099-01-01", "f.txt"), "w") as fh:
+            fh.write("x")
+        out = self.run_js("await attempt('e', () => B.emptyTrash('r1'));")
+        self.assertEqual(out["e"]["value"]["removed"], 0, out["e"])
+        self.assertTrue(os.path.exists(os.path.join(self.root, ".pc-trash", "2099-01-01")))
+
+    def test_trash_stat_on_a_folder_with_no_trash_is_not_an_error(self):
+        """The button reads this before asking anything, so a folder that has never had a delete
+        must answer zero rather than throw — otherwise the confirmation cannot be drawn at all."""
+        out = self.run_js("await attempt('s', () => B.trashStat('r1'));")
+        self.assertTrue(out["s"]["ok"], out["s"])
+        self.assertEqual((out["s"]["value"]["files"], out["s"]["value"]["days"]), (0, 0))
+
 
 if __name__ == "__main__":
     unittest.main()

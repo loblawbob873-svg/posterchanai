@@ -105,7 +105,7 @@
     write: (id, rel, bytes, mtime) => P.write({ id, rel, b64: toB64(bytes), when: mtime || 0 }),
     move: (id, from, to) => P.move({ id, from, to }),
     trash: (id, rel, when) => P.trash({ id, rel, when: when || 0 }).then(r => r.to),
-    emptyTrash: (id, days) => P.emptyTrash({ id, days: days || 30 }),
+    emptyTrash: (id, days) => P.emptyTrash({ id, days: days === 0 ? 0 : (days || 30) }),
     power: () => P.power(),
     /* Background change DETECTION, not sync — see SyncCheckWorker. It cannot upload because every
      * network step of a sweep is signed by the user's nostr key (a kind-24242 per blob, a 27235 for
