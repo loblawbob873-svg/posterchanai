@@ -533,7 +533,10 @@ def test_no_key_means_no_sockets():
     svc = _read(os.path.join(SIGNER, "SignerRelayService.java"))
     reload_body = svc[svc.index("private void reload()"):]
     reload_body = reload_body[:reload_body.index("private OkHttpClient http()")]
-    assert "SignerKey.load(this) == null" in reload_body and "closeAll()" in reload_body
+    # `sec()`, not `SignerKey.load()` — same key, read once per reload instead of once per request
+    # (see test_the_keystore_is_opened_once_not_once_per_request). The RULE here is unchanged: no
+    # key means no sockets.
+    assert "sec() == null" in reload_body and "closeAll()" in reload_body
 
 
 def test_the_only_thing_that_runs_on_a_timer_is_the_keepalive():
@@ -965,4 +968,35 @@ def test_the_panel_can_see_whether_the_crypto_is_in_c():
         assert k in plug, f"status() does not report {k}"
     assert "Native.ecdhActive()" in plug, "the ECDH half is not reported separately from signing"
     assert "Fast crypto: OFF" in app, "the panel never says when the slow path is in use"
+
+def test_the_keystore_is_opened_once_not_once_per_request():
+    """A hardware-backed decrypt per request is most of what "too slow" was made of.
+
+    `SignerKey.load()` opens the AndroidKeyStore provider and does a TEE-backed AES-GCM decrypt —
+    tens to hundreds of milliseconds on a real phone — and it sat at the top of recv(), before any
+    of the work. Measured across four clients: 1.3 answered requests a second in total, which is not
+    what libsecp256k1 costs.
+
+    This is the cheap kind of fix: it removes work rather than adding machinery, so it is faster AND
+    less battery, and there is nothing new to go wrong. The only thing it must get right is staying
+    correct when the key CHANGES — armed for the first time, or turned off — which is what the
+    reload() reset is for.
+    """
+    svc = _read(os.path.join(SIGNER, "SignerRelayService.java"))
+    body = svc[svc.index("private void recv(String url, String raw)"):]
+    body = body[:body.index("\n    /**")] if "\n    /**" in body else body
+    assert "SignerKey.load(" not in body, (
+        "the request path still opens the Keystore per request"
+    )
+    assert "sec()" in body, "recv() no longer reads the cached key"
+    rel = svc[svc.index("private void reload()"):]
+    rel = rel[:rel.index("\n    }")]
+    assert "sec = null" in rel, (
+        "the cached key survives a reload — arming a key, or clearing one, would not take effect"
+    )
+    assert "myPubHex = null" in rel, "the cached pubkey outlives the key it was derived from"
+    # …and it must not outlive the service.
+    for stop in ("public void onDestroy()", "if (ACTION_STOP.equals(action))"):
+        i = svc.index(stop)
+        assert "sec = null" in svc[i:i + 600], f"the key is kept in memory past {stop.strip()}"
 

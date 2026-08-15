@@ -204,6 +204,7 @@ public class SignerRelayService extends Service {
 
         if (ACTION_STOP.equals(action)) {
             stopping = true;
+            sec = null;
             setWanted(this, false);
             handler.post(this::closeAll);      // `socks` belongs to the work thread — see the field
             dropNotification();
@@ -237,7 +238,9 @@ public class SignerRelayService extends Service {
 
     /** Re-read the published pairings and make the sockets match them. */
     private void reload() {
-        if (SignerKey.load(this) == null) {
+        sec = null;                       // re-read: the key may have just been armed or cleared
+        myPubHex = null;
+        if (sec() == null) {
             // No key on this phone: there is nothing to sign with, so holding sockets open would be
             // pure battery for a service that must refuse every request anyway.
             lastError = "no signing key on this device";
@@ -306,6 +309,23 @@ public class SignerRelayService extends Service {
                     });
         }
         return cryptoPool;
+    }
+
+    /* THE UNSEALED KEY, HELD ONCE.
+     *
+     * `SignerKey.load()` opens the AndroidKeyStore provider and does a hardware-backed AES-GCM
+     * decrypt — tens to hundreds of milliseconds on a TEE device — and it was called once PER
+     * REQUEST, on the socket thread, before any of the actual work. Measured across four clients:
+     * 1.3 answered requests a second in total, which is not what libsecp256k1 costs.
+     *
+     * Cleared when the service stops and re-read on every reload, so turning the key off and on
+     * again takes effect. The seal protects the key AT REST; a running foreground signer holds it in
+     * memory for the same reason every other signer does. */
+    private volatile byte[] sec;
+    private byte[] sec() {
+        byte[] k = sec;
+        if (k == null) { k = SignerKey.load(this); sec = k; }
+        return k;
     }
 
     /** Our own x-only pubkey, derived once per process. See send(). */
@@ -470,7 +490,7 @@ public class SignerRelayService extends Service {
         Nip46Core.Session sess = sessions.get(from);
         if (sess == null) return;                       // not an app this phone signs for
 
-        final byte[] sec = SignerKey.load(this);
+        final byte[] sec = sec();
         if (sec == null) return;
 
         /* EVERYTHING FROM HERE IS CRYPTO, AND IT GOES TO A POOL.
@@ -709,6 +729,7 @@ public class SignerRelayService extends Service {
         stopping = true;
         /* Close on the thread that owns the sockets, then stop that thread — `quitSafely` runs the
          * queued close first, where `quit()` would drop it and leak every open WebSocket. */
+        sec = null;
         handler.post(() -> { closeAll(); thread.quitSafely(); });
         if (cryptoPool != null) try { cryptoPool.shutdownNow(); } catch (Throwable ignored) { }
         running = false;
