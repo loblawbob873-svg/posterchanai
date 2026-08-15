@@ -13926,10 +13926,19 @@
         _saveDraftNow();
         closeModal();
         { const r=await publish(replyKindFor(reply?Store.get(reply):null), content, tags);
-          // A QUEUED post drops the draft too. The draft exists as the recovery path for a post that was
-          // lost; a queued one is not lost — it is in the timeline with a Pending badge, and that badge is
-          // where you discard it. Keeping both would leave a stale draft behind every offline post.
-          if(r && (r.ok || r.queued)) _dropDraft();
+          /* A QUEUED post KEEPS its draft, and registers which draft belongs to it.
+           *
+           * The old rule dropped it: "a queued one is not lost — it is in the timeline with a
+           * Pending badge". That holds only while the event can eventually be accepted. A post the
+           * relay will REFUSE for ever (a wrongly-signed one, say) is queued, badged, retried, and
+           * finally given up on — by which time the only copy of what somebody wrote is gone. That
+           * is exactly how a quote post was lost, and "Drafts is empty" is how it was reported.
+           *
+           * So the draft stays until the event actually SENDS: _flushOutbox clears it through this
+           * mapping on success, and deliberately keeps it when an item is dropped — that copy is
+           * then the only place the text still exists. */
+          if(r && r.ok) _dropDraft();
+          else if(r && r.queued && r.ev) _qDraftSet(r.ev.id, autoId||draftId);
           if(r && r.ok) toast('posted'); }   // failure toast + kept draft handled by publish()
         if(VIEW==='home'||VIEW==='global'||VIEW==='drafts') renderView(true);
       };
