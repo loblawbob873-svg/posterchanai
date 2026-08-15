@@ -20305,24 +20305,43 @@
         const pre = ((ME && ME.pubkey) || 'anon').slice(0, 16) + ':';
         const map = {};
         let held = 0;
+        /* YOU CANNOT AWAIT INSIDE A CURSOR WALK, and this did.
+         *
+         * An IndexedDB transaction stays alive only while it has a pending request. The moment an
+         * `async` onsuccess yields — here on `crypto.subtle.decrypt` — there is none, so the
+         * transaction AUTO-COMMITS; when the await resolves, `c.continue()` is being called on a
+         * cursor whose transaction has finished and it throws
+         * `Failed to execute 'continue' on 'IDBCursor'`.
+         *
+         * Every part of what follows is quiet. The throw happens inside an async handler nobody
+         * awaits, so it is not an error anyone catches — it is an UNHANDLED REJECTION, which this
+         * app turns into a toast reading "action failed" (see the listener near healNav). pushShared
+         * runs on startup, so a user with anything in the DM cache got that on every single launch,
+         * with no clue what action was meant. The loop also stopped at the first record, so the
+         * shared cache was never actually pushed — a silent feature outage wearing a scary toast.
+         *
+         * The fix is the standard shape: COLLECT synchronously while the transaction is alive, then
+         * do the async work after it has closed. Nothing is held that was not already in memory as
+         * a decrypted map a moment later. */
+        const rawRecs = [];
         await new Promise((res, rej) => {
           const q = db.transaction('msgs', 'readonly').objectStore('msgs').openCursor();
-          q.onsuccess = async () => {
+          q.onsuccess = () => {                       // NOT async — see above
             const c = q.result;
             if(!c){ res(); return; }
-            try{
-              if(String(c.key).startsWith(pre)){
-                const rec = c.value;
-                const pt = await crypto.subtle.decrypt({ name:'AES-GCM', iv:new Uint8Array(rec.iv) },
-                                                       key, new Uint8Array(rec.ct));
-                map[String(c.key).slice(pre.length)] = JSON.parse(new TextDecoder().decode(pt));
-                held++;
-              }
-            }catch(_){}
+            if(String(c.key).startsWith(pre)) rawRecs.push({ k: String(c.key), rec: c.value });
             c.continue();
           };
           q.onerror = () => rej(q.error);
         });
+        for(const { k, rec } of rawRecs){
+          try{
+            const pt = await crypto.subtle.decrypt({ name:'AES-GCM', iv:new Uint8Array(rec.iv) },
+                                                   key, new Uint8Array(rec.ct));
+            map[k.slice(pre.length)] = JSON.parse(new TextDecoder().decode(pt));
+            held++;
+          }catch(_){}
+        }
         if(!held) return false;
         // What is already out there? Never replace more than we hold.
         let have = 0;
