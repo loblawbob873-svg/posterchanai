@@ -33,6 +33,7 @@ import okhttp3.WebSocketListener;
 
 import place.poster.app.MainActivity;
 import place.poster.app.R;
+import place.poster.app.RunningNote;
 
 /**
  * The remote signer, answered by the PROCESS instead of by the page.
@@ -82,12 +83,13 @@ public class SignerRelayService extends Service {
     private static final String K_SESSIONS = "sessions";
     private static final String K_ON = "on";
 
-    private static final String CHANNEL = "pcai_signer";
-    private static final int NOTIF_ID = 4713;
-
     /** Read by the plugin so the panel reports what the SERVICE measured, never what it assumed. */
     public static boolean running = false;
     public static int connected = 0;
+    /** Apps this phone signs for. Public because {@link place.poster.app.RunningNote} composes ONE
+     *  notification for every background service and cannot reach `sessions`, which belongs to the
+     *  work thread. */
+    public static volatile int paired = 0;
     public static long lastRequestAt = 0;
     public static long requestsAnswered = 0;
     public static String lastError = "";
@@ -179,17 +181,20 @@ public class SignerRelayService extends Service {
             stopping = true;
             setWanted(this, false);
             handler.post(this::closeAll);      // `socks` belongs to the work thread — see the field
-            running = false;
-            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
+            dropNotification();
             stopSelf();
             return START_NOT_STICKY;
         }
 
         ensureChannel(this);
+        /* BEFORE going foreground, not after: RunningNote composes the shared text from the
+         * `running` flags, so a service that sets its own flag afterwards describes an app in which
+         * it is not running — on the very first notification of every start. Put back on failure. */
+        running = true;
         try {
             int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
                     ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
-            ServiceCompat.startForeground(this, NOTIF_ID, build(), type);
+            ServiceCompat.startForeground(this, RunningNote.ID, RunningNote.build(this), type);
         } catch (Throwable t) {
             running = false;
             lastError = "could not go foreground";
@@ -198,7 +203,6 @@ public class SignerRelayService extends Service {
         }
 
         stopping = false;
-        running = true;
         setWanted(this, true);
         /* Posted, not called: `reload()` opens sockets and reads the Keystore, and it mutates the
          * maps `recv` owns. `startForeground` above stays on this thread, where the 5s deadline is. */
@@ -234,6 +238,7 @@ public class SignerRelayService extends Service {
         Map<String, Nip46Core.Session> next = Nip46Core.merge(sessions, incoming);
         sessions.clear();
         sessions.putAll(next);
+        paired = sessions.size();          // what the shared notification says; see RunningNote
 
         /* NOTHING PAIRED IS NOTHING TO DO. A foreground service with no sockets still costs: it
          * pins the process resident, holds a notification, and is one more thing the platform keeps
@@ -245,8 +250,7 @@ public class SignerRelayService extends Service {
         if (sessions.isEmpty()) {
             closeAll();
             stopping = true;
-            running = false;
-            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
+            dropNotification();
             stopSelf();
             return;
         }
@@ -527,56 +531,41 @@ public class SignerRelayService extends Service {
     private void note() {
         try {
             if (!running) return;
-            String state = state();
+            String state = RunningNote.text();
             if (state.equals(shown)) return;
             shown = state;
-            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-            if (nm != null) nm.notify(NOTIF_ID, build());
+            RunningNote.refresh(this);
         } catch (Throwable ignored) { }
     }
 
     /** Say what is TRUE, not what was intended: "connected" with no socket is the lie that would
      *  hide the very failure this service exists to make impossible. */
-    private String state() {
-        int apps = sessions.size();
-        if (socks.isEmpty()) return apps == 0 ? "No apps paired" : "Reconnecting…";
-        return apps == 1 ? "Signing for 1 app" : "Signing for " + apps + " apps";
-    }
-
-    private Notification build() {
-        int f = PendingIntent.FLAG_UPDATE_CURRENT
-                | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
-        PendingIntent tap = PendingIntent.getActivity(this, 0,
-                new Intent(this, MainActivity.class)
-                        .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP), f);
-        PendingIntent off = PendingIntent.getService(this, 1,
-                new Intent(this, SignerRelayService.class).setAction(ACTION_STOP), f);
-
-        return new NotificationCompat.Builder(this, CHANNEL)
-                .setContentTitle("PosterChan signer")
-                .setContentText(state())
-                // MIN and no badge: a receipt for a setting, not news. Someone who opted into a
-                // permanent notification should be able to forget it is there.
-                .setPriority(NotificationCompat.PRIORITY_MIN)
-                .setSmallIcon(R.mipmap.ic_launcher)
-                .setOngoing(true)
-                .setShowWhen(false)
-                .setContentIntent(tap)
-                .addAction(0, "Turn off", off)
-                .build();
-    }
-
+    /* The notification itself belongs to RunningNote now — ONE item in the shade however many of
+     * this app's background services are up, because two permanent notifications from one app is
+     * the app's problem and not the user's. `paired` is what this service contributes to that text;
+     * it is a field rather than `sessions.size()` because the composer runs on whatever thread posts
+     * and `sessions` belongs to the work thread. */
     static void ensureChannel(Context ctx) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
-        NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
-        if (nm == null || nm.getNotificationChannel(CHANNEL) != null) return;
-        NotificationChannel ch = new NotificationChannel(CHANNEL, "Remote signer",
-                NotificationManager.IMPORTANCE_MIN);
-        ch.setDescription("The permanent notification Android requires while this phone answers "
-                        + "signing requests from your other devices.");
-        ch.setShowBadge(false);
-        ch.setSound(null, null);
-        nm.createNotificationChannel(ch);
+        RunningNote.ensureChannel(ctx);
+    }
+
+    /**
+     * Stand down from the shared notification.
+     *
+     * REMOVE would delete it out from under "stay connected" if that is still up, leaving a running
+     * foreground service with nothing in the shade — the thing the platform requires and the user is
+     * owed. So while anything else needs it we DETACH (the item stays, it just stops being ours) and
+     * re-post it without us in the text.
+     */
+    private void dropNotification() {
+        running = false;
+        paired = 0;
+        if (RunningNote.othersRunning(true)) {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH);
+            RunningNote.refresh(this);
+        } else {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
+        }
     }
 
     @Override
@@ -586,6 +575,10 @@ public class SignerRelayService extends Service {
          * queued close first, where `quit()` would drop it and leak every open WebSocket. */
         handler.post(() -> { closeAll(); thread.quitSafely(); });
         running = false;
+        paired = 0;
+        /* Same as the other half: killed rather than switched off, so nothing has redrawn the
+         * shared notification and it would go on naming a signer that has gone. */
+        if (RunningNote.othersRunning(true)) RunningNote.refresh(this);
         super.onDestroy();
     }
 }

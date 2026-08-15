@@ -632,7 +632,7 @@ def test_the_notification_is_not_rebuilt_for_every_request():
     """
     svc = _read(os.path.join(SIGNER, "SignerRelayService.java"))
     note = svc[svc.index("private void note()"):]
-    note = note[:note.index("private String state()")]
+    note = note[:note.index("\n    }") + 6]
     assert "equals(shown)" in note and "return" in note, (
         "note() posts unconditionally, so every request redraws the notification")
 

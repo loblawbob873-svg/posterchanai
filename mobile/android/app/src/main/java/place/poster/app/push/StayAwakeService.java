@@ -25,6 +25,7 @@ import androidx.core.app.ServiceCompat;
 
 import place.poster.app.MainActivity;
 import place.poster.app.R;
+import place.poster.app.RunningNote;
 import place.poster.app.music.MusicService;
 
 /**
@@ -56,8 +57,8 @@ public class StayAwakeService extends Service {
   /** MusicService took over with a real session — drop the standby one. */
   public static final String ACTION_DROP_STANDBY = "place.poster.app.STAY_DROP_STANDBY";
 
-  private static final String CHANNEL = "pcai_stay_connected";
-  private static final int NOTIF_ID = 4712;
+  // The channel and the notification id live in RunningNote now — one item for every background
+  // service this app runs. Keeping private copies here is how two of them came back.
   private static final String PREF_ON = "stay_connected";
 
   public static boolean running = false;
@@ -207,19 +208,21 @@ public class StayAwakeService extends Service {
       return START_STICKY;
     }
     if (ACTION_STOP.equals(action)) {
-      running = false;
       setWanted(this, false);
       closeStandbySession();   // the switch is off: stop being a media app the car can see
-      ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
+      dropNotification();
       stopSelf();
       return START_NOT_STICKY;
     }
     ensureChannel(this);
+    /* BEFORE going foreground, not after — RunningNote composes the shared text from these flags,
+     * so setting it afterwards makes the first notification of every start describe an app in which
+     * this is not running. Put back in the catch below. */
+    running = true;
     try {
       int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
           ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
-      ServiceCompat.startForeground(this, NOTIF_ID, build(), type);
-      running = true;
+      ServiceCompat.startForeground(this, RunningNote.ID, RunningNote.build(this), type);
       setWanted(this, true);
       /* Only AFTER going foreground, and only once: onStartCommand runs again on every restart and
        * on the STICKY relaunch, and registering a second time would deliver every connection twice
@@ -255,45 +258,37 @@ public class StayAwakeService extends Service {
     return START_STICKY;
   }
 
-  private Notification build() {
-    int f = PendingIntent.FLAG_UPDATE_CURRENT
-        | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
-    PendingIntent tap = PendingIntent.getActivity(this, 0,
-        new Intent(this, MainActivity.class)
-            .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP), f);
-    PendingIntent off = PendingIntent.getService(this, 1,
-        new Intent(this, StayAwakeService.class).setAction(ACTION_STOP), f);
-
-    return new NotificationCompat.Builder(this, CHANNEL)
-        .setContentTitle("PosterChan is staying connected")
-        .setContentText("So messages and calls reach you. Costs battery.")
-        .setSmallIcon(R.mipmap.ic_launcher)
-        // MINIMUM priority and no badge: this is a receipt for a setting, not news. A person who has
-        // opted into a permanent notification should be able to forget it is there.
-        .setPriority(NotificationCompat.PRIORITY_MIN)
-        .setOngoing(true)
-        .setShowWhen(false)
-        .setContentIntent(tap)
-        .addAction(0, "Turn off", off)
-        .build();
+  /* The notification belongs to RunningNote now — ONE item in the shade however many of this app's
+   * background services are up. Two permanent notifications from one app is the app's problem, not
+   * the user's. */
+  static void ensureChannel(Context ctx) {
+    RunningNote.ensureChannel(ctx);
   }
 
-  static void ensureChannel(Context ctx) {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
-    NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
-    if (nm == null || nm.getNotificationChannel(CHANNEL) != null) return;
-    NotificationChannel ch = new NotificationChannel(CHANNEL, "Staying connected",
-        NotificationManager.IMPORTANCE_MIN);
-    ch.setDescription("The permanent notification Android requires while the app keeps its "
-                    + "connection open in the background.");
-    ch.setShowBadge(false);
-    ch.setSound(null, null);
-    nm.createNotificationChannel(ch);
+  /**
+   * Stand down from the shared notification.
+   *
+   * REMOVE would delete it out from under the signer if that is still up, leaving a running
+   * foreground service with nothing in the shade. While anything else needs it we DETACH — the item
+   * stays, it just stops being ours — and re-post it without us in the text.
+   */
+  private void dropNotification() {
+    running = false;
+    if (RunningNote.othersRunning(false)) {
+      ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH);
+      RunningNote.refresh(this);
+    } else {
+      ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
+    }
   }
 
   @Override
   public void onDestroy() {
     running = false;
+    /* Killed by the platform rather than switched off, so nothing has redrawn the shared
+     * notification: take this half out of its text instead of leaving it naming a service that is
+     * gone. If nothing else is up the item goes with the process anyway. */
+    if (RunningNote.othersRunning(false)) RunningNote.refresh(this);
     closeStandbySession();
     if (audioCbOn) {
       AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
