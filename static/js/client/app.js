@@ -1344,7 +1344,19 @@
         const list = this.list().map(s => ({ pk:s.pk, relay:s.relay, name:s.name,
                                              perms:(s.perms||[]).join(','), enc:s.enc||'', last:s.last||0 }));
         const r = await p.sync({ sessions: JSON.stringify(list), enabled: !!this.active });
-        this.nativeOn = !!(r && r.running);
+        /* A HAND-OVER RECEIPT IS A SOCKET, NOT A FLAG.
+         *
+         * The caller stands this half DOWN on a true answer here — it closes its own relay sockets,
+         * because the pairings are somebody else's job now. `running` alone cannot carry that: the
+         * plugin's `kick()` is startService, so the flag is read before the service has necessarily
+         * touched it, and even once set the sockets are opened later still on its work thread. Taking
+         * `running` as the receipt closed the only half that WAS listening, and the desktop then sat
+         * on "waiting for your signer…" with the app open on screen — reported exactly that way.
+         *
+         * So the receipt is `connected`: at least one relay socket actually held. Until then this
+         * half keeps answering, which is the safe direction — the worst case is that both halves are
+         * subscribed for a moment and the desktop gets its signature twice as fast. */
+        this.nativeOn = !!(r && r.running && Number(r.connected || 0) > 0);
       }catch(_){ this.nativeOn = false; }
       return this.nativeOn;
     },
@@ -1961,13 +1973,23 @@
           (a,b) => ((a.last||a.created||0) - (b.last||b.created||0)))[0];
         const when = stalest.last ? 'last used ' + timeAgo(stalest.last) + ' ago'
                                   : 'never used since it was added';
+        /* KEEPING THEM IS THE DEFAULT, AND THAT IS A CORRECTION.
+         *
+         * "i signed in 4 devices but only see 2?" — this prompt is why. It was written for THIS
+         * app's own clients, which all announce themselves as "PosterChan", so replacing the stalest
+         * was usually right. Every primal.net login announces "PrimalWeb", so four genuinely
+         * different devices collide on the name every time, and the DESTRUCTIVE answer was the
+         * primary button — the one Enter picks, and the one somebody taps four times in a row while
+         * setting up four devices. Nothing about a name can tell a stale pairing from a new laptop,
+         * so the safe answer has to be the default and the deletion has to be the deliberate one.
+         *
+         * uiConfirm escapes the message itself; enc() here would double-escape the name. */
         const go = await uiConfirm(
-          // uiConfirm escapes the message itself; enc() here would double-escape the name.
           'You already have ' + clash.length + ' “' + name + '” ' +
-          (clash.length === 1 ? 'login' : 'logins') + '. Replace the stalest one (' + when +
-          '), or keep them all and add this?',
-          { ok:'Replace that one', cancel:'Keep them all' });
-        if(go) Nip46Signer.revoke(stalest.pk);
+          (clash.length === 1 ? 'login' : 'logins') + '. Keep them all and add this one, or replace '
+          + 'the stalest (' + when + ')?',
+          { ok:'Keep them all', cancel:'Replace the stalest' });
+        if(!go) Nip46Signer.revoke(stalest.pk);
       }
       const nm=await Nip46Signer.start(uri);
       toast('✅ “'+nm+'” is now logged in — your key stayed on this device');
@@ -24481,7 +24503,14 @@
           + apps.map(a => `<div class="row" style="justify-content:space-between;align-items:center;gap:8px;margin:3px 0">
               <span>${enc(a.name || 'an app')}
                 <span class="muted">· ${a.perms ? enc(String(a.perms.length)) + ' permissions' : 'all permissions'}${
-                  a.last ? ' · last used ' + enc(timeAgo(a.last)) + ' ago' : ''}</span></span>
+                  /* WHEN IT WAS ADDED, not only when it was last used. Every primal.net login is
+                   * called "PrimalWeb" and every login of ours is called "PosterChan", so a list of
+                   * four is four identical rows — and one that has never been used carries no
+                   * timestamp at all, which is exactly the row somebody is trying to find. Without
+                   * this there is no way to tell which entry belongs to which device, and "revoke"
+                   * is a guess. */
+                  a.created ? ' · added ' + enc(timeAgo(a.created)) + ' ago' : ''}${
+                  a.last ? ' · last used ' + enc(timeAgo(a.last)) + ' ago' : ' · never used'}</span></span>
               <button class="mini" data-revoke="${enc(a.pk)}">revoke</button></div>`).join('')
         : 'No apps are signed in with this device.')
       /* THE SECOND WAY IN, and it is not a nicety. Scanning the app's QR only works for apps that

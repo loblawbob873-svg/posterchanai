@@ -97,6 +97,14 @@ public class SignerPlugin extends Plugin {
         }
         JSObject o = new JSObject();
         o.put("running", SignerRelayService.running);
+        /* HOW MANY SOCKETS IT ACTUALLY HOLDS, because `running` alone is not a hand-over receipt.
+         *
+         * `kick()` is startService — asynchronous — so this reads a flag the service may not have
+         * touched yet, and even once it is true the sockets are opened later still, on the work
+         * thread. The caller uses this to decide whether to CLOSE ITS OWN sockets, and closing them
+         * against a service that is up but not yet subscribed leaves nobody answering at all.
+         * Reported as "even with the app open, my drafts from desktop is not getting sent". */
+        o.put("connected", SignerRelayService.connected);
         call.resolve(o);
     }
 
@@ -125,13 +133,42 @@ public class SignerPlugin extends Plugin {
     }
 
     /**
-     * Send the user to the system screen that grants it. NEVER the direct-request Intent
-     * (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`): Google Play bans it outside a short list of
-     * app categories, and a signer is not on that list — shipping it risks the listing over a dialog
-     * the settings screen offers anyway.
+     * Ask for the battery exemption — the ONE tap, not a list of every app on the phone.
+     *
+     * THIS REVERSES AN EARLIER DECISION, so the reason is recorded rather than the conclusion. The
+     * direct-request Intent (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`) was avoided here because
+     * Google Play bans it outside a short list of app categories and a signer is not on that list.
+     * That constraint does not apply to THIS app: it ships as an APK through Zapstore and GitHub
+     * Releases (.github/workflows/android.yml runs `assembleRelease`; there is no .aab and no Play
+     * Console anywhere in the repo). We were paying a Play tax without being on Play.
+     *
+     * It matters because of what the alternative actually costs. The settings-list screen drops
+     * somebody into an alphabetical list of every installed app to find PosterChan themselves, for a
+     * setting that is the ONLY thing standing between a working background signer and one that does
+     * nothing while the screen is off — an "Optimized" app has its NETWORK deferred by Doze, so the
+     * request sits on the relay until a maintenance window and the other device shows "waiting for
+     * your signer…". Reported exactly that way, and the phone had quietly set PosterChan to
+     * Optimized on its own; OEMs re-apply it after updates, so this is not a one-time setup step.
+     *
+     * The list is kept as the FALLBACK, because the direct dialog is refused outright on some ROMs
+     * (and is a no-op if the exemption is already held), and landing nowhere would be worse than
+     * landing on a list.
      */
     @PluginMethod
     public void openBatterySettings(PluginCall call) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !batteryExempt()) {
+                @SuppressWarnings("BatteryLife")
+                Intent d = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:" + getContext().getPackageName()));
+                d.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(d);
+                call.resolve();
+                return;
+            }
+        } catch (Throwable ignored) {
+            // Refused by the ROM, or no activity to handle it — fall through to the list below.
+        }
         try {
             Intent i = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
             i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);

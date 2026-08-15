@@ -353,6 +353,14 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Lets the signer ASK for the Doze exemption in one tap instead of dropping somebody into an
+         alphabetical list of every app on the phone. An "Optimized" app has its NETWORK deferred
+         while the screen is off, so a signing request sits on the relay until a maintenance window
+         and the other device shows "waiting for your signer…" — and phones set this themselves, and
+         re-apply it after updates. Play bans the direct-request Intent outside a few app categories;
+         this app is not on Play (Zapstore + GitHub Releases, `assembleRelease`, no .aab), so that
+         constraint does not apply here. See SignerPlugin.openBatterySettings. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Voice/video calls: keep the CPU/mic alive so a call survives the screen turning off / brief backgrounding. -->
