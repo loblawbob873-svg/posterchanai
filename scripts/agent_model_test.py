@@ -313,6 +313,14 @@ def main() -> int:
     ap.add_argument("--model", required=True)
     ap.add_argument("--ctx", type=int, default=32768)
     ap.add_argument("--steps", type=int, default=40)
+    # A CEILING IN WALL CLOCK, because the step budget is not one. This holds the node's GPU LOCK for
+    # the whole run — that is deliberate, so it cannot OOM a live image generation — which makes an
+    # unbounded run an outage: a model that narrates instead of calling a tool spends every step
+    # generating thousands of tokens, and one such run sat on a serving node's GPU for four and a
+    # half hours before anybody looked. 40 steps of that is not a bound anyone can predict.
+    ap.add_argument("--max-minutes", type=float, default=45.0,
+                    help="Abort the agent loop after this long, release the GPU, and grade whatever "
+                         "was written. 0 disables the ceiling (do not do this on a serving node).")
     ap.add_argument("--workdir", default="")
     ap.add_argument("--report", default="")
     ap.add_argument("--flash-attn", default="")   # "true"/"false"; per-node (Arc OFF, CUDA on)
@@ -373,7 +381,12 @@ def main() -> int:
     calls = 0
     finished = ""
     gen_s = 0.0
+    deadline = (time.time() + args.max_minutes * 60) if args.max_minutes else None
     for step_i in range(args.steps):
+        if deadline and time.time() > deadline:
+            finished = f"stopped at the {args.max_minutes:g}-minute ceiling after {step_i} steps"
+            _say(f"[{node}] {finished} — releasing the GPU and grading what is on disk")
+            break
         t = time.time()
         try:
             msg, reason = generate_message(model, messages, TOOLS, params,
