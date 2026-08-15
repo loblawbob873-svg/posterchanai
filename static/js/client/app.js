@@ -1140,7 +1140,17 @@
      * The sign_event is first in line and still cannot start for minutes, which is reported as
      * "waiting for your signer…" and a draft that never sends, with the signer itself perfectly
      * healthy and never even asked. So signing has its own slots that bulk work can never occupy. */
-    _cap: 6, _capP: 2, _inflight: 0, _inflightP: 0, _queue: [], _queueP: [],
+    /* TWELVE, raised from six once the signer could take it — and the reason is measured, not
+     * hopeful. Six was chosen against a signer that answers on ONE thread and drops what it cannot
+     * keep up with; ours now answers on a pool of three with the crypto in C, and the relay shows
+     * requests and replies at 1:1 (635/642 over a minute) with nothing dropped at any point today.
+     * With six in flight the first pass of a 472-message history is 944 round trips at ~4 pairs a
+     * second — four minutes of a progress bar — and the limit is the round trip, not the phone.
+     *
+     * Not "hundreds", which is what made Amber drop requests and is why a cap exists at all. If a
+     * signer ever starts dropping again the symptom is the counter stalling while `relay last spoke`
+     * stays fresh, and this is the first number to put back. */
+    _cap: 12, _capP: 2, _inflight: 0, _inflightP: 0, _queue: [], _queueP: [],
     _pump(){
       while(this._inflightP < this._capP && this._queueP.length){
         const job=this._queueP.shift();
@@ -19815,9 +19825,20 @@
          * reply never comes because the request never reached anyone. The only thing that tells the
          * two apart is which room we are shouting into, so the line says it. */
         const hosts = (n._urls || []).map(u => { try{ return new URL(u).host; }catch(_){ return u; } });
+        /* WHO THIS CLIENT IS, and WHICH SIGNER it is talking to. Without these two, a report of
+         * "stuck" cannot be matched against what the relay actually carries: every client is an
+         * anonymous ephemeral key from the outside, so "only two clients are exchanging and both are
+         * answered" cannot be turned into "…and yours is not one of them". They are public keys —
+         * the app key is ephemeral by construction and the signer's is the identity it signs as —
+         * so there is nothing here to leak. A pairing that names the WRONG signer is silent in
+         * exactly this way: the phone drops the request (no session for that app), the relay still
+         * ACKs the publish, and this end waits out the ceiling. */
+        const me8 = (n.appPk || '').slice(0, 8) || '?';
+        const sg8 = (n.remotePk || '').slice(0, 8) || '?';
         why = ` — signer: ${n._pending.size} sent and unanswered, ${n._inflight + n._queue.length}`
             + ` queued, relay last spoke ${heard}` + (live ? '' : ', NO SOCKET')
-            + `; via ${hosts.join(', ') || 'nothing'} (${live}/${hosts.length} open)`;
+            + `; via ${hosts.join(', ') || 'nothing'} (${live}/${hosts.length} open)`
+            + `; me ${me8} → signer ${sg8}`;
       }
     }catch(_){}
     _dmProg = _dmBase + (why || ' — waiting on your signer');
