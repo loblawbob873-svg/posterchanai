@@ -4252,7 +4252,7 @@
   // default order, which looks like a layout that was never saved rather than one that was dropped.
   const _CARRY_D = [/^pcai:note:/, /^pcai:notefolder:/, /^pcai:pw:/, /^pcai:pwfolder:/,
                     /^pcai:pwkey$/, /^pcai:budget$/, /^pcai:playlist:/, /^pcai:desktop$/,
-                    /^pcai:agent-tasks$/, /^pcai:dmkey$/];
+                    /^pcai:agent-tasks$/, /^pcai:dmkey$/, /^pcai:dmcache$/];
   let _carrying = false;
 
   function _isCarryDoc(ev){
@@ -19870,6 +19870,13 @@
   async function ensureDMs(){
     if(_dmLoaded) return; _dmLoaded=true;
     const modern = !!(signer && signer.nip17unwrap);   // gift wraps need the local secret key
+    /* THE SHARED CACHE FIRST, and before a single wrap is handed to the signer. On a device that has
+     * never decrypted anything this turns the whole history into one relay read and one HTTP GET —
+     * where the alternative is two round trips per message at a phone that is already answering the
+     * other devices. It is awaited on purpose: starting 900 requests and THEN discovering they were
+     * all cached is the cost this exists to avoid. */
+    if(modern) try{ const n = await DmCache.pullShared();
+                    if(n) console.info('[dm] ' + n + ' messages from the shared cache'); }catch(_){}
     Store.byKind(4).forEach(ingestDM);                 // show cached legacy DMs instantly
     if(modern) Store.byKind(1059).forEach(w=>ingestWrap(w, false));   // unwrap cached gift wraps (async)
     if(VIEW==='messages') renderMessages();
@@ -19897,6 +19904,9 @@
      * moving" is then a true statement about the counter and says nothing about the restore. */
     const wraps=evs.filter(e=>e.kind===1059).sort((a,b)=>b.created_at-a.created_at);
     await Promise.all(wraps.map(w=>ingestWrap(w, false)));
+    /* …and publish what this device just worked out, so the next one does not repeat it. Fire and
+     * forget: it is a courtesy to the other devices, never something this screen waits for. */
+    if(modern) DmCache.pushShared().catch(()=>{});
     // DRAIN THE REST OF THE HISTORY. The bulk query above caps at 400 wraps and the "unlimited" live
     // sub below is not actually unlimited: a filter with NO limit is capped by the relay (ours
     // defaults to 500), so a long history is silently truncated to the newest few hundred and older
@@ -20104,8 +20114,122 @@
         c.onsuccess = () => { if((c.result || 0) > 50000) try{ st.clear(); }catch(_){} };
       }catch(_){}
     },
+    /* ---- ONE DEVICE DOES THE WORK, THE REST READ IT -------------------------------------------
+     *
+     * The per-device cache fixes the SECOND visit. It does nothing for the first, and with three
+     * clients that is three separate 900-round-trip passes at one phone — measured at ~7.7
+     * request/reply pairs a second in total, shared between them. "tablet was fast and good,
+     * windows slowly showing DMs, firefox 1/400": one signer, three queues, all correct and all
+     * unbearable.
+     *
+     * So the cache itself syncs, the way Files does: ONE encrypted blob on Blossom plus a small
+     * pointer document. A device that has never decrypted anything reads the pointer, fetches the
+     * blob and unwraps it with the key it already has — a relay read, an HTTP GET and ZERO signer
+     * round trips for the whole history.
+     *
+     * A 30078 could not hold it (NIP-44 stops at 65535 bytes and this is hundreds of messages), and
+     * a blob is what this codebase already uses at that size — the files index and the folder-sync
+     * manifest both do exactly this.
+     *
+     * The POINTER is plaintext {sha, n, at}: the blob it names is AES-GCM under the same key nobody
+     * but this user can unwrap, and the only thing the pointer itself discloses is how many messages
+     * are cached — which the relay already knows, because it is holding the gift wraps. Keeping it
+     * plaintext saves a signer round trip on the one path whose entire purpose is not to need one. */
+    SHARE_D: 'pcai:dmcache', _sharedPulled: false, _pushedAt: 0,
+
+    async pullShared(){
+      if(this._sharedPulled || this._dead()) return 0;
+      this._sharedPulled = true;
+      try{
+        const key = await this._mk(); if(!key) return 0;
+        const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[30078], '#d':[this.SHARE_D], limit:1 }]);
+        const ev = (evs || []).sort((a, b) => b.created_at - a.created_at)[0];
+        if(!ev) return 0;
+        let ptr = null; try{ ptr = JSON.parse(ev.content || '{}'); }catch(_){ return 0; }
+        const sha = String((ptr && ptr.sha) || '');
+        if(!/^[0-9a-f]{64}$/i.test(sha)) return 0;
+        const srv = mediaServer(); if(!srv) return 0;
+        const r = await fetch(srv + '/' + sha);
+        if(!r.ok) return 0;
+        const buf = new Uint8Array(await r.arrayBuffer());
+        if(buf.length < 13) return 0;
+        const pt = await crypto.subtle.decrypt({ name:'AES-GCM', iv: buf.slice(0, 12) },
+                                               key, buf.slice(12));
+        const map = JSON.parse(new TextDecoder().decode(pt));
+        const db = await this._idb();
+        let n = 0;
+        for(const id in map){
+          const rumor = map[id];
+          if(!rumor || rumor.kind !== 14) continue;
+          await this.put(id, rumor);              // re-encrypted per record, same key
+          n++;
+        }
+        return n;
+      }catch(_){ return 0; }
+    },
+
+    /* Publish what this device holds. Called after a pass finishes, at most every few minutes.
+     *
+     * REFUSES TO SHRINK. The pointer carries `n`, so a device whose cache is smaller than what is
+     * already published does not replace it — the same rule the drive index and the folder-sync
+     * manifest have, for the same reason: an empty or partial read must never become the new truth
+     * for every other device. pullShared() runs first on every client, so the normal state is that
+     * what we hold is a superset of what is published. */
+    async pushShared(){
+      if(this._dead()) return false;
+      if(Date.now() - this._pushedAt < 300000) return false;
+      try{
+        const key = await this._mk(); if(!key) return false;
+        const srv = mediaServer(); if(!srv) return false;
+        const db = await this._idb();
+        const pre = ((ME && ME.pubkey) || 'anon').slice(0, 16) + ':';
+        const map = {};
+        let held = 0;
+        await new Promise((res, rej) => {
+          const q = db.transaction('msgs', 'readonly').objectStore('msgs').openCursor();
+          q.onsuccess = async () => {
+            const c = q.result;
+            if(!c){ res(); return; }
+            try{
+              if(String(c.key).startsWith(pre)){
+                const rec = c.value;
+                const pt = await crypto.subtle.decrypt({ name:'AES-GCM', iv:new Uint8Array(rec.iv) },
+                                                       key, new Uint8Array(rec.ct));
+                map[String(c.key).slice(pre.length)] = JSON.parse(new TextDecoder().decode(pt));
+                held++;
+              }
+            }catch(_){}
+            c.continue();
+          };
+          q.onerror = () => rej(q.error);
+        });
+        if(!held) return false;
+        // What is already out there? Never replace more than we hold.
+        let have = 0;
+        try{
+          const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[30078], '#d':[this.SHARE_D], limit:1 }]);
+          const ev = (evs || []).sort((a, b) => b.created_at - a.created_at)[0];
+          if(ev){ const p = JSON.parse(ev.content || '{}'); have = Number(p && p.n) || 0; }
+        }catch(_){ return false; }          // could not ask → do not write
+        if(held < have) return false;
+        const iv = new Uint8Array(12); crypto.getRandomValues(iv);
+        const ct = new Uint8Array(await crypto.subtle.encrypt({ name:'AES-GCM', iv }, key,
+                                    new TextEncoder().encode(JSON.stringify(map))));
+        const body = new Uint8Array(12 + ct.length); body.set(iv, 0); body.set(ct, 12);
+        const url = await uploadBlob(new File([body], 'dmcache.enc',
+                                              { type:'application/octet-stream' }), { keep:true });
+        const sha = _shaFromUrl(url);
+        if(!sha) return false;
+        await publish(30078, JSON.stringify({ sha, n: held, at: Math.floor(Date.now()/1000) }),
+                      [['d', this.SHARE_D]], { quiet:true });
+        this._pushedAt = Date.now();
+        return true;
+      }catch(_){ return false; }
+    },
+
     forget(){
       this._key = null; this._keyP = null; this._dbP = null; this._offUntil = 0;
+      this._sharedPulled = false; this._pushedAt = 0;
       try{ indexedDB.deleteDatabase('pc-dm-v1'); }catch(_){}
     },
   };

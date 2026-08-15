@@ -92,7 +92,7 @@
         (t[1].startsWith('pcai:note') || t[1].startsWith('pcai:pw') ||
          t[1].startsWith('pcai:playlist') || t[1] === 'pcai:budget' ||
          t[1] === 'pcai:desktop' || t[1] === 'pcai:agent-tasks' ||
-         t[1] === 'pcai:dmkey')) return true;
+         t[1] === 'pcai:dmkey' || t[1] === 'pcai:dmcache')) return true;
     return false;
   }
   /* ONE event with no `tags` used to take down every timeline in the app, permanently.
