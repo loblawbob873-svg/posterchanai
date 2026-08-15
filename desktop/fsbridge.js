@@ -194,6 +194,27 @@ async function writePart(id, rel, offset, bytes){
   return true;
 }
 
+/* VERIFY BEFORE YOU OVERWRITE, which is why this hashes the `.part` file and not the target.
+ *
+ * A download used to be recorded as agreed carrying the REMOTE's csum, without anyone ever asking
+ * what actually landed on disk — so a file with the right length and the wrong bytes was written
+ * over a good copy and then asserted correct by `base` for ever. Nothing would look at it again
+ * short of a Deep check.
+ *
+ * Hashing the part file is the only ordering that can refuse: writeCommit has already renamed the
+ * new file into place and trashed the old one, so a check after it is a report, not a defence. */
+function hashPart(id, rel){
+  return resolveIn(id, rel).then(abs => sha256(abs + PART));
+}
+
+/* Throw away a download that did not verify. Not into `.pc-trash` — this is not somebody's file, it
+ * is bytes we could not confirm, and putting them in the safety net makes the net less trustworthy. */
+async function discardPart(id, rel){
+  const abs = await resolveIn(id, rel);
+  try{ await fsp.rm(abs + PART, { force: true, maxRetries: 3, retryDelay: 100 }); }catch(_){}
+  return true;
+}
+
 async function writeCommit(id, rel, mtime){
   const abs = await resolveIn(id, rel);
   const tmp = abs + PART;
@@ -394,4 +415,4 @@ function removeRoot(id){
 
 module.exports = { init, list, addRoot, removeRoot, resolveIn, scan, sha256,
                    readPart, writePart, writeCommit,
-                   read, write, move, trash, emptyTrash, trashStat, watch, unwatch, IGNORE };
+                   read, write, move, trash, emptyTrash, trashStat, hashPart, discardPart, watch, unwatch, IGNORE };

@@ -167,6 +167,40 @@ class TestTwoDeviceSync(unittest.TestCase):
         self.check("web-upload-reaches-the-devices")
 
 
+    # ---- the corrupted video, across two devices -------------------------------------------------
+
+    def test_a_short_read_never_becomes_a_published_file(self):
+        """THE ONE THAT SHIPPED. A real adapter hands back a partial buffer when it cannot fill a
+        read (desktop `buf.subarray(0, bytesRead)`, Android `Arrays.copyOf(buf, got)`), and the
+        uploader tested only `!plain.length` — catching an empty read and waving a partial one
+        through: encrypted, uploaded, recorded, and `off` advanced by a WHOLE chunk, so the bytes in
+        the gap were stored by nobody. Only files over one chunk take that path, which is exactly why
+        images were fine and the videos would not open in anything, VLC included.
+
+        Asserted as "nothing was PUBLISHED", not merely "it failed": the manifest entry is what
+        reaches the other devices, so an upload that fails loudly and still writes one has lost the
+        argument. Verified to bite — restore the old check and this reports
+        `uploaded: [holiday.mp4], failed: [], entry: {chunks: […]}`, i.e. a corrupt file recorded as
+        a success and handed to every device."""
+        self.check("a-short-read-never-becomes-a-published-file")
+
+    def test_a_download_that_fails_its_checksum_never_lands(self):
+        """"We need to verify that files are the same." Until this, a download was recorded as agreed
+        carrying the REMOTE's csum without anybody hashing what actually landed — right length, wrong
+        bytes, and `base` then asserted the file was correct for ever. Nothing would look at it again
+        short of a Deep check, which is how a corrupt copy outlives the bug that made it.
+
+        The tampering keeps the LENGTH, so the size check added alongside it cannot see this; only
+        the checksum can. And the verification runs on the `.part` file BEFORE the rename, so the
+        good copy already on disk survives untouched — after writeCommit it would be a report rather
+        than a defence."""
+        self.check("a-download-that-fails-its-checksum-never-lands")
+
+    def test_the_same_video_crosses_intact_when_the_reads_are_whole(self):
+        """The control: the identical file with a healthy adapter arrives byte for byte, so the test
+        above is measuring the short read and not merely a file that never syncs."""
+        self.check("the-same-video-crosses-intact-when-the-reads-are-whole")
+
     # ---- deleting a folder, across a whole fleet -------------------------------------------------
     #
     # Reported: "I deleted everything in Windows Explorer on Desktop, PosterChan says 1 file left in

@@ -101,6 +101,8 @@ if (isOurPage) {
     trash: (id, rel, when) => ipcRenderer.invoke('pc:fs:trash', String(id || ''), String(rel || ''), when || 0),
     emptyTrash: (id, days) => ipcRenderer.invoke('pc:fs:empty-trash', String(id || ''), days === 0 ? 0 : (days || 30)),
     trashStat: (id) => ipcRenderer.invoke('pc:fs:trash-stat', String(id || '')),
+    hashPart: (id, rel) => ipcRenderer.invoke('pc:fs:hash-part', String(id || ''), String(rel || '')),
+    discardPart: (id, rel) => ipcRenderer.invoke('pc:fs:discard-part', String(id || ''), String(rel || '')),
     power: () => ipcRenderer.invoke('pc:fs:power'),
     watch: (id, debounceMs) => ipcRenderer.invoke('pc:fs:watch', String(id || ''), debounceMs || 0),
     unwatch: (id) => ipcRenderer.invoke('pc:fs:unwatch', String(id || '')),

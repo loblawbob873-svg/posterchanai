@@ -808,6 +808,8 @@ ipcMain.handle('pc:fs:move', (e, id, from, to) => { fsGuard(e); return fsbridge.
 ipcMain.handle('pc:fs:trash', (e, id, rel, when) => { fsGuard(e); return fsbridge.trash(String(id || ''), String(rel || ''), when); });
 ipcMain.handle('pc:fs:empty-trash', (e, id, days) => { fsGuard(e); return fsbridge.emptyTrash(String(id || ''), days); });
 ipcMain.handle('pc:fs:trash-stat', (e, id) => { fsGuard(e); return fsbridge.trashStat(String(id || '')); });
+ipcMain.handle('pc:fs:hash-part', (e, id, rel) => { fsGuard(e); return fsbridge.hashPart(String(id || ''), String(rel || '')); });
+ipcMain.handle('pc:fs:discard-part', (e, id, rel) => { fsGuard(e); return fsbridge.discardPart(String(id || ''), String(rel || '')); });
 ipcMain.handle('pc:fs:watch', (e, id, debounceMs) => {
   fsGuard(e);
   return fsbridge.watch(String(id || ''), (which) => {

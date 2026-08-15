@@ -59,6 +59,7 @@ function makeDevice(world, opts){
   const name = opts.name, id = opts.id, key = opts.key;
   const files = new Map();               // relpath -> {bytes, mtime}
   const parts = new Map();               // relpath -> [{offset, bytes}] mid-download, like a .part file
+  let shortRead = null;                  // {path, at, by} — see readPart
   // A real wall-clock start, not a counter from zero: `.pc-trash/<date>/` and the "(conflict from
   // laptop, <date>)" suffix are both formatted from it, and a 1970 date in a report is a detail that
   // reads as a bug when someone eyeballs the output.
@@ -97,9 +98,20 @@ function makeDevice(world, opts){
     },
     // Slice I/O — what lets a file bigger than the renderer's heap (and bigger than a proxy's
     // request-body cap) move at all. Same shape as the desktop adapter's.
+    /* A SHORT READ IS A THING REAL ADAPTERS DO, so the sim has to be able to do it.
+     *
+     * Both shipped adapters hand back a partial buffer when they cannot fill the request — desktop
+     * `buf.subarray(0, bytesRead)`, Android `Arrays.copyOf(buf, got)` — and that is precisely the
+     * input that produced holed, unplayable videos. Until this existed no scenario here could
+     * express it, so the sim ran the chunker only on a filesystem that never fails, which is the one
+     * filesystem nobody has. `shortRead` names the offset that comes back light. */
     async readPart(_id, p, offset, len){
       const f = files.get(p); if(!f) throw new Error('ENOENT ' + p);
-      return f.bytes.subarray(offset, offset + len);
+      const full = f.bytes.subarray(offset, offset + len);
+      if(shortRead && shortRead.path === p && shortRead.at === offset){
+        return full.subarray(0, Math.max(1, full.length - (shortRead.by || 7)));
+      }
+      return full;
     },
     async writePart(_id, p, offset, bytes){
       const cur = parts.get(p) || [];
@@ -107,6 +119,18 @@ function makeDevice(world, opts){
       parts.set(p, cur);
       return true;
     },
+    /* Mirrors the desktop adapter: the download is hashed BEFORE it is renamed into place, so an
+     * unverified copy can never overwrite a good file. Without these the sim would silently skip the
+     * verification entirely — `typeof fs.hashPart !== 'function'` is a deliberate escape hatch for
+     * older shells, and a simulator that takes it is testing the escape hatch. */
+    async hashPart(_id, p){
+      const cur = parts.get(p) || [];
+      const total = cur.reduce((n, c) => Math.max(n, c.offset + c.bytes.length), 0);
+      const buf = new Uint8Array(total);
+      for(const c of cur) buf.set(c.bytes, c.offset);
+      return sha256(buf);
+    },
+    async discardPart(_id, p){ parts.delete(p); return true; },
     async writeCommit(_id, p, mtime){
       const cur = parts.get(p) || [];
       const total = cur.reduce((n, c) => Math.max(n, c.offset + c.bytes.length), 0);
@@ -153,42 +177,81 @@ function makeDevice(world, opts){
     // The address these bytes WOULD have. Deterministic here for the same reason it is in life:
     // content in, one address out.
     async blobSha(bytes){ return sha256(bytes); },
-    async chunkShas(readPart, size){
-      const out = [];
-      for(let off = 0; off < size; off += 4096){
-        const p = await readPart(off, Math.min(4096, size - off));
-        out.push(sha256(p));
-      }
-      return out;
-    },
+    // chunkShas is LIFTED FROM app.js with putParts/getParts below — never written twice. It is the
+    // verify half of the same addressing scheme, and a second copy of it is a second opinion about
+    // what a chunk's address is: this one hashed the PLAINTEXT while the shipped putParts hashes the
+    // CIPHERTEXT, so every verify disagreed with the upload that produced it and a legacy chunked
+    // file conflicted on the device that was trying to rescue it.
     async putBlob(bytes){ const sha = sha256(bytes); world.blobs.set(sha, new Uint8Array(bytes)); return sha; },
     /* The chunked pair, with the SAME contract the client's syncBlobs has: one chunk in memory at a
      * time, each content-addressed and skipped when the store already holds it, and an identity for
      * the whole file that is the hash of its parts in order — so the engine's same() keeps working
      * without knowing chunking exists. */
     CHUNK: 4096,
-    async putParts(readPart, size){
-      const chunks = []; let existed = true;
-      for(let off = 0; off < size; off += 4096){
-        const want = Math.min(4096, size - off);
-        const plain = await readPart(off, want);
-        if(!plain || !plain.length) throw new Error('short read at ' + off);
-        const sha = sha256(plain);
-        if(!world.blobs.has(sha)){ world.blobs.set(sha, new Uint8Array(plain)); existed = false; }
-        world.maxBody = Math.max(world.maxBody || 0, plain.length);   // nothing may exceed one chunk
-        chunks.push(sha);
-      }
-      return { sha: sha256(bytesOf(chunks.join(''))), chunks, existed };
-    },
-    async getParts(chunks, writePart){
-      let off = 0;
-      for(const sha of chunks){
-        const b = world.blobs.get(sha);
-        if(!b) throw new Error('chunk ' + sha.slice(0,8) + ' unavailable (404)');
-        await writePart(off, b); off += b.length;
-      }
-      return off;
-    },
+    /* THE SHIPPED CHUNKER, NOT A COPY OF IT.
+     *
+     * These used to be hand-written here, and the copy kept the pre-fix `if(!plain || !plain.length)`
+     * check — the one that accepted a SHORT read, stored a file with a hole in it and published the
+     * chunk list. So `a-file-too-big-to-hold-crosses-in-chunks` passed the whole time videos were
+     * coming back unplayable: the simulator was agreeing with itself. That is the same disease this
+     * file's own header describes for the manifest key, one layer down.
+     *
+     * app.js's syncBlobs is inside an IIFE, so the three functions are lifted out by source slice —
+     * exactly what _liveUnder and _blockedBy already do for sync.js — and given stubs for the master
+     * key, the crypto and the upload. What stays REAL is the part that was wrong: the loop, the
+     * offsets, the length checks and the reassembly.
+     *
+     * The encryption stub is content-derived rather than the identity function, because with
+     * identity a chunk stored at the wrong offset still reassembles into something plausible. */
+    ...(() => {
+      const APP_SRC = require('fs').readFileSync(
+        path.join(__dirname, '..', '..', 'static', 'js', 'client', 'app.js'), 'utf8');
+      const lift = (re, what) => {
+        const m = APP_SRC.match(re);
+        if(!m) throw new Error(what + ' not found in app.js — has syncBlobs been renamed?');
+        return m[0];
+      };
+      const src = [
+        lift(/async _exactPart\(readPart, off, want\)\{[\s\S]*?\n      \},/, '_exactPart'),
+        lift(/async chunkShas\(readPart, size, chunkBytes\)\{[\s\S]*?\n      \},/, 'chunkShas'),
+        lift(/async putParts\(readPart, size, onProgress, chunkBytes\)\{[\s\S]*?\n      \},/, 'putParts'),
+        lift(/async getParts\(chunks, writePart, expect\)\{[\s\S]*?\n      \},/, 'getParts'),
+      ].join('\n');
+      const iv = (p) => crypto.createHash('sha256').update(Buffer.from(p)).digest().subarray(0, 12);
+      const enc = (plain) => {
+        const i = iv(plain), out = new Uint8Array(12 + plain.length);
+        out.set(i, 0);
+        for(let n = 0; n < plain.length; n++) out[12 + n] = plain[n] ^ i[n % 12] ^ 0x5A;
+        return out;
+      };
+      const dec = (ct) => {
+        const i = ct.subarray(0, 12), b = ct.subarray(12), out = new Uint8Array(b.length);
+        for(let n = 0; n < b.length; n++) out[n] = b[n] ^ i[n % 12] ^ 0x5A;
+        return out;
+      };
+      return new Function(
+        'world', 'sha256', 'bytesOf', '_enc', '_dec', '_iv', 'CH',
+        `const FilesIdx = { _ensureMK: async () => 'mk' };
+         const _SYNC_CHUNK = CH;
+         const _masterEncrypt = async (mk, plain, ivv) => _enc(plain);
+         const _contentIV = async (p) => _iv(p);
+         const sha256hex = async (b) => sha256(b);
+         const _blobAlreadyStored = async (s) => world.blobs.has(s);
+         const _shaFromUrl = (u) => String(u).split('/').pop();
+         const uploadBlob = async (file) => {
+           const bytes = new Uint8Array(await file.arrayBuffer());
+           const s = sha256(bytes);
+           world.blobs.set(s, bytes);
+           world.maxBody = Math.max(world.maxBody || 0, bytes.length);
+           return 'https://blossom.example/' + s;
+         };
+         const _syncBlobBytes = async (s) => {
+           const b = world.blobs.get(s);
+           if(!b) throw new Error('chunk ' + String(s).slice(0,8) + ' unavailable (404)');
+           return _dec(b);
+         };
+         return { ${src} };`)(world, sha256, bytesOf, enc, dec, iv, 4096);
+    })(),
     async getBlob(sha){
       const b = world.blobs.get(sha);
       if(!b) throw new Error('blob ' + String(sha).slice(0,8) + ' unavailable (404)');
@@ -199,6 +262,8 @@ function makeDevice(world, opts){
   return {
     name, id, key, files, bases, fs, store,
     put(p, text){ files.set(p, { bytes: bytesOf(text), mtime: ++clock }); },
+    // Make one slice of one file come back light, the way a real adapter does under load.
+    breakReadAt(p, at, by){ shortRead = { path: p, at, by: by || 7 }; },
     rm(p){ files.delete(p); },
     read(p){ const f = files.get(p); return f ? textOf(f.bytes) : null; },
     live(){ return [...files.keys()].filter(p => !IGNORED(p)).sort(); },
@@ -580,7 +645,14 @@ scenario('a-file-too-big-to-hold-crosses-in-chunks', async () => {
         && Array.isArray(entry.chunks) && entry.chunks.length === 10
         // identity is the file's own hash, or the chunk list when the sweep did not hash — never the
         // blob address, which is the hash of the ciphertext and means nothing to another device.
-        && (!!entry.csum || entry.chunks.length > 0) && !entry.sha && w.maxBody === 4096,
+        && (!!entry.csum || entry.chunks.length > 0) && !entry.sha
+        /* The ceiling is what this scenario is really about: no single request may carry more than
+         * ONE chunk, because that is what keeps peak memory independent of the file's size and what
+         * keeps a body under the proxy's limit. It is `<=` and not `=== 4096` because a request
+         * carries the CIPHERTEXT — one chunk plus its 12-byte IV — and the assertion used to be an
+         * equality only because the simulator's own stub stored plaintext. Now that the shipped
+         * chunker runs here, an exact 4096 would mean the envelope had gone missing. */
+        && w.maxBody > 4096 && w.maxBody <= 4096 + 64,
     detail: { bytesMatch: same, chunks: (entry.chunks || []).length, csum: !!entry.csum, maxRequestBytes: w.maxBody,
               uploaded: up.uploaded, downloaded: down.downloaded },
   };
@@ -1161,6 +1233,116 @@ scenario('a-file-cannot-be-written-where-a-directory-is', async () => {
         && phone.live().indexOf('notes') === -1
         && laptop.live().length === 2 && phone.live().length === 2,
     detail: { refusedFile, refusedDir, laptop: laptop.live(), phone: phone.live() },
+  };
+});
+
+/* THE CORRUPTED VIDEO, END TO END, ACROSS TWO DEVICES.
+ *
+ * This is the scenario that could not be written before, and its absence is why the bug shipped.
+ * A real adapter hands back a SHORT buffer when it cannot fill a read; the uploader tested only
+ * `!plain.length`, so it caught an empty read and waved a partial one through — encrypting it,
+ * uploading it, recording it in the manifest and advancing `off` by a WHOLE chunk. The bytes in the
+ * gap were stored by nobody. Every other device then downloaded the original with a hole punched in
+ * it: images were fine because only files over one chunk take this path, and the videos would not
+ * open in anything, VLC included.
+ *
+ * The assertion is not merely "it failed". It is that NOTHING WAS PUBLISHED — a manifest entry for a
+ * file we could not read whole is the thing that reaches the other devices, so an upload that fails
+ * loudly here and still writes an entry has lost the argument. And the phone must come away with no
+ * copy at all rather than a plausible one. */
+scenario('a-short-read-never-becomes-a-published-file', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Pictures' });
+  const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Pictures' });
+
+  const clip = new Uint8Array(20 * 1024).map((_, i) => (i * 37 + 11) & 0xff);
+  laptop.files.set('holiday.mp4', { bytes: clip, mtime: Date.UTC(2026, 7, 1) });
+  laptop.put('note.txt', 'this one is small and must still go');
+
+  laptop.breakReadAt('holiday.mp4', 4096, 7);          // the second chunk comes back light
+  const up = await laptop.sweep({ hash: false });
+  const man = w.manifestOf('Pictures');
+  const down = await phone.sweep();
+
+  return {
+    ok: up.uploaded.indexOf('holiday.mp4') === -1        // not reported as uploaded…
+        && !man['holiday.mp4']                            // …and no entry reached the manifest
+        && (up.failed || []).some(f => f.path === 'holiday.mp4')   // it is REPORTED, not swallowed
+        && phone.read('holiday.mp4') === null              // the other device gets nothing…
+        && phone.read('note.txt') === 'this one is small and must still go',  // …but the sweep goes on
+    detail: { uploaded: up.uploaded, failed: up.failed, entry: man['holiday.mp4'] || null,
+              onPhone: phone.live(), downloaded: down.downloaded },
+  };
+});
+
+/* A DOWNLOAD THAT DOES NOT MATCH ITS CHECKSUM MUST NOT REACH THE DISK.
+ *
+ * A download used to be recorded as agreed carrying the REMOTE's `csum` without anybody hashing what
+ * actually landed. Right length, wrong bytes, and `base` then asserted the file was correct for ever
+ * — nothing would look at it again short of a Deep check, which is exactly how a corrupt copy
+ * outlives the bug that made it. Size alone cannot see this: the tampering here keeps the length.
+ *
+ * The good copy on disk is what the test really guards. Verification happens on the `.part` file
+ * BEFORE the rename, so the phone's existing file has to survive untouched — a check after
+ * writeCommit would be a report, not a defence. */
+scenario('a-download-that-fails-its-checksum-never-lands', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Docs' });
+  const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Docs' });
+
+  laptop.put('budget.csv', 'the real numbers, all of them');
+  await laptop.sweep({ hash: true });                    // hash:true so the entry carries a csum
+  await phone.sweep();
+  const arrivedFirst = phone.read('budget.csv');
+
+  // The laptop edits it; the blob is then corrupted in transit, keeping its LENGTH.
+  laptop.put('budget.csv', 'the real numbers, but revised');
+  const up = await laptop.sweep({ hash: true });
+  const entry = w.manifestOf('Docs')['budget.csv'];
+  /* ONE pass, on the blobs this entry actually names. Corrupting "anything of about the right size"
+   * ran over the same blob twice and XORed it back to correct — a tampering that untampers is a test
+   * that proves the opposite of what it claims, and it reported a clean download. */
+  const targets = (entry.chunks && entry.chunks.length) ? entry.chunks.slice() : [entry.sha];
+  let tampered = 0;
+  for(const sha of targets){
+    const bytes = w.blobs.get(sha);
+    if(!bytes) continue;
+    const bad = new Uint8Array(bytes);
+    bad[bad.length - 1] ^= 0xff;              // one bit wrong, LENGTH UNCHANGED — size cannot see it
+    w.blobs.set(sha, bad);
+    tampered++;
+  }
+
+  const down = await phone.sweep();
+  return {
+    ok: arrivedFirst === 'the real numbers, all of them'
+        && tampered > 0 && !!entry.csum && up.uploaded.indexOf('budget.csv') !== -1
+        && down.downloaded.indexOf('budget.csv') === -1          // refused…
+        && (down.failed || []).some(f => f.path === 'budget.csv' && /checksum/.test(f.error || ''))
+        && phone.read('budget.csv') === 'the real numbers, all of them',  // …good copy untouched
+    detail: { csum: !!entry.csum, tampered, downloaded: down.downloaded, failed: down.failed,
+              onPhone: phone.read('budget.csv') },
+  };
+});
+
+/* THE CONTROL. The identical file with a healthy adapter crosses intact, byte for byte — so the
+ * scenario above is measuring the short read and not merely a file that never syncs. */
+scenario('the-same-video-crosses-intact-when-the-reads-are-whole', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Pictures' });
+  const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Pictures' });
+
+  const clip = new Uint8Array(20 * 1024).map((_, i) => (i * 37 + 11) & 0xff);
+  laptop.files.set('holiday.mp4', { bytes: clip, mtime: Date.UTC(2026, 7, 1) });
+  await laptop.sweep({ hash: false });
+  await phone.sweep();
+
+  const got = phone.files.get('holiday.mp4');
+  const identical = !!got && got.bytes.length === clip.length
+                    && Buffer.compare(Buffer.from(got.bytes), Buffer.from(clip)) === 0;
+  return {
+    ok: identical,
+    detail: { arrived: !!got, bytes: got ? got.bytes.length : 0, expected: clip.length, identical },
   };
 });
 

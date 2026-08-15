@@ -173,6 +173,41 @@
     };
     checkpointRef.fn = checkpoint;
     const agree = (path, entry) => { nextBase[path] = entry; dirty = true; };
+
+    /* A DOWNLOAD MUST BE THE FILE IT CLAIMS TO BE, checked against the checksum the manifest carries.
+     *
+     * Until this existed a download was recorded as agreed carrying the REMOTE's `csum` without
+     * anyone ever hashing what actually landed: right length, wrong bytes, and `base` then asserted
+     * the file was correct for ever. Nothing would look at it again short of a Deep check — which is
+     * exactly how a corrupt copy outlives the bug that made it.
+     *
+     * `csum` is the scan's own sha256 of the PLAINTEXT file, so re-hashing what we wrote and
+     * comparing is a like-for-like test. It is checked BEFORE the commit, on the `.part` file: after
+     * writeCommit the new file has already been renamed into place over the old one, so a check
+     * there is a report rather than a defence. A mismatch throws, the loop's catch records it as a
+     * per-file failure, and the part file is thrown away — deliberately NOT into `.pc-trash`, which
+     * is for somebody's files, not for bytes we could not confirm.
+     *
+     * Both guards are skipped when there is nothing to check against: an entry written before `csum`
+     * existed carries no content identity, and a platform whose adapter has no `hashPart` (any older
+     * shell) keeps the previous behaviour rather than refusing to sync at all. */
+    const verifyPart = async (p, R) => {
+      if(!R || !R.csum || typeof fs.hashPart !== 'function') return;
+      let got = null;
+      try{ got = await fs.hashPart(id, p); }catch(_){ return; }   // cannot check ≠ known bad
+      if(!got || got === R.csum) return;
+      try{ if(typeof fs.discardPart === 'function') await fs.discardPart(id, p); }catch(_){}
+      throw new Error('checksum mismatch after download — refusing to write it (wanted '
+                      + String(R.csum).slice(0, 12) + ', got ' + String(got).slice(0, 12) + ')');
+    };
+    const verifyBytes = async (p, R, bytes) => {
+      if(!R || !R.csum || !store.hashBytes) return;
+      let got = null;
+      try{ got = await store.hashBytes(bytes); }catch(_){ return; }
+      if(!got || got === R.csum) return;
+      throw new Error('checksum mismatch after download — refusing to write it (wanted '
+                      + String(R.csum).slice(0, 12) + ', got ' + String(got).slice(0, 12) + ')');
+    };
     const fail = (path, e, what) => {
       report.failed.push({ path, what, error: (e && e.message) || String(e) });
     };
@@ -292,9 +327,11 @@
         let st;
         if(R.chunks && R.chunks.length && store.getParts && typeof fs.writePart === 'function'){
           await store.getParts(R.chunks, (off, bytes) => fs.writePart(id, c.path, off, bytes), R.size);
+          await verifyPart(c.path, R);            // the incoming copy takes the NAME — it had better be right
           st = await fs.writeCommit(id, c.path, R.mtime || 0);
         } else {
           const bytes = await store.getBlob(c.sha || R.sha);
+          await verifyBytes(c.path, R, bytes);
           st = await fs.write(id, c.path, bytes, R.mtime || 0);
         }
         agree(c.path, { sha:c.sha || R.sha, csum:R.csum, chunks:R.chunks, size:st.size, mtime:st.mtime });
@@ -319,12 +356,14 @@
           // `R.size` is the length the manifest recorded — see getParts. A chunk list that does not
           // rebuild to it is refused here rather than committed over a good file.
           await store.getParts(R.chunks, (off, bytes) => fs.writePart(id, d.path, off, bytes), R.size);
+          await verifyPart(d.path, R);            // …and it must BE the file it claims to be
           st = await fs.writeCommit(id, d.path, R.mtime || 0);
         } else if(R.chunks && R.chunks.length){
           fail(d.path, new Error('this device cannot receive a file that large'), 'download');
           continue;
         } else {
           const bytes = await store.getBlob(d.sha);
+          await verifyBytes(d.path, R, bytes);
           st = await fs.write(id, d.path, bytes, R.mtime || 0);
         }
         agree(d.path, { sha:d.sha, csum:R.csum, chunks:R.chunks, size:st.size, mtime:st.mtime });
