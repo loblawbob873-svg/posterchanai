@@ -33,6 +33,8 @@ public class SignerPlugin extends Plugin {
     public void status(PluginCall call) {
         JSObject o = new JSObject();
         o.put("have", SignerKey.have(getContext()));
+        // Separate from `have`: the background signer needs a KEY, the NIP-55 surface needs CONSENT.
+        o.put("exposed", SignerKey.exposed(getContext()));
         o.put("pubkey", SignerKey.pubkey(getContext()));
         // What the SERVICE measured, never what the page assumed. A panel that reports the page's
         // intention is how "the signer is on" sat above a signer that had answered nothing for hours.
@@ -53,6 +55,9 @@ public class SignerPlugin extends Plugin {
         if (sec == null || sec.length() != 64) { call.reject("need a 32-byte hex secret"); return; }
         try {
             String pub = SignerKey.store(getContext(), Nostr.unhex(sec));
+            // This switch has always meant "other apps on this phone may ask me to sign". `arm`
+            // below stores the same key WITHOUT that, for the background signer.
+            SignerKey.setExposed(getContext(), true);
             JSObject o = new JSObject();
             o.put("pubkey", pub);
             call.resolve(o);
@@ -62,9 +67,39 @@ public class SignerPlugin extends Plugin {
         }
     }
 
+    /**
+     * Hand the background signer its key — and NOTHING else.
+     *
+     * `SignerRelayService` cannot sign without a Keystore-sealed key, and the only thing that ever
+     * stored one was the "Sign for other apps on this phone" switch: a different feature, described
+     * differently, in a different part of settings. So a phone paired to a laptop by QR had a
+     * service that started, found no key, closed its sockets and returned — for ever — while the
+     * page carried on signing at whatever rate Chromium allows a hidden WebView. That is the whole
+     * of "the signer is not working in background mode".
+     *
+     * Deliberately NOT `enable`: exposing this phone to other apps as a NIP-55 signer is a real
+     * capability and stays an explicit choice. This one is asked for by the app itself, on behalf of
+     * pairings the user made here, with a key that is already on this device.
+     */
+    @PluginMethod
+    public void arm(PluginCall call) {
+        String sec = call.getString("sec");
+        if (sec == null || sec.length() != 64) { call.reject("need a 32-byte hex secret"); return; }
+        try {
+            String pub = SignerKey.store(getContext(), Nostr.unhex(sec));
+            JSObject o = new JSObject();
+            o.put("pubkey", pub);
+            o.put("exposed", SignerKey.exposed(getContext()));
+            call.resolve(o);
+        } catch (Throwable t) {
+            call.reject("could not store the key on this device");
+        }
+    }
+
     @PluginMethod
     public void disable(PluginCall call) {
         SignerKey.clear(getContext());
+        SignerKey.setExposed(getContext(), false);
         // A key that is gone cannot sign, so the service has nothing left to do. Leaving it up would
         // hold sockets open for a signer that must refuse every request.
         SignerRelayService.kick(getContext(), SignerRelayService.ACTION_STOP);

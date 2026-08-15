@@ -51,7 +51,11 @@ public class SignerActivity extends Activity {
         // remember it under, and inventing one would let any app inherit another's grant).
         final String pkg = getCallingPackage();
 
-        byte[] sec = SignerKey.load(this);
+        /* EXPOSURE IS ITS OWN QUESTION. A key may be on this phone purely so the BACKGROUND signer
+         * can answer this user's other devices (SignerPlugin.arm); that is not consent for every
+         * other app on the handset to ask it to sign. Reads as "no key" here, which is the answer
+         * this screen already knows how to give. */
+        byte[] sec = SignerKey.exposed(this) ? SignerKey.load(this) : null;
         if (sec == null) {
             Toast.makeText(this, "Open PosterChan and turn on \"Sign for other apps\" first",
                            Toast.LENGTH_LONG).show();

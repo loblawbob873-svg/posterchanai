@@ -862,3 +862,61 @@ def test_the_throwaway_webview_is_not_destroyed_mid_callback():
     hand = main[main.index("private void hand(final WebView v, Uri target)"):]
     hand = hand[:hand.index("((WebView.WebViewTransport)")]
     assert "v.post(" in hand, "destroy() is called inside the callback rather than posted"
+
+def test_the_background_signer_is_given_a_key_without_exposing_the_phone():
+    """THE BUG BEHIND A WHOLE DAY OF "the signer is not working in background mode".
+
+    `SignerRelayService.reload()` returns early when `SignerKey.load()` is null — it closes every
+    socket and gives up. The ONLY thing that ever stored that key was the "Sign for other apps on
+    this phone" switch: a different feature, in a different settings section, that nobody pairing a
+    laptop by QR has any reason to turn on. So the service started, found nothing, and `connected`
+    stayed 0 for ever — which meant the hand-over could never be accepted, and the PAGE kept signing.
+    A page is the throttled half: full speed on screen, about one request a minute behind it, which
+    is exactly how it was reported ("foreground instantly solves the DM problem fast").
+
+    Four assertions, and the last two are the ones that keep this honest rather than merely working:
+
+      arm-exists       the app can hand the service a key by itself
+      arm-is-not-enable   …WITHOUT making this phone a NIP-55 signer for every other app on it.
+                       That is a real capability and stays an explicit choice.
+      activity-gated   the NIP-55 screen refuses when the key was only armed for the service
+      migration        a key that predates the split came from the old switch, which DID mean
+                       exposed — defaulting it to false would silently turn NIP-55 off for everyone
+                       who already had it.
+    """
+    plug = _read(os.path.join(SIGNER, "SignerPlugin.java"))
+    key = _read(os.path.join(SIGNER, "SignerKey.java"))
+    act = _read(os.path.join(SIGNER, "SignerActivity.java"))
+    app = _read(os.path.join(ROOT, "static", "js", "client", "app.js"))
+
+    assert "public void arm(PluginCall call)" in plug, (
+        "there is no way for the app to give the background signer a key — it can only ever be a "
+        "side effect of the unrelated 'sign for other apps' switch"
+    )
+    # arm() must NOT set exposure; enable() must.
+    arm = plug[plug.index("public void arm(PluginCall call)"):]
+    arm = arm[:arm.index("\n    @PluginMethod")] if "\n    @PluginMethod" in arm else arm
+    assert "setExposed" not in arm, "arm() exposes the phone to other apps — that is enable()'s job"
+    # Bounded by the NEXT method, not by the next "public void" — the slice above started at one.
+    en = plug[plug.index("public void enable(PluginCall call)") + 10:]
+    nxt = en.find("@PluginMethod")
+    en = en[:nxt] if nxt > 0 else en
+    assert "setExposed(getContext(), true)" in en, (
+        "enable() no longer records the consent it has always meant"
+    )
+
+    assert "SignerKey.exposed(this) ? SignerKey.load(this) : null" in act, (
+        "the NIP-55 activity signs with a key that was only armed for the background service"
+    )
+    # The migration branch, spelled out: absent means "came from the old switch".
+    ex = key[key.index("public static boolean exposed"):]
+    ex = ex[:ex.index("\n    }")]
+    assert "contains(K_EXPOSED)" in ex and "return have(ctx)" in ex, (
+        "a key that predates the flag now reads as not-exposed, which turns NIP-55 off for every "
+        "phone that already had it"
+    )
+    # …and the client must actually arm before it offers the job.
+    assert "_armNative" in app and "await this._armNative()" in app, (
+        "the page never arms the service, so the first offer is refused for a reason no retry fixes"
+    )
+

@@ -114,6 +114,33 @@ public final class SignerKey {
      * is what makes a signer something people turn off. "Never" is remembered too — an app that was
      * refused must not get another dialog every time it retries, which is how a denial becomes a
      * prompt loop the user cannot escape except by uninstalling something. */
+    /* IS THE KEY EXPOSED TO OTHER APPS ON THIS PHONE — a SEPARATE question from "is there a key".
+     *
+     * These were one flag, and that is why the background signer did not work. The key is loaded by
+     * TWO different things: `SignerActivity`, which lets other apps on this phone sign the way they
+     * would with Amber, and `SignerRelayService`, which answers YOUR OTHER DEVICES over a relay. The
+     * only thing that ever stored it was the switch for the first one — "Sign for other apps on this
+     * phone", in a different settings section, describing a different feature. Nobody pairing a
+     * laptop by QR has any reason to turn that on, so `reload()` found no key, closed every socket
+     * and returned; `connected` stayed 0 for ever, so the hand-over could never be accepted and the
+     * PAGE went on signing — full speed on screen and throttled to about one request a minute behind
+     * it. Reported all day as "the signer is not working in background mode".
+     *
+     * So the key can now be stored for the SERVICE alone (`arm`), and being reachable by other apps
+     * is its own opt-in. Absent means: a key that predates this flag came from the old switch, which
+     * DID mean exposed — anything else would silently turn NIP-55 off for everyone who had it. */
+    private static final String K_EXPOSED = "nip55";
+
+    public static boolean exposed(Context ctx) {
+        SharedPreferences p = prefs(ctx);
+        if (!p.contains(K_EXPOSED)) return have(ctx);
+        return p.getBoolean(K_EXPOSED, false);
+    }
+
+    public static void setExposed(Context ctx, boolean on) {
+        prefs(ctx).edit().putBoolean(K_EXPOSED, on).apply();
+    }
+
     public static String grant(Context ctx, String pkg) {
         if (pkg == null) return null;
         return prefs(ctx).getString("grant:" + pkg, null);      // "always" | "never" | null

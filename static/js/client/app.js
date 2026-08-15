@@ -1574,9 +1574,39 @@
     /* Publish the pairings and ask the service to match them. Answers whether it took the job.
      * `secret` is deliberately NOT sent: it is only ever needed for the pairing ACK, which this half
      * sends before handing over, so the service has no use for it and no reason to store it. */
+    /* GIVE THE SERVICE ITS KEY BEFORE ASKING IT TO DO ANYTHING.
+     *
+     * `SignerRelayService` cannot sign without a Keystore-sealed key, and until now the only thing
+     * that ever stored one was the "Sign for other apps on this phone" switch — a different feature,
+     * in a different settings section, that nobody pairing a laptop by QR has any reason to touch.
+     * Without it the service starts, finds no key, closes every socket and returns; `connected`
+     * stays 0, the hand-over is refused for ever, and the PAGE signs — which is full speed while the
+     * app is on screen and about one request a minute behind it.
+     *
+     * Local keys only: with an extension or a remote signer this device has no secret to hand over,
+     * and arming with nothing would produce a service that answers every request with a failure.
+     * It does NOT expose this phone to other apps as a NIP-55 signer — that stays its own switch
+     * (SignerPlugin.arm vs enable). */
+    async _armNative(){
+      try{
+        if(!ME || ME.mode !== 'local') return false;
+        const p = _capPlugin('Signer', 'arm');
+        if(!p || !p.arm) return false;                 // an APK older than this: nothing to arm
+        const st = await p.status().catch(()=>null);
+        if(st && st.have) return true;                 // already holds one
+        const sess = Session.load();
+        const sec = sess && sess.sk;
+        if(!sec) return false;
+        await p.arm({ sec });
+        return true;
+      }catch(_){ return false; }
+    },
     async _pushNative(){
       const p = this._nativePlugin();
       if(!p){ this.nativeOn = false; return false; }
+      // …and it must happen before the FIRST offer, or the first offer is refused for a reason no
+      // retry can fix.
+      try{ await this._armNative(); }catch(_){}
       try{
         const list = this.list().map(s => ({ pk:s.pk, relay:s.relay, name:s.name,
                                              perms:(s.perms||[]).join(','), enc:s.enc||'', last:s.last||0 }));
@@ -25184,7 +25214,12 @@
     }
     let st = {};
     try{ st = (await P.status()) || {}; }catch(_){ box.innerHTML=''; return; }
-    if(st.have){
+    /* `exposed`, not `have`. The background signer now stores a key of its own (SignerPlugin.arm),
+     * so "there is a key on this phone" no longer means "other apps may use it" — and a panel that
+     * conflated them would report this feature ON for everybody who merely paired a laptop.
+     * `st.exposed === undefined` is an APK older than the split, where the two really were one. */
+    const exposed = (st.exposed === undefined) ? !!st.have : !!st.exposed;
+    if(exposed){
       box.innerHTML = '<div><b>Signing for other apps</b> — other Nostr apps on this phone can ask '
         + 'this one to sign, the way they would ask Amber. Nothing runs in the background; Android '
         + 'starts it only when an app asks. <button class="mini" id="nip55-off">turn off</button></div>';
