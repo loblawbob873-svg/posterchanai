@@ -135,7 +135,9 @@
       local[p] = (e && e.sha) ? { size:e.size, mtime:e.mtime, csum:e.sha } : e;
     }
 
-    const plan = S.diff({ local, remote, base, device, now, excludes:o.excludes||[] });
+    // `let`, because a refused mass delete replaces it with a copy carrying no deletions — while
+    // `report.plan` keeps the original, so the panel can still show what was refused.
+    let plan = S.diff({ local, remote, base, device, now, excludes:o.excludes||[] });
     report.unchanged = plan.unchanged;
     report.excluded = plan.excluded;
     report.plan = plan;
@@ -528,6 +530,25 @@
         report.uploaded.push(u.path);
       }catch(e){ fail(u.path, e, 'upload'); }
       await checkpoint();
+    }
+
+    /* A SWEEP THAT WOULD EMPTY THE FOLDER STOPS AND ASKS — and if nobody is there to ask, it does
+     * not delete. See S.massDelete for what happened without this.
+     *
+     * REFUSING SUPPRESSES DELETION ONLY, never the uploads and downloads above it, for the reason
+     * the contacts sweep learned the hard way: a guard that aborts the whole sweep turns "it deleted
+     * everything" into "it syncs nothing, for ever", which is the same bug with the sign flipped.
+     *
+     * The refused paths are deliberately NOT agreed. `base` still says nothing about them, so the
+     * next sweep re-proposes exactly this and asks again — a refusal has to be a question that keeps
+     * being asked, not a decision recorded once. Saying yes re-runs with `forceTrash`. */
+    const mass = S.massDelete(plan);
+    if(mass && !o.forceTrash){
+      let ok = false;
+      if(typeof o.confirmTrash === 'function'){
+        try{ ok = !!(await o.confirmTrash(mass)); }catch(_){ ok = false; }
+      }
+      if(!ok){ report.refusedTrash = mass; plan = Object.assign({}, plan, { deleteLocal: [] }); }
     }
 
     let ti=0;

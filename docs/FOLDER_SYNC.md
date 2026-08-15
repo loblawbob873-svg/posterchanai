@@ -70,6 +70,18 @@ These are the rules the engine will not bend, each one a way to lose a file:
   "changed" for every file at once; an ordinary sweep does not hash, so a convergence test that
   demanded checksums could never fire and the whole folder duplicated itself as conflict copies.
   Size and modification time settle it, the same comparison used for change detection everywhere.
+- **A sweep may not delete more than it keeps.** Every rule above decides one path, and each of them
+  is right — but a manifest that has gone wrong does not produce one bad decision, it produces ten
+  thousand identical ones. Measured on a real Pictures folder: the shared manifest held ~10k paths
+  and every single one was a tombstone (`n=0` live on the server), so re-adding the folder on the
+  device that still had the files read "deleted elsewhere" for all of them and moved the lot into
+  `.pc-trash`, correctly, per path, without a word. Past 20 files, a sweep that would trash more
+  than survives it stops and asks; a background sweep — the watcher, a resume, the heartbeat — has
+  nobody to ask and so refuses. A refusal is **not recorded in the agreement**, so the next sweep
+  re-proposes it and asks again, and only deletions are suppressed: uploads and downloads still run,
+  because a guard that aborts the whole sweep turns "it deleted everything" into "it syncs nothing,
+  for ever". The server's collapse guard cannot cover this — a mass *local* delete writes no
+  manifest at all, it only advances `base`.
 
 ## Size, and why a big folder used to be unsyncable
 

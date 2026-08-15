@@ -788,6 +788,17 @@
            * whole, so no single file can spike memory however large it is. */
           chunkAbove: 16 * 1024 * 1024,
           hash: decision.mode === 'full', dryRun: !!o.dryRun,
+          forceTrash: !!o.forceTrash,
+          /* ONLY A SWEEP SOMEBODY IS WATCHING MAY ASK. An automatic one — the watcher, a resume, the
+           * heartbeat — has no one in front of it, so a dialog there is a modal nobody answers
+           * blocking a background job; it refuses instead and says so on the card, where "Delete
+           * anyway" is waiting. `o.manual` is the button. */
+          confirmTrash: (o.manual && !o.dryRun) ? (m => PC.uiConfirm(
+            '“' + keyOf(f) + '” — move ' + m.n + ' file' + (m.n === 1 ? '' : 's')
+            + ' on this device to the trash?\n\nThey are marked deleted on your other devices, and '
+            + 'this sweep keeps only ' + m.keep + '. If you did not delete them somewhere else, '
+            + 'cancel — nothing is removed and your files stay where they are.\n\nNothing is erased '
+            + 'either way: a delete here is a move into .pc-trash.')) : null,
           // The first sweep of a Pictures folder is minutes of silence, and silence is
           // indistinguishable from a hang, a failed login or a 404 on the manifest — which is
           // exactly how this looked the first time it was tried for real.
@@ -837,6 +848,11 @@
     // A checkpoint that could not be stored means the next sweep repeats this work. Say so — the
     // alternative is a progress bar that starts at one again with no explanation anywhere.
     if(rep.checkpointFailed) bits.push('couldn’t save progress (' + rep.checkpointFailed + ')');
+    /* FIRST, not appended after "3 up". A sweep that refused to trash ten thousand files has done
+     * one thing worth reading, and burying it behind the counts is how a guard becomes a line nobody
+     * saw — which is the same silence the guard exists to break. */
+    if(rep.refusedTrash) bits.unshift('kept ' + rep.refusedTrash.n + ' file'
+      + (rep.refusedTrash.n === 1 ? '' : 's') + ' the others say are deleted — nothing trashed');
     /* A FINISHED SWEEP DOES NOT BORROW A REASON FROM THE POLICY. `decision.why` answers "why is this
      * running, or not" — "waiting for Wi-Fi", "on battery — changed files only", "you asked for it" —
      * and those belong on a sweep that was SKIPPED, which is where setStatus already puts them.
@@ -906,6 +922,10 @@
       + grp('Uploaded', rep.uploaded, a => a)
       + grp('Downloaded', rep.downloaded, a => a)
       + grp('Moved to trash', rep.trashed, a => a.path + ' → ' + a.to)
+      // What the guard would not do, named. "Nothing trashed" is only believable next to the list of
+      // what it declined to trash — and pressing Sync is what asks about it.
+      + grp('Kept — your other devices say these were deleted',
+            rep.refusedTrash ? (p.deleteLocal || []) : [], a => a.path + ' — ' + a.why)
       + '</div>';
   }
 

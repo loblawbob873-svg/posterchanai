@@ -126,6 +126,38 @@ class TestSyncFolders(unittest.TestCase):
         self.assertEqual(resp.status_code, 403)
 
 
+class TestSyncManifestUnknownAccount(unittest.TestCase):
+    """/client/sync-manifest handing out an EMPTY manifest as a success.
+
+    This endpoint exists for one reason — an empty read written back over a full manifest does not
+    lose a setting, it loses the folder, and every device then reads the missing paths as "deleted
+    elsewhere" and moves its local copies to the trash. Every other exit was already careful about
+    that: an unreadable relay is a 503, a refused shrink is a 409.
+
+    The account lookup was not. A signed request whose npub has no `User` row answered
+    {"ok": true, "manifest": {}} — the wipe itself, wearing a 200. It is reachable by a device that
+    has been syncing for months: a restore onto a fresh node, an instance re-pointed at a different
+    server, an npub that changed. "I do not know who you are" is a refusal, never an empty folder.
+    """
+
+    def _call(self, user):
+        import json
+        req = C.SyncManifestReq(pubkey="a" * 64, auth="x", folder="Pictures")
+        with mock.patch.object(C.nostr_service, "to_pubkey_hex", lambda p: "a" * 64), \
+                mock.patch.object(C.nostr_service, "npub_of", lambda p: "npub1fake"), \
+                mock.patch.object(C, "_verify_self_auth", lambda a, p: True):
+            resp = asyncio.run(C.sync_manifest(req, db=_FakeDB(user)))
+        return resp.status_code, json.loads(bytes(resp.body))
+
+    def test_an_unknown_account_is_refused_never_an_empty_manifest(self):
+        status, body = self._call(None)
+        self.assertEqual(status, 403)
+        self.assertFalse(body.get("ok"))
+        self.assertNotIn("manifest", body,
+                         "an empty manifest handed out as a success is the folder wipe this "
+                         "endpoint exists to prevent")
+
+
 class TestSupersededManifestBlobs(unittest.TestCase):
     """Every manifest save past ~45 KB uploads a whole new encrypted blob, so a first sync of a big
     folder leaves one per checkpoint and every later change leaves another. They are `keep` blobs,

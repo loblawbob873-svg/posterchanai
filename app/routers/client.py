@@ -4168,7 +4168,13 @@ async def sync_manifest(data: SyncManifestReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid folder id"}, status_code=400)
     user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
     if not user:
-        return JSONResponse({"ok": True, "manifest": {}})
+        # NEVER `{"ok": True, "manifest": {}}` HERE. It is the exact wipe the docstring above says
+        # this endpoint exists to prevent, handed out as a success: a client that gets an empty
+        # manifest reads every path as 'deleted elsewhere' and moves the whole folder to its trash.
+        # "I don't know who you are" is a refusal, not an empty folder — and a signed-in device
+        # asking about a folder it has been syncing for months hits this the moment its account row
+        # is missing (a restore onto a fresh node, a re-pointed instance, an npub that changed).
+        return JSONResponse({"ok": False, "error": "no account here for that key"}, status_code=403)
     sk = store.user_storage_seckey(db, user)
     port = int(_setting(db, "nostr_relay_port", "3052"))
 

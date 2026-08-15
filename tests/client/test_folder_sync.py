@@ -490,3 +490,78 @@ class TestExclusions(unittest.TestCase):
         p = self.plan(local={"a.jpg": f("A")}, remote={}, base={}, excludes=[])
         self.assertEqual(len(p["upload"]), 1)
         self.assertEqual(p["excluded"], 0)
+
+
+@unittest.skipIf(not NODE, "no node on this node")
+class TestMassDelete(unittest.TestCase):
+    """THE SHAPE OF THE ANSWER, which nothing above this ever looked at.
+
+    Every case in TestFolderSync asserts the decision for ONE path, and every one of those decisions
+    is correct. That is not enough, and a real Pictures folder is what proved it: the shared manifest
+    held ~10k paths and every single one was a tombstone (`n=0` live on the server). A device that
+    still had the files re-added the folder, read "deleted elsewhere" for all 10k — correctly, per
+    path, by the rules above — and moved the entire folder into `.pc-trash` without asking.
+
+    The server's collapse guard could not catch it, because a mass LOCAL delete writes no manifest at
+    all: it only advances `base`. So the guard has to live here, and it is the phone book's rule —
+    refuse to delete more than you keep.
+    """
+
+    def mass(self, plan):
+        """The plan is BUILT IN NODE from counts, never serialised into argv — the case this guard
+        exists for is ten thousand paths, and `node -e` with ten thousand paths in it is E2BIG."""
+        js = (
+            "const S=require(%s);"
+            "const s=%s;"
+            "const list=(n,w)=>Array.from({length:n},(_,i)=>({path:'p'+i+'.jpg',why:w}));"
+            "const plan={upload:list(s.upload,'new here'),download:list(s.download,'new elsewhere'),"
+            " conflicts:list(s.conflicts,'both'),notes:list(s.notes,s.noteWhy),"
+            " deleteLocal:list(s.deleteLocal,'deleted elsewhere'),deleteRemote:[],unchanged:s.unchanged};"
+            "process.stdout.write(JSON.stringify(S.massDelete(plan)));"
+        ) % (json.dumps(MOD), json.dumps(plan))
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            raise AssertionError("node failed:\n" + r.stderr[-2000:])
+        return json.loads(r.stdout)
+
+    def plan_of(self, n_delete, keep=0, notes=0, note_why="same content both sides",
+                download=0, upload=0, conflicts=0):
+        return {"deleteLocal": n_delete, "unchanged": keep, "notes": notes, "noteWhy": note_why,
+                "download": download, "upload": upload, "conflicts": conflicts}
+
+    def test_the_production_shape_is_refused(self):
+        """10k tombstones, nothing kept. The exact manifest that emptied a Pictures folder."""
+        m = self.mass(self.plan_of(10142))
+        self.assertIsNotNone(m, "a sweep that trashes the whole folder and keeps nothing was allowed")
+        self.assertEqual(m["n"], 10142)
+        self.assertEqual(m["keep"], 0)
+
+    def test_deleting_a_few_files_is_never_questioned(self):
+        """The normal working of the feature. A confirmation on every 3-file delete is how people
+        learn to click through the one that matters."""
+        self.assertIsNone(self.mass(self.plan_of(3)))
+        self.assertIsNone(self.mass(self.plan_of(19)),
+                          "the floor is what keeps ordinary deletes silent")
+
+    def test_a_delete_smaller_than_what_survives_is_allowed(self):
+        """Tidying 50 files out of a 5000-file folder is a delete, not a wipe."""
+        self.assertIsNone(self.mass(self.plan_of(50, keep=4950)))
+
+    def test_kept_counts_every_way_a_file_survives(self):
+        """`unchanged` is not the only thing left standing when the sweep ends — a file being
+        downloaded, uploaded or kept as a conflict copy is still a file in the folder. Counting only
+        one of them would refuse an ordinary big first sync."""
+        self.assertIsNone(self.mass(self.plan_of(30, download=40)))
+        self.assertIsNone(self.mass(self.plan_of(30, notes=40)),
+                          "files both sides already agree on are kept files")
+
+    def test_deleted_on_both_is_not_a_kept_file(self):
+        """It has no bytes anywhere, so counting it would only make the guard quieter — and quieter
+        is the direction that lost the pictures."""
+        self.assertIsNotNone(self.mass(self.plan_of(30, notes=40, note_why="deleted on both")))
+
+    def test_exactly_as_many_deleted_as_kept_is_allowed(self):
+        """The rule is 'more than you keep', and a boundary that drifts turns a silent guard into a
+        noisy one or the other way about."""
+        self.assertIsNone(self.mass(self.plan_of(25, keep=25)))
+        self.assertIsNotNone(self.mass(self.plan_of(26, keep=25)))

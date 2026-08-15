@@ -333,6 +333,112 @@ class TestSyncRun(unittest.TestCase):
         self.assertEqual(out["rep"]["removedRemote"], [])
         self.assertEqual(out["saved"], [], "nothing changed, so the manifest should not be rewritten")
 
+    # ---- the sweep that emptied a Pictures folder ------------------------------------------
+
+    def _tombstoned_folder(self, n, extra=""):
+        """N files on this disk, N tombstones in the shared manifest, and NO agreement — the exact
+        state a real Pictures folder was in: the manifest held ~10k paths and every one of them was
+        marked deleted (`n=0` live on the server), while the files were all still here.
+
+        `base` is empty because the folder had just been re-added, which is the whole reason the
+        engine ends up guessing: with an agreement, an untouched file compares equal to it and the
+        delete is a fact rather than an inference.
+        """
+        return """
+          (async () => {
+            const N = %d;
+            const files = {}, manifest = {};
+            for(let i=0;i<N;i++){
+              files['p'+i+'.jpg'] = { sha:'C'+i, size:10, mtime:1000 };
+              manifest['p'+i+'.jpg'] = { deletedAt: 9000 };     // tombstoned AFTER the local mtime
+            }
+            const fs = makeFs(files);
+            const store = makeStore(manifest, {});
+            const rep = await R.sweep(fs, store, {id:'r1', device:'windows', now:99000%s});
+            process.stdout.write(JSON.stringify({
+              trashed: rep.trashed.length, refused: rep.refusedTrash || null,
+              left: Object.keys(files).length,
+              agreed: store.saved.length ? Object.keys(store.saved[store.saved.length-1].base||{}).length : 0,
+              saves: store.saved.length,
+            }));
+          })();
+        """ % (n, extra)
+
+    def test_a_sweep_that_would_empty_the_folder_trashes_nothing(self):
+        out = self.run_js(self._tombstoned_folder(500))
+        self.assertEqual(out["trashed"], 0,
+                         "the sweep moved the whole folder to the trash without being asked — this "
+                         "is the Pictures wipe")
+        self.assertEqual(out["left"], 500, "every file must still be on the disk")
+        self.assertIsNotNone(out["refused"], "a refusal that says nothing is a silent failure")
+        self.assertEqual(out["refused"]["n"], 500)
+
+    def test_the_refusal_is_re_asked_every_sweep_not_recorded_once(self):
+        """A refused delete must NOT advance `base`. If it did, the next sweep would compare against
+        an agreement saying those files are deleted, decide there is nothing to do, and the question
+        would never be asked again — a guard that silently gives up is worse than no guard, because
+        the folder then never syncs and never says why."""
+        out = self.run_js(self._tombstoned_folder(500))
+        self.assertEqual(out["agreed"], 0,
+                         "base recorded the deletions the sweep refused to make")
+
+    def test_saying_yes_lets_a_real_mass_delete_through(self):
+        """The other half, and the one the contacts sweep learned by breaking: a guard that cannot
+        be answered turns 'it deleted everything' into 'it syncs nothing, for ever'. Deleting 500
+        photos on your phone has to be able to reach this device."""
+        out = self.run_js(self._tombstoned_folder(500, ", confirmTrash: async () => true"))
+        self.assertEqual(out["trashed"], 500)
+        self.assertEqual(out["left"], 0)
+        self.assertIsNone(out["refused"])
+
+    def test_without_the_guard_the_whole_folder_goes_to_the_trash(self):
+        """PROOF THE CHECK ABOVE IS NOT VACUOUS. `forceTrash` is byte-for-byte the behaviour that
+        shipped, so this asserts the scenario really does produce 500 deletions — otherwise the
+        three tests above would pass just as happily against a sweep that had nothing to refuse."""
+        out = self.run_js(self._tombstoned_folder(500, ", forceTrash: true"))
+        self.assertEqual(out["trashed"], 500)
+        self.assertEqual(out["left"], 0)
+
+    def test_an_automatic_sweep_is_never_allowed_to_ask(self):
+        """No confirmTrash at all — the watcher, a resume, the heartbeat. There is nobody in front of
+        a background sweep, so it must fail CLOSED rather than block on a dialog nobody answers."""
+        out = self.run_js(self._tombstoned_folder(100))
+        self.assertEqual(out["trashed"], 0)
+        self.assertIsNotNone(out["refused"])
+
+    def test_a_confirm_that_throws_is_a_no(self):
+        out = self.run_js(self._tombstoned_folder(100, ", confirmTrash: async () => { throw new Error('x'); }"))
+        self.assertEqual(out["trashed"], 0, "a broken dialog must not read as consent")
+        self.assertIsNotNone(out["refused"])
+
+    def test_an_ordinary_small_delete_is_never_questioned(self):
+        """Three files deleted on another device, 40 still here. This is the feature working, and it
+        must not raise a dialog — a guard people are trained to click through protects nothing."""
+        out = self.run_js("""
+          (async () => {
+            const files = {}, manifest = {}, base = {};
+            for(let i=0;i<40;i++){
+              files['k'+i+'.jpg'] = { sha:'K'+i, csum:'K'+i, size:10, mtime:1000 };
+              manifest['k'+i+'.jpg'] = { sha:'K'+i, csum:'K'+i, size:10, mtime:1000 };
+              base['k'+i+'.jpg'] = { csum:'K'+i, size:10, mtime:1000 };
+            }
+            for(let i=0;i<3;i++){
+              files['d'+i+'.jpg'] = { sha:'D'+i, csum:'D'+i, size:10, mtime:1000 };
+              manifest['d'+i+'.jpg'] = { deletedAt: 9000 };
+              base['d'+i+'.jpg'] = { csum:'D'+i, size:10, mtime:1000 };
+            }
+            const fs = makeFs(files);
+            const store = makeStore(manifest, base);
+            const rep = await R.sweep(fs, store, {id:'r1', device:'windows', now:99000});
+            process.stdout.write(JSON.stringify({trashed: rep.trashed.length,
+                                                 refused: rep.refusedTrash || null,
+                                                 left: Object.keys(files).length}));
+          })();
+        """)
+        self.assertEqual(out["trashed"], 3)
+        self.assertIsNone(out["refused"], "an everyday 3-file delete must not ask")
+        self.assertEqual(out["left"], 40)
+
 
 if __name__ == "__main__":
     unittest.main()

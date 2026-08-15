@@ -739,6 +739,27 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   interrupted sweep resumed from file one — it checkpoints during the sweep now, bounded to ~20
   manifest writes however big the folder is. `tests/client/test_sync_store_scale.py` drives the real
   store at those sizes with the real ceilings stubbed in.
+  **EVERY RULE ABOVE DECIDES ONE PATH, AND A BROKEN MANIFEST DOES NOT PRODUCE ONE BAD DECISION — IT
+  PRODUCES TEN THOUSAND IDENTICAL ONES.** Measured: the shared `pcai:sync:Pictures` doc held ~10k
+  paths and every one was a tombstone (`n=0` live, readable on the server — the count is the only
+  plaintext in the doc), so re-adding the folder on the Windows box that still had the files read
+  "deleted elsewhere" for all of them and moved the entire folder into `.pc-trash` — correctly, per
+  path, by rules that are each right, and silently. **The server's collapse guard is blind to it: a
+  mass LOCAL delete writes no manifest at all, it only advances `base`**, which is why every
+  `sync-manifest` call in that window logged 200. So the guard is client-side and it is the phone
+  book's rule — `foldersync.js massDelete()` refuses to delete more than it keeps, above a floor of
+  20 (an everyday 3-file delete must never raise a dialog, or people learn to click through the one
+  that matters). Three properties, each with a test verified to fail without it: a refusal
+  **suppresses deletion only** (uploads/downloads still run — a guard that aborts the sweep is the
+  same bug with the sign flipped, which is exactly what happened to the contacts sweep); it is
+  **never written to `base`**, so the next sweep re-proposes and re-asks rather than recording
+  "agreed" once; and only a MANUAL sweep may ask (`confirmTrash`), since a background one has nobody
+  in front of it and must fail closed. `tests/client/test_folder_sync.py::TestMassDelete` +
+  `tests/client/test_sync_run.py` (which also runs the pre-fix behaviour via `forceTrash`, so the
+  guard tests cannot pass vacuously). Also fixed alongside: `/client/sync-manifest` answered
+  `{"ok":true,"manifest":{}}` when the signed npub had no `User` row — an empty manifest handed out
+  as a SUCCESS is the folder wipe the endpoint exists to prevent, and it is reachable by a device
+  that has synced for months (a restore onto a fresh node, a re-pointed instance). It is a 403 now.
   **An empty `base` must not conflict the whole folder.** Both sides look changed for every path at
   once (re-adding a synced folder, a cleared agreement), and an ordinary sweep does NOT hash — so a
   convergence test written as `L.sha === R.sha` can never fire, and every file becomes a
