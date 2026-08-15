@@ -44,6 +44,13 @@ if (isOurPage) {
       if (typeof fn !== 'function') return;
       ipcRenderer.on('pc:sync:now', () => { try { fn(); } catch (_) {} });
     },
+    /* The machine came back from sleep. See pushWake in main.js: a desktop window that was never
+     * hidden gets no visibilitychange, so this is the only reliable signal the page has that its
+     * sockets are older than they look. */
+    onWake: (fn) => {
+      if (typeof fn !== 'function') return;
+      ipcRenderer.on('pc:wake', () => { try { fn(); } catch (_) {} });
+    },
     // `tor` doubles as the capability test the client uses (_hasNativeTor), so it must be absent rather
     // than present-and-broken on a build without it.
     tor: {

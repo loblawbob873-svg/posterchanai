@@ -246,6 +246,23 @@ async function applyProxy() {
   } catch (e) { console.warn('[tor] setProxy', (e && e.message) || e); }
 }
 
+/* THE PAGE CANNOT TELL THAT THIS MACHINE SLEPT, AND ON A DESKTOP NOTHING ELSE TELLS IT EITHER.
+ *
+ * The client's reconnect paths are hung off `visibilitychange`, `online` and `pageshow`. A desktop
+ * window that was never hidden fires none of them on resume, and `online` only fires if Chromium
+ * decided the interface went down — which a suspend often does not do. So every socket comes back
+ * from suspend either closed or, worse, a zombie (readyState 1, delivering nothing), and the app
+ * looks connected while nothing arrives. It was reported as a signer that stopped working overnight
+ * and could only be fixed by reloading the page.
+ *
+ * powerMonitor is the one source that KNOWS, so it says so. The renderer decides what to redial. */
+function pushWake() {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) { try { w.webContents.send('pc:wake'); } catch (_) {} }
+  }
+}
+try { powerMonitor.on('resume', pushWake); } catch (_) {}
+
 function pushTorStatus() {
   const s = tor.status();
   for (const w of BrowserWindow.getAllWindows()) {

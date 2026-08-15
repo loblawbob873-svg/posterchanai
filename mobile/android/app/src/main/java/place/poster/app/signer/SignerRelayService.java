@@ -137,6 +137,15 @@ public class SignerRelayService extends Service {
     private final Map<String, Nip46Core.Session> sessions = new LinkedHashMap<>();
     private final Map<String, WebSocket> socks = new HashMap<>();
     private final Map<String, Integer> failures = new HashMap<>();
+    /** When each socket last delivered anything. See {@link #redialStale}. */
+    private final Map<String, Long> lastRx = new HashMap<>();
+    /* How long a socket may be silent before the app being OPENED redials it.
+     *
+     * A relay sends nothing between requests, so silence is not evidence of death — which is why
+     * this is not a timer and never fires on its own. It is only consulted when a human has just
+     * opened the app, i.e. at the one moment the cost of a redial (one handshake) is worth paying
+     * for the chance that the socket is a zombie. */
+    private static final long STALE_MS = 90_000L;
     private OkHttpClient http;
     private String subId;
     private boolean stopping = false;
@@ -273,6 +282,7 @@ public class SignerRelayService extends Service {
         for (String url : new java.util.ArrayList<>(socks.keySet())) {
             if (!want.contains(url)) closeOne(url);
         }
+        redialStale();
         for (String url : want) if (!socks.containsKey(url)) open(url);
         note();
     }
@@ -330,16 +340,25 @@ public class SignerRelayService extends Service {
                     f.put("since", Nip46Core.since(System.currentTimeMillis() / 1000));
                     s.send(new JSONArray().put("REQ").put(subId).put(f).toString());
                 } catch (Throwable ignored) { }
-                handler.post(() -> { connected = socks.size(); note(); });
+                handler.post(() -> { lastRx.put(url, System.currentTimeMillis());
+                                     connected = socks.size(); note(); });
             }
             @Override public void onMessage(WebSocket s, String text) {
-                handler.post(() -> recv(url, text));
+                handler.post(() -> { lastRx.put(url, System.currentTimeMillis()); recv(url, text); });
             }
+            /* `socks.get(url) == s` — a death report is only about the socket that is CURRENT.
+             *
+             * redialStale() closes a socket and dials the same relay again in the same pass, so the
+             * old one's onClosed arrives after the replacement is already in the map. Acted on
+             * blindly it removes the NEW socket and schedules a backoff redial for a relay that is
+             * connected, which leaves the service holding nothing while reporting a redial in
+             * progress — the failure this whole file exists to make impossible. */
             @Override public void onFailure(WebSocket s, Throwable t, Response r) {
-                handler.post(() -> dropped(url, t == null ? "socket failed" : String.valueOf(t.getMessage())));
+                handler.post(() -> { if (socks.get(url) == s)
+                        dropped(url, t == null ? "socket failed" : String.valueOf(t.getMessage())); });
             }
             @Override public void onClosed(WebSocket s, int code, String reason) {
-                handler.post(() -> dropped(url, "closed"));
+                handler.post(() -> { if (socks.get(url) == s) dropped(url, "closed"); });
             }
         });
         socks.put(url, ws);
@@ -361,14 +380,38 @@ public class SignerRelayService extends Service {
         }, Nip46Core.backoffMs(n));
     }
 
+    /* THE ONE THING "OPEN THE APP AND TRY AGAIN" COULD NOT FIX, AND IT IS WHAT PEOPLE DO FIRST.
+     *
+     * `reload()` only ever opened relays it had NO socket for — so a socket that was dead-but-open
+     * was left exactly as it was. That is the state a phone comes back from doze in (the carrier
+     * unmapped the TCP connection without a FIN; nothing is delivered and nothing is reported), and
+     * the ping only catches it at the next four-minute beat. Meanwhile a kind-24133 is EPHEMERAL:
+     * the relay fans it out to whoever is subscribed at that instant and stores nothing, so every
+     * request sent into that window is destroyed, not delayed. Reported as a desktop stuck on
+     * "waiting for your signer…", and bringing this app to the foreground changed nothing at all.
+     *
+     * Consulted ONLY from reload(), which is what an app-open triggers, so this costs one handshake
+     * at the moment somebody is standing there waiting for it — never on a timer, and never while
+     * the phone is asleep. */
+    private void redialStale() {
+        long now = System.currentTimeMillis();
+        for (String url : new java.util.ArrayList<>(socks.keySet())) {
+            Long rx = lastRx.get(url);
+            if (rx != null && now - rx <= STALE_MS) continue;
+            closeOne(url);          // the caller's open-what-is-missing loop dials it straight back
+        }
+    }
+
     private void closeOne(String url) {
         WebSocket ws = socks.remove(url);
+        lastRx.remove(url);
         if (ws != null) try { ws.close(1000, "done"); } catch (Throwable ignored) { }
     }
 
     private void closeAll() {
         for (String url : new java.util.ArrayList<>(socks.keySet())) closeOne(url);
         socks.clear();
+        lastRx.clear();
         connected = 0;
     }
 

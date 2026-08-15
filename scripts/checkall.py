@@ -77,6 +77,10 @@ CHECKS = {
     "check_drive_blob_fetch":          dict(group="live", secs=420),
     "check_music_mobile":              dict(group="live", secs=420),
     "check_nip46_signer":              dict(group="live", secs=420),
+    # Kills a relay under a live session and takes the signer away under a live request. Slow by
+    # construction: the waits ARE the check (7s down is longer than the retry that used to be all
+    # there was, and the "answered in under 55s" bound is what separates a re-send from the ceiling).
+    "check_nip46_reconnect":           dict(group="live", secs=600),
     "check_os_apps":                   dict(group="live", secs=900),
     # Two browsers, three pairings, and a clock-skew case that has to time out to prove it works.
     "check_qr_device_login":           dict(group="live", secs=900),

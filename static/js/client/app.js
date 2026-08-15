@@ -867,13 +867,23 @@
     _pending:new Map(), _subId:null, _onEvent:null,
     /* Every relay socket this session holds — not one. See _openAll. */
     _socks:[],
+    /* The relay URLs this session WANTS open, which is not the same list as the sockets it has.
+     *
+     * A socket carries its own url on `_pcUrl`, and that was the only record of it — so the moment a
+     * socket closed, the url went with it and nothing could reopen what had just been lost. That is
+     * survivable while a close is followed by an immediate successful retry and fatal the moment one
+     * isn't (see _scheduleReopen). Kept per SESSION, cleared only by reset(). */
+    _urls:[], _boff:{}, _rtimer:{}, _revivedAt:0,
     _live(){ return (this._socks||[]).filter(w => w && w.readyState === 1); },
+    _want(url){ if(url && this._urls.indexOf(url) < 0) this._urls.push(url); },
     reset(){ this._wantOpen=false; this._enc='nip04'; this._lastDec=null; this._encOk=false; this._encSeen=null;
       (this._socks||[]).forEach(w=>{ try{ w.onclose=w.onerror=w.onmessage=null; w.close(); }catch(_){} });
-      this._socks=[]; this.relay=null; this._subId=null;
+      Object.keys(this._rtimer||{}).forEach(u=>{ try{ clearTimeout(this._rtimer[u]); }catch(_){} });
+      this._socks=[]; this._urls=[]; this._boff={}; this._rtimer={}; this.relay=null; this._subId=null;
       this._pending.forEach(p=>{ try{ p.rej(new Error('signer disconnected')); }catch(_){} }); this._pending.clear();
       // Fail the queued work too — otherwise jobs waiting for a slot hang on a socket that's gone.
-      const q=this._queue||[]; this._queue=[]; this._inflight=0;
+      const q=(this._queue||[]).concat(this._queueP||[]);
+      this._queue=[]; this._queueP=[]; this._inflight=0; this._inflightP=0;
       q.forEach(j=>{ try{ j.rej(new Error('signer disconnected')); }catch(_){} });
       this._onEvent=null; },
     // NIP-46 transport is NIP-04 by default, but some signers reply with NIP-44 — try each scheme
@@ -919,6 +929,8 @@
      * forcing a re-pair. Only while `_wantOpen`, so reset() genuinely disconnects. */
     _adopt(ws, url){
       if(this._socks.indexOf(ws) < 0) this._socks.push(ws);
+      this._want(url);
+      this._boff[url] = 0;                          // a good connection resets that relay's backoff
       if(!this.relay) this.relay = url;             // the first to open names the session's relay
       this._subId = this._subId || ('n46'+Math.random().toString(36).slice(2,8));
       this._req(ws);
@@ -926,22 +938,109 @@
       ws.onmessage = (e)=>this._recv(e.data);
       ws.onclose = ()=>{
         this._socks = this._socks.filter(w => w !== ws);
-        if(!this._wantOpen) return;
-        setTimeout(()=>{ if(this._wantOpen && !this._socks.some(w => w._pcUrl === url))
-                           this._openRelay(url).catch(()=>{}); }, 2000);
+        this._scheduleReopen(url);
       };
       ws._pcUrl = url;
+    },
+    /* Reconnect that KEEPS TRYING — the one-attempt version is why a signed-in desktop woke up
+     * unable to sign.
+     *
+     * This was a single `setTimeout(…, 2000)` whose failure was swallowed by `.catch(()=>{})`, and
+     * a machine coming back from sleep is precisely the case it cannot survive: every socket closes
+     * on suspend, the one retry fires two seconds into the resume — before the wifi has associated,
+     * before DNS answers — and fails. Nothing is scheduled after it, nothing is logged, and the
+     * session is left `_wantOpen` with no sockets for the rest of the page's life. The next thing
+     * the user clicks throws `signer not connected` from _rpc, and reloading the page is the only
+     * cure, which is exactly how it was reported. The phone signer was never involved.
+     *
+     * So: exponential backoff, capped, and it never stops while the session wants the relay. The cap
+     * is 20s rather than the pool's 8s because nothing here is waiting on the socket to draw a
+     * screen — it only has to be up before the next signature, and _ensure() closes even that gap. */
+    _scheduleReopen(url){
+      if(!this._wantOpen || !url) return;
+      if(this._socks.some(w => w._pcUrl === url && w.readyState <= 1)) return;   // open or connecting
+      if(this._rtimer[url]) return;                                              // already scheduled
+      const d = this._boff[url] ? Math.min(this._boff[url] * 1.7, 20000) : 1500;
+      this._boff[url] = d;
+      this._rtimer[url] = setTimeout(()=>{
+        this._rtimer[url] = 0;
+        if(!this._wantOpen) return;
+        if(this._socks.some(w => w._pcUrl === url && w.readyState <= 1)) return;
+        this._openRelay(url).catch(()=>{ this._scheduleReopen(url); });
+      }, d);
+    },
+    /* Reopen NOW — the page came back from sleep / the network returned.
+     *
+     * Two jobs, and the second is the one a backoff cannot do: it cancels the pending backoff so a
+     * relay that has been failing for a while is retried immediately, and it tears down sockets the
+     * browser still calls OPEN. A suspended machine routinely comes back with a zombie socket —
+     * readyState 1, delivering nothing — and a request published into one does not fail, it waits
+     * out the full 120s ceiling while the signer is never asked. Same reasoning as Relay.wake(),
+     * and at most a couple of sockets. */
+    revive(){
+      if(!this._wantOpen || !this._urls.length) return;
+      if(Date.now() - this._revivedAt < 3000) return;
+      this._revivedAt = Date.now();
+      (this._socks||[]).forEach(w=>{ try{ w.onclose=w.onerror=w.onmessage=null; w.close(); }catch(_){} });
+      this._socks = [];
+      this._urls.forEach(url=>{
+        try{ clearTimeout(this._rtimer[url]); }catch(_){}
+        this._rtimer[url] = 0; this._boff[url] = 0;
+        this._openRelay(url).catch(()=>{ this._scheduleReopen(url); });
+      });
+    },
+    /* A live socket before a request goes out, or the truth about why there isn't one.
+     *
+     * _rpc used to throw `signer not connected` the instant `_live()` was empty, which reads to the
+     * user as "your signer is broken" when what actually happened is that this page's socket died
+     * while the machine was asleep and the reconnect is seconds away. Reconnecting HERE is what
+     * makes the first click after a resume work rather than being the thing that discovers the
+     * problem — and it does not depend on any wake event arriving, which on the desktop build is not
+     * guaranteed at all (Chromium reports no visibility change for a window that was never hidden,
+     * and `online` does not fire when the interface never went down). */
+    async _ensure(ms){
+      if(this._live().length) return true;
+      if(!this._wantOpen || !this._urls.length) return false;
+      this._urls.forEach(url=>{
+        try{ clearTimeout(this._rtimer[url]); }catch(_){}
+        this._rtimer[url] = 0; this._boff[url] = 0;
+        if(!this._socks.some(w => w._pcUrl === url && w.readyState <= 1))
+          this._openRelay(url).catch(()=>{ this._scheduleReopen(url); });
+      });
+      const t0 = Date.now(), cap = ms || 9000;
+      while(Date.now() - t0 < cap){
+        if(this._live().length) return true;
+        await new Promise(r=>setTimeout(r, 120));
+      }
+      return !!this._live().length;
     },
     // open a socket to the signer's relay + subscribe for responses addressed to our app key
     _openRelay(relay){
       this._wantOpen=true;
-      return new Promise((res,rej)=>{
-        let done=false; const ws=new WebSocket(relay);
-        ws.onopen=()=>{ this._adopt(ws, relay); if(!done){ done=true; res(relay); } };
+      this._want(relay);
+      /* One connect attempt per relay at a time. The socket is not in `_socks` until it OPENS, so
+       * without this an _ensure() racing a scheduled retry opens two sockets to the same relay and
+       * both get adopted — two copies of every reply, and two idle connections held for the session. */
+      this._opening = this._opening || {};
+      if(this._opening[relay]) return this._opening[relay];
+      const p = new Promise((res,rej)=>{
+        let done=false; let ws;
+        const fin=(fn,v)=>{ if(done) return; done=true; if(this._opening) this._opening[relay]=null; fn(v); };
+        try{ ws=new WebSocket(relay); }
+        catch(e){ fin(rej, new Error('cannot reach signer relay')); return; }
+        ws.onopen=()=>{ this._adopt(ws, relay); fin(res, relay); };
         ws.onmessage=(e)=>this._recv(e.data);
-        ws.onerror=()=>{ if(!done){ done=true; rej(new Error('cannot reach signer relay')); } };
-        setTimeout(()=>{ if(!done){ done=true; rej(new Error('signer relay timed out')); } }, 9000);
+        ws.onerror=()=>{ fin(rej, new Error('cannot reach signer relay')); };
+        // A socket still CONNECTING at the ceiling is abandoned for real: left alone it can open a
+        // minute later and adopt itself alongside the retry that has since succeeded.
+        setTimeout(()=>{
+          if(done) return;
+          if(ws && ws.readyState !== 1){ try{ ws.onopen=ws.onerror=ws.onmessage=null; ws.close(); }catch(_){} }
+          fin(rej, new Error('signer relay timed out'));
+        }, 9000);
       });
+      this._opening[relay] = p;
+      return p;
     },
     /* Open EVERY relay this session knows, and keep them all.
      *
@@ -969,8 +1068,13 @@
         const to=setTimeout(()=>{ if(!opened)
           rej(new Error('signer relays timed out')); }, ms||9000);
         urls.forEach(url=>{
-          let ws; try{ ws=new WebSocket(url); }catch(_){ fail(); return; }
-          ws.onerror=fail; ws.onclose=fail;
+          this._want(url);
+          // A relay that fails HERE is retried too. It is in the session's list either because the
+          // bunker link named it (the signer is listening there) or because it is this node's own,
+          // and "down at the moment we happened to log in" must not mean "gone for the session".
+          const fell=()=>{ fail(); this._scheduleReopen(url); };
+          let ws; try{ ws=new WebSocket(url); }catch(_){ fell(); return; }
+          ws.onerror=fell; ws.onclose=fell;
           ws.onopen=()=>{
             if(!this._wantOpen){ try{ ws.close(); }catch(_){} return; }   // reset() while we connected
             this._adopt(ws, url);
@@ -1008,17 +1112,31 @@
     // So the transport is a QUEUE: a few in flight at a time, each retried once. Slower, but it finishes.
     // 6 in flight: enough to actually chew through a DM history (each message = 2 decryptions), while still
     // far short of the hundreds-at-once that made Amber drop requests.
-    _cap: 6, _inflight: 0, _queue: [],
+    /* TWO LANES, not one queue with a priority end — because jumping the queue does not help if
+     * every SLOT is taken.
+     *
+     * The interactive job went to the front of the same 6-slot queue, and a stalled transport is
+     * exactly when that is not enough: a DM restore fills all six slots with decrypts, each of which
+     * now waits out the full 120s ceiling (twice — _send retries once) before releasing its slot.
+     * The sign_event is first in line and still cannot start for minutes, which is reported as
+     * "waiting for your signer…" and a draft that never sends, with the signer itself perfectly
+     * healthy and never even asked. So signing has its own slots that bulk work can never occupy. */
+    _cap: 6, _capP: 2, _inflight: 0, _inflightP: 0, _queue: [], _queueP: [],
     _pump(){
+      while(this._inflightP < this._capP && this._queueP.length){
+        const job=this._queueP.shift();
+        this._inflightP++;
+        job.run().then(job.res, job.rej).finally(()=>{ this._inflightP--; this._pump(); });
+      }
       while(this._inflight < this._cap && this._queue.length){
         const job=this._queue.shift();
         this._inflight++;
         job.run().then(job.res, job.rej).finally(()=>{ this._inflight--; this._pump(); });
       }
     },
-    // Requests the USER is waiting on jump the queue. Restoring a DM history pushes hundreds of decrypt jobs
-    // in here; a sign_event appended behind them would block the composer for MINUTES — you hit Post and
-    // nothing happens. Interactive work (signing, and the connect handshake) goes to the FRONT.
+    // Requests the USER is waiting on take the reserved lane. Restoring a DM history pushes hundreds of
+    // decrypt jobs at the bulk one; a sign_event sharing their slots blocks the composer for MINUTES —
+    // you hit Post and nothing happens. Interactive work (signing, and the connect handshake) is separate.
     _PRIORITY: new Set(['sign_event', 'connect', 'get_public_key']),
     _send(method, params, opts){
       return new Promise((res, rej)=>{
@@ -1038,7 +1156,7 @@
           }
         };
         const job={ run, res, rej };
-        if(this._PRIORITY.has(method)) this._queue.unshift(job); else this._queue.push(job);
+        if(this._PRIORITY.has(method)) this._queueP.push(job); else this._queue.push(job);
         this._pump();
       });
     },
@@ -1096,7 +1214,12 @@
       }
     },
     async _rpc(method, params, opts){
-      if(!this.remotePk || !this._live().length) throw new Error('signer not connected');
+      if(!this.remotePk) throw new Error('signer not connected');
+      /* Reconnect rather than report. `_live()` being empty means THIS page lost its relay socket —
+       * almost always because the machine slept — and says nothing about the signer, which is why
+       * "signer not connected" was the wrong sentence to put in front of the user. See _ensure. */
+      if(!this._live().length && !(await this._ensure(9000)))
+        throw new Error('cannot reach the signer relay — check your connection');
       const id='r'+Math.random().toString(36).slice(2,10);
       let enc=(opts && opts.enc) || this._enc || 'nip04';
       const body=JSON.stringify({ id, method, params });
@@ -1129,15 +1252,78 @@
         // which is not necessarily the one that opened first — see _openAll.
         const live=this._live(); let sent=0;
         for(const w of live){ try{ w.send(JSON.stringify(['EVENT', signed])); sent++; }catch(_){} }
-        if(!sent){ this._pending.delete(id); return rej(new Error('signer not connected')); }
+        // The socket died between _ensure and here. Kick the reconnect so _send's one retry (600ms
+        // later, through _rpc → _ensure) has something to land on instead of failing the same way.
+        if(!sent){ this._pending.delete(id); (this._urls||[]).forEach(u=>this._scheduleReopen(u));
+                   return rej(new Error('lost the signer relay — retrying')); }
         /* Say something LONG before the ceiling. The 120s is deliberate — approving on a phone is a
          * physical act — but two minutes of a button that does nothing is indistinguishable from a
          * broken one, and that is exactly how it was reported ("click send, nothing happens").
          * A single nudge at 4s, only while the request is still outstanding. */
         const ceiling=(opts && opts.timeout) || 120000;
-        if(!(opts && opts.quiet))
-          setTimeout(()=>{ if(this._pending.has(id)) try{ toast('waiting for your signer…'); }catch(_){} }, 4000);
+        /* ONE nudge, and only for something a human is actually waiting on.
+         *
+         * Every request nudged, so a stalled transport during a DM restore covered the screen in
+         * identical "waiting for your signer…" toasts — hundreds of decrypts, each with its own 4s
+         * timer, none of them anything the user asked for. Reported as "a bunch of waiting for
+         * signer toasters" while trying to post. The nudge exists to tell you a BUTTON you pressed
+         * is still working, so it is limited to the interactive lane and throttled to one per 8s. */
+        if(!(opts && opts.quiet) && this._PRIORITY.has(method))
+          setTimeout(()=>{
+            if(!this._pending.has(id)) return;
+            if(Date.now() - (this._lastNudge||0) < 8000) return;
+            this._lastNudge = Date.now();
+            try{ toast('waiting for your signer…'); }catch(_){}
+          }, 4000);
         setTimeout(()=>{ if(this._pending.has(id)){ this._pending.delete(id); rej(new Error('signer request timed out')); } }, ceiling);
+        /* A KIND-24133 IS EPHEMERAL: IF NOBODY IS SUBSCRIBED AT THAT INSTANT, THE REQUEST IS GONE.
+         *
+         * Our own relay says so in as many words (`elif kind == 24133` in nostr_relay/server.py):
+         * nothing is stored, it is only fanned out to whoever is listening RIGHT NOW. So a signer
+         * whose socket is redialling — a phone that just came back from doze, a NAT that dropped the
+         * mapping — does not receive a late copy. The request simply never happened, and this end
+         * waits out the full 120s ceiling for an answer that cannot come. Clicking Post a second
+         * time is what fixed it in the field, which is the tell: the SECOND request landed.
+         *
+         * So do that here instead of making the user do it: while the request is still outstanding,
+         * publish the SAME signed event again — first making sure this end has a socket at all.
+         *
+         * A `ping` gate was tried here and is WRONG, which is worth recording because it is the
+         * obvious design. The idea was to re-send only when the signer is provably not listening,
+         * so that a signer which is merely slow (a human reading an approval dialog) is never
+         * prompted twice. But the signer that dropped the request answers the ping the moment it
+         * redials — that is the whole scenario — so the probe reports "alive", the re-send is
+         * suppressed, and the request that was destroyed stays destroyed. Measured exactly that way
+         * in scripts/check_nip46_reconnect.py's `signer-away` case: three pings answered, the
+         * sign_event never. Liveness now says nothing about a request sent a moment ago.
+         *
+         * The cost is honest and small: a signer that asks a human to approve EVERY request can
+         * show a second prompt for one action. The event is byte-identical (same template, same
+         * created_at) so approving either produces the same signature and the duplicate reply is
+         * dropped by request id. A second prompt is a nuisance; a post that never sends is the app
+         * being broken.
+         *
+         * Interactive requests only. Bulk decrypts have the queue and their own retry, and a DM
+         * restore re-sending per message would be hundreds of duplicate requests. */
+        if(this._PRIORITY.has(method) && method !== 'connect'){
+          let resent = 0;
+          const again = async ()=>{
+            if(!this._pending.has(id) || resent >= 4) return;
+            resent++;
+            /* By the second go, doubt the SOCKET itself. `_ensure` can only see a socket that is
+             * gone; a resumed machine's socket is routinely a zombie — readyState 1, delivering
+             * nothing — and re-sending into one is as lost as the first time. `revive()` is the
+             * only thing that can tell them apart, by tearing it down and dialling again. Not on
+             * the first attempt: that one is usually a signer that was merely away, and a
+             * needless reconnect would spend the window this re-send is trying to use. */
+            if(resent >= 2) try{ this.revive(); }catch(_){}
+            try{ await this._ensure(4000); }catch(_){}
+            if(!this._pending.has(id)) return;
+            for(const w of this._live()){ try{ w.send(JSON.stringify(['EVENT', signed])); }catch(_){} }
+            setTimeout(again, 20000);
+          };
+          setTimeout(again, 9000);
+        }
       });
     },
     // bunker://<remote-signer-pubkey>?relay=wss://…&secret=…  (Amber gives you this string)
@@ -1365,6 +1551,12 @@
     _standDown(){
       this.socks.forEach(ws => { try{ ws.onclose = null; ws.close(); }catch(_){} });
       this.socks.clear();
+      /* And cancel any reconnect already in flight. Nulling `onclose` stops a NEW one being
+       * scheduled; one that was scheduled before the hand-over would still fire, reopen a socket,
+       * and put both halves back on the relay — the double-answer (two signatures published for one
+       * request) that the whole hand-over protocol exists to prevent. */
+      Object.keys(this._rtimer||{}).forEach(u=>{ try{ clearTimeout(this._rtimer[u]); }catch(_){} });
+      this._rtimer = {}; this._boff = {};
     },
 
     _key(){ return 'pc_signer_v1_' + ((ME && ME.pubkey) || 'anon'); },
@@ -1543,9 +1735,48 @@
           // a socket alive for ever, and a stopped signer must genuinely stop.
           if(!this.active) return;
           if(!this.list().some(s => s.relay === relay)) return;
-          setTimeout(()=>{ if(this.active && !this.socks.get(relay)) this._open(relay).catch(()=>{}); }, 2000);
+          this._reopen(relay);
         };
         setTimeout(()=>{ if(!done){ done=true; rej(new Error('relay timed out')); } }, 9000);
+      });
+    },
+    /* Keep trying, with backoff, for as long as a pairing still needs this relay.
+     *
+     * The single `setTimeout(…, 2000)` this replaces gave up after ONE failed attempt, and the case
+     * it cannot survive is a machine resuming from sleep: every socket closes on suspend, the retry
+     * fires two seconds into the resume before the network is back, and this device silently stops
+     * being a signer for every app it is paired with. Nothing is logged here and nothing is visible
+     * there — the other end simply waits out its 120s ceiling on every signature. The client half's
+     * _scheduleReopen is the mirror of this and exists for the same reason. */
+    _boff:{}, _rtimer:{},
+    _reopen(relay){
+      if(!this.active || this.nativeOn || !relay) return;
+      if(!this.list().some(s => s.relay === relay)) return;
+      if(this.socks.get(relay)) return;                 // open or connecting
+      if(this._rtimer[relay]) return;
+      const d = this._boff[relay] ? Math.min(this._boff[relay] * 1.7, 20000) : 1500;
+      this._boff[relay] = d;
+      this._rtimer[relay] = setTimeout(()=>{
+        this._rtimer[relay] = 0;
+        if(!this.active || this.socks.get(relay)) return;
+        this._open(relay).then(()=>{ this._boff[relay] = 0; }, ()=>{ this._reopen(relay); });
+      }, d);
+    },
+    /* The page came back from sleep — reopen every relay a pairing needs, now, and drop sockets the
+     * browser still calls OPEN (a resumed machine's socket is routinely a zombie: readyState 1,
+     * delivering nothing, so requests arrive nowhere and no error is raised on either side).
+     * No-op while the native service owns the pairings — it has its own socket and its own ping. */
+    revive(){
+      if(!this.active || this.nativeOn) return;
+      if(Date.now() - (this._revivedAt||0) < 3000) return;
+      this._revivedAt = Date.now();
+      const relays = [...new Set(this.list().map(s => s.relay).filter(Boolean))];
+      this.socks.forEach(ws => { try{ ws.onclose = ws.onerror = ws.onmessage = null; ws.close(); }catch(_){} });
+      this.socks.clear();
+      relays.forEach(r=>{
+        try{ clearTimeout(this._rtimer[r]); }catch(_){}
+        this._rtimer[r] = 0; this._boff[r] = 0;
+        this._open(r).catch(()=>{ this._reopen(r); });
       });
     },
 
@@ -1716,6 +1947,8 @@
     stop(){
       this.active=false;
       this.socks.forEach(ws => { try{ ws.onclose=null; ws.close(); }catch(_){} });
+      Object.keys(this._rtimer||{}).forEach(u=>{ try{ clearTimeout(this._rtimer[u]); }catch(_){} });
+      this._rtimer={}; this._boff={};
       this.socks.clear(); this.sessions.clear(); this._subId=null;
       this._persist();
       // `active:false` above is what tells the service to shut down rather than reload.
@@ -3030,6 +3263,12 @@
     if(Date.now() - _lastWake < 4000) return;
     _lastWake = Date.now();
     try{ Relay.wake(); }catch(_){}
+    /* The REMOTE SIGNER's socket is not in that pool and was left out of every resume path — so a
+     * machine that woke from sleep had a healthy feed and a signer that could not be reached, which
+     * is a worse failure than a dead feed because it looks like the phone's fault. Both halves:
+     * Nip46 is this page asking a signer, Nip46Signer is this page BEING one for another device. */
+    try{ Nip46.revive(); }catch(_){}
+    try{ Nip46Signer.revive(); }catch(_){}
     // …and once a socket can actually answer again, re-ask for whatever is still a placeholder on
     // screen. Waiting for `ready` rather than firing straight away is the point: wake() has just torn
     // every socket down, so asking now would go nowhere and merely spend the retry budget again.
@@ -3379,6 +3618,14 @@
       // fires NO JS event, so re-check whenever we return to the foreground (MainActivity.onNewIntent refreshes
       // getIntent() so the plugin sees the new file). Dedupe in _consumeSendIntent stops reprocessing.
       if(!window.__pcNativeBound){ window.__pcNativeBound=true;
+        /* THE DESKTOP'S OWN RESUME SIGNAL. A window that was never hidden gets no
+         * `visibilitychange` when the machine wakes, and `online` fires only if Chromium decided the
+         * interface went down — which a suspend often does not. So on the desktop the page had NO
+         * way to learn its sockets had outlived a sleep, and the symptom was a signer that worked
+         * again only after a reload. main.js pushes powerMonitor's 'resume'; _hiddenAt is stamped
+         * back so _resumeRelay's own debounce is the only thing gating it. */
+        try{ if(window.pcShell && window.pcShell.onWake)
+               window.pcShell.onWake(()=>{ _hiddenAt = 0; _resumeRelay(); }); }catch(_){}
         window.addEventListener('sendIntentReceived', _reShare);
         document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ _reShare(); _reMusic(); _reCal(); } });
         const _App=_capPlugin('App');
@@ -24655,10 +24902,18 @@
      * line for hours. `serviceRunning` is read off the service itself. */
     if(s.serviceRunning){
       const n = Number(s.connected || 0);
+      /* WHEN A REQUEST LAST ARRIVED is the one number that splits the two failures, and it was
+       * measured by the service and then not shown. "The desktop says waiting for the signer" has
+       * two completely different causes — the request never reached this phone (the desktop's own
+       * relay socket died, which is the common one), or it arrived and was not answered — and they
+       * are indistinguishable from either end without this line. */
+      const last = Number(s.lastRequestAt || 0);
       box.insertAdjacentHTML('beforeend',
         '<div class="muted small" style="margin-top:6px">These keep signing while PosterChan is '
         + 'closed' + (n ? '' : ' — reconnecting to the relay now') + '.'
         + (s.answered ? ' ' + enc(String(s.answered)) + ' requests answered.' : '')
+        + (last ? ' Last request ' + enc(timeAgo(last)) + ' ago.'   // the service stamps it in SECONDS
+                : ' No request has reached this phone yet.')
         + '</div>');
       /* The honest limit of a foreground service, and the one thing left that can still delay a
        * request. Doze defers an unexempted app's network while the screen is off, so a signature can
