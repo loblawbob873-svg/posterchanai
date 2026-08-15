@@ -96,6 +96,14 @@ dependencies {
     // Services: it bundles the decoder and its own capture Activity, so a de-Googled phone gets the
     // same scanner as everyone else. ~500KB.
     implementation "com.journeyapps:zxing-android-embedded:4.3.0"
+    // libsecp256k1, the reason Amber signs faster than we did (see signer/Native.java). MEASURED:
+    // the pure-Java signer is 36ms per Schnorr signature on a warmed DESKTOP core, and a NIP-46
+    // request needs two of them plus two ECDH; the C implementation is ~50 MICROseconds. It is
+    // reached by REFLECTION, never imported, so that Nostr/Crypt still compile and RUN under plain
+    // javac in tests/test_android_nip55_signer.py — the cross-check against the repo's own Python
+    // implementation is worth more than the tidiness — and so that a missing library or an ABI with
+    // no .so degrades to the Java path instead of failing to start.
+    implementation "fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.15.0"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

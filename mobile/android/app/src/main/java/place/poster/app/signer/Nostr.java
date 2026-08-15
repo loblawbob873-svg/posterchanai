@@ -114,13 +114,24 @@ public final class Nostr {
     /** x-only public key for a 32-byte secret. */
     public static byte[] pubkey(byte[] sec) {
         BigInteger d = uint(sec);
+        // The range check stays HERE, ahead of the fast path: a bad seckey must throw the same way
+        // whichever implementation answers, and libsecp256k1 reports it as a null rather than an
+        // exception — which would turn "bad seckey" into a silent fall-through to this same code.
         if (d.signum() <= 0 || d.compareTo(N) >= 0) throw new IllegalArgumentException("bad seckey");
+        byte[] fast = Native.pubkey(sec);
+        if (fast != null) return fast;
         return be32(mul(G, d).x);
     }
 
     /** BIP-340 signature. `aux` may be null for random; pass 32 bytes to make it deterministic. */
     public static byte[] sign(byte[] msg32, byte[] sec, byte[] aux) {
         if (aux == null) { aux = new byte[32]; new SecureRandom().nextBytes(aux); }
+        /* libsecp256k1 if this phone has it — 36ms of BigInteger against about 50 microseconds of C,
+         * twice per NIP-46 request. `Native` proves itself against the code below before it is
+         * trusted and answers null whenever it cannot, so this stays the implementation of record
+         * (and the only one the javac/java cross-check against Python ever sees). */
+        byte[] fast = Native.sign(msg32, sec, aux);
+        if (fast != null) return fast;
         BigInteger d0 = uint(sec);
         if (d0.signum() <= 0 || d0.compareTo(N) >= 0) throw new IllegalArgumentException("bad seckey");
         Pt pp = mul(G, d0);

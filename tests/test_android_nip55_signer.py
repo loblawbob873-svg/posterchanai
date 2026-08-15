@@ -84,7 +84,7 @@ def java(tmp_path_factory):
     out = tmp_path_factory.mktemp("signerjava")
     hs = out / "Harness.java"
     hs.write_text(HARNESS, encoding="utf-8")
-    files = [os.path.join(SRC, f) for f in ("Nostr.java", "Crypt.java")]
+    files = [os.path.join(SRC, f) for f in ("Nostr.java", "Crypt.java", "Native.java")]
     r = subprocess.run(["javac", "-d", str(out / "classes"), *files, str(hs)],
                        capture_output=True, text=True)
     if r.returncode != 0:

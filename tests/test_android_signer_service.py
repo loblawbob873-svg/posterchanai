@@ -598,6 +598,47 @@ def test_the_signer_never_does_its_work_on_the_ui_thread():
     )
 
 
+def test_native_secp256k1_proves_itself_before_it_is_trusted_and_is_never_imported():
+    """The fast path may not be reached by an import, and may not be believed without a check.
+
+    Amber is quick because it signs in C. The pure-Java signer here is 36ms per Schnorr signature on
+    a warmed DESKTOP core — four point multiplications, over half of them a self-verify — against
+    about 50 MICROseconds for libsecp256k1, twice per NIP-46 request. That is the whole of "this
+    signer is slower than amber to get events published".
+
+    TWO THINGS MUST HOLD, and neither is visible at a glance:
+
+      * REFLECTION, never an import. `Nostr` and `Crypt` are compiled and RUN by
+        test_android_nip55_signer.py under plain javac/java — no Android, no JNI — so the shipped
+        crypto can be checked byte-for-byte against the repo's own Python implementation. A
+        compile-time reference to fr.acinq.secp256k1 breaks that, and the cross-check is worth more
+        than the tidiness. It is also what makes a missing library or an ABI with no .so degrade to
+        the Java path rather than fail to start.
+      * IT PROVES ITSELF FIRST. None of this can be run on the machine it was written on, and wrong
+        signing code does not throw — it produces signatures a relay rejects, or ones that verify
+        against themselves and nothing else. So the native pubkey is compared with the Java one and
+        the first native signature is verified with `Nostr.verify` before anything real is signed.
+    """
+    nat = _read(os.path.join(SIGNER, "Native.java"))
+    assert "import fr.acinq" not in nat, (
+        "the native library is imported — Nostr/Crypt would stop compiling under plain javac and the "
+        "cross-check against the Python implementation would be lost"
+    )
+    assert "Class.forName(\"fr.acinq.secp256k1.Secp256k1\")" in nat, "the reflection lookup is gone"
+    assert "Nostr.pubkey(" in nat and "Nostr.verify(" in nat, (
+        "the native path no longer checks itself against the Java implementation before being used"
+    )
+    # And the callers must treat null as "use the Java path", not as a failure.
+    nos = _read(os.path.join(SIGNER, "Nostr.java"))
+    for fn in ("Native.sign(", "Native.pubkey("):
+        assert fn in nos, f"{fn} is not wired into Nostr"
+    assert nos.count("if (fast != null) return fast;") >= 2, (
+        "a null from the native path must fall through to the Java implementation"
+    )
+    gradle = _read(os.path.join(ANDROID, "app", "build.gradle"))
+    assert "secp256k1-kmp-jni-android" in gradle, "the native dependency is missing from the build"
+
+
 def test_a_new_pairing_never_revokes_an_existing_one_by_name():
     """A name is a PRODUCT, not an identity, and this app kept mistaking one for the other.
 
