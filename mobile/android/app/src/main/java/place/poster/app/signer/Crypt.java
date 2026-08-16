@@ -198,7 +198,11 @@ public final class Crypt {
     private static final String B64 =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-    static String b64(byte[] in) {
+    /* Public because the native folder sweep needs the same encoder: a Blossom `Authorization` header
+     * is base64 of a signed event, and the drive key arrives base64 inside its NIP-44 wrapper. One
+     * implementation, for the reason it is hand-written in the first place — the platform's is API 26
+     * and this app supports 23. */
+    public static String b64(byte[] in) {
         StringBuilder sb = new StringBuilder(((in.length + 2) / 3) * 4);
         for (int i = 0; i < in.length; i += 3) {
             int b = (in[i] & 0xff) << 16;
@@ -211,7 +215,7 @@ public final class Crypt {
         return sb.toString();
     }
 
-    static byte[] unb64(String s) {
+    public static byte[] unb64(String s) {
         s = s.trim().replace("=", "");
         int n = s.length() * 6 / 8;
         byte[] out = new byte[n];
