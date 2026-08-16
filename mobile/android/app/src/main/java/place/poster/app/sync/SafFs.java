@@ -311,6 +311,22 @@ public final class SafFs {
 
     // -------------------------------------------------------------------------- reading bytes
 
+    /**
+     * The sha256 of a file, computed HERE and never carried across the bridge.
+     *
+     * The conflict path needs a file's content identity to decide whether the local copy and the
+     * manifest's entry are the same bytes — and it was getting it by reading the whole file into the
+     * WebView (`readAll` below, then base64 to cross, then a hash pass). At a photo apiece that is
+     * tens of megabytes of renderer memory per conflict; on a folder with 1,927 of them the app died
+     * on the first. The scan has always hashed this way, streamed, in `sha256(Uri)` — this exposes
+     * the same thing for one path.
+     */
+    public String sha256Of(String rel) throws Exception {
+        String docId = resolve(rel, false);
+        if (docId == null) throw new java.io.IOException("not found: " + rel);
+        return sha256(docUri(docId));
+    }
+
     public byte[] readAll(String rel) throws Exception {
         String docId = resolve(rel, false);
         if (docId == null) throw new java.io.IOException("not found: " + rel);

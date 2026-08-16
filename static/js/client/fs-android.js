@@ -136,6 +136,11 @@
     scanPage: (id, opts, offset, limit) =>
       P.scan(Object.assign({ id }, opts || {}, { offset: offset || 0, limit: limit || 500 })),
     read: (id, rel) => P.read({ id, rel }).then(r => toBytes(r.b64)),
+    /* The content identity of one file, hashed natively and never carried across the bridge. The
+     * conflict path used `read` above for this — the whole file, as base64, into the renderer — and
+     * on a folder with 1,927 conflicts the app died on the first. Absent on an older APK, where the
+     * engine falls back to reading, bounded to what this platform can actually hold. */
+    hashFile: (id, rel) => P.hashFile({ id, rel }).then(r => (r && r.sha) || ''),
     /* Slice I/O — what lets a file bigger than this process can hold move at all. Whole-file read()
      * puts the file in the plugin, again across the bridge as base64, and again in the WebView,
      * which is then asked to encrypt it: a WebView has far less headroom than a desktop and simply

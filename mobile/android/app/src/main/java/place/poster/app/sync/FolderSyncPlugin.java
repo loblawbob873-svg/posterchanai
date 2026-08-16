@@ -540,6 +540,28 @@ public class FolderSyncPlugin extends Plugin {
     });
   }
 
+  /**
+   * A FILE'S CONTENT IDENTITY, WITHOUT THE FILE EVER CROSSING THE BRIDGE.
+   *
+   * Settling a conflict means asking "are these the same bytes", and the only way the engine had was
+   * `read()` above: the whole file into the plugin, base64 to cross (four characters per three
+   * bytes, held as UTF-16), then a hash pass over it in the renderer. Tens of megabytes per photo,
+   * per conflict. Measured on a real folder: 1,927 conflicts, dead on the first one.
+   *
+   * The scan has always hashed the streamed way. This is that, for one path.
+   */
+  @PluginMethod
+  public void hashFile(PluginCall call) {
+    final String id = call.getString("id", ""), rel = call.getString("rel", "");
+    getBridge().execute(() -> {
+      try {
+        JSObject ret = new JSObject();
+        ret.put("sha", fs(id).sha256Of(rel));
+        call.resolve(ret);
+      } catch (Exception e) { call.reject("hash failed: " + e.getMessage()); }
+    });
+  }
+
   /* ---- SLICE I/O: a file too big to hold in one piece -----------------------------------------
    *
    * read()/write() move a whole file through one base64 string, so a 200 MB video is that much in

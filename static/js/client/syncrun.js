@@ -47,9 +47,33 @@
    *
    * (Superseded manifest blobs are not collected yet — see docs/FOLDER_SYNC.md. That is the reason
    * this is bounded rather than generous.) */
-  // How large a file is worth re-reading to avoid duplicating it. Reading costs time; a conflict
-  // copy costs a permanent duplicate on every device, so this is deliberately generous.
+  /* How large a file is worth re-reading to avoid duplicating it. Reading costs time; a conflict
+   * copy costs a permanent duplicate on every device, so this is deliberately generous.
+   *
+   * IT IS ONLY GENEROUS WHERE READING IS CHEAP, and that is the distinction it was missing. `fs.read`
+   * pulls the whole file into the renderer — on Android as base64 across the bridge first — so at two
+   * gigabytes this bound permitted a read that no phone can survive. Measured: a folder with 1,927
+   * conflicts killed the app on the FIRST one, at a photo apiece.
+   *
+   * `verifyMax(fs, o)` answers per platform. Where the adapter can hash a file ITSELF (`hashFile` —
+   * streamed natively, nothing crossing the bridge) the old generosity is not merely safe but free.
+   * Where it cannot, the bound is what that platform says it can hold at once, and a file above it is
+   * settled by the CHUNKED comparison below or, failing that, duplicated — which is the outcome this
+   * whole section exists to avoid, but is still better than an app that dies before it can avoid it. */
   const _VERIFY_MAX = 2 * 1024 * 1024 * 1024;
+  function verifyMax(fs, o){
+    if(fs && typeof fs.hashFile === 'function') return _VERIFY_MAX;
+    const chunk = (o && o.chunkBytes) || (fs && fs.chunkBytes) || 0;
+    return chunk > 0 ? chunk : _VERIFY_MAX;
+  }
+  /* The content identity of a local file, obtained the cheapest way this platform allows. */
+  async function localCsum(fs, store, id, path){
+    if(typeof fs.hashFile === 'function'){
+      const sha = await fs.hashFile(id, path);
+      if(sha) return sha;
+    }
+    return store.hashBytes(await fs.read(id, path));
+  }
   const _CHECKPOINT = 200;
   const _MAX_CHECKPOINTS = 20;
 
@@ -501,10 +525,10 @@
        * prevent: Chromium takes the process, which in the desktop app is a black window. The chunked
        * verify sitting between these two already uses _VERIFY_MAX and readPart; these are the same
        * decision and get the same bound. */
-      if(R0.csum && !L0.csum && store.hashBytes && L0.size && L0.size <= _VERIFY_MAX){
+      if(R0.csum && !L0.csum && store.hashBytes && L0.size && L0.size <= verifyMax(fs, o)){
         let settled = false;
         try{
-          if(await store.hashBytes(await fs.read(id, c.path)) === R0.csum){
+          if(await localCsum(fs, store, id, c.path) === R0.csum){
             const entry = Object.assign({}, R0, { size: L0.size, mtime: L0.mtime });
             remember(c.path, entry);
             agree(c.path, Object.assign({}, entry, { csum: R0.csum }));
@@ -518,7 +542,7 @@
        * still conflicting, on the big ones. Comparing the list costs a read and an encrypt of the
        * local file and no transfer at all, which is far cheaper than the copy it avoids. */
       if(!R0.csum && R0.chunks && R0.chunks.length && store.chunkShas && typeof fs.readPart === 'function'
-         && L0.size && L0.size <= _VERIFY_MAX){
+         && L0.size && L0.size <= _VERIFY_MAX){   // reads in SLICES, so the generous bound is correct
         let settled = false;
         try{
           // At the size the ENTRY used — our own preference would produce a different list and
@@ -540,7 +564,7 @@
        * prevent: Chromium takes the process, which in the desktop app is a black window. The chunked
        * verify sitting between these two already uses _VERIFY_MAX and readPart; these are the same
        * decision and get the same bound. */
-      if(!R0.csum && R0.sha && store.blobSha && L0.size && L0.size <= _VERIFY_MAX){
+      if(!R0.csum && R0.sha && store.blobSha && L0.size && L0.size <= verifyMax(fs, o)){
         let settled = false;
         try{
           const bytes = await fs.read(id, c.path);
