@@ -390,6 +390,77 @@ public final class SyncDiff {
                                          + " your other devices deleted");
     }
 
+    // ------------------------------------------------------------------------------ the policy
+
+    /**
+     * May a sweep run right now, and how much of one — the port of foldersync.js `shouldSync`.
+     *
+     * IT HAS TO BE THE SAME ANSWER AS THE BROWSER'S, because the two run against the same folder and
+     * the same switches. "Only when plugged in" and "Wi-Fi only" are the two the user can see, and a
+     * native sweep that read them differently would either spend somebody's data plan or stop syncing
+     * for a reason nothing reports.
+     *
+     * `mode` is the output rather than a boolean: a device on battery can still afford to notice a
+     * change and upload a small document, while rehashing a Pictures folder is a charging-time job.
+     * The native caller only ever asks for the automatic modes — a manual sweep is the page's.
+     *
+     * @param state {charging, metered, online, battery, now, lastSyncAt, lastFullScanAt, dirty, manual, deep}
+     * @param prefs {enabled, paused, onlyWhenCharging, wifiOnly, minBattery, minIntervalMs, fullScanIntervalMs}
+     * @return {mode, why, run}
+     */
+    public static Map<String, Object> shouldSync(Map<String, Object> state, Map<String, Object> prefs) {
+        Map<String, Object> s = state == null ? new LinkedHashMap<String, Object>() : state;
+        Map<String, Object> p = prefs == null ? new LinkedHashMap<String, Object>() : prefs;
+
+        if (!Json.bool(p.get("enabled"), true)) return say("none", "sync is off for this folder");
+        // Pressing the button beats every constraint below — this is somebody standing there having
+        // just asked, and refusing them because the battery is at 19% is how a feature earns a
+        // reputation. But it asks for a SYNC, not a rehash of the whole folder.
+        if (Json.bool(s.get("manual"), false)) {
+            return say(Json.bool(s.get("deep"), false) ? "full" : "incremental", "you asked for it");
+        }
+        // A FOLDER DOES NOT START ON ITS OWN: the first sweep is the expensive one and the one that
+        // publishes a folder's whole contents, so it is the worst thing to begin by accident.
+        if (Json.bool(p.get("paused"), false)) {
+            return say("none", "not started yet — set what to exclude, then press Start");
+        }
+        boolean chargingKnown = s.get("charging") != null;
+        boolean charging = Json.bool(s.get("charging"), false);
+        if (chargingKnown && !charging && Json.bool(p.get("onlyWhenCharging"), false)) {
+            return say("none", "waiting until you plug in");
+        }
+        if (Json.bool(s.get("metered"), false) && Json.bool(p.get("wifiOnly"), true)) {
+            return say("none", "waiting for Wi-Fi");
+        }
+        if (s.get("online") != null && !Json.bool(s.get("online"), true)) return say("none", "offline");
+
+        long battery = s.get("battery") instanceof Long || s.get("battery") instanceof Double
+                ? Json.num(s.get("battery"), 100) : 100;
+        long minBattery = Json.num(p.get("minBattery"), 20);
+        if (!charging && battery < minBattery) {
+            return say("metadata", "battery at " + battery + "% — noting changes, uploading later");
+        }
+        long now = Json.num(s.get("now"), 0), lastSync = Json.num(s.get("lastSyncAt"), 0);
+        long minInterval = Json.num(p.get("minIntervalMs"), 15 * 60 * 1000L);
+        if (lastSync != 0 && (now - lastSync) < minInterval && !Json.bool(s.get("dirty"), false)) {
+            return say("none", "nothing changed since the last sweep");
+        }
+        long sinceFull = now - Json.num(s.get("lastFullScanAt"), 0);
+        long fullEvery = Json.num(p.get("fullScanIntervalMs"), 24 * 60 * 60 * 1000L);
+        if (charging && sinceFull >= fullEvery) {
+            return say("full", "plugged in, and it has been a while since a full check");
+        }
+        return say("incremental", charging ? "plugged in" : "on battery — changed files only");
+    }
+
+    private static Map<String, Object> say(String mode, String why) {
+        Map<String, Object> m = new LinkedHashMap<String, Object>();
+        m.put("mode", mode);
+        m.put("why", why);
+        m.put("run", !"none".equals(mode));
+        return m;
+    }
+
     /**
      * Fold a completed plan back into the agreement that becomes the next run's `base`. Here, with
      * the rules it has to agree with, rather than in each executor — two implementations of "what did

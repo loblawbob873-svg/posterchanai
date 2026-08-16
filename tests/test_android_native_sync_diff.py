@@ -282,3 +282,97 @@ def test_a_few_hundred_generated_worlds_get_the_same_plan():
                 case["base"][p] = _random_entry(rnd, True)
         cases.append(case)
     _agree(cases)
+
+
+# ---- the battery policy -------------------------------------------------------------------------
+
+POLICY_DRIVER = r"""
+    String text = new String(java.nio.file.Files.readAllBytes(
+        java.nio.file.Paths.get(argv[0])), "UTF-8");
+    for (Object c : Json.arr(Json.parse(text))) {
+      java.util.Map<String,Object> m = Json.obj(c);
+      System.out.println(Json.write(SyncDiff.shouldSync(Json.obj(m.get("state")),
+                                                        Json.obj(m.get("prefs")))));
+    }
+"""
+
+POLICY_NODE = r"""
+const S = require(%s);
+const fs = require('fs');
+for (const c of JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))) {
+  console.log(JSON.stringify(S.shouldSync(c.state, c.prefs)));
+}
+"""
+
+
+def _policy(cases):
+    for t in ("javac", "java", "node"):
+        if shutil.which(t) is None:
+            pytest.skip("no " + t)
+    with tempfile.TemporaryDirectory() as tmp:
+        data = os.path.join(tmp, "cases.json")
+        with open(data, "w", encoding="utf-8") as fh:
+            json.dump(cases, fh)
+        js = os.path.join(tmp, "pol.js")
+        with open(js, "w", encoding="utf-8") as fh:
+            fh.write(POLICY_NODE % json.dumps(FSJS))
+        r = subprocess.run(["node", js, data], capture_output=True, text=True, timeout=120)
+        assert r.returncode == 0, r.stderr[-3000:]
+        from_js = [json.loads(x) for x in r.stdout.strip().splitlines()]
+
+        src = os.path.join(tmp, "PolDriver.java")
+        with open(src, "w", encoding="utf-8") as fh:
+            fh.write("package place.poster.app.sync;\npublic class PolDriver {\n"
+                     "  public static void main(String[] argv) throws Exception {\n%s\n  }\n}\n"
+                     % POLICY_DRIVER)
+        out = os.path.join(tmp, "out")
+        os.makedirs(out)
+        c = subprocess.run(["javac", "-nowarn", "-d", out, "-sourcepath",
+                            STUBS + os.pathsep + os.path.join(ANDROID, "src", "main", "java")]
+                           + SRC + [src], capture_output=True, text=True, timeout=300)
+        assert c.returncode == 0, c.stderr[-4000:]
+        r = subprocess.run(["java", "-cp", out, "place.poster.app.sync.PolDriver", data],
+                           capture_output=True, text=True, timeout=120)
+        assert r.returncode == 0, r.stderr[-4000:]
+        from_java = [json.loads(x) for x in r.stdout.strip().splitlines()]
+
+    for i, (a, b) in enumerate(zip(from_js, from_java)):
+        assert a == b, ("the phone and the browser disagree about when to sync (case %d)\n%s\nJS:   %s\nJava: %s"
+                        % (i, json.dumps(cases[i], sort_keys=True), a, b))
+    return from_js
+
+
+def test_when_to_sync_is_the_same_answer_on_both_sides():
+    """"Only when plugged in" and "Wi-Fi only" are switches the user can see, and the background
+    sweep is the one nobody is watching. A native policy that read them differently would either
+    spend somebody's data plan or stop syncing for a reason nothing reports."""
+    HOUR = 3600000
+    cases = []
+    for charging in (True, False, None):
+        for metered in (True, False):
+            for online in (True, False):
+                for battery in (5, 19, 20, 100):
+                    for prefs in ({}, {"onlyWhenCharging": True}, {"wifiOnly": False},
+                                  {"paused": True}, {"enabled": False}, {"minBattery": 50}):
+                        st = {"metered": metered, "online": online, "battery": battery,
+                              "now": 100 * HOUR, "lastSyncAt": 99 * HOUR,
+                              "lastFullScanAt": 50 * HOUR, "dirty": True}
+                        if charging is not None:
+                            st["charging"] = charging
+                        cases.append({"state": st, "prefs": prefs})
+    # the interval and the full-scan cases, which the grid above always makes dirty
+    cases += [
+        {"state": {"charging": True, "now": 100 * HOUR, "lastSyncAt": 100 * HOUR - 60000,
+                   "lastFullScanAt": 100 * HOUR}, "prefs": {}},
+        {"state": {"charging": True, "now": 100 * HOUR, "lastSyncAt": 90 * HOUR,
+                   "lastFullScanAt": 50 * HOUR}, "prefs": {}},
+        {"state": {"charging": False, "now": 100 * HOUR, "lastSyncAt": 90 * HOUR,
+                   "lastFullScanAt": 50 * HOUR}, "prefs": {}},
+        {"state": {"manual": True, "battery": 3, "metered": True}, "prefs": {"onlyWhenCharging": True}},
+        {"state": {"manual": True, "deep": True}, "prefs": {}},
+        {"state": {}, "prefs": {}},
+    ]
+    out = _policy(cases)
+    assert any(o["mode"] == "full" for o in out) and any(o["mode"] == "metadata" for o in out)
+    assert any(o["why"] == "waiting for Wi-Fi" for o in out)
+    assert any(o["why"] == "waiting until you plug in" for o in out)

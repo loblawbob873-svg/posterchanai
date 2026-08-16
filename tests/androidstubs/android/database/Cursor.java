@@ -7,5 +7,6 @@ public interface Cursor {
   long getLong(int column);
   int getInt(int column);
   int getCount();
+  boolean isNull(int column);
   void close();
 }

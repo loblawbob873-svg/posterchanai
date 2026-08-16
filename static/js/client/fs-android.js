@@ -161,6 +161,27 @@
      * sweep runs exactly as it does today, which is the bug, not a new one. */
     wakeBegin: () => P.sweepBegin().catch(() => {}),
     wakeEnd: () => P.sweepEnd().catch(() => {}),
+    /* ---- THE SWEEP THAT RUNS WITHOUT THIS PAGE -------------------------------------------------
+     *
+     * Chromium throttles a hidden page's JavaScript however awake the processor is, so the tick
+     * above is a request the WebView may be in no position to honour. The transfer therefore also
+     * exists in Java (NativeSweep) — and everything it needs is something only this page knows, so
+     * it is pushed from here on every sweep: the instance, the media server, the pair keys, the
+     * exclusions, the switches, and the NIP-44-WRAPPED drive key (never the key itself — the phone
+     * unwraps it with the account secret the native signer already holds).
+     *
+     * All four tolerate an older APK the same way `tickStats` does: the shim is a literal object, so
+     * the method always exists and a build whose plugin lacks it rejects rather than throwing. That
+     * is caught, and the behaviour falls back to exactly what it is today. */
+    configureNative: (o) => P.configure(o || {}).then(() => true).catch(() => false),
+    forgetNative: () => P.forgetNative().catch(() => {}),
+    nativeReport: () => P.nativeReport().catch(() => null),
+    /* ONE SWEEP PER FOLDER ACROSS BOTH ENGINES. Two sweeps writing the same manifest is
+     * last-writer-wins on the document that decides whether files exist, and the moment it is most
+     * likely is somebody opening the app while the alarm is mid-sweep. A build without the lock
+     * answers true — the behaviour it has today — rather than refusing to sync at all. */
+    claimSweep: (key) => P.claimSweep({ key }).then(r => !r || r.ok !== false).catch(() => true),
+    releaseSweep: (key) => P.releaseSweep({ key }).catch(() => {}),
     onTick: (fn) => {
       try{
         const p = P.addListener('folderSyncTick', () => { try{ fn(); }catch(_){} });

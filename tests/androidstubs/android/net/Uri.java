@@ -6,6 +6,8 @@ package android.net;
  *  test pass against the wrong answer. */
 public abstract class Uri {
   public abstract Builder buildUpon();
+  public String getLastPathSegment() { return null; }
+  public String toString() { return "content://stub"; }
   public static Uri parse(String s) { return new Parsed(); }
   public abstract static class Builder {
     public abstract Builder appendQueryParameter(String key, String value);

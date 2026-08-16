@@ -9,7 +9,6 @@ import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.net.Uri;
 import android.os.BatteryManager;
-import android.os.Build;
 import android.provider.DocumentsContract;
 import android.util.Base64;
 
@@ -23,13 +22,6 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.io.OutputStream;
-import android.os.ParcelFileDescriptor;
-import java.security.MessageDigest;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -245,6 +237,71 @@ public class FolderSyncPlugin extends Plugin {
     try { if (wake != null && wake.isHeld()) wake.release(); } catch (Throwable ignored) {}
   }
 
+  /* ---- THE NATIVE SWEEP'S SETTINGS, handed over by the page ------------------------------------
+   *
+   * Everything the phone needs to sync on its own is something the client already knows and Java
+   * cannot work out: the instance URL, the media server, the pair keys, the exclusion lists, the
+   * per-folder switches, and the NIP-44-wrapped drive key. Pushed on every sweep and at startup, so
+   * a background sweep works from what the user last saw on screen rather than from a stale copy.
+   *
+   * THE KEY IS STORED WRAPPED — the same value the drive index already holds, unreadable without the
+   * account's Nostr secret, which the native signer has anyway. No new secret at rest.
+   */
+  @PluginMethod
+  public void configure(PluginCall call) {
+    try {
+      JSArray folders = call.getArray("folders");
+      new SyncStore(getContext()).configure(
+          Boolean.TRUE.equals(call.getBoolean("enabled", false)),
+          call.getString("apiBase", ""),
+          call.getString("mediaBase", ""),
+          call.getString("mkWrapped", ""),
+          call.getString("device", ""),
+          folders == null ? "[]" : folders.toString());
+    } catch (Throwable t) {
+      call.reject("could not store the sync settings: " + t.getMessage());
+      return;
+    }
+    call.resolve();
+  }
+
+  /** Sign-out, or the switch turned off: the wrapped key must not outlive the session that set it. */
+  @PluginMethod
+  public void forgetNative(PluginCall call) {
+    new SyncStore(getContext()).forget();
+    call.resolve();
+  }
+
+  /** What the last unattended sweep actually did — the only surface any of it can be read from. */
+  @PluginMethod
+  public void nativeReport(PluginCall call) {
+    SyncStore store = new SyncStore(getContext());
+    JSObject o = new JSObject();
+    o.put("enabled", store.nativeEnabled());
+    o.put("haveKey", place.poster.app.signer.SignerKey.have(getContext()));
+    o.put("running", NativeRunner.busy());
+    o.put("why", NativeRunner.why());
+    o.put("report", store.lastReport());
+    call.resolve(o);
+  }
+
+  /* ONE SWEEP PER FOLDER, ACROSS BOTH ENGINES. The page can start a sweep at any moment (someone
+   * opens the app while the alarm is running one), and two sweeps writing the same manifest is
+   * last-writer-wins on the document that decides whether files exist. Both sides take the same
+   * lock; a refusal is an ordinary "already syncing", not an error. */
+  @PluginMethod
+  public void claimSweep(PluginCall call) {
+    JSObject o = new JSObject();
+    o.put("ok", NativeSweep.claim(call.getString("key", "")));
+    call.resolve(o);
+  }
+
+  @PluginMethod
+  public void releaseSweep(PluginCall call) {
+    NativeSweep.release(call.getString("key", ""));
+    call.resolve();
+  }
+
   @PluginMethod
   public void setTickPolicy(PluginCall call) {
     pNeedCharging = Boolean.TRUE.equals(call.getBoolean("needCharging", false));
@@ -313,16 +370,6 @@ public class FolderSyncPlugin extends Plugin {
     call.resolve(o);
   }
 
-  private static final String PART = ".pcpart";
-  private static final String TRASH = ".pc-trash";
-  private static final String[] COLS = {
-      DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-      DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-      DocumentsContract.Document.COLUMN_MIME_TYPE,
-      DocumentsContract.Document.COLUMN_SIZE,
-      DocumentsContract.Document.COLUMN_LAST_MODIFIED,
-  };
-
   // ---- roots ------------------------------------------------------------------------------------
 
   /** The trees the user has granted, straight from the system. Persisted BY ANDROID, not by us — so
@@ -385,7 +432,20 @@ public class FolderSyncPlugin extends Plugin {
     call.resolve();
   }
 
-  // ---- scanning ---------------------------------------------------------------------------------
+  // ---- scanning / reading / writing --------------------------------------------------------------
+  //
+  // ALL OF IT NOW LIVES IN SafFs, and these are delegations rather than implementations. It moved
+  // because a background sweep has no WebView to call a @PluginMethod from — see NativeSweep — and
+  // two copies of "move this file to the trash" is exactly the shape of duplication this feature
+  // cannot survive. The behaviour of every method below is unchanged; the code is one file over.
+
+  private SafFs fs(String id) { return new SafFs(getContext(), id); }
+
+  private static JSObject mapToJs(java.util.Map<String, Object> m) {
+    JSObject o = new JSObject();
+    for (java.util.Map.Entry<String, Object> e : m.entrySet()) o.put(e.getKey(), e.getValue());
+    return o;
+  }
 
   @PluginMethod
   public void scan(PluginCall call) {
@@ -398,56 +458,13 @@ public class FolderSyncPlugin extends Plugin {
     // freezes the UI the user is watching the progress in.
     getBridge().execute(() -> {
       try {
-        Uri tree = Uri.parse(id);
-        String rootDoc = DocumentsContract.getTreeDocumentId(tree);
+        SafFs.Scan sc = fs(id).scan(hash, maxBytes, excludes);
         JSObject files = new JSObject();
-        JSArray skipped = new JSArray();
-        ContentResolver cr = getContext().getContentResolver();
-
-        ArrayDeque<String[]> queue = new ArrayDeque<>();   // {documentId, relative path}
-        queue.add(new String[]{ rootDoc, "" });
-        while (!queue.isEmpty()) {
-          String[] cur = queue.poll();
-          Uri kids = DocumentsContract.buildChildDocumentsUriUsingTree(tree, cur[0]);
-          Cursor c = null;
-          try {
-            c = cr.query(kids, COLS, null, null, null);
-            if (c == null) { skipped.put(skip(cur[1], "unreadable")); continue; }
-            while (c.moveToNext()) {
-              String docId = c.getString(0), name = c.getString(1), mime = c.getString(2);
-              long size = c.isNull(3) ? 0 : c.getLong(3);
-              long mtime = c.isNull(4) ? 0 : c.getLong(4);
-              if (name == null || isNoise(name)) continue;
-              String rel = cur[1].isEmpty() ? name : cur[1] + "/" + name;
-              if (Excludes.matches(rel, excludes)) continue;
-              if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
-                queue.add(new String[]{ docId, rel });
-                continue;
-              }
-              if (maxBytes > 0 && size > maxBytes) { skipped.put(skip(rel, "too big", size)); continue; }
-              JSObject e = new JSObject();
-              e.put("size", size);
-              e.put("mtime", mtime);
-              if (hash) {
-                String sha = sha256(cr, DocumentsContract.buildDocumentUriUsingTree(tree, docId));
-                if (sha == null) { skipped.put(skip(rel, "unreadable")); continue; }
-                // Stability: the provider's size/mtime after the read must match what it said
-                // before. A photo still being written by the camera, or a file syncing in from
-                // another app, hashes to bytes that were never a whole file — and a corrupt copy
-                // with a valid checksum is worse than a delay.
-                long[] now = statById(cr, tree, docId);
-                if (now == null || now[0] != size || now[1] != mtime) {
-                  skipped.put(skip(rel, "in use — will try again"));
-                  continue;
-                }
-                e.put("sha", sha);
-              }
-              files.put(rel, e);
-            }
-          } catch (Exception ex) {
-            skipped.put(skip(cur[1], "unreadable"));
-          } finally { if (c != null) c.close(); }
+        for (java.util.Map.Entry<String, java.util.Map<String, Object>> e : sc.files.entrySet()) {
+          files.put(e.getKey(), mapToJs(e.getValue()));
         }
+        JSArray skipped = new JSArray();
+        for (java.util.Map<String, Object> s : sc.skipped) skipped.put(mapToJs(s));
         JSObject ret = new JSObject();
         ret.put("files", files);
         ret.put("skipped", skipped);
@@ -458,26 +475,13 @@ public class FolderSyncPlugin extends Plugin {
     });
   }
 
-  // ---- reading / writing -------------------------------------------------------------------------
-
   @PluginMethod
   public void read(PluginCall call) {
     final String id = call.getString("id", ""), rel = call.getString("rel", "");
     getBridge().execute(() -> {
       try {
-        Uri tree = Uri.parse(id);
-        String docId = resolve(tree, rel, false);
-        if (docId == null) { call.reject("not found: " + rel); return; }
-        InputStream in = getContext().getContentResolver()
-            .openInputStream(DocumentsContract.buildDocumentUriUsingTree(tree, docId));
-        if (in == null) { call.reject("cannot open: " + rel); return; }
-        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
-        byte[] buf = new byte[65536];
-        int n;
-        while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
-        in.close();
         JSObject ret = new JSObject();
-        ret.put("b64", Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP));
+        ret.put("b64", Base64.encodeToString(fs(id).readAll(rel), Base64.NO_WRAP));
         call.resolve(ret);
       } catch (Exception e) { call.reject("read failed: " + e.getMessage()); }
     });
@@ -490,11 +494,6 @@ public class FolderSyncPlugin extends Plugin {
    * making three or four copies of the file in a process with far less headroom than a desktop.
    * Android simply died. These move one chunk at a time instead, so the ceiling stops depending on
    * the size of the file.
-   *
-   * RANDOM ACCESS, NOT skip(). InputStream.skip is allowed to skip fewer bytes than asked and gives
-   * no way to distinguish that from a short file, so seeking with it silently reads the wrong
-   * offset. A ParcelFileDescriptor gives a real channel position; the stream fallback exists for a
-   * provider that refuses one, and loops until the offset is genuinely reached.
    */
   @PluginMethod
   public void readPart(PluginCall call) {
@@ -503,50 +502,15 @@ public class FolderSyncPlugin extends Plugin {
     final int len = call.getInt("len", 0);
     getBridge().execute(() -> {
       try {
-        Uri tree = Uri.parse(id);
-        String docId = resolve(tree, rel, false);
-        if (docId == null) { call.reject("not found: " + rel); return; }
-        Uri doc = DocumentsContract.buildDocumentUriUsingTree(tree, docId);
-        ContentResolver cr = getContext().getContentResolver();
-        byte[] buf = new byte[Math.max(0, len)];
-        int got = 0;
-        ParcelFileDescriptor pfd = null;
-        try {
-          pfd = cr.openFileDescriptor(doc, "r");
-        } catch (Exception ignored) { }
-        if (pfd != null) {
-          try (FileInputStream fin = new FileInputStream(pfd.getFileDescriptor())) {
-            fin.getChannel().position(off);
-            int n;
-            while (got < buf.length && (n = fin.read(buf, got, buf.length - got)) > 0) got += n;
-          } finally { pfd.close(); }
-        } else {
-          InputStream in = cr.openInputStream(doc);
-          if (in == null) { call.reject("cannot open: " + rel); return; }
-          try {
-            long left = off;
-            while (left > 0) {
-              long sk = in.skip(left);
-              if (sk <= 0) { byte[] one = new byte[1]; if (in.read(one) < 0) break; sk = 1; }
-              left -= sk;
-            }
-            int n;
-            while (got < buf.length && (n = in.read(buf, got, buf.length - got)) > 0) got += n;
-          } finally { in.close(); }
-        }
-        byte[] out = (got == buf.length) ? buf : java.util.Arrays.copyOf(buf, got);
+        byte[] got = fs(id).readRange(rel, off, len);
         JSObject ret = new JSObject();
-        ret.put("b64", Base64.encodeToString(out, Base64.NO_WRAP));
+        ret.put("b64", Base64.encodeToString(got, Base64.NO_WRAP));
+        ret.put("len", got.length);
         call.resolve(ret);
       } catch (Exception e) { call.reject("readPart failed: " + e.getMessage()); }
     });
   }
 
-  /**
-   * Write one slice into `name.pcpart`. Offset 0 creates it (clearing any leftovers from a crash);
-   * later offsets seek into it. Nothing appears under the real name until writeCommit, so an
-   * interrupted download leaves a part file and never a half-written document.
-   */
   @PluginMethod
   public void writePart(PluginCall call) {
     final String id = call.getString("id", ""), rel = call.getString("rel", "");
@@ -554,33 +518,7 @@ public class FolderSyncPlugin extends Plugin {
     final long off = call.getLong("offset", 0L);
     getBridge().execute(() -> {
       try {
-        Uri tree = Uri.parse(id);
-        byte[] bytes = Base64.decode(b64, Base64.DEFAULT);
-        String name = baseName(rel), dirRel = dirName(rel);
-        String dirId = resolve(tree, dirRel, true);
-        if (dirId == null) { call.reject("cannot create " + dirRel); return; }
-        ContentResolver cr = getContext().getContentResolver();
-
-        String partId = childId(cr, tree, dirId, name + PART);
-        if (off == 0 && partId != null) { deleteDoc(cr, tree, partId); partId = null; }
-        Uri partUri;
-        if (partId == null) {
-          partUri = DocumentsContract.createDocument(cr,
-              DocumentsContract.buildDocumentUriUsingTree(tree, dirId), "application/octet-stream", name + PART);
-        } else {
-          partUri = DocumentsContract.buildDocumentUriUsingTree(tree, partId);
-        }
-        if (partUri == null) { call.reject("cannot write " + rel); return; }
-
-        // "rw" keeps what is already there; "w" truncates, which would throw away every chunk
-        // written before this one.
-        ParcelFileDescriptor pfd = cr.openFileDescriptor(partUri, "rw");
-        if (pfd == null) { call.reject("cannot open " + rel + " for writing"); return; }
-        try (FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
-          fos.getChannel().position(off);
-          fos.write(bytes);
-          fos.flush();
-        } finally { pfd.close(); }
+        fs(id).writePart(rel, off, Base64.decode(b64, Base64.DEFAULT));
         call.resolve(new JSObject());
       } catch (Exception e) { call.reject("writePart failed: " + e.getMessage()); }
     });
@@ -598,12 +536,7 @@ public class FolderSyncPlugin extends Plugin {
     final String id = call.getString("id", ""), rel = call.getString("rel", "");
     getBridge().execute(() -> {
       try {
-        Uri tree = Uri.parse(id);
-        ContentResolver cr = getContext().getContentResolver();
-        String dirId = resolve(tree, dirName(rel), false);
-        String partId = dirId == null ? null : childId(cr, tree, dirId, baseName(rel) + PART);
-        if (partId == null) { call.reject("nothing to hash for " + rel); return; }
-        String sha = sha256(cr, DocumentsContract.buildDocumentUriUsingTree(tree, partId));
+        String sha = fs(id).hashPart(rel);
         if (sha == null) { call.reject("could not read the part file for " + rel); return; }
         JSObject ret = new JSObject();
         ret.put("sha", sha);
@@ -617,13 +550,7 @@ public class FolderSyncPlugin extends Plugin {
     final String id = call.getString("id", ""), rel = call.getString("rel", "");
     getBridge().execute(() -> {
       try {
-        Uri tree = Uri.parse(id);
-        ContentResolver cr = getContext().getContentResolver();
-        String dirId = resolve(tree, dirName(rel), false);
-        String partId = dirId == null ? null : childId(cr, tree, dirId, baseName(rel) + PART);
-        // Deleted, never trashed: this is not somebody's file, it is bytes we could not confirm, and
-        // putting those in the safety net makes the net less trustworthy.
-        if (partId != null) deleteDoc(cr, tree, partId);
+        fs(id).discardPart(rel);
         call.resolve(new JSObject());
       } catch (Exception e) { call.reject("discardPart failed: " + e.getMessage()); }
     });
@@ -635,13 +562,8 @@ public class FolderSyncPlugin extends Plugin {
     final String id = call.getString("id", ""), rel = call.getString("rel", "");
     getBridge().execute(() -> {
       try {
-        Uri tree = Uri.parse(id);
-        ContentResolver cr = getContext().getContentResolver();
-        String dirId = resolve(tree, dirName(rel), false);
-        String partId = dirId == null ? null : childId(cr, tree, dirId, baseName(rel) + PART);
-        long[] st = partId == null ? null : statById(cr, tree, partId);
         JSObject ret = new JSObject();
-        ret.put("size", st == null ? 0 : st[0]);
+        ret.put("size", fs(id).partSize(rel));
         call.resolve(ret);
       } catch (Exception e) { call.reject("partSize failed: " + e.getMessage()); }
     });
@@ -651,50 +573,15 @@ public class FolderSyncPlugin extends Plugin {
   @PluginMethod
   public void writeCommit(PluginCall call) {
     final String id = call.getString("id", ""), rel = call.getString("rel", "");
+    final Long when = call.getLong("when", 0L);
     getBridge().execute(() -> {
       try {
-        Uri tree = Uri.parse(id);
-        String name = baseName(rel), dirRel = dirName(rel);
-        String dirId = resolve(tree, dirRel, true);
-        if (dirId == null) { call.reject("cannot create " + dirRel); return; }
-        ContentResolver cr = getContext().getContentResolver();
-        String partId = childId(cr, tree, dirId, name + PART);
-        if (partId == null) { call.reject("nothing to commit for " + rel); return; }
-
-        /* THE COMMIT HAS TO BE CHECKED, or a failure reports as a successful download.
-         *
-         * There is no rename-over-an-existing-document in SAF, so the old file is moved to the trash
-         * FIRST. If that move fails the name is still taken, the rename then fails too, and
-         * childId/statById happily answer with the OLD file's size and mtime — which this resolved
-         * as success. syncrun then recorded `base` claiming the remote version was present, and
-         * because base matched the manifest by csum and the disk by size+mtime, the update was never
-         * retried: the newer version silently never landed on that device.
-         *
-         * Both steps are checked now, and neither is assumed from the absence of an exception. */
-        String existing = childId(cr, tree, dirId, name);
-        if (existing != null && trashDoc(cr, tree, existing, rel, call.getLong("when", 0L)) == null) {
-          call.reject("could not clear the previous " + rel + " — refusing to report a commit that did not happen");
-          return;
-        }
-        try {
-          DocumentsContract.renameDocument(cr, DocumentsContract.buildDocumentUriUsingTree(tree, partId), name);
-        } catch (Exception e) {
-          call.reject("could not put " + rel + " in place: " + e.getMessage());
-          return;
-        }
-        if (childId(cr, tree, dirId, name + PART) != null) {
-          call.reject("could not put " + rel + " in place — the part file is still there");
-          return;
-        }
-
-        String finalId = childId(cr, tree, dirId, name);
-        if (finalId == null) { call.reject("could not put " + rel + " in place"); return; }
-        long[] st = finalId == null ? null : statById(cr, tree, finalId);
+        long[] st = fs(id).commitPart(rel, when == null ? 0L : when);
         JSObject ret = new JSObject();
-        ret.put("size", st != null ? st[0] : 0);
-        ret.put("mtime", st != null ? st[1] : System.currentTimeMillis());
+        ret.put("size", st[0]);
+        ret.put("mtime", st[1]);
         call.resolve(ret);
-      } catch (Exception e) { call.reject("writeCommit failed: " + e.getMessage()); }
+      } catch (Exception e) { call.reject(e.getMessage()); }
     });
   }
 
@@ -703,45 +590,22 @@ public class FolderSyncPlugin extends Plugin {
    *
    * There is no rename-over-an-existing-document: renameDocument fails if the name is taken. So the
    * bytes go to `name.pcpart` first, any existing document is moved into the trash rather than
-   * deleted, and only then is the part renamed into place. The window where the target does not
-   * exist is one rename wide, and what would have been lost in it is sitting in .pc-trash instead.
+   * deleted, and only then is the part renamed into place.
    */
   @PluginMethod
   public void write(PluginCall call) {
     final String id = call.getString("id", ""), rel = call.getString("rel", "");
     final String b64 = call.getString("b64", "");
+    final Long when = call.getLong("when", 0L);
     getBridge().execute(() -> {
       try {
-        Uri tree = Uri.parse(id);
-        byte[] bytes = Base64.decode(b64, Base64.DEFAULT);
-        String name = baseName(rel), dirRel = dirName(rel);
-        String dirId = resolve(tree, dirRel, true);
-        if (dirId == null) { call.reject("cannot create " + dirRel); return; }
-        ContentResolver cr = getContext().getContentResolver();
-
-        String partId = childId(cr, tree, dirId, name + PART);
-        if (partId != null) deleteDoc(cr, tree, partId);          // a previous crash's leftovers
-        Uri partUri = DocumentsContract.createDocument(cr,
-            DocumentsContract.buildDocumentUriUsingTree(tree, dirId), "application/octet-stream", name + PART);
-        if (partUri == null) { call.reject("cannot write " + rel); return; }
-        OutputStream out = cr.openOutputStream(partUri, "w");
-        if (out == null) { call.reject("cannot open " + rel + " for writing"); return; }
-        out.write(bytes);
-        out.flush();
-        out.close();
-
-        String existing = childId(cr, tree, dirId, name);
-        if (existing != null) trashDoc(cr, tree, existing, rel, call.getLong("when", 0L));
-        DocumentsContract.renameDocument(cr, partUri, name);
-
+        long[] st = fs(id).write(rel, Base64.decode(b64, Base64.DEFAULT), when == null ? 0L : when);
         // The provider decides the mtime — SAF has no writable last-modified — so report what it
         // actually became. syncrun.js records THIS as the agreed state, which is what stops the next
         // sweep reading our own download as a local edit.
-        String finalId = childId(cr, tree, dirId, name);
-        long[] st = finalId == null ? null : statById(cr, tree, finalId);
         JSObject ret = new JSObject();
-        ret.put("size", st != null ? st[0] : bytes.length);
-        ret.put("mtime", st != null ? st[1] : System.currentTimeMillis());
+        ret.put("size", st[0]);
+        ret.put("mtime", st[1]);
         call.resolve(ret);
       } catch (Exception e) { call.reject("write failed: " + e.getMessage()); }
     });
@@ -752,23 +616,21 @@ public class FolderSyncPlugin extends Plugin {
     final String id = call.getString("id", ""), from = call.getString("from", ""), to = call.getString("to", "");
     getBridge().execute(() -> {
       try {
-        Uri tree = Uri.parse(id);
+        SafFs f = fs(id);
         ContentResolver cr = getContext().getContentResolver();
-        String srcId = resolve(tree, from, false);
+        Uri tree = f.tree();
+        String srcId = f.resolve(from, false);
         if (srcId == null) { call.reject("not found: " + from); return; }
-        Uri src = DocumentsContract.buildDocumentUriUsingTree(tree, srcId);
-        if (dirName(from).equals(dirName(to))) {
-          DocumentsContract.renameDocument(cr, src, baseName(to));
+        Uri src = f.docUri(srcId);
+        if (SafFs.dirName(from).equals(SafFs.dirName(to))) {
+          DocumentsContract.renameDocument(cr, src, SafFs.baseName(to));
         } else {
-          String srcDir = resolve(tree, dirName(from), false), dstDir = resolve(tree, dirName(to), true);
-          if (dstDir == null) { call.reject("cannot create " + dirName(to)); return; }
-          DocumentsContract.moveDocument(cr, src,
-              DocumentsContract.buildDocumentUriUsingTree(tree, srcDir),
-              DocumentsContract.buildDocumentUriUsingTree(tree, dstDir));
-          String moved = childId(cr, tree, dstDir, baseName(from));
-          if (moved != null && !baseName(from).equals(baseName(to))) {
-            DocumentsContract.renameDocument(cr,
-                DocumentsContract.buildDocumentUriUsingTree(tree, moved), baseName(to));
+          String srcDir = f.resolve(SafFs.dirName(from), false), dstDir = f.resolve(SafFs.dirName(to), true);
+          if (dstDir == null) { call.reject("cannot create " + SafFs.dirName(to)); return; }
+          DocumentsContract.moveDocument(cr, src, f.docUri(srcDir), f.docUri(dstDir));
+          String moved = f.childId(dstDir, SafFs.baseName(from));
+          if (moved != null && !SafFs.baseName(from).equals(SafFs.baseName(to))) {
+            DocumentsContract.renameDocument(cr, f.docUri(moved), SafFs.baseName(to));
           }
         }
         call.resolve();
@@ -782,22 +644,11 @@ public class FolderSyncPlugin extends Plugin {
     final Long when = call.getLong("when", 0L);
     getBridge().execute(() -> {
       try {
-        Uri tree = Uri.parse(id);
-        ContentResolver cr = getContext().getContentResolver();
-        String docId = resolve(tree, rel, false);
-        if (docId == null) { call.reject("not found: " + rel); return; }
-        String dest = trashDoc(cr, tree, docId, rel, when == null ? 0L : when);
-        // A FAILED TRASH IS A FAILURE. Resolving {to:null} made the sweep record the file as
-        // trashed and agree a tombstone for a file still on disk — so the next sweep read it as a
-        // local edit and RE-UPLOADED it, resurrecting a file deleted on another device, while
-        // reporting "1 to trash" both times. Rejecting makes it a per-file failure that retries.
-        if (dest == null) { call.reject("could not move " + rel + " to the trash"); return; }
-        // The directory it just left may now be empty, and so may its parents. Only AFTER the move
-        // is known to have succeeded — pruning around a failed trash would remove a folder whose
-        // file is still sitting in it.
-        pruneEmptyDirs(cr, tree, rel);
+        // A FAILED TRASH IS A FAILURE — SafFs.trash throws rather than answering {to:null}, because
+        // resolving made the sweep agree a tombstone for a file still on disk, which the next sweep
+        // then read as a local edit and RE-UPLOADED.
         JSObject ret = new JSObject();
-        ret.put("to", dest);
+        ret.put("to", fs(id).trash(rel, when == null ? 0L : when));
         call.resolve(ret);
       } catch (Exception e) { call.reject("delete failed: " + e.getMessage()); }
     });
@@ -813,14 +664,14 @@ public class FolderSyncPlugin extends Plugin {
     final int days = daysArg == null ? 30 : daysArg;
     getBridge().execute(() -> {
       try {
-        Uri tree = Uri.parse(id);
+        SafFs f = fs(id);
         ContentResolver cr = getContext().getContentResolver();
-        String trashId = resolve(tree, TRASH, false);
+        String trashId = f.resolve(SafFs.TRASH, false);
         int removed = 0;
         if (trashId != null) {
           long cutoff = System.currentTimeMillis() - (long) days * 86400000L;
-          Cursor c = cr.query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, trashId),
-                              COLS, null, null, null);
+          Cursor c = cr.query(DocumentsContract.buildChildDocumentsUriUsingTree(f.tree(), trashId),
+                              SafFs.COLS, null, null, null);
           if (c != null) {
             while (c.moveToNext()) {
               String docId = c.getString(0), name = c.getString(1);
@@ -831,7 +682,7 @@ public class FolderSyncPlugin extends Plugin {
                 long when = Excludes.dayMillis(name);
                 if (when <= 0 || when >= cutoff) continue;
               }
-              if (deleteDoc(cr, tree, docId)) removed++;
+              if (f.deleteDoc(docId)) removed++;
             }
             c.close();
           }
@@ -899,20 +750,6 @@ public class FolderSyncPlugin extends Plugin {
 
   // ---- helpers ----------------------------------------------------------------------------------
 
-  private static boolean isNoise(String name) {
-    if (TRASH.equals(name) || name.endsWith(PART)) return true;
-    return Excludes.isTempName(name);
-  }
-
-  private static JSObject skip(String path, String why) { return skip(path, why, -1); }
-  private static JSObject skip(String path, String why, long size) {
-    JSObject o = new JSObject();
-    o.put("path", path);
-    o.put("why", why);
-    if (size >= 0) o.put("size", size);
-    return o;
-  }
-
   private static List<String> strings(JSArray a) {
     List<String> out = new ArrayList<>();
     if (a == null) return out;
@@ -925,175 +762,5 @@ public class FolderSyncPlugin extends Plugin {
     int i = d == null ? -1 : d.lastIndexOf(':');
     String tail = i >= 0 ? d.substring(i + 1) : d;
     return (tail == null || tail.isEmpty()) ? tree.getLastPathSegment() : tail;
-  }
-
-  private static String baseName(String rel) {
-    int i = rel.lastIndexOf('/');
-    return i < 0 ? rel : rel.substring(i + 1);
-  }
-  private static String dirName(String rel) {
-    int i = rel.lastIndexOf('/');
-    return i < 0 ? "" : rel.substring(0, i);
-  }
-
-  private String childId(ContentResolver cr, Uri tree, String parentId, String name) {
-    Cursor c = null;
-    try {
-      c = cr.query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId), COLS, null, null, null);
-      if (c == null) return null;
-      while (c.moveToNext()) if (name.equals(c.getString(1))) return c.getString(0);
-    } catch (Exception ignored) {
-    } finally { if (c != null) c.close(); }
-    return null;
-  }
-
-  /** documentId for `rel`, creating the directories along the way when `create` is set. */
-  private String resolve(Uri tree, String rel, boolean create) {
-    ContentResolver cr = getContext().getContentResolver();
-    String cur = DocumentsContract.getTreeDocumentId(tree);
-    if (rel == null || rel.isEmpty()) return cur;
-    for (String part : rel.split("/")) {
-      if (part.isEmpty()) continue;
-      String next = childId(cr, tree, cur, part);
-      if (next == null) {
-        if (!create) return null;
-        // createDocument throws a CHECKED FileNotFoundException — the provider can be gone, the
-        // volume unmounted, or the grant revoked between one segment and the next. Answering null is
-        // right: every caller already treats "could not resolve" as a refusal, and a folder sync must
-        // not take the app down because an SD card left the building mid-sweep.
-        Uri made;
-        try {
-          made = DocumentsContract.createDocument(cr,
-              DocumentsContract.buildDocumentUriUsingTree(tree, cur),
-              DocumentsContract.Document.MIME_TYPE_DIR, part);
-        } catch (Exception e) { return null; }
-        if (made == null) return null;
-        next = DocumentsContract.getDocumentId(made);
-      }
-      cur = next;
-    }
-    return cur;
-  }
-
-  private long[] statById(ContentResolver cr, Uri tree, String docId) {
-    Cursor c = null;
-    try {
-      c = cr.query(DocumentsContract.buildDocumentUriUsingTree(tree, docId), COLS, null, null, null);
-      if (c == null || !c.moveToFirst()) return null;
-      return new long[]{ c.isNull(3) ? 0 : c.getLong(3), c.isNull(4) ? 0 : c.getLong(4) };
-    } catch (Exception e) { return null;
-    } finally { if (c != null) c.close(); }
-  }
-
-  private boolean deleteDoc(ContentResolver cr, Uri tree, String docId) {
-    try { return DocumentsContract.deleteDocument(cr, DocumentsContract.buildDocumentUriUsingTree(tree, docId)); }
-    catch (Exception e) { return false; }
-  }
-
-  /**
-   * Has this directory nothing in it?
-   *
-   * FAILS CLOSED, and here that is not a style choice. `DocumentsContract.deleteDocument` on a
-   * directory deletes it RECURSIVELY — there is no SAF equivalent of rmdir refusing a non-empty
-   * one — so on this platform the emptiness check IS the safety, where on the desktop the syscall
-   * provides it. A query that returns null or throws (provider gone, volume unmounted, grant
-   * revoked mid-sweep) must therefore answer "not empty", because the cost of being wrong in the
-   * other direction is somebody's folder.
-   */
-  private boolean isEmptyDir(ContentResolver cr, Uri tree, String docId) {
-    Cursor c = null;
-    try {
-      c = cr.query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId),
-                   new String[]{ DocumentsContract.Document.COLUMN_DOCUMENT_ID }, null, null, null);
-      if (c == null) return false;
-      return !c.moveToFirst();
-    } catch (Exception e) {
-      return false;
-    } finally { if (c != null) try { c.close(); } catch (Exception ignored) {} }
-  }
-
-  /**
-   * The directories a delete leaves behind — the same gap the desktop bridge had.
-   *
-   * A manifest holds PATHS, never directories: a folder in the Blossom view is only the common
-   * prefix of the files under it. Deleting one tombstones every file it contains, every device
-   * trashes those files, and the tree they lived in is left standing, empty, exactly where the user
-   * deleted it. Reported from two Windows PCs, and true here for the same reason.
-   *
-   * Walks UP from the file's own directory, because emptying `a/b/c` may empty `b`, then `a`. Stops
-   * at the first directory that still holds anything, at the tree ROOT (which is the pairing itself
-   * — a device that deleted it would have to re-grant the folder), and inside `.pc-trash`, which is
-   * the safety net and is emptied only on request.
-   */
-  private void pruneEmptyDirs(ContentResolver cr, Uri tree, String rel) {
-    if (rel == null) return;
-    String[] parts = rel.split("/");
-    if (parts.length == 0 || TRASH.equals(parts[0])) return;
-    String root = DocumentsContract.getTreeDocumentId(tree);
-    for (int depth = parts.length - 1; depth >= 1; depth--) {
-      StringBuilder sb = new StringBuilder();
-      for (int i = 0; i < depth; i++) { if (sb.length() > 0) sb.append('/'); sb.append(parts[i]); }
-      String docId = resolve(tree, sb.toString(), false);
-      if (docId == null || docId.equals(root)) return;
-      if (!isEmptyDir(cr, tree, docId)) return;
-      if (!deleteDoc(cr, tree, docId)) return;
-    }
-  }
-
-  /** Move a document into .pc-trash/<date>/, mirroring desktop/fsbridge.js — nothing is unlinked. */
-  private String trashDoc(ContentResolver cr, Uri tree, String docId, String rel, long when) {
-    String day = Excludes.dayName(when == 0 ? System.currentTimeMillis() : when);
-    String destRel = TRASH + "/" + day + (dirName(rel).isEmpty() ? "" : "/" + dirName(rel));
-    String destDir = resolve(tree, destRel, true);
-    /* REFUSE. Do not delete.
-     *
-     * This used to unlink the user's file when the trash directory could not be created, and return
-     * a path implying it had been trashed — so the caller recorded a successful delete for a file
-     * that no longer exists anywhere. It breaks the one guarantee this feature makes ("nothing is
-     * deleted in place; .pc-trash is the recovery"), and it fires exactly when things are already
-     * wrong: a partially revoked grant, an unmounted volume, a FILE named .pc-trash shadowing the
-     * directory. Every one of those is temporary; the deletion is not.
-     *
-     * null is "I could not do it", which the sweep reports as a per-file failure and retries next
-     * time — the correct outcome for a safety net that is momentarily unavailable. */
-    if (destDir == null) return null;
-    String name = baseName(rel);
-    // Never overwrite what is already in the trash — a safety net that overwrites itself is not one.
-    String want = name;
-    for (int n = 2; n < 1000 && childId(cr, tree, destDir, want) != null; n++) {
-      int dot = name.lastIndexOf('.');
-      want = (dot > 0 ? name.substring(0, dot) : name) + " (" + n + ")" + (dot > 0 ? name.substring(dot) : "");
-    }
-    try {
-      String srcDir = resolve(tree, dirName(rel), false);
-      DocumentsContract.moveDocument(cr, DocumentsContract.buildDocumentUriUsingTree(tree, docId),
-          DocumentsContract.buildDocumentUriUsingTree(tree, srcDir),
-          DocumentsContract.buildDocumentUriUsingTree(tree, destDir));
-      if (!want.equals(name)) {
-        String moved = childId(cr, tree, destDir, name);
-        if (moved != null) DocumentsContract.renameDocument(cr,
-            DocumentsContract.buildDocumentUriUsingTree(tree, moved), want);
-      }
-    } catch (Exception e) {
-      return null;
-    }
-    return destRel + "/" + want;
-  }
-
-  private String sha256(ContentResolver cr, Uri doc) {
-    InputStream in = null;
-    try {
-      in = cr.openInputStream(doc);
-      if (in == null) return null;
-      MessageDigest md = MessageDigest.getInstance("SHA-256");
-      byte[] buf = new byte[65536];
-      int n;
-      while ((n = in.read(buf)) > 0) md.update(buf, 0, n);
-      StringBuilder sb = new StringBuilder();
-      for (byte b : md.digest()) sb.append(Character.forDigit((b >> 4) & 0xf, 16))
-                                   .append(Character.forDigit(b & 0xf, 16));
-      return sb.toString();
-    } catch (Exception e) { return null;
-    } finally { try { if (in != null) in.close(); } catch (Exception ignored) {} }
   }
 }

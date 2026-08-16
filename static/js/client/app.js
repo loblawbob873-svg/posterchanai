@@ -4062,6 +4062,11 @@
     // the previous user's messages readable to whoever opens this browser next. The KEY doc stays on
     // the relay — it is theirs, and signing back in rebuilds the cache from it.
     try{ DmCache.forget(); }catch(_){}
+    /* And the background folder sweep's copy of the drive key. It is stored WRAPPED — unreadable
+     * without the account secret, which `Session.forget` below takes with it — so this is belt and
+     * braces rather than the only thing standing there. It also stops the alarm waking a
+     * signed-out phone every sixteen minutes to discover it can no longer sign anything. */
+    try{ const fs = window.pcFs; if(fs && fs.forgetNative) fs.forgetNative(); }catch(_){}
  // Signing out also FORGETS this identity in the switcher. The list holds real keys, so "log out"
     // has to mean the key is gone from this device — leaving it behind under a different storage key
     // would be a quiet downgrade of what that button has always promised.
@@ -30340,6 +30345,20 @@
     },
     // NIP-98-style self-auth for the client endpoints (the same proof /files-index takes).
     signAuth: (tag) => sign(27235, String(tag||'sync'), [['p', ME.pubkey]]),
+    /* THE DRIVE KEY IN ITS WRAPPER, and never out of it.
+     *
+     * The APK's background folder sweep runs in Java, because Chromium throttles a hidden page's
+     * JavaScript however awake the processor is — and every network step of a sweep needs this key.
+     * What is handed over is the NIP-44 SELF-WRAPPED form the drive index already publishes, which
+     * is unreadable without the account's Nostr secret; the native signer holds that secret already,
+     * so the phone can open it and nothing new is written to disk in the clear.
+     *
+     * Deliberately NOT `_ensureMK()`. That MINTS a key when the account has none, and minting one
+     * from a config push — which happens on every sweep, including before a pull has answered —
+     * would write a key that decrypts nothing over the real one. This reports what is known and
+     * empty when nothing is, and the caller treats empty as "not yet".
+     */
+    driveKeyWrapped: () => (FilesIdx && FilesIdx._mkWrapped) || '',
     mediaServer, modal, closeModal, blossomPicker,
     // The app's own lightbox (pager, zoom, swipe, keyboard) — so Web Search's Images tab opens a
     // picture the way every other picture in this app opens, instead of throwing you out to a

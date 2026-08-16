@@ -7,6 +7,13 @@ import android.net.Uri;
 import java.util.ArrayList;
 
 public abstract class ContentResolver {
+  /** The document-provider side, for SafFs. All three throw a CHECKED FileNotFoundException on
+   *  the real class, which is why the callers wrap them. */
+  public java.io.InputStream openInputStream(Uri uri) throws java.io.FileNotFoundException { return null; }
+  public java.io.OutputStream openOutputStream(Uri uri, String mode) throws java.io.FileNotFoundException { return null; }
+  public android.os.ParcelFileDescriptor openFileDescriptor(Uri uri, String mode)
+      throws java.io.FileNotFoundException { return null; }
+
   public abstract Cursor query(Uri uri, String[] projection, String selection,
                                String[] selectionArgs, String sortOrder);
   public abstract int delete(Uri uri, String selection, String[] selectionArgs);

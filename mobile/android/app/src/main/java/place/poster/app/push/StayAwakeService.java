@@ -278,7 +278,19 @@ public class StayAwakeService extends Service {
       boolean skip = false;
       try { skip = place.poster.app.sync.FolderSyncPlugin.suppressed(this); } catch (Throwable ignored) {}
       if (!skip) {
-        try { place.poster.app.sync.FolderSyncPlugin.tick("stay-connected"); } catch (Throwable ignored) {}
+        /* THE SWEEP ITSELF, IN JAVA, WHEN IT CAN BE. Chromium throttles a hidden page's JavaScript
+         * however awake the processor is, so the tick below — which asks the WebView to sweep — is a
+         * request the WebView may be in no position to honour. NativeRunner does the transfer itself
+         * where the account key is on this device; it answers false for an account signed in through
+         * Amber, where no key is here to sign a single upload with, and then the tick is all there
+         * is. Both paths take the same per-folder lock, so they cannot overlap. */
+        boolean native_ = false;
+        try {
+          native_ = place.poster.app.sync.NativeRunner.tick(this, "stay-connected");
+        } catch (Throwable ignored) {}
+        if (!native_) {
+          try { place.poster.app.sync.FolderSyncPlugin.tick("stay-connected"); } catch (Throwable ignored) {}
+        }
       }
       return START_STICKY;
     }

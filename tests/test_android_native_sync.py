@@ -250,3 +250,25 @@ def test_an_integer_does_not_come_back_as_a_decimal():
     assert run_java("""
     System.out.println(Json.write(Json.parse("{\\"size\\":1234,\\"mtime\\":1700000000000}")));
 """) == '{"size":1234,"mtime":1700000000000}'
+
+
+# ------------------------------------------------------------------- the Android-touching half
+
+ANDROID_SRC = [os.path.join(JAVA, "sync", f + ".java") for f in
+               ("SafFs", "NativeSweep", "SyncStore", "SyncNet", "SyncCrypto", "SyncDiff",
+                "Json", "Excludes")]
+
+
+def test_the_android_half_type_checks_here_rather_than_on_ci():
+    """SafFs, NativeSweep and SyncStore touch the platform, so they cannot be RUN here — but they can
+    be compiled against the hand-written stubs, which turns a wrong column constant or a dropped
+    argument into a failing test in a second instead of a broken APK build twenty minutes later.
+
+    It matters more for these than for anything else in the app: there is no device in this loop at
+    all, so a compile error is discovered by a person with a phone."""
+    _need("javac")
+    with tempfile.TemporaryDirectory() as tmp:
+        r = subprocess.run(["javac", "-nowarn", "-d", tmp, "-sourcepath",
+                            STUBS + os.pathsep + os.path.join(ANDROID, "src", "main", "java")]
+                           + ANDROID_SRC, capture_output=True, text=True, timeout=300)
+        assert r.returncode == 0, r.stderr[-4000:]

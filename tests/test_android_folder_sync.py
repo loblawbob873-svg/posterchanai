@@ -111,17 +111,22 @@ def test_the_trash_layout_matches_the_desktop():
     ex = _read(JAVA, "sync", "Excludes.java")
     bridge = _read(ROOT, "desktop", "fsbridge.js")
     assert '"%04d-%02d-%02d"' in ex and "UTC" in ex
-    assert ".pc-trash" in bridge and "TRASH = \".pc-trash\"" in _read(JAVA, "sync", "FolderSyncPlugin.java")
+    assert ".pc-trash" in bridge and "TRASH = \".pc-trash\"" in _saf()
 
 
 def test_saf_cannot_set_mtime_so_the_write_reports_what_it_became():
     """SAF has no writable last-modified column. If write() returned the mtime it was ASKED for, every
     downloaded file would look locally-edited on the next sweep and be pushed straight back."""
-    plugin = _read(JAVA, "sync", "FolderSyncPlugin.java")
-    assert "statById" in plugin and 'ret.put("mtime"' in plugin
-    assert re.search(r'ret\.put\("mtime",\s*st != null \? st\[1\]', plugin), (
-        "write() must report the mtime the provider actually gave the file, not the requested one"
-    )
+    saf = _saf()
+    assert "statById" in saf
+    for fn in ("public long[] write(", "public long[] commitPart("):
+        body = saf[saf.index(fn):]
+        body = body[:body.index("\n    }")]
+        assert re.search(r'st != null \? st\[1\]', body), (
+            fn + " must report the mtime the provider actually gave the file, not the requested one"
+        )
+    # …and the plugin must hand that straight back rather than echoing what it was asked for.
+    assert 'ret.put("mtime", st[1])' in _plugin()
 
 
 # ---- failures must FAIL, not resolve --------------------------------------------------------
@@ -135,6 +140,17 @@ def _plugin():
     return _read(JAVA, "sync", "FolderSyncPlugin.java")
 
 
+def _saf():
+    """The SAF filesystem itself.
+
+    It used to live inside FolderSyncPlugin, reachable only as a @PluginMethod — i.e. only from a
+    page calling across the Capacitor bridge, which is exactly the half Android takes away when the
+    screen goes off. It is SafFs.java now so the native background sweep can call the same code, and
+    every rule below is asserted against wherever it actually lives rather than against a file
+    name."""
+    return _read(JAVA, "sync", "SafFs.java")
+
+
 def test_a_file_is_never_unlinked_when_the_trash_is_unavailable():
     """THE WORST ONE. trashDoc used to call deleteDoc() when the .pc-trash directory could not be
     created, and return a path implying the file had been trashed — so the caller recorded a
@@ -143,13 +159,13 @@ def test_a_file_is_never_unlinked_when_the_trash_is_unavailable():
     It breaks the single guarantee this feature makes, and it fires exactly when things are already
     going wrong: a partially revoked grant, an unmounted volume, a FILE named .pc-trash shadowing the
     directory. Every one of those is temporary. The deletion is not."""
-    src = _plugin()
-    i = src.index("private String trashDoc(")
-    body = src[i: src.index("\n  private ", i + 10)]
+    src = _saf()
+    i = src.index("public String trashDoc(")
+    body = src[i: src.index("\n    public ", i + 10)]
     head = body[: body.index("String name = baseName(rel);")]
     assert "if (destDir == null) return null;" in head, (
         "trashDoc no longer refuses when the trash is unavailable")
-    assert "deleteDoc(cr, tree, docId)" not in head, (
+    assert "deleteDoc(" not in head, (
         "trashDoc unlinks the user's file when it cannot trash it — that is data loss, not a fallback")
 
 
@@ -158,11 +174,17 @@ def test_a_failed_trash_rejects_instead_of_resolving():
     agreed a TOMBSTONE for a file still on disk — so the next sweep read it as a local edit and
     re-uploaded it, resurrecting a file deleted on another device, reporting "1 to trash" both
     times."""
-    src = _plugin()
-    i = src.index("public void trash(PluginCall call)")
-    body = src[i: src.index("@PluginMethod", i + 10)]
-    assert 'if (dest == null) { call.reject(' in body, (
-        "a failed trash still resolves — the sweep will record a tombstone for a file that is there")
+    saf = _saf()
+    body = saf[saf.index("public String trash(String rel, long when)"):]
+    body = body[:body.index("\n    }")]
+    assert 'if (dest == null) throw' in body, (
+        "a failed trash still answers a path — the sweep will record a tombstone for a file that is "
+        "still there, and re-upload it on the next pass")
+    # …and the plugin must not turn that throw back into a resolve.
+    plug = _plugin()
+    pbody = plug[plug.index("public void trash(PluginCall call)"):]
+    pbody = pbody[:pbody.index("@PluginMethod", 10)]
+    assert "call.reject(" in pbody
 
 
 def test_write_commit_checks_that_the_rename_actually_happened():
@@ -171,15 +193,16 @@ def test_write_commit_checks_that_the_rename_actually_happened():
     file's size and mtime — which resolved as success. `base` then claimed the remote version was
     present, and since it matched the manifest by csum and the disk by size+mtime, the update was
     never retried: the newer version silently never landed on that device."""
-    src = _plugin()
-    i = src.index("public void writeCommit(PluginCall call)")
-    body = src[i: src.index("@PluginMethod", i + 10)]
-    assert "trashDoc(cr, tree, existing, rel, call.getLong(\"when\", 0L)) == null" in body, (
-        "writeCommit does not check that the previous file was cleared")
-    assert body.count("call.reject(") >= 3, (
-        "writeCommit still has paths that report success without checking: " + str(body.count("call.reject(")))
-    assert "if (finalId == null) { call.reject(" in body, (
-        "writeCommit resolves even when the committed file cannot be found")
+    src = _saf()
+    body = src[src.index("public long[] commitPart(String rel, long when)"):]
+    body = body[:body.index("\n    }")]
+    assert "trashDoc(existing, rel, when) == null" in body, (
+        "commitPart does not check that the previous file was cleared")
+    assert body.count("throw new java.io.IOException(") >= 4, (
+        "commitPart still has paths that report success without checking: "
+        + str(body.count("throw new java.io.IOException(")))
+    assert 'if (finalId == null) throw' in body, (
+        "commitPart answers a stat even when the committed file cannot be found")
 
 
 def test_empty_trash_can_actually_empty_it():
@@ -202,14 +225,15 @@ def test_android_can_verify_a_download_like_the_desktop_does():
     unverified while the laptop checked every one, and because resume is only permitted where the
     result can be checked, Android also re-downloaded from byte zero after any drop."""
     src = _plugin()
+    saf = _saf()
     shim = _read(CLIENT, "fs-android.js")
     for fn in ("hashPart", "discardPart", "partSize"):
         assert "public void %s(PluginCall call)" % fn in src, f"the plugin has no {fn}"
         assert "%s:" % fn in shim, f"the shim does not expose {fn}, so syncrun cannot see it"
     # discardPart must DELETE, never trash: these are bytes we could not confirm, and putting them
     # in the safety net makes the net less trustworthy.
-    i = src.index("public void discardPart(PluginCall call)")
-    body = src[i: src.index("@PluginMethod", i + 10)]
+    body = saf[saf.index("public void discardPart(String rel)"):]
+    body = body[:body.index("\n    }")]
     assert "deleteDoc(" in body and "trashDoc(" not in body, (
         "an unverified part file is being put in .pc-trash")
 
@@ -399,32 +423,32 @@ def test_emptied_directories_are_removed_but_only_when_empty():
         or throws (provider gone, volume unmounted, grant revoked mid-sweep) has to answer "not
         empty", because being wrong the other way costs somebody's folder.
     """
-    plugin = _read(JAVA, "sync", "FolderSyncPlugin.java")
-    assert "pruneEmptyDirs(cr, tree, rel)" in plugin, (
+    saf = _saf()
+    assert "pruneEmptyDirs(rel)" in saf, (
         "Android leaves the emptied directory tree behind after a delete"
     )
-    assert "private boolean isEmptyDir(" in plugin, "nothing checks the directory is empty first"
+    assert "public boolean isEmptyDir(" in saf, "nothing checks the directory is empty first"
 
-    body = plugin[plugin.index("private boolean isEmptyDir("):]
-    body = body[:body.index("\n  }")]
+    body = saf[saf.index("public boolean isEmptyDir("):]
+    body = body[:body.index("\n    }")]
     assert "if (c == null) return false;" in body, (
         "a failed query must answer NOT empty. deleteDocument on a directory is recursive, so a "
         "true here deletes a folder whose contents could not be listed"
     )
-    assert "catch (Exception e) {\n      return false;" in body or "return false;" in body.split("catch")[-1], (
+    assert re.search(r"catch \(Exception e\) \{\s*return false;", body), (
         "a throw must answer NOT empty, for the same reason"
     )
 
     # It must run only after the move SUCCEEDED — pruning around a failed trash would remove a
     # directory whose file is still sitting in it.
-    trash = plugin[plugin.index("public void trash(PluginCall call)"):]
-    trash = trash[:trash.index("@PluginMethod", 10)]
+    trash = saf[saf.index("public String trash(String rel, long when)"):]
+    trash = trash[:trash.index("\n    }")]
     assert trash.index("could not move") < trash.index("pruneEmptyDirs"), (
         "the prune runs before the failed-trash guard"
     )
 
-    prune = plugin[plugin.index("private void pruneEmptyDirs("):]
-    prune = prune[:prune.index("\n  }")]
+    prune = saf[saf.index("public void pruneEmptyDirs("):]
+    prune = prune[:prune.index("\n    }")]
     assert "TRASH.equals(parts[0])" in prune, "the prune would walk into .pc-trash"
     assert "docId.equals(root)" in prune, (
         "the sync ROOT must never be removed — it is the pairing, and a device that deleted it "
@@ -529,3 +553,123 @@ def test_a_sweep_makes_sure_javascript_is_actually_running():
         "keeping timers running for the life of the service is a standing keep-awake, which is the "
         "battery cost the whole policy exists to avoid"
     )
+
+
+# ---- THE SWEEP THAT RUNS WITHOUT THE WEBVIEW ----------------------------------------------------
+#
+# The tick above asks the page to sweep, and Chromium throttles a hidden page's JavaScript however
+# awake the processor is — so on a backgrounded phone that request often reaches nobody. The transfer
+# therefore also exists in Java. Every link below is one whose absence is total silence: no sync, no
+# error, and a counter panel that still says the clock is ticking perfectly.
+
+def test_the_native_sweep_is_wired_from_the_alarm_to_the_engine():
+    svc = _read(JAVA, "push", "StayAwakeService.java")
+    runner = _read(JAVA, "sync", "NativeRunner.java")
+    plugin = _plugin()
+    shim = _read(CLIENT, "fs-android.js")
+    sync = _read(CLIENT, "sync.js")
+
+    assert "NativeRunner.tick(" in svc, (
+        "the alarm never reaches the native sweep — every tick still goes to a WebView that may be "
+        "throttled, which is the bug this exists to fix"
+    )
+    # …and the JS tick must still happen when the native path declines. An account signed in through
+    # Amber has no key here; a phone that ALSO stopped ticking the page would sync nowhere at all.
+    i = svc.index("NativeRunner.tick(")
+    after = svc[i:i + 700]
+    assert "FolderSyncPlugin.tick(" in after and "if (!native_)" in after, (
+        "the native path swallows the tick — an Amber account then has neither engine"
+    )
+
+    for fn in ("configure", "forgetNative", "nativeReport", "claimSweep", "releaseSweep"):
+        assert "public void %s(PluginCall call)" % fn in plugin, "the plugin has no " + fn
+    for fn in ("configureNative", "forgetNative", "nativeReport", "claimSweep", "releaseSweep"):
+        assert "%s:" % fn in shim, "the shim does not expose %s, so it ships dead" % fn
+    assert "_pushNativeConfig" in sync, "nothing ever tells the phone where the servers are"
+    assert "PC.driveKeyWrapped" in sync, "the phone is never given a key, so it can decrypt nothing"
+
+
+def test_the_key_the_phone_is_given_is_the_wrapped_one():
+    """No new secret at rest is the whole reason a native sweep is acceptable. What is handed over is
+    the NIP-44 self-wrapped value the drive index already publishes; the phone opens it with the
+    account secret its own signer holds."""
+    app = _read(CLIENT, "app.js")
+    assert "driveKeyWrapped: () => (FilesIdx && FilesIdx._mkWrapped)" in app, (
+        "the accessor hands over something other than the wrapped key"
+    )
+    # …and it must NOT be _ensureMK, which MINTS a key when the account has none — from a config push
+    # that happens on every sweep, including before a pull has answered. That would write a key which
+    # decrypts nothing over the real one.
+    i = app.index("driveKeyWrapped:")
+    assert "_ensureMK" not in app[i:i + 200]
+    store = _read(JAVA, "sync", "SyncStore.java")
+    assert 'if (wrappedKey != null && !wrappedKey.isEmpty()) e.putString(K_MK, wrappedKey);' in store, (
+        "an empty key erases the stored one — a configure() that arrives before the signer answers "
+        "would silently turn background sync off until somebody opened the app again"
+    )
+    assert "public void forget()" in store and "forgetNative" in _read(CLIENT, "app.js"), (
+        "signing out leaves the wrapped key on a handed-down phone"
+    )
+
+
+def test_only_one_engine_may_sweep_a_folder():
+    """Two sweeps writing the same manifest is last-writer-wins on the document that decides whether
+    files exist, and the moment it is most likely is somebody opening the app while the alarm is
+    mid-sweep. The lock has to be NATIVE, because the page's own `running` map cannot see Java."""
+    sweep = _read(JAVA, "sync", "NativeSweep.java")
+    sync = _read(CLIENT, "sync.js")
+    assert "public static synchronized boolean claim(" in sweep
+    assert "if (!claim(f.key))" in sweep, "the native sweep does not take its own lock"
+    assert "claimSweep(keyOf(f))" in sync, "the page sweeps without asking whether Java is in there"
+    assert "releaseSweep(keyOf(f))" in sync, (
+        "a claim that is never released is a folder the background sweep can never touch again"
+    )
+    # Released in the finally, not on the happy path.
+    fin = sync[sync.index("running.delete(f.id);"):]
+    fin = fin[:fin.index("})();")]
+    assert "releaseSweep" in fin
+
+
+def test_the_unattended_sweep_refuses_what_it_cannot_ask_about():
+    """A background sweep has nobody in front of it, so the standing rule is that it fails closed —
+    and refusing suppresses ONE BUCKET, never the sweep. A guard that aborts everything is the same
+    bug with the sign flipped, which is exactly what happened to the contacts sweep: "it deleted
+    everything" became "it syncs nothing, for ever"."""
+    sweep = _read(JAVA, "sync", "NativeSweep.java")
+    body = sweep[sweep.index("Map<String, Object> mass = SyncDiff.massDelete(plan);"):]
+    body = body[:body.index("final Map<String, Map<String, Object>> nextRemote")]
+    assert "deleteLocal = new ArrayList" in body and "return" not in body, (
+        "a refused mass delete aborts the whole sweep instead of dropping the deletions"
+    )
+    assert "uploads = new ArrayList" in body, "a mass resurrect is not refused"
+    # A first-ever sweep is deferred, never attempted: it is the one that hashes everything and the
+    # one that publishes a folder's whole contents for the first time.
+    assert "if (base.isEmpty())" in sweep and "first sync" in sweep
+    # …and the deferral must not advance the clock, or the next sixteen minutes are silenced as
+    # though the folder had synced.
+    runner = _read(JAVA, "sync", "NativeRunner.java")
+    assert "rep.error.isEmpty() && rep.deferred == 0" in runner
+
+
+def test_the_native_sweep_holds_the_processor_and_gives_it_back():
+    """A foreground service keeps the PROCESS resident and does nothing about the PROCESSOR —
+    measured as 23 downloads in the minute before the screen went off and 0 in the minute after. A
+    timed lock is not renewed by being held, and renewing on progress is what left a long download
+    without one, so the renewal is a clock."""
+    runner = _read(JAVA, "sync", "NativeRunner.java")
+    assert "PARTIAL_WAKE_LOCK" in runner
+    assert "acquire(WAKE_MAX_MS)" in runner, "an untimed lock survives a crash mid-sweep"
+    assert "setReferenceCounted(false)" in runner
+    assert runner.count("acquire(WAKE_MAX_MS)") >= 2, "the lock is taken once and never renewed"
+    fin = runner[runner.index("} finally {"):]
+    assert "wake.release()" in fin and "renew.cancel()" in fin, "the lock or its timer can leak"
+    assert "java.util.Arrays.fill(sec, (byte) 0)" in fin, "the account key is left in memory"
+
+
+def test_the_panel_can_say_why_a_background_sweep_did_nothing():
+    """There is no device in this loop and this failure REPORTS SUCCESS: an account whose key is not
+    here, a folder deferred, a manifest the server refused to shrink — every one of them is a phone
+    whose alarm counters look perfect and which syncs nothing."""
+    sync = _read(CLIENT, "sync.js")
+    assert "nativeReport()" in sync, "nothing in the UI reads what the native sweep did"
+    assert "no key on this device" in sync, "the commonest reason is not spelled out anywhere"

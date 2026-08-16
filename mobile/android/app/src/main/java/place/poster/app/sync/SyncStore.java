@@ -1,0 +1,196 @@
+package place.poster.app.sync;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.RandomAccessFile;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * What the phone needs to sweep on its own: where the servers are, which folders are paired, and
+ * what this device last agreed each one contained.
+ *
+ * THE CLIENT HANDS IT OVER; NOTHING HERE IS INVENTED. Every value below is one the WebView already
+ * knows and the phone cannot work out for itself — the instance URL, the media server, the pair
+ * keys, the exclusion lists, the per-folder switches. `configure()` is called on every foreground
+ * sweep and on startup, so a background sweep is always working from the settings the user last saw
+ * on screen rather than from a copy that can silently go stale.
+ *
+ * THE DRIVE KEY IS STORED WRAPPED, and that is the whole reason a native sweep is acceptable at all.
+ * What lands on disk is the NIP-44 self-wrapped form the drive index already holds — unreadable
+ * without the account's Nostr secret, which the native signer holds already. So this adds no new
+ * secret at rest: an attacker with the file has what the server has, which is nothing.
+ *
+ * `base` IS A FILE, NOT A PREFERENCE. It is the per-path agreement, and on a real 15,790-file folder
+ * it is megabytes — SharedPreferences holds every value in memory and rewrites the whole XML on each
+ * commit, which is exactly the trap the browser fell into with localStorage (a swallowed quota error
+ * and an infinite resync). One JSON file per pair key, written whole, read whole.
+ */
+public final class SyncStore {
+
+    private static final String PREFS = "pc_sync_native";
+    private static final String K_API = "apiBase";
+    private static final String K_MEDIA = "mediaBase";
+    private static final String K_MK = "mkWrapped";
+    private static final String K_DEVICE = "device";
+    private static final String K_FOLDERS = "folders";
+    private static final String K_ENABLED = "nativeEnabled";
+    private static final String K_LAST = "lastReport";
+
+    private final Context ctx;
+
+    public SyncStore(Context ctx) { this.ctx = ctx.getApplicationContext(); }
+
+    private SharedPreferences prefs() {
+        return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    // ------------------------------------------------------------------------------- config
+
+    /** One paired folder as the client sees it. */
+    public static final class Folder {
+        public String key = "";          // the PAIR key — the name, the same on every device
+        public String id = "";           // this device's SAF tree URI
+        public final List<String> excludes = new ArrayList<String>();
+        public boolean enabled = true;
+        public boolean paused = false;
+        public boolean onlyWhenCharging = false;
+        public boolean wifiOnly = true;
+        public int minBattery = 20;
+    }
+
+    public boolean nativeEnabled() { return prefs().getBoolean(K_ENABLED, false); }
+
+    public String apiBase() { return prefs().getString(K_API, ""); }
+
+    public String mediaBase() { return prefs().getString(K_MEDIA, ""); }
+
+    public String wrappedDriveKey() { return prefs().getString(K_MK, ""); }
+
+    public String deviceName() { return prefs().getString(K_DEVICE, "this phone"); }
+
+    public List<Folder> folders() {
+        List<Folder> out = new ArrayList<Folder>();
+        String raw = prefs().getString(K_FOLDERS, "[]");
+        List<Object> list;
+        try { list = Json.arr(Json.parse(raw)); } catch (RuntimeException e) { return out; }
+        for (Object o : list) {
+            Map<String, Object> m = Json.obj(o);
+            Folder f = new Folder();
+            f.key = Json.str(m.get("key"), "");
+            f.id = Json.str(m.get("id"), "");
+            f.enabled = Json.bool(m.get("enabled"), true);
+            f.paused = Json.bool(m.get("paused"), false);
+            f.onlyWhenCharging = Json.bool(m.get("onlyWhenCharging"), false);
+            f.wifiOnly = Json.bool(m.get("wifiOnly"), true);
+            f.minBattery = (int) Json.num(m.get("minBattery"), 20);
+            for (Object e : Json.arr(m.get("excludes"))) f.excludes.add(String.valueOf(e));
+            if (!f.key.isEmpty() && !f.id.isEmpty()) out.add(f);
+        }
+        return out;
+    }
+
+    /** Store what the page just told us. `folders` is the JSON array exactly as the client sent it. */
+    public void configure(boolean enabled, String apiBase, String mediaBase, String wrappedKey,
+                          String device, String foldersJson) {
+        SharedPreferences.Editor e = prefs().edit();
+        e.putBoolean(K_ENABLED, enabled);
+        if (apiBase != null) e.putString(K_API, apiBase);
+        if (mediaBase != null) e.putString(K_MEDIA, mediaBase);
+        /* AN ABSENT KEY DOES NOT ERASE THE ONE WE HAVE. The client only has a drive key once the
+         * signer has answered, and a configure() that arrives before that (page load, an account
+         * still resolving) would otherwise wipe the very thing that lets the phone sweep alone —
+         * turning a working background sync off, silently, until somebody opened the app again. */
+        if (wrappedKey != null && !wrappedKey.isEmpty()) e.putString(K_MK, wrappedKey);
+        if (device != null && !device.isEmpty()) e.putString(K_DEVICE, device);
+        if (foldersJson != null) e.putString(K_FOLDERS, foldersJson);
+        e.apply();
+    }
+
+    /** Sign-out, or a switch turned off: the wrapped key must not outlive the session that set it. */
+    public void forget() {
+        prefs().edit().remove(K_MK).putBoolean(K_ENABLED, false).apply();
+    }
+
+    // -------------------------------------------------------------------------- last report
+
+    /** What the last native sweep did, for Folder Sync → background details to show. */
+    public void setLastReport(String json) { prefs().edit().putString(K_LAST, json).apply(); }
+
+    public String lastReport() { return prefs().getString(K_LAST, ""); }
+
+    /* WHEN THIS FOLDER LAST SETTLED, which is what `shouldSync`'s minimum interval reads.
+     *
+     * Deliberately the NATIVE clock and not the page's: the two paths sweep the same folder and the
+     * page's own record lives in the browser's storage, so sharing one would need a round trip
+     * through the very WebView this path exists to work without. The cost of two clocks is at worst
+     * one extra sweep after the app has been open, which finds nothing and stops. */
+    public long lastSyncAt(String key) {
+        return prefs().getLong("lastSync:" + key, 0L);
+    }
+
+    public void setLastSyncAt(String key, long when) {
+        prefs().edit().putLong("lastSync:" + key, when).apply();
+    }
+
+    // ---------------------------------------------------------------------- the agreement
+
+    private File baseFile(String key) {
+        File dir = new File(ctx.getFilesDir(), "syncbase");
+        if (!dir.exists()) dir.mkdirs();
+        // Hashed, because a pair key is a user-typed name and can hold anything a filename cannot.
+        return new File(dir, SyncCrypto.sha256hex(SyncCrypto.utf8(key)) + ".json");
+    }
+
+    public Map<String, Map<String, Object>> base(String key) {
+        Map<String, Map<String, Object>> out = new LinkedHashMap<String, Map<String, Object>>();
+        File f = baseFile(key);
+        if (!f.exists()) return out;
+        RandomAccessFile r = null;
+        try {
+            r = new RandomAccessFile(f, "r");
+            byte[] buf = new byte[(int) r.length()];
+            r.readFully(buf);
+            for (Map.Entry<String, Object> e : Json.obj(Json.parse(SyncCrypto.fromUtf8(buf))).entrySet()) {
+                out.put(e.getKey(), Json.obj(e.getValue()));
+            }
+        } catch (Exception ignored) {
+            /* A CORRUPT AGREEMENT IS RECOVERABLE AND AN EMPTY ONE IS NOT DANGEROUS HERE: it costs a
+             * full compare, never data — the engine's empty-base rule settles identical files by
+             * content rather than conflicting them. What must never happen is treating an unreadable
+             * MANIFEST this way, which is a different file and a 503. */
+        } finally { try { if (r != null) r.close(); } catch (Exception ignored) { } }
+        return out;
+    }
+
+    /**
+     * NOT SWALLOWED. A `base` that silently fails to persist is an infinite resync, and the only way
+     * anyone finds out is by watching the upload counter start again from one.
+     */
+    public void saveBase(String key, Map<String, Map<String, Object>> base) throws Exception {
+        File f = baseFile(key);
+        File tmp = new File(f.getPath() + ".tmp");
+        FileOutputStream out = new FileOutputStream(tmp);
+        try {
+            out.write(SyncCrypto.utf8(Json.write(base)));
+            out.flush();
+            out.getFD().sync();
+        } finally { out.close(); }
+        if (!tmp.renameTo(f)) {
+            // Some filesystems refuse a rename over an existing file; delete and retry once rather
+            // than leaving the old agreement in place and reporting success.
+            if (!(f.delete() && tmp.renameTo(f))) {
+                throw new java.io.IOException("could not store the agreement for " + key);
+            }
+        }
+    }
+
+    public void dropBase(String key) {
+        try { baseFile(key).delete(); } catch (Exception ignored) { }
+    }
+}

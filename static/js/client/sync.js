@@ -69,6 +69,9 @@
     // Every switch, add and removal comes through here, so the native clock's copy of the policy
     // cannot drift from the one shouldSync reads.
     try{ _pushTickPolicy(); }catch(_){}
+    // …and the native sweep's copy of the SAME list, for the same reason: a folder removed here and
+    // still swept in the background is a folder the user cannot get rid of.
+    try{ const r = _pushNativeConfig(); if(r && r.catch) r.catch(()=>{}); }catch(_){}
   }
   function prefs(f){ return Object.assign({}, S.DEFAULT_PREFS, (f && f.prefs) || {}); }
 
@@ -912,6 +915,35 @@
           try{ const r = _wake.wakeBegin(); if(r && r.catch) r.catch(()=>{}); }catch(_){}
         }, 60000);
       }
+      /* AND THE OTHER ENGINE MUST NOT BE IN THIS FOLDER AT THE SAME TIME.
+       *
+       * On Android the sweep now also exists in Java, because Chromium throttles a hidden page's
+       * JavaScript however awake the processor is — so the alarm can be mid-sweep at the exact
+       * moment somebody opens the app. Two sweeps writing the same manifest is last-writer-wins on
+       * the document that decides whether files exist. The lock is native so both sides see it;
+       * `running` above is this page's own guard and cannot.
+       *
+       * A dry run does not claim: it reads a manifest and stops, and blocking Check behind a
+       * background transfer would make the button look broken. A platform without the lock (desktop,
+       * an older APK) answers true, which is the behaviour it has today. */
+      /* Pushed here as well as at startup: the drive key arrives from the signer some time AFTER
+       * the page loads, so the startup push often carries an empty one and the phone would sit
+       * unable to sweep until the next time a switch was touched. */
+      if(!o.dryRun) { try{ await _pushNativeConfig(); }catch(_){} }
+      let _claimed = false;
+      if(!o.dryRun && _wake && _wake.claimSweep){
+        try{ _claimed = await _wake.claimSweep(keyOf(f)); }catch(_){ _claimed = true; }
+        if(!_claimed){
+          // Same order as the `finally` below, and for the same reasons: the folder stops being
+          // busy, the renewal stops, and the processor goes back.
+          running.delete(f.id);
+          if(_wakeTimer){ clearInterval(_wakeTimer); _wakeTimer = null; }
+          if(_wake.wakeEnd){ try{ await _wake.wakeEnd(); }catch(_){} }
+          const why = 'this folder is syncing in the background — it will finish on its own';
+          setStatus(f.id, why, null, true);
+          return { skipped:true, why };
+        }
+      }
       try{
         const rep = await RUN.sweep(fs, store, {
           id: f.id, key: keyOf(f), device: deviceName(), now: Date.now(),
@@ -973,8 +1005,10 @@
       } finally {
         running.delete(f.id);
         // Released on EVERY exit — a sweep that threw still has to give the processor back, and the
-        // renewal must stop with it or it holds the lease open for ever.
+        // renewal must stop with it or it holds the lease open for ever. Same for the cross-engine
+        // lock: a claim never released is a folder the background sweep can never touch again.
         if(_wakeTimer){ clearInterval(_wakeTimer); _wakeTimer = null; }
+        if(_claimed && _wake && _wake.releaseSweep){ try{ await _wake.releaseSweep(keyOf(f)); }catch(_){} }
         if(!o.dryRun && _wake && _wake.wakeEnd){ try{ await _wake.wakeEnd(); }catch(_){} }
       }
     })();
@@ -1633,14 +1667,33 @@
             + ' (last delivered ' + ago(st.lastDeliveredAt) + ')'
             + '\nwaiting for: ' + ([st.needCharging && 'a charger', st.needUnmetered && 'Wi-Fi']
                                      .filter(Boolean).join(' + ') || 'nothing');
+          /* AND WHAT THE SWEEP THAT RUNS WITHOUT THIS PAGE ACTUALLY DID.
+           *
+           * The counters above answer "did the clock tick", which was the right question while the
+           * sweep was JavaScript the tick could only ASK to run. It is Java now, and the ways that
+           * fails are invisible from here in the same way: an account whose key is not on the device
+           * (Amber), a folder deferred because it has never synced, a manifest the server refused to
+           * shrink. Every one of those is a phone that ticks perfectly and syncs nothing, so the
+           * reason it gives itself has to be readable. */
+          let nat = null;
+          try{ nat = FS().nativeReport ? await FS().nativeReport() : null; }catch(_){ nat = null; }
+          let extra = '';
+          if(nat){
+            extra = '\nnative sweep: ' + (nat.enabled ? 'on' : 'off')
+                  + (nat.haveKey ? '' : ' (no key on this device — Amber signs elsewhere)')
+                  + (nat.running ? ', running now' : '')
+                  + (nat.why ? '\n  last decision: ' + nat.why : '')
+                  + (nat.report ? '\n  last run: ' + nat.report : '\n  last run: never');
+          }
           /* COPIED, NOT PRINTED ON THE CARD. This went to the status line, which a running sweep
            * overwrites with its per-file progress several times a second — so the one reading that
            * explains why background sync is not working was unreadable on the one device it
            * describes, and could not be quoted to anybody either. copyValue puts it on the clipboard
            * (the APK's WebView refuses navigator.clipboard, which is why this helper exists) and
            * falls back to a dialog that STAYS until dismissed when even that is refused. */
-          PC.copyValue ? PC.copyValue(line, 'background details copied', 'Background sync:')
-                       : setStatus(id, line.replace(/\n/g, ' · '));
+          const full = line + extra;
+          PC.copyValue ? PC.copyValue(full, 'background details copied', 'Background sync:')
+                       : setStatus(id, full.replace(/\n/g, ' · '));
         }; }
       card.querySelector('.sync-forget').onclick = async () => {
         if(!await PC.uiConfirm('Stop syncing this folder?\n\nNothing is deleted — the files stay on this '
@@ -1688,6 +1741,48 @@
     try{
       const r = fs.setTickPolicy({ needCharging: all('onlyWhenCharging'), needUnmetered: all('wifiOnly') });
       if(r && typeof r.catch === 'function') r.catch(()=>{});
+    }catch(_){}
+  }
+
+  /* ---- HAND THE PHONE WHAT IT NEEDS TO SWEEP WITHOUT THIS PAGE --------------------------------
+   *
+   * Chromium throttles a hidden page's JavaScript however awake the processor is — a browser policy,
+   * not a power one — so on Android the transfer also exists in Java. Everything it needs is
+   * something only this page knows: which instance, which media server, which folders are paired to
+   * which trees here, what is excluded, what the switches say, and the account's drive key.
+   *
+   * THE KEY GOES OVER WRAPPED. `PC.driveKeyWrapped()` is the NIP-44 self-wrapped value the drive
+   * index already publishes; the phone unwraps it with the account secret its own signer holds. An
+   * account signed in through Amber has no such secret on the device, so the native path answers
+   * "not my job" and the old tick-the-WebView behaviour is what runs — which is the honest outcome,
+   * since nothing on that phone can sign an upload.
+   *
+   * PUSHED ON EVERY SWEEP AND AT STARTUP, because a stale copy is the whole failure mode: a folder
+   * removed here and still swept there, an exclusion typed here and ignored there. An EMPTY key does
+   * not erase the stored one (the signer may not have answered yet) — see SyncStore.configure. */
+  async function _pushNativeConfig(){
+    const fs = FS();
+    if(!fs || !fs.configureNative) return;               // desktop, or an APK older than this
+    let mk = '';
+    try{ mk = (PC.driveKeyWrapped && PC.driveKeyWrapped()) || ''; }catch(_){}
+    const list = folders().map(f => {
+      const p = prefs(f);
+      return { key: keyOf(f), id: f.id, excludes: f.excludes || [],
+               enabled: p.enabled !== false, paused: !!p.paused,
+               onlyWhenCharging: !!p.onlyWhenCharging, wifiOnly: p.wifiOnly !== false,
+               minBattery: p.minBattery };
+    });
+    try{
+      await fs.configureNative({
+        // Only with a key AND somewhere to put the bytes. Without either the phone would wake, fail
+        // every folder and write a report saying so, once every sixteen minutes.
+        enabled: !!mk && list.length > 0,
+        apiBase: location.origin,
+        mediaBase: (PC.mediaServer && PC.mediaServer()) || '',
+        mkWrapped: mk,
+        device: deviceName(),
+        folders: list,
+      });
     }catch(_){}
   }
 
@@ -1838,6 +1933,7 @@
      * happens while nobody is. */
     try{ if(fs.onTick) fs.onTick(() => nudge('native', true)); }catch(_){}
     _pushTickPolicy();
+    try{ const r = _pushNativeConfig(); if(r && r.catch) r.catch(()=>{}); }catch(_){}
     /* THE DESKTOP'S OWN VERSION OF THE SAME HOLE, and the shell already had the signal.
      *
      * A laptop that sleeps wakes up with NOTHING telling this module: desktop/main.js says it in as
