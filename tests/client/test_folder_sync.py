@@ -565,3 +565,78 @@ class TestMassDelete(unittest.TestCase):
         noisy one or the other way about."""
         self.assertIsNone(self.mass(self.plan_of(25, keep=25)))
         self.assertIsNotNone(self.mass(self.plan_of(26, keep=25)))
+
+
+@unittest.skipIf(not NODE, "no node on this node")
+class TestConflictCandidates(unittest.TestCase):
+    """Which conflict copies are worth OPENING, when the manifest cannot judge them.
+
+    `redundantConflicts` is the proof — a matching checksum or chunk list, nothing else — and it is
+    right to be strict, because for a copy taken FROM a file, equal size and mtime is exactly what
+    you would expect whether the bytes match or not. But a manifest only carries an identity for
+    entries some sweep uploaded with one, and a folder that has been through several devices has
+    plenty that do not. Reported from three machines at once: a phone downloading a pile of
+    `(conflict from windows, …)` copies while every device answered "no conflict copies that are
+    provably identical".
+
+    So this is the shortlist a device holding both files can settle exactly by hashing them. It
+    decides what to read; the hashes still decide what to delete.
+    """
+
+    def cand(self, manifest):
+        js = ("const S=require(%s);"
+              "process.stdout.write(JSON.stringify(S.conflictCandidates(%s)));"
+              ) % (json.dumps(MOD), json.dumps(manifest))
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            raise AssertionError("node failed:\n" + r.stderr[-2000:])
+        return json.loads(r.stdout)
+
+    C = "note (conflict from windows, 2026-08-15).txt"
+
+    def test_a_pair_the_manifest_cannot_judge_is_offered_for_reading(self):
+        out = self.cand({"note.txt": {"sha": "A", "size": 10, "mtime": 1},
+                         self.C: {"sha": "B", "size": 10, "mtime": 2}})
+        self.assertEqual([c["path"] for c in out], [self.C])
+        self.assertEqual(out[0]["original"], "note.txt")
+
+    def test_a_pair_the_manifest_already_proved_is_not_offered_again(self):
+        """`redundantConflicts` has it; reading the files would be wasted I/O."""
+        out = self.cand({"note.txt": {"csum": "X", "size": 10},
+                         self.C: {"csum": "X", "size": 10}})
+        self.assertEqual(out, [])
+
+    def test_different_sizes_are_not_even_candidates(self):
+        """Cheap pre-filter — it keeps the caller from opening every unrelated pair in the folder.
+        It is NOT the verdict: equal size proves nothing, which is the whole reason
+        redundantConflicts refuses to use it."""
+        out = self.cand({"note.txt": {"sha": "A", "size": 10},
+                         self.C: {"sha": "B", "size": 11}})
+        self.assertEqual(out, [])
+
+    def test_a_copy_whose_original_was_deleted_is_left_alone(self):
+        """It is not a redundant copy, it is the only remaining copy — and tonight's folder is full
+        of originals that were tombstoned."""
+        # The tombstone carries a SIZE on purpose: without it the size pre-filter excludes this
+        # pair anyway and the test would pass whether or not the tombstone guard exists.
+        out = self.cand({"note.txt": {"deletedAt": 9000, "size": 10},
+                         self.C: {"sha": "B", "size": 10}})
+        self.assertEqual(out, [])
+
+    def test_a_tombstoned_copy_is_left_alone(self):
+        out = self.cand({"note.txt": {"sha": "A", "size": 10},
+                         self.C: {"deletedAt": 9000, "size": 10}})   # size, so only live() can catch it
+        self.assertEqual(out, [])
+
+    def test_an_ordinary_file_is_never_a_candidate(self):
+        out = self.cand({"note.txt": {"sha": "A", "size": 10},
+                         "holiday.jpg": {"sha": "B", "size": 10}})
+        self.assertEqual(out, [])
+
+    def test_the_suffix_is_read_before_the_extension(self):
+        """conflictPath puts it there so the file still opens in whatever owns that type — a
+        candidate matcher that assumed otherwise would pair every copy with a file that does not
+        exist, and quietly find nothing for ever."""
+        out = self.cand({"a/b/report.pdf": {"sha": "A", "size": 5},
+                         "a/b/report (conflict from phone, 2026-08-09).pdf": {"sha": "B", "size": 5}})
+        self.assertEqual([c["original"] for c in out], ["a/b/report.pdf"])

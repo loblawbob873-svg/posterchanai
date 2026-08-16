@@ -1106,12 +1106,44 @@
    * path every other deletion takes.
    *
    * So the worst case is the worst case of a normal delete, and everything is still on disk. */
+  /* Reading two whole files to retire one duplicate is worth it; reading two 4 GB ones is not —
+   * that is the renderer kill chunking exists to avoid, and the same bound the sweep's own
+   * conflict verification uses. */
+  const _TIDY_VERIFY_MAX = 2 * 1024 * 1024 * 1024;
   async function conflictCleanup(f, opts){
     const fs = FS();
     if(!fs) throw new Error('this device has no filesystem access');
     const key = keyOf(f);
     const man = await store.manifest(key);
     const list = S.redundantConflicts(man);
+    /* IF THE MANIFEST CANNOT PROVE IT, READ THE FILES — this is the one operation where that is the
+     * right trade, and without it the button could not clean up the copies it exists for.
+     *
+     * `redundantConflicts` is deliberately strict: it removes a copy only on a matching `csum` or
+     * chunk list, because size+mtime is not evidence for a copy taken FROM a file. But a manifest
+     * only carries an identity for entries some sweep happened to upload with one, and a folder that
+     * has been through a few devices has plenty that do not. Reported from three machines at once —
+     * a phone downloading a pile of `(conflict from windows, …)` copies while every device answered
+     * "no conflict copies that are provably identical".
+     *
+     * So: for a pair the manifest cannot settle, hash BOTH files on this disk and compare. That is
+     * exact, it is the same proof `redundantConflicts` demands, and reading is acceptable here in a
+     * way it is not during a sweep — somebody pressed a button and is waiting for the answer.
+     *
+     * SIZE IS A PRE-FILTER, NEVER THE PROOF. Two files of equal length are a candidate and nothing
+     * more; only equal hashes qualify. Anything this device does not hold, or cannot read, is left
+     * alone rather than guessed at — the whole point of this function is that the alternative to
+     * proof is deleting somebody's file. */
+    if(!(opts && opts.noVerify) && store.hashBytes && typeof fs.read === 'function' && S.conflictCandidates){
+      for(const c of S.conflictCandidates(man)){
+        if(c.size > _TIDY_VERIFY_MAX) continue;
+        try{
+          const a = await store.hashBytes(await fs.read(f.id, c.path));
+          const b = await store.hashBytes(await fs.read(f.id, c.original));
+          if(a && b && a === b) list.push(Object.assign({}, c, { byRead: true }));
+        }catch(_){ /* not on this disk, or unreadable — leave it for a device that has it */ }
+      }
+    }
     if(opts && opts.dryRun) return { list, bytes: list.reduce((n, x) => n + (x.size || 0), 0) };
 
     let moved = 0, absent = 0;
@@ -1422,7 +1454,16 @@
         let found;
         try{ found = await conflictCleanup(f, { dryRun:true }); }
         catch(e){ PC.toast('couldn’t check: ' + ((e && e.message) || e)); paint(); return; }
-        if(!found.list.length){ PC.toast('no conflict copies that are provably identical'); paint(); return; }
+        /* SAY WHICH QUESTION WAS ASKED. "No conflict copies" next to a Check reporting hundreds of
+         * "conflicts" reads as a contradiction, and it is not: Check lists files that MIGHT be
+         * duplicated on the next sweep (and on Android almost never are — see details()), while this
+         * looks for copies already sitting on the disk named "(conflict from …)". Two different
+         * things, one word. */
+        if(!found.list.length){
+          PC.toast('no duplicate copies to remove — every “(conflict from …)” file here differs from '
+                   + 'its original, or its original is gone');
+          paint(); return;
+        }
         const mb = (found.bytes / 1048576).toFixed(1);
         const ok = await PC.uiConfirm(found.list.length + ' conflict copies are byte-for-byte identical to the '
           + 'file they were made from (' + mb + ' MB).\n\nMove them to .pc-trash? They are removed on your other '
