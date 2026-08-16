@@ -84,7 +84,11 @@ DRIVER = r"""
           code = 404; out = new byte[0];
         } else if (path.startsWith("/collapse")) {
           code = 409;
-          out = "{\"ok\":false,\"error\":\"refused\",\"collapse\":{\"old\":900,\"new\":3}}".getBytes("UTF-8");
+          // THE SHAPE THE ENDPOINT ACTUALLY RETURNS — `collapse` a flag, the counts beside it
+          // (app/routers/client.py). A stub that nests them lets a client that reads the wrong place
+          // pass a test while disarming the guard in production.
+          out = ("{\"ok\":false,\"error\":\"refused\",\"collapse\":true,\"old\":900,\"new\":3}")
+                 .getBytes("UTF-8");
         } else if (path.endsWith("/sync-manifest")) {
           out = "{\"ok\":true,\"manifest\":{\"n\":2,\"sealed\":\"xx\"}}".getBytes("UTF-8");
         } else {
@@ -175,7 +179,19 @@ def test_present_is_not_enough_a_blob_on_its_way_out_is_uploaded_again(wire):
 
 
 def test_a_refused_shrink_arrives_as_something_the_caller_can_answer(wire):
+    """And with the COUNTS, which is the whole reason the endpoint sends them. Reading them from the
+    wrong place gives 0 and 0, which is not a wrong number — it is a disarmed guard: `shrink()`
+    becomes 0, so "did this sweep account for the shrink?" is true for any sweep that deleted one
+    path, and the client force-writes the folder wipe the 409 exists to stop."""
     assert wire["results"]["collapse"] == "old=900 new=3 shrink=897"
+
+
+def test_the_stub_matches_what_the_endpoint_really_answers():
+    """The test above is only worth anything while its stub is honest, and the shape it got wrong is
+    exactly the one that mattered: `collapse` is a BOOLEAN and old/new are TOP-LEVEL."""
+    src = open(os.path.join(ROOT, "app", "routers", "client.py"), encoding="utf-8").read()
+    i = src.index('"error": "refused: " + drop, "collapse": True')
+    assert '"old": _files_index_count(prev), "new": _files_index_count(data.manifest)' in src[i:i + 300]
 
 
 def test_the_upload_is_marked_keep_and_no_mirror(wire):

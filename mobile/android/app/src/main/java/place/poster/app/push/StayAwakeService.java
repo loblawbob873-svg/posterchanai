@@ -278,19 +278,22 @@ public class StayAwakeService extends Service {
       boolean skip = false;
       try { skip = place.poster.app.sync.FolderSyncPlugin.suppressed(this); } catch (Throwable ignored) {}
       if (!skip) {
-        /* THE SWEEP ITSELF, IN JAVA, WHEN IT CAN BE. Chromium throttles a hidden page's JavaScript
-         * however awake the processor is, so the tick below — which asks the WebView to sweep — is a
-         * request the WebView may be in no position to honour. NativeRunner does the transfer itself
-         * where the account key is on this device; it answers false for an account signed in through
-         * Amber, where no key is here to sign a single upload with, and then the tick is all there
-         * is. Both paths take the same per-folder lock, so they cannot overlap. */
-        boolean native_ = false;
-        try {
-          native_ = place.poster.app.sync.NativeRunner.tick(this, "stay-connected");
-        } catch (Throwable ignored) {}
-        if (!native_) {
-          try { place.poster.app.sync.FolderSyncPlugin.tick("stay-connected"); } catch (Throwable ignored) {}
-        }
+        /* BOTH ENGINES ARE ASKED, EVERY TIME, and the per-folder lock is what makes that safe.
+         *
+         * NativeRunner does the transfer itself where the account key is on this device — Chromium
+         * throttles a hidden page's JavaScript however awake the processor is, so asking the WebView
+         * is a request it may be in no position to honour.
+         *
+         * IT USED TO SKIP THE WEBVIEW WHENEVER THE NATIVE PATH STARTED, and that reads as an
+         * optimisation and is a way to lose sync entirely. `tick()` can only answer "a thread was
+         * spawned", never "the work happened": a folder holding one conflict is deferred by the
+         * native sweep on every single run, and skipping on the strength of that silenced the engine
+         * that COULD have settled it — for that folder and, because the skip is process-wide, for
+         * every other folder on the phone. So both are asked. If the native sweep holds a folder the
+         * page's own attempt is refused with a sentence rather than a race, and a tick into a dead
+         * bridge costs nothing, which is the usual case with the screen off. */
+        try { place.poster.app.sync.NativeRunner.tick(this, "stay-connected"); } catch (Throwable ignored) {}
+        try { place.poster.app.sync.FolderSyncPlugin.tick("stay-connected"); } catch (Throwable ignored) {}
       }
       return START_STICKY;
     }
