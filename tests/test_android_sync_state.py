@@ -275,3 +275,75 @@ def test_an_unreadable_network_does_not_read_as_offline():
     assert got["eligible"].startswith("true"), (
         f"the sweep still declines with a network it could not read: {got['eligible']}"
     )
+
+
+def test_backgrounding_hands_the_folders_over_instead_of_stranding_them():
+    """THE REPORT, READ LITERALLY: *"syncing stops shortly after you turn off the screen"*.
+
+    Not "never starts" — a sweep is RUNNING and it dies. The page's sweep is JavaScript, Chromium
+    throttles a hidden page's timers to about one a minute, so it does not fail, it STALLS mid-folder
+    while still holding the per-folder claim. The next alarm is up to sixteen minutes away, finds the
+    folder claimed and skips it, and nothing resumes until the claim expires or the app is opened.
+    From outside: it was syncing, you locked the phone, it stopped.
+
+    `onPause` is the handover. The page's claims go back — a hidden page cannot finish them, so
+    holding them only blocks the engine that can — and the native sweep starts then rather than at
+    the next tick.
+    """
+    out = run_java("""
+    Fake.STORE.clear();
+    place.poster.app.signer.SignerKey.HAVE = true;
+    Fake ctx = new Fake();
+    SyncStore s = new SyncStore(ctx);
+    s.configure(true, "https://a", "https://b", "K", "phone", "%s");
+
+    // The page is sweeping Pictures with the app on screen.
+    FolderSyncPlugin.setForegroundForTest(true);
+    NativeSweep.claim("Pictures");
+    FolderSyncPlugin.notePageClaim("Pictures");
+    System.out.println("whileVisible=" + NativeRunner.eligible(ctx));
+
+    // Screen off.
+    new FolderSyncPlugin().handleOnPause();
+    System.out.println("claimHeld=" + NativeSweep.claimed("Pictures"));
+    System.out.println("afterPause=" + NativeRunner.eligible(ctx) + "|" + NativeRunner.why());
+""" % ONE_FOLDER)
+    got = dict(l.split("=", 1) for l in out.splitlines())
+    assert got["whileVisible"] == "false", "the native sweep competes with the page it can see"
+    assert got["claimHeld"] == "false", (
+        "the page keeps its claim after the screen goes off — a stalled sweep then blocks the only "
+        "engine that can still run, which is the whole reported bug"
+    )
+    assert got["afterPause"].startswith("true"), (
+        f"nothing can take over when the app is backgrounded mid-sweep: {got['afterPause']}"
+    )
+
+
+def test_a_late_page_release_cannot_free_the_native_sweep_s_claim():
+    """The handover makes an old harmless line dangerous.
+
+    `releaseSweep` used to release unconditionally, which was fine while the page was the only thing
+    that ever claimed. After `onPause` hands the folders over, a page sweep that was stalled and
+    finishes minutes later would free a claim the NATIVE sweep is holding — and two engines writing
+    one manifest is last-writer-wins on the document that decides whether files exist.
+    """
+    out = run_java("""
+    NativeSweep.release("Pictures");
+    // The page claims, then the screen goes off and the handover moves it to the native sweep.
+    NativeSweep.claim("Pictures");
+    FolderSyncPlugin.notePageClaim("Pictures");
+    new FolderSyncPlugin().handleOnPause();
+    System.out.println("freedByHandover=" + NativeSweep.claimed("Pictures"));
+    NativeSweep.claim("Pictures");                       // the native sweep takes it
+    System.out.println("nativeHolds=" + NativeSweep.claimed("Pictures"));
+    // …and now the page's stalled sweep finally reaches its finally block.
+    FolderSyncPlugin.releaseForTest("Pictures");
+    System.out.println("stillHeld=" + NativeSweep.claimed("Pictures"));
+""")
+    got = dict(l.split("=", 1) for l in out.splitlines())
+    assert got["freedByHandover"] == "false"
+    assert got["nativeHolds"] == "true"
+    assert got["stillHeld"] == "true", (
+        "a late release from the page freed the native sweep's claim — a third sweep can now start "
+        "on a folder that is already being written"
+    )
