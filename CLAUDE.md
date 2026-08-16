@@ -836,6 +836,23 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   **`RunningNote.othersRunning` takes an int, not a boolean**: "the OTHER one" stopped meaning
   anything at three services, and getting it wrong deletes the shared notification out from under a
   service that is still foreground.
+  **AND THE ROOT CAUSE WAS ONE LINE, UNDER ALL OF THAT:** `NativeRunner.deviceState` did
+  `s.put("online", nc != null)` — but a null from `getNetworkCapabilities(getActiveNetwork())` means
+  "I could not read the network", NOT "offline", and it is what a DOZING device answers. The alarm
+  exists to fire while dozing, so the one moment the feature was built for was the moment it read
+  itself offline → `shouldSync` `why:offline` → `plan()` "no folder is due" → nothing swept. It
+  worked with the app open and never with the screen off. Unreadable is UNSET now (`shouldSync`
+  guards on `!= null`); a READABLE manager with no active network is still a real offline. The same
+  file already stated this rule for `metered` — **failing closed on an unreliable read stops the
+  feature outright, which is the worse error.**
+  **`tests/test_android_sync_state.py` RUNS this** (javac + `java` against `tests/androidstubs`, with
+  a `Fake extends Context` backed by a HashMap) — every finding mutation-verified. Two days went into
+  text-matching tests that were all green while the logic was wrong: **grep the WIRING, RUN the
+  LOGIC.** Also there: `nativeEnabled()` is DERIVED from disk (the page pushed it as a boolean, and a
+  cold start with no `mk` wrote `false` over a working config on every launch), the native sweep
+  stands down while `FolderSyncPlugin.appInForeground()` (two engines racing meant "already syncing,
+  no progress" on the screen the user was watching), and a claim EXPIRES at 20 min and is stolen, or
+  one wedged sweep bricks the folder until force-stop.
   The WebView tick remains for the accounts Java cannot sign for — `FolderSyncPlugin.tick()` →
   `folderSyncTick` → `fs-android.onTick` → `sync.js nudge(force)` — and four things about it are
   load-bearing, each verified by a test: (1) it is an

@@ -1724,7 +1724,7 @@
           try{ nat = FS().nativeReport ? await FS().nativeReport() : null; }catch(_){ nat = null; }
           let extra = '';
           if(nat){
-            extra = '\nnative sweep: ' + (nat.enabled ? 'on' : 'off')
+            extra = '\nnative sweep: ' + (nat.enabled ? 'on' : 'OFF' + (nat.why_off ? ' — ' + nat.why_off : ''))
                   + (nat.haveKey ? '' : ' (no key on this device — Amber signs elsewhere)')
                   + (nat.running ? ', running now' : '')
                   + (nat.why ? '\n  last decision: ' + nat.why : '')
@@ -1829,6 +1829,15 @@
     // Only with a key, a server, somewhere to put the bytes AND a folder. Without any of them the
     // phone would wake, fail every folder and write a report saying so, every sixteen minutes.
     const wanted = !!mk && !!api && !!media && list.length > 0;
+    /* THE KEY IS ARMED ON `list.length`, NOT ON `wanted`, and that is a chicken-and-egg fix.
+     *
+     * `mk` is the drive key, which is exactly the value most likely to be missing on a cold start —
+     * so gating the arming on it meant the one push that could have armed the key was the one push
+     * that had nothing to arm with, on every launch. The phone then had folders, a server and no
+     * key, which is the state the sweep declines in. Paired with a device: the native side no longer
+     * lets an empty push switch anything off (SyncStore.nativeEnabled is derived now), so arming
+     * early and configuring fully a moment later converges instead of fighting. */
+    const haveFolders = list.length > 0;
     /* THE ACCOUNT KEY, AND ONLY ONCE THIS DEVICE ACTUALLY SYNCS SOMETHING.
      *
      * The native sweep signs every network step, so it needs the account secret sealed in the
@@ -1848,7 +1857,7 @@
      * Awaited but never fatal: an Amber/bunker account has nothing to hand over and answers false,
      * which is the honest outcome — that phone keeps the ask-the-page path, because nothing on it
      * can sign an upload unattended. See PC.armNativeSigner. */
-    if(wanted){ try{ if(PC.armNativeSigner) await PC.armNativeSigner(); }catch(_){} }
+    if(haveFolders){ try{ if(PC.armNativeSigner) await PC.armNativeSigner(); }catch(_){} }
     try{
       await fs.configureNative({
         enabled: wanted,

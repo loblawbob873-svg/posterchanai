@@ -5,10 +5,12 @@ import android.content.pm.ServiceInfo;
 import android.os.Build;
 
 import androidx.annotation.NonNull;
+import androidx.work.ExistingPeriodicWorkPolicy;
 import androidx.work.ExistingWorkPolicy;
 import androidx.work.ForegroundInfo;
 import androidx.work.OneTimeWorkRequest;
 import androidx.work.OutOfQuotaPolicy;
+import androidx.work.PeriodicWorkRequest;
 import androidx.work.WorkManager;
 import androidx.work.Worker;
 import androidx.work.WorkerParameters;
@@ -51,6 +53,7 @@ import place.poster.app.RunningNote;
 public class SyncWork extends Worker {
 
     public static final String WORK_NAME = "pc-folder-sync-sweep";
+    public static final String PERIODIC_NAME = "pc-folder-sync-periodic";
 
     /** Bounded so a job that outlives its own window cannot wedge WorkManager's thread for ever.
      *  Comfortably past a job's own ~10 minute ceiling; the sweep checkpoints, so being cut off
@@ -75,6 +78,35 @@ public class SyncWork extends Worker {
         } catch (Throwable t) {
             return false;
         }
+    }
+
+    /**
+     * A SECOND, INDEPENDENT CLOCK — and the reason it exists is that I cannot test the first one.
+     *
+     * Everything else here hangs off one AlarmManager alarm: if it does not fire, or fires and
+     * cannot start anything, background sync is dead and the only symptom is silence. There is no
+     * device in this loop, so betting the feature on a single scheduler I cannot observe is how two
+     * days get spent. WorkManager is the most reliable periodic scheduler Android offers, it already
+     * runs in this app (SyncCheckWorker), it survives reboots and app updates on its own, and it is
+     * subject to a completely different set of platform rules than an alarm.
+     *
+     * Deliberately UNCONSTRAINED, unlike SyncCheckWorker: no charging requirement and no network
+     * type, because {@code shouldSync} is the policy and duplicating it here would give the user two
+     * different answers to "only when plugged in". The floor is WorkManager's own fifteen minutes.
+     *
+     * KEEP, not REPLACE: this is re-scheduled on every configure() (page load, sweep, folder change),
+     * and REPLACE would reset the period each time and starve a job that is waiting its turn.
+     *
+     * Running both clocks is safe by construction — `NativeRunner.busy()` and the per-folder claim
+     * make a second sweep a no-op, and `shouldSync`'s minimum interval absorbs the extra tick.
+     */
+    public static void schedulePeriodic(Context ctx, boolean on) {
+        try {
+            WorkManager wm = WorkManager.getInstance(ctx.getApplicationContext());
+            if (!on) { wm.cancelUniqueWork(PERIODIC_NAME); return; }
+            wm.enqueueUniquePeriodicWork(PERIODIC_NAME, ExistingPeriodicWorkPolicy.KEEP,
+                    new PeriodicWorkRequest.Builder(SyncWork.class, 15, TimeUnit.MINUTES).build());
+        } catch (Throwable ignored) { }
     }
 
     /**

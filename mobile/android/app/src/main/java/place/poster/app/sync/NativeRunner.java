@@ -78,6 +78,18 @@ public final class NativeRunner {
             return null;
         }
 
+        /* THE APP IS OPEN — LET THE PAGE DO IT. See FolderSyncPlugin.appInForeground.
+         *
+         * Two engines racing for the same folder is not merely wasteful: the loser is the one the
+         * user is looking at, and it has nothing to show but "already syncing". This is also the
+         * honest division, because the whole reason a native sweep exists is that a HIDDEN page's
+         * JavaScript is throttled — a visible one is not, and it can do strictly more (settle
+         * conflicts, ask about a mass delete, draw a progress bar). */
+        if (FolderSyncPlugin.appInForeground()) {
+            lastWhy = "the app is open — the page sweeps while you can see it";
+            return null;
+        }
+
         Plan p = new Plan();
         Map<String, Object> state = deviceState(app);
         for (SyncStore.Folder f : store.folders()) {
@@ -219,10 +231,36 @@ public final class NativeRunner {
         try {
             ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
             NetworkCapabilities nc = cm == null ? null : cm.getNetworkCapabilities(cm.getActiveNetwork());
-            s.put("online", nc != null);
-            // NOT_METERED is the capability that reflects the user's own "this is metered" flag on a
-            // hotspot, which a Wi-Fi-vs-cellular check gets wrong every time.
-            s.put("metered", nc != null && !nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED));
+            /* "I COULD NOT READ THE NETWORK" IS NOT "THERE IS NO NETWORK", AND CONFLATING THEM IS
+             * WHY THE BACKGROUND SWEEP NEVER RAN.
+             *
+             * This used to be `s.put("online", nc != null)` — a null read asserted OFFLINE, and
+             * `shouldSync` answers `mode: none, why: offline` to that, so `plan()` found no folder
+             * due and the whole chain above it declined. The alarm fired, the receiver ran, and
+             * nothing swept.
+             *
+             * `getNetworkCapabilities(getActiveNetwork())` returning null is not rare in the state
+             * this code runs in: it is exactly what a dozing device can answer, and the alarm exists
+             * to fire while the device is dozing. So the one moment the sweep was designed for was
+             * the one moment it read itself as offline — working whenever the app was open (network
+             * live, capabilities readable) and never with the screen off. Reported, precisely, as
+             * "background sync stops shortly after you turn the screen off".
+             *
+             * So an unreadable network is left UNSET, and `shouldSync` skips a check it has no
+             * answer for (`s.get("online") != null` guards it). The same rule `suppressed()` already
+             * states for metered — an unreliable read must not stop background sync outright — now
+             * applied to the fact that was silently stopping it. Being wrong costs one sweep whose
+             * requests fail against a bounded timeout and are retried by the next tick. */
+            if (nc != null) {
+                s.put("online", true);
+                // NOT_METERED reflects the user's own "this is metered" flag on a hotspot, which a
+                // Wi-Fi-vs-cellular check gets wrong every time.
+                s.put("metered", !nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED));
+            } else if (cm != null && cm.getActiveNetwork() == null) {
+                // A readable manager reporting NO active network at all IS a real answer: flight
+                // mode, or genuinely nothing up. Only an unreadable one is left unknown.
+                s.put("online", false);
+            }
         } catch (Throwable ignored) { }
         return s;
     }

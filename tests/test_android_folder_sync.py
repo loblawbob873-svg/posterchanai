@@ -1001,10 +1001,15 @@ def test_the_key_is_only_armed_for_a_device_that_syncs():
     sync = _code_only(_read(CLIENT, "sync.js"))
     body = sync[sync.index("async function _pushNativeConfig("):]
     body = body[:body.index("\n  }")]
-    assert "if(wanted){" in body and "armNativeSigner" in body, (
+    assert "if(haveFolders){" in body and "armNativeSigner" in body, (
         "the account key is sealed into the keystore whether or not this device syncs anything"
     )
-    assert body.index("const wanted =") < body.index("armNativeSigner"), (
+    # GATED ON FOLDERS, NOT ON THE FULL `wanted`. `wanted` includes the drive key, which is the value
+    # most likely to be absent on a cold start — so gating the arming on it meant the one push that
+    # could have armed the key was the one push with nothing to arm with. The native side no longer
+    # lets an empty push switch anything off, so arming early and configuring fully a moment later
+    # converges rather than fighting.
+    assert body.index("const haveFolders =") < body.index("armNativeSigner"), (
         "the gate is computed after the arming it is supposed to gate"
     )
 

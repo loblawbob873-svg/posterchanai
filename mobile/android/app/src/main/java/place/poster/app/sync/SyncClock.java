@@ -185,6 +185,12 @@ public final class SyncClock {
             }
         } catch (Throwable ignored) { }
         follow(ctx, wanted);
+        /* THE SECOND CLOCK, armed from the same decision. An alarm is the only thing that fires in
+         * Doze, but it is also the only thing here nobody can watch fail — so WorkManager runs the
+         * same sweep on its own fifteen-minute cadence beside it. Two schedulers under two different
+         * sets of platform rules; whichever survives does the work, and the per-folder claim makes
+         * the overlap a no-op. See SyncWork.schedulePeriodic. */
+        try { SyncWork.schedulePeriodic(ctx, wanted); } catch (Throwable ignored) { }
     }
 
     static void onFired(Context ctx) {
