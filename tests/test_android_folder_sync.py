@@ -573,11 +573,13 @@ def test_the_native_sweep_is_wired_from_the_alarm_to_the_engine():
         "the alarm never reaches the native sweep — every tick still goes to a WebView that may be "
         "throttled, which is the bug this exists to fix"
     )
-    # …and the JS tick must still happen when the native path declines. An account signed in through
-    # Amber has no key here; a phone that ALSO stopped ticking the page would sync nowhere at all.
+    # …and the JS tick still happens, unconditionally. An account signed in through Amber has no key
+    # here, and a folder holding one conflict is deferred by the native sweep on every run — a phone
+    # that stopped ticking the page for either reason would sync nowhere at all. See
+    # test_the_native_tick_never_silences_the_webview_one.
     i = svc.index("NativeRunner.tick(")
-    after = svc[i:i + 700]
-    assert "FolderSyncPlugin.tick(" in after and "if (!native_)" in after, (
+    after = svc[i:i + 500]
+    assert "FolderSyncPlugin.tick(" in after, (
         "the native path swallows the tick — an Amber account then has neither engine"
     )
 
@@ -642,9 +644,16 @@ def test_the_unattended_sweep_refuses_what_it_cannot_ask_about():
         "a refused mass delete aborts the whole sweep instead of dropping the deletions"
     )
     assert "uploads = new ArrayList" in body, "a mass resurrect is not refused"
-    # A first-ever sweep is deferred, never attempted: it is the one that hashes everything and the
-    # one that publishes a folder's whole contents for the first time.
-    assert "if (base.isEmpty())" in sweep and "first sync" in sweep
+    # An empty agreement FORCES A HASH; it must not stop the sweep. The first version deferred
+    # instead, and since `base` here is written only by this sweep and the page keeps its own copy
+    # where Java cannot read it, the whole native path could never run once on any device — every
+    # alarm answered "first sync — open the app once" and opening the app did nothing.
+    assert "boolean firstEver = base.isEmpty();" in sweep
+    assert "if (firstEver) { hash = true;" in sweep
+    assert 'rep.deferredWhy = "first sync' not in sweep, (
+        "the native sweep defers on an empty agreement again — nothing else ever writes one, so it "
+        "can never run"
+    )
     # …and the deferral must not advance the clock, or the next sixteen minutes are silenced as
     # though the folder had synced.
     runner = _read(JAVA, "sync", "NativeRunner.java")
@@ -697,3 +706,41 @@ def test_the_phone_is_given_an_absolute_server_and_not_its_own_bundle():
     fn = app[app.index("function _serverOrigin()"):]
     fn = fn[:fn.index("\n")]
     assert "if(_standalone()) return ''" in fn
+
+
+def test_the_native_tick_never_silences_the_webview_one():
+    """`NativeRunner.tick` can only answer "a thread was spawned", never "the work happened" — a
+    folder holding one conflict is deferred on every single run. Skipping the WebView tick on the
+    strength of it silenced the engine that COULD have settled that folder, and because the skip is
+    process-wide, every other folder on the phone with it."""
+    svc = _read(JAVA, "push", "StayAwakeService.java")
+    i = svc.index("NativeRunner.tick(")
+    after = svc[i:i + 400]
+    assert "FolderSyncPlugin.tick(" in after, "the WebView is never asked"
+    assert "if (!native_)" not in svc and "if (native_" not in svc, (
+        "the WebView tick is conditional on the native path declining — see above"
+    )
+
+
+def test_a_claim_does_not_outlive_the_page_that_took_it():
+    """The claim is released in the sweep's `finally`, which does not run when the renderer is killed
+    mid-sweep — the case this whole path exists for. Left held, NEITHER engine can touch that folder
+    again for the life of the process: the native sweep answers "already syncing" and the reloaded
+    page is told "syncing in the background", on every press."""
+    plugin = _plugin()
+    sweep = _read(JAVA, "sync", "NativeSweep.java")
+    assert "public static synchronized void releaseAll(" in sweep
+    body = plugin[plugin.index("protected void handleOnDestroy()"):]
+    body = body[:body.index("\n  }")]
+    assert "NativeSweep.releaseAll(" in body, "a page that dies mid-sweep strands the folder for ever"
+    # Only the PAGE's claims: a native sweep running in the service must survive the page dying,
+    # which is the entire point of it.
+    assert "pageClaims" in body and "BUSY" not in body
+
+
+def test_the_two_engines_fold_case_the_same_way():
+    """`Pattern.CASE_INSENSITIVE` alone folds ASCII; JavaScript's `i` folds Unicode. A folder typed
+    as `Übungen` and spelled `übungen` on disk is then excluded by the browser and not by the phone,
+    and the two sync different sets from one exclusion list."""
+    diff = _read(JAVA, "sync", "SyncDiff.java")
+    assert "Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE" in diff

@@ -108,6 +108,22 @@ public final class NativeSweep {
 
     public static synchronized void release(String key) { BUSY.remove(key); }
 
+    /**
+     * Everything the PAGE is holding, dropped — called when the page goes away.
+     *
+     * A claim taken across the bridge is released in the sweep's `finally`, which does not run when
+     * the renderer is killed mid-sweep or the activity is destroyed while backgrounded. That is not
+     * an edge case here: it is precisely the situation this whole native path exists for. Without
+     * this the pair key stays claimed for the life of the PROCESS, and afterwards neither engine can
+     * touch that folder ever again — the native sweep answers "already syncing" and the reloaded
+     * page is told "this folder is syncing in the background", on every press, until the app is
+     * force-stopped.
+     *
+     * Only the page's own claims: a native sweep genuinely running in the service must survive the
+     * page dying, which is the entire point of it.
+     */
+    public static synchronized void releaseAll(Set<String> keys) { BUSY.removeAll(keys); }
+
     // -------------------------------------------------------------------------------- the sweep
 
     public static Report run(Context ctx, SyncStore store, SyncStore.Folder f, byte[] sec,
@@ -141,23 +157,31 @@ public final class NativeSweep {
         Map<String, Map<String, Object>> remote = readManifest(net, sec, mk, f.key);
         Map<String, Map<String, Object>> base = store.base(f.key);
 
-        /* A FIRST SWEEP IS NOT A BACKGROUND JOB. With no agreement every path looks changed on both
-         * sides at once, so settling it means HASHING the whole folder — and the outcome of getting
-         * it wrong is a conflict copy of every file on every device. It is also the sweep that
-         * publishes a folder's entire contents for the first time. Both are things to do with the
-         * app open. */
-        if (base.isEmpty()) {
-            rep.deferred = 1;
-            rep.deferredWhy = "first sync — open the app once to start this folder";
-            return;
-        }
-
-        /* HASHING IS THE CHARGING-TIME JOB, and the caller has already decided whether this is one.
-         * `shouldSync` answers `full` when the phone is plugged in and it has been a day, and that is
-         * the only mode that rehashes: doing it on every sweep is the space heater the whole battery
-         * policy exists to avoid, and never doing it means an entry that has no content identity
-         * never gains one — so every device that joins the folder later falls back to size+mtime,
+        /* AN EMPTY AGREEMENT FORCES A HASH, IT DOES NOT STOP THE SWEEP — and the first version of
+         * this got that exactly backwards.
+         *
+         * It deferred instead, on the reasoning that a first sweep is expensive and dangerous. The
+         * reasoning was fine and the consequence was that the whole native path could never run
+         * ONCE, on any device: `base` here is written only by this sweep, the page keeps its own copy
+         * in IndexedDB where Java cannot reach it, so the agreement was empty for ever and every
+         * alarm answered "first sync — open the app once". Opening the app did nothing, because the
+         * page writes only its own copy. Dead on arrival, and reported as success.
+         *
+         * What the deferral was actually protecting against is covered elsewhere: with no `base` both
+         * sides look changed for every path at once, so the answer has to come from CONTENT — that is
+         * the hash — and the thing that would go wrong without it is a conflict copy of every file.
+         * Conflicts are deferred by this sweep regardless (see the class comment), the mass-delete and
+         * mass-resurrect guards refuse in bulk, and a folder nobody has pressed Start on is `paused`,
+         * which `shouldSync` declines before we ever get here. So the honest move is to pay for the
+         * hash and settle the folder, which is what the browser's first sweep does too.
+         *
+         * OTHERWISE hashing is the charging-time job the caller already decided about: `shouldSync`
+         * answers `full` when plugged in and it has been a day. Rehashing on every sweep is the space
+         * heater the battery policy exists to avoid; never rehashing means an entry with no content
+         * identity never gains one, and every device that joins later falls back to size+mtime —
          * which on Android can never match, because SAF assigns its own last-modified. */
+        boolean firstEver = base.isEmpty();
+        if (firstEver) { hash = true; rep.hashed = true; }
         SafFs.Scan scan = fs.scan(hash, 0, f.excludes);
         Map<String, Map<String, Object>> local = new LinkedHashMap<String, Map<String, Object>>();
         for (Map.Entry<String, Map<String, Object>> e : scan.files.entrySet()) {
@@ -238,7 +262,9 @@ public final class NativeSweep {
             try {
                 long[] st = download(net, fs, mk, path, R, now);
                 Map<String, Object> agreed = new LinkedHashMap<String, Object>();
-                agreed.put("sha", R.get("sha") == null ? Json.UNDEFINED : R.get("sha"));
+                // Absent, never null: a chunked entry has no `sha` at all — its address is the LIST —
+                // and writing an explicit null would be a value the next sweep has to reason about.
+                if (R.get("sha") != null) agreed.put("sha", R.get("sha"));
                 if (R.get("csum") != null) agreed.put("csum", R.get("csum"));
                 /* `cs` TRAVELS WITH `chunks`, always. An entry is comparable only to one made at the
                  * same chunk size, so an agreement that kept the list and dropped the size can never

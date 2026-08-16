@@ -289,16 +289,28 @@ public class FolderSyncPlugin extends Plugin {
    * opens the app while the alarm is running one), and two sweeps writing the same manifest is
    * last-writer-wins on the document that decides whether files exist. Both sides take the same
    * lock; a refusal is an ordinary "already syncing", not an error. */
+  /* WHAT THIS PAGE IS HOLDING, so it can be given back when the page is taken away. A claim is
+   * released in the sweep's `finally`, which does not run when the renderer is killed mid-sweep —
+   * the case this whole native path exists for. Without this the key stays claimed for the life of
+   * the process and NEITHER engine can touch that folder again until the app is force-stopped. */
+  private static final java.util.Set<String> pageClaims =
+      java.util.Collections.synchronizedSet(new java.util.LinkedHashSet<String>());
+
   @PluginMethod
   public void claimSweep(PluginCall call) {
+    String key = call.getString("key", "");
+    boolean ok = NativeSweep.claim(key);
+    if (ok) pageClaims.add(key);
     JSObject o = new JSObject();
-    o.put("ok", NativeSweep.claim(call.getString("key", "")));
+    o.put("ok", ok);
     call.resolve(o);
   }
 
   @PluginMethod
   public void releaseSweep(PluginCall call) {
-    NativeSweep.release(call.getString("key", ""));
+    String key = call.getString("key", "");
+    pageClaims.remove(key);
+    NativeSweep.release(key);
     call.resolve();
   }
 
@@ -321,6 +333,14 @@ public class FolderSyncPlugin extends Plugin {
     // the sweep running in the page that just went away.
     if (INSTANCE == this) INSTANCE = null;
     releaseWake();
+    /* …and every folder this page had claimed. Only its own: a native sweep running in the service
+     * must survive the page dying, which is the entire point of it. */
+    synchronized (pageClaims) {
+      if (!pageClaims.isEmpty()) {
+        NativeSweep.releaseAll(new java.util.LinkedHashSet<String>(pageClaims));
+        pageClaims.clear();
+      }
+    }
     super.handleOnDestroy();
   }
 

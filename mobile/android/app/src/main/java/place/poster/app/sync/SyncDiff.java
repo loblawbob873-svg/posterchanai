@@ -182,8 +182,13 @@ public final class SyncDiff {
             body.append(c);
         }
         try {
+            /* UNICODE_CASE, not CASE_INSENSITIVE alone. On its own Java folds ASCII and nothing
+             * else, while JavaScript's `i` flag folds Unicode — so a folder the user typed as
+             * `Übungen` and the disk spells `übungen` is excluded by the browser and NOT by the
+             * phone, and the two devices then sync different sets from the same exclusion list. In
+             * a file whose whole contract is "the same answer as foldersync.js". */
             return Pattern.compile("^" + (anchored ? "" : "(?:.*/)?") + body + "$",
-                                   Pattern.CASE_INSENSITIVE);
+                                   Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
         } catch (PatternSyntaxException e) {
             return null;
         }
