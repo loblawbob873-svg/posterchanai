@@ -169,7 +169,6 @@
  "4. Then the": "4. Then the",
  "40 GB+:": "40 GB+:",
  "443 (blank = off)": "443 (blank = off)",
- "4chan Catalog": "4chan Catalog",
  "4… or 8… (XMR — others can tip you)": "4… or 8… (XMR — others can tip you)",
  "5. Paste the client ID and secret below and Save.": "5. Paste the client ID and secret below and Save.",
  "7 days before expiry": "7 days before expiry",
@@ -1711,7 +1710,6 @@
  "NIP-96": "NIP-96",
  "Nitter Feeds": "Nitter Feeds",
  "Nitter feeds": "Nitter feeds",
- "Nitter feeds, 4chan, and SearX fetches. Required for torrents and Nitter.": "Nitter feeds, 4chan, and SearX fetches. Required for torrents and Nitter.",
  "No #blackjack bot is configured on this server yet — ask the admin to enable one in Admin → Bots.": "No #blackjack bot is configured on this server yet — ask the admin to enable one in Admin → Bots.",
  "No #chess bot is configured on this server yet — ask the admin to enable one in Admin → Bots.": "No #chess bot is configured on this server yet — ask the admin to enable one in Admin → Bots.",
  "No #connect4 bot is configured on this server yet — ask the admin to enable one in Admin → Bots.": "No #connect4 bot is configured on this server yet — ask the admin to enable one in Admin → Bots.",
@@ -1991,8 +1989,6 @@
  "Open magnet": "Open magnet",
  "Open Music": "Open Music",
  "Open Notifications": "Open Notifications",
- "Open on 4chan": "Open on 4chan",
- "Open on 4chan ↗": "Open on 4chan ↗",
  "Open Orbot": "Open Orbot",
  "Open repo →": "Open repo →",
  "Open Settings → Mail": "Open Settings → Mail",
@@ -3452,8 +3448,6 @@
  "📈 Can't reach the server — retrying…": "📈 Can't reach the server — retrying…",
  "📈 Markets is temporarily unavailable — the AI backend isn't responding. Retrying automatically…": "📈 Markets is temporarily unavailable — the AI backend isn't responding. Retrying automatically…",
  "📊 Server Stats": "📊 Server Stats",
- "📋 4chan": "📋 4chan",
- "📋 4chan Catalog": "📋 4chan Catalog",
  "📋 Copy": "📋 Copy",
  "📋 Copy nsec": "📋 Copy nsec",
  "📋 PIM ▾": "📋 PIM ▾",
@@ -3558,5 +3552,6 @@
  "🧹 Housekeeping": "🧹 Housekeeping",
  "🧹 Purge existing notes now": "🧹 Purge existing notes now",
  "🧽 Run auto-clean now": "🧽 Run auto-clean now",
- "🪪 NIP-05": "🪪 NIP-05"
+ "🪪 NIP-05": "🪪 NIP-05",
+ "Nitter feeds and SearX fetches. Required for torrents and Nitter.": "Nitter feeds and SearX fetches. Required for torrents and Nitter."
 }

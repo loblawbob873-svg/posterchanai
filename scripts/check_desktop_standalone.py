@@ -12,7 +12,7 @@ never exercises it — every assertion here corresponds to a way it broke, or wo
   nostr-only         PC_NOSTR_ONLY has to be forced on at RUNTIME. The web page bakes it into the
                      template, but one bundle serves every instance, so a baked value is either wrong or
                      permanent.
-  gated-nav          Views that need a server (AI, Meme Builder, News, Torrents, 4chan, Server Stats)
+  gated-nav          Views that need a server (AI, Meme Builder, News, Torrents, Server Stats)
                      hidden; relay-only views (Social, Messages, Notes, Passwords, Budget, Games) NOT.
                      A dead button that 404s is worse than an absent one.
   empty-groups       A nav group whose every child was hidden used to leave an empty disclosure triangle.
@@ -117,7 +117,7 @@ AUDIT = r"""(() => {
   out.subtle      = !!(window.crypto && window.crypto.subtle && window.crypto.subtle.digest);
 
   // Gated (need a server) vs kept (relays + key only).
-  out.gatedShown = ['ai','translate','markets','news','torrents','4chan','stats','meme']
+  out.gatedShown = ['ai','translate','markets','news','torrents','stats','meme']
     .filter(v => shown(nav(v)));
   out.keptHidden = ['global','notifications','messages','bookmarks','calls','notes','vault','drafts',
                     'budget','articles','communities','chat','streams','chess','settings']

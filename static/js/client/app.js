@@ -312,7 +312,7 @@
    * Hidden, not disabled. A greyed row still invites a click and still has to explain itself; a
    * standalone install is not a degraded PosterChan, it is a Nostr client, and it should read like
    * one. Anyone who wants the rest can name an instance in Settings and they all come back. */
-  const INSTANCE_VIEWS = new Set(['ai', 'translate', 'markets', 'news', 'torrents', '4chan',
+  const INSTANCE_VIEWS = new Set(['ai', 'translate', 'markets', 'news', 'torrents',
                                   'stats', 'meme', 'admin', 'websearch', 'terminal', 'calendar', 'contacts',
                                   // Email is IMAP/SMTP through this instance's mail service — with no
                                   // instance there is nothing behind the screen at all.
@@ -413,7 +413,7 @@
 
   /* ===== HIDING ROWS FROM THE LEFT NAV =========================================================
    *
-   * Anyone who never opens Torrents, or 4chan, or six games, is paying for them with a row of the
+   * Anyone who never opens Torrents, or six games, is paying for them with a row of the
    * sidebar on every screen. So the rows are a PREFERENCE: turn one off and it leaves the sidebar
    * and the phone's ☰ More sheet. It is stored with the rest of the client prefs in the per-account
    * kind-30078 document `pcai:client-prefs`, so a sidebar tidied on a laptop is tidy on the phone.
@@ -5093,7 +5093,7 @@
 
   // ---------- view routing ----------
   // The 340px right rail is a companion to a TIMELINE — it only makes sense beside a vertical list of
-  // notes. Almost nothing else in the app is that: AI chat, News, Markets, Stats, Torrents, 4chan,
+  // notes. Almost nothing else in the app is that: AI chat, News, Markets, Stats, Torrents,
   // Repos, chat rooms, Shopping, Streams, Pics, Calls, Files, Settings, Admin, Live Translate and the
   // games are all forms, boards, grids, players or their own split panes, and every one of them would
   // rather have the width. The rail is stale there too — refreshRightbar() only updates on home/global.
@@ -5283,7 +5283,7 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', '4chan':'4chan', news:'News 🗞️', websearch:'Web Search 🔎', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
     { const tl = (v==='home'||v==='global'||v==='trending');   // the three views that carry the .tl-tabs header
@@ -5389,7 +5389,6 @@
     if (VIEW==='chat') return renderChatrooms();
     if (VIEW==='torrents') return renderTorrents();
     if (VIEW==='repos') return renderRepos();
-    if (VIEW==='4chan') return render4chan();
     if (VIEW==='news'){ if(window.PCNews) return window.PCNews.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='websearch'){ if(window.PCWebSearch) return window.PCWebSearch.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='terminal'){ if(window.PCTerm) return window.PCTerm.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
@@ -13290,7 +13289,7 @@
   }
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
     const _off=navHiddenSet();
-    const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['communities','users','Communities'],['chat','chat','Chat'],['torrents','magnet','Torrents'],['repos','git','Git'],['4chan','leaf','4chan'],['stats','bars','Server Stats']]
+    const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['communities','users','Communities'],['chat','chat','Chat'],['torrents','magnet','Torrents'],['repos','git','Git'],['stats','bars','Server Stats']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='markets')     // Markets needs the AI backend (Budget is client-only, so it stays)
                    && !_off.has(v));                              // …and the user's own Settings → Sidebar choices
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-compass"></use></svg> Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}${v==='chat'?'<i id="chat-badge-m" class="badge hidden"></i>':''}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{
@@ -15175,9 +15174,6 @@
     })();
   }
 
-  // ---- 4chan browser (Discover) — live catalog/thread via the /api/4chan/* backend (proxies
-  // a.4cdn.org through the built-in proxy). Content is ephemeral + re-fetchable, so it is NOT stored
-  // as relay events (that would bloat the WoT relay with non-Nostr junk); the view fetches fresh.
   // ---------- Pics: a picture-first feed (NIP-68 kind-20 + image notes) as a media grid ----------
   function _firstImage(ev){
     for(const t of (ev.tags||[])){
@@ -15205,83 +15201,6 @@
     const grid=$('#pics-grid'); if(!grid) return;
     grid.innerHTML = pics.length ? pics.map(x=>`<div class="pic-card" data-id="${x.e.id}">${_hold(`<img src="${enc(x.img)}" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()">`, x.img)}</div>`).join('') : '<div class="empty">No pics found yet.</div>';
     $$('.pic-card',grid).forEach(c=> c.onclick=()=> openThread(c.dataset.id));
-  }
-
-  // ---------- 4chan browser (Discover) ----------
-  // Board picker + mobile-friendly grid; thumbnails open in the shared lightbox. ----
-  const _4CHAN_BOARDS = [['g','/g/ Tech'],['a','/a/ Anime'],['pol','/pol/ Politics'],['h','/h/ NSFW']];
-  let _4chanBoard = '4chan' in (window._pcState||{}) ? window._pcState['4chan'] : 'g';
-
-  async function render4chan(){
-    const feed=$('#feed');
-    feed.innerHTML = `<div class="fc-bar">${_4CHAN_BOARDS.map(([b,l])=>
-      `<button class="fc-tab${b===_4chanBoard?' on':''}${b==='h'?' nsfw':''}" data-board="${b}">${enc(l)}</button>`).join('')}</div>
-      <div class="fc-grid" id="fc-grid"><div class="spinner"></div></div>`;
-    $$('.fc-tab',feed).forEach(t=> t.onclick=()=>{ _4chanBoard=t.dataset.board; (window._pcState=window._pcState||{})['4chan']=_4chanBoard; render4chan(); });
-    let data=null;
-    try{ const r=await fetch('/api/4chan/catalog?board='+encodeURIComponent(_4chanBoard)); if(!r.ok) throw 0; data=await r.json(); }
-    catch(_){ const g=$('#fc-grid'); if(g) g.innerHTML='<div class="empty">Couldn\'t load /'+enc(_4chanBoard)+'/ — the board may be blocked or 4chan is unreachable.</div>'; return; }
-    if(VIEW!=='4chan') return;
-    const grid=$('#fc-grid'); if(!grid) return;
-    const threads=(data&&data.threads)||[];
-    grid.innerHTML = threads.length ? threads.map(t=>
-      `<div class="fc-card" data-id="${enc(String(t.thread_id))}">
-        ${t.thumb_url?`<img class="fc-thumb" src="${enc('/api/4chan/proxy?url='+encodeURIComponent(t.thumb_url))}" loading="lazy" onerror="this.style.visibility='hidden'">`:'<div class="fc-thumb"></div>'}
-        <div class="fc-card-body"><div class="fc-title">${enc(t.title||'(no subject)')}</div>
-          <div class="fc-meta">💬 ${t.replies||0} · 🖼 ${t.images||0}</div></div>
-      </div>`).join('') : '<div class="empty">No threads.</div>';
-    $$('.fc-card',grid).forEach(c=> c.onclick=()=> open4chanThread(_4chanBoard, c.dataset.id));
-  }
-
-  async function open4chanThread(board, id){
-    const feed=$('#feed');
-    feed.innerHTML = `<div class="fc-thread-top">
-        <button class="btn btn-ghost small" id="fc-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>/${enc(board)}/</button>
-        <a class="btn btn-ghost small" href="https://boards.4chan.org/${enc(board)}/thread/${enc(id)}" target="_blank" rel="noopener">Open on 4chan ↗</a>
-        <button class="btn btn-cyan small" id="fc-sum"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Summarize</button>
-        <button class="btn btn-neon small" id="fc-share"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Share</button>
-      </div>
-      <div class="fc-summary hidden" id="fc-summary"></div>
-      <div class="fc-posts" id="fc-posts"><div class="spinner"></div></div>`;
-    $('#fc-back').onclick=()=> render4chan();
-    $('#fc-sum').onclick=()=> summarize4chan(board, id);
-    // Share on Nostr → open the composer pre-filled with the thread link
-    $('#fc-share').onclick=()=> compose({text: `https://boards.4chan.org/${board}/thread/${id}`});
-    let data=null;
-    try{ const r=await fetch(`/api/4chan/thread?board=${encodeURIComponent(board)}&thread_id=${encodeURIComponent(id)}`); if(!r.ok) throw 0; data=await r.json(); }
-    catch(_){ const p=$('#fc-posts'); if(p) p.innerHTML='<div class="empty">Couldn\'t load the thread.</div>'; return; }
-    if(VIEW!=='4chan') return;
-    const posts=(data&&data.posts)||[]; const box=$('#fc-posts'); if(!box) return;
-    box.innerHTML = posts.length ? posts.map(p=>{
-      // The thread endpoint ALREADY returns thumb_url/image_url as /api/4chan/proxy paths — use them
-      // as-is (re-wrapping them double-proxied → broken → no image). Show the small THUMBNAIL to save
-      // bandwidth; tap opens the full-size image (or video) in the lightbox.
-      let media='';
-      if(p.thumb_url){
-        const isVid=/\.(webm|mp4|m4v|mov|ogg)$/i.test(p.image_url_direct||p.image_url||'');
-        // tabindex + role: this is an <a> with no href, so Tab skipped it and the images in a thread could
-        // not be opened from the keyboard at all. Enter/Space are wired below.
-        media=`<a class="fc-post-thumb${isVid?' vid':''}" tabindex="0" role="button" aria-label="Open ${isVid?'video':'image'}" data-full="${enc(p.image_url||p.thumb_url)}" data-kind="${isVid?'video':'image'}">`
-            + `<img src="${enc(p.thumb_url)}" loading="lazy" onerror="this.parentNode.style.display='none'">`
-            + `${isVid?'<span class="fc-play">▶</span>':''}</a>`;
-      }
-      const body = p.com ? `<div class="fc-post-body">${enc(p.com)}</div>` : '';
-      return `<div class="fc-post"><div class="fc-post-hd"><span class="fc-no">#${enc(String(p.no))}</span> <span class="fc-name">${enc(p.name||'Anonymous')}</span></div>${media}${body}</div>`;
-    }).join('') : '<div class="empty">No posts.</div>';
-    $$('.fc-post-thumb',box).forEach(a=>{
-      a.onclick=()=> openLightbox(a.dataset.full, a.dataset.kind==='video'?'video':undefined);
-      a.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '||e.key==='Spacebar'){ e.preventDefault(); a.click(); } };
-    });
-  }
-
-  async function summarize4chan(board, id){
-    const box=$('#fc-summary'); if(!box) return;
-    box.classList.remove('hidden'); box.innerHTML='<div class="spinner"></div>';
-    try{
-      const r=await fetch(`/api/4chan/summarize?board=${encodeURIComponent(board)}&thread_id=${encodeURIComponent(id)}`, {credentials:'include'});
-      const j=await r.json().catch(()=>({}));
-      box.innerHTML = (r.ok && j.summary) ? `<h4><svg class="ic h-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Summary</h4>${linkify(j.summary)}` : `<div class="muted">${enc(j.error||'Summary unavailable (needs AI access).')}</div>`;
-    }catch(_){ box.innerHTML='<div class="muted">Summary failed.</div>'; }
   }
 
   // Files view = two tabs: Public (your built-in Blossom blobs, shareable URLs) and AI Chat
@@ -26276,7 +26195,7 @@
         // not obvious from a button ("where did Meme Builder go?"), and it is one tap from Connect.
         if(non) non.onclick=async()=>{
           if(_standalone()){ toast('already running on relays only'); return; }
-          if(!await uiConfirm('Run on relays only? AI, Meme Builder, News, Torrents, 4chan and Server Stats need a server and will be hidden. Your key, posts, Notes, Passwords and Budget are on relays and are unaffected — you can name an instance again at any time.')) return;
+          if(!await uiConfirm('Run on relays only? AI, Meme Builder, News, Torrents and Server Stats need a server and will be hidden. Your key, posts, Notes, Passwords and Budget are on relays and are unaffected — you can name an instance again at any time.')) return;
           if(window.__PC_SET_INSTANCE__) window.__PC_SET_INSTANCE__('');
           else { try{ localStorage.setItem('pc_instance',''); }catch(_){} location.reload(); }
         };
@@ -27886,7 +27805,7 @@
     '#feed .thread-node[data-tid]',
     '#feed article.note[data-id]',       // timeline
     '#feed .notif[data-open]',           // notifications (the updater row has no data-open — not selectable)
-    // Every other card view — Streams, Articles, Shopping, Communities, 4chan, Pics. Deliberately the SAME
+    // Every other card view — Streams, Articles, Shopping, Communities, Pics. Deliberately the SAME
     // list the app already uses to mean "a card" (see the long-press handler), so a new card type is picked
     // up here without a second place to remember.
     '#feed .draft-card[data-draft], #feed .draft-art[data-id]',   // Drafts (post + article)
@@ -27914,9 +27833,8 @@
     '#feed .ai-msgs .ai-msg',
     '#dm-list .dm-peer[data-peer]',      // messages
     // The DETAIL views you open INTO. The list that got you here was navigable, but what it opened was
-    // not: Markets' tickers, a 4chan thread's posts, a chat room's messages. Same rows, same keys.
+    // not: Markets' tickers, a chat room's messages. Same rows, same keys.
     '#feed .mkts-card',                  // Markets (NOT .mkt-card above — that is Shopping)
-    '#fc-posts .fc-post',                // an open 4chan thread
     '#ch-msgs .chat-msg[data-mid]',      // an open chat room
     // An open git repo: the file list and the commit list. Both are plain vertical lists, so they get
     // the arrows, j/k and gg/G with no stride. A .fb-row already knows how to open itself (a directory
@@ -27940,7 +27858,7 @@
     return id ? { id, pk: art.dataset.pk || '' } : null;
   }
   function _selEl(){
-    // Prefer the live element: not every card view gives its cards an id (4chan, some listings), and those
+    // Prefer the live element: not every card view gives its cards an id (some listings), and those
     // cannot be found again by key. Fall back to the key so a keyed row survives the feed re-rendering
     // under it — which is what happens constantly on a live timeline.
     if(_selRef && _selRef.isConnected){ _selRef.classList.add('sel'); return _selRef; }
@@ -28268,7 +28186,7 @@
     });
   })();
 
-  // Alt+← goes BACK out of whatever you opened. Every detail view — an article, a 4chan thread, a chat
+  // Alt+← goes BACK out of whatever you opened. Every detail view — an article, a chat
   // room, a community, a stream, a listing, a DM — puts a "←" button in its header, and every one of them
   // was mouse-only: you could open the thing from the keyboard and then had no way out of it.
   // An explicit list rather than [id$="-back"], because that would also match #follow-all-back, which
@@ -28526,7 +28444,7 @@
       for(const el of document.querySelectorAll(sel)){ if(shown(el) && can(el)) return el; }
     }
     // Otherwise find it GENERICALLY. Enumerating every view that owns its own pane (News, Markets,
-    // Torrents, Repos, 4chan…) would just be a list to forget to update — walk out from the feed instead
+    // Torrents, Repos…) would just be a list to forget to update — walk out from the feed instead
     // and take the biggest visible scrollable box. Node-bounded: a scroller sits near the top of a view's
     // subtree, and a keypress must not walk a thousand list rows to find one.
     let best=null, bestH=0, budget=400;

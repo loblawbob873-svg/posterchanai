@@ -153,9 +153,9 @@ class LockedRowTests(unittest.TestCase):
             self.assertIn(k, r["visible"], f"{k} was hidden by a document that asked for it")
 
     def test_setNavHidden_refuses_to_write_them(self):
-        r = run(hide=["settings", "bookmarks", "blossom", "4chan"])
-        self.assertEqual(r["published"], [{"navHidden": ["4chan"]}])
-        self.assertEqual(r["settings"]["navHidden"], ["4chan"])
+        r = run(hide=["settings", "bookmarks", "blossom", "markets"])
+        self.assertEqual(r["published"], [{"navHidden": ["markets"]}])
+        self.assertEqual(r["settings"]["navHidden"], ["markets"])
 
     def test_they_are_not_listed_in_the_editor_at_all(self):
         """Not a disabled switch — a control that cannot move is not a setting, and three of them at
@@ -184,8 +184,8 @@ class LockedRowTests(unittest.TestCase):
 class HidingTests(unittest.TestCase):
 
     def test_a_hidden_row_leaves_the_sidebar_and_nothing_else_does(self):
-        r = run(hide=["torrents", "4chan", "notes"])
-        for k in ("torrents", "4chan", "notes"):
+        r = run(hide=["torrents", "markets", "notes"])
+        for k in ("torrents", "markets", "notes"):
             self.assertNotIn(k, r["visible"])
         for k in ("global", "messages", "news", "chess", "settings"):
             self.assertIn(k, r["visible"])
@@ -224,9 +224,9 @@ class HidingTests(unittest.TestCase):
         self.assertEqual(once["visible"], twice["visible"])
 
     def test_turning_a_row_back_on_brings_it_back(self):
-        r = run(settings={"navHidden": ["torrents", "4chan"]}, hide=["4chan"])
+        r = run(settings={"navHidden": ["torrents", "markets"]}, hide=["markets"])
         self.assertIn("torrents", r["visible"])
-        self.assertNotIn("4chan", r["visible"])
+        self.assertNotIn("markets", r["visible"])
 
 
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
@@ -256,10 +256,10 @@ class EditorTests(unittest.TestCase):
         self.assertIn("notes", r["editorKeys"])
 
     def test_the_save_is_written_locally_and_published(self):
-        r = run(editor={"uncheck": ["torrents", "4chan"]})
-        self.assertEqual(sorted(r["settings"]["navHidden"]), ["4chan", "torrents"])
+        r = run(editor={"uncheck": ["torrents", "markets"]})
+        self.assertEqual(sorted(r["settings"]["navHidden"]), ["markets", "torrents"])
         self.assertEqual(len(r["published"]), 1)
-        self.assertEqual(sorted(r["published"][0]["navHidden"]), ["4chan", "torrents"])
+        self.assertEqual(sorted(r["published"][0]["navHidden"]), ["markets", "torrents"])
 
 
 @unittest.skipIf(shutil.which("node") is None, "node not installed")

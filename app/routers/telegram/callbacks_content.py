@@ -1,7 +1,7 @@
 """Auto-split from callbacks.py: content callback handlers. Bodies moved verbatim."""
 from ._common import ChatService, CommandService, User, _MEDIA_ACTION_TTL, _media_action_cache, _news_post_cache, _news_source_cache, _youtube_action_cache, logger, re, telegram_service, time
-from .keyboards import _4chan_initial_keyboard, _build_torrent_keyboard, _has_nostr, _has_pleroma, _news_menu_keyboard, _split_news_into_articles, _strip_cmd_links, _strip_hashtags, _torrents_menu_keyboard, re
-from .senders import User, _has_pleroma, _media_action_cache, _news_source_cache, _offer_social_post, _offer_ytdl_share, _offer_ytdl_video_actions, _send_4chan_catalog, _send_4chan_thread, _send_active_torrents, _send_news_source_selector, _send_torrent_results, _strip_cmd_links, logger, re, telegram_service, time
+from .keyboards import _build_torrent_keyboard, _has_nostr, _has_pleroma, _news_menu_keyboard, _split_news_into_articles, _strip_cmd_links, _strip_hashtags, _torrents_menu_keyboard, re
+from .senders import User, _has_pleroma, _media_action_cache, _news_source_cache, _offer_social_post, _offer_ytdl_share, _offer_ytdl_video_actions, _send_active_torrents, _send_news_source_selector, _send_torrent_results, _strip_cmd_links, logger, re, telegram_service, time
 
 
 async def _cb_t(update, db, chat_id, data, callback_query, callback_query_id):
@@ -155,102 +155,6 @@ async def _cb_n(update, db, chat_id, data, callback_query, callback_query_id):
         except Exception as cb_err:
             logger.error(f"Nyaa callback error: {cb_err}", exc_info=True)
             await telegram_service.send_message(chat_id, f"Error: {cb_err}")
-
-
-async def _cb_4c(update, db, chat_id, data, callback_query, callback_query_id):
-        cb_user = db.query(User).filter(
-            User.telegram_chat_id == chat_id,
-            User.telegram_enabled == True
-        ).first()
-
-        if not cb_user:
-            await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
-            return {"ok": True}
-
-        parts = data.split(":")
-        action = parts[1] if len(parts) > 1 else ""
-
-        # 4chan buttons carry numeric offsets / thread ids in parts[3:]. A stale or
-        # tampered button with a non-numeric value would raise ValueError on int() —
-        # bail gracefully instead.
-        if any(p and not p.lstrip("-").isdigit() for p in parts[3:]):
-            await telegram_service.answer_callback_query(
-                callback_query_id, text="That button is no longer valid — reopen the menu.",
-                show_alert=True)
-            return {"ok": True}
-
-        if action == "select":
-            # Show board selector
-            await telegram_service.send_message(
-                chat_id,
-                "🍀 *4chan Board Selector*\n\nChoose a board to browse:",
-                reply_markup=_4chan_initial_keyboard()
-            )
-            return {"ok": True}
-
-        elif action == "board" and len(parts) >= 3:
-            board = parts[2]
-            offset = int(parts[3]) if len(parts) >= 4 else 0
-            user_id = cb_user.id if cb_user else 0
-            await _send_4chan_catalog(chat_id, board, user_id, offset=offset)
-            return {"ok": True}
-
-        elif action == "catalognext" and len(parts) >= 4:
-            board = parts[2]
-            offset = int(parts[3])
-            user_id = cb_user.id if cb_user else 0
-            await _send_4chan_catalog(chat_id, board, user_id, offset=offset)
-            return {"ok": True}
-
-        elif action == "catalogprev" and len(parts) >= 4:
-            board = parts[2]
-            offset = int(parts[3])
-            user_id = cb_user.id if cb_user else 0
-            await _send_4chan_catalog(chat_id, board, user_id, offset=offset)
-            return {"ok": True}
-
-        elif action == "thread" and len(parts) >= 4:
-            board = parts[2]
-            thread_id = int(parts[3])
-            user_id = cb_user.id if cb_user else 0
-            await _send_4chan_thread(chat_id, board, thread_id, user_id)
-            return {"ok": True}
-
-        elif action == "summarize" and len(parts) >= 4:
-            board = parts[2]
-            thread_id = int(parts[3])
-            user_id = cb_user.id if cb_user else 0
-            await _send_4chan_thread(chat_id, board, thread_id, user_id, summarize=True)
-            return {"ok": True}
-
-        elif action == "refreshthread" and len(parts) >= 4:
-            board = parts[2]
-            thread_id = int(parts[3])
-            offset = int(parts[4]) if len(parts) >= 5 else 0
-            user_id = cb_user.id if cb_user else 0
-            # Send loading message
-            await telegram_service.send_message(chat_id, "🔄 Refreshing thread...")
-            # Reload the thread at current offset
-            await _send_4chan_thread(chat_id, board, thread_id, user_id, offset=offset)
-            return {"ok": True}
-
-        elif action == "nextpage" and len(parts) >= 5:
-            board = parts[2]
-            thread_id = int(parts[3])
-            offset = int(parts[4])
-            user_id = cb_user.id if cb_user else 0
-            # Load next page
-            await _send_4chan_thread(chat_id, board, thread_id, user_id, offset=offset)
-            return {"ok": True}
-
-        elif action == "prevpage" and len(parts) >= 5:
-            board = parts[2]
-            thread_id = int(parts[3])
-            offset = int(parts[4])
-            user_id = cb_user.id if cb_user else 0
-            # Load previous page
-            await _send_4chan_thread(chat_id, board, thread_id, user_id, offset=offset)
-            return {"ok": True}
 
 
 async def _cb_news(update, db, chat_id, data, callback_query, callback_query_id):

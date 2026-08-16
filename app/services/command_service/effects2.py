@@ -678,14 +678,3 @@ class _Effects2Mixin:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
-    async def _4chan_command(self, arg: str) -> dict:
-        """Open 4chan catalog browser. Optional board: g, pol, a, or h."""
-        allowed_boards = ("g", "pol", "a", "h")
-        board = (arg or "g").strip().lower()
-        if board not in allowed_boards:
-            board = "g"
-        return {
-            "type": "4chan",
-            "content": f"Opening 4chan /{board}/ catalog.",
-            "board": board,
-        }

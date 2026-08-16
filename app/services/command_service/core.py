@@ -685,11 +685,6 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             return await self._todo_command(arg)
         elif command == "translate":
             return await self._translate_command(arg, attachments=attachments)
-        # NOTE: `4chan` is no longer offered — it was dropped from COMMANDS (so it's out of the help
-        # sheet and no longer parsed as a command). The branch is kept because the client's Discover →
-        # 4chan VIEW is a separate feature and still renders this response type.
-        elif command == "4chan":
-            return await self._4chan_command(arg)
         elif command == "compress":
             return await self._compress_command(attachments)
         elif command == "removebackground":

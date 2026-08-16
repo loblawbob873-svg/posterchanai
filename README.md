@@ -198,7 +198,6 @@ A companion **browser extension** (Firefox, and Chrome / Brave via MV3) makes yo
 
 ### Extensibility & admin
 
-- **4chan** integration (optional)
 - **Remote node management**: run OS commands across SSH-reachable machines (or a per-user Debian **sandbox** container) from chat or Telegram, with long-running background jobs and a **tool-calling agentic mode** (one node or all nodes) that streams each step live. The agent keeps a persistent `/workspace`, and you can pull a file — or the agent's whole workspace — **back out** as an encrypted **Blossom** download with `node get <path>` / `node backup` (every sandbox agent run auto-archives its workspace too). See [Remote node management](#remote-node-management).
 - **Admin panel**: users, API keys, LLM/image/email settings, systemd service setup
 - **Multi-user** with registration (optional), email verification, and quotas

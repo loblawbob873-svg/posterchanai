@@ -1,7 +1,7 @@
 """Auto-split from messages.py: _msg_command."""
 from ._common import Conversation, Message, User, _news_post_cache, asyncio, logger, re, telegram_service
-from .keyboards import _4chan_initial_keyboard, _build_torrent_keyboard, _has_nostr, _has_pleroma, _help_main_keyboard, _news_menu_keyboard, _split_news_into_articles, _strip_cmd_links, _torrent_nav_keyboard, re
-from .senders import User, _has_pleroma, _offer_social_post, _offer_ytdl_video_actions, _send_4chan_catalog, _send_active_torrents, _send_nyaa_results, _send_torrent_results, _strip_cmd_links, _torrent_nav_keyboard, asyncio, logger, re, telegram_service
+from .keyboards import _build_torrent_keyboard, _has_nostr, _has_pleroma, _help_main_keyboard, _news_menu_keyboard, _split_news_into_articles, _strip_cmd_links, _torrent_nav_keyboard, re
+from .senders import User, _has_pleroma, _offer_social_post, _offer_ytdl_video_actions, _send_active_torrents, _send_nyaa_results, _send_torrent_results, _strip_cmd_links, _torrent_nav_keyboard, asyncio, logger, re, telegram_service
 
 
 async def _msg_command(_make_tg_node_notify, arg, attachments, chat_id, command, command_service, db, has_images, reply_to, text, user_obj):
@@ -243,24 +243,6 @@ async def _msg_command(_make_tg_node_notify, arg, attachments, chat_id, command,
                         result = await command_service.execute_command(command, arg)
                         user_id = user_obj.id if user_obj else 0
                         await _send_nyaa_results(chat_id, user_id)
-                        return {"ok": True}
-                    elif command == "4chan":
-                        # Parse board from argument
-                        arg_parts = arg.strip().split()
-                        board = arg_parts[0].lower() if arg_parts else None
-                        allowed_boards = ("g", "pol", "a", "h")
-                        
-                        if board and board in allowed_boards:
-                            # Valid board specified, show catalog
-                            user_id = user_obj.id if user_obj else 0
-                            await _send_4chan_catalog(chat_id, board, user_id)
-                        else:
-                            # No board specified or invalid board, show board selector
-                            await telegram_service.send_message(
-                                chat_id,
-                                "🍀 *4chan Board Selector*\n\nChoose a board to browse:",
-                                reply_markup=_4chan_initial_keyboard()
-                            )
                         return {"ok": True}
                     elif command == "news":
                         # If no argument provided, show the news menu

@@ -160,76 +160,6 @@ def _torrent_nav_keyboard() -> dict:
     }
 
 
-def _4chan_initial_keyboard() -> dict:
-    """Return initial board selection keyboard when user types '4chan' without a board."""
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "🖥 /g/ Technology", "callback_data": "4c:board:g:0"},
-                {"text": "🌎 /pol/", "callback_data": "4c:board:pol:0"},
-            ],
-            [
-                {"text": "🇯🇵 /a/ Anime", "callback_data": "4c:board:a:0"},
-                {"text": "🔞 /h/ Hentai", "callback_data": "4c:board:h:0"},
-            ],
-        ]
-    }
-
-
-def _4chan_board_keyboard(board: str = "g") -> dict:
-    """Return 4chan board selection keyboard."""
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "🖥 /g/ Technology", "callback_data": "4c:board:g:0"},
-                {"text": "🌎 /pol/", "callback_data": "4c:board:pol:0"},
-            ],
-            [
-                {"text": "🇯🇵 /a/ Anime", "callback_data": "4c:board:a:0"},
-                {"text": "🔞 /h/ Hentai", "callback_data": "4c:board:h:0"},
-            ],
-        ]
-    }
-
-
-def _4chan_thread_keyboard(board: str, thread_id: int, has_summary: bool = False, offset: int = 0, total_posts: int = 0) -> dict:
-    """Build inline keyboard for viewing a 4chan thread."""
-    buttons = []
-    posts_per_page = 10
-    
-    # First row: Summarize and Refresh
-    row1 = []
-    if not has_summary:
-        row1.append({"text": "📝 Summarize", "callback_data": f"4c:summarize:{board}:{thread_id}"})
-    row1.append({"text": "🔄 Refresh", "callback_data": f"4c:refreshthread:{board}:{thread_id}:{offset}"})
-    if row1:
-        buttons.append(row1)
-    
-    # Second row: Pagination buttons (Previous/Next)
-    row2 = []
-    if offset > 0:
-        prev_offset = max(0, offset - posts_per_page)
-        row2.append({"text": "⬅️ Previous", "callback_data": f"4c:prevpage:{board}:{thread_id}:{prev_offset}"})
-    # Show Next button if there are more replies after current page
-    total_replies = total_posts - 1  # Exclude OP
-    remaining_replies = total_replies - offset - posts_per_page
-    if remaining_replies > 0:
-        next_offset = offset + posts_per_page
-        row2.append({"text": "Next ➡️", "callback_data": f"4c:nextpage:{board}:{thread_id}:{next_offset}"})
-    if row2:
-        buttons.append(row2)
-    
-    # Third row: Open on 4chan
-    buttons.append([
-        {"text": "🔗 Open on 4chan", "url": f"https://boards.4chan.org/{board}/thread/{thread_id}"},
-    ])
-    # Fourth row: Back to catalog
-    buttons.append([
-        {"text": "⬅️ Back to Catalog", "callback_data": f"4c:board:{board}"},
-    ])
-    return {"inline_keyboard": buttons}
-
-
 def _torrents_menu_keyboard() -> dict:
     """Return torrents main menu keyboard."""
     return {
@@ -253,61 +183,6 @@ def _torrents_menu_keyboard() -> dict:
             ],
         ]
     }
-
-
-def _clean_4chan_text(text: str) -> str:
-    """Clean 4chan HTML text for Telegram display.
-    
-    Decodes HTML entities and escapes Telegram markdown characters.
-    """
-    import html
-    if not text:
-        return ""
-    # Decode HTML entities (&gt; -> >, &lt; -> <, &quot; -> ", etc.)
-    text = html.unescape(text)
-    # Escape Telegram markdown chars
-    text = text.replace("*", "\\*").replace("_", "\\_").replace("[", "\\[").replace("]", "\\]")
-    return text
-
-
-def _format_4chan_post(post: dict, max_len: int = 800) -> str:
-    """Format a single 4chan post for Telegram display.
-    
-    Handles 4chan's HTML content: converts <br> to newlines, strips other tags,
-    decodes HTML entities, and escapes Telegram markdown characters.
-    """
-    import html
-    
-    name = post.get("name", "Anonymous")
-    com = post.get("com", "")
-    no = post.get("no", 0)
-    
-    if not com:
-        com = ""
-    
-    # Convert <br> tags to newlines first (4chan uses these for line breaks)
-    com = re.sub(r"<br\s*/?>", "\n", com, flags=re.IGNORECASE)
-    
-    # Remove other HTML tags (quotes, links, spans, etc.)
-    com = re.sub(r"<[^>]+>", "", com)
-    
-    # Decode HTML entities (&gt; -> >, &lt; -> <, &quot; -> ", etc.)
-    com = html.unescape(com)
-    
-    # Clean up whitespace (collapse multiple spaces, but preserve newlines)
-    lines = com.split("\n")
-    lines = [" ".join(line.split()) for line in lines]  # Collapse spaces per line
-    com = "\n".join(line for line in lines if line)  # Remove empty lines
-    
-    # Escape markdown chars for Telegram (do this AFTER HTML decoding)
-    com = com.replace("*", "\\*").replace("_", "\\_").replace("[", "\\[").replace("]", "\\]")
-    
-    # Truncate if needed (respecting line breaks)
-    if len(com) > max_len:
-        com = com[:max_len].rsplit("\n", 1)[0] + "..."
-    
-    text = f"*No.{no}* — _{name}_\n{com}" if com else f"*No.{no}* — _{name}_"
-    return text
 
 
 def _news_menu_keyboard() -> dict:
@@ -350,37 +225,6 @@ def _news_source_keyboard(sources: list) -> dict:
     return {"inline_keyboard": buttons}
 
 
-def _4chan_board_switcher_keyboard(current_board: str = "g", offset: int = 0, total_threads: int = 0) -> dict:
-    """Return board switcher keyboard with pagination."""
-    buttons = []
-    threads_per_page = 10
-    
-    # First row: Pagination (Previous/Next)
-    row1 = []
-    if offset > 0:
-        prev_offset = max(0, offset - threads_per_page)
-        row1.append({"text": "⬅️ Previous", "callback_data": f"4c:catalogprev:{current_board}:{prev_offset}"})
-    # Show Next if there are more threads
-    remaining = total_threads - offset - threads_per_page
-    if remaining > 0:
-        next_offset = offset + threads_per_page
-        row1.append({"text": "Next ➡️", "callback_data": f"4c:catalognext:{current_board}:{next_offset}"})
-    if row1:
-        buttons.append(row1)
-    
-    # Second row: Board switcher
-    buttons.append([
-        {"text": "🖥 /g/" if current_board != "g" else "✅ /g/", "callback_data": f"4c:board:g:0"},
-        {"text": "🌎 /pol/" if current_board != "pol" else "✅ /pol/", "callback_data": f"4c:board:pol:0"},
-    ])
-    buttons.append([
-        {"text": "🇯🇵 /a/" if current_board != "a" else "✅ /a/", "callback_data": f"4c:board:a:0"},
-        {"text": "🔞 /h/" if current_board != "h" else "✅ /h/", "callback_data": f"4c:board:h:0"},
-    ])
-    
-    return {"inline_keyboard": buttons}
-
-
 def _help_main_keyboard() -> dict:
     """Inline keyboard for the help main menu."""
     return {
@@ -399,7 +243,6 @@ def _help_main_keyboard() -> dict:
             ],
             [
                 {"text": "🎌 Nyaa",        "callback_data": "n:prompt"},
-                {"text": "🍀 4chan",       "callback_data": "4c:select"},
             ],
             [
                 {"text": "🌐 Translate",   "callback_data": "help:translate"},

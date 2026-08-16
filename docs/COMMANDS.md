@@ -29,7 +29,6 @@ the LLM. The bots reply with TTS via `/narrate <message>`.
 | `ytdl <url>` | Download audio (MP3 default); `ytdl video <url>` for video (YouTube/X/Nitter — Nitter links resolve via X.com). Add `clip <start> <end>` and/or `compress`, e.g. `ytdl video <url> clip 0:10 0:30 compress` |
 | `torrents <query>` / `nyaa <query>` | Torrent search / anime torrents |
 | `dailynews <source>` / `news <source>` | Headlines (e.g. `news drudge`) |
-| `4chan [g\|pol\|h]` | 4chan catalog browser |
 | `geni <prompt>` | Generate an image |
 | `musicgeni <style prompt> [\| lyrics]` | Generate a song (ACE-Step). Web UI + Telegram only. See [MUSIC.md](MUSIC.md) |
 | `videogeni <prompt> [\| negative]` | Generate a short video (native diffusers Wan2.1). Web UI + Telegram only. Configure in Admin → Video |

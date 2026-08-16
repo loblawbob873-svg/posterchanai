@@ -238,10 +238,9 @@
 :root[data-theme] .nav-item:hover{ background:var(--panel); color:var(--text); }
 :root[data-theme] .note:hover{ background:var(--panel); }
 
-/* more hardcoded light-on-X text → theme text: form labels, fc-post body, the AI/permission gate
+/* more hardcoded light-on-X text → theme text: form labels, the AI/permission gate
    heading (the "permissions modal" is a modal() with an .ai-gate h2 that was hardcoded #fff). */
 :root[data-theme] .fld,
-:root[data-theme] .fc-post-body,
 :root[data-theme] .ai-gate h2,
 :root[data-theme] .me .mk,
 :root[data-theme] .conn{ color:var(--text); }
@@ -1283,7 +1282,7 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .more-item .news-badge{position:absolute;top:8px;inset-inline-end:8px;margin:0}
 .news-wrap{max-width:none;margin:0 auto;padding:0 6px 40px}
 /* top:-8px + the matching padding swallow .feed's 8px top padding — with top:0 a sliver of the
-   scrolling list stayed visible ABOVE the bar. Same fix as .tl-tabs / .notif-tabs / .fc-bar. */
+   scrolling list stayed visible ABOVE the bar. Same fix as .tl-tabs / .notif-tabs. */
 #news-head{position:sticky;top:-8px;padding-top:8px;z-index:3;background:var(--bg)}
 /* Feed strip scrolls; the action buttons sit OUTSIDE it so they never get pushed off the edge by a
    long feed list (70 feeds made ✓✓ and ＋ unreachable on desktop). */
@@ -3852,42 +3851,13 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
   .quoted .txt{font-size:15px}
 }
 
-/* ---- 4chan browser (Discover) — themed to match the note UI, mobile-first ---- */
-.fc-bar,.fc-thread-top{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:18px 12px 10px;position:sticky;top:-8px;z-index:3;background:var(--bg);border-bottom:1px solid var(--line)}
-.fc-tab{padding:6px 14px;border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--muted);cursor:pointer;font-family:inherit;font-size:15px;font-weight:600;white-space:nowrap}
-.fc-tab:hover{border-color:var(--cyan);color:var(--cyan)}
-.fc-tab.on{background:linear-gradient(135deg,var(--neon),var(--neon2));color:#06121a;border-color:transparent;box-shadow:var(--glow)}
-.fc-tab.nsfw{border-color:rgba(var(--accent2-rgb),.5)}
-.fc-tab.nsfw.on{box-shadow:0 0 12px rgba(var(--accent2-rgb),.5)}
-.fc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;padding:12px 12px 90px}
+/* Flashcards' card and its question title. These two selectors were shared with the 4chan
+ * browser that used to live here — the browser is gone, these are still drawn. */
 .fc-card{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel);cursor:pointer;transition:.15s}
 .fc-card:hover{border-color:var(--cyan);box-shadow:0 0 12px rgba(var(--accent-rgb),.18);transform:translateY(-2px)}
-.fc-thumb{width:100%;aspect-ratio:1/1;object-fit:cover;background:#0d0a1a;display:block}
-.fc-card-body{padding:8px 10px}
 .fc-title{font-size:13px;line-height:1.45;color:var(--text);max-height:3.6em;overflow:hidden;word-break:break-word}
-.fc-meta{margin-top:6px;font-size:12px;color:var(--muted)}
-.fc-thread-top .btn-cyan{margin-inline-start:auto}
-.fc-summary{margin:10px 12px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--panel);line-height:1.6;color:var(--text)}
-.fc-summary h4{margin:0 0 6px;color:var(--cyan)}
-.fc-posts{padding:8px 12px 90px}
-.fc-post{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:10px 12px;margin-bottom:10px}
-.fc-post::after{content:"";display:block;clear:both}
-.fc-post-hd{font-size:13px;color:var(--muted);margin-bottom:6px}
-.fc-no{color:var(--cyan);font-weight:600}
-.fc-name{color:var(--green)}
-/* small thumbnail floated left (text wraps beside it); tap opens full-size in the lightbox — saves
- * bandwidth vs loading every full image. Videos show a ▶ badge over the thumb. */
-.fc-post-thumb{display:inline-block;position:relative;float:inline-start;margin:0 12px 6px 0;cursor:zoom-in;line-height:0}
-.fc-post-thumb img{max-width:140px;max-height:140px;width:auto;height:auto;border-radius:8px;border:1px solid var(--line);background:#0d0a1a;display:block}
-.fc-post-thumb:hover img{border-color:var(--cyan);box-shadow:0 0 10px rgba(var(--accent-rgb),.25)}
-.fc-post-thumb .fc-play{position:absolute;inset-inline-start:50%;top:50%;transform:translate(-50%,-50%);font-size:24px;color:#fff;text-shadow:0 0 8px #000,0 0 4px #000;pointer-events:none}
-.fc-post-body{white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere;line-height:1.45;font-size:15px;color:#eceefb}
 @media(max-width:820px){
-  .fc-grid{grid-template-columns:1fr 1fr;gap:8px;padding:8px 8px 80px}
   .fc-title{font-size:12px}
-  .fc-post-thumb img{max-width:104px;max-height:104px}
-  .fc-thread-top .btn-cyan{margin-inline-start:0}
-  .fc-tab{font-size:13px;padding:6px 12px}
 }
 
 /* ---------- NIP-88 polls ---------- */
@@ -5861,14 +5831,13 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
 /* The splash's starter cards are a GRID, so the cursor is an outline round the whole card rather than a
    left rail — a rail on a tile reads as a border glitch, not a selection. */
 .aw-card.sel,.ai-welcome .ai-cmd.sel{outline:2px solid var(--neon);outline-offset:2px}
-/* The detail views that are now navigable too: an open 4chan thread, a chat room, Markets' tickers. */
-.fc-post.sel,.chat-msg.sel{box-shadow:inset 3px 0 0 var(--neon);border-radius:8px}
+/* The detail views that are now navigable too: a chat room, Markets' tickers. */
+.chat-msg.sel{box-shadow:inset 3px 0 0 var(--neon);border-radius:8px}
 .mkts-card.sel,.bl-more.sel{outline:2px solid var(--neon);outline-offset:2px}
 /* Cursor for the More / Files / Discover / Games sheets, which are arrow/vim navigable grids now. */
 .more-item.kb{outline:2px solid var(--neon);outline-offset:2px}
 /* A thread thumbnail is an <a> with no href — it only became reachable by being given a tabindex, so it
    needs a ring to show for it. */
-.fc-post-thumb:focus-visible{outline:2px solid var(--neon);outline-offset:3px;border-radius:8px}
 
 /* Keyboard cursor in the Effects studio, matching how a picked chip already reads. */
 .fxs-chip.kb{outline:2px solid var(--neon);outline-offset:1px}
@@ -5878,7 +5847,7 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
 /* Same cursor for the Blossom picker's grid, which is now arrow/vim navigable. */
 .file-card.kb{outline:2px solid var(--neon);outline-offset:2px}
 
-/* Cursor on the other card views (Streams, Articles, Shopping, Communities, 4chan, Pics). They are
+/* Cursor on the other card views (Streams, Articles, Shopping, Communities, Pics). They are
    bordered cards rather than full-bleed rows, so a ring reads better here than the inset rule. */
 .stream-card.sel,.article-card.sel,.mkt-card.sel,.community-card.sel,.channel-card.sel,.fc-card.sel,.pic-card.sel{
   outline:2px solid var(--neon);outline-offset:2px}

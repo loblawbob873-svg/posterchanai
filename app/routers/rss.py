@@ -1,5 +1,5 @@
 """News RSS reader endpoints (client-facing). Thin wrapper over app.services.rss_service — fetch via the
-built-in proxy (→ Tor) with a direct fallback, structured JSON, shared cache. Public (like /api/4chan);
+built-in proxy (→ Tor) with a direct fallback, structured JSON, shared cache. Public;
 the SSRF guard restricts targets to real external hosts. Per-user feed list + read state live as Nostr
 events on the client, so nothing user-specific is stored here."""
 import asyncio

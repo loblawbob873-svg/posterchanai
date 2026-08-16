@@ -89,7 +89,7 @@ async def feed(update, label):
 
 COMMANDS = [
     "help", "new", "reminders", "remind test in 5 minutes", "pins", "pin latest xrp news",
-    "todo", "budget", "bills", "torrents tv", "nyaa naruto", "news", "dailynews", "4chan",
+    "todo", "budget", "bills", "torrents tv", "nyaa naruto", "news", "dailynews",
     "geni a cat", "musicgeni happy song", "videogeni a dog running", "narrate hello",
     "meme top text", "glow", "collage", "translate spanish hola",
     "ytdl https://youtu.be/x", "post hello world", "screenshot https://example.com",

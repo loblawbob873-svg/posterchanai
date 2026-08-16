@@ -111,20 +111,6 @@ _HELP_SECTIONS = {
         "Or use `ytdl <url>` for audio, `ytdl video <url>` for video.\n"
         "Trim and/or shrink a video in one go: `ytdl video <url> clip 0:10 0:30 compress`"
     ),
-    "4chan": (
-        "🍀 *4chan Browser*\n\n"
-        "`4chan` — Select a board to browse\n"
-        "`4chan g` — View /g/ (Technology) catalog\n"
-        "`4chan pol` — View /pol/ catalog\n"
-        "`4chan a` — View /a/ (Anime) catalog\n"
-        "`4chan h` — View /h/ (Hentai) catalog\n\n"
-        "*Features:*\n"
-        "• Browse thread catalog with reply counts\n"
-        "• Tap any thread to view posts with images\n"
-        "• Summarize long threads with AI\n"
-        "• Navigate with inline buttons\n"
-        "• Open threads directly on 4chan"
-    ),
     "chat": (
         "💬 *Chat & URLs*\n\n"
         "Just send any message to chat with the AI\\.\n\n"
@@ -327,8 +313,6 @@ _TRANSLATE_LANGS = [
 ]
 _news_post_cache: dict = {}
 _news_source_cache: dict = {}
-_4chan_cache: dict = {}
-_4chan_thread_cache: dict = {}
 class TelegramWebhookUpdate(BaseModel):
     update_id: int
     message: Optional[dict] = None

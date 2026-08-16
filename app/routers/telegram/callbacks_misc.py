@@ -68,7 +68,6 @@ async def _cb_prompt(update, db, chat_id, data, callback_query, callback_query_i
             "geni":     ("🎨 Describe the image you want to generate:", "e.g. a sunset over a cyberpunk city"),
             "nyaa":     ("🔎 Type your anime search:", "e.g. one piece 1080p"),
             "torrents": ("🔍 Type your torrent search:", "e.g. dark knight 1080p"),
-            "4chan":    ("🍀 Which board? (g, pol, a, or h)", "e.g. g"),
             "screenshot": ("📸 Send the URL to screenshot:", "e.g. example.com"),
         }
         cfg = _PROMPT_CONFIGS.get(action)

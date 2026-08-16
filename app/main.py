@@ -23,7 +23,7 @@ from app.auth import get_current_user_optional, get_current_user, create_access_
 from app.models import User, VerificationToken
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api, voice_api, effects_api, search_api
 from app.auth import NATIVE_APP_ORIGINS as _NATIVE_ORIGINS
-from app.routers import fourchan, youtube_thumb, bots, push, calls, streams, rss, markets, websearch, weather, ssh_term, mempool
+from app.routers import youtube_thumb, bots, push, calls, streams, rss, markets, websearch, weather, ssh_term, mempool
 from app.routers import admin_emoji
 from app.routers import git as git_router
 from app.routers.telegram import router as telegram_router
@@ -242,7 +242,6 @@ except Exception as _card_err:
     logging.getLogger(__name__).warning("[carddav] contacts API not mounted: %s", _card_err)
 app.include_router(mail.router)
 app.include_router(torrent.router)
-app.include_router(fourchan.router)
 app.include_router(rss.router)
 app.include_router(markets.router)
 app.include_router(weather.router)
@@ -621,12 +620,6 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error starting Nostr DVM worker: {e}", exc_info=True)
             try:
-                # 4chan catalog warm-refresh (15 min, only boards a user viewed → kind-30078 cache)
-                from app.routers.fourchan import start_catalog_refresh
-                start_catalog_refresh()
-            except Exception as e:
-                logging.error(f"Error starting 4chan refresh scheduler: {e}", exc_info=True)
-            try:
                 # Markets daily digest (08:00): crypto price+news → operator kind-30078, served via /api/markets
                 from app.services.markets_service import start_markets_scheduler
                 start_markets_scheduler()
@@ -938,11 +931,6 @@ async def shutdown():
         try:
             from app.services import nostr_dvm
             await nostr_dvm.stop_worker()
-        except Exception:
-            pass
-        try:
-            from app.routers.fourchan import stop_catalog_refresh
-            stop_catalog_refresh()
         except Exception:
             pass
         try:

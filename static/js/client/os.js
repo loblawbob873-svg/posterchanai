@@ -869,7 +869,7 @@
    * position, and no memory of where you had navigated inside the view. So a background window
    * showed a picture of itself, the first click on it did nothing at all, and focusing it re-rendered
    * the view from scratch — landing you at the top of the default screen. "Click a post and it just
-   * loads the window again", "you lose your spot", and "open a 4chan thread, come back, it's the /g/
+   * loads the window again", "you lose your spot", and "open a thread, come back, it's the top of the
    * catalog again" are all the same line.
    *
    * appendChild MOVES a node and keeps its listeners, so parking and unparking is lossless and the
