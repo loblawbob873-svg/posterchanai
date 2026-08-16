@@ -187,6 +187,18 @@ def test_every_adb_call_in_the_script_is_bounded():
         assert "timeout" in stripped, f"{SCRIPT.name}:{n} calls adb without a timeout: {stripped}"
 
 
+def test_editing_the_check_script_actually_runs_the_check():
+    """The script IS the check, so it has to be one of the paths that triggers the workflow.
+
+    Without it the only way to exercise a fix to these checks is to edit the workflow file in the
+    same commit — which is how the first version happened to ship, and the next fix would have gone
+    to a repo that quietly did not run it. A check nothing triggers is indistinguishable from a
+    passing one.
+    """
+    wf = (ROOT / ".github" / "workflows" / "android-emulator.yml").read_text()
+    assert "scripts/android_device_checks.sh" in wf
+
+
 @pytest.mark.parametrize("workflow_key,expected", [("timeout-minutes: 35", True)])
 def test_the_job_timeout_is_no_longer_an_hour(workflow_key, expected):
     """An hour is not a safety net, it is a bill. The script bounds its own calls now, so the job

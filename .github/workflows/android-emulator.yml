@@ -29,10 +29,15 @@ on:
       - 'mobile/**'
       - 'static/js/client/**'
       - '.github/workflows/android-emulator.yml'
+      # The script IS the check. Leaving it out meant a fix to the checks could only be exercised by
+      # editing the workflow file in the same commit — which is exactly how the first one shipped,
+      # and the next fix would have been pushed to a repo that quietly did not run it.
+      - 'scripts/android_device_checks.sh'
   pull_request:
     paths:
       - 'mobile/**'
       - '.github/workflows/android-emulator.yml'
+      - 'scripts/android_device_checks.sh'
   workflow_dispatch:
     inputs:
       api_level:
