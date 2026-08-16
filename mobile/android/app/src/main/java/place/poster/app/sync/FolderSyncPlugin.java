@@ -454,26 +454,79 @@ public class FolderSyncPlugin extends Plugin {
     final long maxBytes = call.getLong("maxBytes", 0L) == null ? 0L : call.getLong("maxBytes", 0L);
     final List<String> excludes = strings(call.getArray("excludes"));
 
+    final int offset = call.getInt("offset", 0) == null ? 0 : call.getInt("offset", 0);
+    final int limit = call.getInt("limit", 0) == null ? 0 : call.getInt("limit", 0);
+
     // Off the WebView thread: a Pictures folder is minutes of provider queries, and blocking here
     // freezes the UI the user is watching the progress in.
     getBridge().execute(() -> {
       try {
-        SafFs.Scan sc = fs(id).scan(hash, maxBytes, excludes);
+        final String key = id + "|" + hash + "|" + maxBytes + "|" + excludes;
+        SafFs.Scan sc;
+        java.util.List<String> keys;
+        synchronized (SCAN_LOCK) {
+          if (offset == 0 || scanCache == null || !key.equals(scanCacheKey)) {
+            sc = fs(id).scan(hash, maxBytes, excludes);
+            scanCache = sc;
+            scanCacheKey = key;
+            scanKeys = new ArrayList<String>(sc.files.keySet());
+          } else {
+            sc = scanCache;
+          }
+          keys = scanKeys;
+        }
+
+        final int total = keys.size();
+        final int end = limit <= 0 ? total : Math.min(total, offset + limit);
         JSObject files = new JSObject();
-        for (java.util.Map.Entry<String, java.util.Map<String, Object>> e : sc.files.entrySet()) {
-          files.put(e.getKey(), mapToJs(e.getValue()));
+        for (int i = offset; i < end; i++) {
+          String k = keys.get(i);
+          files.put(k, mapToJs(sc.files.get(k)));
         }
         JSArray skipped = new JSArray();
-        for (java.util.Map<String, Object> s : sc.skipped) skipped.put(mapToJs(s));
+        // Only with the first page: it is small, and eleven copies of it is eleven copies.
+        if (offset == 0) for (java.util.Map<String, Object> s : sc.skipped) skipped.put(mapToJs(s));
+
         JSObject ret = new JSObject();
         ret.put("files", files);
         ret.put("skipped", skipped);
+        ret.put("total", total);
+        ret.put("done", end >= total);
+        // Let the map go the moment the last page is out. Holding a 15,000-entry snapshot for the
+        // life of the process would trade one memory spike for a permanent one.
+        if (end >= total) {
+          synchronized (SCAN_LOCK) {
+            if (key.equals(scanCacheKey)) { scanCache = null; scanKeys = null; scanCacheKey = ""; }
+          }
+        }
         call.resolve(ret);
       } catch (Exception e) {
         call.reject("scan failed: " + e.getMessage());
       }
     });
   }
+
+  /* THE FOLDER LISTING IS HANDED OVER IN PAGES, AND THAT IS WHAT STOPPED THE APP DYING.
+   *
+   * This used to answer with every file in one reply. For a real Pictures folder — measured at about
+   * 15,000 files — that object exists FOUR TIMES AT ONCE at the moment it crosses: the Java map, the
+   * org.json copy built here, the multi-megabyte JSON STRING Capacitor serialises it into to cross
+   * the bridge, and the parsed object on the other side. A WebView has far less headroom than the
+   * desktop this engine was written on, and the result is the renderer being killed the instant a
+   * sweep of that folder starts — reported exactly that way: "as soon as pictures starts syncing, it
+   * closes", with the app still sitting in the recents list, because the PROCESS never died. Only the
+   * renderer did, which is why nothing was ever thrown, logged, or catchable.
+   *
+   * The same reasoning already produced `readPart`/`writePart` for file CONTENT; the directory
+   * listing was the one whole-folder object left.
+   *
+   * The walk itself still happens once — it is minutes of provider queries and must not be repeated
+   * per page — so the result is cached here and served in slices. `limit <= 0` keeps the old
+   * behaviour intact, which is what an older client that does not page still asks for. */
+  private static final Object SCAN_LOCK = new Object();
+  private static SafFs.Scan scanCache;
+  private static String scanCacheKey = "";
+  private static java.util.List<String> scanKeys;
 
   @PluginMethod
   public void read(PluginCall call) {
