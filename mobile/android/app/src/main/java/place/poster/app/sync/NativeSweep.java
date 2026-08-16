@@ -104,6 +104,11 @@ public final class NativeSweep {
 
     public static synchronized boolean claim(String key) { return BUSY.add(key); }
 
+    /** Whether something already holds this folder. ASKED, not taken — {@link NativeRunner#plan}
+     *  uses it to decide there is nothing to wake the phone for, and taking the claim there would
+     *  mean the caller has to remember to give it back on every path that decides not to sweep. */
+    public static synchronized boolean claimed(String key) { return BUSY.contains(key); }
+
     public static synchronized void release(String key) { BUSY.remove(key); }
 
     /**

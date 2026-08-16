@@ -67,70 +67,43 @@ public class StayAwakeService extends Service {
   private boolean audioCbOn = false;
 
   /**
-   * THE FOLDER-SYNC HEARTBEAT, which is the only clock that runs while the screen is off.
+   * THE FOLDER-SYNC CLOCK USED TO LIVE HERE, AND THAT WAS THE BUG.
    *
-   * This service already keeps the process and its WebView alive — that was never the missing half.
-   * The missing half was that nothing ASKED the page to sync: on Android there is no filesystem
-   * watcher (SAF has no usable tree notification, so fs-android's `watch()` answers false), so the
-   * client's only automatic trigger was a JS `setInterval`, and Android throttles timers in a hidden
-   * WebView into uselessness. "Stay connected" was on, the process was up, and sync still stopped
-   * the moment the screen went off.
+   * It was put here because this is the service that is up with the app closed — true, and not the
+   * same as "the only one that can be". "Stay connected" is OFF BY DEFAULT and is described,
+   * correctly, as a fallback for receiving DMs and calls where no push distributor is installed. So
+   * on every phone that had never touched that switch there was NO CLOCK AT ALL, and background
+   * folder sync could not run however good the sweep engine got: the alarm that fires in Doze, the
+   * wake lock, its renewal, resumeTimers and finally an entire native sweep were all downstream of a
+   * tick nothing emitted. Reported, correctly, as syncing stopping shortly after the screen goes
+   * off — on two devices, across several rounds of "fixed".
    *
-   * The clock lives here and the work stays in JS, the same split the music controls use. It only
-   * ever emits.
+   * A FEATURE HAS TO ASK FOR WHAT IT NEEDS ITSELF. That is the same lesson the background signer
+   * cost (it could not sign, because the only thing that ever stored a key was an unrelated switch
+   * in another part of settings). The clock is {@code sync.SyncClock} now — armed by the folder-sync
+   * plugin whenever this account actually syncs a folder, landing in {@code sync.SyncTickReceiver},
+   * sweeping inside {@code sync.SyncService}. There is exactly ONE of it: a second one left here
+   * would double every wake-up on the phones that do have this switch on, which is the opposite of
+   * what the switch is for.
    *
-   * WHY THE PERIOD IS NOT A BATTERY DECISION. It looks like one and it is not: `shouldSync` on the
-   * other side declines on battery, on a metered link, when the battery is low and inside the
-   * minimum interval — which is exactly what the "only when plugged in" and "Wi-Fi only" switches
-   * already mean. A tick arriving when those say no costs one policy check.
-   *
-   * IT IS AN ALARM, NOT A HANDLER, AND THAT DISTINCTION IS THE WHOLE FEATURE. `Handler.postDelayed`
-   * schedules against `SystemClock.uptimeMillis()`, which STOPS ADVANCING IN DEEP SLEEP — and this
-   * service holds no wake lock, because a foreground service keeps the process RESIDENT without
-   * keeping the CPU AWAKE. A Handler therefore fires only when something else happens to wake the
-   * phone, so the period stretches arbitrarily in exactly the state this exists for: in a pocket,
-   * screen off, dozing. It would have looked like a fix and behaved like the bug.
-   *
-   * `setAndAllowWhileIdle` is the one that fires in Doze. Android rate-limits it to roughly once
-   * every nine minutes per app, which is the real floor here and well under the period below.
-   *
-   * WHY THE PERIOD IS JUST OVER FIFTEEN MINUTES, and it is not a battery number. `shouldSync`
-   * refuses when less than `minIntervalMs` (15 min) has passed and nothing is dirty — and on Android
-   * nothing is ever dirty, because there is no watcher. So a ten-minute alarm aliases against that
-   * floor and produces a TWENTY-minute effective period: sweep at 0, refused at 10, runs at 20. Just
-   * above the floor means every alarm that fires does the work it woke up for.
+   * The action below survives only to swallow an alarm armed by a build older than this one.
+   * PendingIntents outlive an app update, so without it a stale tick falls through to the start path
+   * and restarts a service the user may have turned off.
    */
-  private static final long SYNC_TICK_MS = 16 * 60 * 1000L;
   public static final String ACTION_SYNC_TICK = "place.poster.app.SYNC_TICK";
-  private boolean ticking = false;
 
-  private PendingIntent tickIntent() {
-    // FLAG_IMMUTABLE is not optional — Android 12+ throws when the PendingIntent is built without it.
-    return PendingIntent.getService(this, 0x5C12,
-        new Intent(this, StayAwakeService.class).setAction(ACTION_SYNC_TICK),
-        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-  }
-
-  private void armTick() {
-    android.app.AlarmManager am =
-        (android.app.AlarmManager) getSystemService(Context.ALARM_SERVICE);
-    if (am == null) return;
-    long at = android.os.SystemClock.elapsedRealtime() + SYNC_TICK_MS;
+  private void cancelLegacyTick() {
     try {
-      // ELAPSED_REALTIME_WAKEUP: counts through sleep, and wakes the device to deliver. The
-      // non-WAKEUP variants would queue until something else woke the phone, which is the Handler's
-      // failure wearing a different name.
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        am.setAndAllowWhileIdle(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, at, tickIntent());
-      } else {
-        am.set(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, at, tickIntent());
-      }
-      // Counted only where the schedule actually took. Counting before the call would make an alarm
-      // the OS refused indistinguishable from one it accepted and then never delivered — which are
-      // opposite problems with opposite fixes, and the whole point of measuring this.
-      try { place.poster.app.sync.FolderSyncPlugin.onAlarmArmed(); } catch (Throwable ignored) {}
+      android.app.AlarmManager am =
+          (android.app.AlarmManager) getSystemService(Context.ALARM_SERVICE);
+      if (am == null) return;
+      int f = PendingIntent.FLAG_UPDATE_CURRENT
+          | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
+      am.cancel(PendingIntent.getService(this, 0x5C12,
+          new Intent(this, StayAwakeService.class).setAction(ACTION_SYNC_TICK), f));
     } catch (Throwable ignored) {}
   }
+
   /** registerAudioDeviceCallback fires immediately with everything ALREADY connected. That is this
    *  service starting — at boot, most often — not a car door, and treating it as one would autoplay
    *  every time the phone reboots near a paired speaker. Same rule as MusicService's own sweep. */
@@ -268,34 +241,14 @@ public class StayAwakeService extends Service {
   public int onStartCommand(Intent intent, int flags, int startId) {
     String action = intent != null ? intent.getAction() : null;
     if (ACTION_SYNC_TICK.equals(action)) {
-      /* The alarm came back. Handled BEFORE the foreground block for the same reason DROP_STANDBY
-       * is — it is a message, not a restart — and re-armed FIRST so a throw in the emit cannot end
-       * the clock. `setAndAllowWhileIdle` is one-shot, so re-arming here is the repeat. */
-      try { place.poster.app.sync.FolderSyncPlugin.onAlarmFired(); } catch (Throwable ignored) {}
-      armTick();                      // re-armed FIRST: a throw below must not end the clock
-      /* "Only when plugged in" / "Wi-Fi only", answered here rather than by waking the WebView to
-       * be told the same thing. A pre-filter only — see FolderSyncPlugin.suppressed. */
-      boolean skip = false;
-      try { skip = place.poster.app.sync.FolderSyncPlugin.suppressed(this); } catch (Throwable ignored) {}
-      if (!skip) {
-        /* BOTH ENGINES ARE ASKED, EVERY TIME, and the per-folder lock is what makes that safe.
-         *
-         * NativeRunner does the transfer itself where the account key is on this device — Chromium
-         * throttles a hidden page's JavaScript however awake the processor is, so asking the WebView
-         * is a request it may be in no position to honour.
-         *
-         * IT USED TO SKIP THE WEBVIEW WHENEVER THE NATIVE PATH STARTED, and that reads as an
-         * optimisation and is a way to lose sync entirely. `tick()` can only answer "a thread was
-         * spawned", never "the work happened": a folder holding one conflict is deferred by the
-         * native sweep on every single run, and skipping on the strength of that silenced the engine
-         * that COULD have settled it — for that folder and, because the skip is process-wide, for
-         * every other folder on the phone. So both are asked. If the native sweep holds a folder the
-         * page's own attempt is refused with a sentence rather than a race, and a tick into a dead
-         * bridge costs nothing, which is the usual case with the screen off. */
-        try { place.poster.app.sync.NativeRunner.tick(this, "stay-connected"); } catch (Throwable ignored) {}
-        try { place.poster.app.sync.FolderSyncPlugin.tick("stay-connected"); } catch (Throwable ignored) {}
-      }
-      return START_STICKY;
+      /* A tick armed by a build older than this one, arriving after the update. Cancel it and stop:
+       * the clock is SyncClock now (see the note above), and doing the work here as well would mean
+       * two alarms and two sweeps on any phone that has this switch on. Handled BEFORE the
+       * foreground block because it is a message, not a restart — falling through would start a
+       * service the user may have turned off. */
+      cancelLegacyTick();
+      if (!running) stopSelf();   // started only to receive this: do not linger un-foregrounded
+      return running ? START_STICKY : START_NOT_STICKY;
     }
     if (ACTION_DROP_STANDBY.equals(action)) {
       // Handled BEFORE the foreground/re-arm block below: this is a message, not a restart, and
@@ -343,16 +296,9 @@ public class StayAwakeService extends Service {
        * exists). Without it the head unit sees no media app at all: nothing to display, and a PLAY
        * button with nowhere to route. */
       openStandbySession();
-      /* ONCE, for the same reason the audio callback is: onStartCommand runs again on every restart
-       * and on the STICKY relaunch, and a second posted Runnable would double the tick rate for the
-       * life of the service — then treble it. */
-      if (!ticking) {
-        ticking = true;
-        // Recorded so `armed` can be read honestly: this arm is a service start, not an alarm
-        // that failed to come back. See FolderSyncPlugin's counter note.
-        try { place.poster.app.sync.FolderSyncPlugin.onServiceStarted(); } catch (Throwable ignored) {}
-        armTick();
-      }
+      // Belt and braces for an install coming from the build where the folder-sync alarm lived here:
+      // its PendingIntent survived the update, and this is the first moment we are certainly running.
+      cancelLegacyTick();
     } catch (Throwable t) {
       running = false;
       stopSelf();
@@ -380,7 +326,7 @@ public class StayAwakeService extends Service {
    */
   private void dropNotification() {
     running = false;
-    if (RunningNote.othersRunning(false)) {
+    if (RunningNote.othersRunning(RunningNote.STAY)) {
       ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH);
       RunningNote.refresh(this);
     } else {
@@ -391,19 +337,15 @@ public class StayAwakeService extends Service {
   @Override
   public void onDestroy() {
     running = false;
-    /* The clock stops with the service. An alarm OUTLIVES the process — that is the point of it —
-     * so leaving one armed would restart this service from a dead switch, and a STICKY relaunch
-     * would then arm a second beside it. Cancelled by the same PendingIntent that set it. */
-    try {
-      android.app.AlarmManager am =
-          (android.app.AlarmManager) getSystemService(Context.ALARM_SERVICE);
-      if (am != null) am.cancel(tickIntent());
-    } catch (Throwable ignored) {}
-    ticking = false;
+    /* The folder-sync alarm is NOT cancelled here any more, and that is the point of moving it: it
+     * belongs to folder sync, which keeps running whether or not this switch is on. Only the legacy
+     * one — armed by a build where it did live here — is cleared, and it is cleared unconditionally
+     * because nothing else will ever cancel it. */
+    cancelLegacyTick();
     /* Killed by the platform rather than switched off, so nothing has redrawn the shared
      * notification: take this half out of its text instead of leaving it naming a service that is
      * gone. If nothing else is up the item goes with the process anyway. */
-    if (RunningNote.othersRunning(false)) RunningNote.refresh(this);
+    if (RunningNote.othersRunning(RunningNote.STAY)) RunningNote.refresh(this);
     closeStandbySession();
     if (audioCbOn) {
       AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);

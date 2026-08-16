@@ -36,8 +36,11 @@ def _read(*parts):
 
 SIGNER = _read(JAVA, "signer", "SignerRelayService.java")
 STAY = _read(JAVA, "push", "StayAwakeService.java")
+SYNC = _read(JAVA, "sync", "SyncService.java")
 NOTE = _read(JAVA, "RunningNote.java")
-SERVICES = (("SignerRelayService", SIGNER), ("StayAwakeService", STAY))
+# The background folder sweep is the THIRD service to post this notification, and the third is where
+# a truth table over "the other one" stops meaning anything — see othersRunning.
+SERVICES = (("SignerRelayService", SIGNER), ("StayAwakeService", STAY), ("SyncService", SYNC))
 
 
 def test_there_is_exactly_one_notification_id_and_one_channel():
@@ -115,13 +118,29 @@ def test_the_upgrade_clears_the_notification_nothing_will_post_again():
     )
 
 
-def test_the_text_names_both_jobs_when_both_are_running():
-    """One item still has to say what it is doing, or it is just a mystery notification."""
+def test_the_text_names_every_job_that_is_running():
+    """One item still has to say what it is doing, or it is just a mystery notification.
+
+    COMPOSED, NOT ENUMERATED. This was a truth table over two services, which is readable at two and
+    is four branches at three — and the branch that gets forgotten is always the new service's,
+    which then runs under a notification describing somebody else's job."""
     body = NOTE[NOTE.index("public static String text()"):]
     body = body[:body.index("public static Notification build")]
-    assert "signer && stay" in body, "the composed text has no both-running case"
-    for alone in ("if (signer)", "if (stay)"):
-        assert alone in body, f"the composed text has no {alone} case"
+    for svc in ("SignerRelayService.running", "StayAwakeService.running", "SyncService.running"):
+        assert svc in body, f"the composed text never asks about {svc}"
+    assert "Working in the background" in body, "there is no text for the case nothing is running"
+
+
+def test_a_third_service_cannot_be_told_apart_from_the_other_two():
+    """`othersRunning(boolean)` answered "is the OTHER one up" while there were exactly two. A third
+    makes that meaningless, and the failure is the one this file exists for: a service stands down,
+    reads a stale "nothing else is running", and REMOVEs the shared notification out from under a
+    service that is still foreground."""
+    body = NOTE[NOTE.index("public static boolean othersRunning("):]
+    body = body[:body.index("\n    }")]
+    for svc in ("SignerRelayService.running", "StayAwakeService.running", "SyncService.running"):
+        assert svc in body, f"othersRunning does not consider {svc}"
+    assert "me !=" in body, "othersRunning does not exclude the caller, so it always answers yes"
 
 
 def test_two_stop_actions_are_told_apart():

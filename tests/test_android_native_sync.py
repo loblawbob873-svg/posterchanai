@@ -23,6 +23,7 @@ compared with node running the same operations the way `app.js` does — and bot
 interop are checked, because equal ciphertext and mutual decryptability are different claims and only
 the second one is what a phone and a laptop actually need from each other.
 """
+import glob
 import json
 import os
 import re
@@ -254,18 +255,26 @@ def test_an_integer_does_not_come_back_as_a_decimal():
 
 # ------------------------------------------------------------------- the Android-touching half
 
-ANDROID_SRC = [os.path.join(JAVA, "sync", f + ".java") for f in
-               ("SafFs", "NativeSweep", "SyncStore", "SyncNet", "SyncCrypto", "SyncDiff",
-                "Json", "Excludes")]
+"""THE WHOLE PACKAGE, not a hand-kept list.
+
+It was a list of eight, and the four files it did not name were the plugin, the worker, the alarm
+glue and — once background sync got its own — the clock, the receiver and the foreground service.
+Which is to say: every file that touches the Android lifecycle, i.e. exactly the half that can only
+be built on CI and can only be run by a person holding a phone. A glob cannot fall behind.
+"""
+ANDROID_SRC = sorted(glob.glob(os.path.join(JAVA, "sync", "*.java")))
 
 
 def test_the_android_half_type_checks_here_rather_than_on_ci():
-    """SafFs, NativeSweep and SyncStore touch the platform, so they cannot be RUN here — but they can
-    be compiled against the hand-written stubs, which turns a wrong column constant or a dropped
-    argument into a failing test in a second instead of a broken APK build twenty minutes later.
+    """These classes touch the platform, so they cannot be RUN here — but they can be compiled
+    against the hand-written stubs, which turns a wrong column constant, a dropped argument or a
+    method that is package-private in the wrong package into a failing test in a second instead of a
+    broken APK build twenty minutes later. (That last one is not hypothetical: it is what this caught
+    the day the folder-sync clock moved out of StayAwakeService.)
 
     It matters more for these than for anything else in the app: there is no device in this loop at
-    all, so a compile error is discovered by a person with a phone."""
+    all, so a compile error is otherwise discovered by a person with a phone."""
+    assert len(ANDROID_SRC) >= 12, "the sync package shrank — did a file move without this noticing?"
     _need("javac")
     with tempfile.TemporaryDirectory() as tmp:
         r = subprocess.run(["javac", "-nowarn", "-d", tmp, "-sourcepath",

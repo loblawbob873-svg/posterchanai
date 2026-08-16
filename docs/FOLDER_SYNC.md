@@ -156,27 +156,55 @@ much* rather than yes/no: a full rehash is a plugged-in job, changed files only 
 and below the battery floor it notes what changed and uploads later. "Sync now" overrides all of it —
 refusing someone standing there because the battery is at 19% is how a feature earns a reputation.
 
-**With "Stay connected" off, the unattended job can only notice, not upload.** Every network step is
-signed by your Nostr key, and outside the foreground service there is nothing running to sign with.
-Android's `SyncCheckWorker` therefore walks the tree, hashes nothing, holds no key and opens no
-socket: it *tells you* when there is something to sync.
+**On Android it syncs in the background on its own, and nothing has to be switched on for it.** Add a
+folder and the app arms its own alarm; every sixteen minutes the phone wakes, checks your settings,
+and sweeps if there is anything to do. Your "only when plugged in" and "Wi-Fi only" settings still
+gate whether anything runs, and a folder you have never pressed Start on stays stopped.
 
-**"Stay connected" is the path that does sync in the background,** and it is off by default. That
-switch runs a foreground service which keeps the app's WebView — the half that *does* hold your key —
-resident, so a real sweep can run with the app off screen. What was missing until now is that nothing
-ever asked it to: Android has no filesystem watcher here, so the client's only automatic trigger was
-a JS timer, and Android throttles timers in a hidden WebView. Reported as *syncing stops every time
-the screen goes off*, with the switch already on.
+That sentence was not true until recently, and the reason is worth stating because it made every
+earlier fix invisible. The clock used to live inside **"Stay connected"** — a *notifications* feature,
+off by default, for receiving DMs and calls where no push distributor is installed. So on a phone that
+had never turned that switch on there was no clock at all: the alarm that fires in Doze, the wake
+lock, its renewal and finally a whole sweep engine written in Java were all downstream of a tick
+nothing emitted. Folder sync worked while the screen was on, because the page's own heartbeat ran, and
+stopped when it went off. Reported exactly that way, on a phone and a tablet, more than once.
 
-The clock is native. The service arms an `AlarmManager.setAndAllowWhileIdle` alarm — **not** a
-`Handler`, whose delays are measured on `uptimeMillis()` and simply stop advancing in deep sleep,
-which is precisely the state this exists for. Your "only when plugged in" and "Wi-Fi only" settings
-still gate whether anything runs, and a folder you have never pressed Start on stays stopped.
+Three things make it work now, and each one was separately missing:
 
-**And so is the sweep.** A clock alone was not enough: Chromium throttles a hidden page's JavaScript
-however awake the processor is, so the alarm could fire perfectly and the sweep — which was
-JavaScript — would not run. The transfer is Java now, in the same foreground service, where this
-app's push, media session and signer already live and where every other sync app on Android does it.
+* **Its own clock.** An `AlarmManager` alarm that fires in Doze — **not** a `Handler`, whose delays
+  are measured on `uptimeMillis()` and stop advancing in deep sleep, which is precisely the state
+  this exists for. Armed by folder sync itself whenever this device syncs anything, re-armed after a
+  reboot (an alarm does not survive one), cancelled when the account syncs nothing. It asks for an
+  **exact** alarm where the platform will give one, which sounds like a detail about punctuality and
+  is the thing that decides the next bullet: Android 12+ only lets an *exact* alarm start a
+  foreground service in the background.
+* **Somewhere to run that Android will not freeze.** A wake lock keeps the *processor* awake and
+  does nothing about the *process*: a few seconds after the alarm fires the app is cached, and a
+  cached process on modern Android is **frozen** — threads stop, transfers stall, nothing is logged.
+  That is what "it runs for a moment after the screen goes off and then stops" actually was. So the
+  sweep runs in a **foreground service**, where every other sync app on Android runs, joining the
+  app's single background notification rather than adding a second one — and when Android refuses to
+  start one (on 13+ the exact-alarm permission is the user's to grant, so that is the *ordinary*
+  case) it falls back to an **expedited background job**, which carries no such restriction and also
+  keeps the process out of the freezer. The service has no time limit and a job is capped near ten
+  minutes, which is why the service is tried first. Folder Sync → **Background details** says which
+  one this phone actually got.
+* **The key, put where the sweep can reach it.** Every network step is signed by your Nostr key, and
+  the only two things that ever stored one on the device were the "Sign for other apps on this
+  phone" switch and pairing a laptop over NIP-46 — neither of which has anything to do with syncing
+  a folder. So the sweep declined with *"the account key is not on this device"* about a key the app
+  was holding. Folder sync now asks for it itself, sealed in the Android keystore, and **does not**
+  expose the phone to other apps as a signer. It is asked for only once this device actually syncs a
+  folder, it is re-armed when you switch accounts (an unattended sweep signing as the *previous*
+  account is a 403 at best), and **signing out takes it off the phone**.
+
+**The sweep is Java, not JavaScript,** for the same class of reason: Chromium throttles a hidden
+page's JavaScript however awake the processor is, so the alarm could fire perfectly and a JS sweep
+still would not run.
+
+**The unattended `SyncCheckWorker` can still only notice, not upload,** and that is unchanged: it
+walks the tree while charging on Wi-Fi, hashes nothing, holds no key and opens no socket, and *tells
+you* there is something to sync. It exists for the accounts the sweep above cannot serve.
 
 It **moves bytes; anything that needs a decision waits for you**. A folder's *first* sync is deferred
 until you open the app — it hashes everything and publishes the folder's whole contents, which is the
@@ -184,11 +212,11 @@ worst thing to start unattended. So are conflicts. And a sweep that would empty 
 one from a machine whose timestamps moved, refuses rather than asking a phone nobody is looking at —
 suppressing only the deletions (or only the resurrections), never the rest of the sweep.
 
-It needs your account key to sign each upload, and it is handed that key **already wrapped**: the
-same NIP-44-sealed value your encrypted drive publishes, which only your Nostr key opens — and the
-app's own signer holds that. So nothing new is written to the phone in the clear, and **an account
-signed in through Amber or a remote signer has no key here at all**: on those, the background service
-still wakes the app and asks it to sync, exactly as before, because nothing on the device can sign.
+The *file* key it is handed is **already wrapped**: the same NIP-44-sealed value your encrypted drive
+publishes, which only your Nostr key opens. So nothing new is written to the phone in the clear, and
+**an account signed in through Amber or a remote signer has no key here at all** — on those, the
+alarm still wakes the app and asks it to sync, exactly as before, because nothing on the device can
+sign an upload unattended.
 
 Folder Sync → **Background details** copies out what the phone measured, including what the native
 sweep decided and did last — "no key on this device", "first sync — open the app once", the counts.

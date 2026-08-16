@@ -45,27 +45,49 @@ public final class NativeRunner {
 
     public static String why() { return lastWhy; }
 
-    /**
-     * @return true when a native sweep has been started, so the caller must NOT also ask the WebView
-     *         to sweep. False means "not my job" — the tick goes to JavaScript exactly as before.
-     */
-    public static boolean tick(Context ctx, String why) {
-        Context app = ctx.getApplicationContext();
-        SyncStore store = new SyncStore(app);
-        if (!store.nativeEnabled()) { lastWhy = "native sweeps are off"; return false; }
-        if (store.wrappedDriveKey().isEmpty()) { lastWhy = "no drive key handed over yet"; return false; }
-        if (!SignerKey.have(app)) {
-            // Amber / a bunker: the account key is not on this device, so nothing here can sign an
-            // upload. This is not a failure, it is the shape of that account.
-            lastWhy = "the account key is not on this device";
-            return false;
-        }
-        if (running) { lastWhy = "a native sweep is already running"; return true; }
-
+    /** What a tick would do, worked out without doing any of it. */
+    private static final class Plan {
         final List<SyncStore.Folder> due = new ArrayList<SyncStore.Folder>();
         final List<Boolean> deep = new ArrayList<Boolean>();
+    }
+
+    /**
+     * Every gate a sweep has to pass, and nothing started.
+     *
+     * SEPARATE FROM {@link #tick} SO THE CALLER CAN ASK BEFORE IT SPENDS ANYTHING. The tick now runs
+     * inside a foreground service, and starting one to discover that no folder was due would put an
+     * item in somebody's shade for a fraction of a second, every sixteen minutes, for ever. Reading
+     * the answer costs a SharedPreferences read and some arithmetic.
+     */
+    static Plan plan(Context ctx) {
+        Context app = ctx.getApplicationContext();
+        SyncStore store = new SyncStore(app);
+        if (!store.nativeEnabled()) { lastWhy = "native sweeps are off"; return null; }
+        if (store.wrappedDriveKey().isEmpty()) { lastWhy = "no drive key handed over yet"; return null; }
+        if (!SignerKey.have(app)) {
+            /* Amber / a bunker: the account key is not on this device, so nothing here can sign an
+             * upload. This is not a failure, it is the shape of that account.
+             *
+             * FOR A LOCAL KEY IT USED TO BE A BUG, and the most expensive one in this feature: the
+             * only things that ever put a key in Keystore were the "Sign for other apps on this
+             * phone" switch and pairing a laptop over NIP-46 — two unrelated features in two other
+             * parts of settings. So an ordinary account that had touched neither answered "not on
+             * this device" about a key that was sitting in the WebView the whole time, and the
+             * native sweep never ran once. sync.js `_pushNativeConfig` arms it now. */
+            lastWhy = "the account key is not on this device";
+            return null;
+        }
+
+        Plan p = new Plan();
         Map<String, Object> state = deviceState(app);
         for (SyncStore.Folder f : store.folders()) {
+            /* A FOLDER SOMEBODY ELSE IS ALREADY SWEEPING IS NOT DUE. Without this the app being OPEN
+             * — the case where the page claims every folder before the alarm lands — still answered
+             * "eligible", so a foreground service started, `NativeSweep.run` was refused its claim on
+             * every folder, and the whole thing amounted to a notification appearing and vanishing.
+             * Asked, never taken: `plan()` decides and does not sweep, so a claim taken here would
+             * have to be given back on every path that decides not to. */
+            if (NativeSweep.claimed(f.key)) continue;
             Map<String, Object> s = new LinkedHashMap<String, Object>(state);
             s.put("lastSyncAt", store.lastSyncAt(f.key));
             s.put("lastFullScanAt", store.lastFullScanAt(f.key));
@@ -74,22 +96,48 @@ public final class NativeRunner {
             // this path to do than what a sweep already does, so only the two real modes run.
             String mode = Json.str(verdict.get("mode"), "none");
             if ("incremental".equals(mode) || "full".equals(mode)) {
-                due.add(f);
+                p.due.add(f);
                 /* `full` IS THE ONE THAT REHASHES, and it has to be carried through or the mode is a
                  * label with nothing behind it — the folder would be marked as fully checked by a
                  * sweep that only compared sizes and timestamps, and would then not be checked again
                  * for a day. `lastFullScanAt` was also never recorded, so every sweep on a charger
                  * answered `full`. */
-                deep.add("full".equals(mode));
+                p.deep.add("full".equals(mode));
             }
         }
-        if (due.isEmpty()) { lastWhy = "no folder is due"; return false; }
+        if (p.due.isEmpty()) { lastWhy = "no folder is due"; return null; }
+        return p;
+    }
+
+    /** @return true when a sweep would run right now — asked before a foreground service is started. */
+    public static boolean eligible(Context ctx) {
+        if (running) { lastWhy = "a native sweep is already running"; return false; }
+        return plan(ctx) != null;
+    }
+
+    public static boolean tick(Context ctx, String why) { return tick(ctx, why, null); }
+
+    /**
+     * @param done run on the sweep thread when the sweep finishes, however it finishes. This is how
+     *             {@link SyncService} knows to stand down — polling `busy()` would be a timer inside
+     *             the very state (screen off, process about to be frozen) timers cannot be trusted in.
+     * @return true when a native sweep has been started, so the caller must NOT also ask the WebView
+     *         to sweep. False means "not my job" — the tick goes to JavaScript exactly as before.
+     */
+    public static boolean tick(Context ctx, String why, final Runnable done) {
+        final Context app = ctx.getApplicationContext();
+        if (running) { lastWhy = "a native sweep is already running"; return false; }
+        final Plan p = plan(app);
+        if (p == null) return false;
 
         running = true;
-        lastWhy = "sweeping " + due.size() + " folder" + (due.size() == 1 ? "" : "s");
-        final Context fctx = app;
+        lastWhy = "sweeping " + p.due.size() + " folder" + (p.due.size() == 1 ? "" : "s")
+                + (why == null || why.isEmpty() ? "" : " (" + why + ")");
         Thread t = new Thread(new Runnable() {
-            public void run() { sweepAll(fctx, due, deep); }
+            public void run() {
+                try { sweepAll(app, p.due, p.deep); }
+                finally { if (done != null) { try { done.run(); } catch (Throwable ignored) { } } }
+            }
         }, "pc-native-sync");
         t.setPriority(Thread.MIN_PRIORITY + 2);
         t.start();

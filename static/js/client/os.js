@@ -1289,10 +1289,37 @@
    * shared #feed, and focusing anything else takes it away and repaints — which for a running mini
    * app means its iframe is disturbed and the game goes black or starts over, every time you click
    * another window. A folder already opts out for the same reason. */
-  function openDoc(key, label, icon, render, noFeed){
+  /* `rerun` — THE WINDOW IS THIS DOCUMENT NOW, not the one it was opened with.
+   *
+   * Without it a second search did nothing, which is exactly how it was reported: type a query, get
+   * results, type a different query, and the window comes forward still showing the FIRST one. The
+   * cause is that `render` is a closure over the query, captured when the window was created: the
+   * existing-window branch focused it and `focusWin` re-ran that ORIGINAL closure. So it was not
+   * "the search didn't run" — the old search ran again, which looks identical.
+   *
+   * Every doc window whose key identifies its content (a post is `doc:<id>`) is right as it was: the
+   * same key means the same document, so re-running is a repaint. SEARCH is the odd one — one window
+   * that shows a succession of different documents — so it, and anything else like it, says so.
+   *
+   * The new render is called AFTER `focusWin(…, false)` rather than through it, because focusWin has
+   * a second path: a window whose nodes were parked is RESTORED from them and the repaint skipped
+   * entirely, which would put the old results back on top of the new ones. `scrollTop` is cleared
+   * for the same reason — `restoreScroll` spends a second trying to put a fresh result list back at
+   * the previous query's offset. */
+  function openDoc(key, label, icon, render, noFeed, rerun){
     const view = 'doc:' + key;
     const existing = wins.find(w => w.view === view);
-    if(existing){ focusWin(existing); return existing; }
+    if(existing){
+      if(rerun && render){
+        existing.render = render;
+        existing.scrollTop = 0;
+        focusWin(existing, false);          // forward + claim the feed, WITHOUT repainting the old
+        try{ render(); }catch(_){ }
+        return existing;
+      }
+      focusWin(existing);
+      return existing;
+    }
     return openApp(view, label, icon, render, noFeed);
   }
 
@@ -3800,7 +3827,10 @@
           qb.value = ''; barQuery = ''; qb.blur();
           const run = () => { try{ PC().runSearch && PC().runSearch(q); }
                               catch(err){ PC().toast && PC().toast('search is unavailable here'); } };
-          openDoc('search', 'Search', 'i-search', run);
+          // `rerun`: one Search window shows a succession of queries, so a second search has to
+          // REPLACE what it is rendering. Without it the window came forward re-running the first
+          // query — see openDoc.
+          openDoc('search', 'Search', 'i-search', run, false, true);
         });
       } }
     /* The BELL is the notification button; the clock still opens the same panel because it always
@@ -4326,10 +4356,12 @@
     root.appendChild(menu);
     const searchNostr = (q) => {
       toggleStart(false);
+      // `rerun` — searching again from the start menu must show the NEW query, not re-run the one
+      // the Search window was opened with. See openDoc.
       openDoc('search', 'Search', 'i-search', () => {
         try{ PC().runSearch && PC().runSearch(q); }
         catch(_){ try{ PC().toast('search is unavailable here'); }catch(__){} }
-      });
+      }, false, true);
     };
     const paint = (q) => {
       // Folded when idle; FLAT while searching, so typing "chess" finds Chess rather than requiring

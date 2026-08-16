@@ -24,8 +24,11 @@ import place.poster.app.calendar.CalendarWidget;
  * BOOT_COMPLETED is one of the explicit exemptions to Android 12's ban on starting a foreground
  * service from the background, so this is allowed where the same call from anywhere else would throw.
  *
- * The folder-sync job needs nothing here: WorkManager persists its own queue across a reboot and
- * re-enqueues, which is the whole reason it is a WorkManager job rather than an alarm.
+ * The folder-sync WorkManager job needs nothing here — it persists its own queue across a reboot and
+ * re-enqueues. Its ALARM does not: an alarm is erased by a reboot, and the folder-sync clock is an
+ * alarm precisely because a WorkManager job cannot fire in Doze. So it is re-armed here, from the
+ * stored folder list rather than from anything a page has told us this session, because at this
+ * point no page has run.
  */
 public class BootReceiver extends BroadcastReceiver {
 
@@ -42,6 +45,15 @@ public class BootReceiver extends BroadcastReceiver {
     // widget that has not decided what day it is.
     try {
       CalendarWidget.refresh(ctx);
+    } catch (Throwable ignored) {
+    }
+
+    /* THE FOLDER-SYNC CLOCK, before every early return below and for the same reason the signer is:
+     * it is its own feature with its own switch, and a reboot must not be able to turn it off. A
+     * reboot erases alarms, so without this line background sync stops at the next restart and stays
+     * stopped until somebody opens the app — which is a bug that only shows up days later. */
+    try {
+      place.poster.app.sync.SyncClock.followStore(ctx);
     } catch (Throwable ignored) {
     }
 
