@@ -481,6 +481,53 @@ class TestSyncRun(unittest.TestCase):
                          "a device applying someone else's deletions must not republish them")
 
 
+    def test_deletions_happen_before_any_transfer(self):
+        """THE ORDER THAT MADE A DELETE LOOK IMPOSSIBLE.
+
+        Deletions used to run last, after conflicts, downloads and uploads. On a settled folder that
+        is invisible. On a folder with a BACKLOG the deletions sit behind hours of network transfer
+        and are never reached: measured on a real laptop whose Check reported 3,041 changes of which
+        ~300 were deletions, moving ~7 files a minute. Every sweep spent itself on transfers, was
+        interrupted, and restarted the transfer loops from the top — so the user pressed Sync, waited,
+        pressed Check, and saw the same 300 every time. "How do I actually make it remove?"
+
+        A local delete is a rename into `.pc-trash` — instant, no network, recoverable. It has no
+        business waiting behind a 40 GB upload, and it cannot conflict with one: diff() puts each
+        path in exactly one bucket, so no file being trashed has a download coming for it.
+        """
+        out = self.run_js("""
+          (async () => {
+            const files = {}, manifest = {}, base = {};
+            for(let i=0;i<3;i++){                       // deleted elsewhere: trash these
+              const p = 'gone'+i+'.txt';
+              files[p] = { sha:'G'+i, csum:'G'+i, size:1, mtime:1000 };
+              base[p]  = { csum:'G'+i, size:1, mtime:1000 };
+              manifest[p] = { deletedAt: 9000 };
+            }
+            for(let i=0;i<3;i++){                       // new here: upload these
+              files['up'+i+'.txt'] = { sha:'U'+i, csum:'U'+i, size:1, mtime:1000 };
+            }
+            for(let i=0;i<3;i++){                       // new elsewhere: download these
+              manifest['down'+i+'.txt'] = { sha:'D'+i, csum:'D'+i, size:1, mtime:1000 };
+            }
+            const fs = makeFs(files);
+            const store = makeStore(manifest, base);
+            const rep = await R.sweep(fs, store, {id:'r1', key:'K', device:'laptop', now:99000});
+            process.stdout.write(JSON.stringify({ calls: fs.calls.map(c => c[0]), rep: {
+              trashed: rep.trashed.length, up: rep.uploaded.length, down: rep.downloaded.length } }));
+          })();
+        """)
+        kinds = out["calls"]
+        self.assertEqual(out["rep"]["trashed"], 3)
+        self.assertTrue(out["rep"]["up"] and out["rep"]["down"], "the fixture must also transfer")
+        first_trash = kinds.index("trash")
+        moved = [i for i, k in enumerate(kinds) if k in ("read", "write")]
+        self.assertTrue(moved, "no transfers happened, so the ordering is not being tested")
+        self.assertLess(first_trash, min(moved),
+                        "a deletion waited for a transfer — on a folder with a backlog that means it "
+                        "is never reached at all, which is what made deletes look impossible")
+
+
 
 if __name__ == "__main__":
     unittest.main()

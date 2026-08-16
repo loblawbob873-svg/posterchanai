@@ -11,8 +11,13 @@
  *     crash in between has overwritten an edit that now exists nowhere. Renaming first means the
  *     worst case is two copies and no canonical file — recoverable by hand, and the next sweep fixes
  *     it anyway.
- *  2. DOWNLOAD before DELETE. A sweep that deletes first and then fails to download has removed a
- *     file it cannot replace.
+ *  2. DOWNLOAD before DELETE — for the same PATH. A sweep that overwrites first and then fails to
+ *     fetch the replacement has removed a file it cannot restore, which is why a conflict renames
+ *     before it writes. It does NOT mean deletions wait for unrelated transfers: diff() puts each
+ *     path in exactly one bucket, so nothing in `deleteLocal` has a download coming. Local deletes
+ *     therefore run FIRST — they are renames into `.pc-trash`, instant and recoverable, and queuing
+ *     them behind hours of upload is why a folder with a backlog appeared never to apply a delete
+ *     at all.
  *  3. `base` ADVANCES PER FILE, and only for the ones that actually succeeded. A sweep interrupted
  *     halfway — laptop closed, phone unplugged, network dropped — must resume, not restart, and must
  *     never record agreement about a file it did not move. Advancing the whole plan at the end is
@@ -255,6 +260,57 @@
       repaired++;
     }
     if(repaired){ report.repaired = repaired; dirty = true; }
+
+    /* DELETIONS RUN FIRST, BEFORE ANY BYTE MOVES, and that ordering is the whole reason a delete
+     * appeared never to happen.
+     *
+     * They used to run last — after conflicts, downloads and uploads. On a settled folder that is
+     * invisible; on a folder with a BACKLOG it means the deletions are queued behind hours of
+     * network transfer and are simply never reached. Measured: a laptop whose Check reported 3,041
+     * changes, of which ~300 were deletions, moving files at ~7 a minute. Every sweep spent itself
+     * on transfers, was interrupted (screen off, app closed, Stop), and restarted the transfer loops
+     * from the top — so the deletions sat there across sweep after sweep while the user pressed Sync
+     * and watched Check report the same number. "How do I actually make it remove?"
+     *
+     * A local delete is a RENAME into `.pc-trash`: instant, no network, and recoverable. There is no
+     * reason for it to wait behind a 40 GB upload.
+     *
+     * THIS DOES NOT BREAK RULE 2 ("download before delete"), because the two never touch the same
+     * path. diff() puts each path in exactly ONE bucket: `deleteLocal` is where the manifest holds a
+     * tombstone, `download` is where it holds live bytes. No file being trashed here has a download
+     * coming for it, so the case rule 2 protects — deleting something and then failing to fetch its
+     * replacement — cannot arise. The rule still governs conflicts, which rename before they write.
+     */
+    /* A SWEEP THAT WOULD EMPTY THE FOLDER STOPS AND ASKS — and if nobody is there to ask, it does
+     * not delete. See S.massDelete for what happened without this.
+     *
+     * REFUSING SUPPRESSES DELETION ONLY, never the uploads and downloads above it, for the reason
+     * the contacts sweep learned the hard way: a guard that aborts the whole sweep turns "it deleted
+     * everything" into "it syncs nothing, for ever", which is the same bug with the sign flipped.
+     *
+     * The refused paths are deliberately NOT agreed. `base` still says nothing about them, so the
+     * next sweep re-proposes exactly this and asks again — a refusal has to be a question that keeps
+     * being asked, not a decision recorded once. Saying yes re-runs with `forceTrash`. */
+    const mass = S.massDelete(plan);
+    if(mass && !o.forceTrash){
+      let ok = false;
+      if(typeof o.confirmTrash === 'function'){
+        try{ ok = !!(await o.confirmTrash(mass)); }catch(_){ ok = false; }
+      }
+      if(!ok){ report.refusedTrash = mass; plan = Object.assign({}, plan, { deleteLocal: [] }); }
+    }
+
+    let ti=0;
+    for(const t of plan.deleteLocal){
+      if(stopping()) return await halt();
+      step('to trash', t.path, ++ti, plan.deleteLocal.length);
+      try{
+        const to = await fs.trash(id, t.path, now);
+        agree(t.path, { deletedAt: (remote[t.path]||{}).deletedAt || now });
+        report.trashed.push({ path:t.path, to });
+      }catch(e){ fail(t.path, e, 'delete'); }
+      await checkpoint();
+    }
 
     /* 1 & 2 — conflicts first: they are the only step that both writes AND renames, and the rename
      * has to happen before anything else can clobber the local copy. */
@@ -567,36 +623,6 @@
       await checkpoint();
     }
 
-    /* A SWEEP THAT WOULD EMPTY THE FOLDER STOPS AND ASKS — and if nobody is there to ask, it does
-     * not delete. See S.massDelete for what happened without this.
-     *
-     * REFUSING SUPPRESSES DELETION ONLY, never the uploads and downloads above it, for the reason
-     * the contacts sweep learned the hard way: a guard that aborts the whole sweep turns "it deleted
-     * everything" into "it syncs nothing, for ever", which is the same bug with the sign flipped.
-     *
-     * The refused paths are deliberately NOT agreed. `base` still says nothing about them, so the
-     * next sweep re-proposes exactly this and asks again — a refusal has to be a question that keeps
-     * being asked, not a decision recorded once. Saying yes re-runs with `forceTrash`. */
-    const mass = S.massDelete(plan);
-    if(mass && !o.forceTrash){
-      let ok = false;
-      if(typeof o.confirmTrash === 'function'){
-        try{ ok = !!(await o.confirmTrash(mass)); }catch(_){ ok = false; }
-      }
-      if(!ok){ report.refusedTrash = mass; plan = Object.assign({}, plan, { deleteLocal: [] }); }
-    }
-
-    let ti=0;
-    for(const t of plan.deleteLocal){
-      if(stopping()) return await halt();
-      step('to trash', t.path, ++ti, plan.deleteLocal.length);
-      try{
-        const to = await fs.trash(id, t.path, now);
-        agree(t.path, { deletedAt: (remote[t.path]||{}).deletedAt || now });
-        report.trashed.push({ path:t.path, to });
-      }catch(e){ fail(t.path, e, 'delete'); }
-      await checkpoint();
-    }
 
     for(const r of plan.deleteRemote){
       remember(r.path, { deletedAt: now });             // a tombstone, so other devices learn of it
