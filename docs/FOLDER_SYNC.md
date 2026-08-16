@@ -156,8 +156,8 @@ much* rather than yes/no: a full rehash is a plugged-in job, changed files only 
 and below the battery floor it notes what changed and uploads later. "Sync now" overrides all of it —
 refusing someone standing there because the battery is at 19% is how a feature earns a reputation.
 
-**The unattended background job cannot upload, and that is not a bug to fix.** Every network step is
-signed by your Nostr key, and with Amber or a remote signer that key is not on the device at all.
+**With "Stay connected" off, the unattended job can only notice, not upload.** Every network step is
+signed by your Nostr key, and outside the foreground service there is nothing running to sign with.
 Android's `SyncCheckWorker` therefore walks the tree, hashes nothing, holds no key and opens no
 socket: it *tells you* when there is something to sync.
 
@@ -168,11 +168,30 @@ ever asked it to: Android has no filesystem watcher here, so the client's only a
 a JS timer, and Android throttles timers in a hidden WebView. Reported as *syncing stops every time
 the screen goes off*, with the switch already on.
 
-The clock is native now. The service arms an `AlarmManager.setAndAllowWhileIdle` alarm — **not** a
+The clock is native. The service arms an `AlarmManager.setAndAllowWhileIdle` alarm — **not** a
 `Handler`, whose delays are measured on `uptimeMillis()` and simply stop advancing in deep sleep,
-which is precisely the state this exists for — and each firing emits one event the client turns into
-an ordinary sweep request. It decides nothing: your "only when plugged in" and "Wi-Fi only" settings
+which is precisely the state this exists for. Your "only when plugged in" and "Wi-Fi only" settings
 still gate whether anything runs, and a folder you have never pressed Start on stays stopped.
+
+**And so is the sweep.** A clock alone was not enough: Chromium throttles a hidden page's JavaScript
+however awake the processor is, so the alarm could fire perfectly and the sweep — which was
+JavaScript — would not run. The transfer is Java now, in the same foreground service, where this
+app's push, media session and signer already live and where every other sync app on Android does it.
+
+It **moves bytes; anything that needs a decision waits for you**. A folder's *first* sync is deferred
+until you open the app — it hashes everything and publishes the folder's whole contents, which is the
+worst thing to start unattended. So are conflicts. And a sweep that would empty a folder, or refill
+one from a machine whose timestamps moved, refuses rather than asking a phone nobody is looking at —
+suppressing only the deletions (or only the resurrections), never the rest of the sweep.
+
+It needs your account key to sign each upload, and it is handed that key **already wrapped**: the
+same NIP-44-sealed value your encrypted drive publishes, which only your Nostr key opens — and the
+app's own signer holds that. So nothing new is written to the phone in the clear, and **an account
+signed in through Amber or a remote signer has no key here at all**: on those, the background service
+still wakes the app and asks it to sync, exactly as before, because nothing on the device can sign.
+
+Folder Sync → **Background details** copies out what the phone measured, including what the native
+sweep decided and did last — "no key on this device", "first sync — open the app once", the counts.
 
 ## Browsing a folder on a device that does not sync it
 
