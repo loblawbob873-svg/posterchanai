@@ -43,7 +43,12 @@ on:
 jobs:
   emulator:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 60 was a guess and it cost a full runner hour to learn nothing: the first run hung inside a
+    # single `adb logcat -d` and the only thing the timeout could say was "the job was cancelled".
+    # The script bounds every adb call now, so the job timeout is the LAST line of defence rather
+    # than the first — and it is short enough that a wedged emulator is a red run inside half an
+    # hour. Build + boot measured under nine minutes.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -112,7 +117,12 @@ jobs:
           disable-animations: false
           script: echo "AVD snapshot created"
 
+      # A STEP timeout as well as a job one, because they answer different questions: this one fails
+      # the checks while the UPLOAD LOGCAT step below still runs, so a hang leaves the artifacts that
+      # explain it. The first run was cancelled at the JOB level and the only evidence that survived
+      # was a zero-byte file — which turned out to be enough, but only by luck.
       - name: Run the device checks
+        timeout-minutes: 18
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ github.event.inputs.api_level || '34' }}
