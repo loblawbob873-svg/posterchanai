@@ -65,6 +65,205 @@ class TestFsBridge(unittest.TestCase):
             raise AssertionError("node failed:\n" + r.stderr[-3000:])
         return json.loads(r.stdout)
 
+    # ---- the whole stack, on a real disk ----------------------------------------------------
+    #
+    # Every other folder-sync test above the adapter uses STUB adapters: the engine is proven with
+    # fake filesystems and the bridge is proven in isolation. Nothing ever ran the real executor
+    # against the real bridge against real files, which is precisely the combination a laptop runs —
+    # so "another device deleted 3,930 files and this one still has them" had no test that could
+    # even fail. This is that test.
+
+    def run_sweep(self, manifest, base, files, excludes=None, force_resurrect=False):
+        """Drive the SHIPPED syncrun.js through the SHIPPED fsbridge.js over a real directory.
+
+        `base` entries are completed from what the file ACTUALLY became on disk. That is not test
+        convenience, it is the only honest fixture: a real agreement was written from a real stat, so
+        an invented mtime makes every file look locally edited — and the engine then applies DELETE
+        LOSES TO EDIT and re-uploads the very files the other device deleted. Which is correct, and
+        is also worth knowing: a laptop whose files were restored, copied or rsynced with fresh
+        timestamps will resurrect deletions rather than apply them, and be right to."""
+        for rel, body in files.items():
+            full = os.path.join(self.root, rel)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w") as fh:
+                fh.write(body)
+            # Only when the case has not stated one itself: a test that WANTS a stale agreement
+            # (a restore, a copy, an rsync without -t) says so by giving base an explicit mtime.
+            if rel in base and "mtime" not in base[rel]:
+                st = os.stat(full)
+                base[rel] = dict(base[rel], size=st.st_size, mtime=int(st.st_mtime * 1000))
+        run = os.path.join(REPO, "static", "js", "client", "syncrun.js")
+        js = textwrap.dedent("""
+            const B = require(%s);
+            const R = require(%s);
+            B.init({ roots: [{id:'r1', dir: %s}], save(){} });
+            const manifest = %s, base = %s;
+            const store = {
+              saved: [],
+              async manifest(){ return JSON.parse(JSON.stringify(manifest)); },
+              async base(){ return JSON.parse(JSON.stringify(base)); },
+              async getBlob(){ return new Uint8Array([1]); },
+              async putBlob(){ return 'SHA'; },
+              async save(id, s){ this.saved.push(s); },
+            };
+            (async () => {
+              const rep = await R.sweep(B, store, {id:'r1', key:'Documents', device:'laptop',
+                                                   now: 99000, excludes: %s,
+                                                   forceResurrect: %s});
+              process.stdout.write(JSON.stringify({
+                trashed: rep.trashed.length, failed: rep.failed, refused: rep.refusedTrash || null,
+                excluded: rep.excluded, unchanged: rep.unchanged,
+                resurrected: (rep.resurrected || []).map(r => r.path),
+                refusedResurrect: rep.refusedResurrect || null,
+                uploaded: rep.uploaded.length,
+              }));
+            })().catch(e => { process.stderr.write(String(e && e.stack || e)); process.exit(1); });
+        """) % (json.dumps(MOD), json.dumps(run), json.dumps(self.root),
+                json.dumps(manifest), json.dumps(base), json.dumps(excludes or []),
+                "true" if force_resurrect else "false")
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=180)
+        if r.returncode != 0:
+            raise AssertionError("node failed:\n" + r.stderr[-3000:])
+        return json.loads(r.stdout)
+
+    def _left_on_disk(self):
+        out = []
+        for dirpath, _dirs, names in os.walk(self.root):
+            for n in names:
+                rel = os.path.relpath(os.path.join(dirpath, n), self.root).replace(os.sep, "/")
+                if not rel.startswith(".pc-trash/"):
+                    out.append(rel)
+        return sorted(out)
+
+    def test_another_devices_deletes_actually_reach_this_disk(self):
+        """THE REPORTED ONE. Files sit here, the shared manifest says they were deleted elsewhere,
+        and this device has an agreement saying it once had them. They must end up in .pc-trash —
+        on a real filesystem, through the real bridge, not a stub that cannot fail."""
+        files, manifest, base = {}, {}, {}
+        for i in range(40):
+            rel = "notes/%02d.txt" % i
+            files[rel] = "body %d" % i
+            base[rel] = {"csum": "C%d" % i}
+            manifest[rel] = ({"deletedAt": 9000} if i < 10
+                             else {"sha": "S%d" % i, "csum": "C%d" % i,
+                                   "size": len("body %d" % i), "mtime": 1000})
+        out = self.run_sweep(manifest, base, files)
+        self.assertEqual(out["failed"], [], "the bridge could not carry out the deletions")
+        self.assertIsNone(out["refused"])
+        self.assertEqual(out["trashed"], 10)
+        self.assertEqual(len(self._left_on_disk()), 30,
+                         "another device's deletions never reached this disk")
+        # and they are recoverable, which is the promise the whole feature makes
+        trash = [os.path.join(dp, n) for dp, _d, ns in os.walk(os.path.join(self.root, ".pc-trash"))
+                 for n in ns]
+        self.assertEqual(len(trash), 10, "deleted files are not in .pc-trash")
+
+    def test_a_deletion_in_a_subdirectory_is_trashed_with_its_path(self):
+        """`trash()` rebuilds the destination from the manifest path, which is always posix, while
+        `path.sep` is a backslash on Windows — the laptop's platform. A nested path is where that
+        would go wrong, and every other test here uses files at the root."""
+        files = {"a/b/c/deep.txt": "x", "a/b/keep.txt": "y"}
+        base = {"a/b/c/deep.txt": {"csum": "D"}, "a/b/keep.txt": {"csum": "K"}}
+        manifest = {"a/b/c/deep.txt": {"deletedAt": 9000},
+                    "a/b/keep.txt": {"sha": "SK", "csum": "K", "size": 1, "mtime": 1000}}
+        out = self.run_sweep(manifest, base, files)
+        self.assertEqual(out["failed"], [])
+        self.assertEqual(out["trashed"], 1)
+        self.assertEqual(self._left_on_disk(), ["a/b/keep.txt"])
+        self.assertTrue(os.path.exists(
+            os.path.join(self.root, ".pc-trash", "1970-01-01", "a", "b", "c", "deep.txt")),
+            "the trashed file did not keep its path inside .pc-trash")
+
+    def test_a_touched_file_resurrects_the_deletion_and_SAYS_SO(self):
+        """THE LIKELY LAPTOP CASE, and the one with no symptom until now.
+
+        An ordinary sweep does not hash, so "changed here" is size+mtime. Restore a folder from a
+        backup, copy it in, or rsync it without -t, and every timestamp is new — so a file the
+        manifest says was deleted looks locally edited, DELETE LOSES TO EDIT fires, and the device
+        republishes every deletion instead of applying it. The rule is right; being unable to tell
+        that from a normal upload is not. It reports "N up" and the folder looks in step while the
+        deletions have been quietly undone for everyone.
+
+        The count is separate now, so the card can say it out loud."""
+        files = {"gone.txt": "x", "keep.txt": "y"}
+        # An explicit, STALE agreement for gone.txt — the file on disk is newer than what this
+        # device last agreed to, exactly as a restore or a copy leaves it. keep.txt is filled from
+        # the real stat by the fixture, so it stays untouched and the sweep is not trivially all-new.
+        base = {"gone.txt": {"csum": "G", "size": 1, "mtime": 1000}, "keep.txt": {"csum": "K"}}
+        manifest = {"gone.txt": {"deletedAt": 9000},
+                    "keep.txt": {"sha": "SK", "csum": "K", "size": 1, "mtime": 1000}}
+        out = self.run_sweep(manifest, base, files, force_resurrect=True)
+        self.assertEqual(out["trashed"], 0)
+        self.assertEqual(out["failed"], [],
+                         "counting a republish that never landed would assert the opposite of what "
+                         "the manifest says, on the one sweep somebody is reading to find out why")
+        self.assertEqual(out["resurrected"], ["gone.txt"],
+                         "a sweep that undid another device's deletion reported it as a plain "
+                         "upload — the folder then reads as in step while the delete is reversed")
+
+    def test_a_mass_resurrection_is_refused_rather_than_refilling_every_device(self):
+        """THE GUARD THIS PAIRS WITH, and the mirror of the mass-delete one. A laptop restored from
+        backup has fresh timestamps on everything, so every tombstoned path reads as edited here and
+        the sweep republishes the lot — putting thousands of deliberately deleted files back on every
+        other device, including the phone that had just correctly applied the deletion.
+
+        The mass-DELETE guard cannot see this: it only ever suppresses deleteLocal, and it runs after
+        the upload loop, so the files would already be back before anything asked."""
+        files, base, manifest = {}, {}, {}
+        for i in range(30):
+            rel = "doc%02d.txt" % i
+            files[rel] = "x"
+            base[rel] = {"csum": "C%d" % i, "size": 1, "mtime": 1000}   # stale on purpose
+            manifest[rel] = {"deletedAt": 9000}
+        out = self.run_sweep(manifest, base, files)
+        self.assertIsNotNone(out["refusedResurrect"], "a mass resurrection went ahead unasked")
+        self.assertEqual(out["refusedResurrect"]["n"], 30)
+        self.assertEqual(out["uploaded"], 0, "the deletions were republished anyway")
+        self.assertEqual(out["resurrected"], [])
+        self.assertEqual(len(self._left_on_disk()), 30,
+                         "refusing to republish must not delete anything locally either")
+
+    def test_saying_yes_still_lets_a_real_mass_resurrection_through(self):
+        """A guard that cannot be answered is the delete-guard bug with the sign flipped: it would
+        make a genuine bulk edit impossible to sync, for ever, with no way past it."""
+        files, base, manifest = {}, {}, {}
+        for i in range(30):
+            rel = "doc%02d.txt" % i
+            files[rel] = "x"
+            base[rel] = {"csum": "C%d" % i, "size": 1, "mtime": 1000}
+            manifest[rel] = {"deletedAt": 9000}
+        out = self.run_sweep(manifest, base, files, force_resurrect=True)
+        self.assertIsNone(out["refusedResurrect"])
+        self.assertEqual(len(out["resurrected"]), 30)
+        self.assertEqual(out["failed"], [])
+
+    def test_an_ordinary_handful_is_never_questioned(self):
+        """Deleting three files on one device and genuinely editing them on another is rare but real,
+        and a dialog people are trained to click through protects nothing."""
+        files, base, manifest = {}, {}, {}
+        for i in range(3):
+            rel = "doc%d.txt" % i
+            files[rel] = "x"
+            base[rel] = {"csum": "C%d" % i, "size": 1, "mtime": 1000}
+            manifest[rel] = {"deletedAt": 9000}
+        out = self.run_sweep(manifest, base, files)
+        self.assertIsNone(out["refusedResurrect"])
+        self.assertEqual(len(out["resurrected"]), 3)
+
+    def test_an_exclusion_silently_keeps_files_another_device_deleted(self):
+        """NOT A BUG — the documented rule, pinned because it is the likeliest innocent explanation
+        for 'the deletes never arrived'. An exclusion means 'stop looking at this', so an excluded
+        path is dropped from all three snapshots and can never be deleted by anyone. A folder whose
+        pattern covers the deleted files therefore keeps them for ever, correctly and silently."""
+        files = {"old/gone.txt": "x", "keep.txt": "y"}
+        base = {"old/gone.txt": {"csum": "G"}, "keep.txt": {"csum": "K"}}
+        manifest = {"old/gone.txt": {"deletedAt": 9000},
+                    "keep.txt": {"sha": "SK", "csum": "K", "size": 1, "mtime": 1000}}
+        out = self.run_sweep(manifest, base, files, excludes=["old"])
+        self.assertEqual(out["trashed"], 0)
+        self.assertGreaterEqual(out["excluded"], 1)
+        self.assertIn("old/gone.txt", self._left_on_disk())
+
     # ---- confinement ----------------------------------------------------------------------
 
     def test_dot_dot_cannot_escape(self):

@@ -70,6 +70,20 @@ These are the rules the engine will not bend, each one a way to lose a file:
   "changed" for every file at once; an ordinary sweep does not hash, so a convergence test that
   demanded checksums could never fire and the whole folder duplicated itself as conflict copies.
   Size and modification time settle it, the same comparison used for change detection everywhere.
+- **A sweep may not republish more than 20 files your other devices deleted.** The mirror of the rule
+  below, and the one that catches a restored machine. *Delete loses to edit* republishes a file the
+  manifest says was deleted whenever it looks changed here — and on an ordinary sweep "changed" is
+  size and modification time, because rehashing a 40 GB folder every time is the space heater the
+  whole battery policy exists to avoid. So a device whose timestamps moved under it (restored from a
+  backup, copied in, `rsync` without `-t`) reads *every* deletion as a local edit and refills the
+  folder on every other device, including the ones that correctly applied the delete minutes earlier.
+  Past a floor of 20 it asks; a background sweep, having nobody to ask, declines and leaves the
+  deletions standing. Unlike the delete guard this is an absolute floor rather than a ratio, because
+  a restore makes everything look edited — the resurrections arrive beside thousands of ordinary
+  uploads that any ratio counts as "kept", and 3,930 beside 11,884 sails past every one of them.
+  Refusing suppresses only the republishing, records nothing in the agreement, and asks again next
+  sweep. It is reported by name, not as a tally: deciding whether to delete them again is a decision
+  you can only make if you can see which files they are.
 - **A sweep may not delete more than it keeps.** Every rule above decides one path, and each of them
   is right — but a manifest that has gone wrong does not produce one bad decision, it produces ten
   thousand identical ones. Measured on a real Pictures folder: the shared manifest held ~10k paths

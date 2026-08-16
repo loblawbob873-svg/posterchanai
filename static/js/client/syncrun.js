@@ -442,6 +442,41 @@
     }
 
     let ui=0;
+    /* REPUBLISHING SOMEBODY'S DELETIONS IS GUARDED THE SAME WAY DELETING THEM IS.
+     *
+     * `delete loses to edit` is right per file and catastrophic in bulk: a device whose timestamps
+     * moved under it (restored from backup, copied in, rsynced without -t) reads every tombstoned
+     * path as edited here and refills the folder on every other device. The mass-delete guard could
+     * not see it — that one only ever suppresses `deleteLocal`, and it runs AFTER this loop, so the
+     * files were already back on every device by the time anything asked.
+     *
+     * Refusing drops only the resurrections. Ordinary uploads, downloads and deletions still run,
+     * and the refused paths are NOT agreed — so the next sweep proposes them again and asks again,
+     * rather than recording a decision nobody made. */
+    const massUp = S.massResurrect(plan);
+    if(massUp && !o.forceResurrect){
+      let ok = false;
+      if(typeof o.confirmResurrect === 'function'){
+        try{ ok = !!(await o.confirmResurrect(massUp)); }catch(_){ ok = false; }
+      }
+      if(!ok){
+        report.refusedResurrect = massUp;
+        plan = Object.assign({}, plan, { upload: plan.upload.filter(u => !(u && u.resurrect)) });
+      }
+    }
+
+    /* COUNTED WHERE IT ACTUALLY HAPPENED, at the two points an upload is known to have landed.
+     *
+     * Incremented at the top of the loop it claimed files were republished that were then skipped
+     * for being too big, or that threw — a status line asserting a thing the manifest flatly
+     * contradicts, on the one sweep somebody is reading it to find out what went wrong. PATHS, not
+     * a tally: "kept 3,930 files another device deleted" is unactionable without them, and every
+     * other reported category already lists what it is talking about. */
+    const uploaded = (u) => {
+      report.uploaded.push(u.path);
+      if(u && u.resurrect) (report.resurrected = report.resurrected || []).push({ path: u.path, why: u.why });
+    };
+
     for(const u of plan.upload){
       if(stopping()) return await halt();
       step('uploading', u.path, ++ui, plan.upload.length);
@@ -501,7 +536,7 @@
           remember(u.path, entry);
           agree(u.path, entry);
           if(res.existed) report.alreadyStored = (report.alreadyStored || 0) + 1;
-          report.uploaded.push(u.path);
+          uploaded(u);
           await checkpoint();
           continue;
         }
@@ -527,7 +562,7 @@
         if(!entry.csum) delete entry.csum;
         remember(u.path, entry);
         agree(u.path, entry);
-        report.uploaded.push(u.path);
+        uploaded(u);
       }catch(e){ fail(u.path, e, 'upload'); }
       await checkpoint();
     }

@@ -789,6 +789,16 @@
           chunkAbove: 16 * 1024 * 1024,
           hash: decision.mode === 'full', dryRun: !!o.dryRun,
           forceTrash: !!o.forceTrash,
+          forceResurrect: !!o.forceResurrect,
+          /* Same rule as confirmTrash: only a sweep somebody is watching may ask, and a background
+           * one fails closed — which here means the deletions STAY deleted until a human says
+           * otherwise, the safe direction when the alternative is refilling every device. */
+          confirmResurrect: (o.manual && !o.dryRun) ? (m => PC.uiConfirm(
+            '“' + keyOf(f) + '” — put ' + m.n + ' file' + (m.n === 1 ? '' : 's')
+            + ' back on your other devices?\n\nYour other devices deleted them, but they look '
+            + 'changed on this one, so syncing would republish them everywhere.\n\nIf these files '
+            + 'were restored from a backup or copied in, their timestamps just look new and this is '
+            + 'not an edit — cancel, and the deletions stand.')) : null,
           /* ONLY A SWEEP SOMEBODY IS WATCHING MAY ASK. An automatic one — the watcher, a resume, the
            * heartbeat — has no one in front of it, so a dialog there is a modal nobody answers
            * blocking a background job; it refuses instead and says so on the card, where "Delete
@@ -851,6 +861,22 @@
     /* FIRST, not appended after "3 up". A sweep that refused to trash ten thousand files has done
      * one thing worth reading, and burying it behind the counts is how a guard becomes a line nobody
      * saw — which is the same silence the guard exists to break. */
+    /* THE TWO WAYS A FOLDER LOOKS IN STEP WHILE ANOTHER DEVICE'S DELETIONS SIT HERE UNDONE, both of
+     * which used to be reported as an ordinary sweep — the second not reported at all.
+     *
+     * `resurrected`: files the manifest says were deleted, republished because they look edited
+     * here. Correct (delete loses to edit), and indistinguishable from a normal upload in the
+     * counts, so a laptop whose timestamps changed under it reads as "3,930 up" and nobody learns
+     * that it just undid a deletion.
+     *
+     * `excluded`: an exclusion means "stop looking at this", so those paths are dropped from all
+     * three snapshots and can never be deleted by anyone, ever. A pattern covering the deleted files
+     * keeps them for good — silently, since the summary never mentioned exclusions at all. */
+    const _res = (rep.resurrected || []).length;
+    if(_res) bits.unshift('republished ' + _res + ' file' + (_res === 1 ? '' : 's')
+      + ' another device deleted — changed here since');
+    if(rep.refusedResurrect) bits.unshift('did NOT republish ' + rep.refusedResurrect.n + ' file'
+      + (rep.refusedResurrect.n === 1 ? '' : 's') + ' your other devices deleted');
     if(rep.refusedTrash) bits.unshift('kept ' + rep.refusedTrash.n + ' file'
       + (rep.refusedTrash.n === 1 ? '' : 's') + ' the others say are deleted — nothing trashed');
     /* A FINISHED SWEEP DOES NOT BORROW A REASON FROM THE POLICY. `decision.why` answers "why is this
@@ -858,10 +884,21 @@
      * and those belong on a sweep that was SKIPPED, which is where setStatus already puts them.
      * Pasted after a completed one it produced "in step · you asked for it", which reads as a
      * non-answer to a question nobody asked. What someone wants here is what the sweep found. */
-    if(!bits.length) return rep.unchanged
+    /* EXCLUSIONS RIDE ALONGSIDE, THEY DO NOT COUNT AS SOMETHING HAVING HAPPENED.
+     *
+     * `rep.excluded` is a standing property of the folder — how many paths its patterns drop — not
+     * work this sweep did, and it is set on EVERY sweep. Pushed into `bits` it made the list never
+     * empty, so an idle folder that excludes `Old` lost the "in step" line and the checked-file
+     * count entirely and read as a bare "5000 excluded": a five-thousand-file number reported by a
+     * sweep that did nothing, which is the opposite of what saying it was for. It is here because
+     * an exclusion is the quiet reason a deletion never arrives — an excluded path is dropped from
+     * all three snapshots and can never be deleted by anyone — so it belongs on the line, not
+     * instead of it. */
+    const _exc = rep.excluded ? ' · ' + rep.excluded + ' excluded' : '';
+    if(!bits.length) return (rep.unchanged
       ? ('in step · nothing to sync (' + rep.unchanged + ' file' + (rep.unchanged === 1 ? '' : 's') + ' checked)')
-      : 'in step · nothing to sync';
-    return bits.join(' · ');
+      : 'in step · nothing to sync') + _exc;
+    return bits.join(' · ') + _exc;
   }
   /* A SWEEP THAT THREW MUST SAY SO ON THE CARD.
    *
@@ -926,6 +963,14 @@
       // what it declined to trash — and pressing Sync is what asks about it.
       + grp('Kept — your other devices say these were deleted',
             rep.refusedTrash ? (p.deleteLocal || []) : [], a => a.path + ' — ' + a.why)
+      // Named, not tallied. "republished 3,930 files another device deleted" is not something anyone
+      // can act on without knowing which — and deciding whether to delete them again is exactly the
+      // decision this leaves the user holding.
+      + grp('Republished — deleted elsewhere, but changed here since',
+            rep.resurrected || [], a => a.path)
+      + grp('NOT republished — your other devices deleted these',
+            rep.refusedResurrect ? (p.upload || []).filter(a => a && a.resurrect) : [],
+            a => a.path)
       + '</div>';
   }
 

@@ -739,6 +739,26 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   interrupted sweep resumed from file one — it checkpoints during the sweep now, bounded to ~20
   manifest writes however big the folder is. `tests/client/test_sync_store_scale.py` drives the real
   store at those sizes with the real ceilings stubbed in.
+  **AND THE SAME THING POINTING THE OTHER WAY — A RESTORED MACHINE REFILLS THE FOLDER EVERYWHERE.**
+  `delete loses to edit` republishes a tombstoned path whenever it looks changed here, and on an
+  ordinary sweep "changed" is size+mtime (no hashing — that is the point of `incremental`). So a
+  device whose timestamps moved under it (a backup restore, a copy, `rsync` without `-t`) resurrects
+  EVERY deletion at once, undoing it on every device that had correctly applied it. The mass-delete
+  guard is blind to this: it only suppresses `deleteLocal` and it runs AFTER the upload loop, so the
+  files are already back before anything asks. `massResurrect()` is an **absolute floor (20), NOT a
+  ratio** — a restore makes everything look edited, so the resurrections arrive beside thousands of
+  ordinary uploads and 3,930-beside-11,884 clears any ratio. It was also INVISIBLE: those uploads
+  were counted as ordinary ones, so the card read "3,930 up" on a sweep that had just reversed a
+  delete. `resurrect:true` is a FLAG on the plan action, never a substring match on the `why` prose
+  (two other `why` strings open with the same two words, and a reword would silently disarm the
+  guard); the counter is incremented at the two points an upload actually LANDED, not at the top of
+  the loop, or a sweep whose uploads all failed still claims it republished them. Covered by
+  `tests/client/test_fs_bridge.py`, which is also the first test anywhere to run the real executor
+  against the real desktop bridge against real files on disk — every other folder-sync test uses stub
+  adapters, which is why "another device deleted 3,930 files and this one still has them" had no test
+  that could fail. **`rep.excluded` must NOT go in the summary's `bits`**: it is a standing property
+  of the folder, set on every sweep, so pushing it made the list never empty and an idle folder with
+  an exclusion lost its "in step · nothing to sync (N checked)" line entirely.
   **EVERY RULE ABOVE DECIDES ONE PATH, AND A BROKEN MANIFEST DOES NOT PRODUCE ONE BAD DECISION — IT
   PRODUCES TEN THOUSAND IDENTICAL ONES.** Measured: the shared `pcai:sync:Pictures` doc held ~10k
   paths and every one was a tombstone (`n=0` live, readable on the server — the count is the only
