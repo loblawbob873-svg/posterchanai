@@ -384,3 +384,91 @@ def test_the_background_clock_reports_what_the_phone_measured():
     sync = _read(CLIENT, "sync.js")
     assert "tickStats()" in sync, "nothing in the UI reads the counters"
     assert "sync-bg" in sync, "there is no control that shows them"
+
+
+def test_emptied_directories_are_removed_but_only_when_empty():
+    """"The files are gone but the dirs remain."
+
+    A manifest holds PATHS, never directories, so deleting a folder tombstones the files under it and
+    leaves the tree standing on every device. Fixed on both platforms — but the two have OPPOSITE
+    safety properties and only one of them is free:
+
+      * desktop uses `rmdir`, which REFUSES a non-empty directory. The syscall is the guard.
+      * SAF has no rmdir. `DocumentsContract.deleteDocument` on a directory deletes it RECURSIVELY,
+        so here the emptiness check IS the guard, and it must fail CLOSED — a query that returns null
+        or throws (provider gone, volume unmounted, grant revoked mid-sweep) has to answer "not
+        empty", because being wrong the other way costs somebody's folder.
+    """
+    plugin = _read(JAVA, "sync", "FolderSyncPlugin.java")
+    assert "pruneEmptyDirs(cr, tree, rel)" in plugin, (
+        "Android leaves the emptied directory tree behind after a delete"
+    )
+    assert "private boolean isEmptyDir(" in plugin, "nothing checks the directory is empty first"
+
+    body = plugin[plugin.index("private boolean isEmptyDir("):]
+    body = body[:body.index("\n  }")]
+    assert "if (c == null) return false;" in body, (
+        "a failed query must answer NOT empty. deleteDocument on a directory is recursive, so a "
+        "true here deletes a folder whose contents could not be listed"
+    )
+    assert "catch (Exception e) {\n      return false;" in body or "return false;" in body.split("catch")[-1], (
+        "a throw must answer NOT empty, for the same reason"
+    )
+
+    # It must run only after the move SUCCEEDED — pruning around a failed trash would remove a
+    # directory whose file is still sitting in it.
+    trash = plugin[plugin.index("public void trash(PluginCall call)"):]
+    trash = trash[:trash.index("@PluginMethod", 10)]
+    assert trash.index("could not move") < trash.index("pruneEmptyDirs"), (
+        "the prune runs before the failed-trash guard"
+    )
+
+    prune = plugin[plugin.index("private void pruneEmptyDirs("):]
+    prune = prune[:prune.index("\n  }")]
+    assert "TRASH.equals(parts[0])" in prune, "the prune would walk into .pc-trash"
+    assert "docId.equals(root)" in prune, (
+        "the sync ROOT must never be removed — it is the pairing, and a device that deleted it "
+        "would have to re-grant the folder before it could sync again"
+    )
+
+
+def test_a_sweep_holds_a_wake_lock_and_can_never_leak_it():
+    """THE MEASURED CAUSE of "syncing stops the moment the screen goes off".
+
+    A foreground service keeps the PROCESS resident — that is what "Stay connected" buys, and it is
+    why the WebView survives with the app off screen. It does not keep the PROCESSOR running. On a
+    real phone: 23 downloads in the minute before the screen went off, 0 in the minute after, while
+    the alarm was firing and the tick was being delivered the whole time. There was no CPU to sweep
+    with.
+
+    A wake lock is the one thing here that can flatten a battery, so the three properties that stop
+    it leaking are asserted rather than assumed — and the page that holds it is the half Android
+    takes away, so every one of them is load-bearing.
+    """
+    plugin = _read(JAVA, "sync", "FolderSyncPlugin.java")
+    sync = _read(CLIENT, "sync.js")
+    shim = _read(CLIENT, "fs-android.js")
+
+    assert "PARTIAL_WAKE_LOCK" in plugin, "nothing keeps the CPU awake for a sweep"
+    assert "public void sweepBegin(" in plugin and "public void sweepEnd(" in plugin
+    assert "wakeBegin" in shim and "wakeEnd" in shim, "the bridge does not expose it, so it ships dead"
+
+    body = plugin[plugin.index("public void sweepBegin("):]
+    body = body[:body.index("\n  }")]
+    assert "acquire(WAKE_MAX_MS)" in body, (
+        "an untimed acquire is held for ever if the renderer is killed mid-sweep — which is the "
+        "exact case this exists for"
+    )
+    assert "setReferenceCounted(false)" in plugin, (
+        "begin/end cross a bridge that can drop either; a counted lock left at +1 by one lost end "
+        "is never released again"
+    )
+    assert "releaseWake();" in plugin[plugin.index("protected void handleOnDestroy()"):][:400], (
+        "the page going away must drop the lock — nothing else can, since the only thing that would "
+        "have released it was the sweep running in that page"
+    )
+
+    # Taken for a real sweep only, and given back on every exit including a throw.
+    assert "!o.dryRun && _wake && _wake.wakeBegin" in sync, "a dry run must not hold the CPU up"
+    tail = sync[sync.index("running.delete(f.id);"):][:400]
+    assert "wakeEnd" in tail, "a sweep that threw would keep the processor awake"

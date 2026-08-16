@@ -170,6 +170,54 @@ public class FolderSyncPlugin extends Plugin {
     return false;
   }
 
+  /* THE CPU HAS TO BE AWAKE FOR A SWEEP, AND NOTHING WAS KEEPING IT AWAKE.
+   *
+   * "Stay connected" keeps the PROCESS resident — that is what a foreground service does, and it is
+   * why the WebView survives with the app off screen. It does not keep the PROCESSOR running. So
+   * with the screen off the device suspends between alarms and the sweep stops mid-file: measured,
+   * 23 downloads in the minute before the screen went off and 0 in the minute after. The alarm was
+   * never the problem — it fires, the tick is delivered, and then there is no CPU to sweep with.
+   *
+   * Held ONLY while a sweep is actually running, which is what makes it defensible: `shouldSync` has
+   * already decided the folder may run at all (charging, unmetered, not inside the minimum interval),
+   * so this cannot keep a phone awake that the user's own switches said no to.
+   *
+   * THREE THINGS STOP IT LEAKING, because a stuck wake lock is a flat battery and the page holding
+   * it is the half Android takes away:
+   *   * `acquire(timeout)` — the OS releases it regardless, so a renderer killed mid-sweep costs one
+   *     timeout and not the night;
+   *   * `setReferenceCounted(false)` — begin/end are called across a bridge that can drop either, and
+   *     a counted lock left at +1 by one lost `end` is never released again;
+   *   * released in handleOnDestroy, so a page going away takes it with it.
+   */
+  private static final long WAKE_MAX_MS = 10 * 60 * 1000L;
+  private static android.os.PowerManager.WakeLock wake = null;
+
+  @PluginMethod
+  public void sweepBegin(PluginCall call) {
+    try {
+      if (wake == null) {
+        android.os.PowerManager pm =
+            (android.os.PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+        if (pm == null) { call.resolve(); return; }
+        wake = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "posterchan:foldersync");
+        wake.setReferenceCounted(false);
+      }
+      if (!wake.isHeld()) wake.acquire(WAKE_MAX_MS);
+    } catch (Throwable ignored) {}
+    call.resolve();
+  }
+
+  @PluginMethod
+  public void sweepEnd(PluginCall call) {
+    releaseWake();
+    call.resolve();
+  }
+
+  private static void releaseWake() {
+    try { if (wake != null && wake.isHeld()) wake.release(); } catch (Throwable ignored) {}
+  }
+
   @PluginMethod
   public void setTickPolicy(PluginCall call) {
     pNeedCharging = Boolean.TRUE.equals(call.getBoolean("needCharging", false));
@@ -184,8 +232,11 @@ public class FolderSyncPlugin extends Plugin {
 
   @Override
   protected void handleOnDestroy() {
-    // The page is going. Clearing this is what stops a tick being delivered into a dead bridge.
+    // The page is going. Clearing this is what stops a tick being delivered into a dead bridge —
+    // and dropping the wake lock with it, because the only thing that could have released it was
+    // the sweep running in the page that just went away.
     if (INSTANCE == this) INSTANCE = null;
+    releaseWake();
     super.handleOnDestroy();
   }
 
@@ -714,6 +765,10 @@ public class FolderSyncPlugin extends Plugin {
         // local edit and RE-UPLOADED it, resurrecting a file deleted on another device, while
         // reporting "1 to trash" both times. Rejecting makes it a per-file failure that retries.
         if (dest == null) { call.reject("could not move " + rel + " to the trash"); return; }
+        // The directory it just left may now be empty, and so may its parents. Only AFTER the move
+        // is known to have succeeded — pruning around a failed trash would remove a folder whose
+        // file is still sitting in it.
+        pruneEmptyDirs(cr, tree, rel);
         JSObject ret = new JSObject();
         ret.put("to", dest);
         call.resolve(ret);
@@ -906,6 +961,56 @@ public class FolderSyncPlugin extends Plugin {
   private boolean deleteDoc(ContentResolver cr, Uri tree, String docId) {
     try { return DocumentsContract.deleteDocument(cr, DocumentsContract.buildDocumentUriUsingTree(tree, docId)); }
     catch (Exception e) { return false; }
+  }
+
+  /**
+   * Has this directory nothing in it?
+   *
+   * FAILS CLOSED, and here that is not a style choice. `DocumentsContract.deleteDocument` on a
+   * directory deletes it RECURSIVELY — there is no SAF equivalent of rmdir refusing a non-empty
+   * one — so on this platform the emptiness check IS the safety, where on the desktop the syscall
+   * provides it. A query that returns null or throws (provider gone, volume unmounted, grant
+   * revoked mid-sweep) must therefore answer "not empty", because the cost of being wrong in the
+   * other direction is somebody's folder.
+   */
+  private boolean isEmptyDir(ContentResolver cr, Uri tree, String docId) {
+    Cursor c = null;
+    try {
+      c = cr.query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId),
+                   new String[]{ DocumentsContract.Document.COLUMN_DOCUMENT_ID }, null, null, null);
+      if (c == null) return false;
+      return !c.moveToFirst();
+    } catch (Exception e) {
+      return false;
+    } finally { if (c != null) try { c.close(); } catch (Exception ignored) {} }
+  }
+
+  /**
+   * The directories a delete leaves behind — the same gap the desktop bridge had.
+   *
+   * A manifest holds PATHS, never directories: a folder in the Blossom view is only the common
+   * prefix of the files under it. Deleting one tombstones every file it contains, every device
+   * trashes those files, and the tree they lived in is left standing, empty, exactly where the user
+   * deleted it. Reported from two Windows PCs, and true here for the same reason.
+   *
+   * Walks UP from the file's own directory, because emptying `a/b/c` may empty `b`, then `a`. Stops
+   * at the first directory that still holds anything, at the tree ROOT (which is the pairing itself
+   * — a device that deleted it would have to re-grant the folder), and inside `.pc-trash`, which is
+   * the safety net and is emptied only on request.
+   */
+  private void pruneEmptyDirs(ContentResolver cr, Uri tree, String rel) {
+    if (rel == null) return;
+    String[] parts = rel.split("/");
+    if (parts.length == 0 || TRASH.equals(parts[0])) return;
+    String root = DocumentsContract.getTreeDocumentId(tree);
+    for (int depth = parts.length - 1; depth >= 1; depth--) {
+      StringBuilder sb = new StringBuilder();
+      for (int i = 0; i < depth; i++) { if (sb.length() > 0) sb.append('/'); sb.append(parts[i]); }
+      String docId = resolve(tree, sb.toString(), false);
+      if (docId == null || docId.equals(root)) return;
+      if (!isEmptyDir(cr, tree, docId)) return;
+      if (!deleteDoc(cr, tree, docId)) return;
+    }
   }
 
   /** Move a document into .pc-trash/<date>/, mirroring desktop/fsbridge.js — nothing is unlinked. */

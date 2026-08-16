@@ -250,6 +250,53 @@ class TestFsBridge(unittest.TestCase):
         self.assertIsNone(out["refusedResurrect"])
         self.assertEqual(len(out["resurrected"]), 3)
 
+    def test_deleting_a_folders_files_removes_the_empty_folders_too(self):
+        """"The files are gone but the dirs remain."
+
+        A manifest holds PATHS, never directories — a folder in the Blossom view is just the common
+        prefix of the files under it. So deleting one tombstones every file it contains, each device
+        trashes those files, and the directory tree is left standing on disk, empty, exactly where
+        the user deleted it: `PDF Project/1/venv` with nothing in it. Reported from two Windows PCs
+        as "files and folders I deleted in Blossom are not deleted on disk", and the folders were the
+        whole of it — the files really had gone.
+        """
+        files = {"PDF Project/1/venv/lib/a.py": "x", "PDF Project/1/venv/lib/b.py": "y",
+                 "keep.txt": "z"}
+        base = {k: {"csum": "C" + k} for k in files}
+        manifest = {"PDF Project/1/venv/lib/a.py": {"deletedAt": 9000},
+                    "PDF Project/1/venv/lib/b.py": {"deletedAt": 9000},
+                    "keep.txt": {"sha": "SK", "csum": "Ckeep.txt", "size": 1, "mtime": 1000}}
+        out = self.run_sweep(manifest, base, files)
+        self.assertEqual(out["trashed"], 2)
+        self.assertEqual(out["failed"], [])
+        self.assertEqual(self._left_on_disk(), ["keep.txt"])
+        self.assertFalse(os.path.exists(os.path.join(self.root, "PDF Project")),
+                         "the emptied folder is still on disk — this is the reported bug")
+
+    def test_a_folder_that_still_holds_anything_is_never_removed(self):
+        """THE SAFETY PROPERTY, and the reason this uses rmdir rather than a recursive delete: rmdir
+        physically refuses a non-empty directory. A file the sweep did not touch — excluded, ignored,
+        written by another program a moment ago, never ours at all — keeps its folder, and the worst
+        this can do is leave a directory standing."""
+        files = {"proj/gone.txt": "x", "proj/mine.txt": "keep me"}
+        base = {"proj/gone.txt": {"csum": "G"}}
+        manifest = {"proj/gone.txt": {"deletedAt": 9000}}
+        out = self.run_sweep(manifest, base, files)
+        self.assertEqual(out["trashed"], 1)
+        self.assertTrue(os.path.exists(os.path.join(self.root, "proj")),
+                        "a directory still holding a file was removed")
+        self.assertIn("proj/mine.txt", self._left_on_disk())
+
+    def test_the_sync_root_is_never_removed_however_empty(self):
+        """The root IS the pairing. A device that deleted it would have to re-pick the folder in a
+        native dialog before it could sync again."""
+        files = {"only.txt": "x"}
+        base = {"only.txt": {"csum": "O"}}
+        manifest = {"only.txt": {"deletedAt": 9000}}
+        out = self.run_sweep(manifest, base, files)
+        self.assertEqual(out["trashed"], 1)
+        self.assertTrue(os.path.isdir(self.root), "the sync root itself was removed")
+
     def test_an_exclusion_silently_keeps_files_another_device_deleted(self):
         """NOT A BUG — the documented rule, pinned because it is the likeliest innocent explanation
         for 'the deletes never arrived'. An exclusion means 'stop looking at this', so an excluded

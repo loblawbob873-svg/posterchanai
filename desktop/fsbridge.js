@@ -33,7 +33,8 @@ const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
 
-const IGNORE = new Set(['.pc-trash', '.git', 'node_modules', '.DS_Store', 'Thumbs.db',
+const TRASH_DIR = '.pc-trash';
+const IGNORE = new Set([TRASH_DIR, '.git', 'node_modules', '.DS_Store', 'Thumbs.db',
                         '.Trash', '$RECYCLE.BIN', 'System Volume Information']);
 /* Half-written files, by the names the tools that make them use.
  *
@@ -316,8 +317,50 @@ async function trash(id, rel, when){
   }
   await fsp.mkdir(path.dirname(abs), { recursive: true });
   await fsp.rename(src, abs);
-  return path.relative(await fsp.realpath(roots.find(r => r.id === id).dir), abs)
-             .split(path.sep).join('/');
+  const landed = path.relative(await fsp.realpath(roots.find(r => r.id === id).dir), abs)
+                     .split(path.sep).join('/');
+  // The directory the file just left may now be empty, and so may its parents. See pruneEmptyDirs.
+  await pruneEmptyDirs(id, path.dirname(src));
+  return landed;
+}
+
+/* THE DIRECTORIES A DELETE LEAVES BEHIND, which is what "the folder is still there" was.
+ *
+ * A manifest holds PATHS, never directories — a folder in the Blossom view is only the common
+ * prefix of the files under it. So deleting one tombstones every file it contains, each device
+ * trashes those files, and the directory tree they lived in is left standing: empty, on disk,
+ * exactly where the user just deleted it. `PDF Project/1/venv` with nothing in it.
+ *
+ * `rmdir`, NEVER `rm -r`, AND THAT IS THE WHOLE SAFETY ARGUMENT. rmdir refuses a directory that is
+ * not empty, so this physically cannot remove a file — not one this sweep missed, not one another
+ * program wrote a moment ago, not one that was never ours. The worst case is a directory that stays.
+ * A recursive delete here would be the only unguarded destructive path in the whole feature.
+ *
+ * It walks UP, because deleting `a/b/c/x.txt` empties `c`, which may empty `b`, which may empty `a`.
+ * It stops at the first directory that will not go (non-empty, in use, permission), and it stops at
+ * the sync ROOT, which is never removed however empty it gets: the root is the pairing itself, and
+ * a device that deleted it would have to re-pick the folder to sync again.
+ */
+async function pruneEmptyDirs(id, dir){
+  const root = roots.find(r => r.id === id);
+  if(!root) return 0;
+  let base;
+  try{ base = await fsp.realpath(root.dir); }catch(_){ return 0; }
+  let cur;
+  try{ cur = await fsp.realpath(dir); }catch(_){ return 0; }
+  let gone = 0;
+  // Bounded: a path cannot have more components than this, and a symlinked parent must not turn the
+  // walk into a loop.
+  for(let i = 0; i < 64; i++){
+    if(cur === base) break;                             // never the root
+    const inside = cur.startsWith(base + path.sep);
+    if(!inside) break;                                  // outside the pairing — not ours to touch
+    if(path.basename(cur) === TRASH_DIR) break;         // the safety net is not swept by the sweep
+    try{ await fsp.rmdir(cur); }catch(_){ break; }      // not empty, or held open: stop here
+    gone++;
+    cur = path.dirname(cur);
+  }
+  return gone;
 }
 
 /* Empty trash older than N days. Deliberately explicit and NOT automatic: the whole value of the

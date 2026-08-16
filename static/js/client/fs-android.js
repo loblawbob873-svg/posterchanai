@@ -155,6 +155,12 @@
      * exactly as it did before — a feature that ships inert and tests green, because the Java and
      * the caller were both correct and only the wire between them was missing. */
     setTickPolicy: (o) => P.setTickPolicy(o || {}).catch(() => {}),
+    /* Keep the CPU up for the duration of a sweep. A foreground service keeps the PROCESS resident
+     * and lets the processor sleep, so with the screen off a sweep stops mid-file — measured, 23
+     * downloads the minute before and 0 the minute after. Never fatal if absent or refused: the
+     * sweep runs exactly as it does today, which is the bug, not a new one. */
+    wakeBegin: () => P.sweepBegin().catch(() => {}),
+    wakeEnd: () => P.sweepEnd().catch(() => {}),
     onTick: (fn) => {
       try{
         const p = P.addListener('folderSyncTick', () => { try{ fn(); }catch(_){} });

@@ -807,6 +807,17 @@
 
     const job = (async () => {
       setStatus(f.id, o.dryRun ? 'checking…' : 'syncing…', null, true);
+      /* KEEP THE CPU UP FOR THE DURATION, on a platform that otherwise suspends underneath us.
+       *
+       * "Stay connected" keeps the process resident; it does not keep the processor running. Measured
+       * on a real phone: 23 downloads in the minute before the screen went off, 0 in the minute
+       * after. The alarm was firing and the tick was arriving the whole time — there was simply no
+       * CPU to sweep with. Taken only for a REAL sweep (a dry run reads a manifest and stops), and
+       * only after `shouldSync` has already decided this folder may run at all, so the "only when
+       * plugged in" and "Wi-Fi only" switches still gate it. Absent on desktop and on an older APK,
+       * where it is a no-op. */
+      const _wake = FS();
+      if(!o.dryRun && _wake && _wake.wakeBegin){ try{ await _wake.wakeBegin(); }catch(_){} }
       try{
         const rep = await RUN.sweep(fs, store, {
           id: f.id, key: keyOf(f), device: deviceName(), now: Date.now(),
@@ -865,7 +876,11 @@
       }catch(e){
         setStatus(f.id, 'failed: ' + ((e && e.message) || e));
         throw e;
-      } finally { running.delete(f.id); }
+      } finally {
+        running.delete(f.id);
+        // Released on EVERY exit — a sweep that threw still has to give the processor back.
+        if(!o.dryRun && _wake && _wake.wakeEnd){ try{ await _wake.wakeEnd(); }catch(_){} }
+      }
     })();
     running.set(f.id, job);
     return job;
@@ -1455,13 +1470,22 @@
           try{ st = await FS().tickStats(); }catch(_){ st = null; }
           if(!st){ PC.toast('this build can’t report background sync'); return; }
           const ago = (t) => !t ? 'never' : Math.round((Date.now() - t) / 60000) + ' min ago';
-          setStatus(id, 'background: ' + (st.stayConnected ? 'stay-connected ON' : 'stay-connected OFF')
-            + (st.serviceUp ? ', service up' : ', service down')
-            + ' · alarms ' + st.armed + ' scheduled / ' + st.fired + ' fired (last ' + ago(st.lastFiredAt) + ')'
-            + ' · ticks ' + st.delivered + ' delivered, ' + st.dropped + ' dropped, ' + st.suppressed + ' skipped'
-            + (st.needCharging || st.needUnmetered
-                ? ' · waiting for ' + [st.needCharging && 'a charger', st.needUnmetered && 'Wi-Fi'].filter(Boolean).join(' + ')
-                : ''));
+          const line = 'stay-connected ' + (st.stayConnected ? 'ON' : 'OFF')
+            + ', service ' + (st.serviceUp ? 'up' : 'DOWN')
+            + '\nalarms: ' + st.armed + ' scheduled, ' + st.fired + ' fired'
+            + ' (' + (st.restarts || 0) + ' of the scheduled are service starts; last fired ' + ago(st.lastFiredAt) + ')'
+            + '\nticks: ' + st.delivered + ' delivered, ' + st.dropped + ' dropped, ' + st.suppressed + ' skipped'
+            + ' (last delivered ' + ago(st.lastDeliveredAt) + ')'
+            + '\nwaiting for: ' + ([st.needCharging && 'a charger', st.needUnmetered && 'Wi-Fi']
+                                     .filter(Boolean).join(' + ') || 'nothing');
+          /* COPIED, NOT PRINTED ON THE CARD. This went to the status line, which a running sweep
+           * overwrites with its per-file progress several times a second — so the one reading that
+           * explains why background sync is not working was unreadable on the one device it
+           * describes, and could not be quoted to anybody either. copyValue puts it on the clipboard
+           * (the APK's WebView refuses navigator.clipboard, which is why this helper exists) and
+           * falls back to a dialog that STAYS until dismissed when even that is refused. */
+          PC.copyValue ? PC.copyValue(line, 'background details copied', 'Background sync:')
+                       : setStatus(id, line.replace(/\n/g, ' · '));
         }; }
       card.querySelector('.sync-forget').onclick = async () => {
         if(!await PC.uiConfirm('Stop syncing this folder?\n\nNothing is deleted — the files stay on this '
