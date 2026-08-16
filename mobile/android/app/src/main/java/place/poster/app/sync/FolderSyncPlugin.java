@@ -54,9 +54,12 @@ import java.util.List;
  * so watch() answers false. That left one automatic trigger, a JS setInterval — which Android
  * throttles in a hidden WebView — so with the screen off the app synced only when opened.
  *
- * Background sync now runs under "Stay connected", whose foreground service keeps the WebView (and
- * therefore the key) resident and arms an AlarmManager alarm that fires in Doze; see tick() above.
- * The UNATTENDED job is still only a notifier (SyncCheckWorker), for the reason it always was: an
+ * Background sync runs off {@link SyncClock} — folder sync's OWN alarm, armed from configure() below
+ * whenever this account syncs anything — landing in {@link SyncTickReceiver} and sweeping inside
+ * {@link SyncService}. It used to ride "Stay connected"'s foreground service, which is off by
+ * default and is a notifications feature: a phone that had never turned that switch on had no clock
+ * at all, so none of the machinery below ever ran. That was the bug.
+ * The WorkManager job (SyncCheckWorker) is still only a notifier, for the reason it always was: an
  * uploader with no page needs the nsec in native storage, which with Amber or NIP-46 does not exist
  * on the device at all.
  *
@@ -100,27 +103,17 @@ public class FolderSyncPlugin extends Plugin {
    * tick happened — answering "nothing has ticked this session" about the very tick under
    * investigation.
    *
-   * `armed` counts SCHEDULING OPERATIONS, `fired` alarms that came back, `delivered` ticks handed to
-   * a live bridge, `dropped` ticks with no bridge to hand them to, `suppressed` ticks the battery
-   * pre-filter skipped. `fired > delivered` is a page that keeps dying.
+   * `delivered` counts ticks handed to a live bridge, `dropped` ticks with no bridge to hand them
+   * to, `suppressed` ticks the battery pre-filter skipped. The ALARM's own counters live with the
+   * alarm, in {@link SyncClock} — one clock, one place that knows whether it is running.
    *
    * DO NOT READ `armed > fired + 1` AS DOZE EATING ALARMS — that was the first reading written here
    * and it is wrong. Only ONE alarm is ever outstanding (`FLAG_UPDATE_CURRENT` replaces the pending
-   * one rather than adding to it), while every service start arms again: a STICKY relaunch, a boot,
-   * stay-connected off and on. Those are counted by `restarts`, so the honest comparison is
-   * `armed - restarts` against `fired`. Without that subtraction a perfectly healthy phone shows the
-   * exact signature these counters exist to identify, after two or three service restarts. */
-  private static final java.util.concurrent.atomic.AtomicInteger tArmed = new java.util.concurrent.atomic.AtomicInteger();
-  private static final java.util.concurrent.atomic.AtomicInteger tFired = new java.util.concurrent.atomic.AtomicInteger();
+   * one rather than adding to it), and every configure() from the page arms again: a page load, a
+   * sweep, a folder added. So `armed` is a count of schedulings, not of alarms in flight. */
   private static final java.util.concurrent.atomic.AtomicInteger tDelivered = new java.util.concurrent.atomic.AtomicInteger();
   private static final java.util.concurrent.atomic.AtomicInteger tDropped = new java.util.concurrent.atomic.AtomicInteger();
-  private static final java.util.concurrent.atomic.AtomicInteger tRestarts = new java.util.concurrent.atomic.AtomicInteger();
-  private static volatile long tLastFired = 0, tLastDelivered = 0;
-
-  public static void onAlarmArmed() { tArmed.incrementAndGet(); }
-  /** The service started and armed its first alarm — not a delivery that went missing. */
-  public static void onServiceStarted() { tRestarts.incrementAndGet(); }
-  public static void onAlarmFired() { tFired.incrementAndGet(); tLastFired = System.currentTimeMillis(); }
+  private static volatile long tLastDelivered = 0;
 
   /* THE TWO CHECKBOXES, ANSWERED BEFORE THE WEBVIEW IS WOKEN.
    *
@@ -249,9 +242,10 @@ public class FolderSyncPlugin extends Plugin {
    */
   @PluginMethod
   public void configure(PluginCall call) {
+    SyncStore store = new SyncStore(getContext());
     try {
       JSArray folders = call.getArray("folders");
-      new SyncStore(getContext()).configure(
+      store.configure(
           Boolean.TRUE.equals(call.getBoolean("enabled", false)),
           call.getString("apiBase", ""),
           call.getString("mediaBase", ""),
@@ -262,6 +256,21 @@ public class FolderSyncPlugin extends Plugin {
       call.reject("could not store the sync settings: " + t.getMessage());
       return;
     }
+    /* AND ARM THE CLOCK, which is the whole of "background sync does not work on this phone".
+     *
+     * It used to be armed by StayAwakeService — the "Stay connected" switch, off by default, in the
+     * notifications settings, described as a fallback for DMs and calls. A phone that had never
+     * touched it had no clock, so nothing ever asked for a background sweep and folder sync stopped
+     * with the screen. The feature asks for its own clock now.
+     *
+     * ON EVERY CONFIGURE, not once: an alarm does not survive a reboot, a force-stop clears it, and
+     * FLAG_UPDATE_CURRENT means re-arming replaces rather than multiplies. The page calls this at
+     * startup and after every sweep, so opening the app is what puts the clock back.
+     *
+     * CANCELLED when nothing is left to sync — including when this account signs out — because an
+     * alarm that wakes the phone every sixteen minutes to decide there is no work is exactly the
+     * battery complaint that gets a sync feature turned off. */
+    SyncClock.followStore(getContext());
     call.resolve();
   }
 
@@ -269,6 +278,8 @@ public class FolderSyncPlugin extends Plugin {
   @PluginMethod
   public void forgetNative(PluginCall call) {
     new SyncStore(getContext()).forget();
+    // …and stop waking the phone for an account that is no longer here.
+    SyncClock.cancel(getContext());
     call.resolve();
   }
 
@@ -375,16 +386,36 @@ public class FolderSyncPlugin extends Plugin {
   @PluginMethod
   public void tickStats(PluginCall call) {
     JSObject o = new JSObject();
-    o.put("armed", tArmed.get());
-    o.put("fired", tFired.get());
+    o.put("armed", SyncClock.armedCount());
+    o.put("fired", SyncClock.firedCount());
     o.put("delivered", tDelivered.get());
     o.put("dropped", tDropped.get());
     o.put("suppressed", tSuppressed.get());
-    o.put("restarts", tRestarts.get());
     o.put("needCharging", pNeedCharging);
     o.put("needUnmetered", pNeedUnmetered);
-    o.put("lastFiredAt", tLastFired);
+    /* THE CLOCK, WHICH IS NOW FOLDER SYNC'S OWN. Reported as two WALL-CLOCK TIMES that survive a
+     * process death, not as a flag: the panel can only be opened from a running page, and a running
+     * page has already armed, so any "is it armed" boolean reads true to everyone who can ask it.
+     * "armed 4 min ago, last fired never" is a clock that is not running and says so on sight. */
+    o.put("lastArmedAt", SyncClock.lastArmedAt(getContext()));
+    o.put("lastFiredAt", SyncClock.lastFiredAt(getContext()));
     o.put("lastDeliveredAt", tLastDelivered);
+    o.put("clockArmed", SyncClock.armedThisProcess());
+    o.put("clockPeriodMin", (int) (SyncClock.PERIOD_MS / 60000L));
+    /* WHETHER THE ALARM IS EXACT, which sounds like a detail about punctuality and is the thing that
+     * decides whether a background sweep may hold the process at all: Android 12+ only lets an
+     * EXACT alarm start a foreground service. On 13+ that is a permission the user grants, so this
+     * being false is normal — and it is why `job` exists beside `foreground` below. */
+    o.put("clockExact", SyncClock.isExact(getContext()));
+    /* WHICH ROUTE THE SWEEP ACTUALLY GOT. `foreground` = a foreground service (best: no time limit).
+     * `refused` = Android would not allow one. `job` = the expedited-job fallback, which also keeps
+     * the process out of the freezer but is capped at about ten minutes. All three are counted
+     * because from every other vantage point they look identical — silence. */
+    o.put("foreground", SyncClock.foregroundCount());
+    o.put("foregroundRefused", SyncClock.refusedCount());
+    o.put("job", SyncClock.jobCount());
+    o.put("sweepServiceUp", SyncService.running);
+    // Still reported, because it is no longer REQUIRED and somebody will ask whether it is.
     o.put("serviceUp", place.poster.app.push.StayAwakeService.running);
     o.put("stayConnected", place.poster.app.push.StayAwakeService.wanted(getContext()));
     call.resolve(o);

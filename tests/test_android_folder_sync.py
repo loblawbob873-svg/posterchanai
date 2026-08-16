@@ -30,6 +30,16 @@ def _read(*parts):
         return fh.read()
 
 
+def _code_only(src):
+    """Source with its comments removed.
+
+    Every file here explains itself at length, so a test that matches raw text can be satisfied by
+    the very paragraph explaining why the code it is looking for was removed. That is not
+    hypothetical — it happened twice while these were being written."""
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    return "\n".join(l for l in src.splitlines() if not l.strip().startswith("//"))
+
+
 def test_the_plugin_is_registered():
     main = _read(JAVA, "MainActivity.java")
     assert "registerPlugin(place.poster.app.sync.FolderSyncPlugin.class)" in main, (
@@ -248,15 +258,19 @@ def test_the_native_tick_is_wired_end_to_end():
     service was keeping the process alive and nothing was ever asking it to sync.
 
     Four links, and a break in any one of them is the same silence:
-      service ticks -> plugin emits -> shim subscribes -> sync.js nudges.
+      alarm fires -> receiver ticks -> plugin emits -> shim subscribes -> sync.js nudges.
+
+    The clock has MOVED out of StayAwakeService since this was written — see
+    test_the_clock_does_not_depend_on_an_unrelated_switch for why that was the whole bug — so this
+    reads it wherever it lives now.
     """
-    svc = _read(JAVA, "push", "StayAwakeService.java")
+    svc = _read(JAVA, "sync", "SyncClock.java") + _read(JAVA, "sync", "SyncTickReceiver.java")
     plugin = _read(JAVA, "sync", "FolderSyncPlugin.java")
     shim = _read(CLIENT, "fs-android.js")
     sync = _read(CLIENT, "sync.js")
 
     assert "FolderSyncPlugin.tick(" in svc, (
-        "StayAwakeService never ticks — it keeps the process alive and nothing asks it to sync, "
+        "the alarm never ticks — something keeps the process alive and nothing asks it to sync, "
         "which is the screen-off bug exactly"
     )
     assert "setAndAllowWhileIdle" in svc, (
@@ -280,11 +294,20 @@ def test_the_native_tick_is_wired_end_to_end():
     )
     assert "FLAG_IMMUTABLE" in svc, "Android 12+ throws when a PendingIntent is built without it"
     assert "am.cancel(" in svc, (
-        "the alarm is not cancelled in onDestroy — an alarm OUTLIVES the process, so it would "
-        "restart the service from a switch the user turned off"
+        "there is no way to cancel the alarm — an alarm OUTLIVES the process, so an account that "
+        "stopped syncing would go on waking the phone every sixteen minutes for ever"
+    )
+    # …and it is re-armed by the delivery itself. setAndAllowWhileIdle is one-shot, so a receiver
+    # that does not re-arm ticks exactly once per app start and then never again — which reads as
+    # "background sync works for a bit and then stops", i.e. as the bug.
+    recv = _code_only(_read(JAVA, "sync", "SyncTickReceiver.java"))
+    body = recv[recv.index("public void onReceive("):]
+    assert body.index("SyncClock.arm(") < body.index("FolderSyncPlugin.tick("), (
+        "the alarm is re-armed after work that can throw — one throw and the clock is gone for the "
+        "life of the install, silently"
     )
 
-    m_ms = re.search(r"SYNC_TICK_MS\s*=\s*(\d+)\s*\*\s*60", svc)
+    m_ms = re.search(r"PERIOD_MS\s*=\s*(\d+)\s*\*\s*60", svc)
     assert m_ms, "the tick period is not stated in minutes"
     minutes = int(m_ms.group(1))
     floor = int(re.search(r"minIntervalMs:\s*(\d+)\s*\*\s*60", _read(CLIENT, "foldersync.js")).group(1))
@@ -341,11 +364,11 @@ def test_the_background_tick_obeys_the_two_battery_switches():
     policy would silently stop a folder syncing with nothing to say so, so this pins that it reads
     the same two facts shouldSync does and that the client votes with EVERY rather than ANY.
     """
-    svc = _read(JAVA, "push", "StayAwakeService.java")
+    svc = _read(JAVA, "sync", "SyncTickReceiver.java")
     plugin = _read(JAVA, "sync", "FolderSyncPlugin.java")
     sync = _read(CLIENT, "sync.js")
 
-    assert "suppressed(this)" in svc, (
+    assert "suppressed(ctx)" in svc, (
         "the alarm emits unconditionally, so a phone on battery with 'only when plugged in' set is "
         "woken every 16 minutes to be told no"
     )
@@ -396,8 +419,14 @@ def test_the_background_clock_reports_what_the_phone_measured():
     instance, the panel would answer 'nothing has ticked this session' about the very tick being
     investigated."""
     plugin = _read(JAVA, "sync", "FolderSyncPlugin.java")
-    for counter in ("tArmed", "tFired", "tDelivered", "tDropped", "tSuppressed"):
+    clock = _read(JAVA, "sync", "SyncClock.java")
+    for counter in ("tDelivered", "tDropped", "tSuppressed"):
         assert re.search(r"private static .*\b%s\b" % counter, plugin), (
+            "%s is missing or not static — see above" % counter
+        )
+    # The ALARM's counters live with the alarm — one clock, one place that knows about it.
+    for counter in ("cArmed", "cFired", "cForeground", "cRefused"):
+        assert re.search(r"private static .*\b%s\b" % counter, clock), (
             "%s is missing or not static — see above" % counter
         )
     assert "public void tickStats(" in plugin, "nothing can read the counters"
@@ -547,8 +576,11 @@ def test_a_sweep_makes_sure_javascript_is_actually_running():
         "app-wide and stops the sweep dead while the lock is happily held"
     )
     assert "runOnUiThread" in body, "WebView calls must be made on the UI thread"
-    # Scoped to a sweep, not a standing flag: it must not appear in the service.
+    # Scoped to a sweep, not a standing flag: it must not appear in the service. Comments stripped —
+    # that file now EXPLAINS why the clock left it, and a test that fails on its own explanation is
+    # the trap test_documentfile_is_not_used already had to step around.
     svc = _read(JAVA, "push", "StayAwakeService.java")
+    svc = re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", svc, flags=re.S))
     assert "resumeTimers" not in svc, (
         "keeping timers running for the life of the service is a standing keep-awake, which is the "
         "battery cost the whole policy exists to avoid"
@@ -563,13 +595,13 @@ def test_a_sweep_makes_sure_javascript_is_actually_running():
 # error, and a counter panel that still says the clock is ticking perfectly.
 
 def test_the_native_sweep_is_wired_from_the_alarm_to_the_engine():
-    svc = _read(JAVA, "push", "StayAwakeService.java")
-    runner = _read(JAVA, "sync", "NativeRunner.java")
+    svc = _code_only(_read(JAVA, "sync", "SyncTickReceiver.java"))
+    runner = _code_only(_read(JAVA, "sync", "NativeRunner.java"))
     plugin = _plugin()
     shim = _read(CLIENT, "fs-android.js")
     sync = _read(CLIENT, "sync.js")
 
-    assert "NativeRunner.tick(" in svc, (
+    assert "NativeRunner.tick(" in svc or "SyncService.start(" in svc, (
         "the alarm never reaches the native sweep — every tick still goes to a WebView that may be "
         "throttled, which is the bug this exists to fix"
     )
@@ -577,10 +609,13 @@ def test_the_native_sweep_is_wired_from_the_alarm_to_the_engine():
     # here, and a folder holding one conflict is deferred by the native sweep on every run — a phone
     # that stopped ticking the page for either reason would sync nowhere at all. See
     # test_the_native_tick_never_silences_the_webview_one.
-    i = svc.index("NativeRunner.tick(")
-    after = svc[i:i + 500]
-    assert "FolderSyncPlugin.tick(" in after, (
+    assert "FolderSyncPlugin.tick(" in svc, (
         "the native path swallows the tick — an Amber account then has neither engine"
+    )
+    assert "public static boolean eligible(" in runner, (
+        "nothing can ask whether a sweep would run without starting one, so the only way to find "
+        "out is to start a foreground service and put an item in somebody's shade to discover that "
+        "no folder was due — every sixteen minutes, for ever"
     )
 
     for fn in ("configure", "forgetNative", "nativeReport", "claimSweep", "releaseSweep"):
@@ -701,9 +736,13 @@ def test_the_phone_is_given_an_absolute_server_and_not_its_own_bundle():
     body = body[:body.index("\n  }")]
     assert "PC.serverOrigin" in body, "the native config is built from the page's own origin"
     assert "apiBase: location.origin" not in body
-    assert "enabled: !!mk && !!api && !!media" in body, (
+    # The same four facts, now named once and reused: `wanted` gates BOTH the `enabled` flag and
+    # whether the account key is sealed into the keystore at all (see test_folder_sync_arms_the_
+    # native_key_itself — arming on a device that syncs nothing would be a cost with no feature).
+    assert "const wanted = !!mk && !!api && !!media && list.length > 0;" in body, (
         "a missing server or media host still reports the sweep as enabled"
     )
+    assert "enabled: wanted," in body, "the flag no longer comes from that decision"
     assert "serverOrigin: _serverOrigin," in app, "PC does not expose the instance base"
     # …and _serverOrigin must keep answering '' with no instance, or the guard above never fires.
     fn = app[app.index("function _serverOrigin()"):]
@@ -716,12 +755,14 @@ def test_the_native_tick_never_silences_the_webview_one():
     folder holding one conflict is deferred on every single run. Skipping the WebView tick on the
     strength of it silenced the engine that COULD have settled that folder, and because the skip is
     process-wide, every other folder on the phone with it."""
-    svc = _read(JAVA, "push", "StayAwakeService.java")
-    i = svc.index("NativeRunner.tick(")
-    after = svc[i:i + 400]
-    assert "FolderSyncPlugin.tick(" in after, "the WebView is never asked"
-    assert "if (!native_)" not in svc and "if (native_" not in svc, (
-        "the WebView tick is conditional on the native path declining — see above"
+    svc = _code_only(_read(JAVA, "sync", "SyncTickReceiver.java"))
+    body = svc[svc.index("public void onReceive("):]
+    assert "FolderSyncPlugin.tick(" in body, "the WebView is never asked"
+    # The page tick must come out of the receiver UNCONDITIONALLY — before anything that inspects the
+    # native path, so no later branch can be written that skips it.
+    assert body.index("FolderSyncPlugin.tick(") < body.index("NativeRunner.eligible("), (
+        "the WebView tick sits after (and can therefore be made conditional on) the native path — "
+        "see above"
     )
 
 
@@ -739,6 +780,263 @@ def test_a_claim_does_not_outlive_the_page_that_took_it():
     # Only the PAGE's claims: a native sweep running in the service must survive the page dying,
     # which is the entire point of it.
     assert "pageClaims" in body and "BUSY" not in body
+
+
+def test_the_clock_does_not_depend_on_an_unrelated_switch():
+    """THE BUG THIS FILE SPENT FOUR ROUNDS NOT FINDING, because every link it did guard was fine.
+
+    The alarm lived inside StayAwakeService — the "Stay connected" foreground service, which is OFF
+    BY DEFAULT and is a NOTIFICATIONS feature (a fallback for receiving DMs and calls where no push
+    distributor is installed). So on a phone that had never touched that switch there was no clock at
+    all: the Doze alarm, the wake lock, its renewal, resumeTimers and finally an entire native sweep
+    engine were all downstream of a tick nothing ever emitted. Folder sync worked while the screen was
+    on, because the page's own heartbeat ran, and stopped when it went off — reported exactly that
+    way, on a phone and a tablet, across several rounds of "fixed".
+
+    Three properties, and the first one is the fix:
+      * the clock is armed by FOLDER SYNC, from its own configure() and from boot;
+      * StayAwakeService no longer arms one, or a phone that does have that switch on gets two
+        alarms and two sweeps;
+      * it is cancelled when the account syncs nothing, or an alarm wakes the phone every sixteen
+        minutes for ever to decide there is no work.
+    """
+    plugin = _code_only(_read(JAVA, "sync", "FolderSyncPlugin.java"))
+    boot = _code_only(_read(JAVA, "push", "BootReceiver.java"))
+    stay = _read(JAVA, "push", "StayAwakeService.java")
+
+    assert "SyncClock.followStore(" in plugin, (
+        "configure() does not arm the clock, so background sync depends on something else having "
+        "armed it — which is the bug"
+    )
+    assert "SyncClock.followStore(" in boot, (
+        "an alarm does not survive a reboot. Without this line background sync stops at the next "
+        "restart and stays stopped until somebody opens the app — a bug that shows up days later"
+    )
+    assert "SyncClock.cancel(" in plugin, "nothing ever stops the clock"
+
+    # StayAwakeService may CANCEL the alarm it used to own (an update inherits the old PendingIntent)
+    # but must not arm one. Comments are stripped: this file explains at length why the clock left.
+    stay_code = _code_only(stay)
+    assert "setAndAllowWhileIdle" not in stay_code, (
+        "StayAwakeService arms a folder-sync alarm again. There is one clock; a second here doubles "
+        "every wake-up on exactly the phones that opted into the switch"
+    )
+    assert "NativeRunner.tick(" not in stay_code, (
+        "StayAwakeService sweeps again — the sweep belongs to the clock that every phone has, not "
+        "to the one only some phones turned on"
+    )
+    # …and the legacy alarm is still cleared, or an install upgrading from that build keeps firing a
+    # tick into a service that no longer handles it.
+    assert "cancelLegacyTick" in stay_code, (
+        "an alarm armed by the previous build outlives the update and nothing cancels it"
+    )
+
+
+def test_the_background_sweep_gets_to_hold_the_process():
+    """A RECEIVER GETS TEN SECONDS AND THEN THE PROCESS IS CACHED — and a cached process on Android
+    12+ is FROZEN. Threads stop. Sockets stall. Nothing throws and nothing logs, and the sweep resumes
+    only if something else brings the app back. That is "not running long in the background, shortly
+    after you turn the screen off" precisely, and no amount of wake lock fixes it: a wake lock is the
+    CPU, and this is the process.
+
+    So the sweep runs inside a foreground service, which is what every sync app on Android does. The
+    refusal path matters as much: Android 12+ throws on a background foreground-service start outside
+    its exemptions, and a phone that refuses must still sweep (worse, and not nothing) AND SAY SO —
+    otherwise the fallback is indistinguishable from the fix working.
+    """
+    recv = _code_only(_read(JAVA, "sync", "SyncTickReceiver.java"))
+    svc = _code_only(_read(JAVA, "sync", "SyncService.java"))
+    manifest = _read(
+        os.path.join(ROOT, "mobile", "android", "app", "src", "main", "AndroidManifest.xml"))
+
+    assert "SyncService.start(" in recv, "the sweep never gets a foreground service"
+    assert re.search(r'android:name="\.sync\.SyncService"', manifest), (
+        "SyncService is not declared — an undeclared service simply does not start"
+    )
+    assert re.search(r'android:name="\.sync\.SyncTickReceiver"', manifest), (
+        "the receiver is not declared, so the alarm lands nowhere at all"
+    )
+    assert re.search(r'\.sync\.SyncService"[\s\S]{0,300}foregroundServiceType="specialUse"', manifest), (
+        "SyncService declares no foreground service type — or declares dataSync, which Android 15 "
+        "caps at six hours a day across the whole app: a first sync of a real Pictures folder is "
+        "hours of transfer, so that type silently stops background sync for the rest of the day on "
+        "exactly the folders that need it (tests/test_android_call_service.py bans it outright)"
+    )
+    assert "FOREGROUND_SERVICE_SPECIAL_USE" in manifest, (
+        "Android 14+ refuses to START a service whose declared type it has no permission for, so "
+        "without this the sweep silently falls back to the bare thread this exists to replace"
+    )
+    assert re.search(r'\.sync\.SyncService"[\s\S]{0,600}PROPERTY_SPECIAL_USE_FGS_SUBTYPE', manifest), (
+        "Android 14+ requires the subtype property beside a specialUse service"
+    )
+    # The fallback, and the counter that tells the two apart on a phone nobody here can hold.
+    assert "onForegroundRefused()" in recv and "NativeRunner.tick(" in recv, (
+        "a refused foreground service either crashes or silently syncs nothing — it must fall back "
+        "AND be counted"
+    )
+    # The fallback must ALSO hold the process, or it is a fallback to the original bug.
+    assert "SyncWork.start(" in recv, (
+        "the refusal path drops straight to a bare thread, which is the pre-fix behaviour: the "
+        "process is cached seconds later and frozen mid-sweep. An expedited job carries no "
+        "background-start restriction and keeps the process out of the freezer"
+    )
+    assert recv.index("SyncWork.start(") < recv.index("NativeRunner.tick("), (
+        "the bare thread is tried before the job — it must be the last resort, not the first"
+    )
+    # …and the refusal can arrive at the SERVICE instead of at the call site, where giving up would
+    # be a total silent failure sitting under a panel reporting a successful foreground start.
+    assert "SyncWork.start(" in svc and "onForegroundRefused()" in svc, (
+        "SyncService's own startForeground failure neither counts the refusal nor falls back, so "
+        "nothing syncs and the counters say it did"
+    )
+    assert "STOP_FOREGROUND_DETACH" in svc, (
+        "the sweep finishing removes the shared notification out from under the signer or "
+        "'stay connected' if either is up"
+    )
+    assert "onTimeout" in svc, (
+        "a foreground-service time limit arrives as onTimeout and then a kill — a kill mid-transfer "
+        "is the one thing a sweep handles worse than not running"
+    )
+    assert "START_NOT_STICKY" in svc and "START_STICKY" not in svc, (
+        "a sticky relaunch restarts this service with a null intent and no sweep behind it"
+    )
+
+
+def test_the_alarm_is_exact_where_the_platform_allows_it():
+    """This looks like a question about punctuality and is the one that decides whether a background
+    sweep can hold the process at all.
+
+    Android 12+ refuses a background foreground-service start outside a short list of exemptions, and
+    the one this path relies on is "your app invokes an EXACT alarm". An inexact
+    `setAndAllowWhileIdle` is temp-allowlisted with foreground services explicitly NOT allowed — so
+    with the inexact form alone, the service start is refused on essentially every tick and the sweep
+    falls back for the whole life of the install. Sixteen minutes either way is the same clock; the
+    exemption is the whole difference.
+
+    Asked for, never demanded: it is granted by default on 12 and is a user permission on 13+, which
+    is exactly why the job route exists beside it rather than as a nicety."""
+    clock = _code_only(_read(JAVA, "sync", "SyncClock.java"))
+    assert "setExactAndAllowWhileIdle" in clock, "the clock never asks for an exact alarm"
+    assert "canScheduleExactAlarms" in clock, (
+        "an exact alarm is scheduled without checking whether this phone allows one — on Android 13+ "
+        "that throws SecurityException, and the throw is inside the arm, so it would end the clock"
+    )
+    assert "setAndAllowWhileIdle" in clock, (
+        "there is no inexact fallback, so a phone that has not granted the permission gets no clock "
+        "at all — a strictly worse outcome than a clock whose sweep runs as a job"
+    )
+    # And the panel has to be able to say which one this phone got, since the two behave identically
+    # right up to the moment the service start is refused.
+    assert "isExact(" in clock and "clockExact" in _read(JAVA, "sync", "FolderSyncPlugin.java"), (
+        "nothing reports whether the alarm is exact, so 'every sweep ran as a job' has no explanation"
+    )
+
+
+def test_a_sweep_already_running_is_not_swept_again():
+    """`plan()` is asked BEFORE a foreground service is started, so it has to know what the other
+    engine is holding. With the app open the page claims every folder first; without this the alarm
+    still answered "eligible", started a service, had every claim refused, and amounted to a
+    notification appearing and vanishing — the exact cost `plan()` was split out of `tick()` to
+    avoid."""
+    runner = _code_only(_read(JAVA, "sync", "NativeRunner.java"))
+    sweep = _read(JAVA, "sync", "NativeSweep.java")
+    assert "public static synchronized boolean claimed(" in sweep, (
+        "there is no way to ASK whether a folder is claimed without taking the claim"
+    )
+    assert "NativeSweep.claimed(" in runner, (
+        "the plan counts folders another engine is already sweeping as due"
+    )
+
+
+def test_folder_sync_arms_the_native_key_itself():
+    """THE SECOND HALF OF THE SAME BUG, and the same shape as the background signer's.
+
+    The native sweep signs every network step, so it refuses to start without a Keystore-sealed
+    secret — and the only two things that ever stored one were the "Sign for other apps on this
+    phone" switch and pairing a laptop over NIP-46. Two unrelated features, in two other parts of
+    settings, that somebody syncing a folder has no reason to have touched. So an ordinary account
+    got "the account key is not on this device" about a key the page was holding, and the native
+    sweep — the entire point of writing one — never ran once.
+
+    A feature asks for what it needs, itself.
+    """
+    sync = _read(CLIENT, "sync.js")
+    app = _read(CLIENT, "app.js")
+    runner = _read(JAVA, "sync", "NativeRunner.java")
+
+    assert "armNativeSigner" in app, "nothing exposes the arming call to the rest of the client"
+    body = sync[sync.index("async function _pushNativeConfig("):]
+    body = body[:body.index("\n  }")]
+    # COMMENTS STRIPPED, and this is not fussiness: the first version of this test passed with the
+    # call deleted, because the explanation left behind still named it. A guard that its own
+    # rationale satisfies guards nothing.
+    body = _code_only(body)
+    assert "armNativeSigner" in body, (
+        "folder sync hands the phone its settings without ever handing it the key those settings "
+        "are useless without"
+    )
+    # …and it happens BEFORE the configure, or the first background tick after a fresh sign-in is
+    # refused for a reason the next one cannot fix any faster.
+    assert body.index("armNativeSigner") < body.index("fs.configureNative("), (
+        "the key is armed after the settings are pushed"
+    )
+    # LOCAL KEYS ONLY. With Amber or a bunker there is nothing on this device to hand over, and
+    # arming with nothing would produce a sweep that fails every upload instead of declining.
+    arm = app[app.index("async _armNative()"):]
+    arm = arm[:arm.index("\n    },")]
+    assert "ME.mode !== 'local'" in arm, (
+        "the arming path does not check that this account HAS a local key here"
+    )
+    assert "SignerKey.have(" in runner, (
+        "the sweep no longer checks for a key at all — it would try to sign with nothing"
+    )
+
+
+def test_the_key_is_only_armed_for_a_device_that_syncs():
+    """`_pushNativeConfig` runs at startup on EVERY Android launch. Arming there unconditionally
+    would seal the nsec into the keystore of every local-key user on the platform, including everyone
+    who has never opened Folder Sync — a real cost (it is what lets an unattended process sign as
+    you) paid by people getting no feature for it. It is gated on the same four facts that decide
+    whether the native sweep is enabled at all."""
+    sync = _code_only(_read(CLIENT, "sync.js"))
+    body = sync[sync.index("async function _pushNativeConfig("):]
+    body = body[:body.index("\n  }")]
+    assert "if(wanted){" in body and "armNativeSigner" in body, (
+        "the account key is sealed into the keystore whether or not this device syncs anything"
+    )
+    assert body.index("const wanted =") < body.index("armNativeSigner"), (
+        "the gate is computed after the arming it is supposed to gate"
+    )
+
+
+def test_the_armed_key_is_this_account_s_key():
+    """"Already holds one" has to mean "holds THIS account's".
+
+    Switching accounts reloads the page with a new session and does not clear the keystore, so a
+    phone that armed account A kept A's secret. That was nearly inert while only the NIP-46 signer
+    used it; the background sweep DEPENDS on it now, so B's unattended sweep would sign its Blossom
+    auth and its manifest proof as A and try to unwrap B's drive key with A's secret — a 403 at best,
+    the wrong identity at worst, and silence on both paths."""
+    app = _code_only(_read(CLIENT, "app.js"))
+    arm = app[app.index("async _armNative()"):]
+    arm = arm[:arm.index("\n    },")]
+    assert "st.pubkey" in arm and "ME.pubkey" in arm, (
+        "the arming path treats any stored key as this account's — see above"
+    )
+
+
+def test_signing_out_takes_the_account_key_off_the_phone():
+    """The wrapped drive key used to be safe on its own because the secret that opens it lived in
+    `Session`, which logout clears. Folder sync now seals that secret into the Android keystore so an
+    unattended sweep can sign — so without this, "log out" leaves the previous account's nsec on a
+    handed-down phone, usable by the background signer and by the sweep."""
+    app = _code_only(_read(CLIENT, "app.js"))
+    body = app[app.index("function logout(){"):]
+    body = body[:body.index("_forgetPhonebook()")]
+    assert "forgetNative" in body, "the wrapped drive key outlives the session"
+    assert re.search(r"_capPlugin\('Signer',\s*'disable'\)", body), (
+        "the account SECRET stays in the keystore after signing out"
+    )
 
 
 def test_the_two_engines_fold_case_the_same_way():
