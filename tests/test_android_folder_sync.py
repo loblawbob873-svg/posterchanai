@@ -654,10 +654,13 @@ def test_the_unattended_sweep_refuses_what_it_cannot_ask_about():
         "the native sweep defers on an empty agreement again — nothing else ever writes one, so it "
         "can never run"
     )
-    # …and the deferral must not advance the clock, or the next sixteen minutes are silenced as
-    # though the folder had synced.
+    # …and a DEFERRAL still advances the clock, while an ERROR does not. Requiring `deferred == 0`
+    # reads as caution and is a battery leak: a conflict is deferred by design and may never be
+    # settled until somebody opens the app, so that folder would be swept on every single alarm, for
+    # ever, to defer it again. An error is different — nothing was learned — so the next tick retries.
     runner = _read(JAVA, "sync", "NativeRunner.java")
-    assert "rep.error.isEmpty() && rep.deferred == 0" in runner
+    assert "if (rep.error.isEmpty()) {" in runner
+    assert "rep.deferred == 0" not in runner
 
 
 def test_the_native_sweep_holds_the_processor_and_gives_it_back():
