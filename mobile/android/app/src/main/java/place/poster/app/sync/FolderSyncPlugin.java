@@ -301,6 +301,32 @@ public class FolderSyncPlugin extends Plugin {
     call.resolve(o);
   }
 
+  /**
+   * THE STACK TRACE OF THE LAST CRASH, so a phone with no cable can still answer "why did it die".
+   *
+   * The log itself is app-wide — {@link place.poster.app.CrashLog} is installed from the Application
+   * and catches every thread in every process start, sync or not. Only the READER lives on this
+   * plugin, because Background details is the panel that exists and the alternative is a second
+   * plugin registered for one method. If a crash surface is ever needed away from folder sync, this
+   * moves; the log does not.
+   */
+  @PluginMethod
+  public void crashReport(PluginCall call) {
+    JSObject o = new JSObject();
+    String text = "";
+    try { text = place.poster.app.CrashLog.read(getContext()); } catch (Throwable ignored) { }
+    o.put("text", text == null ? "" : text);
+    o.put("present", text != null && text.length() > 0);
+    call.resolve(o);
+  }
+
+  /** Forget the crashes, once they have been reported and fixed — the panel offers it beside them. */
+  @PluginMethod
+  public void clearCrashReport(PluginCall call) {
+    try { place.poster.app.CrashLog.clear(getContext()); } catch (Throwable ignored) { }
+    call.resolve();
+  }
+
   /* ONE SWEEP PER FOLDER, ACROSS BOTH ENGINES. The page can start a sweep at any moment (someone
    * opens the app while the alarm is running one), and two sweeps writing the same manifest is
    * last-writer-wins on the document that decides whether files exist. Both sides take the same
