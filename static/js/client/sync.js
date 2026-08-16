@@ -195,14 +195,70 @@
     try{ localStorage.removeItem(BASE_KEY(key)); }catch(_){}
   }
 
+  /* How long a manifest request may hang before it is treated as failed. Generous — this is a
+   * small JSON POST and a slow radio is not a broken one — but bounded, which it was not. */
+  /* Twenty seconds, not forty-five. These are small JSON requests, and a sweep makes SEVERAL of
+   * them before it moves a byte (`/client/config`, then the manifest) — so the ceiling is paid more
+   * than once and a generous one compounds: at 45s a phone on a dead network sat for a minute and a
+   * half before admitting it, which is its own kind of hang. Long enough for a slow radio, short
+   * enough that giving up still feels like an answer. */
+  const _POST_TIMEOUT_MS = 20000;
+  /* One whole-file transfer. Generous — a slow radio is not a broken one — but a ceiling, which
+   * there was not: past this the socket is dead rather than slow, and waiting longer only means
+   * waiting for ever. */
+  const _XFER_TIMEOUT_MS = 5 * 60 * 1000;
+  function _bounded(p, what, ms){
+    return new Promise((res, rej) => {
+      let done = false;
+      const t = setTimeout(() => { if(!done){ done = true;
+        rej(new Error('the ' + what + ' stopped responding — will try again')); } }, ms || _XFER_TIMEOUT_MS);
+      Promise.resolve(p).then(v => { if(!done){ done = true; clearTimeout(t); res(v); } },
+                              e => { if(!done){ done = true; clearTimeout(t); rej(e); } });
+    });
+  }
+
   // ---- the store -------------------------------------------------------------------------------
   const store = {
+    /* A REQUEST THAT NEVER ANSWERS MUST NOT BLOCK THE FOLDER FOR EVER.
+     *
+     * Nothing in this path had a timeout or an AbortController, and `fetch` does not impose one. A
+     * socket that dies without an RST — a phone leaving the house, Wi-Fi to cellular, a laptop lid —
+     * leaves the request pending indefinitely: it neither resolves nor rejects. The sweep is then
+     * stuck on this await, `running` is only cleared in a `finally` that never runs, and every later
+     * press of Sync silently returns that dead promise. Reported exactly: "left the house and came
+     * back, stuck, no progress; I click Pause and Sync now and it says already syncing but no file
+     * transfer." Pause could not rescue it either, because `stopping()` is checked BETWEEN files and
+     * the sweep is stuck inside one.
+     *
+     * A bounded wait turns that into an ordinary failure: the sweep throws, the `finally` clears
+     * `running`, the card says what happened, and the next sweep resumes from the checkpoint. This
+     * is a small JSON POST — never a file — so the ceiling can be generous and still be a ceiling. */
     async _post(body){
       const auth = await PC.signAuth('sync-manifest');
-      const r = await fetch('/client/sync-manifest', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(Object.assign({ pubkey: PC.me().pubkey, auth: btoa(JSON.stringify(auth)) }, body)),
-      });
+      /* THE RACE IS THE GUARANTEE; THE ABORT IS THE COURTESY.
+       *
+       * The first version bounded this with an AbortController alone — and when the runtime has no
+       * AbortController the constructor throws, the catch sets it to null, and NO timeout is armed:
+       * a hang-proofing that silently does not apply, on exactly the runtimes least likely to
+       * behave. Caught by the check for this, which still hung with the fix "in".
+       *
+       * So the ceiling is a race, which needs nothing but setTimeout, and the abort rides along when
+       * it exists to actually cancel the request rather than just stop waiting for it. */
+      let ctl = null, timer = null;
+      try{ ctl = new AbortController(); }catch(_){ ctl = null; }
+      if(ctl) timer = setTimeout(() => { try{ ctl.abort(); }catch(_){} }, _POST_TIMEOUT_MS);
+      let r;
+      try{
+        r = await _bounded(fetch('/client/sync-manifest', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          signal: ctl ? ctl.signal : undefined,
+          body: JSON.stringify(Object.assign({ pubkey: PC.me().pubkey, auth: btoa(JSON.stringify(auth)) }, body)),
+        }), 'server', _POST_TIMEOUT_MS);
+      }catch(e){
+        const aborted = e && (e.name === 'AbortError' || /abort|stopped responding/i.test(String(e.message || e)));
+        throw new Error(aborted ? 'the server did not answer in time — will try again'
+                                : ('could not reach the server: ' + ((e && e.message) || e)));
+      }finally{ if(timer) clearTimeout(timer); }
       const j = await r.json().catch(() => ({}));
       if(r.status === 409 && j && j.collapse){
         const e = new Error(j.error || 'refused'); e.collapse = j; throw e;
@@ -384,10 +440,25 @@
     blobSha: (PC.syncBlobs && PC.syncBlobs.blobSha) ? (bytes) => PC.syncBlobs.blobSha(bytes) : null,
     chunkShas: (PC.syncBlobs && PC.syncBlobs.chunkShas)
       ? (read, size, cs) => PC.syncBlobs.chunkShas(read, size, cs) : null,
-    putBlob: (bytes) => PC.syncBlobs.put(bytes),
-    getBlob: (sha) => PC.syncBlobs.get(sha),
+    /* BOUNDED, for the reason `_post` is. A transfer that hangs strands the sweep exactly as a hung
+     * manifest request does — and worse, because this is where a sweep spends its time, so it is the
+     * likelier place to be standing when the network goes. The phone that had to be force-closed was
+     * stuck on one of these.
+     *
+     * A RACE, not an abort: these go through PC.syncBlobs, which is shared with the drive, Notes and
+     * the music library, and threading a signal through all of that to fix folder sync would be a
+     * much larger change made at speed. The loser keeps running and is collected; what matters is
+     * that the SWEEP stops waiting, `running` clears, the card says so and the next sweep resumes
+     * from its checkpoint. A dangling request is a leak measured in one buffer; a stranded sweep is
+     * a folder that never syncs again until the app is killed. */
+    putBlob: (bytes) => _bounded(PC.syncBlobs.put(bytes), 'upload'),
+    getBlob: (sha) => _bounded(PC.syncBlobs.get(sha), 'download'),
     // The chunked pair. Present only when the client build has them, so an older bundle simply does
     // not take the chunked path rather than calling something undefined.
+    /* The chunked pair is deliberately NOT bounded as a whole: it moves a file of any size and
+     * reports progress per chunk, so a ceiling here would be a guess about someone's connection.
+     * Each chunk inside it is an ordinary request and a stall shows up as no progress, which is what
+     * the resume path already handles. */
     putParts: PC.syncBlobs && PC.syncBlobs.putParts
       ? (read, size, onProgress, cs) => PC.syncBlobs.putParts(read, size, onProgress, cs) : null,
     getParts: PC.syncBlobs && PC.syncBlobs.getParts
@@ -528,8 +599,14 @@
   async function serverMaxBytes(){
     if(_srvMax !== null) return _srvMax;
     let server = 0;
+    /* BOUNDED, because this runs BEFORE the sweep and a hang here strands it earlier than anything
+     * else could — the folder never reaches its first file, so nothing reports progress and nothing
+     * reports a failure either. It is also the least important request in the whole path: it asks
+     * the node how large an upload it accepts, and there is a sane fallback for not knowing. This is
+     * where the check for "a request that never answers" was actually getting stuck, several layers
+     * above the manifest post I bounded first. */
     try{
-      const r = await fetch('/client/config');
+      const r = await _bounded(fetch('/client/config'), 'server', _POST_TIMEOUT_MS);
       const j = await r.json();
       const mb = +(j && (j.blossom_max_upload_mb || j.max_upload_mb)) || 0;
       server = mb > 0 ? mb * 1024 * 1024 : 0;

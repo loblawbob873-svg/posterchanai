@@ -182,6 +182,48 @@ function assert(cond, msg){ if(!cond) throw new Error(msg); }
       'an unforced nudge swallowed the forced one — the tick fires and the sweep never happens');
   });
 
+  await check('a request that never answers does not strand the folder for ever', async () => {
+    /* THE ONE THAT NEEDED THE APP FORCE-CLOSED.
+     *
+     * `fetch` imposes no timeout, and nothing in the sync path had one. A socket that dies without
+     * an RST — a phone leaving the house, Wi-Fi handing over to cellular — leaves the request
+     * pending indefinitely: it neither resolves nor rejects. The sweep stops on that await, `running`
+     * is cleared only in a `finally` that never runs, and every later press of Sync silently returns
+     * the dead promise. Pause cannot help either: it is checked BETWEEN files.
+     *
+     * Reported as "left the house and came back, stuck, no progress; Pause and Sync now says already
+     * syncing but no file transfer" — and then "had to force close and reopen the app", which is the
+     * only exit an unbounded await leaves. It also explains the background sync stopping after a
+     * period and never resuming, which no amount of wake lock could fix.
+     *
+     * The assertion is that the sweep ENDS. Not that it succeeds — a dead network cannot be made to
+     * work — but that it fails, so the folder is usable again without killing the process. */
+    const { ctx, seen } = boot({ hidden: false });
+    ctx.fetch = () => new Promise(() => {});          // never resolves, never rejects
+    ctx.PCSync.startAll();
+    await sleep(50);
+    const f = ctx.PCSync.folders()[0];
+    const started = Date.now();
+    /* SIXTY SECONDS, against a forty-five second ceiling. The first version of this raced at eight
+     * and reported HUNG against a working timeout — proving only that the test was impatient. The
+     * point is that the ceiling EXPIRES, so the wait has to outlast it; a slow check is the honest
+     * price of testing a timeout rather than asserting one exists. */
+    const rep = await Promise.race([
+      ctx.PCSync.sweep(f, { manual: true }).catch(e => ({ error: (e && e.message) || String(e) })),
+      sleep(60000).then(() => 'HUNG'),
+    ]);
+    assert(rep !== 'HUNG',
+      'the sweep never returned — the folder is stranded until the app is force-closed, which is '
+      + 'exactly what was reported');
+    // …and the folder must be usable again, not stuck reporting "already syncing".
+    const second = await Promise.race([
+      ctx.PCSync.sweep(f, { manual: true }).catch(() => 'failed-again'),
+      sleep(60000).then(() => 'HUNG'),
+    ]);
+    assert(second !== 'HUNG', 'a second sweep hung too, so `running` was never cleared');
+    void seen; void started;
+  });
+
   await check('the tick does not bypass the battery and network policy', async () => {
     const { ctx, pcFs, seen } = boot({ hidden: true });
     // What "only when plugged in" and "Wi-Fi only" mean, on a phone that is on neither.
