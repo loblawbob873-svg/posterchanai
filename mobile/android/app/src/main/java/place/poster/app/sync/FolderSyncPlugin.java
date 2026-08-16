@@ -270,7 +270,9 @@ public class FolderSyncPlugin extends Plugin {
      * CANCELLED when nothing is left to sync — including when this account signs out — because an
      * alarm that wakes the phone every sixteen minutes to decide there is no work is exactly the
      * battery complaint that gets a sync feature turned off. */
-    SyncClock.followStore(getContext());
+    // GUARDED. Everything else in this method is, and this is on the path a sweep takes on
+    // every start — a throw here would surface as the app dying when you press Sync.
+    try { SyncClock.followStore(getContext()); } catch (Throwable ignored) { }
     call.resolve();
   }
 
@@ -410,7 +412,15 @@ public class FolderSyncPlugin extends Plugin {
     super.handleOnPause();
   }
 
-  /** Give the folders to the engine that can still run, and start it. */
+  /**
+   * Give the folders to the engine that can still run, and start it.
+   *
+   * THE CLAIMS GO BACK ON THIS THREAD and the rest does not. Releasing is a set operation and has to
+   * happen before anything else can look; deciding does not — `eligible()` opens the keystore,
+   * parses the folder list and runs the whole policy, and `onPause` is a main-looper callback the
+   * system times. Work that heavy on the looper at exactly the moment the screen is going off is how
+   * a background feature becomes a foreground stutter, or worse.
+   */
   private void handOver() {
     synchronized (pageClaims) {
       if (!pageClaims.isEmpty()) {
@@ -418,10 +428,17 @@ public class FolderSyncPlugin extends Plugin {
         pageClaims.clear();
       }
     }
-    Context ctx = getContext();
+    final Context ctx = getContext();
     if (ctx == null) return;
-    if (!NativeRunner.eligible(ctx)) return;      // nothing due, no key, or already sweeping
-    if (!SyncService.start(ctx)) SyncWork.start(ctx);
+    final Context app = ctx.getApplicationContext();
+    new Thread(new Runnable() {
+      public void run() {
+        try {
+          if (!NativeRunner.eligible(app)) return;   // nothing due, no key, or already sweeping
+          if (!SyncService.start(app)) SyncWork.start(app);
+        } catch (Throwable ignored) { }
+      }
+    }, "pc-sync-handover").start();
   }
 
   @Override
