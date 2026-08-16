@@ -502,3 +502,30 @@ def test_a_long_sweep_renews_the_cpu_lease():
     assert "_keepAwake();" in run[run.index("const step = (phase"):][:200], (
         "step() does not renew, so the lease expires part-way through a long sweep"
     )
+
+
+def test_a_sweep_makes_sure_javascript_is_actually_running():
+    """A WAKE LOCK KEEPS THE CPU UP AND DOES NOTHING ABOUT THE WEBVIEW.
+
+    `WebView.pauseTimers()` is APP-WIDE and stops all JavaScript in the process — every timer, every
+    scheduled task — and the activity lifecycle can call it when the app is backgrounded. A sweep
+    with no JavaScript running is a sweep that does not run, however awake the processor is and
+    however faithfully the alarm fires. Reported for hours as "background syncing stops after a short
+    period" and starts again the moment the app is opened, which is that shape exactly.
+
+    `resumeTimers()` is idempotent, so where nothing paused them this costs nothing; and it is taken
+    WITH the wake lock, scoped to a sweep, rather than being a standing keep-awake flag."""
+    plugin = _read(JAVA, "sync", "FolderSyncPlugin.java")
+    body = plugin[plugin.index("public void sweepBegin("):]
+    body = body[:body.index("\n  }")]
+    assert "resumeTimers" in body, (
+        "a sweep acquires the CPU but never checks that JavaScript is running — pauseTimers() is "
+        "app-wide and stops the sweep dead while the lock is happily held"
+    )
+    assert "runOnUiThread" in body, "WebView calls must be made on the UI thread"
+    # Scoped to a sweep, not a standing flag: it must not appear in the service.
+    svc = _read(JAVA, "push", "StayAwakeService.java")
+    assert "resumeTimers" not in svc, (
+        "keeping timers running for the life of the service is a standing keep-awake, which is the "
+        "battery cost the whole policy exists to avoid"
+    )

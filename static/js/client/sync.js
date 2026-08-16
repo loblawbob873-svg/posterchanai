@@ -894,7 +894,24 @@
        * plugged in" and "Wi-Fi only" switches still gate it. Absent on desktop and on an older APK,
        * where it is a no-op. */
       const _wake = FS();
-      if(!o.dryRun && _wake && _wake.wakeBegin){ try{ await _wake.wakeBegin(); }catch(_){} }
+      /* RENEWED ON A CLOCK, not on progress. The lease is timed and a sweep can spend far longer
+       * than it inside ONE operation: `putParts` reports per chunk (so `step` renews it), but
+       * `getParts` takes no progress callback at all, so downloading a single large video ran the
+       * whole way with no renewal, lost the CPU part-way, and stalled. Anything else long — a hash
+       * of a big file, a slow chunk — has the same shape.
+       *
+       * An interval needs no cooperation from the thing it is protecting. It is throttled in a
+       * hidden WebView, but only to about once a minute, which is ten times more often than a
+       * ten-minute lease needs; and the CPU is held up by the very lock it is renewing, so it is not
+       * competing with a sleeping device. Cleared in the same `finally` that releases the lock, so a
+       * sweep that throws cannot leave it running. */
+      let _wakeTimer = null;
+      if(!o.dryRun && _wake && _wake.wakeBegin){
+        try{ await _wake.wakeBegin(); }catch(_){}
+        _wakeTimer = setInterval(() => {
+          try{ const r = _wake.wakeBegin(); if(r && r.catch) r.catch(()=>{}); }catch(_){}
+        }, 60000);
+      }
       try{
         const rep = await RUN.sweep(fs, store, {
           id: f.id, key: keyOf(f), device: deviceName(), now: Date.now(),
@@ -955,7 +972,9 @@
         throw e;
       } finally {
         running.delete(f.id);
-        // Released on EVERY exit — a sweep that threw still has to give the processor back.
+        // Released on EVERY exit — a sweep that threw still has to give the processor back, and the
+        // renewal must stop with it or it holds the lease open for ever.
+        if(_wakeTimer){ clearInterval(_wakeTimer); _wakeTimer = null; }
         if(!o.dryRun && _wake && _wake.wakeEnd){ try{ await _wake.wakeEnd(); }catch(_){} }
       }
     })();

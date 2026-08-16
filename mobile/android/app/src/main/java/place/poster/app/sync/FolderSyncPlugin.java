@@ -212,6 +212,25 @@ public class FolderSyncPlugin extends Plugin {
        * the SWEEP that renews it, once per file, so the lock outlives a long transfer and dies with
        * a page that stopped asking. acquire() on a non-reference-counted lock resets the timeout. */
       wake.acquire(WAKE_MAX_MS);
+      /* AND MAKE SURE JAVASCRIPT IS ACTUALLY RUNNING.
+       *
+       * A wake lock keeps the CPU up; it does nothing about the WebView. `WebView.pauseTimers()` is
+       * APP-WIDE and stops all JavaScript in the process — every timer, every scheduled task — and
+       * the activity lifecycle can call it when the app goes to the background. That is exactly the
+       * reported shape: sync works for a short period, stops, and starts again the moment the app is
+       * opened. A sweep with no JavaScript running is a sweep that does not run, however awake the
+       * processor is and however faithfully the alarm fires.
+       *
+       * `resumeTimers()` is the counter-call and is idempotent: where nothing paused them it is a
+       * no-op, so this cannot cost anything on a device that was working. It is scoped to a sweep —
+       * taken with the lock, and the sweep is the only thing that asks — so it is not a standing
+       * "keep the app awake" flag. */
+      try {
+        final android.webkit.WebView wv = getBridge() != null ? getBridge().getWebView() : null;
+        if (wv != null) getBridge().getActivity().runOnUiThread(() -> {
+          try { wv.resumeTimers(); } catch (Throwable ignored) {}
+        });
+      } catch (Throwable ignored) {}
     } catch (Throwable ignored) {}
     call.resolve();
   }
