@@ -23,9 +23,6 @@ import java.util.Set;
  * sweep MOVES BYTES; anything that needs a decision waits for a foreground sweep, where the whole
  * executor and a person are both available:
  *
- *   * a FIRST-EVER sweep of a folder (no agreement yet) is deferred. It is the expensive one, the one
- *     that hashes everything, and the one that publishes a folder's whole contents to every other
- *     device — the worst possible thing to start unattended.
  *   * CONFLICTS are deferred. Settling one properly means hashing, comparing chunk lists and
  *     sometimes renaming somebody's file; leaving the path unagreed costs nothing, because the next
  *     sweep simply proposes it again.
@@ -64,7 +61,7 @@ public final class NativeSweep {
         public final List<String> trashed = new ArrayList<String>();
         public final List<String> removedRemote = new ArrayList<String>();
         public final List<Map<String, Object>> failed = new ArrayList<Map<String, Object>>();
-        public int unchanged, excluded, deferred, alreadyStored, checkpoints;
+        public int unchanged, excluded, deferred, alreadyStored, checkpoints, repaired;
         public boolean hashed = false;
         public String refusedTrash = "", refusedResurrect = "", error = "", deferredWhy = "";
         public long at = System.currentTimeMillis();
@@ -84,6 +81,7 @@ public final class NativeSweep {
             m.put("alreadyStored", (long) alreadyStored);
             m.put("checkpoints", (long) checkpoints);
             m.put("hashed", hashed);
+            if (repaired > 0) m.put("repaired", (long) repaired);
             if (!refusedTrash.isEmpty()) m.put("refusedTrash", refusedTrash);
             if (!refusedResurrect.isEmpty()) m.put("refusedResurrect", refusedResurrect);
             if (!deferredWhy.isEmpty()) m.put("deferredWhy", deferredWhy);
@@ -197,6 +195,9 @@ public final class NativeSweep {
             local.put(e.getKey(), out);
         }
 
+        final Map<String, Map<String, Object>> nextRemote0 =
+                new LinkedHashMap<String, Map<String, Object>>(remote);
+        final Set<String> touched0 = new LinkedHashSet<String>();
         SyncDiff.Plan plan = SyncDiff.diff(local, remote, base, f.excludes, device, now);
         rep.unchanged = plan.unchanged;
         rep.excluded = plan.excluded;
@@ -225,15 +226,40 @@ public final class NativeSweep {
             }
         }
 
-        final Map<String, Map<String, Object>> nextRemote =
-                new LinkedHashMap<String, Map<String, Object>>(remote);
+        final Map<String, Map<String, Object>> nextRemote = nextRemote0;
         final Map<String, Map<String, Object>> nextBase =
                 new LinkedHashMap<String, Map<String, Object>>(base);
-        final Set<String> touched = new LinkedHashSet<String>();
+        final Set<String> touched = touched0;
+
+        /* GIVE EVERY ENTRY A CONTENT IDENTITY WHILE WE ARE HERE.
+         *
+         * An entry written before `csum` existed can never be compared by content, so every device
+         * that hashes falls back to size+mtime — which Android can never match, because SAF assigns
+         * its own last-modified. Those paths conflict for ever, and a conflict is exactly what this
+         * sweep DEFERS, so without this a folder full of them would be re-swept every sixteen
+         * minutes and settle nothing, on every phone, permanently.
+         *
+         * It is not a new fact — it is the one this sweep just established, written down where the
+         * other devices can use it. `same()` had to be true to get here, so a path that is genuinely
+         * different is untouched. */
+        int repaired = 0;
+        for (Map.Entry<String, Map<String, Object>> e : local.entrySet()) {
+            Map<String, Object> L = e.getValue(), R = remote.get(e.getKey());
+            if (L == null || Json.str(L.get("csum"), "").isEmpty()) continue;
+            if (R == null || R.get("csum") != null || SyncDiff.gone(R)) continue;
+            if (!SyncDiff.same(L, R)) continue;
+            Map<String, Object> up = new LinkedHashMap<String, Object>(R);
+            up.put("csum", L.get("csum"));
+            nextRemote0.put(e.getKey(), up);
+            touched0.add(e.getKey());
+            repaired++;
+        }
+        rep.repaired = repaired;
 
         int work = deleteLocal.size() + plan.download.size() + uploads.size();
         int every = Math.max(CHECKPOINT, (int) Math.ceil(work / (double) MAX_CHECKPOINTS));
         Check check = new Check(net, store, sec, mk, f.key, nextRemote, nextBase, touched, every, rep);
+        if (repaired > 0) check.markDirty();
 
         /* DELETIONS FIRST, BEFORE ANY BYTE MOVES. Queued behind hours of transfer they are simply
          * never reached: a sweep is interrupted, restarts its transfer loops from the top, and the
@@ -565,6 +591,9 @@ public final class NativeSweep {
             this.remote = remote; this.base = base; this.touched = touched; this.every = every;
             this.rep = rep;
         }
+
+        /** A repair changed the manifest without agreeing anything, and it still has to be stored. */
+        void markDirty() { dirty = true; }
 
         void remember(String path, Map<String, Object> entry) {
             remote.put(path, entry);

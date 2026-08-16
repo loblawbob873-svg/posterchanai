@@ -128,10 +128,14 @@ public final class NativeRunner {
                 boolean hash = i < deep.size() && Boolean.TRUE.equals(deep.get(i));
                 NativeSweep.Report rep = NativeSweep.run(ctx, store, f, sec, hash, null);
                 reports.add(rep.toMap());
-                /* THE CLOCK ADVANCES ONLY WHERE SOMETHING WAS ACTUALLY DECIDED. A sweep that could
-                 * not run — deferred to the foreground, or thrown out by the network — must not
-                 * silence the next sixteen minutes as though it had synced. */
-                if (rep.error.isEmpty() && rep.deferred == 0) {
+                /* THE CLOCK ADVANCES WHEN THE SWEEP COMPLETED, and a DEFERRAL is a completion.
+                 *
+                 * It used to require `deferred == 0` too, which reads as caution and is a battery
+                 * leak: a conflict is deferred by this sweep by design and may never be settled
+                 * until somebody opens the app, so that folder would be swept again on every single
+                 * alarm, for ever, to defer it again. An ERROR is different — nothing was learned —
+                 * and still holds the clock back so the next tick retries promptly. */
+                if (rep.error.isEmpty()) {
                     store.setLastSyncAt(f.key, rep.at);
                     if (hash) store.setLastFullScanAt(f.key, rep.at);
                 }
