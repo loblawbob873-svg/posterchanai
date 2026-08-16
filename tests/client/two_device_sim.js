@@ -1614,3 +1614,119 @@ scenario('a-file-written-after-the-delete-still-wins', async () => {
   process.stdout.write(JSON.stringify(rows, null, 1));
   process.exit(rows.every(r => r.ok) ? 0 : 1);
 })();
+
+/* ---- STABILITY: does a real folder actually SETTLE? ---------------------------------------------
+ *
+ * Everything above pins one behaviour each, and every one of them passed while the feature was
+ * failing in the field. That is the gap these three close: they ask the question a user asks —
+ * "does my folder end up the same on both machines, and does it stop?" — instead of asking whether
+ * a particular rule fired. A per-bug regression can only catch a bug that has already escaped.
+ */
+
+/* THE ORDERING BUG, as a user experiences it rather than as a call sequence.
+ *
+ * Deletions used to run after conflicts, downloads and uploads. On a settled folder that is
+ * invisible; on a folder with a BACKLOG the deletions sit behind every byte and are never reached.
+ * Measured in the field: 3,041 changes of which ~300 were deletions, ~7 files a minute, every sweep
+ * interrupted before it got there — so Check reported the same 300 for ever and pressing Sync
+ * appeared to do nothing at all.
+ *
+ * The sweep is STOPPED partway here, which is what an interrupted sweep really is: a screen going
+ * off, an app closing, a Stop pressed. A delete that only lands when a sweep runs to completion is a
+ * delete that never lands on a folder that never finishes. */
+scenario('a-backlog-does-not-starve-deletions', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Documents' });
+  const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Documents' });
+
+  for(let i = 0; i < 12; i++) laptop.put('old' + i + '.txt', 'shared ' + i);
+  await laptop.sweep(); await phone.sweep();
+
+  // The phone deletes four of them; the laptop meanwhile has a pile of new work queued.
+  for(let i = 0; i < 4; i++) phone.rm('old' + i + '.txt');
+  await phone.sweep();
+  for(let i = 0; i < 25; i++) laptop.put('new' + i + '.txt', 'backlog ' + i);
+
+  // …and is interrupted well before it could transfer all of that.
+  let moved = 0;
+  const rep = await laptop.sweep({ shouldStop: () => ++moved > 8 });
+
+  const gone = ['old0.txt','old1.txt','old2.txt','old3.txt'].filter(p => laptop.read(p) === null);
+  return {
+    ok: gone.length === 4 && rep.trashed.length === 4,
+    detail: { appliedDeletions: gone.length, trashed: rep.trashed.length,
+              stopped: !!rep.stopped, uploaded: rep.uploaded.length,
+              note: 'an interrupted sweep must still apply the deletions it was told about' },
+  };
+});
+
+/* THE ONE THAT ANSWERS "IS IT STABLE".
+ *
+ * A messy but entirely ordinary state — both devices with their own new files, an edit on each, a
+ * delete on each, and one file changed identically on both — swept alternately until nothing moves.
+ * Then: do the two machines hold the SAME files, did it settle inside a sane number of rounds, and
+ * did it avoid inventing conflict copies for files that were never in conflict?
+ *
+ * A folder that converges is the whole product. Nothing else here tests it. */
+scenario('two-devices-converge-and-stop', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Documents' });
+  const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Documents' });
+
+  for(let i = 0; i < 10; i++) laptop.put('base' + i + '.txt', 'v1 ' + i);
+  await laptop.sweep(); await phone.sweep();
+
+  laptop.put('base0.txt', 'edited on the laptop');
+  phone.put('base1.txt', 'edited on the phone');
+  laptop.rm('base2.txt');
+  phone.rm('base3.txt');
+  laptop.put('same.txt', 'identical bytes');
+  phone.put('same.txt', 'identical bytes');          // must NOT become a conflict
+  for(let i = 0; i < 5; i++) laptop.put('L' + i + '.txt', 'laptop ' + i);
+  for(let i = 0; i < 5; i++) phone.put('P' + i + '.txt', 'phone ' + i);
+
+  let rounds = 0, quiet = 0, conflicts = 0;
+  while(rounds < 12 && quiet < 2){
+    const a = await laptop.sweep(), b = await phone.sweep();
+    rounds++;
+    conflicts += a.conflicted.length + b.conflicted.length;
+    const work = ['uploaded','downloaded','trashed','conflicted','removedRemote']
+      .reduce((n, k) => n + a[k].length + b[k].length, 0);
+    quiet = work === 0 ? quiet + 1 : 0;
+  }
+
+  const L = laptop.live(), P = phone.live();
+  const sameSet = L.length === P.length && L.every((p, i) => p === P[i]);
+  const sameBytes = L.every(p => laptop.read(p) === phone.read(p));
+  return {
+    ok: quiet >= 2 && sameSet && sameBytes && conflicts === 0
+        && !L.includes('base2.txt') && !L.includes('base3.txt'),
+    detail: { rounds, settled: quiet >= 2, conflicts, sameSet, sameBytes,
+              onlyOnLaptop: L.filter(p => !P.includes(p)),
+              onlyOnPhone: P.filter(p => !L.includes(p)) },
+  };
+});
+
+/* AND THEN IT HAS TO STOP. A converged folder that keeps re-uploading is the infinite resync this
+ * feature has hit more than once — every time from a different cause, every time looking to the user
+ * like a sync that never finishes. Convergence is only half the property; staying converged is the
+ * other half, and it is cheap to assert. */
+scenario('a-settled-folder-does-nothing-for-ever', async () => {
+  const w = makeWorld();
+  const laptop = makeDevice(w, { name:'laptop', id:'aaa1', key:'Documents' });
+  const phone  = makeDevice(w, { name:'phone',  id:'bbb2', key:'Documents' });
+
+  for(let i = 0; i < 8; i++) laptop.put('f' + i + '.txt', 'contents ' + i);
+  laptop.put('big.bin', 'x'.repeat(20000));           // over the chunk threshold, on purpose
+  await laptop.sweep(); await phone.sweep(); await laptop.sweep(); await phone.sweep();
+
+  let work = 0;
+  for(let i = 0; i < 4; i++){
+    const a = await laptop.sweep(), b = await phone.sweep();
+    for(const r of [a, b])
+      work += r.uploaded.length + r.downloaded.length + r.trashed.length
+            + r.conflicted.length + r.removedRemote.length;
+  }
+  return { ok: work === 0, detail: { workAfterSettling: work,
+    note: 'a converged folder that keeps moving files is the infinite resync' } };
+});

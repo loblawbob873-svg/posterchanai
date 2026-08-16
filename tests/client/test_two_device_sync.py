@@ -248,6 +248,31 @@ class TestTwoDeviceSync(unittest.TestCase):
         self.check("a-file-written-after-the-delete-still-wins")
 
 
+    def test_a_backlog_does_not_starve_deletions(self):
+        """Deletions used to run after every transfer, so on a folder with a backlog they were never
+        reached — and an interrupted sweep restarted the transfer loops from the top. Pressing Sync
+        appeared to do nothing at all."""
+        self.check("a-backlog-does-not-starve-deletions")
+
+    def test_two_devices_converge_and_stop(self):
+        """THE ONE THAT ASKS WHAT A USER ASKS. Every other scenario pins one rule, and every one of
+        them passed while the feature was failing in the field — a per-rule test can only catch a
+        rule that is wrong, never a system that never settles. This runs an ordinary messy state
+        (edits and deletes on both sides, the same bytes added independently, new files on each) and
+        asserts the folder ends up IDENTICAL on both machines and then goes quiet.
+
+        It found a real one immediately: `same()` compares an absent local file against a tombstone
+        in `base` as CHANGED, so every already-deleted path re-proposed its own deletion on every
+        sweep, for ever — a manifest with 3,930 tombstones rewriting and re-uploading itself on a
+        loop while logging an unchanged count, which is why it looked healthy in production."""
+        self.check("two-devices-converge-and-stop")
+
+    def test_a_settled_folder_does_nothing_for_ever(self):
+        """Convergence is only half of it; staying converged is the other half. A folder that keeps
+        moving files after it has agreed is the infinite resync this feature has hit repeatedly, each
+        time from a different cause and each time looking to the user like a sync that never ends."""
+        self.check("a-settled-folder-does-nothing-for-ever")
+
 @unittest.skipIf(not NODE, "no node on this node")
 class TestPairKeyCrossesTheWire(unittest.TestCase):
     """The client sanitises the folder name and the SERVER sanitises it again into a d-tag. Those two
@@ -320,6 +345,7 @@ class TestPairKeyCrossesTheWire(unittest.TestCase):
             self.assertTrue(key is None or key.startswith("pcai:sync:"), evil)
             if key:
                 self.assertEqual(key.count(":"), 2, "a folder key escaped its namespace: %r" % key)
+
 
 
 if __name__ == "__main__":
