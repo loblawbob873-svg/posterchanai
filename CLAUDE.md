@@ -853,6 +853,12 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   stands down while `FolderSyncPlugin.appInForeground()` (two engines racing meant "already syncing,
   no progress" on the screen the user was watching), and a claim EXPIRES at 20 min and is stolen, or
   one wedged sweep bricks the folder until force-stop.
+  **AND "STOPS SHORTLY AFTER THE SCREEN GOES OFF" MEANT EXACTLY THAT — a sweep that is RUNNING, not
+  one that never starts.** The page's sweep is JS; a hidden page is throttled to ~1 timer/min, so it
+  STALLS mid-folder still holding the per-folder claim, and the next alarm (≤16 min) skips that
+  folder as claimed. Nothing resumes until the claim expires or the app is reopened.
+  `FolderSyncPlugin.handleOnPause` is a HANDOVER: release the page's claims and start the native
+  sweep NOW. onPause is also the one moment an FGS start cannot be refused (still foreground).
   The WebView tick remains for the accounts Java cannot sign for — `FolderSyncPlugin.tick()` →
   `folderSyncTick` → `fs-android.onTick` → `sync.js nudge(force)` — and four things about it are
   load-bearing, each verified by a test: (1) it is an

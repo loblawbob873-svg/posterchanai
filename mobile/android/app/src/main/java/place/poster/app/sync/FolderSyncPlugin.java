@@ -310,21 +310,37 @@ public class FolderSyncPlugin extends Plugin {
   private static final java.util.Set<String> pageClaims =
       java.util.Collections.synchronizedSet(new java.util.LinkedHashSet<String>());
 
+  /** Record that the PAGE holds this folder. Package-private so the handover can be run in a test —
+   *  the alternative is asserting on the text of the release loop, which is how three bugs shipped. */
+  static void notePageClaim(String key) { pageClaims.add(key); }
+
+  /** The body of {@link #releaseSweep} without the bridge, so the ownership rule can be RUN. */
+  static void releaseForTest(String key) { if (pageClaims.remove(key)) NativeSweep.release(key); }
+
   @PluginMethod
   public void claimSweep(PluginCall call) {
     String key = call.getString("key", "");
     boolean ok = NativeSweep.claim(key);
-    if (ok) pageClaims.add(key);
+    if (ok) notePageClaim(key);
     JSObject o = new JSObject();
     o.put("ok", ok);
     call.resolve(o);
   }
 
+  /**
+   * ONLY RELEASE WHAT THIS PAGE STILL HOLDS.
+   *
+   * It used to release unconditionally, which was harmless while the page was the only thing that
+   * ever took a claim. It is not any more: `handleOnPause` hands the folders to the native sweep and
+   * clears `pageClaims`, so a stalled page sweep that finishes minutes later — after being unfrozen
+   * by the app reopening — would arrive here and free a claim the NATIVE sweep is currently holding,
+   * letting a third sweep start on a folder already being written. The claim set is the only thing
+   * standing between two engines and one manifest, so the release has to be as owned as the claim.
+   */
   @PluginMethod
   public void releaseSweep(PluginCall call) {
     String key = call.getString("key", "");
-    pageClaims.remove(key);
-    NativeSweep.release(key);
+    if (pageClaims.remove(key)) NativeSweep.release(key);
     call.resolve();
   }
 
@@ -362,8 +378,51 @@ public class FolderSyncPlugin extends Plugin {
   @Override
   public void handleOnResume() { foreground = true; super.handleOnResume(); }
 
+  /**
+   * THE SCREEN JUST WENT OFF, AND THIS IS THE MOMENT THE WHOLE FEATURE IS ABOUT.
+   *
+   * Setting a flag here and waiting for the next alarm was the bug behind the report that never went
+   * away: *"syncing stops shortly after you turn off the screen"*. Read literally — and it was
+   * literal — a sweep is RUNNING when the screen goes off, and it dies. Nothing in the clock work
+   * addressed that, because the clock is about sweeps that have not started.
+   *
+   * What actually happened: the page's sweep is JavaScript, Chromium throttles a hidden page's
+   * timers to roughly one a minute, so the sweep does not fail — it STALLS, mid-folder, holding the
+   * per-folder claim. The next alarm arrives up to sixteen minutes later, finds the folder claimed,
+   * and skips it. Nothing resumes until the claim expires or somebody opens the app. From the
+   * outside: it was syncing, you locked the phone, it stopped.
+   *
+   * So backgrounding is a HANDOVER, performed now:
+   *   * the page's claims are RELEASED — a hidden page cannot finish them, so holding them only
+   *     blocks the engine that can;
+   *   * the native sweep is started immediately rather than at the next tick.
+   *
+   * Starting a foreground service is allowed here because the app is still foreground at onPause —
+   * this is the one moment in the cycle where that start is never refused, which is exactly when it
+   * is needed. A brief overlap with a page sweep that has not yet been throttled is possible and is
+   * survivable: `store.save` re-reads and merges, and the server's collapse guard is the backstop.
+   * A folder that syncs nothing until you next unlock the phone is not survivable.
+   */
   @Override
-  public void handleOnPause() { foreground = false; super.handleOnPause(); }
+  public void handleOnPause() {
+    foreground = false;
+    try { handOver(); } catch (Throwable ignored) { }
+    super.handleOnPause();
+  }
+
+  /** Give the folders to the engine that can still run, and start it. */
+  private void handOver() {
+    synchronized (pageClaims) {
+      if (!pageClaims.isEmpty()) {
+        NativeSweep.releaseAll(new java.util.LinkedHashSet<String>(pageClaims));
+        pageClaims.clear();
+      }
+    }
+    Context ctx = getContext();
+    if (ctx == null) return;
+    if (!NativeRunner.eligible(ctx)) return;      // nothing due, no key, or already sweeping
+    if (!SyncService.start(ctx)) SyncWork.start(ctx);
+  }
 
   @Override
   public void load() {
