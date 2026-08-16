@@ -455,6 +455,11 @@ def test_a_sweep_holds_a_wake_lock_and_can_never_leak_it():
 
     body = plugin[plugin.index("public void sweepBegin("):]
     body = body[:body.index("\n  }")]
+    assert "if (!wake.isHeld())" not in body, (
+        "the lock is taken only when not already held, so it is never RENEWED — a timed wake lock is "
+        "not extended by being held, so a sweep longer than the bound loses the CPU part-way and "
+        "stops mid-file. Reported as 'seems to last longer', which was exactly the timeout"
+    )
     assert "acquire(WAKE_MAX_MS)" in body, (
         "an untimed acquire is held for ever if the renderer is killed mid-sweep — which is the "
         "exact case this exists for"
@@ -472,3 +477,28 @@ def test_a_sweep_holds_a_wake_lock_and_can_never_leak_it():
     assert "!o.dryRun && _wake && _wake.wakeBegin" in sync, "a dry run must not hold the CPU up"
     tail = sync[sync.index("running.delete(f.id);"):][:400]
     assert "wakeEnd" in tail, "a sweep that threw would keep the processor awake"
+
+
+def test_a_long_sweep_renews_the_cpu_lease():
+    """A TIMED wake lock is not renewed by being held — the OS reclaims it when the bound expires. So
+    taking it once at the start of a sweep buys exactly WAKE_MAX_MS and then the device suspends
+    mid-file, which is the original bug arriving ten minutes later.
+
+    The bound must STAY (a renderer killed mid-sweep cannot be allowed to hold the processor all
+    night), so the sweep renews it while there is still work — from `step`, the one call every loop
+    already makes per file, throttled because it crosses the Capacitor bridge."""
+    run = _read(CLIENT, "syncrun.js")
+    assert "_keepAwake" in run, "nothing renews the wake lock during a long sweep"
+    body = run[run.index("const _keepAwake ="):]
+    body = body[:body.index("\n    };")]
+    assert "wakeBegin" in body, "the renewal does not reach the platform"
+    assert "60000" in body or "throttl" in body.lower(), (
+        "an unthrottled renewal crosses the bridge for every file in the folder"
+    )
+    assert "typeof fs.wakeBegin !== 'function'" in body, (
+        "desktop and older APKs have no wakeBegin; this must be a no-op there, not a throw"
+    )
+    # It has to be wired into the per-file call, or it renews nothing.
+    assert "_keepAwake();" in run[run.index("const step = (phase"):][:200], (
+        "step() does not renew, so the lease expires part-way through a long sweep"
+    )

@@ -203,7 +203,15 @@ public class FolderSyncPlugin extends Plugin {
         wake = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "posterchan:foldersync");
         wake.setReferenceCounted(false);
       }
-      if (!wake.isHeld()) wake.acquire(WAKE_MAX_MS);
+      /* RE-ACQUIRE, do not skip when already held. A timed wake lock is not renewed by being held —
+       * the OS reclaims it when the timeout expires — so taking it once at the start of a sweep buys
+       * exactly WAKE_MAX_MS and then the device suspends mid-file again. Reported as "seems to last
+       * longer", which is precisely ten minutes longer.
+       *
+       * The bound stays: a renderer killed mid-sweep must not keep the processor up all night. It is
+       * the SWEEP that renews it, once per file, so the lock outlives a long transfer and dies with
+       * a page that stopped asking. acquire() on a non-reference-counted lock resets the timeout. */
+      wake.acquire(WAKE_MAX_MS);
     } catch (Throwable ignored) {}
     call.resolve();
   }

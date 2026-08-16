@@ -74,7 +74,20 @@
      * is indistinguishable from a hang, a refused login or a 404 on the manifest. The caller renders
      * whatever it likes; nothing here depends on it. */
     const tick = (typeof o.onProgress === 'function') ? o.onProgress : function(){};
-    const step = (phase, path, i, n) => { try{ tick({ phase, path, i, n }); }catch(_){} };
+    /* RENEW THE CPU LEASE WHILE THERE IS STILL WORK. Android's wake lock is TIMED — held is not
+     * renewed — so a sweep longer than that bound loses the processor part-way and stops mid-file,
+     * which is the same failure as having no lock at all, arriving later. Renewed from `step`
+     * because that is the one call every loop already makes per file, and throttled because it
+     * crosses the Capacitor bridge. A no-op on desktop and on an APK without it. */
+    let _wokeAt = 0;
+    const _keepAwake = () => {
+      if(typeof fs.wakeBegin !== 'function') return;
+      const t = Date.now();
+      if(t - _wokeAt < 60000) return;
+      _wokeAt = t;
+      try{ const r = fs.wakeBegin(); if(r && r.catch) r.catch(()=>{}); }catch(_){}
+    };
+    const step = (phase, path, i, n) => { _keepAwake(); try{ tick({ phase, path, i, n }); }catch(_){} };
     /* STOPPING HAS TO STOP THIS SWEEP, not the next one.
      *
      * Pausing a folder used to set a flag the POLICY reads, which decides whether a sweep may start —
