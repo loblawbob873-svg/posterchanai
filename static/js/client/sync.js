@@ -889,9 +889,15 @@
   function summarise(rep, decision){
     if(rep.dryRun){
       const p = rep.plan || {};
+      const c = (p.conflicts||[]).length;
       const n = (p.upload||[]).length + (p.download||[]).length + (p.deleteLocal||[]).length
-              + (p.deleteRemote||[]).length + (p.conflicts||[]).length;
-      return n ? (n + ' change' + (n>1?'s':'') + ' to make') : 'already in step';
+              + (p.deleteRemote||[]).length + c;
+      if(!n) return 'already in step';
+      /* The conflict count is called out separately because a dry run has NOT verified it — see
+       * details(). Folding it into one number told someone their phone had hundreds of conflicts
+       * when a real sweep would have settled every one of them without making a copy. */
+      return n + ' change' + (n>1?'s':'') + ' to make'
+             + (c ? ' (' + c + ' of them only if the bytes really differ)' : '');
     }
     const bits = [];
     if(rep.uploaded.length) bits.push(rep.uploaded.length + ' up');
@@ -997,7 +1003,19 @@
         + grp('Would download', p.download, a => a.path + ' — ' + a.why)
         + grp('Would move to trash', p.deleteLocal, a => a.path + ' — ' + a.why)
         + grp('Would remove from the cloud', p.deleteRemote, a => a.path + ' — ' + a.why)
-        + grp('Conflicts', p.conflicts, a => a.path + ' → ' + a.keepAs)
+        /* NOT "Conflicts" — a dry run has not checked them, and saying so is the difference between
+         * a screen someone can act on and one that frightens them.
+         *
+         * `if(o.dryRun) return report` sits ABOVE the conflict loop in syncrun, so Check reports what
+         * diff() proposed and never runs the three passes that dissolve most of it: hash against
+         * `csum`, chunk list against `chunks`, blob address against `sha`. On Android that is the
+         * normal case rather than an edge one — SAF gives every file it writes its own
+         * last-modified, so an incremental scan's size+mtime can never match the manifest and diff()
+         * flags the whole folder. The real sweep then hashes them, finds them identical, and records
+         * `unchanged` without duplicating anything. Reported as "phone has many conflicts when
+         * clicking check", on a phone that had none. */
+        + grp('Possible conflicts — each is checked against the stored copy first, and only a file '
+              + 'that really differs is ever duplicated', p.conflicts, a => a.path)
         + '</div>';
     }
     return '<div class="sync-details">'

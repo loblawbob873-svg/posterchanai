@@ -248,6 +248,7 @@ class TestTwoDeviceSync(unittest.TestCase):
         self.check("a-file-written-after-the-delete-still-wins")
 
 
+
     def test_a_backlog_does_not_starve_deletions(self):
         """Deletions used to run after every transfer, so on a folder with a backlog they were never
         reached — and an interrupted sweep restarted the transfer loops from the top. Pressing Sync

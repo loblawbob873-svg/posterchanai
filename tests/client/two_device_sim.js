@@ -1730,3 +1730,4 @@ scenario('a-settled-folder-does-nothing-for-ever', async () => {
   return { ok: work === 0, detail: { workAfterSettling: work,
     note: 'a converged folder that keeps moving files is the infinite resync' } };
 });
+
