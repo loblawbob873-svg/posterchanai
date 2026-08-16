@@ -198,6 +198,13 @@ Three things make it work now, and each one was separately missing:
   folder, it is re-armed when you switch accounts (an unattended sweep signing as the *previous*
   account is a 403 at best), and **signing out takes it off the phone**.
 
+**And one line under all of it decided the whole thing.** The sweep asks the phone whether it is
+online, and it used to read "I could not determine the network" as "there is no network" — which is
+precisely what a *dozing* device answers, and dozing is the state this entire feature exists for. So
+it declined every background tick as offline: it worked whenever the app was open and never with the
+screen off. An unreadable network is now treated as unknown rather than as a no; a device that really
+has no network still says so.
+
 **The sweep is Java, not JavaScript,** for the same class of reason: Chromium throttles a hidden
 page's JavaScript however awake the processor is, so the alarm could fire perfectly and a JS sweep
 still would not run.

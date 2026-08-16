@@ -7,7 +7,9 @@ import android.content.Context;
 public final class SignerKey {
   private SignerKey() { }
 
-  public static boolean have(Context ctx) { return false; }
+  /** Settable, so a test can drive the paths that only exist for an account whose key IS here. */
+  public static boolean HAVE = false;
+  public static boolean have(Context ctx) { return HAVE; }
   public static byte[] load(Context ctx) { return null; }
   public static String pubkey(Context ctx) { return ""; }
 }

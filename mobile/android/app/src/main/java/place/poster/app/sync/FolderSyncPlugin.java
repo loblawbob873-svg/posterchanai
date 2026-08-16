@@ -289,6 +289,9 @@ public class FolderSyncPlugin extends Plugin {
     SyncStore store = new SyncStore(getContext());
     JSObject o = new JSObject();
     o.put("enabled", store.nativeEnabled());
+    // WHY it is off, when it is. "native sweep: off" on its own sent this investigation down two
+    // wrong paths; the store knows exactly which of the four facts is missing, so it says.
+    o.put("why_off", store.whyDisabled());
     o.put("haveKey", place.poster.app.signer.SignerKey.have(getContext()));
     o.put("running", NativeRunner.busy());
     o.put("why", NativeRunner.why());
@@ -331,6 +334,36 @@ public class FolderSyncPlugin extends Plugin {
     pNeedUnmetered = Boolean.TRUE.equals(call.getBoolean("needUnmetered", false));
     call.resolve();
   }
+
+  /* IS THE APP ON SCREEN RIGHT NOW.
+   *
+   * THE NATIVE SWEEP MUST NOT COMPETE WITH THE PAGE, and until the clock started firing it never
+   * had the chance to. Making background sync actually run turned a dormant conflict into the
+   * reported one: the alarm claims "Pictures", the person looking at the app presses Sync now, the
+   * page's claim is refused, and the card sits on "syncing in the background — it will finish on its
+   * own" with no progress of its own to show. From the user's side that is a hang, and it is a hang
+   * they caused by opening the app.
+   *
+   * The division is by VISIBILITY, which is also the honest one: the native sweep exists because a
+   * hidden page's JavaScript is throttled. A page that is on screen is not throttled — it is the
+   * better engine, it can settle conflicts the background sweep defers, and it can show progress. So
+   * while the app is up, the page owns the folders and the alarm stands down; the moment it is
+   * backgrounded (including the screen going off, which is what `onPause` means here) the native
+   * sweep takes over.
+   */
+  private static volatile boolean foreground = false;
+
+  public static boolean appInForeground() { return foreground; }
+
+  /** Visible ONLY so the stand-down can be run in a test — there is no device in this loop, and the
+   *  alternative is asserting on the text of the `if` that implements it. */
+  static void setForegroundForTest(boolean on) { foreground = on; }
+
+  @Override
+  public void handleOnResume() { foreground = true; super.handleOnResume(); }
+
+  @Override
+  public void handleOnPause() { foreground = false; super.handleOnPause(); }
 
   @Override
   public void load() {

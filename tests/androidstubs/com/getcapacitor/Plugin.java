@@ -14,4 +14,6 @@ public class Plugin {
   protected void notifyListeners(String eventName, JSObject data) {}
   protected void startActivityForResult(PluginCall call, Intent intent, String callbackName) {}
   protected void handleOnDestroy() {}
+  public void handleOnResume() {}
+  public void handleOnPause() {}
 }

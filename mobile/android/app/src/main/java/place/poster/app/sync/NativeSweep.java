@@ -101,15 +101,97 @@ public final class NativeSweep {
      * takes this too, so the JavaScript path and this one cannot overlap.
      */
     private static final Set<String> BUSY = new LinkedHashSet<String>();
+    /** When each claim was taken — see {@link #claimed}. */
+    private static final java.util.Map<String, Long> CLAIMED_AT = new java.util.HashMap<String, Long>();
 
-    public static synchronized boolean claim(String key) { return BUSY.add(key); }
+    /**
+     * A CLAIM MAY BLOCK A SWEEP; IT MAY NOT BLOCK THE CLOCK FOR EVER.
+     *
+     * `claimed()` is only an optimisation — it stops the alarm starting a foreground service for a
+     * folder the page is already sweeping. But a claim can be STUCK: the page's sweep is JavaScript
+     * in a WebView, and a WebView can hang, be throttled to a standstill, or be killed between
+     * taking the claim and the `finally` that returns it. (handleOnDestroy covers the kill; it does
+     * not cover a page that is alive and wedged.) Treated as authoritative, one such claim answers
+     * "nothing is due" on every tick from then on, and background sync is silently dead for the life
+     * of the process — a hung foreground sync and a background sync that never runs being, in that
+     * case, the same bug reported twice.
+     *
+     * So a claim goes STALE. Past the bound this reports the folder free and the alarm proceeds;
+     * `claim()` itself is unchanged and still refuses, so the two engines can never actually overlap
+     * — the worst case is one wasted wake-up, which is exactly the cost this method exists to avoid
+     * and enormously cheaper than the failure it was causing.
+     */
+    private static final long CLAIM_STALE_MS = 20 * 60 * 1000L;
 
-    /** Whether something already holds this folder. ASKED, not taken — {@link NativeRunner#plan}
-     *  uses it to decide there is nothing to wake the phone for, and taking the claim there would
-     *  mean the caller has to remember to give it back on every path that decides not to sweep. */
-    public static synchronized boolean claimed(String key) { return BUSY.contains(key); }
+    /**
+     * @return false only when something is ACTIVELY holding this folder. A claim older than the
+     *         stale bound is STOLEN, and that is the difference between a wedged sweep costing one
+     *         cycle and it bricking the folder.
+     *
+     * Reported as *"pictures is set to already syncing and stuck / no progress"*: the page asks for
+     * the claim on every attempt, is refused, and shows "syncing in the background — it will finish
+     * on its own". If the holder is never coming back, that is the card's permanent state and the
+     * only way out is force-stopping the app. Nothing in the sweep can promise to return a claim: it
+     * runs on a thread that can be frozen with the process, killed with the renderer, or blocked on a
+     * socket the platform never times out. So the claim carries an expiry rather than a promise.
+     */
+    public static synchronized boolean claim(String key) {
+        long now = System.currentTimeMillis();
+        if (BUSY.contains(key)) {
+            Long at = CLAIMED_AT.get(key);
+            if (at != null && now - at >= CLAIM_STALE_MS) {
+                // Steal it. The previous holder is gone or wedged; if it ever does come back its
+                // `finally` releases a claim it no longer owns, which is harmless — the worst case
+                // is one overlapping sweep, and `store.save`'s re-read-and-merge is what makes that
+                // survivable. A folder nobody can ever sync again is not.
+                CLAIMED_AT.put(key, now);
+                return true;
+            }
+            return false;
+        }
+        BUSY.add(key);
+        CLAIMED_AT.put(key, now);
+        return true;
+    }
 
-    public static synchronized void release(String key) { BUSY.remove(key); }
+    /* LIVE PROGRESS OF THE SWEEP THAT IS RUNNING NOW, so the page has something true to show while
+     * it is locked out. The card used to print one static sentence when its claim was refused, which
+     * on a folder of any size is indistinguishable from a hang — and was reported as exactly that.
+     * These are written on the sweep thread and read from the plugin; ints, so no lock is needed for
+     * a number that is only ever displayed. */
+    private static volatile String liveKey = "";
+    private static volatile int liveDone = 0, liveTotal = 0;
+    private static volatile long liveAt = 0;
+
+    static void progress(String key, int done, int total) {
+        liveKey = key == null ? "" : key;
+        liveDone = done;
+        liveTotal = total;
+        liveAt = System.currentTimeMillis();
+    }
+
+    /** {key, done, total, at} for whatever is sweeping, or null when nothing is. */
+    public static synchronized Map<String, Object> live() {
+        if (liveKey.isEmpty() || !BUSY.contains(liveKey)) return null;
+        Map<String, Object> m = new LinkedHashMap<String, Object>();
+        m.put("key", liveKey);
+        m.put("done", (long) liveDone);
+        m.put("total", (long) liveTotal);
+        m.put("at", liveAt);
+        return m;
+    }
+
+    /** Whether something already holds this folder, and holds it RECENTLY. ASKED, not taken —
+     *  {@link NativeRunner#plan} uses it to decide there is nothing to wake the phone for, and taking
+     *  the claim there would mean the caller has to give it back on every path that declines. */
+    public static synchronized boolean claimed(String key) {
+        if (!BUSY.contains(key)) return false;
+        Long at = CLAIMED_AT.get(key);
+        if (at == null) return true;
+        return System.currentTimeMillis() - at < CLAIM_STALE_MS;
+    }
+
+    public static synchronized void release(String key) { BUSY.remove(key); CLAIMED_AT.remove(key); }
 
     /**
      * Everything the PAGE is holding, dropped — called when the page goes away.
@@ -125,7 +207,10 @@ public final class NativeSweep {
      * Only the page's own claims: a native sweep genuinely running in the service must survive the
      * page dying, which is the entire point of it.
      */
-    public static synchronized void releaseAll(Set<String> keys) { BUSY.removeAll(keys); }
+    public static synchronized void releaseAll(Set<String> keys) {
+        BUSY.removeAll(keys);
+        CLAIMED_AT.keySet().removeAll(keys);   // or the timestamps outlive the claims
+    }
 
     // -------------------------------------------------------------------------------- the sweep
 
