@@ -49,6 +49,15 @@ import java.util.Map;
 public class Fake extends Context {
   public static final Map<String, Object> STORE = new HashMap<String, Object>();
   public ContentResolver getContentResolver() { return null; }
+  /* HOW SLOW THE SYSTEM SERVICES ARE, which on a dozing phone is the whole question. Only the two
+   * the sweep policy reads are slowed; the alarm service is not, because re-arming is deliberately
+   * done on the looper and slowing it would make every path look equally bad. */
+  public static volatile long SLOW_MS = 0;
+  public Object getSystemService(String name) {
+    if (SLOW_MS > 0 && (Context.CONNECTIVITY_SERVICE.equals(name) || Context.BATTERY_SERVICE.equals(name)))
+      try { Thread.sleep(SLOW_MS); } catch (InterruptedException ignored) { }
+    return null;
+  }
   public java.io.File getFilesDir() { return new java.io.File(System.getProperty("java.io.tmpdir")); }
   public SharedPreferences getSharedPreferences(String name, int mode) {
     return new SharedPreferences() {
@@ -68,6 +77,19 @@ public class Fake extends Context {
   }
 }
 """
+
+
+def _read(*parts):
+    with open(os.path.join(*parts), encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _code_only(src):
+    """Source with its comments removed — these files explain themselves at length, and a raw text
+    match is otherwise satisfied by the paragraph explaining why the code was removed."""
+    import re as _re
+    src = _re.sub(r"/\*.*?\*/", "", src, flags=_re.S)
+    return "\n".join(l for l in src.splitlines() if not l.strip().startswith("//"))
 
 
 def _need(*tools):
@@ -347,3 +369,79 @@ def test_a_late_page_release_cannot_free_the_native_sweep_s_claim():
         "a late release from the page freed the native sweep's claim — a third sweep can now start "
         "on a folder that is already being written"
     )
+
+
+def test_the_alarm_decides_off_the_main_thread():
+    """THE ONE THAT LOOKED LIKE A CRASH FOR A WHOLE DAY, AND WAS NEVER AN EXCEPTION.
+
+    `onReceive` is delivered on the app's MAIN LOOPER, and everything the tick used to do from there
+    — a battery read, a connectivity read, a Keystore lookup, a policy pass per folder — is IPC to
+    system services. This receiver fires while the device is DOZING, which is when that IPC is at its
+    slowest, because dozing is the state the whole feature exists for.
+
+    A blocked main thread is not a crash. Nothing is thrown, so no try/catch sees it, no crash
+    handler records it, and no stack trace exists anywhere: the user gets "PosterChan isn't
+    responding", and when a receiver overruns its ten seconds the system kills the process outright —
+    an app that "just closes, with nothing". Reported as both, one after the other, and four rounds
+    of fixes went looking for an exception that was never there.
+
+    So this measures the ONE property that matters: how long the looper is held. The work still has
+    to happen — a receiver that returns fast by doing nothing is the same bug wearing a smile — so
+    the broadcast must also be FINISHED, which only happens at the end of the real decision.
+
+    Mutation-verified: call `decide(app)` inline in `onReceive` and this fails on the first assert.
+    """
+    out = run_java("""
+    Fake.STORE.clear();
+    Fake.SLOW_MS = 0;
+    place.poster.app.signer.SignerKey.HAVE = true;
+    Fake ctx = new Fake();
+    SyncStore s = new SyncStore(ctx);
+    s.configure(true, "https://a", "https://b", "K", "phone", "%s");
+    FolderSyncPlugin.setForegroundForTest(false);
+
+    Fake.SLOW_MS = 1500;                      // a dozing phone answering a system service
+    SyncTickReceiver r = new SyncTickReceiver();
+    long t0 = System.currentTimeMillis();
+    r.onReceive(ctx, null);
+    long held = System.currentTimeMillis() - t0;
+
+    long waited = 0;
+    while (!r.pendingResult().finished && waited < 20000) { Thread.sleep(50); waited += 50; }
+    System.out.println("looperHeldMs=" + held);
+    System.out.println("broadcastFinished=" + r.pendingResult().finished);
+    System.out.println("workReallyRan=" + (waited >= 1000));
+""" % ONE_FOLDER)
+    got = dict(l.split("=", 1) for l in out.splitlines())
+    assert int(got["looperHeldMs"]) < 500, (
+        "the alarm holds the main thread for the length of a system-service read — on a dozing "
+        "phone that is an ANR, which throws nothing, logs nothing and ends with the app simply "
+        "closing"
+    )
+    assert got["broadcastFinished"] == "true", (
+        "the broadcast is never finished, so the process can be cached mid-decision — and an "
+        "unfinished PendingResult is its own ANR ten seconds later"
+    )
+    assert got["workReallyRan"] == "true", (
+        "the decision did not actually take the slow path, so this test would pass against a "
+        "receiver that returns fast by doing nothing at all"
+    )
+
+
+def test_the_service_starts_its_sweep_off_the_main_thread():
+    """`onStartCommand` runs on the main looper too, and `NativeRunner.tick` re-runs the whole plan
+    — the same Keystore and IPC reads, at the same moment, on the same thread. `startForeground`
+    must stay on the looper (the platform kills us for missing its deadline); nothing after it may.
+
+    Wiring, not logic: driving a real Service needs a real Context, so this asserts the shape and
+    the RUN test above covers the behaviour."""
+    svc = _code_only(_read(JAVA, "sync", "SyncService.java"))
+    start = svc[svc.index("public int onStartCommand("):svc.index("private void decide(")]
+    assert "startForeground" in start, "the foreground promise must still be kept immediately"
+    assert "NativeRunner.tick(" not in start, (
+        "the sweep is still decided on the main thread — see the ANR above"
+    )
+    assert "new Thread(" in start and "decide()" in start
+    # The looper used to BE the lock. Off it, two starts can interleave on the flag that decides
+    # whether a second sweep runs on a folder already being written.
+    assert "synchronized (GATE)" in svc
