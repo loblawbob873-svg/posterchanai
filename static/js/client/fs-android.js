@@ -126,6 +126,15 @@
      * split. An older plugin that ignores `limit` sends everything and omits `done`, which ends the
      * loop after the first reply — so this is safe against a mismatched APK either way. */
     scan: (id, opts) => _scanPaged(id, opts),
+    /* ONE PAGE, HANDED STRAIGHT TO THE CALLER — what lets a first sweep run in bounded batches.
+     *
+     * `scan` above pages purely to protect the BRIDGE, then hands back the whole folder, so the
+     * engine still assembles 15,790 files' worth of metadata, plan and manifest at once. That is
+     * what kills the renderer. This exposes the paging so syncrun can sweep a page at a time and
+     * agree as it goes; its presence is also the signal that this platform can, so desktop keeps its
+     * single-pass behaviour untouched. */
+    scanPage: (id, opts, offset, limit) =>
+      P.scan(Object.assign({ id }, opts || {}, { offset: offset || 0, limit: limit || 500 })),
     read: (id, rel) => P.read({ id, rel }).then(r => toBytes(r.b64)),
     /* Slice I/O — what lets a file bigger than this process can hold move at all. Whole-file read()
      * puts the file in the plugin, again across the bridge as base64, and again in the WebView,

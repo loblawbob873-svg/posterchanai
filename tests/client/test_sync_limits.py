@@ -78,13 +78,24 @@ class TestTheServerLimitIsPerUploadNotPerFile(unittest.TestCase):
 
     def test_the_chunk_fallback_matches_what_the_sweep_uses(self):
         """`chunkAbove` in the sweep and CHUNK_FALLBACK here have to mean the same thing, or a
-        platform that reports no chunk size is sized against a chunk length nothing ever writes."""
+        platform that reports no chunk size is sized against a chunk length nothing ever writes.
+
+        `chunkAbove` is no longer a literal: it is the PLATFORM's own chunk size, because it used to
+        be hardcoded to the desktop's 16 MB while Android's is 4 MB — so every file in between was
+        held whole on the device with the least headroom, which is the renderer dying mid-sweep. The
+        rule this test exists for is unchanged and is now checked where it actually applies: the
+        fallback, taken when a platform reports no chunk size at all, must still be CHUNK_FALLBACK."""
         body = src()
         m = re.search(r"const CHUNK_FALLBACK = ([^;]+);", body)
         self.assertIsNotNone(m)
-        above = re.search(r"chunkAbove: ([^,]+),", body)
+        above = re.search(r"chunkAbove: ([^\n]+),", body)
         self.assertIsNotNone(above)
-        self.assertEqual(eval(m.group(1)), eval(above.group(1)))
+        expr = above.group(1).strip()
+        self.assertIn("chunkBytes", expr,
+                      "chunkAbove is a fixed number again: %s" % expr)
+        self.assertTrue(expr.endswith("CHUNK_FALLBACK"),
+                        "a platform that reports no chunk size falls back to something other than "
+                        "CHUNK_FALLBACK: %s" % expr)
 
 
 if __name__ == "__main__":

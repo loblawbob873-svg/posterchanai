@@ -59,7 +59,145 @@
    * store  : { manifest, putBlob, getBlob, save }      — encrypted Blossom + the shared manifest
    * opts   : { id, device, excludes, maxBytes, now, hash, dryRun }
    */
+  /* HOW MANY FILES A FIRST SWEEP TAKES AT A TIME.
+   *
+   * Small enough that a phone never holds a whole camera roll's worth of metadata, plan and manifest
+   * at once; large enough that 15,790 files is twenty-one batches rather than a thousand. */
+  const FIRST_SWEEP_BATCH = 750;
+
+  /**
+   * A FIRST SWEEP OF A REAL PICTURES FOLDER, IN PIECES.
+   *
+   * The engine below assembles the whole folder before it moves a byte: every path's metadata, the
+   * plan, the manifest snapshot and the agreement, all live at once. On a desktop that is fine. On a
+   * phone, at 15,790 files, it kills the WebView's render process the moment a sweep starts — the
+   * app vanishes and stays in the recents list, because the process never died, only its renderer,
+   * so nothing is thrown and nothing is logged. Confirmed by pausing the folders: the app is stable
+   * with the sweep off and dies within seconds of it starting.
+   *
+   * WHAT MAKES BATCHING SAFE HERE, AND ONLY HERE. A first sweep is the one where `base` is empty, and
+   * an empty base is what every destructive decision needs to be absent:
+   *   * a DELETE requires base to hold a path that the local scan does not — impossible when base is
+   *     empty, so a partial view of the folder cannot delete anything, remotely or locally;
+   *   * a CONFLICT needs both sides changed against base, and is decided per path, so it is correct
+   *     on a page that holds that path;
+   *   * a DOWNLOAD of a remote-only path is the one decision a partial view WOULD get wrong — it
+   *     would fetch, and overwrite, files that are merely in a later page. So every batch but the
+   *     last is shown only the part of the manifest its own paths appear in; the last is shown all
+   *     of it, when the whole folder has been seen.
+   * Every other kind of sweep runs exactly as it always has, in one pass.
+   *
+   * THE ENGINE IS NOT MODIFIED. Each batch runs the same `sweepOnce` against a filesystem that
+   * answers with one page and a store whose `base` is empty and whose `saveBase` merges rather than
+   * replaces. That merge is also what makes the sweep RESUMABLE: a batch that completes is agreed
+   * and persisted, so an interrupted first sweep continues from where it stopped instead of starting
+   * again — which is what turned the previous behaviour into a loop that could never finish.
+   */
   async function sweep(fs, store, opts){
+    const o = opts || {};
+    const key0 = o.key || o.id;
+    // Only where the adapter can hand its listing over in pages (Android). Anywhere else, and for a
+    // dry run, nothing changes.
+    if(typeof fs.scanPage !== 'function' || o.dryRun) return sweepOnce(fs, store, opts);
+    let base0 = null;
+    try{ base0 = await store.base(key0); }catch(_){ base0 = null; }
+    if(base0 && Object.keys(base0).length) return sweepOnce(fs, store, opts);  // not a first sweep
+    return firstSweepInBatches(fs, store, o, Math.max(100, o.batchFiles || FIRST_SWEEP_BATCH));
+  }
+
+  async function firstSweepInBatches(fs, store, o, PAGE){
+    const key = o.key || o.id;
+    const merged = { uploaded:[], downloaded:[], trashed:[], conflicted:[], removedRemote:[],
+                     failed:[], skipped:[], excluded:0, unchanged:0, batches:0, dryRun:false };
+    const acc = {};                     // the agreement, accumulated across batches
+    let remoteAll = {};
+    try{ remoteAll = (await store.manifest(key)) || {}; }catch(_){ remoteAll = {}; }
+
+    let offset = 0, done = false;
+    while(!done){
+      /* The scan options are stated here rather than taken from the engine, and the reason it is
+       * safe: this path only runs on an adapter with `scanPage`, which is the one with `readPart`
+       * and chunked uploads — where the engine itself passes `maxBytes: 0`, because a file too big
+       * to hold is not too big to send in pieces. */
+      let page;
+      try{
+        page = await fs.scanPage(o.id, { hash: true, excludes: o.excludes || [], maxBytes: 0 },
+                                 offset, PAGE);
+      }catch(e){
+        merged.error = (e && e.message) || String(e);
+        break;
+      }
+      const files = (page && page.files) || {};
+      const paths = Object.keys(files);
+      done = !page || page.done === undefined || !!page.done || paths.length === 0;
+      if(!paths.length) break;
+
+      // Everything the manifest says about THIS page — plus, on the last one, everything else in it,
+      // so files that live only on another device are finally fetched.
+      const remoteForPage = done ? remoteAll : pick(remoteAll, paths);
+
+      const fsPage = shallow(fs, {
+        scan: async () => ({ files, skipped: (page.skipped || []) }),
+      });
+      /* BOTH WRITERS OF THE AGREEMENT HAVE TO MERGE, not just the obvious one. `saveBase` is the
+       * checkpoint, but `save` carries a `base` too — it is how the end of a sweep stores the
+       * manifest and the agreement together — so intercepting only the first let each batch's
+       * partial agreement overwrite everything the batches before it had agreed. The folder then
+       * finished with the last page's files recorded and nothing else, and the next sweep would
+       * re-upload all of it. Caught by first_sweep_sim.js, which counts what was agreed at the end. */
+      const storePage = shallow(store, {
+        manifest: async () => remoteForPage,
+        base: async () => ({}),
+        saveBase: async (k, b) => {
+          Object.assign(acc, b || {});
+          return store.saveBase(k, acc);
+        },
+        save: async (k, m) => {
+          const mm = m || {};
+          if(mm.base) Object.assign(acc, mm.base);
+          return store.save(k, Object.assign({}, mm, mm.base ? { base: acc } : {}));
+        },
+      });
+
+      const rep = await sweepOnce(fsPage, storePage, Object.assign({}, o, {
+        onProgress: (p) => {
+          try{
+            if(typeof o.onProgress === 'function')
+              o.onProgress(Object.assign({}, p, { batch: merged.batches + 1 }));
+          }catch(_){}
+        },
+      }));
+      absorb(merged, rep);
+      merged.batches++;
+      offset += paths.length;
+      if(rep && rep.stopped){ merged.stopped = true; break; }
+    }
+    return merged;
+  }
+
+  function shallow(obj, over){
+    const out = {};
+    for(const k in obj){ const v = obj[k]; out[k] = (typeof v === 'function') ? v.bind(obj) : v; }
+    return Object.assign(out, over);
+  }
+
+  function pick(src, keys){
+    const out = {};
+    for(const k of keys) if(Object.prototype.hasOwnProperty.call(src, k)) out[k] = src[k];
+    return out;
+  }
+
+  function absorb(into, rep){
+    if(!rep) return;
+    for(const k of ['uploaded','downloaded','trashed','conflicted','removedRemote','failed','skipped'])
+      if(Array.isArray(rep[k])) into[k] = into[k].concat(rep[k]);
+    for(const k of ['excluded','unchanged']) into[k] = (into[k] || 0) + (rep[k] || 0);
+    if(rep.resurrected) into.resurrected = (into.resurrected || []).concat(rep.resurrected);
+    if(rep.refusedTrash) into.refusedTrash = rep.refusedTrash;
+    if(rep.partsCollected) into.partsCollected = rep.partsCollected;
+  }
+
+  async function sweepOnce(fs, store, opts){
     const o = opts || {};
     /* TWO IDENTIFIERS, and conflating them is what stopped devices seeing each other.
      *   id  — the PLATFORM's handle for this directory. Device-local: a random hex id on desktop, a
