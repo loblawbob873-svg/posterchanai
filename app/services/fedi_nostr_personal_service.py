@@ -27,7 +27,8 @@ from app.services import pleroma_service, settings_store
 from app.services import fedi_bridge_identity as ident
 from app.services.nostr import nip17
 from app.services.fedi_timeline_service import _norm_pleroma
-from app.services.fedi_nostr_bridge_service import _blocked_domains, _domain_blocked, _host_of, _is_public_audience
+from app.services.fedi_nostr_bridge_service import (_blocked_domains, _domain_blocked, _host_of,
+                                                    _is_public_audience, _PublishFailed)
 
 logger = logging.getLogger(__name__)
 
@@ -61,14 +62,23 @@ def _user_pubkey(user: User) -> str | None:
 
 
 async def _wrap_dm(port: int, puppet: dict, recipient_hex: str, text: str) -> str | None:
-    """NIP-17 gift-wrap `text` from the puppet to the user; publish to the local relay. Returns id."""
+    """NIP-17 gift-wrap `text` from the puppet to the user; publish to the local relay. Returns id.
+
+    Raises _PublishFailed when the relay publish fails TRANSIENTLY (flap/disconnect) so the caller
+    retries instead of silently dropping a private mention — the gift wrap is freshly randomised each
+    call, so there is no dedup row to fall back on. Returns None only for a PERMANENT failure (the
+    content can't be wrapped, or the relay rejected it outright): those never succeed, so advance."""
     try:
         wrap = nip17.wrap(puppet["seckey"], recipient_hex, text)
     except Exception as e:
         logger.debug("[fedi-personal] wrap failed: %s", e)
         return None
-    ok, _ = await ident.publish(port, wrap)
-    return wrap["id"] if ok else None
+    ok, msg = await ident.publish(port, wrap)
+    if ok:
+        return wrap["id"]
+    if _is_permanent_reject(msg):
+        return None
+    raise _PublishFailed(msg or "gift-wrap publish failed")
 
 
 def _persist_cursor(user_id: int, attr: str, value) -> None:
@@ -187,11 +197,16 @@ async def _ensure_status_event(db: Session, port: int, user: User, instance_host
     eid = _delivered_event_for(db, user.pleroma_instance_url, status)
     if eid or not status.get("id"):
         return eid
+    from app.services.fedi_nostr_bridge_service import _deliver   # (_PublishFailed is module-level)
     try:
-        from app.services.fedi_nostr_bridge_service import _deliver
         post = _norm_pleroma(status)
         return await _deliver(db, port, "pleroma", user.pleroma_instance_url, instance_host, status,
                               post, token=user.pleroma_access_token)
+    except _PublishFailed:
+        raise   # TRANSIENT relay failure while mirroring the reacted post — propagate so the caller RETRIES
+                # rather than emitting a reaction whose ABSENT target would flip to present once the mirror
+                # later succeeds (→ a different event id → a duplicate). A PERMANENT non-delivery returns
+                # None below: a STABLE absent target the caller can safely publish target-less.
     except Exception as e:
         logger.debug("[fedi-personal] mirror-for-reaction failed: %s", e)
         return None
@@ -222,9 +237,15 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
                 for m in (post.get("media") or []):
                     if m.get("url"):
                         body += ("\n" if body else "") + m["url"]
-                return bool(await _wrap_dm(port, puppet, recipient, body or "​"))
+                # _wrap_dm RAISES on a transient relay failure (handled below → retry); a None return is
+                # a permanent wrap/reject that never succeeds → advance rather than retry-then-drop.
+                await _wrap_dm(port, puppet, recipient, body or "​")
+                return True
             # Public/unlisted mention → properly threaded public note (e/p + ancestor backfill) + p-tag.
-            from app.services.fedi_nostr_bridge_service import _deliver, _seen, _canonical_uri, _PublishFailed
+            # NB: do NOT import _PublishFailed here — a function-local import would shadow the
+            # module-level name and make this function's `except _PublishFailed` an UNBOUND local
+            # on every branch that doesn't run this line (silently dropping those notifications).
+            from app.services.fedi_nostr_bridge_service import _deliver, _seen, _canonical_uri
             uri = _canonical_uri("pleroma", user.pleroma_instance_url, post)
             if status.get("id") and not _seen(db, user.pleroma_instance_url, status["id"], uri):
                 try:
@@ -271,6 +292,13 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
             await _bridge_follow(db, port, puppet, recipient, broadcast)
             return True
         return True                                  # follow-accepted + untracked types (poll/update/…) → skip
+    except _PublishFailed as e:
+        # TRANSIENT relay failure anywhere in the branch above (private-mention gift wrap, or mirroring
+        # the reacted/boosted post before building the reaction). Retry with the cursor unmoved instead
+        # of advancing — advancing here is exactly how a notification gets silently lost during a flap.
+        # Bounded by the _POISON_MAX_FAILS streak so a permanently-failing item still can't wedge.
+        logger.debug("[fedi-personal] transient deliver failure (%s), will retry: %s", ntype, e)
+        return False
     except Exception as e:
         logger.debug("[fedi-personal] notif deliver failed (%s): %s", ntype, e)
         return True                                  # poison item → skip so the drain can't wedge
