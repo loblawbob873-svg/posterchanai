@@ -65,6 +65,7 @@ public final class NativeSweep {
         public final List<String> removedRemote = new ArrayList<String>();
         public final List<Map<String, Object>> failed = new ArrayList<Map<String, Object>>();
         public int unchanged, excluded, deferred, alreadyStored, checkpoints;
+        public boolean hashed = false;
         public String refusedTrash = "", refusedResurrect = "", error = "", deferredWhy = "";
         public long at = System.currentTimeMillis();
         public String key = "";
@@ -82,6 +83,7 @@ public final class NativeSweep {
             m.put("deferred", (long) deferred);
             m.put("alreadyStored", (long) alreadyStored);
             m.put("checkpoints", (long) checkpoints);
+            m.put("hashed", hashed);
             if (!refusedTrash.isEmpty()) m.put("refusedTrash", refusedTrash);
             if (!refusedResurrect.isEmpty()) m.put("refusedResurrect", refusedResurrect);
             if (!deferredWhy.isEmpty()) m.put("deferredWhy", deferredWhy);
@@ -108,16 +110,18 @@ public final class NativeSweep {
 
     // -------------------------------------------------------------------------------- the sweep
 
-    public static Report run(Context ctx, SyncStore store, SyncStore.Folder f, byte[] sec, Stop stop) {
+    public static Report run(Context ctx, SyncStore store, SyncStore.Folder f, byte[] sec,
+                             boolean hash, Stop stop) {
         Report rep = new Report();
         rep.key = f.key;
+        rep.hashed = hash;
         if (!claim(f.key)) {
             rep.deferred = 1;
             rep.deferredWhy = "already syncing";
             return rep;
         }
         try {
-            sweep(ctx, store, f, sec, stop, rep);
+            sweep(ctx, store, f, sec, hash, stop, rep);
         } catch (Throwable t) {
             rep.error = String.valueOf(t.getMessage() == null ? t : t.getMessage());
         } finally {
@@ -127,7 +131,7 @@ public final class NativeSweep {
     }
 
     private static void sweep(Context ctx, SyncStore store, SyncStore.Folder f, byte[] sec,
-                              Stop stop, Report rep) throws Exception {
+                              boolean hash, Stop stop, Report rep) throws Exception {
         final long now = System.currentTimeMillis();
         final String device = store.deviceName();
         SyncNet net = new SyncNet(store.apiBase(), store.mediaBase(), sec);
@@ -148,7 +152,13 @@ public final class NativeSweep {
             return;
         }
 
-        SafFs.Scan scan = fs.scan(false, 0, f.excludes);
+        /* HASHING IS THE CHARGING-TIME JOB, and the caller has already decided whether this is one.
+         * `shouldSync` answers `full` when the phone is plugged in and it has been a day, and that is
+         * the only mode that rehashes: doing it on every sweep is the space heater the whole battery
+         * policy exists to avoid, and never doing it means an entry that has no content identity
+         * never gains one — so every device that joins the folder later falls back to size+mtime,
+         * which on Android can never match, because SAF assigns its own last-modified. */
+        SafFs.Scan scan = fs.scan(hash, 0, f.excludes);
         Map<String, Map<String, Object>> local = new LinkedHashMap<String, Map<String, Object>>();
         for (Map.Entry<String, Map<String, Object>> e : scan.files.entrySet()) {
             /* The scan reports the FILE's hash in `sha`; a manifest entry's `sha` is the address of
@@ -387,6 +397,13 @@ public final class NativeSweep {
             if (allExisted) rep.alreadyStored++;
             entry.put("chunks", chunks);
             entry.put("cs", (long) CHUNK_BYTES);
+            /* Whatever content identity the scan established travels with it. `chunks` IS an identity
+             * on its own, but only at this chunk size — a desktop splitting the same file 16 MB at a
+             * time produces a list with nothing in common — so a `csum` is what lets the two agree. It
+             * is only here when this was a rehashing sweep; an incremental one leaves it out, exactly
+             * as the browser does. */
+            String big = Json.str(meta.get("csum"), "");
+            if (!big.isEmpty()) entry.put("csum", big);
         } else {
             byte[] plain = fs.readAll(path);
             byte[] blob = SyncCrypto.encrypt(mk, plain);

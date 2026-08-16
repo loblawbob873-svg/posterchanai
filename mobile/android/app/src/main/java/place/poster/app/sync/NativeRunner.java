@@ -63,15 +63,25 @@ public final class NativeRunner {
         if (running) { lastWhy = "a native sweep is already running"; return true; }
 
         final List<SyncStore.Folder> due = new ArrayList<SyncStore.Folder>();
+        final List<Boolean> deep = new ArrayList<Boolean>();
         Map<String, Object> state = deviceState(app);
         for (SyncStore.Folder f : store.folders()) {
             Map<String, Object> s = new LinkedHashMap<String, Object>(state);
             s.put("lastSyncAt", store.lastSyncAt(f.key));
+            s.put("lastFullScanAt", store.lastFullScanAt(f.key));
             Map<String, Object> verdict = SyncDiff.shouldSync(s, prefsOf(f));
             // `metadata` means "note the changes, move bytes later" — there is no cheaper thing for
             // this path to do than what a sweep already does, so only the two real modes run.
             String mode = Json.str(verdict.get("mode"), "none");
-            if ("incremental".equals(mode) || "full".equals(mode)) due.add(f);
+            if ("incremental".equals(mode) || "full".equals(mode)) {
+                due.add(f);
+                /* `full` IS THE ONE THAT REHASHES, and it has to be carried through or the mode is a
+                 * label with nothing behind it — the folder would be marked as fully checked by a
+                 * sweep that only compared sizes and timestamps, and would then not be checked again
+                 * for a day. `lastFullScanAt` was also never recorded, so every sweep on a charger
+                 * answered `full`. */
+                deep.add("full".equals(mode));
+            }
         }
         if (due.isEmpty()) { lastWhy = "no folder is due"; return false; }
 
@@ -79,14 +89,14 @@ public final class NativeRunner {
         lastWhy = "sweeping " + due.size() + " folder" + (due.size() == 1 ? "" : "s");
         final Context fctx = app;
         Thread t = new Thread(new Runnable() {
-            public void run() { sweepAll(fctx, due); }
+            public void run() { sweepAll(fctx, due, deep); }
         }, "pc-native-sync");
         t.setPriority(Thread.MIN_PRIORITY + 2);
         t.start();
         return true;
     }
 
-    private static void sweepAll(Context ctx, List<SyncStore.Folder> due) {
+    private static void sweepAll(Context ctx, List<SyncStore.Folder> due, List<Boolean> deep) {
         SyncStore store = new SyncStore(ctx);
         PowerManager.WakeLock wake = null;
         java.util.Timer renew = null;
@@ -113,13 +123,18 @@ public final class NativeRunner {
             if (sec == null) { lastWhy = "the stored key could not be read"; return; }
 
             List<Object> reports = new ArrayList<Object>();
-            for (SyncStore.Folder f : due) {
-                NativeSweep.Report rep = NativeSweep.run(ctx, store, f, sec, null);
+            for (int i = 0; i < due.size(); i++) {
+                SyncStore.Folder f = due.get(i);
+                boolean hash = i < deep.size() && Boolean.TRUE.equals(deep.get(i));
+                NativeSweep.Report rep = NativeSweep.run(ctx, store, f, sec, hash, null);
                 reports.add(rep.toMap());
                 /* THE CLOCK ADVANCES ONLY WHERE SOMETHING WAS ACTUALLY DECIDED. A sweep that could
                  * not run — deferred to the foreground, or thrown out by the network — must not
                  * silence the next sixteen minutes as though it had synced. */
-                if (rep.error.isEmpty() && rep.deferred == 0) store.setLastSyncAt(f.key, rep.at);
+                if (rep.error.isEmpty() && rep.deferred == 0) {
+                    store.setLastSyncAt(f.key, rep.at);
+                    if (hash) store.setLastFullScanAt(f.key, rep.at);
+                }
             }
             Map<String, Object> out = new LinkedHashMap<String, Object>();
             out.put("at", System.currentTimeMillis());

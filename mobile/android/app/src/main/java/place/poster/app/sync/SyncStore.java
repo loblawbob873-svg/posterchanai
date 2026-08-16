@@ -138,6 +138,15 @@ public final class SyncStore {
         prefs().edit().putLong("lastSync:" + key, when).apply();
     }
 
+    /** When this folder was last REHASHED, which is what makes `full` mean something on a charger. */
+    public long lastFullScanAt(String key) {
+        return prefs().getLong("lastFull:" + key, 0L);
+    }
+
+    public void setLastFullScanAt(String key, long when) {
+        prefs().edit().putLong("lastFull:" + key, when).apply();
+    }
+
     // ---------------------------------------------------------------------- the agreement
 
     private File baseFile(String key) {
