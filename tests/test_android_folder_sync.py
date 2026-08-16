@@ -673,3 +673,27 @@ def test_the_panel_can_say_why_a_background_sweep_did_nothing():
     sync = _read(CLIENT, "sync.js")
     assert "nativeReport()" in sync, "nothing in the UI reads what the native sweep did"
     assert "no key on this device" in sync, "the commonest reason is not spelled out anywhere"
+
+
+def test_the_phone_is_given_an_absolute_server_and_not_its_own_bundle():
+    """`location.origin` in the packaged app is `https://localhost` — the app's OWN bundle. Every
+    fetch in the page is relative and that is right; the native sweep is not in the page, so it needs
+    a URL it can open a socket to, and the wrong one is not an error: the phone POSTs a manifest into
+    itself every sixteen minutes and reports a failure nobody reads.
+
+    `''` is the standalone case (no instance at all) and must turn the whole thing OFF rather than be
+    treated as a base."""
+    sync = _read(CLIENT, "sync.js")
+    app = _read(CLIENT, "app.js")
+    body = sync[sync.index("async function _pushNativeConfig()"):]
+    body = body[:body.index("\n  }")]
+    assert "PC.serverOrigin" in body, "the native config is built from the page's own origin"
+    assert "apiBase: location.origin" not in body
+    assert "enabled: !!mk && !!api && !!media" in body, (
+        "a missing server or media host still reports the sweep as enabled"
+    )
+    assert "serverOrigin: _serverOrigin," in app, "PC does not expose the instance base"
+    # …and _serverOrigin must keep answering '' with no instance, or the guard above never fires.
+    fn = app[app.index("function _serverOrigin()"):]
+    fn = fn[:fn.index("\n")]
+    assert "if(_standalone()) return ''" in fn

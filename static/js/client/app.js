@@ -30277,6 +30277,15 @@
      * empty when nothing is, and the caller treats empty as "not yet".
      */
     driveKeyWrapped: () => (FilesIdx && FilesIdx._mkWrapped) || '',
+    /* WHERE THIS INSTALL'S SERVER ACTUALLY IS, in absolute form.
+     *
+     * Everything in the page fetches `/client/…` relative and that is right — but the native folder
+     * sweep is not in the page, so it needs a URL it can open a socket to. In the bundled app
+     * `location.origin` is `https://localhost`, which resolves to the app's own bundle and reaches
+     * nothing; `__PC_API_BASE__` is the real one. Standalone deliberately answers '' — there is no
+     * instance, and an empty base is what makes the caller's own guard fire instead of the phone
+     * quietly POSTing a manifest into itself every sixteen minutes. */
+    serverOrigin: _serverOrigin,
     mediaServer, modal, closeModal, blossomPicker,
     // The app's own lightbox (pager, zoom, swipe, keyboard) — so Web Search's Images tab opens a
     // picture the way every other picture in this app opens, instead of throwing you out to a

@@ -1772,13 +1772,22 @@
                onlyWhenCharging: !!p.onlyWhenCharging, wifiOnly: p.wifiOnly !== false,
                minBattery: p.minBattery };
     });
+    /* AN ABSOLUTE BASE, AND `location.origin` IS THE WRONG ONE. Every fetch in this page is relative
+     * and that is right, but the native sweep is not in this page — in the bundled app the page's
+     * origin is `https://localhost`, which resolves to the app's own bundle and reaches nothing at
+     * all. `PC.serverOrigin()` is the instance the shim injected, and it answers '' when there is no
+     * instance (standalone), which is what turns the whole thing off rather than pointing the phone
+     * at itself. */
+    let api = '';
+    try{ api = (PC.serverOrigin && PC.serverOrigin()) || ''; }catch(_){}
+    const media = (() => { try{ return (PC.mediaServer && PC.mediaServer()) || ''; }catch(_){ return ''; } })();
     try{
       await fs.configureNative({
-        // Only with a key AND somewhere to put the bytes. Without either the phone would wake, fail
-        // every folder and write a report saying so, once every sixteen minutes.
-        enabled: !!mk && list.length > 0,
-        apiBase: location.origin,
-        mediaBase: (PC.mediaServer && PC.mediaServer()) || '',
+        // Only with a key, a server, somewhere to put the bytes AND a folder. Without any of them the
+        // phone would wake, fail every folder and write a report saying so, every sixteen minutes.
+        enabled: !!mk && !!api && !!media && list.length > 0,
+        apiBase: api,
+        mediaBase: media,
         mkWrapped: mk,
         device: deviceName(),
         folders: list,
