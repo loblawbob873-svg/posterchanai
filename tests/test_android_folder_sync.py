@@ -269,7 +269,7 @@ def test_the_native_tick_is_wired_end_to_end():
     shim = _read(CLIENT, "fs-android.js")
     sync = _read(CLIENT, "sync.js")
 
-    assert "FolderSyncPlugin.tick(" in svc, (
+    assert "FolderSyncPlugin.tickOnMain(" in svc, (
         "the alarm never ticks — something keeps the process alive and nothing asks it to sync, "
         "which is the screen-off bug exactly"
     )
@@ -302,7 +302,7 @@ def test_the_native_tick_is_wired_end_to_end():
     # "background sync works for a bit and then stops", i.e. as the bug.
     recv = _code_only(_read(JAVA, "sync", "SyncTickReceiver.java"))
     body = recv[recv.index("public void onReceive("):]
-    assert body.index("SyncClock.arm(") < body.index("FolderSyncPlugin.tick("), (
+    assert body.index("SyncClock.arm(") < body.index("FolderSyncPlugin.tickOnMain("), (
         "the alarm is re-armed after work that can throw — one throw and the clock is gone for the "
         "life of the install, silently"
     )
@@ -609,7 +609,7 @@ def test_the_native_sweep_is_wired_from_the_alarm_to_the_engine():
     # here, and a folder holding one conflict is deferred by the native sweep on every run — a phone
     # that stopped ticking the page for either reason would sync nowhere at all. See
     # test_the_native_tick_never_silences_the_webview_one.
-    assert "FolderSyncPlugin.tick(" in svc, (
+    assert "FolderSyncPlugin.tickOnMain(" in svc, (
         "the native path swallows the tick — an Amber account then has neither engine"
     )
     assert "public static boolean eligible(" in runner, (
@@ -756,11 +756,14 @@ def test_the_native_tick_never_silences_the_webview_one():
     strength of it silenced the engine that COULD have settled that folder, and because the skip is
     process-wide, every other folder on the phone with it."""
     svc = _code_only(_read(JAVA, "sync", "SyncTickReceiver.java"))
-    body = svc[svc.index("public void onReceive("):]
-    assert "FolderSyncPlugin.tick(" in body, "the WebView is never asked"
+    # `decide()`, not `onReceive`: the deciding moved OFF the main thread, because a Keystore lookup
+    # and a battery read on the looper of a dozing phone is an ANR — no exception, no log, and the
+    # app "just closes". The rule below is unchanged; only which method holds it.
+    body = svc[svc.index("static void decide("):]
+    assert "FolderSyncPlugin.tickOnMain(" in body, "the WebView is never asked"
     # The page tick must come out of the receiver UNCONDITIONALLY — before anything that inspects the
     # native path, so no later branch can be written that skips it.
-    assert body.index("FolderSyncPlugin.tick(") < body.index("NativeRunner.eligible("), (
+    assert body.index("FolderSyncPlugin.tickOnMain(") < body.index("NativeRunner.eligible("), (
         "the WebView tick sits after (and can therefore be made conditional on) the native path — "
         "see above"
     )

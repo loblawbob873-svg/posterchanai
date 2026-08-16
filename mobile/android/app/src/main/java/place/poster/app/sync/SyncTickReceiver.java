@@ -39,11 +39,52 @@ import android.content.Intent;
  */
 public class SyncTickReceiver extends BroadcastReceiver {
 
+    /**
+     * NOTHING BELOW THE RE-ARM RUNS ON THE MAIN THREAD, AND THAT IS THE WHOLE POINT OF THIS METHOD.
+     *
+     * `onReceive` is delivered on the app's MAIN LOOPER. Everything it used to call from here — a
+     * battery/network read, `NativeRunner.eligible` (Keystore, provider IPC, a `shouldSync` per
+     * folder) — is inter-process communication with system services, and this receiver fires at the
+     * one moment those are slowest: the device is DOZING, which is precisely what the alarm is for.
+     * A blocked main thread is not a crash. It throws nothing, records nothing, and is caught by no
+     * try/catch: the user gets "PosterChan isn't responding", and the system kills the process
+     * outright when a receiver overruns its ten seconds — which is an app that "just closes, with
+     * nothing". That is the reported symptom, and it is invisible to every exception-shaped
+     * instrument in this repo, including the crash log added hours ago.
+     *
+     * `goAsync()` is the sanctioned way to keep a receiver alive past the return of `onReceive`. It
+     * hands back a PendingResult; the broadcast is not complete until `finish()` is called on it, so
+     * the process stays out of the cache while the decision is made — and it is made on a thread
+     * where blocking costs nobody a frame. `finish()` runs in a `finally`, because a PendingResult
+     * that is never finished is its own ANR, ten seconds later, in the system's own bookkeeping.
+     *
+     * The two SyncClock calls stay: both are a counter and a SharedPreferences write, and the re-arm
+     * must not be deferred behind a thread start — it IS the repeat of a one-shot alarm.
+     */
     @Override
     public void onReceive(Context ctx, Intent intent) {
         SyncClock.onFired(ctx);
         SyncClock.arm(ctx);                     // re-armed FIRST: a throw below must not end the clock
 
+        final Context app = ctx.getApplicationContext();
+        PendingResult pr = null;
+        try { pr = goAsync(); } catch (Throwable ignored) { }
+        final PendingResult keepAlive = pr;
+        Thread t = new Thread(new Runnable() {
+            public void run() {
+                try { decide(app); }
+                catch (Throwable ignored) { }
+                finally {
+                    if (keepAlive != null) try { keepAlive.finish(); } catch (Throwable ignored) { }
+                }
+            }
+        }, "pc-sync-tick");
+        t.setPriority(Thread.NORM_PRIORITY - 1);
+        t.start();
+    }
+
+    /** Everything the alarm has to work out, none of which may happen on the looper. */
+    static void decide(Context ctx) {
         /* "Only when plugged in" / "Wi-Fi only", answered here rather than by waking anything to be
          * told the same thing. A pre-filter only — see FolderSyncPlugin.suppressed. */
         boolean skip = false;
@@ -52,7 +93,9 @@ public class SyncTickReceiver extends BroadcastReceiver {
 
         // The page, for the accounts this phone cannot sign for (Amber, a bunker) and for the
         // decisions a background sweep deliberately defers. Costs nothing when there is no page.
-        try { FolderSyncPlugin.tick("clock"); } catch (Throwable ignored) { }
+        // POSTED TO THE MAIN THREAD: it ends in a bridge call into the WebView, which is the one
+        // thing here that must NOT move off the looper.
+        try { FolderSyncPlugin.tickOnMain("clock"); } catch (Throwable ignored) { }
 
         boolean due = false;
         try { due = NativeRunner.eligible(ctx); } catch (Throwable ignored) { }

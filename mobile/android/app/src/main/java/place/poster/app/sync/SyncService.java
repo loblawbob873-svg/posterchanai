@@ -102,23 +102,50 @@ public class SyncService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
-        /* TWO KINDS OF "ALREADY BUSY", AND THEY NEED OPPOSITE ANSWERS.
+        /* AND THE DECIDING GOES OFF THE MAIN THREAD, WHICH IS WHERE onStartCommand RUNS.
          *
-         * Android delivers a repeat start to the SAME service instance, so when the sweep in flight
-         * is OURS the only correct thing to do is nothing: its `finish()` owns the teardown, and
-         * standing down here would take the notification and the process away from a running
-         * transfer. When it is somebody ELSE'S sweep — the page's, or the job's — nothing will ever
-         * call our `finish()`, so returning would leave this service foreground and the shared
-         * notification saying "syncing your folders" until the process died. */
-        if (sweeping) return START_NOT_STICKY;
-        if (NativeRunner.busy()) { finish(); return START_NOT_STICKY; }
-        sweeping = true;
-        boolean began = NativeRunner.tick(this, "background clock", new Runnable() {
-            public void run() { finish(); }
-        });
-        if (!began) finish();      // nothing was due after all: stop, do not sit in the shade
+         * `NativeRunner.tick` re-runs `plan()`: a Keystore lookup, a connectivity read, a battery
+         * read and a policy pass per folder — all of it IPC to system services, all of it at its
+         * slowest on a dozing device, which is the only kind of device this service starts on. On
+         * the looper that is an ANR: nothing thrown, nothing logged, no exception for any handler to
+         * catch, and the user sees "isn't responding" or simply watches the app vanish. The
+         * `startForeground` above must stay here — the platform gives us seconds and kills us for
+         * missing them — but nothing after it may block. */
+        new Thread(new Runnable() { public void run() { decide(); } }, "pc-sync-start").start();
         return START_NOT_STICKY;
     }
+
+    /**
+     * TWO KINDS OF "ALREADY BUSY", AND THEY NEED OPPOSITE ANSWERS.
+     *
+     * Android delivers a repeat start to the SAME service instance, so when the sweep in flight is
+     * OURS the only correct thing to do is nothing: its `finish()` owns the teardown, and standing
+     * down here would take the notification and the process away from a running transfer. When it is
+     * somebody ELSE'S sweep — the page's, or the job's — nothing will ever call our `finish()`, so
+     * returning would leave this service foreground and the shared notification saying "syncing your
+     * folders" until the process died.
+     *
+     * THE GATE IS AN EXPLICIT LOCK NOW, because the main looper used to be the lock. Deciding on the
+     * looper meant a repeat start could not interleave with this by construction; off it, two starts
+     * can, and `sweeping` is the flag that decides whether a second sweep runs on a folder already
+     * being written. `finish()` takes the same lock for the same reason.
+     */
+    private void decide() {
+        synchronized (GATE) {
+            if (sweeping) return;
+            if (NativeRunner.busy()) { finish(); return; }
+            sweeping = true;
+        }
+        boolean began = false;
+        try {
+            began = NativeRunner.tick(this, "background clock", new Runnable() {
+                public void run() { finish(); }
+            });
+        } catch (Throwable ignored) { }
+        if (!began) finish();      // nothing was due after all: stop, do not sit in the shade
+    }
+
+    private static final Object GATE = new Object();
 
     /**
      * Called from the sweep thread. Everything happens on the MAIN LOOPER, including clearing
@@ -133,7 +160,7 @@ public class SyncService extends Service {
     private void finish() {
         new Handler(Looper.getMainLooper()).post(new Runnable() {
             public void run() {
-                sweeping = false;
+                synchronized (GATE) { sweeping = false; }
                 dropNotification();
                 stopSelf();
             }

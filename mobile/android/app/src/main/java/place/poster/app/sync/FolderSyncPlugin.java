@@ -457,6 +457,22 @@ public class FolderSyncPlugin extends Plugin {
    * Nothing today reads this — the caller re-arms its clock either way — and it is written down
    * because the moment something logs or counts on it, the honest answer is the one above.
    */
+  /**
+   * The same tick, POSTED TO THE MAIN THREAD, for callers that are deliberately not on it.
+   *
+   * The alarm receiver now does its deciding on a background thread — a battery read and a Keystore
+   * lookup on the looper of a dozing phone is an ANR, which throws nothing and ends as "the app just
+   * closes". This one call is the exception to that move: it ends in `notifyListeners`, i.e. a
+   * bridge call into the WebView, and the WebView is single-threaded and owns the UI thread.
+   */
+  public static void tickOnMain(final String why) {
+    try {
+      new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
+        public void run() { try { tick(why); } catch (Throwable ignored) { } }
+      });
+    } catch (Throwable ignored) { }
+  }
+
   public static boolean tick(String why) {
     FolderSyncPlugin p = INSTANCE;
     if (p == null) { tDropped.incrementAndGet(); return false; }
