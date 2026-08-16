@@ -344,7 +344,14 @@ public final class NativeSweep {
             }
             /* ONE SHORT OR WRONG-SIZED CHUNK SHIFTS EVERY BYTE AFTER IT, and the file lands the right
              * shape with the wrong content. The manifest's size is the one check that catches a bad
-             * chunk list — including lists already stored by an older uploader. */
+             * chunk list — including lists already stored by an older uploader.
+             *
+             * THE PART FILE IS DISCARDED HERE, which the browser does not do — it throws from inside
+             * getParts, before the caller's discard can run. That leaves a part file whose length may
+             * still be a whole multiple of the chunk size, so the NEXT attempt resumes onto the same
+             * bad prefix and fails identically, for ever. Nothing is at risk in throwing it away: it
+             * is not the user's file, it is bytes we have just proved wrong, and the cost of being
+             * cautious is one full download. */
             if (expect >= 0 && off != expect) {
                 fs.discardPart(path);
                 throw new java.io.IOException("rebuilt " + off + " bytes, the manifest says " + expect);

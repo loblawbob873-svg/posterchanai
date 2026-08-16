@@ -161,7 +161,13 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
                      "It's stored in a Nostr event encrypted to your own key, so only your client can "
                      "read or change it. That's why I can't show or pay bills for you here any more.\n"
                      "The `bill` command still works: send a photo of a bill and I'll read it.")
+    # And one that is simply gone. It was never in COMMANDS, so the web UI already treated it as
+    # ordinary text — but Telegram carried it in its own hardcoded list, so removing the feature would
+    # have sent `4chan` to the model, which would cheerfully talk about 4chan as though the browser
+    # were still there. A retired command answers for itself.
+    _4CHAN_GONE = "The 4chan browser has been removed."
     RETIRED_COMMANDS = {
+        "4chan": _4CHAN_GONE,
         "budget": _BUDGET_MOVED,
         "bills": _BUDGET_MOVED,
         "pay": _BUDGET_MOVED,
