@@ -125,6 +125,10 @@ public class StayAwakeService extends Service {
       } else {
         am.set(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, at, tickIntent());
       }
+      // Counted only where the schedule actually took. Counting before the call would make an alarm
+      // the OS refused indistinguishable from one it accepted and then never delivered — which are
+      // opposite problems with opposite fixes, and the whole point of measuring this.
+      try { place.poster.app.sync.FolderSyncPlugin.onAlarmArmed(); } catch (Throwable ignored) {}
     } catch (Throwable ignored) {}
   }
   /** registerAudioDeviceCallback fires immediately with everything ALREADY connected. That is this
@@ -267,8 +271,15 @@ public class StayAwakeService extends Service {
       /* The alarm came back. Handled BEFORE the foreground block for the same reason DROP_STANDBY
        * is — it is a message, not a restart — and re-armed FIRST so a throw in the emit cannot end
        * the clock. `setAndAllowWhileIdle` is one-shot, so re-arming here is the repeat. */
-      armTick();
-      try { place.poster.app.sync.FolderSyncPlugin.tick("stay-connected"); } catch (Throwable ignored) {}
+      try { place.poster.app.sync.FolderSyncPlugin.onAlarmFired(); } catch (Throwable ignored) {}
+      armTick();                      // re-armed FIRST: a throw below must not end the clock
+      /* "Only when plugged in" / "Wi-Fi only", answered here rather than by waking the WebView to
+       * be told the same thing. A pre-filter only — see FolderSyncPlugin.suppressed. */
+      boolean skip = false;
+      try { skip = place.poster.app.sync.FolderSyncPlugin.suppressed(this); } catch (Throwable ignored) {}
+      if (!skip) {
+        try { place.poster.app.sync.FolderSyncPlugin.tick("stay-connected"); } catch (Throwable ignored) {}
+      }
       return START_STICKY;
     }
     if (ACTION_DROP_STANDBY.equals(action)) {
@@ -320,7 +331,13 @@ public class StayAwakeService extends Service {
       /* ONCE, for the same reason the audio callback is: onStartCommand runs again on every restart
        * and on the STICKY relaunch, and a second posted Runnable would double the tick rate for the
        * life of the service — then treble it. */
-      if (!ticking) { ticking = true; armTick(); }
+      if (!ticking) {
+        ticking = true;
+        // Recorded so `armed` can be read honestly: this arm is a service start, not an alarm
+        // that failed to come back. See FolderSyncPlugin's counter note.
+        try { place.poster.app.sync.FolderSyncPlugin.onServiceStarted(); } catch (Throwable ignored) {}
+        armTick();
+      }
     } catch (Throwable t) {
       running = false;
       stopSelf();

@@ -25901,10 +25901,10 @@
           <label class="fld">Language <span class="muted small">(English is the default; Arabic switches the layout right-to-left)</span>
             <select class="input" id="us-lang">${_langOptions()}</select>
           </label>
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">📉 Data saver<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-compress"></use></svg>Data saver<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Holds images &amp; videos until you tap them, skips link previews, and loads lighter feed pages — turn it on when you're low on data. Syncs across your devices.</div>
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">🆕 Auto-show new posts<label class="switch"><input type="checkbox" id="set-auto-new-posts" ${AUTO_NEW_POSTS?'checked':''}><span class="slider"></span></label></label>
-          <label class="fld">🏠 Timeline the app opens on
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-refresh"></use></svg>Auto-show new posts<label class="switch"><input type="checkbox" id="set-auto-new-posts" ${AUTO_NEW_POSTS?'checked':''}><span class="slider"></span></label></label>
+          <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-home"></use></svg>Timeline the app opens on
             <select class="input" id="set-start-timeline">
               <option value="global"${ClientSettings.get('startTimeline','global')==='home'?'':' selected'}>Nostrverse (default)</option>
               <option value="home"${ClientSettings.get('startTimeline','global')==='home'?' selected':''}>Home — people you follow</option>
@@ -25915,23 +25915,23 @@
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide fediverse posts in timelines<label class="switch"><input type="checkbox" id="set-hide-fedi" ${ClientSettings.get('hideFediBridge',true)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">On by default. The bridge mirrors whole fediverse timelines onto Nostr under stand-in keys — this keeps them out of Home and Nostrverse. Mentions, replies and DMs from fediverse people still reach you either way.</div>
           <div class="muted small">On, new notes appear at the top of Home / Nostrverse as they arrive. Off, they wait behind a <b>↑ N new posts</b> button and only appear when you tap it — so the timeline never moves under you. Syncs across your devices.</div>
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center" title="h j k l to move, gg / G for top and bottom. h and l cross between the nav rail, the feed and notifications.">⌨️ Vim keys<label class="switch"><input type="checkbox" id="set-vim" ${ClientSettings.get('vimKeys',false)?'checked':''}><span class="slider"></span></label></label>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center" title="h j k l to move, gg / G for top and bottom. h and l cross between the nav rail, the feed and notifications."><svg class="ic fld-ico" aria-hidden="true"><use href="#i-terminal"></use></svg>Vim keys<label class="switch"><input type="checkbox" id="set-vim" ${ClientSettings.get('vimKeys',false)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small"><code>h j k l</code> to move, <code>gg</code> / <code>G</code> for top and bottom. <code>h</code> and <code>l</code> also cross between the nav rail, the feed and notifications. While on, <code>l</code> is movement, so React is <code>f</code> — <code>Alt</code>+<code>L</code> always works either way. Syncs across your devices.</div>
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">🎉 Post effects<label class="switch"><input type="checkbox" id="set-post-effects" ${_postEffectsOn()?'checked':''}><span class="slider"></span></label></label>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-wand"></use></svg>Post effects<label class="switch"><input type="checkbox" id="set-post-effects" ${_postEffectsOn()?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Celebratory animations on notes: confetti on congrats, a sunrise on <code>gm</code>, and drifting tears on 😭 reactions. Off by default. Syncs across your devices.</div>
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">🧹 Remove link trackers when I post<label class="switch"><input type="checkbox" id="set-clean-links" ${ClientSettings.get('cleanLinks',false)?'checked':''}><span class="slider"></span></label></label>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-broom"></use></svg>Remove link trackers when I post<label class="switch"><input type="checkbox" id="set-clean-links" ${ClientSettings.get('cleanLinks',false)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Strips tracking parameters (<code>utm_*</code>, <code>fbclid</code>, <code>gclid</code>, YouTube's <code>si</code>…) out of every link in a post or reply, and unwraps click-wrappers like <code>google.com/url?q=</code> and Outlook safelinks, so what you share can't be tied back to you. Runs on this device with no network call — it's a published list of tracker names, not a guess. Off by default; you can always run it by hand from <b>🤖 AI → 🧹 Clean links</b> in the composer. Syncs across your devices.</div>
-          <label class="fld">💾 Media cache size
+          <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-image"></use></svg>Media cache size
             <select class="input" id="set-media-cache">${[1,2,4,8,16,32].map(g=>`<option value="${g}"${(+ClientSettings.get('mediaCacheGB',4)===g)?' selected':''}>${g} GB${g===4?' (default)':''}</option>`).join('')}</select>
           </label>
           <div class="muted small">How much offline media (avatars, images, played videos) to keep cached on THIS device. Larger = fewer re-downloads on a slow/throttled link, but more storage used. The setting follows your account; what a device can actually hold is capped by its own free space.</div>
           <div class="muted small" id="media-cache-stat" style="margin-top:4px">Checking device storage…</div>
-          <label class="fld">🎵 Offline music limit
+          <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-music"></use></svg>Offline music limit
             <select class="input" id="set-music-offline">${(()=>{const cur=+ClientSettings.get('musicOfflineGB',0)||0;const opts=[0,5,10,20,50,100,250,500];if(!opts.includes(cur))opts.push(cur);return opts.sort((a,b)=>a-b).map(g=>`<option value="${g}"${cur===g?' selected':''}>${g?g+' GB':'No limit (default)'}</option>`).join('');})()}</select>
           </label>
           <div class="muted small">How much of your music library to keep playable offline on THIS device. <b>No limit</b> keeps everything you download — a library is not a cache, and nothing is ever evicted. Set a size and the tracks stored longest ago make room once it is reached. The setting follows your account, so a new device starts where you left off; what each device can actually hold is still capped by its own free space.</div>
           <div class="muted small" id="music-offline-stat" style="margin-top:4px">Checking…</div>
-          ${BUNDLED ? `<label class="fld">🌐 Instance
+          ${BUNDLED ? `<label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-globe"></use></svg>Instance
             <div class="instance-pick" id="us-instance-pick"></div>
             <span class="input-row" style="display:flex;gap:6px;margin-top:6px"><input class="input" id="us-instance-inp" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="https://your-instance" value="${enc(_instanceBase())}"><button class="btn btn-ghost small" id="us-instance-go">Connect</button></span>
             <span class="input-row" style="display:flex;gap:6px;margin-top:6px"><button class="btn btn-ghost small${_standalone()?' active':''}" id="us-instance-none">${_standalone()?'✓ Relays only — no server':'Use relays only (no server)'}</button></span>
@@ -25948,7 +25948,7 @@
           <button class="btn btn-ghost small" id="us-mail-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add email account</button>
         </div>
         <div class="us-pane" data-pane="telegram">
-          <div class="${s.telegram_chat_id?'us-ok':'muted small'}" id="us-tg-status">${s.telegram_chat_id?('✓ Linked (chat '+enc(String(s.telegram_chat_id))+')'):'⚠ Not linked — generate a key below and send it to your bot.'}</div>
+          <div class="${s.telegram_chat_id?'us-ok':'muted small'}" id="us-tg-status">${s.telegram_chat_id?('<svg class="ic st-ico ok" aria-hidden="true"><use href="#i-check"></use></svg> Linked (chat '+enc(String(s.telegram_chat_id))+')'):'<svg class="ic st-ico warn" aria-hidden="true"><use href="#i-warn"></use></svg> Not linked — generate a key below and send it to your bot.'}</div>
           <div class="set-actions">
             <button class="btn btn-ghost small" id="us-tg-key">Generate link key</button>
             ${s.telegram_chat_id?'<button class="btn btn-ghost small" id="us-tg-unlink" style="color:var(--danger)">Unlink Telegram</button>':''}
@@ -25982,7 +25982,7 @@
              fields — and Tor is not a profile setting, it is how the whole app reaches the network.
              The wiring below is keyed on these ids and did not move. -->
         <div class="us-pane" data-pane="tor">
-          ${_hasNativeTor() ? `<div class="fld" id="us-ntor-row">🧅 Tor
+          ${_hasNativeTor() ? `<div class="fld" id="us-ntor-row"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-shield"></use></svg>Tor
             <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center;margin:6px 0 0">Route everything through Tor<label class="switch"><input type="checkbox" id="us-ntor-on"><span class="slider"></span></label></label>
             <div class="muted small" id="us-ntor-state" style="margin-top:4px">Checking…</div>
             <label class="fld" style="margin-top:8px">Exit country
@@ -25993,7 +25993,7 @@
               <button class="btn btn-ghost small" id="us-ntor-new">New circuit</button>
             </span>
           </div>` : ''}
-          ${window.Capacitor ? `<div class="fld" id="us-tor-row">🧅 Tor
+          ${window.Capacitor ? `<div class="fld" id="us-tor-row"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-shield"></use></svg>Tor
             <div class="muted small" id="us-tor-state" style="margin-top:4px">Checking for Orbot…</div>
             <span class="input-row" style="display:flex;gap:6px;margin-top:6px">
               <button class="btn btn-ghost small" id="us-tor-start">Start Orbot</button>
@@ -26026,7 +26026,7 @@
           <div class="set-actions"><button class="btn btn-neon small" id="set-relays-save">Save &amp; reload</button></div>
         </div>
         <div class="us-pane" data-pane="media">
-          <label class="fld">📦 Where your uploads are stored</label>
+          <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-cloud"></use></svg>Where your uploads are stored</label>
           <div class="muted small">Photos, videos and files you attach to a post get uploaded to a media server, and its link goes into your note. Choose where:</div>
           <div class="media-modes">
             <label class="media-mode"><input type="radio" name="media-mode" value="default" ${mediaMode==='default'?'checked':''}>
@@ -26054,9 +26054,9 @@
           <div class="set-actions"><button class="btn btn-neon small" id="set-nwc-save">Save wallet</button>
             <button class="btn btn-cyan small" id="set-nwc-clear">Disconnect</button></div>
           <div class="muted small" id="set-nwc-status">${Nwc.configured()?'✓ NWC wallet connected — zaps pay instantly':''}</div>
-          <label class="fld">⚡ Zap amounts <span class="muted small">(sats — your one-tap presets)</span><input class="input" id="us-zap-presets" value="${enc(ClientSettings.get('zapPresets','')||_ZAP_DEFAULTS.join(', '))}" placeholder="21, 100, 500, 1000, 5000"></label>
+          <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-zap"></use></svg>Zap amounts <span class="muted small">(sats — your one-tap presets)</span><input class="input" id="us-zap-presets" value="${enc(ClientSettings.get('zapPresets','')||_ZAP_DEFAULTS.join(', '))}" placeholder="21, 100, 500, 1000, 5000"></label>
           <label class="fld">ɱ Monero tip amounts <span class="muted small">(XMR — your one-tap presets)</span><input class="input" id="us-xmr-presets" value="${enc(ClientSettings.get('xmrPresets','')||_XMR_DEFAULTS.join(', '))}" placeholder="0.001, 0.01, 0.1, 1"></label>
-          <label class="fld">🟢 Bitcoin Cash tip amounts <span class="muted small">(BCH — your one-tap presets)</span><input class="input" id="us-bch-presets" value="${enc(ClientSettings.get('bchPresets','')||_BCH_DEFAULTS.join(', '))}" placeholder="0.001, 0.01, 0.05, 0.1"></label>
+          <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-coin"></use></svg>Bitcoin Cash tip amounts <span class="muted small">(BCH — your one-tap presets)</span><input class="input" id="us-bch-presets" value="${enc(ClientSettings.get('bchPresets','')||_BCH_DEFAULTS.join(', '))}" placeholder="0.001, 0.01, 0.05, 0.1"></label>
           <div class="muted small">Your one-tap amounts in the ⚡ zap / ɱ Monero tip dialogs. Comma-separated; synced to your other devices.</div>
         </div>
         <div class="us-pane" data-pane="muted">
@@ -26110,12 +26110,12 @@
     const _updMediaCurrent=()=>{ const el=$('#set-media-current'); if(!el) return;
       const m=_mediaMode();
       if(m==='custom'){ const url=(($('#set-media')||{}).value||'').trim();
-        el.innerHTML = url ? `✅ Uploads go to <b>your server</b>: <code>${enc(url)}</code>` : `⚠️ Enter your server URL above.`; return; }
-      if(m==='nostrbuild'){ el.innerHTML=`✅ Uploads go to the public <b>nostr.build</b> server.`; return; }
+        el.innerHTML = url ? `<svg class="ic st-ico ok" aria-hidden="true"><use href="#i-check"></use></svg> Uploads go to <b>your server</b>: <code>${enc(url)}</code>` : `<svg class="ic st-ico warn" aria-hidden="true"><use href="#i-warn"></use></svg> Enter your server URL above.`; return; }
+      if(m==='nostrbuild'){ el.innerHTML=`<svg class="ic st-ico ok" aria-hidden="true"><use href="#i-check"></use></svg> Uploads go to the public <b>nostr.build</b> server.`; return; }
       // Default: built-in if this account has access, else the automatic nostr.build fallback.
       el.innerHTML = (_blossomOK===false)
-        ? `✅ Your account has no upload access to this instance's built-in server, so uploads use the public <b>nostr.build</b> automatically.`
-        : `✅ Uploads go to this instance's <b>built-in server</b>${CFG.blossom_url?` (<code>${enc(CFG.blossom_url)}</code>)`:''}.`; };
+        ? `<svg class="ic st-ico ok" aria-hidden="true"><use href="#i-check"></use></svg> Your account has no upload access to this instance's built-in server, so uploads use the public <b>nostr.build</b> automatically.`
+        : `<svg class="ic st-ico ok" aria-hidden="true"><use href="#i-check"></use></svg> Uploads go to this instance's <b>built-in server</b>${CFG.blossom_url?` (<code>${enc(CFG.blossom_url)}</code>)`:''}.`; };
     const _syncMediaUI=()=>{ const custom=_mediaMode()==='custom';
       const body=$('#set-blossom-body'); if(body) body.classList.toggle('disabled', !custom);
       _updMediaCurrent(); };
@@ -26292,7 +26292,7 @@
           if(nb) nb.disabled=!(s.enabled && s.running);
           if(!st) return;
           if(!s.enabled){ st.textContent='Off — traffic goes out normally.'; return; }
-          if(s.error){ st.innerHTML='⚠ '+enc(s.error); return; }
+          if(s.error){ st.innerHTML='<svg class="ic st-ico warn" aria-hidden="true"><use href="#i-warn"></use></svg> '+enc(s.error); return; }
           if(!s.running){ st.textContent='Starting Tor…'; return; }
           st.textContent = s.bootstrapped
             ? ('Connected through Tor' + (s.country ? ' — exiting in ' + (s.countryName||s.country.toUpperCase()) : '') + '.')

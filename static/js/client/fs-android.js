@@ -140,6 +140,21 @@
      * on the promise too, or a rejection lands as an unhandled rejection in the WebView and this
      * still reports success. What is returned is "this bridge has the method", which is the question
      * sync.js actually asks; a listener that fails to attach is silence either way. */
+    /* What the PHONE measured about the background clock — alarms armed, alarms that came back,
+     * ticks delivered to a live page, ticks dropped into a dead one.
+     *
+     * ANSWERS null ON A BUILD THAT CANNOT TELL YOU, rather than throwing. The shim is a literal
+     * object, so this method exists on every build — a caller probing `if(fs.tickStats)` gets true
+     * even against an APK whose plugin has no such method, and would then take a Capacitor
+     * rejection for an unimplemented call. null is the honest answer and is NOT zeros: zeros would
+     * read as "the clock has never ticked", which is the actual failure this exists to detect. */
+    tickStats: () => P.tickStats().catch(() => null),
+    /* THE BATTERY/DATA POLICY, PUSHED TO THE NATIVE CLOCK. Without this line the whole pre-filter is
+     * dead: `pNeedCharging`/`pNeedUnmetered` keep their false defaults, `suppressed()` returns false
+     * at its first statement, and the alarm wakes the WebView every sixteen minutes on cellular
+     * exactly as it did before — a feature that ships inert and tests green, because the Java and
+     * the caller were both correct and only the wire between them was missing. */
+    setTickPolicy: (o) => P.setTickPolicy(o || {}).catch(() => {}),
     onTick: (fn) => {
       try{
         const p = P.addListener('folderSyncTick', () => { try{ fn(); }catch(_){} });

@@ -299,3 +299,88 @@ def test_the_tick_holds_no_key_and_opens_no_socket():
     body = body[:body.index("\n  }")]
     for forbidden in ("HttpURLConnection", "OkHttp", "Socket", "nsec", "PrivateKey"):
         assert forbidden not in body, "tick() grew a %s — it must only emit" % forbidden
+
+
+def test_the_background_tick_obeys_the_two_battery_switches():
+    """"Only when plugged in" and "Wi-Fi only" must hold for a BACKGROUND sweep, which is the one
+    nobody is watching and the one that can quietly spend a data plan.
+
+    Two independent guarantees, and both are needed:
+      * the DECISION stays in shouldSync — the tick forces past `_idle()` ("is anyone looking") and
+        nothing else, proven against the real sync.js by
+        tests/client/test_sync_tick.py::test_the_tick_does_not_bypass_the_policy;
+      * the alarm ALSO pre-checks natively, so honouring the switches does not itself cost a
+        renderer wake-up every sixteen minutes on a phone in a pocket — which is the battery the
+        switches were ticked to save.
+
+    The pre-filter is the dangerous half: it can only ever SUPPRESS. If it could decide, a stale
+    policy would silently stop a folder syncing with nothing to say so, so this pins that it reads
+    the same two facts shouldSync does and that the client votes with EVERY rather than ANY.
+    """
+    svc = _read(JAVA, "push", "StayAwakeService.java")
+    plugin = _read(JAVA, "sync", "FolderSyncPlugin.java")
+    sync = _read(CLIENT, "sync.js")
+
+    assert "suppressed(this)" in svc, (
+        "the alarm emits unconditionally, so a phone on battery with 'only when plugged in' set is "
+        "woken every 16 minutes to be told no"
+    )
+    assert "isCharging()" in plugin and "NET_CAPABILITY_NOT_METERED" in plugin, (
+        "the native pre-check must read the SAME two facts shouldSync does, or the two halves can "
+        "disagree and a folder stops syncing for a reason nothing reports"
+    )
+    # It may only suppress. A pre-filter that could start a sweep would be a second decision-maker.
+    body = plugin[plugin.index("public static boolean suppressed("):]
+    body = body[:body.index("\n  }")]
+    assert "tick(" not in body and "notifyListeners" not in body, (
+        "suppressed() emits — it is a filter, not a trigger"
+    )
+    # THE WIRE BETWEEN THEM, which is what actually shipped missing. The Java was right and the
+    # caller was right; `fs-android.js` had no `setTickPolicy`, so `_pushTickPolicy` returned at its
+    # guard, the policy stayed false/false, `suppressed()` returned false at its first statement, and
+    # the alarm woke the WebView on cellular exactly as before. Every other assertion in this test
+    # passed while the feature was inert — a shape worth naming, because both halves being correct is
+    # precisely what makes a missing bridge invisible.
+    shim = _read(CLIENT, "fs-android.js")
+    for method in ("setTickPolicy", "tickStats"):
+        assert re.search(rf"\b{method}\s*:", shim), (
+            "fs-android.js does not expose %s, so the native half is unreachable and ships dead"
+            % method
+        )
+        assert "public void %s(PluginCall" % method in plugin, (
+            "the shim calls %s but the plugin does not implement it" % method
+        )
+    assert "_pushTickPolicy" in sync and "startAll" in sync, (
+        "nothing ever pushes the policy, so the native pre-filter keeps its false defaults"
+    )
+    assert "EVERY, not ANY" in sync or "every(" in sync, (
+        "the client must vote with EVERY: one folder willing to run on battery has to be able to, "
+        "and suppressing on the strictest folder's preference silently stops the others"
+    )
+    assert "!p.paused" in sync, (
+        "a paused folder must not vote — it is not waiting on a charger, it is not started"
+    )
+
+
+def test_the_background_clock_reports_what_the_phone_measured():
+    """There is no device in this loop and this failure REPORTS SUCCESS: an alarm that never fires,
+    a tick emitted into a dead page and a sweep that ran all look identical from here. The music
+    controls cost four APK builds of guessing before they were made to count, so the counters are
+    part of the feature rather than a debugging afterthought.
+
+    STATIC, because the case worth explaining is the one where the page was gone — read off an
+    instance, the panel would answer 'nothing has ticked this session' about the very tick being
+    investigated."""
+    plugin = _read(JAVA, "sync", "FolderSyncPlugin.java")
+    for counter in ("tArmed", "tFired", "tDelivered", "tDropped", "tSuppressed"):
+        assert re.search(r"private static .*\b%s\b" % counter, plugin), (
+            "%s is missing or not static — see above" % counter
+        )
+    assert "public void tickStats(" in plugin, "nothing can read the counters"
+    assert "tickStats" in _read(CLIENT, "fs-android.js"), "the bridge does not expose them"
+    # AND SOMETHING MUST RENDER THEM. Counters nothing displays are worth exactly as much as no
+    # counters — which is what the first version of this shipped, with a javadoc naming a panel that
+    # did not exist. On a phone this is the only surface any of it can be read from.
+    sync = _read(CLIENT, "sync.js")
+    assert "tickStats()" in sync, "nothing in the UI reads the counters"
+    assert "sync-bg" in sync, "there is no control that shows them"

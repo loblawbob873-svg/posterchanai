@@ -66,6 +66,9 @@
   }
   function saveFolders(list){
     try{ localStorage.setItem(CFG_KEY(), JSON.stringify(list)); }catch(_){}
+    // Every switch, add and removal comes through here, so the native clock's copy of the policy
+    // cannot drift from the one shouldSync reads.
+    try{ _pushTickPolicy(); }catch(_){}
   }
   function prefs(f){ return Object.assign({}, S.DEFAULT_PREFS, (f && f.prefs) || {}); }
 
@@ -757,7 +760,37 @@
 
   async function sweep(f, opts){
     const o = opts || {};
-    if(running.has(f.id)) return running.get(f.id);
+    /* A SWEEP ALREADY RUNNING MAKES THE BUTTON DO NOTHING, AND THAT HAS TO BE SAID OUT LOUD.
+     *
+     * `running` is cleared in a `finally`, so it clears when the sweep's promise SETTLES — and a
+     * sweep that never settles never clears it. One await that does not come back (a fetch with no
+     * timeout, a blob read that hangs, a chunk the media server never answers) leaves the folder id
+     * in this map for the life of the page. From then on every press of Sync silently returns that
+     * dead promise: no request, no status change, no error, nothing in any log. Reported exactly
+     * that way — "clicked sync, nothing changed" — and the button is genuinely inert, which is a
+     * fair description of the code as it stood.
+     *
+     * This does not unstick it (nothing here can know a hung await from a slow one — a first sweep
+     * of 15,790 files is legitimately many minutes). It removes the SILENCE, which is the part that
+     * made it undiagnosable: an explicit press now says a sweep is already going and points at Stop,
+     * so "the button is broken" and "it is still working" stop looking identical. Only for a manual
+     * press: an automatic trigger landing on a running sweep is the normal case and says nothing. */
+    if(running.has(f.id)){
+      if(o.manual){
+        /* The live progress line, NOT whatever is on the card — which may be this same message from
+         * the last press. Appending to it grew the text on every press ("already syncing — already
+         * syncing — …"), unbounded, on precisely the stuck sweep this exists to explain. */
+        const st = status.get(f.id) || {};
+        const prog = (st.busy && st.text && !/^already syncing/.test(st.text)) ? ' — ' + st.text : '';
+        setStatus(f.id, 'already syncing' + prog + ' · press Stop to interrupt it', null, true);
+      }
+      /* A DRY RUN MUST NOT ADOPT A REAL SWEEP'S RESULT. Returning the running job handed Check the
+       * other sweep's promise, so when that settled the panel rendered "Uploaded / Conflicts kept"
+       * under a button pressed to PREVIEW — a report of things that were done, presented as things
+       * that would be. A preview that cannot run says so and returns nothing. */
+      if(o.dryRun) return { skipped:true, why:'a sync is already running on this folder' };
+      return running.get(f.id);
+    }
     const fs = FS();
     if(!fs) throw new Error('this device has no filesystem access');
 
@@ -1165,6 +1198,7 @@
           <button class="btn btn-ghost small sync-deep" title="Re-read and re-hash every file. Slow on a big folder — for a file edited in place without changing its size or timestamp.">Deep check</button>
           <button class="btn btn-ghost small sync-tidy">Tidy up conflict copies</button>
           <button class="btn btn-ghost small sync-trash">Empty trash</button>
+          ${(FS() && FS().tickStats) ? '<button class="btn btn-ghost small sync-bg" title="What this phone measured about background syncing: alarms scheduled, alarms that fired, and ticks that reached the app.">Background details</button>' : ''}
           <button class="btn btn-ghost small danger sync-forget">Stop syncing</button>
         </div></div>`;
     }).join('');
@@ -1411,6 +1445,24 @@
         catch(e){ PC.toast('failed: ' + ((e && e.message) || e)); }
         paint();
       };
+      /* THE ONLY PLACE ANY OF THIS CAN BE OBSERVED. The counters exist because this failure reports
+       * SUCCESS — an alarm that never fires, a tick emitted into a dead page and a sweep that ran
+       * are all silence from every other vantage point — and counters nothing renders are no better
+       * than no counters, which is what shipped in the first version of them. */
+      { const bg = card.querySelector('.sync-bg');
+        if(bg) bg.onclick = async () => {
+          let st = null;
+          try{ st = await FS().tickStats(); }catch(_){ st = null; }
+          if(!st){ PC.toast('this build can’t report background sync'); return; }
+          const ago = (t) => !t ? 'never' : Math.round((Date.now() - t) / 60000) + ' min ago';
+          setStatus(id, 'background: ' + (st.stayConnected ? 'stay-connected ON' : 'stay-connected OFF')
+            + (st.serviceUp ? ', service up' : ', service down')
+            + ' · alarms ' + st.armed + ' scheduled / ' + st.fired + ' fired (last ' + ago(st.lastFiredAt) + ')'
+            + ' · ticks ' + st.delivered + ' delivered, ' + st.dropped + ' dropped, ' + st.suppressed + ' skipped'
+            + (st.needCharging || st.needUnmetered
+                ? ' · waiting for ' + [st.needCharging && 'a charger', st.needUnmetered && 'Wi-Fi'].filter(Boolean).join(' + ')
+                : ''));
+        }; }
       card.querySelector('.sync-forget').onclick = async () => {
         if(!await PC.uiConfirm('Stop syncing this folder?\n\nNothing is deleted — the files stay on this '
                                + 'device and on your other devices. It simply stops being kept in step.')) return;
@@ -1437,6 +1489,28 @@
    * dirty, and the policy decides whether that is worth a sweep right now. On a phone that is the
    * difference between "sync when it matters" and a radio that never sleeps. */
   function watch(id){ const fs = FS(); if(fs && fs.watch) fs.watch(id, 4000).catch(()=>{}); }
+
+  /* TELL THE NATIVE CLOCK WHAT THE SWITCHES SAY, so it can stop waking the phone for nothing.
+   *
+   * `shouldSync` is still the decision — this only lets the alarm skip a tick it was certain to
+   * decline. EVERY, not ANY: `needCharging` is true only when every folder that could otherwise run
+   * requires a charger, because one folder willing to sync on battery must still be able to, and
+   * suppressing on the strictest folder's preference would silently stop the others. A PAUSED folder
+   * is excluded from the vote entirely — it is not waiting on a charger, it is not started.
+   *
+   * With no folders at all the answer is false/false: an alarm that suppresses everything would be
+   * indistinguishable from the clock being broken, which is the state this whole mechanism exists to
+   * get out of. */
+  function _pushTickPolicy(){
+    const fs = FS();
+    if(!fs || !fs.setTickPolicy) return;                 // an APK older than the tick
+    const live = folders().map(prefs).filter(p => p.enabled !== false && !p.paused);
+    const all = (k) => live.length > 0 && live.every(p => !!p[k]);
+    try{
+      const r = fs.setTickPolicy({ needCharging: all('onlyWhenCharging'), needUnmetered: all('wifiOnly') });
+      if(r && typeof r.catch === 'function') r.catch(()=>{});
+    }catch(_){}
+  }
 
   /* NOTICING A CHANGE, on platforms that will and will not tell you about one.
    *
@@ -1584,6 +1658,32 @@
      * can only be produced by a foreground service the user switched on precisely so that work
      * happens while nobody is. */
     try{ if(fs.onTick) fs.onTick(() => nudge('native', true)); }catch(_){}
+    _pushTickPolicy();
+    /* THE DESKTOP'S OWN VERSION OF THE SAME HOLE, and the shell already had the signal.
+     *
+     * A laptop that sleeps wakes up with NOTHING telling this module: desktop/main.js says it in as
+     * many words — a window that was never hidden fires no `visibilitychange`, no `pageshow`, and
+     * `online` only if Chromium decided the interface went down, which a suspend usually does not.
+     * That is exactly why `pc:wake` exists. app.js subscribes to it to redial the relay sockets;
+     * folder sync never did, so after a resume its only remaining trigger was the 15-minute
+     * heartbeat.
+     *
+     * AND THE WATCHER IS RE-ARMED, which is the half that does not come back on its own. A suspend
+     * can take the `fs.watch` handle with it, and fsbridge's watcher swallows its own `error` event
+     * (rightly — a dying watch must not take the process down) with nothing to re-establish it. So
+     * the machine stops noticing LOCAL edits too, silently, until the app is restarted. `watch()`
+     * unwatches first, so re-arming is idempotent and cannot double-fire.
+     *
+     * Not forced: `_idle()` is already false whenever `pcShell` exists, so `force` would only blur
+     * what it means — a background tick nobody is watching. */
+    try{
+      if(window.pcShell && window.pcShell.onWake){
+        window.pcShell.onWake(() => {
+          folders().forEach(f => watch(f.id));
+          nudge('wake');
+        });
+      }
+    }catch(_){}
     // Re-assert the stored preference on every start. Scheduling is idempotent on the Android side
     // (ExistingPeriodicWorkPolicy.KEEP), so this cannot reset the period and starve a job that has
     // been waiting for a charger.

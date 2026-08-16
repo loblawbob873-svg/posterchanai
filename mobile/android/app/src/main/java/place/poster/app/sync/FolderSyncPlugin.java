@@ -57,17 +57,20 @@ import java.util.List;
  * (syncrun.js `agree(path, {sha, size, mtime: st.mtime})`). The loop closes because the executor
  * believes the filesystem rather than its own intent.
  *
- * THERE IS NO WATCHER, AND NO BACKGROUND SYNC YET. SAF exposes no reliable change notification for
- * a tree, and polling one is precisely the battery bug the policy exists to avoid, so watch() answers
- * false. Today that means the app syncs when it is OPEN — when you press the button, and when the
- * app starts.
+ * THERE IS NO WATCHER, AND THAT IS WHY THE CLOCK IS NATIVE. SAF exposes no reliable change
+ * notification for a tree, and polling one is precisely the battery bug the policy exists to avoid,
+ * so watch() answers false. That left one automatic trigger, a JS setInterval — which Android
+ * throttles in a hidden WebView — so with the screen off the app synced only when opened.
  *
- * A WorkManager job is the intended next step and its constraints map one-for-one onto the sync
- * policy (setRequiresCharging / NetworkType.UNMETERED / setRequiresBatteryNotLow), which is the OS
- * holding the work until it is cheap rather than the app asking repeatedly. What makes it more than
- * a few lines is that the encryption key lives in the WebView: a native worker can walk the tree and
- * hash it cheaply, but it cannot encrypt or upload without either a headless WebView or moving the
- * crypto into Java. Until that is decided, claiming background sync here would be a lie.
+ * Background sync now runs under "Stay connected", whose foreground service keeps the WebView (and
+ * therefore the key) resident and arms an AlarmManager alarm that fires in Doze; see tick() above.
+ * The UNATTENDED job is still only a notifier (SyncCheckWorker), for the reason it always was: an
+ * uploader with no page needs the nsec in native storage, which with Amber or NIP-46 does not exist
+ * on the device at all.
+ *
+ * The battery story is unchanged and is still shouldSync's: "only when plugged in" and "Wi-Fi only"
+ * decide in JavaScript, and suppressed() below is a pre-filter that can only skip a tick those were
+ * certain to refuse.
  */
 @CapacitorPlugin(name = "FolderSync")
 public class FolderSyncPlugin extends Plugin {
@@ -95,6 +98,85 @@ public class FolderSyncPlugin extends Plugin {
    */
   private static volatile FolderSyncPlugin INSTANCE = null;
 
+  /* WHAT THE PHONE ACTUALLY MEASURED, because there is no device here and this failure REPORTS
+   * SUCCESS. An alarm that never fires, a tick emitted into a dead bridge and a sweep that ran are
+   * indistinguishable from this side — all three look like silence — and the music controls cost
+   * four APK builds of guessing before they were made to count instead.
+   *
+   * STATIC, for the same reason MusicService's counters are: the interesting case is the one where
+   * the page was gone, and an instance field would be read off a plugin that did not exist when the
+   * tick happened — answering "nothing has ticked this session" about the very tick under
+   * investigation.
+   *
+   * `armed` counts SCHEDULING OPERATIONS, `fired` alarms that came back, `delivered` ticks handed to
+   * a live bridge, `dropped` ticks with no bridge to hand them to, `suppressed` ticks the battery
+   * pre-filter skipped. `fired > delivered` is a page that keeps dying.
+   *
+   * DO NOT READ `armed > fired + 1` AS DOZE EATING ALARMS — that was the first reading written here
+   * and it is wrong. Only ONE alarm is ever outstanding (`FLAG_UPDATE_CURRENT` replaces the pending
+   * one rather than adding to it), while every service start arms again: a STICKY relaunch, a boot,
+   * stay-connected off and on. Those are counted by `restarts`, so the honest comparison is
+   * `armed - restarts` against `fired`. Without that subtraction a perfectly healthy phone shows the
+   * exact signature these counters exist to identify, after two or three service restarts. */
+  private static final java.util.concurrent.atomic.AtomicInteger tArmed = new java.util.concurrent.atomic.AtomicInteger();
+  private static final java.util.concurrent.atomic.AtomicInteger tFired = new java.util.concurrent.atomic.AtomicInteger();
+  private static final java.util.concurrent.atomic.AtomicInteger tDelivered = new java.util.concurrent.atomic.AtomicInteger();
+  private static final java.util.concurrent.atomic.AtomicInteger tDropped = new java.util.concurrent.atomic.AtomicInteger();
+  private static final java.util.concurrent.atomic.AtomicInteger tRestarts = new java.util.concurrent.atomic.AtomicInteger();
+  private static volatile long tLastFired = 0, tLastDelivered = 0;
+
+  public static void onAlarmArmed() { tArmed.incrementAndGet(); }
+  /** The service started and armed its first alarm — not a delivery that went missing. */
+  public static void onServiceStarted() { tRestarts.incrementAndGet(); }
+  public static void onAlarmFired() { tFired.incrementAndGet(); tLastFired = System.currentTimeMillis(); }
+
+  /* THE TWO CHECKBOXES, ANSWERED BEFORE THE WEBVIEW IS WOKEN.
+   *
+   * `shouldSync` already declines on "only when plugged in" and "Wi-Fi only" — that is where the
+   * decision lives and it is not moving. But it lives in JavaScript, so honouring the switches
+   * costs a renderer wake-up and a plugin round trip every sixteen minutes, on a phone in a pocket,
+   * to arrive at "no" — which is precisely the battery the switches were ticked to save.
+   *
+   * So the CLIENT pushes what its folders need (`needCharging` if EVERY enabled folder requires a
+   * charger, `needUnmetered` likewise) and the alarm checks the phone's own state against it before
+   * emitting anything. EVERY, not ANY: one folder willing to run on battery has to be able to, and
+   * suppressing on the strictest folder's preference would silently stop the others.
+   *
+   * IT IS A PRE-FILTER, NEVER THE DECISION. It can only suppress a tick that JavaScript was certain
+   * to decline anyway — battery and metered are exactly the two facts both sides read from the same
+   * APIs — so a stale or absent policy costs a wasted wake-up, never a missed sync. Default is
+   * `false/false`: an APK whose page has not run yet suppresses nothing. */
+  private static volatile boolean pNeedCharging = false, pNeedUnmetered = false;
+  private static final java.util.concurrent.atomic.AtomicInteger tSuppressed = new java.util.concurrent.atomic.AtomicInteger();
+
+  /** @return true when this tick cannot possibly result in a sweep, so it is not worth a wake-up. */
+  public static boolean suppressed(Context ctx) {
+    if (!pNeedCharging && !pNeedUnmetered) return false;
+    try {
+      if (pNeedCharging) {
+        BatteryManager bm = (BatteryManager) ctx.getSystemService(Context.BATTERY_SERVICE);
+        if (bm != null && !bm.isCharging()) { tSuppressed.incrementAndGet(); return true; }
+      }
+      if (pNeedUnmetered) {
+        ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+        NetworkCapabilities nc = cm == null ? null : cm.getNetworkCapabilities(cm.getActiveNetwork());
+        // Unknown network is NOT treated as metered: failing closed here would stop background sync
+        // outright on any device this read is unreliable on, which is the worse of the two errors.
+        if (nc != null && !nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)) {
+          tSuppressed.incrementAndGet(); return true;
+        }
+      }
+    } catch (Throwable ignored) {}
+    return false;
+  }
+
+  @PluginMethod
+  public void setTickPolicy(PluginCall call) {
+    pNeedCharging = Boolean.TRUE.equals(call.getBoolean("needCharging", false));
+    pNeedUnmetered = Boolean.TRUE.equals(call.getBoolean("needUnmetered", false));
+    call.resolve();
+  }
+
   @Override
   public void load() {
     INSTANCE = this;
@@ -119,15 +201,38 @@ public class FolderSyncPlugin extends Plugin {
    */
   public static boolean tick(String why) {
     FolderSyncPlugin p = INSTANCE;
-    if (p == null) return false;
+    if (p == null) { tDropped.incrementAndGet(); return false; }
     try {
       JSObject data = new JSObject();
       data.put("why", why == null ? "native" : why);
       p.notifyListeners("folderSyncTick", data);
+      tDelivered.incrementAndGet();
+      tLastDelivered = System.currentTimeMillis();
       return true;
     } catch (Throwable t) {
+      tDropped.incrementAndGet();
       return false;
     }
+  }
+
+  /** What the phone measured about the background clock. Read by Folder Sync → "Background details",
+   *  which is the only place any of this can be observed — there is no device in the loop here. */
+  @PluginMethod
+  public void tickStats(PluginCall call) {
+    JSObject o = new JSObject();
+    o.put("armed", tArmed.get());
+    o.put("fired", tFired.get());
+    o.put("delivered", tDelivered.get());
+    o.put("dropped", tDropped.get());
+    o.put("suppressed", tSuppressed.get());
+    o.put("restarts", tRestarts.get());
+    o.put("needCharging", pNeedCharging);
+    o.put("needUnmetered", pNeedUnmetered);
+    o.put("lastFiredAt", tLastFired);
+    o.put("lastDeliveredAt", tLastDelivered);
+    o.put("serviceUp", place.poster.app.push.StayAwakeService.running);
+    o.put("stayConnected", place.poster.app.push.StayAwakeService.wanted(getContext()));
+    call.resolve(o);
   }
 
   private static final String PART = ".pcpart";

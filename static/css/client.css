@@ -588,6 +588,24 @@ svg.ic.b-ic{width:1.05em;height:1.05em;stroke-width:1.9;opacity:.95}
    had and not one of their rules needs touching. vertical-align centres it on the text baseline for the
    ones that are inline rather than flex. */
 svg.ic.x-ic{width:1em;height:1em;stroke-width:2.1;vertical-align:-.12em}
+/* The icon in front of a settings label (`.fld`), where an emoji used to sit.
+   Sized in em so it tracks the label's own 13px uppercase type rather than the 20px base, and
+   `vertical-align` puts it on the text baseline instead of hanging below it.
+   `flex:none` matters more than it looks: several of these labels carry an inline
+   `flex-direction:row;justify-content:space-between`, so the moment anything makes `.fld` a flex
+   container the icon becomes a flex ITEM and space-between throws it to the opposite end of the row
+   from its own text. Costing nothing where the label is a block, it is the difference between a
+   label and a scattered one — the same lesson as the icon+label buttons above. */
+svg.ic.fld-ico{flex:none;width:1.15em;height:1.15em;stroke-width:1.9;vertical-align:-.2em;margin-right:6px;opacity:.9}
+/* Status lines ("uploads go to your server", "not linked"). These replaced ✅ and ⚠️ — the only two
+   emojis on this screen carrying real MEANING in their colour, green and amber — so the colour has
+   to be restated or the line loses the at-a-glance answer it existed to give. A sprite icon strokes
+   `currentColor` and would otherwise come out the same grey as the sentence.
+   `--green` / `--amber` are the existing per-theme tokens, redefined by all seven themes, so this
+   stays readable on winxp and the light themes without a single per-theme rule. */
+svg.ic.st-ico{flex:none;width:1.05em;height:1.05em;stroke-width:2;vertical-align:-.15em;margin-right:5px}
+svg.ic.st-ico.ok{color:var(--green)}
+svg.ic.st-ico.warn{color:var(--amber)}
 /* Any button whose ENTIRE label is a sprite icon, whatever its class. 54 of them are not .btn — the
    New Post FAB, .mini, the chat controls, the media-player transport, every ✕ — and the centering
    above only reaches .btn. A text glyph was centred by line-height/text-align, which does nothing for
@@ -3786,7 +3804,10 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 @media(max-width:820px){ .us-mail{grid-template-columns:1fr 1fr;}}
 .us-key{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin-bottom:8px;gap:8px}
 .us-key .mini{margin-inline-start:6px}
-.us-ok{color:#4ade80;font-weight:600}
+/* The linked/OK status text. `--green` rather than a hardcoded #4ade80 so it matches the icon
+   beside it and stays readable on win98/winxp/professional, where green is a dark tone and a
+   fixed mint sat on the light background almost invisibly. */
+.us-ok{color:var(--green);font-weight:600}
 @keyframes reminderPulse{0%,100%{box-shadow:0 0 40px 6px rgba(var(--accent-rgb),.55)}50%{box-shadow:0 0 70px 16px rgba(255,0,128,.7)}}
 .reminder-card{max-width:520px;width:100%;text-align:center;background:var(--bg2);border:2px solid var(--neon);border-radius:16px;padding:34px 26px;animation:reminderPulse 1.4s ease-in-out infinite}
 .feed.feed-admin{padding:0;overflow:hidden}

@@ -154,6 +154,7 @@
   <symbol id="i-call" viewBox="0 0 24 24"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.6.1.4 0 .7-.2 1l-2.3 2.2z"/></symbol>
   <symbol id="i-quotes" viewBox="0 0 24 24"><path d="M9.6 5.8H5.2a1.2 1.2 0 00-1.2 1.2v4.4a1.2 1.2 0 001.2 1.2h4.4V7a1.2 1.2 0 00-1.2-1.2z"/><path d="M9.6 12.6c0 3-1.6 4.8-4.4 5.6"/><path d="M19.6 5.8h-4.4A1.2 1.2 0 0014 7v4.4a1.2 1.2 0 001.2 1.2h4.4V7a1.2 1.2 0 00-1.2-1.2z"/><path d="M19.6 12.6c0 3-1.6 4.8-4.4 5.6"/></symbol>
   <symbol id="i-close" viewBox="0 0 24 24"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3.6l9 15.6H3z"/><path d="M12 9.4v4.4"/><path d="M12 16.6v.1" stroke-width="2.4"/></symbol>
   <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.8"/><path d="M8.6 14.2a4.4 4.4 0 006.8 0"/><circle cx="9.3" cy="9.8" r=".95" fill="currentColor" stroke="none"/><circle cx="14.7" cy="9.8" r=".95" fill="currentColor" stroke="none"/></symbol>
 </defs></svg>`;
   function inject(){
