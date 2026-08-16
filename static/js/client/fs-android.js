@@ -176,14 +176,6 @@
     configureNative: (o) => P.configure(o || {}).then(() => true).catch(() => false),
     forgetNative: () => P.forgetNative().catch(() => {}),
     nativeReport: () => P.nativeReport().catch(() => null),
-    /* THE LAST CRASH THIS PHONE HAD, as a stack trace.
-     *
-     * Four rounds of fixes for "the app closes when the screen goes off" were reasoned from the
-     * SYMPTOM, because the trace needs adb and the person hitting it has no cable. null on a build
-     * that predates this method — and null must read as "this build cannot tell you", never as "it
-     * has not crashed", which is why the panel prints those two differently. */
-    crashReport: () => P.crashReport().catch(() => null),
-    clearCrashReport: () => P.clearCrashReport().catch(() => {}),
     /* ONE SWEEP PER FOLDER ACROSS BOTH ENGINES. Two sweeps writing the same manifest is
      * last-writer-wins on the document that decides whether files exist, and the moment it is most
      * likely is somebody opening the app while the alarm is mid-sweep. A build without the lock

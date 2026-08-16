@@ -1703,35 +1703,9 @@
            * describes, and could not be quoted to anybody either. copyValue puts it on the clipboard
            * (the APK's WebView refuses navigator.clipboard, which is why this helper exists) and
            * falls back to a dialog that STAYS until dismissed when even that is refused. */
-          /* AND THE CRASH, ABOVE EVERYTHING ELSE, BECAUSE IT OUTRANKS EVERY COUNTER BELOW IT.
-           *
-           * "The app closes when the screen goes off" was fixed four times from the symptom alone —
-           * every diagnosis reasoned from a description, every one wrong, each costing a build, a
-           * deploy and an evening — because the stack trace lives in logcat and reading logcat needs
-           * a cable this phone has never had. It is written to a file now (CrashLog, installed from
-           * the Application so it covers the alarm-started process with no Activity, which is the
-           * path in question) and it is put FIRST here: a phone that died has a more urgent answer
-           * than a phone whose alarms all fired.
-           *
-           * THREE OUTCOMES, PRINTED DIFFERENTLY ON PURPOSE. null is a build too old to have the
-           * method — saying "no crashes" there would be a lie that reads as an all-clear on exactly
-           * the build that cannot check. */
-          let crash = null;
-          try{ crash = FS().crashReport ? await FS().crashReport() : null; }catch(_){ crash = null; }
-          let top = '';
-          if(crash && crash.present) top = 'LAST CRASH — paste this:\n' + crash.text + '\n\n';
-          else if(crash) top = 'no crash recorded since this build was installed\n\n';
-          else top = 'this build cannot report crashes (update the app to record them)\n\n';
-          const full = top + line + extra;
+          const full = line + extra;
           PC.copyValue ? PC.copyValue(full, 'background details copied', 'Background sync:')
                        : setStatus(id, full.replace(/\n/g, ' · '));
-          /* Only AFTER the copy, and only when there was something to copy. Clearing is what makes
-           * the NEXT report unambiguous — a fresh log means the trace in it is the crash you just
-           * reproduced, not one from last week that has already been fixed. */
-          if(crash && crash.present && FS().clearCrashReport
-             && await PC.uiConfirm('Copied. Forget the recorded crash now?\n\nThe next crash then '
-                                   + 'stands alone, which makes it much easier to identify.'))
-            try{ await FS().clearCrashReport(); }catch(_){}
         }; }
       card.querySelector('.sync-forget').onclick = async () => {
         if(!await PC.uiConfirm('Stop syncing this folder?\n\nNothing is deleted — the files stay on this '

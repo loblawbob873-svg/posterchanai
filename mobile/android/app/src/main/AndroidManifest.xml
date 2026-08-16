@@ -7,11 +7,7 @@
          grants this to calling apps; anywhere it is not granted the call degrades to a heads-up. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
-    <!-- `android:name` is what installs the crash handler on EVERY process start, including the ones
-         with no Activity: an alarm firing into `.sync.SyncTickReceiver` starts this process cold,
-         and that is the exact path the crash under investigation lives on. See CrashLog. -->
     <application
-        android:name=".PosterChanApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
