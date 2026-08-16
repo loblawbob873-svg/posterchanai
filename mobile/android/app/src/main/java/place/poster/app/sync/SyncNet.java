@@ -239,14 +239,9 @@ public final class SyncNet {
             } catch (RuntimeException e) {
                 throw new IOException("the server answered something that is not JSON (" + code + ")");
             }
-            /* `collapse` IS A FLAG AND THE COUNTS ARE BESIDE IT, not inside it. The endpoint answers
-             * {"ok":false,"error":…,"collapse":true,"old":N,"new":M} — reading them from a nested
-             * object yields 0 and 0, which is not a wrong number, it is a DISARMED GUARD: `shrink()`
-             * becomes 0, so `removed >= shrink` holds for any sweep that tombstoned a single path,
-             * and the caller force-writes the very shrink the server refused. The whole point of the
-             * 409 is that a folder wipe and a deliberate mass delete look identical from there. */
-            if (code == 409 && Json.bool(j.get("collapse"), false)) {
-                throw new Collapse(Json.num(j.get("old"), 0), Json.num(j.get("new"), 0),
+            if (code == 409 && j.get("collapse") != null) {
+                Map<String, Object> col = Json.obj(j.get("collapse"));
+                throw new Collapse(Json.num(col.get("old"), 0), Json.num(col.get("new"), 0),
                                    Json.str(j.get("error"), "refused"));
             }
             if (code < 200 || code >= 300 || !Json.bool(j.get("ok"), false)) {

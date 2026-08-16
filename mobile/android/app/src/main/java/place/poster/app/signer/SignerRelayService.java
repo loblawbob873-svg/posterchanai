@@ -717,7 +717,7 @@ public class SignerRelayService extends Service {
     private void dropNotification() {
         running = false;
         paired = 0;
-        if (RunningNote.othersRunning(RunningNote.SIGNER)) {
+        if (RunningNote.othersRunning(true)) {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH);
             RunningNote.refresh(this);
         } else {
@@ -737,7 +737,7 @@ public class SignerRelayService extends Service {
         paired = 0;
         /* Same as the other half: killed rather than switched off, so nothing has redrawn the
          * shared notification and it would go on naming a signer that has gone. */
-        if (RunningNote.othersRunning(RunningNote.SIGNER)) RunningNote.refresh(this);
+        if (RunningNote.othersRunning(true)) RunningNote.refresh(this);
         super.onDestroy();
     }
 

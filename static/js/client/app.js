@@ -1614,16 +1614,8 @@
         if(!ME || ME.mode !== 'local') return false;
         const p = _capPlugin('Signer', 'arm');
         if(!p || !p.arm) return false;                 // an APK older than this: nothing to arm
-        /* "ALREADY HOLDS ONE" HAS TO MEAN "HOLDS THIS ACCOUNT'S", and it did not.
-         *
-         * Switching accounts reloads the page with a new session and never clears the Keystore, so
-         * a phone that had armed account A kept A's secret and this returned true for B. That was
-         * nearly inert while only the NIP-46 signer used it; the background sweep now DEPENDS on it,
-         * so B's unattended sweep would sign its Blossom auth and its manifest proof as A, and try
-         * to unwrap B's drive key with A's secret — a 403 at best, the wrong identity at worst, and
-         * nothing on either path says a word. `status()` reports the stored pubkey; compare it. */
         const st = await p.status().catch(()=>null);
-        if(st && st.have && st.pubkey && ME.pubkey && st.pubkey === ME.pubkey) return true;
+        if(st && st.have) return true;                 // already holds one
         const sess = Session.load();
         const sec = sess && sess.sk;
         if(!sec) return false;
@@ -4071,18 +4063,10 @@
     // the relay — it is theirs, and signing back in rebuilds the cache from it.
     try{ DmCache.forget(); }catch(_){}
     /* And the background folder sweep's copy of the drive key. It is stored WRAPPED — unreadable
-     * without the account secret — and it also stops the alarm waking a signed-out phone every
-     * sixteen minutes to discover it can no longer sign anything. */
+     * without the account secret, which `Session.forget` below takes with it — so this is belt and
+     * braces rather than the only thing standing there. It also stops the alarm waking a
+     * signed-out phone every sixteen minutes to discover it can no longer sign anything. */
     try{ const fs = window.pcFs; if(fs && fs.forgetNative) fs.forgetNative(); }catch(_){}
-    /* AND THE ACCOUNT SECRET ITSELF, which is the half that stopped being belt-and-braces.
-     *
-     * That wrapped key used to be safe on its own because the secret to open it was in `Session`,
-     * which the line below clears. Folder sync now seals the secret into the Android Keystore so an
-     * unattended sweep can sign — so on a phone that has synced a folder, "log out" without this
-     * leaves the previous account's nsec on the device, usable by the background signer and by the
-     * sweep. `disable` is the right call rather than something narrower: it clears the key, drops
-     * NIP-55 consent, and stops the signer service, which is exactly what signing out means. */
-    try{ const sp = _capPlugin('Signer', 'disable'); if(sp && sp.disable) sp.disable(); }catch(_){}
  // Signing out also FORGETS this identity in the switcher. The list holds real keys, so "log out"
     // has to mean the key is gone from this device — leaving it behind under a different storage key
     // would be a quiet downgrade of what that button has always promised.
@@ -30302,24 +30286,6 @@
      * instance, and an empty base is what makes the caller's own guard fire instead of the phone
      * quietly POSTing a manifest into itself every sixteen minutes. */
     serverOrigin: _serverOrigin,
-    /* PUT THE ACCOUNT KEY WHERE THE BACKGROUND SWEEP CAN REACH IT — and this one line is most of
-     * "background sync still does not work on my phone".
-     *
-     * The native sweep signs every step (a kind-24242 Blossom auth per upload, a 27235 proof for the
-     * manifest, NIP-44 to the user's own key), so it refuses to start without a Keystore-sealed
-     * secret. The only two things that ever stored one were the "Sign for other apps on this phone"
-     * switch and pairing a laptop over NIP-46 — two unrelated features, in two other parts of
-     * settings, that somebody syncing a folder has no reason to have touched. So on an ordinary
-     * account the sweep answered "the account key is not on this device" about a key that was
-     * sitting in this page the whole time, and never ran once. The same shape as the background
-     * signer's own bug, one feature later.
-     *
-     * IT IS NOT A NEW SECRET AT REST AND NOT A NEW CAPABILITY. The key is already on this device (in
-     * the WebView's storage, which is strictly worse); `arm` seals it under an AndroidKeyStore key
-     * that cannot be exported, and deliberately does NOT set `exposed`, so this phone still does not
-     * answer other apps as a NIP-55 signer. Local keys only — with Amber or a bunker there is
-     * nothing here to hand over, which is exactly why that account keeps the old ask-the-page path. */
-    armNativeSigner: () => Nip46Signer._armNative(),
     mediaServer, modal, closeModal, blossomPicker,
     // The app's own lightbox (pager, zoom, swipe, keyboard) — so Web Search's Images tab opens a
     // picture the way every other picture in this app opens, instead of throwing you out to a

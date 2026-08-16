@@ -404,34 +404,6 @@ DRIVE = r"""(async () => {
     out.docClosed = document.querySelectorAll('.osw').length - before;
   }
 
-  /* SEARCHING AGAIN WHILE THE SEARCH WINDOW IS OPEN MUST SHOW THE NEW QUERY.
-   *
-   * The window above is keyed by the post it shows, so re-opening it is a repaint of the same
-   * document and re-running its render is right. SEARCH is the odd one out: ONE window that shows a
-   * succession of different documents. Its render is a closure over the query, so the existing-window
-   * branch focusing it re-ran the ORIGINAL closure — the first query's results, painted again.
-   *
-   * That is why it was reported as "searching for something else does not search for the new term":
-   * it is not that nothing ran, it is that the wrong thing ran, which from the outside is the same
-   * picture with a stale list in it. Asserted on WHAT WAS PAINTED, not on whether a call happened.
-   */
-  {
-    const before = document.querySelectorAll('.osw').length;
-    const seen = [];
-    const mk = (q) => () => { seen.push(q);
-                              document.getElementById('feed').innerHTML = 'RESULTS FOR ' + q; };
-    PCOS.openDoc('search', 'Search', 'i-search', mk('first'), false, true);
-    await sleep(80);
-    PCOS.openDoc('search', 'Search', 'i-search', mk('second'), false, true);
-    await sleep(150);
-    out.searchWins = document.querySelectorAll('.osw').length - before;
-    out.searchLast = seen[seen.length - 1] || 'nothing rendered';
-    out.searchShown = (document.getElementById('feed').textContent || '').trim().slice(0, 40);
-    document.querySelector('.osw.focused .osw-x').click();
-    await sleep(80);
-    out.searchClosed = document.querySelectorAll('.osw').length - before;
-  }
-
   /* Refocusing a window must hand the client back the VIEW that window is showing.
    *
    * `#feed` is one element that MOVES, and every painter in the client tests the VIEW global before
@@ -1491,15 +1463,6 @@ async def drive(url):
                                      f"opened={r.get('docWins')} after-reopen={r.get('docDedup')} "
                                      f"feed-inside={r.get('docFeed')} taskbar={r.get('docTask')} "
                                      f"repaints={r.get('docPaint')} left-open={r.get('docClosed')}"))
-                if r.get("searchWins") != 1 or r.get("searchLast") != "second" \
-                        or "second" not in (r.get("searchShown") or "") \
-                        or r.get("searchClosed") != 0:
-                    problems.append((label, "search-window-stale",
-                                     "searching again while the Search window is open re-ran the "
-                                     "PREVIOUS query instead of the new one — one window, a "
-                                     "succession of queries, so its render has to be replaced "
-                                     f"(windows={r.get('searchWins')} last-render={r.get('searchLast')!r} "
-                                     f"on-screen={r.get('searchShown')!r} left-open={r.get('searchClosed')})"))
                 if r.get("viewOnDoc") != "profile" or r.get("viewOnFeature") != "calendar" \
                         or not r.get("docFeedBack") or r.get("viewWinsClosed") != 0:
                     problems.append((label, "stale-view",

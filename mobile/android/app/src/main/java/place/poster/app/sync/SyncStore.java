@@ -64,41 +64,7 @@ public final class SyncStore {
         public int minBattery = 20;
     }
 
-    /**
-     * DERIVED, NEVER STORED — and this is the bug that survived the first fix.
-     *
-     * The page used to compute this and push it as a boolean: `mk && api && media && folders`. But
-     * `mk` is `FilesIdx._mkWrapped`, which is populated from localStorage when the drive index
-     * loads, and `configure()` is called at STARTUP — before that has necessarily happened. So an
-     * ordinary app launch pushed `enabled:false` and OVERWROTE a true value, and the next alarm
-     * found the feature switched off. The clock fired, the receiver ran, `plan()` read this flag
-     * first and answered "native sweeps are off": nothing swept, and nothing anywhere said why.
-     * Opening Folder Sync and pressing Sync now put it back — which is exactly the shape of "it only
-     * syncs when I open the app", the report this whole change exists to end.
-     *
-     * The stored key already had this rule ("AN ABSENT KEY DOES NOT ERASE THE ONE WE HAVE", below);
-     * the flag derived from it did not, which made that protection useless. So there is no flag any
-     * more: the answer is computed from what is actually on disk, where a value that was never
-     * pushed simply leaves the previous one in place. A transient empty push can no longer turn
-     * background sync off.
-     *
-     * `K_ENABLED` survives as an explicit OFF only — set false by {@link #forget()} on sign-out.
-     */
-    public boolean nativeEnabled() {
-        if (!prefs().getBoolean(K_ENABLED, true)) return false;      // signed out: hard off
-        return !wrappedDriveKey().isEmpty() && !apiBase().isEmpty()
-                && !mediaBase().isEmpty() && !folders().isEmpty();
-    }
-
-    /** What {@link #nativeEnabled} is missing, for the panel. Empty string when it is on. */
-    public String whyDisabled() {
-        if (!prefs().getBoolean(K_ENABLED, true)) return "signed out on this device";
-        if (wrappedDriveKey().isEmpty()) return "no drive key handed over yet";
-        if (apiBase().isEmpty()) return "no server address";
-        if (mediaBase().isEmpty()) return "no media server";
-        if (folders().isEmpty()) return "no folders paired on this device";
-        return "";
-    }
+    public boolean nativeEnabled() { return prefs().getBoolean(K_ENABLED, false); }
 
     public String apiBase() { return prefs().getString(K_API, ""); }
 
@@ -133,16 +99,9 @@ public final class SyncStore {
     public void configure(boolean enabled, String apiBase, String mediaBase, String wrappedKey,
                           String device, String foldersJson) {
         SharedPreferences.Editor e = prefs().edit();
-        /* `enabled` FROM THE PAGE IS NOW ONLY ABLE TO TURN THIS BACK ON, never off — see
-         * nativeEnabled(). A false here means "I could not see a drive key at this instant", which
-         * on a cold start is the normal state and must not disable the feature. Sign-out goes
-         * through forget(), which is the one path that means it. */
-        if (enabled) e.putBoolean(K_ENABLED, true);
-        /* AN EMPTY SERVER DOES NOT ERASE THE STORED ONE, for the same reason the key does not: these
-         * come from `PC.serverOrigin()`/`PC.mediaServer()`, which answer '' before the client has
-         * resolved its instance, and a startup push would otherwise blank what a working sweep needs. */
-        if (apiBase != null && !apiBase.isEmpty()) e.putString(K_API, apiBase);
-        if (mediaBase != null && !mediaBase.isEmpty()) e.putString(K_MEDIA, mediaBase);
+        e.putBoolean(K_ENABLED, enabled);
+        if (apiBase != null) e.putString(K_API, apiBase);
+        if (mediaBase != null) e.putString(K_MEDIA, mediaBase);
         /* AN ABSENT KEY DOES NOT ERASE THE ONE WE HAVE. The client only has a drive key once the
          * signer has answered, and a configure() that arrives before that (page load, an account
          * still resolving) would otherwise wipe the very thing that lets the phone sweep alone —

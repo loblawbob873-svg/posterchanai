@@ -193,42 +193,6 @@
                                off by default, cancellable from the notification." />
         </service>
 
-        <!-- The few minutes a background folder sweep takes.
-
-             WHY IT EXISTS AT ALL, given the alarm, the wake lock and a sweep engine written in Java:
-             none of those keep the PROCESS alive. A broadcast receiver gets about ten seconds and
-             then the process is cached — and a cached process on Android 12+ is FROZEN, so a sweep
-             running on a bare thread stops a few seconds after the screen goes off having moved a
-             handful of files, with nothing thrown and nothing logged. That is the reported bug.
-
-             `specialUse`, NOT `dataSync`, for the same reason the two services above are: Android 15
-             caps dataSync at SIX HOURS in any twenty-four across the whole app, and past it the
-             system stops the service and refuses further dataSync starts until the window rolls.
-             A first sync of a real Pictures folder is hours of transfer, so the honest type is the
-             one that would silently stop background sync for the rest of the day — on the biggest
-             folders, which are the ones that need it most. It is NOT "stay connected": this exists
-             for the length of one sweep, and folder sync no longer depends on that switch. -->
-        <service
-            android:name=".sync.SyncService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Finishes syncing the folders the user paired with this device while
-                               the screen is off. Runs only for the length of one sweep and stops
-                               itself; started by the app's own alarm, never by another app." />
-        </service>
-
-        <!-- Where the folder-sync alarm lands. A RECEIVER rather than the service directly, because
-             Android 12+ throws on a background foreground-service start outside its exemptions and a
-             receiver is the only place that throw can be CAUGHT and fallen back from — a
-             PendingIntent.getForegroundService would throw inside the system's delivery, which is a
-             crash rather than a fallback. Explicit component, so the Android 8 implicit-broadcast
-             restrictions do not apply. -->
-        <receiver
-            android:name=".sync.SyncTickReceiver"
-            android:exported="false" />
-
         <!-- Voice/video calls. NOT the same reason as the music service above: since Android 11 an app
              in the BACKGROUND may not capture the microphone or camera at all unless a foreground
              service of the matching type is running. Without this, pressing Home mid-call silences
@@ -415,8 +379,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <!-- The "stay connected" service (off by default) — see StayAwakeService for why specialUse. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <!-- (The background folder sweep is specialUse too — see SyncService in the manifest above for
-         why the six-hour dataSync cap makes the "honest" type the wrong one here.) -->
     <!-- Start at boot (see BootReceiver): restarts the stay-connected service the user opted into,
          and redraws the home-screen calendar the launcher rebuilt from scratch. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />

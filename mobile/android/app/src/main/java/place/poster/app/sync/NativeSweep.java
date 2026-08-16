@@ -23,6 +23,9 @@ import java.util.Set;
  * sweep MOVES BYTES; anything that needs a decision waits for a foreground sweep, where the whole
  * executor and a person are both available:
  *
+ *   * a FIRST-EVER sweep of a folder (no agreement yet) is deferred. It is the expensive one, the one
+ *     that hashes everything, and the one that publishes a folder's whole contents to every other
+ *     device — the worst possible thing to start unattended.
  *   * CONFLICTS are deferred. Settling one properly means hashing, comparing chunk lists and
  *     sometimes renaming somebody's file; leaving the path unagreed costs nothing, because the next
  *     sweep simply proposes it again.
@@ -61,7 +64,7 @@ public final class NativeSweep {
         public final List<String> trashed = new ArrayList<String>();
         public final List<String> removedRemote = new ArrayList<String>();
         public final List<Map<String, Object>> failed = new ArrayList<Map<String, Object>>();
-        public int unchanged, excluded, deferred, alreadyStored, checkpoints, repaired;
+        public int unchanged, excluded, deferred, alreadyStored, checkpoints;
         public boolean hashed = false;
         public String refusedTrash = "", refusedResurrect = "", error = "", deferredWhy = "";
         public long at = System.currentTimeMillis();
@@ -81,7 +84,6 @@ public final class NativeSweep {
             m.put("alreadyStored", (long) alreadyStored);
             m.put("checkpoints", (long) checkpoints);
             m.put("hashed", hashed);
-            if (repaired > 0) m.put("repaired", (long) repaired);
             if (!refusedTrash.isEmpty()) m.put("refusedTrash", refusedTrash);
             if (!refusedResurrect.isEmpty()) m.put("refusedResurrect", refusedResurrect);
             if (!deferredWhy.isEmpty()) m.put("deferredWhy", deferredWhy);
@@ -101,116 +103,10 @@ public final class NativeSweep {
      * takes this too, so the JavaScript path and this one cannot overlap.
      */
     private static final Set<String> BUSY = new LinkedHashSet<String>();
-    /** When each claim was taken — see {@link #claimed}. */
-    private static final java.util.Map<String, Long> CLAIMED_AT = new java.util.HashMap<String, Long>();
 
-    /**
-     * A CLAIM MAY BLOCK A SWEEP; IT MAY NOT BLOCK THE CLOCK FOR EVER.
-     *
-     * `claimed()` is only an optimisation — it stops the alarm starting a foreground service for a
-     * folder the page is already sweeping. But a claim can be STUCK: the page's sweep is JavaScript
-     * in a WebView, and a WebView can hang, be throttled to a standstill, or be killed between
-     * taking the claim and the `finally` that returns it. (handleOnDestroy covers the kill; it does
-     * not cover a page that is alive and wedged.) Treated as authoritative, one such claim answers
-     * "nothing is due" on every tick from then on, and background sync is silently dead for the life
-     * of the process — a hung foreground sync and a background sync that never runs being, in that
-     * case, the same bug reported twice.
-     *
-     * So a claim goes STALE. Past the bound this reports the folder free and the alarm proceeds;
-     * `claim()` itself is unchanged and still refuses, so the two engines can never actually overlap
-     * — the worst case is one wasted wake-up, which is exactly the cost this method exists to avoid
-     * and enormously cheaper than the failure it was causing.
-     */
-    private static final long CLAIM_STALE_MS = 20 * 60 * 1000L;
+    public static synchronized boolean claim(String key) { return BUSY.add(key); }
 
-    /**
-     * @return false only when something is ACTIVELY holding this folder. A claim older than the
-     *         stale bound is STOLEN, and that is the difference between a wedged sweep costing one
-     *         cycle and it bricking the folder.
-     *
-     * Reported as *"pictures is set to already syncing and stuck / no progress"*: the page asks for
-     * the claim on every attempt, is refused, and shows "syncing in the background — it will finish
-     * on its own". If the holder is never coming back, that is the card's permanent state and the
-     * only way out is force-stopping the app. Nothing in the sweep can promise to return a claim: it
-     * runs on a thread that can be frozen with the process, killed with the renderer, or blocked on a
-     * socket the platform never times out. So the claim carries an expiry rather than a promise.
-     */
-    public static synchronized boolean claim(String key) {
-        long now = System.currentTimeMillis();
-        if (BUSY.contains(key)) {
-            Long at = CLAIMED_AT.get(key);
-            if (at != null && now - at >= CLAIM_STALE_MS) {
-                // Steal it. The previous holder is gone or wedged; if it ever does come back its
-                // `finally` releases a claim it no longer owns, which is harmless — the worst case
-                // is one overlapping sweep, and `store.save`'s re-read-and-merge is what makes that
-                // survivable. A folder nobody can ever sync again is not.
-                CLAIMED_AT.put(key, now);
-                return true;
-            }
-            return false;
-        }
-        BUSY.add(key);
-        CLAIMED_AT.put(key, now);
-        return true;
-    }
-
-    /* LIVE PROGRESS OF THE SWEEP THAT IS RUNNING NOW, so the page has something true to show while
-     * it is locked out. The card used to print one static sentence when its claim was refused, which
-     * on a folder of any size is indistinguishable from a hang — and was reported as exactly that.
-     * These are written on the sweep thread and read from the plugin; ints, so no lock is needed for
-     * a number that is only ever displayed. */
-    private static volatile String liveKey = "";
-    private static volatile int liveDone = 0, liveTotal = 0;
-    private static volatile long liveAt = 0;
-
-    static void progress(String key, int done, int total) {
-        liveKey = key == null ? "" : key;
-        liveDone = done;
-        liveTotal = total;
-        liveAt = System.currentTimeMillis();
-    }
-
-    /** {key, done, total, at} for whatever is sweeping, or null when nothing is. */
-    public static synchronized Map<String, Object> live() {
-        if (liveKey.isEmpty() || !BUSY.contains(liveKey)) return null;
-        Map<String, Object> m = new LinkedHashMap<String, Object>();
-        m.put("key", liveKey);
-        m.put("done", (long) liveDone);
-        m.put("total", (long) liveTotal);
-        m.put("at", liveAt);
-        return m;
-    }
-
-    /** Whether something already holds this folder, and holds it RECENTLY. ASKED, not taken —
-     *  {@link NativeRunner#plan} uses it to decide there is nothing to wake the phone for, and taking
-     *  the claim there would mean the caller has to give it back on every path that declines. */
-    public static synchronized boolean claimed(String key) {
-        if (!BUSY.contains(key)) return false;
-        Long at = CLAIMED_AT.get(key);
-        if (at == null) return true;
-        return System.currentTimeMillis() - at < CLAIM_STALE_MS;
-    }
-
-    public static synchronized void release(String key) { BUSY.remove(key); CLAIMED_AT.remove(key); }
-
-    /**
-     * Everything the PAGE is holding, dropped — called when the page goes away.
-     *
-     * A claim taken across the bridge is released in the sweep's `finally`, which does not run when
-     * the renderer is killed mid-sweep or the activity is destroyed while backgrounded. That is not
-     * an edge case here: it is precisely the situation this whole native path exists for. Without
-     * this the pair key stays claimed for the life of the PROCESS, and afterwards neither engine can
-     * touch that folder ever again — the native sweep answers "already syncing" and the reloaded
-     * page is told "this folder is syncing in the background", on every press, until the app is
-     * force-stopped.
-     *
-     * Only the page's own claims: a native sweep genuinely running in the service must survive the
-     * page dying, which is the entire point of it.
-     */
-    public static synchronized void releaseAll(Set<String> keys) {
-        BUSY.removeAll(keys);
-        CLAIMED_AT.keySet().removeAll(keys);   // or the timestamps outlive the claims
-    }
+    public static synchronized void release(String key) { BUSY.remove(key); }
 
     // -------------------------------------------------------------------------------- the sweep
 
@@ -245,31 +141,23 @@ public final class NativeSweep {
         Map<String, Map<String, Object>> remote = readManifest(net, sec, mk, f.key);
         Map<String, Map<String, Object>> base = store.base(f.key);
 
-        /* AN EMPTY AGREEMENT FORCES A HASH, IT DOES NOT STOP THE SWEEP — and the first version of
-         * this got that exactly backwards.
-         *
-         * It deferred instead, on the reasoning that a first sweep is expensive and dangerous. The
-         * reasoning was fine and the consequence was that the whole native path could never run
-         * ONCE, on any device: `base` here is written only by this sweep, the page keeps its own copy
-         * in IndexedDB where Java cannot reach it, so the agreement was empty for ever and every
-         * alarm answered "first sync — open the app once". Opening the app did nothing, because the
-         * page writes only its own copy. Dead on arrival, and reported as success.
-         *
-         * What the deferral was actually protecting against is covered elsewhere: with no `base` both
-         * sides look changed for every path at once, so the answer has to come from CONTENT — that is
-         * the hash — and the thing that would go wrong without it is a conflict copy of every file.
-         * Conflicts are deferred by this sweep regardless (see the class comment), the mass-delete and
-         * mass-resurrect guards refuse in bulk, and a folder nobody has pressed Start on is `paused`,
-         * which `shouldSync` declines before we ever get here. So the honest move is to pay for the
-         * hash and settle the folder, which is what the browser's first sweep does too.
-         *
-         * OTHERWISE hashing is the charging-time job the caller already decided about: `shouldSync`
-         * answers `full` when plugged in and it has been a day. Rehashing on every sweep is the space
-         * heater the battery policy exists to avoid; never rehashing means an entry with no content
-         * identity never gains one, and every device that joins later falls back to size+mtime —
+        /* A FIRST SWEEP IS NOT A BACKGROUND JOB. With no agreement every path looks changed on both
+         * sides at once, so settling it means HASHING the whole folder — and the outcome of getting
+         * it wrong is a conflict copy of every file on every device. It is also the sweep that
+         * publishes a folder's entire contents for the first time. Both are things to do with the
+         * app open. */
+        if (base.isEmpty()) {
+            rep.deferred = 1;
+            rep.deferredWhy = "first sync — open the app once to start this folder";
+            return;
+        }
+
+        /* HASHING IS THE CHARGING-TIME JOB, and the caller has already decided whether this is one.
+         * `shouldSync` answers `full` when the phone is plugged in and it has been a day, and that is
+         * the only mode that rehashes: doing it on every sweep is the space heater the whole battery
+         * policy exists to avoid, and never doing it means an entry that has no content identity
+         * never gains one — so every device that joins the folder later falls back to size+mtime,
          * which on Android can never match, because SAF assigns its own last-modified. */
-        boolean firstEver = base.isEmpty();
-        if (firstEver) { hash = true; rep.hashed = true; }
         SafFs.Scan scan = fs.scan(hash, 0, f.excludes);
         Map<String, Map<String, Object>> local = new LinkedHashMap<String, Map<String, Object>>();
         for (Map.Entry<String, Map<String, Object>> e : scan.files.entrySet()) {
@@ -285,9 +173,6 @@ public final class NativeSweep {
             local.put(e.getKey(), out);
         }
 
-        final Map<String, Map<String, Object>> nextRemote0 =
-                new LinkedHashMap<String, Map<String, Object>>(remote);
-        final Set<String> touched0 = new LinkedHashSet<String>();
         SyncDiff.Plan plan = SyncDiff.diff(local, remote, base, f.excludes, device, now);
         rep.unchanged = plan.unchanged;
         rep.excluded = plan.excluded;
@@ -316,40 +201,15 @@ public final class NativeSweep {
             }
         }
 
-        final Map<String, Map<String, Object>> nextRemote = nextRemote0;
+        final Map<String, Map<String, Object>> nextRemote =
+                new LinkedHashMap<String, Map<String, Object>>(remote);
         final Map<String, Map<String, Object>> nextBase =
                 new LinkedHashMap<String, Map<String, Object>>(base);
-        final Set<String> touched = touched0;
-
-        /* GIVE EVERY ENTRY A CONTENT IDENTITY WHILE WE ARE HERE.
-         *
-         * An entry written before `csum` existed can never be compared by content, so every device
-         * that hashes falls back to size+mtime — which Android can never match, because SAF assigns
-         * its own last-modified. Those paths conflict for ever, and a conflict is exactly what this
-         * sweep DEFERS, so without this a folder full of them would be re-swept every sixteen
-         * minutes and settle nothing, on every phone, permanently.
-         *
-         * It is not a new fact — it is the one this sweep just established, written down where the
-         * other devices can use it. `same()` had to be true to get here, so a path that is genuinely
-         * different is untouched. */
-        int repaired = 0;
-        for (Map.Entry<String, Map<String, Object>> e : local.entrySet()) {
-            Map<String, Object> L = e.getValue(), R = remote.get(e.getKey());
-            if (L == null || Json.str(L.get("csum"), "").isEmpty()) continue;
-            if (R == null || R.get("csum") != null || SyncDiff.gone(R)) continue;
-            if (!SyncDiff.same(L, R)) continue;
-            Map<String, Object> up = new LinkedHashMap<String, Object>(R);
-            up.put("csum", L.get("csum"));
-            nextRemote0.put(e.getKey(), up);
-            touched0.add(e.getKey());
-            repaired++;
-        }
-        rep.repaired = repaired;
+        final Set<String> touched = new LinkedHashSet<String>();
 
         int work = deleteLocal.size() + plan.download.size() + uploads.size();
         int every = Math.max(CHECKPOINT, (int) Math.ceil(work / (double) MAX_CHECKPOINTS));
         Check check = new Check(net, store, sec, mk, f.key, nextRemote, nextBase, touched, every, rep);
-        if (repaired > 0) check.markDirty();
 
         /* DELETIONS FIRST, BEFORE ANY BYTE MOVES. Queued behind hours of transfer they are simply
          * never reached: a sweep is interrupted, restarts its transfer loops from the top, and the
@@ -378,9 +238,7 @@ public final class NativeSweep {
             try {
                 long[] st = download(net, fs, mk, path, R, now);
                 Map<String, Object> agreed = new LinkedHashMap<String, Object>();
-                // Absent, never null: a chunked entry has no `sha` at all — its address is the LIST —
-                // and writing an explicit null would be a value the next sweep has to reason about.
-                if (R.get("sha") != null) agreed.put("sha", R.get("sha"));
+                agreed.put("sha", R.get("sha") == null ? Json.UNDEFINED : R.get("sha"));
                 if (R.get("csum") != null) agreed.put("csum", R.get("csum"));
                 /* `cs` TRAVELS WITH `chunks`, always. An entry is comparable only to one made at the
                  * same chunk size, so an agreement that kept the list and dropped the size can never
@@ -681,9 +539,6 @@ public final class NativeSweep {
             this.remote = remote; this.base = base; this.touched = touched; this.every = every;
             this.rep = rep;
         }
-
-        /** A repair changed the manifest without agreeing anything, and it still has to be stored. */
-        void markDirty() { dirty = true; }
 
         void remember(String path, Map<String, Object> entry) {
             remote.put(path, entry);

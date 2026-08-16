@@ -33,18 +33,12 @@ import java.util.concurrent.TimeUnit;
  * WHY IT CANNOT UPLOAD, which is a fact about the protocol and not a shortcut. Every network step of
  * a sweep is signed by the user's NOSTR key: each Blossom upload carries a kind-24242 auth event,
  * the manifest endpoint takes a kind-27235 proof, and the manifest itself is NIP-44 encrypted to the
- * user's own key. So an unattended uploader needs the nsec — the whole identity, not just the
- * file-encryption key. For anyone signing with Amber or a remote signer (NIP-46) that key is not on
- * the device at all, so for them it is impossible by construction, and this notifier is all there
- * can ever be.
- *
- * FOR A LOCAL KEY THERE IS NOW A SWEEP THAT DOES UPLOAD — {@link NativeRunner}, driven by
- * {@link SyncClock} and running inside {@link SyncService} — and this worker is deliberately not it.
- * The difference is where the key lives: that path reads a secret this app already stored, sealed
- * under an AndroidKeyStore key, on a device the user signed into. This job runs under WorkManager's
- * constraints in a process that may be anything at all, so it keeps its original promise: it holds
- * no key, opens no socket and reads no file content. Both exist because they answer different
- * questions — "sync it" and "tell me there is something to sync".
+ * user's own key. So an unattended native uploader would need the nsec — the whole identity, not
+ * just the file-encryption key — sitting in native storage. For anyone signing with Amber or a
+ * remote signer (NIP-46) that key is not on the device at all, so it is impossible by construction;
+ * and for a local key it would mean that a device compromise yields impersonation and every DM,
+ * traded for photo backup. That is a bad trade, so this worker holds no key, opens no socket and
+ * reads no file content.
  *
  * WHAT IT DOES. Under WorkManager's constraints — charging, unmetered, battery not low — it walks
  * each granted tree with the same one-cursor-per-directory scan the plugin uses, hashing nothing,

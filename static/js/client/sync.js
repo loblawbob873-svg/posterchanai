@@ -951,24 +951,12 @@
           shouldStop: () => stopping.has(f.id),
           // The platform decides how much it can hold at once; see fs-android.js.
           chunkBytes: (FS() && FS().chunkBytes) || 0,
-          /* ABOVE ONE CHUNK A FILE GOES UP IN PIECES — AND "ONE CHUNK" IS THE PLATFORM'S, NOT A
-           * NUMBER PICKED HERE.
-           *
-           * This said exactly that and then hardcoded 16 MB, which is the DESKTOP's chunk. Android's
-           * is 4 MB, deliberately, because every chunk crosses the Capacitor bridge as base64 held
-           * as UTF-16 (see fs-android.js). So on a phone every file between 4 and 16 MB — an
-           * ordinary photo from a recent camera, and every video in a Pictures folder — took the
-           * whole-file path, where the plaintext, the base64 crossing the bridge, the ciphertext and
-           * the upload body are all live at once: three to four times the file, so up to ~65 MB of
-           * renderer memory for a single 16 MB file, thousands of times over in one sweep.
-           *
-           * That is the renderer being killed mid-sweep: the app vanishes from the screen and STAYS
-           * IN THE RECENTS LIST, because the process never died — only the WebView's renderer.
-           * Nothing is thrown, nothing is logged, and no crash handler can see it.
-           *
-           * Deriving it removes the class rather than moving the threshold: a platform that says how
-           * much it can hold gets held to its own answer. */
-          chunkAbove: (FS() && FS().chunkBytes) || CHUNK_FALLBACK,
+          /* Above ONE CHUNK a file goes up in pieces. This used to be 64 MB, which left every file
+           * under it on the whole-file path — and a 60 MB photo there costs ~240 MB of renderer
+           * memory, which is what kept killing the window on a big Pictures folder. Chunking is the
+           * normal path now, not the exception for enormous files: past 16 MB nothing is ever held
+           * whole, so no single file can spike memory however large it is. */
+          chunkAbove: 16 * 1024 * 1024,
           hash: decision.mode === 'full', dryRun: !!o.dryRun,
           forceTrash: !!o.forceTrash,
           forceResurrect: !!o.forceResurrect,
@@ -1671,26 +1659,14 @@
           try{ st = await FS().tickStats(); }catch(_){ st = null; }
           if(!st){ PC.toast('this build can’t report background sync'); return; }
           const ago = (t) => !t ? 'never' : Math.round((Date.now() - t) / 60000) + ' min ago';
-          /* THE CLOCK IS THE FIRST LINE, because for the whole life of this feature it was the
-           * answer and nothing reported it: the alarm lived inside "Stay connected", which is off by
-           * default, so a phone that had never touched that switch had no clock at all and every
-           * counter below it read zero — indistinguishable from an alarm that fires and is eaten. */
-          const line = 'clock: armed ' + ago(st.lastArmedAt) + ', last fired ' + ago(st.lastFiredAt)
-            + (st.clockPeriodMin ? ' · every ' + st.clockPeriodMin + ' min' : '')
-            + (st.clockExact === false ? ' · INEXACT alarm (no exact-alarm permission)' : '')
+          const line = 'stay-connected ' + (st.stayConnected ? 'ON' : 'OFF')
+            + ', service ' + (st.serviceUp ? 'up' : 'DOWN')
             + '\nalarms: ' + st.armed + ' scheduled, ' + st.fired + ' fired'
-            + '\nsweeps: ' + (st.foreground || 0) + ' as a foreground service, '
-            + (st.job || 0) + ' as a background job'
-            + ((st.foregroundRefused || 0)
-                 ? ' (' + st.foregroundRefused + ' foreground starts refused by Android)' : '')
-            + (st.sweepServiceUp ? ' · sweeping now' : '')
-            + '\nticks to the app: ' + st.delivered + ' delivered, ' + st.dropped + ' dropped, '
-            + st.suppressed + ' skipped (last delivered ' + ago(st.lastDeliveredAt) + ')'
+            + ' (' + (st.restarts || 0) + ' of the scheduled are service starts; last fired ' + ago(st.lastFiredAt) + ')'
+            + '\nticks: ' + st.delivered + ' delivered, ' + st.dropped + ' dropped, ' + st.suppressed + ' skipped'
+            + ' (last delivered ' + ago(st.lastDeliveredAt) + ')'
             + '\nwaiting for: ' + ([st.needCharging && 'a charger', st.needUnmetered && 'Wi-Fi']
-                                     .filter(Boolean).join(' + ') || 'nothing')
-            // Reported last, and only as context: background sync no longer needs it.
-            + '\nstay-connected ' + (st.stayConnected ? 'ON' : 'off')
-            + ' (not required for syncing)';
+                                     .filter(Boolean).join(' + ') || 'nothing');
           /* AND WHAT THE SWEEP THAT RUNS WITHOUT THIS PAGE ACTUALLY DID.
            *
            * The counters above answer "did the clock tick", which was the right question while the
@@ -1703,7 +1679,7 @@
           try{ nat = FS().nativeReport ? await FS().nativeReport() : null; }catch(_){ nat = null; }
           let extra = '';
           if(nat){
-            extra = '\nnative sweep: ' + (nat.enabled ? 'on' : 'OFF' + (nat.why_off ? ' — ' + nat.why_off : ''))
+            extra = '\nnative sweep: ' + (nat.enabled ? 'on' : 'off')
                   + (nat.haveKey ? '' : ' (no key on this device — Amber signs elsewhere)')
                   + (nat.running ? ', running now' : '')
                   + (nat.why ? '\n  last decision: ' + nat.why : '')
@@ -1805,41 +1781,11 @@
     let api = '';
     try{ api = (PC.serverOrigin && PC.serverOrigin()) || ''; }catch(_){}
     const media = (() => { try{ return (PC.mediaServer && PC.mediaServer()) || ''; }catch(_){ return ''; } })();
-    // Only with a key, a server, somewhere to put the bytes AND a folder. Without any of them the
-    // phone would wake, fail every folder and write a report saying so, every sixteen minutes.
-    const wanted = !!mk && !!api && !!media && list.length > 0;
-    /* THE KEY IS ARMED ON `list.length`, NOT ON `wanted`, and that is a chicken-and-egg fix.
-     *
-     * `mk` is the drive key, which is exactly the value most likely to be missing on a cold start —
-     * so gating the arming on it meant the one push that could have armed the key was the one push
-     * that had nothing to arm with, on every launch. The phone then had folders, a server and no
-     * key, which is the state the sweep declines in. Paired with a device: the native side no longer
-     * lets an empty push switch anything off (SyncStore.nativeEnabled is derived now), so arming
-     * early and configuring fully a moment later converges instead of fighting. */
-    const haveFolders = list.length > 0;
-    /* THE ACCOUNT KEY, AND ONLY ONCE THIS DEVICE ACTUALLY SYNCS SOMETHING.
-     *
-     * The native sweep signs every network step, so it needs the account secret sealed in the
-     * Android keystore — and the only two things that ever put one there were the "Sign for other
-     * apps on this phone" switch and pairing a laptop over NIP-46. Neither has anything to do with
-     * syncing a folder, so on an ordinary account the sweep answered "the account key is not on this
-     * device" about a key this page was holding, and background sync could not run at all. Reported
-     * as syncing stopping shortly after the screen goes off, on two devices.
-     *
-     * GATED ON `wanted`, not called unconditionally: this function runs at startup on EVERY Android
-     * launch, so arming here regardless would seal the nsec into the keystore of every local-key user
-     * on the platform, including everyone who has never opened Folder Sync. Sealing a key is a
-     * security upgrade over the WebView storage it already sits in, but it is not free — it is what
-     * makes an unattended process able to sign as you — so it is asked for by the one feature that
-     * needs it, when it needs it.
-     *
-     * Awaited but never fatal: an Amber/bunker account has nothing to hand over and answers false,
-     * which is the honest outcome — that phone keeps the ask-the-page path, because nothing on it
-     * can sign an upload unattended. See PC.armNativeSigner. */
-    if(haveFolders){ try{ if(PC.armNativeSigner) await PC.armNativeSigner(); }catch(_){} }
     try{
       await fs.configureNative({
-        enabled: wanted,
+        // Only with a key, a server, somewhere to put the bytes AND a folder. Without any of them the
+        // phone would wake, fail every folder and write a report saying so, every sixteen minutes.
+        enabled: !!mk && !!api && !!media && list.length > 0,
         apiBase: api,
         mediaBase: media,
         mkWrapped: mk,

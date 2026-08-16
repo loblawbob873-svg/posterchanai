@@ -54,12 +54,9 @@ import java.util.List;
  * so watch() answers false. That left one automatic trigger, a JS setInterval — which Android
  * throttles in a hidden WebView — so with the screen off the app synced only when opened.
  *
- * Background sync runs off {@link SyncClock} — folder sync's OWN alarm, armed from configure() below
- * whenever this account syncs anything — landing in {@link SyncTickReceiver} and sweeping inside
- * {@link SyncService}. It used to ride "Stay connected"'s foreground service, which is off by
- * default and is a notifications feature: a phone that had never turned that switch on had no clock
- * at all, so none of the machinery below ever ran. That was the bug.
- * The WorkManager job (SyncCheckWorker) is still only a notifier, for the reason it always was: an
+ * Background sync now runs under "Stay connected", whose foreground service keeps the WebView (and
+ * therefore the key) resident and arms an AlarmManager alarm that fires in Doze; see tick() above.
+ * The UNATTENDED job is still only a notifier (SyncCheckWorker), for the reason it always was: an
  * uploader with no page needs the nsec in native storage, which with Amber or NIP-46 does not exist
  * on the device at all.
  *
@@ -103,17 +100,27 @@ public class FolderSyncPlugin extends Plugin {
    * tick happened — answering "nothing has ticked this session" about the very tick under
    * investigation.
    *
-   * `delivered` counts ticks handed to a live bridge, `dropped` ticks with no bridge to hand them
-   * to, `suppressed` ticks the battery pre-filter skipped. The ALARM's own counters live with the
-   * alarm, in {@link SyncClock} — one clock, one place that knows whether it is running.
+   * `armed` counts SCHEDULING OPERATIONS, `fired` alarms that came back, `delivered` ticks handed to
+   * a live bridge, `dropped` ticks with no bridge to hand them to, `suppressed` ticks the battery
+   * pre-filter skipped. `fired > delivered` is a page that keeps dying.
    *
    * DO NOT READ `armed > fired + 1` AS DOZE EATING ALARMS — that was the first reading written here
    * and it is wrong. Only ONE alarm is ever outstanding (`FLAG_UPDATE_CURRENT` replaces the pending
-   * one rather than adding to it), and every configure() from the page arms again: a page load, a
-   * sweep, a folder added. So `armed` is a count of schedulings, not of alarms in flight. */
+   * one rather than adding to it), while every service start arms again: a STICKY relaunch, a boot,
+   * stay-connected off and on. Those are counted by `restarts`, so the honest comparison is
+   * `armed - restarts` against `fired`. Without that subtraction a perfectly healthy phone shows the
+   * exact signature these counters exist to identify, after two or three service restarts. */
+  private static final java.util.concurrent.atomic.AtomicInteger tArmed = new java.util.concurrent.atomic.AtomicInteger();
+  private static final java.util.concurrent.atomic.AtomicInteger tFired = new java.util.concurrent.atomic.AtomicInteger();
   private static final java.util.concurrent.atomic.AtomicInteger tDelivered = new java.util.concurrent.atomic.AtomicInteger();
   private static final java.util.concurrent.atomic.AtomicInteger tDropped = new java.util.concurrent.atomic.AtomicInteger();
-  private static volatile long tLastDelivered = 0;
+  private static final java.util.concurrent.atomic.AtomicInteger tRestarts = new java.util.concurrent.atomic.AtomicInteger();
+  private static volatile long tLastFired = 0, tLastDelivered = 0;
+
+  public static void onAlarmArmed() { tArmed.incrementAndGet(); }
+  /** The service started and armed its first alarm — not a delivery that went missing. */
+  public static void onServiceStarted() { tRestarts.incrementAndGet(); }
+  public static void onAlarmFired() { tFired.incrementAndGet(); tLastFired = System.currentTimeMillis(); }
 
   /* THE TWO CHECKBOXES, ANSWERED BEFORE THE WEBVIEW IS WOKEN.
    *
@@ -242,10 +249,9 @@ public class FolderSyncPlugin extends Plugin {
    */
   @PluginMethod
   public void configure(PluginCall call) {
-    SyncStore store = new SyncStore(getContext());
     try {
       JSArray folders = call.getArray("folders");
-      store.configure(
+      new SyncStore(getContext()).configure(
           Boolean.TRUE.equals(call.getBoolean("enabled", false)),
           call.getString("apiBase", ""),
           call.getString("mediaBase", ""),
@@ -256,23 +262,6 @@ public class FolderSyncPlugin extends Plugin {
       call.reject("could not store the sync settings: " + t.getMessage());
       return;
     }
-    /* AND ARM THE CLOCK, which is the whole of "background sync does not work on this phone".
-     *
-     * It used to be armed by StayAwakeService — the "Stay connected" switch, off by default, in the
-     * notifications settings, described as a fallback for DMs and calls. A phone that had never
-     * touched it had no clock, so nothing ever asked for a background sweep and folder sync stopped
-     * with the screen. The feature asks for its own clock now.
-     *
-     * ON EVERY CONFIGURE, not once: an alarm does not survive a reboot, a force-stop clears it, and
-     * FLAG_UPDATE_CURRENT means re-arming replaces rather than multiplies. The page calls this at
-     * startup and after every sweep, so opening the app is what puts the clock back.
-     *
-     * CANCELLED when nothing is left to sync — including when this account signs out — because an
-     * alarm that wakes the phone every sixteen minutes to decide there is no work is exactly the
-     * battery complaint that gets a sync feature turned off. */
-    // GUARDED. Everything else in this method is, and this is on the path a sweep takes on
-    // every start — a throw here would surface as the app dying when you press Sync.
-    try { SyncClock.followStore(getContext()); } catch (Throwable ignored) { }
     call.resolve();
   }
 
@@ -280,8 +269,6 @@ public class FolderSyncPlugin extends Plugin {
   @PluginMethod
   public void forgetNative(PluginCall call) {
     new SyncStore(getContext()).forget();
-    // …and stop waking the phone for an account that is no longer here.
-    SyncClock.cancel(getContext());
     call.resolve();
   }
 
@@ -291,9 +278,6 @@ public class FolderSyncPlugin extends Plugin {
     SyncStore store = new SyncStore(getContext());
     JSObject o = new JSObject();
     o.put("enabled", store.nativeEnabled());
-    // WHY it is off, when it is. "native sweep: off" on its own sent this investigation down two
-    // wrong paths; the store knows exactly which of the four facts is missing, so it says.
-    o.put("why_off", store.whyDisabled());
     o.put("haveKey", place.poster.app.signer.SignerKey.have(getContext()));
     o.put("running", NativeRunner.busy());
     o.put("why", NativeRunner.why());
@@ -305,44 +289,16 @@ public class FolderSyncPlugin extends Plugin {
    * opens the app while the alarm is running one), and two sweeps writing the same manifest is
    * last-writer-wins on the document that decides whether files exist. Both sides take the same
    * lock; a refusal is an ordinary "already syncing", not an error. */
-  /* WHAT THIS PAGE IS HOLDING, so it can be given back when the page is taken away. A claim is
-   * released in the sweep's `finally`, which does not run when the renderer is killed mid-sweep —
-   * the case this whole native path exists for. Without this the key stays claimed for the life of
-   * the process and NEITHER engine can touch that folder again until the app is force-stopped. */
-  private static final java.util.Set<String> pageClaims =
-      java.util.Collections.synchronizedSet(new java.util.LinkedHashSet<String>());
-
-  /** Record that the PAGE holds this folder. Package-private so the handover can be run in a test —
-   *  the alternative is asserting on the text of the release loop, which is how three bugs shipped. */
-  static void notePageClaim(String key) { pageClaims.add(key); }
-
-  /** The body of {@link #releaseSweep} without the bridge, so the ownership rule can be RUN. */
-  static void releaseForTest(String key) { if (pageClaims.remove(key)) NativeSweep.release(key); }
-
   @PluginMethod
   public void claimSweep(PluginCall call) {
-    String key = call.getString("key", "");
-    boolean ok = NativeSweep.claim(key);
-    if (ok) notePageClaim(key);
     JSObject o = new JSObject();
-    o.put("ok", ok);
+    o.put("ok", NativeSweep.claim(call.getString("key", "")));
     call.resolve(o);
   }
 
-  /**
-   * ONLY RELEASE WHAT THIS PAGE STILL HOLDS.
-   *
-   * It used to release unconditionally, which was harmless while the page was the only thing that
-   * ever took a claim. It is not any more: `handleOnPause` hands the folders to the native sweep and
-   * clears `pageClaims`, so a stalled page sweep that finishes minutes later — after being unfrozen
-   * by the app reopening — would arrive here and free a claim the NATIVE sweep is currently holding,
-   * letting a third sweep start on a folder already being written. The claim set is the only thing
-   * standing between two engines and one manifest, so the release has to be as owned as the claim.
-   */
   @PluginMethod
   public void releaseSweep(PluginCall call) {
-    String key = call.getString("key", "");
-    if (pageClaims.remove(key)) NativeSweep.release(key);
+    NativeSweep.release(call.getString("key", ""));
     call.resolve();
   }
 
@@ -351,94 +307,6 @@ public class FolderSyncPlugin extends Plugin {
     pNeedCharging = Boolean.TRUE.equals(call.getBoolean("needCharging", false));
     pNeedUnmetered = Boolean.TRUE.equals(call.getBoolean("needUnmetered", false));
     call.resolve();
-  }
-
-  /* IS THE APP ON SCREEN RIGHT NOW.
-   *
-   * THE NATIVE SWEEP MUST NOT COMPETE WITH THE PAGE, and until the clock started firing it never
-   * had the chance to. Making background sync actually run turned a dormant conflict into the
-   * reported one: the alarm claims "Pictures", the person looking at the app presses Sync now, the
-   * page's claim is refused, and the card sits on "syncing in the background — it will finish on its
-   * own" with no progress of its own to show. From the user's side that is a hang, and it is a hang
-   * they caused by opening the app.
-   *
-   * The division is by VISIBILITY, which is also the honest one: the native sweep exists because a
-   * hidden page's JavaScript is throttled. A page that is on screen is not throttled — it is the
-   * better engine, it can settle conflicts the background sweep defers, and it can show progress. So
-   * while the app is up, the page owns the folders and the alarm stands down; the moment it is
-   * backgrounded (including the screen going off, which is what `onPause` means here) the native
-   * sweep takes over.
-   */
-  private static volatile boolean foreground = false;
-
-  public static boolean appInForeground() { return foreground; }
-
-  /** Visible ONLY so the stand-down can be run in a test — there is no device in this loop, and the
-   *  alternative is asserting on the text of the `if` that implements it. */
-  static void setForegroundForTest(boolean on) { foreground = on; }
-
-  @Override
-  public void handleOnResume() { foreground = true; super.handleOnResume(); }
-
-  /**
-   * THE SCREEN JUST WENT OFF, AND THIS IS THE MOMENT THE WHOLE FEATURE IS ABOUT.
-   *
-   * Setting a flag here and waiting for the next alarm was the bug behind the report that never went
-   * away: *"syncing stops shortly after you turn off the screen"*. Read literally — and it was
-   * literal — a sweep is RUNNING when the screen goes off, and it dies. Nothing in the clock work
-   * addressed that, because the clock is about sweeps that have not started.
-   *
-   * What actually happened: the page's sweep is JavaScript, Chromium throttles a hidden page's
-   * timers to roughly one a minute, so the sweep does not fail — it STALLS, mid-folder, holding the
-   * per-folder claim. The next alarm arrives up to sixteen minutes later, finds the folder claimed,
-   * and skips it. Nothing resumes until the claim expires or somebody opens the app. From the
-   * outside: it was syncing, you locked the phone, it stopped.
-   *
-   * So backgrounding is a HANDOVER, performed now:
-   *   * the page's claims are RELEASED — a hidden page cannot finish them, so holding them only
-   *     blocks the engine that can;
-   *   * the native sweep is started immediately rather than at the next tick.
-   *
-   * Starting a foreground service is allowed here because the app is still foreground at onPause —
-   * this is the one moment in the cycle where that start is never refused, which is exactly when it
-   * is needed. A brief overlap with a page sweep that has not yet been throttled is possible and is
-   * survivable: `store.save` re-reads and merges, and the server's collapse guard is the backstop.
-   * A folder that syncs nothing until you next unlock the phone is not survivable.
-   */
-  @Override
-  public void handleOnPause() {
-    foreground = false;
-    try { handOver(); } catch (Throwable ignored) { }
-    super.handleOnPause();
-  }
-
-  /**
-   * Give the folders to the engine that can still run, and start it.
-   *
-   * THE CLAIMS GO BACK ON THIS THREAD and the rest does not. Releasing is a set operation and has to
-   * happen before anything else can look; deciding does not — `eligible()` opens the keystore,
-   * parses the folder list and runs the whole policy, and `onPause` is a main-looper callback the
-   * system times. Work that heavy on the looper at exactly the moment the screen is going off is how
-   * a background feature becomes a foreground stutter, or worse.
-   */
-  private void handOver() {
-    synchronized (pageClaims) {
-      if (!pageClaims.isEmpty()) {
-        NativeSweep.releaseAll(new java.util.LinkedHashSet<String>(pageClaims));
-        pageClaims.clear();
-      }
-    }
-    final Context ctx = getContext();
-    if (ctx == null) return;
-    final Context app = ctx.getApplicationContext();
-    new Thread(new Runnable() {
-      public void run() {
-        try {
-          if (!NativeRunner.eligible(app)) return;   // nothing due, no key, or already sweeping
-          if (!SyncService.start(app)) SyncWork.start(app);
-        } catch (Throwable ignored) { }
-      }
-    }, "pc-sync-handover").start();
   }
 
   @Override
@@ -453,14 +321,6 @@ public class FolderSyncPlugin extends Plugin {
     // the sweep running in the page that just went away.
     if (INSTANCE == this) INSTANCE = null;
     releaseWake();
-    /* …and every folder this page had claimed. Only its own: a native sweep running in the service
-     * must survive the page dying, which is the entire point of it. */
-    synchronized (pageClaims) {
-      if (!pageClaims.isEmpty()) {
-        NativeSweep.releaseAll(new java.util.LinkedHashSet<String>(pageClaims));
-        pageClaims.clear();
-      }
-    }
     super.handleOnDestroy();
   }
 
@@ -474,22 +334,6 @@ public class FolderSyncPlugin extends Plugin {
    * Nothing today reads this — the caller re-arms its clock either way — and it is written down
    * because the moment something logs or counts on it, the honest answer is the one above.
    */
-  /**
-   * The same tick, POSTED TO THE MAIN THREAD, for callers that are deliberately not on it.
-   *
-   * The alarm receiver now does its deciding on a background thread — a battery read and a Keystore
-   * lookup on the looper of a dozing phone is an ANR, which throws nothing and ends as "the app just
-   * closes". This one call is the exception to that move: it ends in `notifyListeners`, i.e. a
-   * bridge call into the WebView, and the WebView is single-threaded and owns the UI thread.
-   */
-  public static void tickOnMain(final String why) {
-    try {
-      new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
-        public void run() { try { tick(why); } catch (Throwable ignored) { } }
-      });
-    } catch (Throwable ignored) { }
-  }
-
   public static boolean tick(String why) {
     FolderSyncPlugin p = INSTANCE;
     if (p == null) { tDropped.incrementAndGet(); return false; }
@@ -511,36 +355,16 @@ public class FolderSyncPlugin extends Plugin {
   @PluginMethod
   public void tickStats(PluginCall call) {
     JSObject o = new JSObject();
-    o.put("armed", SyncClock.armedCount());
-    o.put("fired", SyncClock.firedCount());
+    o.put("armed", tArmed.get());
+    o.put("fired", tFired.get());
     o.put("delivered", tDelivered.get());
     o.put("dropped", tDropped.get());
     o.put("suppressed", tSuppressed.get());
+    o.put("restarts", tRestarts.get());
     o.put("needCharging", pNeedCharging);
     o.put("needUnmetered", pNeedUnmetered);
-    /* THE CLOCK, WHICH IS NOW FOLDER SYNC'S OWN. Reported as two WALL-CLOCK TIMES that survive a
-     * process death, not as a flag: the panel can only be opened from a running page, and a running
-     * page has already armed, so any "is it armed" boolean reads true to everyone who can ask it.
-     * "armed 4 min ago, last fired never" is a clock that is not running and says so on sight. */
-    o.put("lastArmedAt", SyncClock.lastArmedAt(getContext()));
-    o.put("lastFiredAt", SyncClock.lastFiredAt(getContext()));
+    o.put("lastFiredAt", tLastFired);
     o.put("lastDeliveredAt", tLastDelivered);
-    o.put("clockArmed", SyncClock.armedThisProcess());
-    o.put("clockPeriodMin", (int) (SyncClock.PERIOD_MS / 60000L));
-    /* WHETHER THE ALARM IS EXACT, which sounds like a detail about punctuality and is the thing that
-     * decides whether a background sweep may hold the process at all: Android 12+ only lets an
-     * EXACT alarm start a foreground service. On 13+ that is a permission the user grants, so this
-     * being false is normal — and it is why `job` exists beside `foreground` below. */
-    o.put("clockExact", SyncClock.isExact(getContext()));
-    /* WHICH ROUTE THE SWEEP ACTUALLY GOT. `foreground` = a foreground service (best: no time limit).
-     * `refused` = Android would not allow one. `job` = the expedited-job fallback, which also keeps
-     * the process out of the freezer but is capped at about ten minutes. All three are counted
-     * because from every other vantage point they look identical — silence. */
-    o.put("foreground", SyncClock.foregroundCount());
-    o.put("foregroundRefused", SyncClock.refusedCount());
-    o.put("job", SyncClock.jobCount());
-    o.put("sweepServiceUp", SyncService.running);
-    // Still reported, because it is no longer REQUIRED and somebody will ask whether it is.
     o.put("serviceUp", place.poster.app.push.StayAwakeService.running);
     o.put("stayConnected", place.poster.app.push.StayAwakeService.wanted(getContext()));
     call.resolve(o);
@@ -630,79 +454,26 @@ public class FolderSyncPlugin extends Plugin {
     final long maxBytes = call.getLong("maxBytes", 0L) == null ? 0L : call.getLong("maxBytes", 0L);
     final List<String> excludes = strings(call.getArray("excludes"));
 
-    final int offset = call.getInt("offset", 0) == null ? 0 : call.getInt("offset", 0);
-    final int limit = call.getInt("limit", 0) == null ? 0 : call.getInt("limit", 0);
-
     // Off the WebView thread: a Pictures folder is minutes of provider queries, and blocking here
     // freezes the UI the user is watching the progress in.
     getBridge().execute(() -> {
       try {
-        final String key = id + "|" + hash + "|" + maxBytes + "|" + excludes;
-        SafFs.Scan sc;
-        java.util.List<String> keys;
-        synchronized (SCAN_LOCK) {
-          if (offset == 0 || scanCache == null || !key.equals(scanCacheKey)) {
-            sc = fs(id).scan(hash, maxBytes, excludes);
-            scanCache = sc;
-            scanCacheKey = key;
-            scanKeys = new ArrayList<String>(sc.files.keySet());
-          } else {
-            sc = scanCache;
-          }
-          keys = scanKeys;
-        }
-
-        final int total = keys.size();
-        final int end = limit <= 0 ? total : Math.min(total, offset + limit);
+        SafFs.Scan sc = fs(id).scan(hash, maxBytes, excludes);
         JSObject files = new JSObject();
-        for (int i = offset; i < end; i++) {
-          String k = keys.get(i);
-          files.put(k, mapToJs(sc.files.get(k)));
+        for (java.util.Map.Entry<String, java.util.Map<String, Object>> e : sc.files.entrySet()) {
+          files.put(e.getKey(), mapToJs(e.getValue()));
         }
         JSArray skipped = new JSArray();
-        // Only with the first page: it is small, and eleven copies of it is eleven copies.
-        if (offset == 0) for (java.util.Map<String, Object> s : sc.skipped) skipped.put(mapToJs(s));
-
+        for (java.util.Map<String, Object> s : sc.skipped) skipped.put(mapToJs(s));
         JSObject ret = new JSObject();
         ret.put("files", files);
         ret.put("skipped", skipped);
-        ret.put("total", total);
-        ret.put("done", end >= total);
-        // Let the map go the moment the last page is out. Holding a 15,000-entry snapshot for the
-        // life of the process would trade one memory spike for a permanent one.
-        if (end >= total) {
-          synchronized (SCAN_LOCK) {
-            if (key.equals(scanCacheKey)) { scanCache = null; scanKeys = null; scanCacheKey = ""; }
-          }
-        }
         call.resolve(ret);
       } catch (Exception e) {
         call.reject("scan failed: " + e.getMessage());
       }
     });
   }
-
-  /* THE FOLDER LISTING IS HANDED OVER IN PAGES, AND THAT IS WHAT STOPPED THE APP DYING.
-   *
-   * This used to answer with every file in one reply. For a real Pictures folder — measured at about
-   * 15,000 files — that object exists FOUR TIMES AT ONCE at the moment it crosses: the Java map, the
-   * org.json copy built here, the multi-megabyte JSON STRING Capacitor serialises it into to cross
-   * the bridge, and the parsed object on the other side. A WebView has far less headroom than the
-   * desktop this engine was written on, and the result is the renderer being killed the instant a
-   * sweep of that folder starts — reported exactly that way: "as soon as pictures starts syncing, it
-   * closes", with the app still sitting in the recents list, because the PROCESS never died. Only the
-   * renderer did, which is why nothing was ever thrown, logged, or catchable.
-   *
-   * The same reasoning already produced `readPart`/`writePart` for file CONTENT; the directory
-   * listing was the one whole-folder object left.
-   *
-   * The walk itself still happens once — it is minutes of provider queries and must not be repeated
-   * per page — so the result is cached here and served in slices. `limit <= 0` keeps the old
-   * behaviour intact, which is what an older client that does not page still asks for. */
-  private static final Object SCAN_LOCK = new Object();
-  private static SafFs.Scan scanCache;
-  private static String scanCacheKey = "";
-  private static java.util.List<String> scanKeys;
 
   @PluginMethod
   public void read(PluginCall call) {

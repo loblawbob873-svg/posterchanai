@@ -45,7 +45,4 @@ public abstract class ContentResolver {
   public static void setSyncAutomatically(Account account, String authority, boolean sync) {
     syncPermission();
   }
-  public java.util.List<UriPermission> getPersistedUriPermissions() { return null; }
-  public void takePersistableUriPermission(android.net.Uri uri, int modeFlags) { }
-  public void releasePersistableUriPermission(android.net.Uri uri, int modeFlags) { }
 }

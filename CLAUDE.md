@@ -803,65 +803,13 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   **The UNATTENDED background job cannot upload and that is not a bug**: every network step is signed
   by the user's Nostr key, which with Amber/NIP-46 is not on the device — so `SyncCheckWorker` holds
   no key, opens no socket, notices changes and notifies.
-  **BACKGROUND SYNC RODE "STAY CONNECTED", AND THAT ONE FACT IS WHY EVERY FIX BEFORE IT WAS
-  INVISIBLE.** The alarm lived in `StayAwakeService` — a NOTIFICATIONS feature, **off by default**,
-  for DMs and calls where no push distributor is installed. On a phone that had never touched that
-  switch there was NO CLOCK AT ALL, so the Doze alarm, the wake lock, its renewal, `resumeTimers` and
-  finally an entire native sweep engine were all downstream of a tick nothing emitted: sync worked
-  with the screen on (the page's own heartbeat) and stopped when it went off. Reported that way on a
-  phone AND a tablet, across several rounds of "fixed". **A feature asks for what it needs itself** —
-  the same lesson the background signer cost. It is now `sync/SyncClock` (armed from
-  `FolderSyncPlugin.configure` and from `BootReceiver`, cancelled when nothing syncs) →
-  `sync/SyncTickReceiver` → `sync/SyncService`. Three things were separately missing and all three
-  are load-bearing: (a) **the clock**, owned by folder sync — and it asks for an **EXACT** alarm
-  where the platform allows one, which reads as a detail about punctuality and is the thing that
-  decides (b): Android 12+ only lets an *exact* alarm start a background FGS, an inexact
-  `setAndAllowWhileIdle` is temp-allowlisted with FGS explicitly NOT allowed; (b) **somewhere to run
-  that Android will not freeze** — a wake lock is the CPU and says nothing about the PROCESS, and a
-  cached process on 12+ is FROZEN, which is exactly "runs for a moment after the screen goes off and
-  then stops"; a receiver's ~10s is not a sweep. `SyncService` is `specialUse` (NOT `dataSync` —
-  Android 15 caps that at 6h/day app-wide and a first Pictures sync is hours), joins `RunningNote`'s
-  single notification, handles `onTimeout`, and a REFUSED FGS start falls back to `sync/SyncWork`,
-  an **expedited job** (no background-start restriction, also un-freezable) — never to a bare thread,
-  which IS the original bug. On 13+ the exact-alarm permission is the user's to grant, so the job
-  route is the ordinary one, not an edge case. Every route is counted; (c) **the key** —
-  `NativeRunner` needs a Keystore secret and the only two things that ever
-  stored one were the NIP-55 "sign for other apps" switch and a NIP-46 pairing, so an ordinary
-  account got "the account key is not on this device" about a key the page was holding and the native
-  sweep never ran once. `sync.js _pushNativeConfig` calls `PC.armNativeSigner()` (→ `Signer.arm`,
-  which does NOT set `exposed`) before configuring — **gated on the same four facts as `enabled`**,
-  or every local-key Android user gets their nsec sealed for a feature they never opened; matched on
-  PUBKEY, not on "a key exists", or a switched account signs as the previous one; and cleared by
-  `logout()` (`Signer.disable`), which used to be unnecessary because only `Session` held the secret.
-  **`RunningNote.othersRunning` takes an int, not a boolean**: "the OTHER one" stopped meaning
-  anything at three services, and getting it wrong deletes the shared notification out from under a
-  service that is still foreground.
-  **AND THE ROOT CAUSE WAS ONE LINE, UNDER ALL OF THAT:** `NativeRunner.deviceState` did
-  `s.put("online", nc != null)` — but a null from `getNetworkCapabilities(getActiveNetwork())` means
-  "I could not read the network", NOT "offline", and it is what a DOZING device answers. The alarm
-  exists to fire while dozing, so the one moment the feature was built for was the moment it read
-  itself offline → `shouldSync` `why:offline` → `plan()` "no folder is due" → nothing swept. It
-  worked with the app open and never with the screen off. Unreadable is UNSET now (`shouldSync`
-  guards on `!= null`); a READABLE manager with no active network is still a real offline. The same
-  file already stated this rule for `metered` — **failing closed on an unreliable read stops the
-  feature outright, which is the worse error.**
-  **`tests/test_android_sync_state.py` RUNS this** (javac + `java` against `tests/androidstubs`, with
-  a `Fake extends Context` backed by a HashMap) — every finding mutation-verified. Two days went into
-  text-matching tests that were all green while the logic was wrong: **grep the WIRING, RUN the
-  LOGIC.** Also there: `nativeEnabled()` is DERIVED from disk (the page pushed it as a boolean, and a
-  cold start with no `mk` wrote `false` over a working config on every launch), the native sweep
-  stands down while `FolderSyncPlugin.appInForeground()` (two engines racing meant "already syncing,
-  no progress" on the screen the user was watching), and a claim EXPIRES at 20 min and is stolen, or
-  one wedged sweep bricks the folder until force-stop.
-  **AND "STOPS SHORTLY AFTER THE SCREEN GOES OFF" MEANT EXACTLY THAT — a sweep that is RUNNING, not
-  one that never starts.** The page's sweep is JS; a hidden page is throttled to ~1 timer/min, so it
-  STALLS mid-folder still holding the per-folder claim, and the next alarm (≤16 min) skips that
-  folder as claimed. Nothing resumes until the claim expires or the app is reopened.
-  `FolderSyncPlugin.handleOnPause` is a HANDOVER: release the page's claims and start the native
-  sweep NOW. onPause is also the one moment an FGS start cannot be refused (still foreground).
-  The WebView tick remains for the accounts Java cannot sign for — `FolderSyncPlugin.tick()` →
-  `folderSyncTick` → `fs-android.onTick` → `sync.js nudge(force)` — and four things about it are
-  load-bearing, each verified by a test: (1) it is an
+  **"STAY CONNECTED" IS THE PATH THAT DOES SYNC IN THE BACKGROUND, AND IT WAS DEAD.** That switch's
+  foreground service keeps the WebView (which DOES hold the key) resident — but nothing ever asked it
+  to sync: there is no watcher on Android (`fs-android.watch()` answers false), so the only automatic
+  trigger was a JS `setInterval`, which Android throttles in a hidden WebView. "Syncing stops every
+  time the screen goes off", with the switch already on. The clock is native now — StayAwakeService →
+  `FolderSyncPlugin.tick()` → `folderSyncTick` → `fs-android.onTick` → `sync.js nudge(force)` — and
+  four things about it are load-bearing, each verified by a test: (1) it is an
   **`AlarmManager.setAndAllowWhileIdle`, NEVER a `Handler`** — `postDelayed` is scheduled on
   `uptimeMillis()`, which STOPS in deep sleep, and a foreground service keeps the process resident
   without keeping the CPU awake, so a Handler fires only when something else happens to wake the

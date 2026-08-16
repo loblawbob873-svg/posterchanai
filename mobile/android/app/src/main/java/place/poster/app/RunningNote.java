@@ -12,7 +12,6 @@ import androidx.core.app.NotificationCompat;
 
 import place.poster.app.push.StayAwakeService;
 import place.poster.app.signer.SignerRelayService;
-import place.poster.app.sync.SyncService;
 
 /**
  * ONE permanent notification, however many background services are up.
@@ -83,23 +82,14 @@ public final class RunningNote {
         return apps == 1 ? "Signing for 1 app" : "Signing for " + apps + " apps";
     }
 
-    /** The one line of text, composed from whatever is up. Public so a test can read the rules.
-     *
-     *  COMPOSED, NOT ENUMERATED. It used to be a truth table over two services, which is readable at
-     *  two and is four branches at three — and the branch that gets forgotten is always the new
-     *  service's, which then runs with a notification describing somebody else's job. */
+    /** The one line of text, composed from whatever is up. Public so a test can read the rules. */
     public static String text() {
-        StringBuilder b = new StringBuilder();
-        if (SignerRelayService.running) b.append(signerLine());
-        if (StayAwakeService.running) {
-            if (b.length() > 0) b.append(" · staying connected");
-            else b.append("Staying connected so messages and calls reach you");
-        }
-        if (SyncService.running) {
-            if (b.length() > 0) b.append(" · syncing folders");
-            else b.append("Syncing your folders");
-        }
-        return b.length() == 0 ? "Working in the background" : b.toString();
+        boolean signer = SignerRelayService.running;
+        boolean stay = StayAwakeService.running;
+        if (signer && stay) return signerLine() + " · staying connected";
+        if (signer) return signerLine();
+        if (stay) return "Staying connected so messages and calls reach you";
+        return "Working in the background";
     }
 
     public static Notification build(Context ctx) {
@@ -112,10 +102,6 @@ public final class RunningNote {
         boolean signer = SignerRelayService.running;
         boolean stay = StayAwakeService.running;
         boolean both = signer && stay;
-        /* The sweep deliberately gets NO action button. The other two are standing preferences the
-         * user turned on and may want off from the shade; this one is a few minutes of work that
-         * ends by itself, and a "Turn off" beside it would mean "abandon this sweep", which is not
-         * a thing anybody wants to be offered at a glance. */
 
         NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, CHANNEL)
                 .setContentTitle("PosterChan")
@@ -150,21 +136,13 @@ public final class RunningNote {
         try { nm.notify(ID, build(ctx)); } catch (Throwable ignored) { }
     }
 
-    /** Who is asking. A boolean answered this while there were exactly two services; a third made
-     *  "the other one" meaningless, which is how a shared notification gets deleted from under a
-     *  service that is still foreground. */
-    public static final int SIGNER = 1, STAY = 2, SYNC = 3;
-
     /**
      * True when a service OTHER than the one asking is still foreground, i.e. the shared
      * notification must survive this stop.
      *
-     * @param me one of {@link #SIGNER}, {@link #STAY}, {@link #SYNC}
+     * @param meSigner true when the caller is the signer, false when it is "stay connected"
      */
-    public static boolean othersRunning(int me) {
-        boolean signer = me != SIGNER && SignerRelayService.running;
-        boolean stay = me != STAY && StayAwakeService.running;
-        boolean sync = me != SYNC && SyncService.running;
-        return signer || stay || sync;
+    public static boolean othersRunning(boolean meSigner) {
+        return meSigner ? StayAwakeService.running : SignerRelayService.running;
     }
 }

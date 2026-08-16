@@ -80,52 +80,13 @@
    * make an identical file look different to a device that chose another. */
   const CHUNK_BYTES = 4 * 1024 * 1024;
 
-  /* How many files cross the bridge at a time. Small enough that the transient JSON string stays in
-   * the hundreds of kilobytes on a folder of any size, large enough that a 15,000-file folder is ten
-   * round trips rather than a thousand. */
-  const SCAN_PAGE = 1500;
-
-  async function _scanPaged(id, opts){
-    const base = Object.assign({ id }, opts || {});
-    const files = {};
-    let skipped = [], offset = 0, page = 0;
-    for(;;){
-      const r = await P.scan(Object.assign({}, base, { offset, limit: SCAN_PAGE }));
-      if(!r) break;
-      const got = r.files || {};
-      let n = 0;
-      for(const k in got){ files[k] = got[k]; n++; }
-      /* THE SKIPPED LIST BELONGS TO THE WALK, NOT TO THE PAGE. The plugin sends it with the first
-       * reply only, and taking it from every reply would report one too-big file eleven times on an
-       * eleven-page folder — a folder-size-dependent lie in the one message that explains why
-       * something did not sync. */
-      if(page === 0 && r.skipped && r.skipped.length) skipped = r.skipped.slice();
-      page++;
-      offset += n;
-      // `done` absent = a plugin older than paging, which already sent everything.
-      if(r.done === undefined || r.done || n === 0) break;
-    }
-    return { files, skipped };
-  }
-
   window.pcFs = {
     chunkBytes: CHUNK_BYTES,
     list: () => P.list().then(r => r.roots || []),
     // {} when the user backed out of the system picker — a cancel is not an error.
     pick: () => P.pick().then(r => (r && r.id) ? r : null),
     forget: (id) => P.forget({ id }),
-    /* THE FOLDER LISTING COMES BACK IN PAGES, AND THAT IS WHAT STOPPED THE APP DYING.
-     *
-     * One reply carrying every file meant that object existed four times at once as it crossed: the
-     * Java map, the org.json copy, the multi-megabyte JSON string Capacitor serialises to cross the
-     * bridge, and the parsed object here. On a real Pictures folder (~15,000 files) that killed the
-     * WebView's RENDER PROCESS the moment a sweep started — "as soon as pictures starts syncing, it
-     * closes", with the app still in the recents list, because the process itself never died.
-     *
-     * The caller's shape is unchanged: it still gets one {files, skipped}. Only the crossing is
-     * split. An older plugin that ignores `limit` sends everything and omits `done`, which ends the
-     * loop after the first reply — so this is safe against a mismatched APK either way. */
-    scan: (id, opts) => _scanPaged(id, opts),
+    scan: (id, opts) => P.scan(Object.assign({ id }, opts || {})),
     read: (id, rel) => P.read({ id, rel }).then(r => toBytes(r.b64)),
     /* Slice I/O — what lets a file bigger than this process can hold move at all. Whole-file read()
      * puts the file in the plugin, again across the bridge as base64, and again in the WebView,
