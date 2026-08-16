@@ -529,3 +529,42 @@ def test_a_sweep_makes_sure_javascript_is_actually_running():
         "keeping timers running for the life of the service is a standing keep-awake, which is the "
         "battery cost the whole policy exists to avoid"
     )
+
+
+def test_a_backgrounded_sweep_keeps_the_renderer_unthrottled():
+    """THE HALF A WAKE LOCK CANNOT BUY.
+
+    Chromium throttles a hidden page's JavaScript however awake the CPU is — a browser policy, not a
+    power one. That is why every earlier attempt failed after a short period while the alarm fired
+    faithfully and the tick was delivered into a page that was not running: the counters said
+    `1 fired, 1 delivered` and were telling the truth.
+
+    The one documented exemption is a page playing audio, which is exactly why this app's music
+    player already keeps working with the screen off. A sweep borrows it: silence, on a loop, at zero
+    volume, for the length of the sweep only.
+
+    Three properties, because this is a hack and an unbounded one would be a battery complaint:
+    scoped to a sweep (started with the wake lock, stopped in the same finally), silent and
+    focus-free so it cannot touch anybody's music, and native-platform only."""
+    sync = _read(CLIENT, "sync.js")
+    assert "_keepRendererAwake" in sync, (
+        "nothing keeps the renderer running, so a backgrounded sweep is throttled to a stop however "
+        "well the alarm and the wake lock work"
+    )
+    body = sync[sync.index("function _keepRendererAwake("):]
+    body = body[:body.index("\n  }")]
+    assert "volume = 0" in body, "audible audio during a sync is not acceptable"
+    assert "window.Capacitor" in body, (
+        "this must not run on desktop or in a browser tab — Electron sets backgroundThrottling:false "
+        "and a tab is the user's own business"
+    )
+    assert "requestAudioFocus" not in sync and "AudioFocus" not in sync, (
+        "requesting audio focus would pause somebody's music to run a file sync"
+    )
+    # Scoped to a sweep: started where the lock is taken, stopped where it is released.
+    start = sync.index("_keepRendererAwake(true)")
+    stop = sync.index("_keepRendererAwake(false)")
+    assert "wakeBegin" in sync[start-400:start], "it is not started with the wake lock"
+    assert "running.delete(f.id)" in sync[stop-400:stop], (
+        "it is not stopped in the finally, so a sweep that threw would leave audio looping for ever"
+    )

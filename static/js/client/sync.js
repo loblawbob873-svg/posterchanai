@@ -835,6 +835,45 @@
     return p;
   }
 
+  /* KEEPING THE RENDERER ALIVE, which is the half a wake lock cannot buy.
+   *
+   * Chromium throttles a hidden page's JavaScript no matter how awake the CPU is — that is a browser
+   * policy, not a power one, and it is why every previous attempt here failed after a short period
+   * while the alarm fired faithfully and the tick was delivered into a page that was not running.
+   *
+   * It has ONE documented exemption: a page playing audio is not throttled. That is exactly why this
+   * app's music player already keeps working with the screen off, and it is the same mechanism
+   * borrowed for the length of a sweep — a few hundred milliseconds of digital silence on a loop, at
+   * zero volume.
+   *
+   * IT IS A HACK AND IT IS WRITTEN DOWN AS ONE. The honest fix is to move the transfer into Java,
+   * where this app's other background work already lives (push, the media session, the signer) and
+   * where every other sync app on Android does it. That needs the key in native storage, which is
+   * now true for a local key and will never be true for Amber. Until then this is what makes a
+   * backgrounded sweep actually run.
+   *
+   * NO AUDIO FOCUS IS REQUESTED and the volume is zero, so it cannot pause somebody's music, duck a
+   * call, or appear on the lock screen. It runs ONLY while a sweep is in flight — started with the
+   * wake lock, stopped in the same `finally` — so an idle app is exactly as quiet as before. */
+  let _silence = null;
+  const _SILENCE = 'data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
+  function _keepRendererAwake(on){
+    try{
+      if(!on){ if(_silence){ try{ _silence.pause(); }catch(_){} } return; }
+      // Only where the renderer is actually at risk: a phone or tablet. Desktop Electron sets
+      // backgroundThrottling:false and a browser tab is the user's own business.
+      if(!window.Capacitor) return;
+      if(!_silence){
+        _silence = new Audio(_SILENCE);
+        _silence.loop = true;
+        _silence.volume = 0;
+        _silence.preload = 'auto';
+      }
+      const p = _silence.play();
+      if(p && p.catch) p.catch(()=>{});   // refused without a gesture; the sweep still runs
+    }catch(_){}
+  }
+
   async function sweep(f, opts){
     const o = opts || {};
     /* A SWEEP ALREADY RUNNING MAKES THE BUTTON DO NOTHING, AND THAT HAS TO BE SAID OUT LOUD.
@@ -908,6 +947,7 @@
       let _wakeTimer = null;
       if(!o.dryRun && _wake && _wake.wakeBegin){
         try{ await _wake.wakeBegin(); }catch(_){}
+        _keepRendererAwake(true);
         _wakeTimer = setInterval(() => {
           try{ const r = _wake.wakeBegin(); if(r && r.catch) r.catch(()=>{}); }catch(_){}
         }, 60000);
@@ -975,6 +1015,7 @@
         // Released on EVERY exit — a sweep that threw still has to give the processor back, and the
         // renewal must stop with it or it holds the lease open for ever.
         if(_wakeTimer){ clearInterval(_wakeTimer); _wakeTimer = null; }
+        _keepRendererAwake(false);
         if(!o.dryRun && _wake && _wake.wakeEnd){ try{ await _wake.wakeEnd(); }catch(_){} }
       }
     })();
