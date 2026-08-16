@@ -120,3 +120,24 @@ def test_an_apk_older_than_paging_still_works(tmp_path):
     got = _node(DRIVER_OLD_APK, tmp_path)
     assert got["calls"] == 1, "it kept asking for pages an older plugin will never send"
     assert got["files"] == 40
+
+
+def test_a_file_is_never_held_whole_above_the_platforms_own_chunk_size():
+    """The whole-file upload path holds the plaintext, the base64 crossing the bridge, the ciphertext
+    and the upload body AT ONCE — three to four times the file. `chunkAbove` is what decides which
+    files take it, and it was hardcoded to the DESKTOP's 16 MB chunk while Android's is 4 MB. Every
+    photo and video between the two therefore went the expensive way on the device with the least
+    headroom, which is the renderer dying mid-sweep.
+
+    Structural, deliberately: this is about the value handed to the executor, and the executor's own
+    behaviour at that value is already covered by tests/client/test_sync_run.py."""
+    import re
+    src = open(os.path.join(ROOT, "static", "js", "client", "sync.js"), encoding="utf-8").read()
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    m = re.search(r"chunkAbove:\s*([^,\n]+)", src)
+    assert m, "the sweep no longer passes chunkAbove at all"
+    expr = m.group(1).strip()
+    assert "chunkBytes" in expr, (
+        "chunkAbove is a fixed number again (%s) — on any platform whose chunk is smaller, every "
+        "file in between is held whole on the device least able to afford it" % expr
+    )

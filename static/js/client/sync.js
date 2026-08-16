@@ -951,12 +951,24 @@
           shouldStop: () => stopping.has(f.id),
           // The platform decides how much it can hold at once; see fs-android.js.
           chunkBytes: (FS() && FS().chunkBytes) || 0,
-          /* Above ONE CHUNK a file goes up in pieces. This used to be 64 MB, which left every file
-           * under it on the whole-file path — and a 60 MB photo there costs ~240 MB of renderer
-           * memory, which is what kept killing the window on a big Pictures folder. Chunking is the
-           * normal path now, not the exception for enormous files: past 16 MB nothing is ever held
-           * whole, so no single file can spike memory however large it is. */
-          chunkAbove: 16 * 1024 * 1024,
+          /* ABOVE ONE CHUNK A FILE GOES UP IN PIECES — AND "ONE CHUNK" IS THE PLATFORM'S, NOT A
+           * NUMBER PICKED HERE.
+           *
+           * This said exactly that and then hardcoded 16 MB, which is the DESKTOP's chunk. Android's
+           * is 4 MB, deliberately, because every chunk crosses the Capacitor bridge as base64 held
+           * as UTF-16 (see fs-android.js). So on a phone every file between 4 and 16 MB — an
+           * ordinary photo from a recent camera, and every video in a Pictures folder — took the
+           * whole-file path, where the plaintext, the base64 crossing the bridge, the ciphertext and
+           * the upload body are all live at once: three to four times the file, so up to ~65 MB of
+           * renderer memory for a single 16 MB file, thousands of times over in one sweep.
+           *
+           * That is the renderer being killed mid-sweep: the app vanishes from the screen and STAYS
+           * IN THE RECENTS LIST, because the process never died — only the WebView's renderer.
+           * Nothing is thrown, nothing is logged, and no crash handler can see it.
+           *
+           * Deriving it removes the class rather than moving the threshold: a platform that says how
+           * much it can hold gets held to its own answer. */
+          chunkAbove: (FS() && FS().chunkBytes) || CHUNK_FALLBACK,
           hash: decision.mode === 'full', dryRun: !!o.dryRun,
           forceTrash: !!o.forceTrash,
           forceResurrect: !!o.forceResurrect,
