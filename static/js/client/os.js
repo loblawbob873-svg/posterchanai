@@ -157,6 +157,12 @@
   const FOLDERS = [
     { key: 'games', label: 'Nostr Games', icon: '#i-gamepad',
       views: ['chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem', 'xdc'] },
+    /* Contacts, Calendar and Email are one thing to reach for and were three icons apart. Like every
+     * entry here this is a DEFAULT and not a rule: drag Email onto the desktop and it stays out, while
+     * anything added to the group later still lands in it — and if the folder has been renamed, the
+     * newcomer joins the renamed one rather than making a second beside it. */
+    { key: 'office', label: 'Office', icon: '#i-folder',
+      views: ['contacts', 'calendar', 'mail'] },
   ];
 
   /* ---- YOUR layout -----------------------------------------------------------------------------

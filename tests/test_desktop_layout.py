@@ -119,9 +119,22 @@ class OrderTests(unittest.TestCase):
     def test_a_new_feature_appears_at_the_end(self):
         """THE rule that keeps a customised desktop alive: the document stores decisions, not the
         app list, so a feature shipped after it was written still shows up."""
-        later = APPS + [{"view": "mail", "label": "Mail", "icon": "#i-mail"}]
+        # NOT a view that a built-in FOLDER claims — one of those correctly lands in its group
+        # instead, which is a different rule (and its own test below).
+        later = APPS + [{"view": "kanban", "label": "Kanban", "icon": "#i-grid"}]
         lay = layout({"order": ["news", "home", "global", "notes", "folder:games"]}, later)
-        self.assertEqual(lay["items"][-1], "mail")
+        self.assertEqual(lay["items"][-1], "kanban")
+
+    def test_a_new_app_in_a_built_in_group_joins_it_rather_than_the_end(self):
+        """The other half of the same rule, and what makes the Office and Nostr Games defaults worth
+        having: a view the document has no opinion about, which a built-in folder claims, lands in
+        that folder — including on a desktop somebody arranged before the folder existed."""
+        later = APPS + [{"view": "mail", "label": "Email", "icon": "#i-mail"}]
+        lay = layout({"order": ["news", "home", "global", "notes"]}, later)
+        self.assertNotIn("mail", lay["items"])
+        office = members(lay, "office")
+        self.assertIsNotNone(office, "the Office group was not applied")
+        self.assertIn("mail", office)
 
     def test_a_retired_feature_leaves_without_taking_anything_with_it(self):
         """A view the sidebar no longer has (nostr_only, no instance, a removed feature) is dropped

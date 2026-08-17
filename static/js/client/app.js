@@ -3597,6 +3597,15 @@
         const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; try{ bumpChat(); }catch(_){} };   // the chat count moves between the header and the Chat item as this opens/closes
         apply(ClientSettings.get('discOpen', false));   // collapsed on first load — Discover is too cluttery open
         dt.onclick=()=>{ const o=!ClientSettings.get('discOpen', false); ClientSettings.set('discOpen', o); apply(o); }; } }
+    /* Collapsible "Office" group (Contacts / Calendar / Email).
+     *
+     * OPEN by default, unlike Discover and Games: those are places to browse, this is where somebody's
+     * mail and appointments live, and a collapsed group is one more click on the things most likely to
+     * be opened. The preference is remembered per device like the other two. */
+    { const ot=$('#office-toggle'); if(ot){ const sub=$('#office-sub'), chev=$('#office-chev');
+        const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; };
+        apply(ClientSettings.get('officeOpen', true));
+        ot.onclick=()=>{ const o=!ClientSettings.get('officeOpen', true); ClientSettings.set('officeOpen', o); apply(o); }; } }
     // Collapsible "Games" group (Chess).
     { const gt=$('#games-toggle'); if(gt){ const sub=$('#games-sub'), chev=$('#games-chev');
         const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; };

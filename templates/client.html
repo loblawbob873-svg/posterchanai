@@ -223,9 +223,6 @@
                  rather than inside Discover — it is a thing you reach for mid-thought, like AI. -->
             {% if not nostr_only %}<button class="nav-item" data-view="websearch"><svg class="ic"><use href="#i-search"></use></svg><span>Web Search</span></button>{% endif %}
             {% if not nostr_only %}<button class="nav-item" data-view="terminal"><svg class="ic"><use href="#i-terminal"></use></svg><span>Terminal</span></button>{% endif %}
-            <!-- Calendar: this node's own CalDAV server, so the same calendar syncs to a phone. -->
-            {% if not nostr_only %}<button class="nav-item" data-view="calendar"><svg class="ic"><use href="#i-clock"></use></svg><span>Calendar</span></button>{% endif %}
-            {% if not nostr_only %}<button class="nav-item" data-view="contacts"><svg class="ic"><use href="#i-user"></use></svg><span>Contacts</span></button>{% endif %}
             <button class="nav-item" data-view="messages"><svg class="ic"><use href="#i-speech"></use></svg><span>Messages<i id="dm-badge" class="badge hidden"></i></span></button>
             <!-- Email is its OWN view, directly under Messages, rather than a tab inside it. The two
                  share nothing but a metaphor: one is NIP-17 DMs held on relays, the other is IMAP
@@ -234,7 +231,20 @@
                  bar sat above every DM thread costing a row of a phone screen to a feature the user
                  was not in. Server-backed, so it is hidden with the rest of the instance features on
                  a nostr-only node and gated by _viewNeedsInstance in a server-less build. -->
-            {% if not nostr_only %}<button class="nav-item" data-view="mail"><svg class="ic"><use href="#i-mail"></use></svg><span>Email<i id="mail-badge" class="badge hidden"></i></span></button>{% endif %}
+            <!-- OFFICE: Calendar, Contacts and Email, which are one thing to reach for and were three
+                 rows apart. All three are server-backed (CalDAV/CardDAV through this node, IMAP through
+                 it too), so on a nostr-only node or a server-less build the whole group disappears
+                 together rather than leaving an empty heading. The group heading is a `group:` key, so
+                 Settings → Sidebar offers it as one switch as well as three. -->
+            <div class="nav-group">
+                <button class="nav-item nav-grouphd" id="office-toggle"><svg class="ic"><use href="#i-folder"></use></svg><span>Office</span><span class="chev" id="office-chev">▾</span></button>
+                <div class="nav-sub" id="office-sub">
+                    {% if not nostr_only %}<button class="nav-item sub" data-view="contacts"><svg class="ic"><use href="#i-user"></use></svg><span>Contacts</span></button>{% endif %}
+                    <!-- Calendar: this node's own CalDAV server, so the same calendar syncs to a phone. -->
+                    {% if not nostr_only %}<button class="nav-item sub" data-view="calendar"><svg class="ic"><use href="#i-clock"></use></svg><span>Calendar</span></button>{% endif %}
+                    {% if not nostr_only %}<button class="nav-item sub" data-view="mail"><svg class="ic"><use href="#i-mail"></use></svg><span>Email<i id="mail-badge" class="badge hidden"></i></span></button>{% endif %}
+                </div>
+            </div>
             <button class="nav-item" data-view="bookmarks"><svg class="ic"><use href="#i-bookmark"></use></svg><span>Bookmarks</span></button>
             <button class="nav-item" data-view="calls"><svg class="ic"><use href="#i-phone"></use></svg><span>Calls</span></button>
             <!-- Go Live was reachable ONLY from inside Discover → Streams, three levels down a collapsed

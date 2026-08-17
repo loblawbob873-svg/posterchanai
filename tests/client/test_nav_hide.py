@@ -245,7 +245,11 @@ class EditorTests(unittest.TestCase):
         r = run(sidebar=nostr_only, settings={"navHidden": ["mail", "translate", "news"]},
                 editor={"check": ["news"]})
         self.assertEqual(sorted(r["hiddenSet"]), ["mail", "translate"])
-        self.assertEqual(r["published"], [{"navHidden": ["mail", "translate"]}])
+        # `navHidden` is a SET of keys — the order it happens to be written in carries no meaning and
+        # follows wherever a row sits in the sidebar, so comparing it as a list makes this test fail
+        # whenever a row moves (it did, when Email joined the Office group).
+        self.assertEqual(len(r["published"]), 1)
+        self.assertEqual(sorted(r["published"][0]["navHidden"]), ["mail", "translate"])
 
     def test_a_gated_off_row_is_not_offered_as_a_choice(self):
         """`hidden` already took it away — a switch for it would promise something it cannot do."""
