@@ -286,6 +286,12 @@ public class FolderSyncPlugin extends Plugin {
   /** What the last unattended sweep actually did — the only surface any of it can be read from. */
   @PluginMethod
   public void nativeReport(PluginCall call) {
+    // Off the WebView thread: `SignerKey.have` is a Keystore lookup, and this is read from a panel
+    // somebody opened — a stutter there is the same defect as one at startup, just less often.
+    getBridge().execute(() -> nativeReportNow(call));
+  }
+
+  private void nativeReportNow(PluginCall call) {
     SyncStore store = new SyncStore(getContext());
     JSObject o = new JSObject();
     o.put("enabled", store.nativeEnabled());

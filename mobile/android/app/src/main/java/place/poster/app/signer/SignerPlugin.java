@@ -29,8 +29,15 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 @CapacitorPlugin(name = "Signer")
 public class SignerPlugin extends Plugin {
 
+    /* ALSO OFF THE WEBVIEW THREAD, for the same reason and on the same path: `_armNative` asks
+     * status() FIRST, to avoid re-sealing a key this phone already holds, so it runs at every launch
+     * too — and every one of the three SignerKey reads below is a Keystore lookup. */
     @PluginMethod
     public void status(PluginCall call) {
+        getBridge().execute(() -> statusNow(call));
+    }
+
+    private void statusNow(PluginCall call) {
         JSObject o = new JSObject();
         o.put("have", SignerKey.have(getContext()));
         // Separate from `have`: the background signer needs a KEY, the NIP-55 surface needs CONSENT.
@@ -88,19 +95,35 @@ public class SignerPlugin extends Plugin {
      * capability and stays an explicit choice. This one is asked for by the app itself, on behalf of
      * pairings the user made here, with a key that is already on this device.
      */
+    /**
+     * OFF THE WEBVIEW THREAD, BECAUSE THIS IS ON THE STARTUP PATH NOW.
+     *
+     * Capacitor runs a plugin method on the WebView's thread unless it hands off, and this one ends
+     * in {@link SignerKey#store}: AndroidKeyStore key generation and an AES-GCM seal — IPC to
+     * keystore2 and work in the secure element, hundreds of milliseconds to seconds on real hardware.
+     *
+     * It used to run only when somebody flipped "sign for other apps" or paired a desktop: a
+     * deliberate action, on a screen they were watching, where a pause is invisible. Folder sync arms
+     * the same key at EVERY app start (the background sweep cannot sign without it), which put that
+     * work on the UI thread of every launch — the app stops responding seconds after starting and
+     * Android kills it. Reported exactly that way, and correctly blamed on the night's work; it is
+     * the regression the whole tree was rolled back for.
+     */
     @PluginMethod
     public void arm(PluginCall call) {
         String sec = call.getString("sec");
         if (sec == null || sec.length() != 64) { call.reject("need a 32-byte hex secret"); return; }
-        try {
-            String pub = SignerKey.store(getContext(), Nostr.unhex(sec));
-            JSObject o = new JSObject();
-            o.put("pubkey", pub);
-            o.put("exposed", SignerKey.exposed(getContext()));
-            call.resolve(o);
-        } catch (Throwable t) {
-            call.reject("could not store the key on this device");
-        }
+        getBridge().execute(() -> {
+            try {
+                String pub = SignerKey.store(getContext(), Nostr.unhex(sec));
+                JSObject o = new JSObject();
+                o.put("pubkey", pub);
+                o.put("exposed", SignerKey.exposed(getContext()));
+                call.resolve(o);
+            } catch (Throwable t) {
+                call.reject("could not store the key on this device");
+            }
+        });
     }
 
     @PluginMethod
