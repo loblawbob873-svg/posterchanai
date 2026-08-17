@@ -1067,6 +1067,34 @@
     }
 
 
+    /* A DEVICE THAT HAS NOTHING MUST NOT TELL EVERY OTHER DEVICE THAT EVERYTHING IS GONE.
+     *
+     * `deleteRemote` writes tombstones — it is how one device tells the others a file was deleted —
+     * and NOTHING guarded it. `massDelete` covers only the local side, the trashing of files on this
+     * disk; measured, a device with an agreement and an empty scan produced 500 remote deletions and
+     * `massDelete() === null`. So a phone whose folder was removed, or whose SAF grant lapsed, or
+     * that was pointed at an unmounted disk, would quietly mark the entire folder deleted for
+     * everyone — and the device that actually holds the files would then be offered the chance to
+     * trash them, which is the same catastrophe arriving one sweep later.
+     *
+     * Caught while a desktop was mid-upload of 6,334 files with a phone still sweeping the same pair.
+     *
+     * The rule is the one the contacts sweep and the local guard already use: refusing to delete more
+     * than you keep, above a floor that keeps everyday deletions silent. An empty scan keeps NOTHING,
+     * so it can never pass. Refusing suppresses the tombstones ONLY — uploads and downloads still run
+     * — because a guard that aborts the sweep is the same bug with the sign flipped, and the paths are
+     * deliberately NOT agreed, so the next sweep re-proposes them rather than recording a decision
+     * nobody made. */
+    {
+      const doomed = plan.deleteRemote || [];
+      const keeps = (plan.unchanged || 0) + (plan.upload || []).length
+                  + (plan.download || []).length + (plan.conflicts || []).length;
+      if(doomed.length >= 20 && doomed.length > keeps){
+        report.refusedRemoteDelete = { n: doomed.length, keep: keeps };
+        plan = Object.assign({}, plan, { deleteRemote: [] });
+      }
+    }
+
     for(const r of plan.deleteRemote){
       remember(r.path, { deletedAt: now });             // a tombstone, so other devices learn of it
       agree(r.path, { deletedAt: now });
