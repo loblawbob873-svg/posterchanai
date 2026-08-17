@@ -54,10 +54,15 @@ def test_a_15790_file_first_sweep_never_holds_the_folder_at_once():
 
 def test_a_small_folder_still_works():
     """The batching must not need a big folder to be correct — most folders are small, and this is the
-    path they take too."""
+    path they take too.
+
+    A folder under one page is one page plus the final pass (the pass that is allowed to conclude a
+    file was deleted, because it is the only one that has seen everything), so the count is small
+    rather than exactly one. What matters is that nothing is lost and no page exceeds its size."""
     got = _run(300, 750, timeout=300)
     assert got["uploaded"] == 300
-    assert got["batches"] == 1
+    assert got["batches"] <= 2
+    assert got["biggestPage"] <= 750
 
 
 def test_an_interrupted_first_sweep_resumes_instead_of_starting_again():
@@ -69,3 +74,22 @@ def test_an_interrupted_first_sweep_resumes_instead_of_starting_again():
     assert r["firstRun"] > 0, "the interrupted run agreed nothing"
     assert r["secondRun"] > 0, "the resumed run did nothing"
     assert r["total"] <= 2000 * 1.05, "the resume re-uploaded work already agreed: %s" % r
+
+
+def test_only_the_final_pass_concludes_a_deletion_and_only_when_it_is_true():
+    """THE DANGEROUS HALF OF BATCHING EVERY SWEEP. No single batch sees the whole folder, so the pass
+    that decides a file is gone runs last and alone. Two ways that costs somebody their files, both
+    asserted here against a folder that has already been agreed:
+
+      * concluding a deletion from a partial view — mutation-verified: build the final pass's view
+        from the AGREEMENT instead of the scan and this run trashes 160 files and propagates none of
+        the two real deletions;
+      * concluding one from a file whose UPLOAD FAILED. That file is not agreed, so an agreement-based
+        view would call it missing and remove it from every other device — because this one could not
+        send it.
+    """
+    got = _run(2000, 500, timeout=300)
+    d = got["deletions"]
+    assert d["agreedBefore"] >= 600, "the setup sweep did not agree the folder"
+    assert d["removed"] == 2, "expected exactly the two files deleted on disk, got %s" % d["removed"]
+    assert d["editedRemoved"] is False, "a failed upload was reported as a deletion"

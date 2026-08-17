@@ -53,11 +53,18 @@ def test_the_preview_and_the_sweep_give_one_answer(regime):
         "a report with no plan can only ever say 'in step'"
 
 
-def test_the_batched_regime_really_is_batched():
-    """Otherwise the test above passes by never exercising the path it exists for."""
+def test_every_sweep_batches_not_just_the_first():
+    """THE TRAP THIS CLOSED. Batching used to apply only when the agreement was empty, so an
+    interrupted first sweep left a partial agreement and the NEXT sweep took the single-pass
+    whole-folder path — precisely what batching exists to prevent. On a folder big enough to need it
+    that is a loop: sweep, die, reload, start again, for ever. Reported as a tablet going "back to
+    scanning during download".
+
+    So both regimes batch now, and this asserts it rather than trusting the code to have meant it."""
     got = _run(2000, 5)
     assert got["emptyBase"]["batches"] > 1
-    assert got["agreedBase"]["batches"] == 1, "an ordinary incremental sweep should not batch"
+    assert got["agreedBase"]["batches"] > 1, \
+        "an incremental sweep of a large folder is back on the single-pass path"
 
 
 def test_a_small_folder_agrees_too():

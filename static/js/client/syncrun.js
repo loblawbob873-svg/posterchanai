@@ -129,13 +129,10 @@
      * and impossible to tell from a bug in the sweep itself. A preview whose job is to say what the
      * sweep will do has to be the sweep, minus the writing. */
     if(typeof fs.scanPage !== 'function') return sweepOnce(fs, store, opts);
-    let base0 = null;
-    try{ base0 = await store.base(key0); }catch(_){ base0 = null; }
-    if(base0 && Object.keys(base0).length) return sweepOnce(fs, store, opts);  // not a first sweep
-    return firstSweepInBatches(fs, store, o, Math.max(100, o.batchFiles || FIRST_SWEEP_BATCH));
+    return sweepInBatches(fs, store, o, Math.max(100, o.batchFiles || FIRST_SWEEP_BATCH));
   }
 
-  async function firstSweepInBatches(fs, store, o, PAGE){
+  async function sweepInBatches(fs, store, o, PAGE){
     const key = o.key || o.id;
     const merged = { uploaded:[], downloaded:[], trashed:[], conflicted:[], removedRemote:[],
                      failed:[], skipped:[], excluded:0, unchanged:0, batches:0, dryRun:!!o.dryRun,
@@ -145,11 +142,44 @@
                       * folder that says "in step" whatever it found. */
                      plan: { upload:[], download:[], deleteLocal:[], deleteRemote:[], conflicts:[],
                              unchanged:0, excluded:0, notes:[] } };
-    const acc = {};                     // the agreement, accumulated across batches
-    let remoteAll = {};
+    let remoteAll = {}, baseAll = {};
     try{ remoteAll = (await store.manifest(key)) || {}; }catch(_){ remoteAll = {}; }
+    try{ baseAll = (await store.base(key)) || {}; }catch(_){ baseAll = {}; }
+    /* The agreement starts as the REAL one and is merged into, batch by batch. It used to start
+     * empty, which was only safe while this path ran on first sweeps alone. */
+    const acc = Object.assign({}, baseAll);
+    /* Every path the scan handed over, with just enough of it to stand in for the folder in the
+     * final pass below: a couple of numbers per file, which is one compact map rather than the four
+     * simultaneous copies of the whole folder that were killing the renderer. */
+    const seen = {};
 
-    let offset = 0, done = false;
+    let offset = 0, done = false, total = 0;
+
+    /* PROGRESS HAS TO READ AS ONE SWEEP, because it IS one sweep.
+     *
+     * Every batch re-enters the engine, so each one announced "scanning" and then restarted its own
+     * per-phase counters from 1. On a folder of any size that looks exactly like a sweep going round
+     * in a circle — reported as "every time I leave folder sync, syncing goes back to scanning" and
+     * "why is the phone always downloading 1/32" — when nothing was wrong at all: that was batch
+     * three's first download, then batch four's.
+     *
+     * So the repeated scan is not announced (after the first page the walk is served from a cache and
+     * is instant, so there is nothing to report), and every line says which part of how many it is
+     * in. The counters stay per batch on purpose: they are per PHASE, not per file, and adding them
+     * up across batches would produce a total that means nothing. */
+    const parts = () => (total && PAGE) ? Math.ceil(total / PAGE) : 0;
+    const report = (p, isTail) => {
+      try{
+        if(typeof o.onProgress !== 'function' || !p) return;
+        const first = merged.batches === 0 && !isTail;
+        if(!first && (p.phase === 'scanning' || p.phase === 'reading the manifest')) return;
+        const n = parts();
+        const tag = isTail ? ' (finishing up)'
+                  : (n > 1 ? ' (part ' + (merged.batches + 1) + ' of ' + n + ')' : '');
+        o.onProgress(Object.assign({}, p, { phase: (p.phase || '') + tag,
+                                            batch: merged.batches + 1 }));
+      }catch(_){}
+    };
     while(!done){
       /* The scan options are stated here rather than taken from the engine, and the reason it is
        * safe: this path only runs on an adapter with `scanPage`, which is the one with `readPart`
@@ -171,12 +201,21 @@
       }
       const files = (page && page.files) || {};
       const paths = Object.keys(files);
+      if(page && page.total) total = page.total;
       done = !page || page.done === undefined || !!page.done || paths.length === 0;
       if(!paths.length) break;
 
-      // Everything the manifest says about THIS page — plus, on the last one, everything else in it,
-      // so files that live only on another device are finally fetched.
-      const remoteForPage = done ? remoteAll : pick(remoteAll, paths);
+      for(const p2 of paths) seen[p2] = { size: files[p2] && files[p2].size,
+                                          mtime: files[p2] && files[p2].mtime };
+
+      /* WHAT THIS BATCH IS ALLOWED TO SEE, and it is the whole safety of batching a sweep that is
+       * NOT the first one:
+       *   * the manifest and the agreement are restricted to the paths in this page, so a path the
+       *     scan has not reached yet cannot look deleted — a partial view must never delete;
+       *   * which leaves deletions and remote-only files to the final pass, once the whole folder
+       *     has been seen and "missing" means missing rather than "not yet". */
+      const remoteForPage = pick(remoteAll, paths);
+      const baseForPage = pick(acc, paths);
 
       const fsPage = shallow(fs, {
         scan: async () => ({ files, skipped: (page.skipped || []) }),
@@ -189,7 +228,7 @@
        * re-upload all of it. Caught by first_sweep_sim.js, which counts what was agreed at the end. */
       const storePage = shallow(store, {
         manifest: async () => remoteForPage,
-        base: async () => ({}),
+        base: async () => baseForPage,
         saveBase: async (k, b) => {
           Object.assign(acc, b || {});
           return store.saveBase(k, acc);
@@ -202,17 +241,52 @@
       });
 
       const rep = await sweepOnce(fsPage, storePage, Object.assign({}, o, {
-        onProgress: (p) => {
-          try{
-            if(typeof o.onProgress === 'function')
-              o.onProgress(Object.assign({}, p, { batch: merged.batches + 1 }));
-          }catch(_){}
-        },
+        onProgress: (p) => { report(p); },
       }));
       absorb(merged, rep);
       merged.batches++;
       offset += paths.length;
       if(rep && rep.stopped){ merged.stopped = true; break; }
+    }
+
+    /* THE ONLY PASS THAT MAY DECIDE A FILE IS GONE.
+     *
+     * Every batch above was shown only its own paths, so "not in the local scan" meant "not in THIS
+     * page" and could never be read as a deletion. Here the whole folder has been seen, so the two
+     * questions no page could answer are answered once:
+     *   * a path the agreement holds and the scan never produced was DELETED here;
+     *   * a path only the manifest holds is on another device and is fetched.
+     *
+     * `local` is the seen set and `base` is the agreement AS UPDATED by this sweep, and both of those
+     * matter. Using the OLD agreement would make everything the batches just did look changed again
+     * and re-upload the folder. Building `local` from the agreement instead of from the scan would be
+     * worse: a file whose upload FAILED is not agreed, so it would appear deleted and be removed from
+     * every other device — the scan saw it, which is the whole point of remembering that separately.
+     *
+     * It also gives the mass-delete guard a real count to weigh: with an empty `local` every
+     * deletion is "more than it keeps" and the guard would refuse every legitimate delete for ever.
+     *
+     * Skipped entirely when the sweep stopped early — a partial view is exactly the state in which
+     * nothing may be concluded missing. */
+    const unseenBase = Object.keys(acc).filter(p2 => !(p2 in seen));
+    const unseenRemote = Object.keys(remoteAll).filter(p2 => !(p2 in seen));
+    if(!merged.stopped && (unseenBase.length || unseenRemote.length)){
+      const fsTail = shallow(fs, { scan: async () => ({ files: seen, skipped: [] }) });
+      const storeTail = shallow(store, {
+        manifest: async () => remoteAll,
+        base: async () => acc,
+        saveBase: async (k, b) => { Object.assign(acc, b || {}); return store.saveBase(k, acc); },
+        save: async (k, m) => {
+          const mm = m || {};
+          if(mm.base) Object.assign(acc, mm.base);
+          return store.save(k, Object.assign({}, mm, mm.base ? { base: acc } : {}));
+        },
+      });
+      const tail = await sweepOnce(fsTail, storeTail, Object.assign({}, o, {
+        onProgress: (p2) => { report(p2, true); },
+      }));
+      absorb(merged, tail);
+      merged.batches++;
     }
     return merged;
   }
@@ -394,9 +468,24 @@
     const _work = plan.conflicts.length + plan.download.length + plan.upload.length + plan.deleteLocal.length;
     const _every = Math.max(_CHECKPOINT, Math.ceil(_work / _MAX_CHECKPOINTS));
     let sinceCheck = 0;
+    /* …AND BY THE CLOCK, NOT ONLY BY THE COUNT.
+     *
+     * The interval is in FILES, which is the right unit for a folder of photos and the wrong one for
+     * a folder of videos: thirty-two large downloads is thirty-two files, far short of any count
+     * threshold, so the only checkpoint was the one at the end. Anything that ended the sweep early —
+     * a reload, a kill, a flat battery — threw away every one of them, and the next run started again
+     * at "downloading 1/32". Reported exactly that way, on a device that kept coming back to it.
+     *
+     * A time bound makes the loss proportional to the interruption instead of to the file count. It
+     * cannot multiply the writes on an ordinary folder, because the file-count rule still has to be
+     * satisfied OR this one, and a fast sweep never spends this long between files. */
+    const _CHECKPOINT_MS = 30 * 1000;
+    let lastCheck = Date.now();
     const checkpoint = async (force) => {
-      if(!dirty || (!force && ++sinceCheck < _every)) return;
+      const overdue = (Date.now() - lastCheck) >= _CHECKPOINT_MS;
+      if(!dirty || (!force && !overdue && ++sinceCheck < _every)) return;
       sinceCheck = 0;
+      lastCheck = Date.now();
       try{
         await store.save(key, { manifest: nextRemote, base: nextBase, touched: [...touched] });
         report.checkpoints = (report.checkpoints || 0) + 1;

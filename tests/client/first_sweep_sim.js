@@ -170,8 +170,41 @@ function options(extra){
   check(totalUploaded <= N * 1.05,
         're-uploaded work the first run had already agreed: ' + totalUploaded + ' for ' + N + ' files');
 
+  // ---- 6: the final pass may conclude "deleted", and only when it is true ----------------------
+  /* Batching every sweep means no single batch can see the whole folder, so the pass that decides a
+   * file is gone runs last and alone. Two ways that goes wrong, both data loss on every device:
+   * concluding a deletion from a partial view, and concluding one from a file whose upload failed. */
+  {
+    const disk3 = makeFolder(600);
+    const gone = ['DCIM/2026/IMG_00003.jpg', 'DCIM/2026/IMG_00004.jpg'];
+    const c = makeStubs(disk3, {});
+    // Agree the whole folder first, the way a completed sweep would.
+    await RUN.sweep(c.fs, c.store, options({}));
+    const agreedBefore = Object.keys(c.state.base).length;
+    // …then two files are deleted on this disk, and one that remains fails to upload its change.
+    for(const g of gone) delete disk3[g];
+    const edited = 'DCIM/2026/IMG_00009.jpg';
+    disk3[edited] = { size: disk3[edited].size + 1, mtime: Date.now() };
+    c.store.putParts = async () => { throw new Error('upload refused'); };
+    c.store.putBlob = async () => { throw new Error('upload refused'); };
+
+    const rep3 = await RUN.sweep(c.fs, c.store, options({}));
+    const removed = (rep3.removedRemote || []).map(x => (x && x.path) || x);
+    check(agreedBefore >= 600, 'the setup sweep did not agree the folder: ' + agreedBefore);
+    check(removed.length === gone.length,
+          'the final pass removed ' + removed.length + ' paths, expected ' + gone.length
+          + ' — a partial view concluded a deletion');
+    for(const g of gone)
+      check(removed.indexOf(g) >= 0, 'a genuinely deleted file was not propagated: ' + g);
+    check(removed.indexOf(edited) < 0,
+          'a file whose UPLOAD FAILED was reported as deleted — that removes it from every other '
+          + 'device because this one could not send it');
+    var deletionArm = { agreedBefore, removed: removed.length, editedRemoved: removed.indexOf(edited) >= 0 };
+  }
+
   console.log(JSON.stringify({
     files: N, page: PAGE, seconds: secs,
+    deletions: deletionArm,
     batches: rep.batches, uploaded: rep.uploaded.length,
     downloaded: rep.downloaded.length, conflicted: rep.conflicted.length,
     biggestPage: Math.max.apply(null, state.pagesSeen),
