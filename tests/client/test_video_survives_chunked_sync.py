@@ -234,3 +234,30 @@ def test_the_simulator_runs_the_shipped_chunker_and_not_a_copy_of_it():
     assert "if(!plain || !plain.length)" not in code, (
         "a hand-written chunker is back in the simulator — that is the blind spot, not the fix")
     assert "readFileSync(" in code and "app.js" in code
+
+
+def test_an_upload_that_lands_at_a_different_address_is_refused(tmp_path):
+    """CONTENT-ADDRESSED MEANS THE ADDRESS IS THE HASH, so a server answering with a different one is
+    not "stored elsewhere" — it is holding something other than what was sent.
+
+    Recording its answer anyway writes a manifest entry pointing at bytes that are not this file, and
+    nothing notices until another device downloads it and fails its checksum, which can be a whole
+    folder of uploads later. This is the one comparison that turns "the upload returned 200" into
+    "the bytes are stored".
+
+    Both paths are checked: a big file goes up in chunks, a small one whole, and the check has to be
+    on both or the gap just moves to the other size.
+    """
+    body = HARNESS % {
+        "bridge": json.dumps(str(FSBRIDGE)), "root": json.dumps(str(tmp_path)),
+        "shipped": _shipped(), "size": 200 * 1024, "short_at": "null", "chunk": CHUNK,
+    }
+    # A server that stores the bytes but answers with somebody else's address.
+    body = body.replace(
+        "  return 'https://blossom.example/' + sha;",
+        "  return 'https://blossom.example/' + 'f'.repeat(64);")
+    (tmp_path / "in.mp4").write_bytes(os.urandom(200 * 1024))
+    r = subprocess.run([NODE, "-e", body], capture_output=True, text=True, timeout=180)
+    out = (r.stdout or "") + (r.stderr or "")
+    assert "different chunk" in out or "different file" in out, (
+        "an upload that landed at another address was accepted:\n" + out[-2000:])

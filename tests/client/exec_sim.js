@@ -141,9 +141,18 @@ function device(name, sky, opts){
     move: async (id, from, to) => { st.moved.push(from + ' -> ' + to);
                                     disk[to] = disk[from]; delete disk[from]; },
     trash: async (id, r) => { st.trashed.push(r); delete disk[r]; return '.pc-trash/x/' + r; },
+    /* Abandoned part files, collected by age. The real adapters delete them off the disk; this
+     * records that it was ASKED, which is the half the executor is responsible for. */
+    sweepParts: async (id, olderThan) => { st.swept = (st.swept || 0) + 1; st.sweptAge = olderThan;
+                                           return { removed: 0 }; },
   };
 
   const mark = (k, d) => { st.live[k] += d; st.peak[k] = Math.max(st.peak[k], st.live[k]); };
+  /* BYTES held in flight, not just how many transfers overlap. The Windows app ran out of memory on
+   * a sweep that "worked": four 16 MB files at once, each held as plaintext, ciphertext and a
+   * request body. Counting transfers would have called that healthy. */
+  st.bytes = 0; st.peakBytes = 0;
+  const hold = (n) => { st.bytes += n; st.peakBytes = Math.max(st.peakBytes, st.bytes); };
   const chunker = realChunker(sky);
   chunker.CHUNK = CH;
   const io = {
@@ -165,10 +174,20 @@ function device(name, sky, opts){
                          return JSON.parse(JSON.stringify(st.index)); },
     saveIndex: async (k, idx) => { st.saves++; st.index = JSON.parse(JSON.stringify(idx)); },
     hashBytes: async (b) => sha(Buffer.from(b)),
-    putBlob: async (b) => ({ sha: sky.put(Buffer.from(b)) }),
+    putBlob: async (b) => {
+      // What the real path holds at once: the plaintext, the ciphertext and the upload body.
+      hold(b.length * 3);
+      await new Promise(r => setTimeout(r, 2));
+      const out = { sha: sky.put(Buffer.from(b)) };
+      hold(-b.length * 3);
+      return out;
+    },
     getBlob: async (h) => {
       mark('small', 1);
+      const size = (sky.get(h) || Buffer.alloc(0)).length;
+      hold(size * 2);
       await new Promise(r => setTimeout(r, 2));
+      hold(-size * 2);
       mark('small', -1);
       const b = sky.get(h);
       if(!b) throw new Error('blob ' + String(h).slice(0, 8) + ' unavailable (404)');
@@ -180,7 +199,14 @@ function device(name, sky, opts){
     putParts: (readPart, size, onProg, cs) => chunker.putParts(readPart, size, onProg, cs || CH),
     getParts: async (chunks, write, size, have, cs) => {
       mark('big', 1);
-      try{ return await chunker.getParts(chunks, write, size, have, cs); }
+      try{
+        // A connection that dies mid-file: the part file keeps whatever landed, exactly as on disk.
+        let n = 0;
+        return await chunker.getParts(chunks, async (off, bytes) => {
+          if(o.dieAfter != null && n++ >= o.dieAfter) throw new Error('the connection went away');
+          return write(off, bytes);
+        }, size, have, cs);
+      }
       finally { mark('big', -1); }
     },
     hasBlob: async (h) => sky.has(h),
@@ -521,6 +547,94 @@ scenario('a device whose own document is lost puts it back from its journal', as
   const C = device('tablet', sky, {});
   await C.sweep();
   t.eq(identical(A2.disk, C.disk), null, 'a new device could not fetch the restored folder');
+});
+
+scenario('a short read is refused, not stored under a checksum that certifies it', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(6) });
+  const victim = Object.keys(A.disk)[0];
+  // The adapter hands back less than the file. THIS is the dangerous shape: the short buffer is what
+  // gets hashed, so the entry's checksum would match the truncation and every later check agrees.
+  const realRead = A.fs.read;
+  A.fs.read = async (id, r) => (r === victim ? new Uint8Array(A.disk[r].subarray(0, 20))
+                                             : realRead(id, r));
+  const rep = await A.sweep();
+  t.eq(rep.failed.length, 1, 'a short read was accepted (' + rep.failed.length + ' failures)');
+  t.ok(/bytes of/.test(rep.failed[0].error), 'reported as something else: ' + rep.failed[0].error);
+  t.ok(!sky.docs.laptop[victim], 'the truncated file was published anyway');
+  t.eq(rep.uploaded.length, 5, 'the other five files did not upload');
+});
+
+scenario('a download interrupted mid-file resumes and is still byte-perfect', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: { 'DCIM/clip.mp4': video(9, 11) }, chunk: 4 * MB });
+  await A.sweep();
+  // The phone loses the connection after the first chunk lands.
+  const B = device('phone', sky, { chunk: 4 * MB, dieAfter: 1 });
+  const r1 = await B.sweep();
+  t.eq(r1.failed.length, 1, 'the interrupted download was not reported as a failure');
+  t.ok(!B.disk['DCIM/clip.mp4'], 'a half-written file was committed under the real name');
+  t.ok((B.st.parts['DCIM/clip.mp4'] || Buffer.alloc(0)).length > 0, 'nothing was kept to resume from');
+  // …and the next sweep finishes it rather than starting over.
+  const B2 = device('phone', sky, { chunk: 4 * MB, disk: B.disk, index: B.st.index });
+  B2.st.parts['DCIM/clip.mp4'] = B.st.parts['DCIM/clip.mp4'];
+  const r2 = await B2.sweep();
+  t.eq(r2.failed.length, 0, 'the resumed download failed: ' + JSON.stringify(r2.failed));
+  t.eq(identical(A.disk, B2.disk), null, 'the resumed file is not byte-identical');
+});
+
+scenario('a stale part file is thrown away, not spliced — and does not blacklist a good copy', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: { 'DCIM/clip.mp4': video(9, 21) }, chunk: 4 * MB });
+  await A.sweep();
+  const B = device('phone', sky, { chunk: 4 * MB });
+  // Left behind by an EARLIER version of the same path: the right length to look resumable, the
+  // wrong bytes. Splicing onto it produces a file that is half one video and half another.
+  B.st.parts['DCIM/clip.mp4'] = Buffer.alloc(4 * MB, 0x5A);
+  const r = await B.sweep();
+  t.eq(r.failed.length, 0, 'a stale part file failed the download: ' + JSON.stringify(r.failed));
+  t.ok(!r.badFetch, 'a stale part file of OURS got the stored copy blacklisted');
+  t.eq(identical(A.disk, B.disk), null, 'the file was spliced rather than re-fetched');
+});
+
+scenario('abandoned part files are collected, and only ones old enough', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(3) });
+  await A.sweep();
+  t.ok(A.st.swept > 0, 'nothing ever collects abandoned .part files — an interrupted download leaks');
+  t.eq(A.st.sweptAge, 24 * 3600000,
+       'the age bound is ' + A.st.sweptAge + ' — a part file this sweep is about to resume from must survive');
+});
+
+scenario('a folder of large files does not hold them all at once — the Windows OOM', async (t) => {
+  const sky = cloud();
+  const big = {};
+  // Eight files just under the chunking threshold: the size that is held WHOLE, which is exactly the
+  // band that ran a desktop out of memory when four of them overlapped.
+  for(let i = 0; i < 8; i++) big['DCIM/raw' + i + '.tif'] = video(12, i + 40);
+  const A = device('laptop', sky, { disk: big, chunk: 16 * MB });
+  const r = await A.sweep();
+  t.eq(r.uploaded.length, 8, 'uploaded ' + r.uploaded.length + ' of 8');
+  const ceiling = 12 * MB * 3 + MB;              // one file's worth of holding, plus slack
+  t.ok(A.st.peakBytes <= ceiling,
+       'held ' + Math.round(A.st.peakBytes / MB) + ' MB at once, ceiling '
+       + Math.round(ceiling / MB) + ' MB — large uploads are overlapping again');
+
+  // …and the same on the way down.
+  const B = device('phone', sky, { chunk: 16 * MB });
+  await B.sweep();
+  t.ok(B.st.peakBytes <= 12 * MB * 2 + MB,
+       'held ' + Math.round(B.st.peakBytes / MB) + ' MB at once on download');
+  t.eq(identical(A.disk, B.disk), null, 'the files did not survive');
+});
+
+scenario('small files still overlap — the whole point of the lanes', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(80) });
+  await A.sweep();
+  const B = device('phone', sky, {});
+  await B.sweep();
+  t.ok(B.st.peak.small > 1, 'downloads run one at a time again (peak ' + B.st.peak.small + ')');
 });
 
 scenario('the scale that killed the desktop: 6,000 files, checked and quiet the second time', async (t) => {

@@ -91,8 +91,14 @@ class TestTheServerLimitIsPerUploadNotPerFile(unittest.TestCase):
         above = re.search(r"chunkAbove: ([^\n]+),", body)
         self.assertIsNotNone(above)
         expr = above.group(1).strip()
-        self.assertIn("chunkBytes", expr,
+        self.assertIn("chunkSize()", expr,
                       "chunkAbove is a fixed number again: %s" % expr)
+        # …and chunkSize() is what derives it: the platform's own figure, never above what the node
+        # accepts, because a chunk IS one upload.
+        cs = body[body.index("async function chunkSize(){"):]
+        cs = cs[:cs.index("\n  }")]
+        self.assertIn("fs.chunkBytes", cs, "the chunk size stopped asking the platform")
+        self.assertIn("serverMaxBytes()", cs, "the chunk size stopped asking the node")
         self.assertTrue(expr.endswith("CHUNK_FALLBACK"),
                         "a platform that reports no chunk size falls back to something other than "
                         "CHUNK_FALLBACK: %s" % expr)

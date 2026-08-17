@@ -37,6 +37,18 @@
 
   const SCAN_PAGE = 1000;          // paths per bridge call — bounds the payload, not the folder
   const LANES = 4;                 // small files in flight at once; the wait is the round trip
+  /* AND "SMALL" IS A SIZE, NOT "NOT CHUNKED".
+   *
+   * A transfer that is not chunked is held WHOLE, and an upload holds it three or four times over:
+   * the plaintext, the ciphertext, the request body, and a hash pass across them. At the chunking
+   * threshold — 16 MB on the desktop — that is some 64 MB for one file, and four of those at once is
+   * a quarter of a gigabyte of transient allocation. Reported immediately: "windows app keeps
+   * running out of memory trying to sync".
+   *
+   * So overlapping is for files where it is nearly free, which is the case it was added for: six
+   * thousand photos, where the wait is the round trip and the bytes are nothing. Anything larger goes
+   * one at a time, whether it is chunked or not. */
+  const PARALLEL_MAX = 2 * 1024 * 1024;
   const SAVE_EVERY = 200;          // files between journal writes
   const SAVE_MS = 20 * 1000;
   const PUBLISH_EVERY = 500;       // changes before telling the other devices, mid-sweep
@@ -98,6 +110,22 @@
     const merged = E.merge(views);
     report.devices = merged.devices.length;
     report.missingViews = missing;
+
+    /* COLLECT ABANDONED `.part` FILES BEFORE SCANNING, and this needs a caller or it is decoration.
+     *
+     * They are invisible to everything else: the scan ignores them (rightly — a half-written file
+     * must never be uploaded), so nothing ever looks at them again and every interrupted download
+     * leaves its bytes on the disk for good. On a folder of videos that is real money.
+     *
+     * A DAY, not an hour: a part file THIS sweep is about to resume from must survive, and the only
+     * safe way to say "no download is coming back for this" is an age no sweep can still be inside.
+     * Best-effort — a folder that cannot be swept is not a folder that cannot be synced. */
+    if(typeof fs.sweepParts === 'function'){
+      try{
+        const gone = await fs.sweepParts(o.id, 24 * 3600000);
+        if(gone && gone.removed) report.partsCollected = gone.removed;
+      }catch(_){}
+    }
 
     /* 3. The disk, a page at a time. */
     step('scanning');
@@ -188,7 +216,8 @@
     const idOf = (e) => (e && (e.csum || e.sha || (e.chunks && e.chunks.join(',')))) || '';
     // Downloads.
     await transfers(plan.fetch, o, stopping, journal, LANES,
-      (d) => !!(d.entry && d.entry.chunks && d.entry.chunks.length),
+      (d) => !!(d.entry && d.entry.chunks && d.entry.chunks.length)
+             || ((d.entry && d.entry.size) || 0) > PARALLEL_MAX,
       async (d, i, n) => {
         const badId = skipFetch[d.path] || '';
         if(badId && badId === idOf(d.entry)){
@@ -217,7 +246,7 @@
     // Uploads.
     let published = 0;
     await transfers(plan.send, o, stopping, journal, LANES,
-      (u) => (u.stat && u.stat.size || 0) > chunkAbove(fs, o),
+      (u) => (u.stat && u.stat.size || 0) > PARALLEL_MAX,
       async (u, i, n) => {
         step('uploading', u.path, i, n);
         try{
@@ -359,13 +388,33 @@
       if(canVerify){ try{ if(fs.partSize) have = await fs.partSize(o.id, path); }catch(_){ have = 0; } }
       else { try{ if(fs.discardPart) await fs.discardPart(o.id, path); }catch(_){} }
       const total = entry.size || 0;
-      let got = have;
-      await io.getParts(chunks, (off, bytes) => {
-        got = Math.max(got, off + ((bytes && bytes.length) || 0));
-        if(total && onPercent) onPercent(Math.round(got / total * 100));
-        return fs.writePart(o.id, path, off, bytes);
-      }, entry.size, have, entry.cs || 0);
-      await verifyPart(fs, o, path, entry);
+      const pull = async (from) => {
+        let got = from;
+        await io.getParts(chunks, (off, bytes) => {
+          got = Math.max(got, off + ((bytes && bytes.length) || 0));
+          if(total && onPercent) onPercent(Math.round(got / total * 100));
+          return fs.writePart(o.id, path, off, bytes);
+        }, entry.size, from, entry.cs || 0);
+      };
+      await pull(have);
+      try{
+        await verifyPart(fs, o, path, entry);
+      }catch(e){
+        /* A RESUMED DOWNLOAD THAT FAILS ITS CHECKSUM IS THE PART FILE'S FAULT UNTIL PROVEN OTHERWISE.
+         *
+         * A part file is tied to nothing but its length, so one left by an EARLIER version of the
+         * same path resumes into a splice of two files — and the checksum, correctly, refuses it.
+         * Blaming the stored copy there is worse than the corruption: the caller remembers that copy
+         * as bad and never fetches it again, so a perfectly good file becomes permanently
+         * unfetchable on this device because of a stale temp file we wrote ourselves.
+         *
+         * So: throw the part file away and fetch the whole thing. Only a from-scratch download that
+         * still fails is evidence about the copy. */
+        if(!have) throw e;
+        try{ if(typeof fs.discardPart === 'function') await fs.discardPart(o.id, path); }catch(_){}
+        await pull(0);
+        await verifyPart(fs, o, path, entry);
+      }
       return await fs.writeCommit(o.id, path, entry.mtime || 0);
     }
     if(chunks && chunks.length) throw new Error('this device cannot receive a file that large');
@@ -406,7 +455,24 @@
       if(!entry.csum) delete entry.csum;
       return entry;
     }
+    /* A WHOLE-FILE READ IS EXACTLY THE FILE, OR IT IS A FAILURE — the same rule `_exactPart` applies
+     * to a chunk, on the path that did not have it.
+     *
+     * This is the worse half of that bug, because a truncation here is SELF-CONSISTENT: the short
+     * buffer is what gets hashed, so the entry's checksum matches the truncation, the receiving
+     * device verifies it happily and writes a short file, and every check afterwards agrees. Nothing
+     * would ever notice.
+     *
+     * A length that does not match the scan also happens when somebody edits the file WHILE the
+     * sweep is reading it, and the right answer is the same either way: do not store this, report it,
+     * pick it up next sweep. Storing a half-written file under a checksum that certifies it is the
+     * one outcome there is no recovering from. */
     const bytes = await fs.read(o.id, path);
+    const got = (bytes && bytes.length) || 0;
+    if(got !== size){
+      throw new Error('read ' + got + ' bytes of ' + size + ' — the file changed while it was being '
+                      + 'read, or the read came back short; it will be picked up next sweep');
+    }
     entry.csum = io.hashBytes ? await io.hashBytes(bytes) : undefined;
     const put = await io.putBlob(bytes);
     entry.sha = (put && typeof put === 'object') ? put.sha : put;

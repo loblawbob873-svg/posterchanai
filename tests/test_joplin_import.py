@@ -467,3 +467,127 @@ def test_a_large_export_parses_whole():
     r = _parse(_jex(entries))
     assert r["counts"]["notes"] == 500, r["counts"]
     assert {n["title"] for n in r["notes"]} == {f"Note {i}" for i in range(1, 501)}
+
+
+# ---------------------------------------------------------------------------------------------
+# THE SHAPES A REAL EXPORT HAS AND A HAND-BUILT FIXTURE DOES NOT.
+#
+# The parser tests above build tidy archives. A .jex written by Joplin itself is messier in ways that
+# are individually boring and collectively how an import fails on somebody's real file: a directory
+# entry before the items, CRLF, a BOM, a note whose body ends without a newline, an id in capitals,
+# a resource whose record and bytes are in the opposite order, and a `resources/` prefix that may or
+# may not be there.
+#
+# Each of these is a separate case because when one breaks, the failure has to name which.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_a_directory_entry_in_the_tar_is_not_read_as_an_item():
+    """Real archives carry `resources/` as its own zero-length entry with typeflag 5."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        d = tarfile.TarInfo("resources")
+        d.type = tarfile.DIRTYPE
+        d.size = 0
+        tar.addfile(d)
+        nid = _id(1)
+        data = _item("Real note", "body", id=nid, type_=1, parent_id="",
+                     created_time="2020-01-01T00:00:00.000Z",
+                     updated_time="2020-01-01T00:00:00.000Z").encode()
+        info = tarfile.TarInfo(nid + ".md")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    got = _parse(buf.getvalue())
+    assert got.get("error") is None, got
+    assert [n["title"] for n in got["notes"]] == ["Real note"], got["notes"]
+
+
+def test_crlf_line_endings_do_not_swallow_the_metadata():
+    """A .jex made on Windows. The metadata block is found by walking backwards from the end, and a
+    trailing \\r on every line is exactly the sort of thing that makes `key: value` stop matching."""
+    nid = _id(2)
+    body = "line one\r\n\r\ntodo: call the bank"
+    raw = _item("CRLF note", body, id=nid, type_=1, parent_id="",
+                created_time="2020-01-01T00:00:00.000Z",
+                updated_time="2020-01-02T00:00:00.000Z").replace("\n", "\r\n")
+    got = _parse(_jex({nid + ".md": raw}))
+    assert got.get("error") is None, got
+    assert len(got["notes"]) == 1, got
+    n = got["notes"][0]
+    assert n["title"] == "CRLF note", n
+    assert "todo: call the bank" in n["body"], n["body"]
+    assert n["id"] == nid, n
+
+
+def test_a_byte_order_mark_does_not_become_part_of_the_title():
+    nid = _id(3)
+    raw = "﻿" + _item("BOM note", "body", id=nid, type_=1, parent_id="",
+                           created_time="2020-01-01T00:00:00.000Z",
+                           updated_time="2020-01-01T00:00:00.000Z")
+    got = _parse(_jex({nid + ".md": raw}))
+    assert got.get("error") is None, got
+    assert got["notes"][0]["title"] == "BOM note", repr(got["notes"][0]["title"])
+
+
+def test_an_item_with_no_trailing_newline_still_parses():
+    nid = _id(4)
+    raw = _item("No newline", "body", id=nid, type_=1, parent_id="",
+                created_time="2020-01-01T00:00:00.000Z",
+                updated_time="2020-01-01T00:00:00.000Z").rstrip("\n")
+    got = _parse(_jex({nid + ".md": raw}))
+    assert got.get("error") is None, got
+    assert got["notes"][0]["title"] == "No newline", got["notes"]
+
+
+def test_a_resource_whose_bytes_come_before_its_record_is_still_matched():
+    """Tar order is whatever the exporter felt like. Matching must not depend on it."""
+    rid = _id(5)
+    nid = _id(6)
+    entries = {}
+    entries["resources/" + rid + ".bin"] = b"\x89PNG\r\n\x1a\nrest"
+    entries[rid + ".md"] = _item("pic.png", "", id=rid, type_=4, mime="image/png",
+                                 filename="pic.png", file_extension="png",
+                                 created_time="2020-01-01T00:00:00.000Z",
+                                 updated_time="2020-01-01T00:00:00.000Z")
+    entries[nid + ".md"] = _item("Has a picture", "![pic](:/%s)" % rid, id=nid, type_=1,
+                                 parent_id="", created_time="2020-01-01T00:00:00.000Z",
+                                 updated_time="2020-01-01T00:00:00.000Z")
+    got = _parse(_jex(entries))
+    assert got.get("error") is None, got
+    assert len(got["resources"]) == 1, got["resources"]
+    r = got["resources"][0]
+    assert r["len"] == 12, r
+    assert r["bytes"][:4] == [0x89, 0x50, 0x4E, 0x47], r
+
+
+def test_an_uppercase_id_still_links_to_its_resource():
+    """Joplin ids are lowercase hex, and other tools that write .jex are not always so careful."""
+    rid = _id(7).upper()
+    nid = _id(8)
+    entries = {
+        rid + ".md": _item("shot.png", "", id=rid, type_=4, mime="image/png",
+                           filename="shot.png", file_extension="png",
+                           created_time="2020-01-01T00:00:00.000Z",
+                           updated_time="2020-01-01T00:00:00.000Z"),
+        "resources/" + rid + ".png": b"bytes-here",
+        nid + ".md": _item("Note", "![shot](:/%s)" % rid, id=nid, type_=1, parent_id="",
+                           created_time="2020-01-01T00:00:00.000Z",
+                           updated_time="2020-01-01T00:00:00.000Z"),
+    }
+    got = _parse(_jex(entries))
+    assert got.get("error") is None, got
+    assert len(got["resources"]) == 1 and got["resources"][0]["len"] == 10, got["resources"]
+
+
+def test_a_note_that_is_only_a_title_keeps_an_empty_body_not_the_metadata():
+    """The one that eats an import silently: with no body, the metadata block is everything after
+    the title, and a parser that takes 'the rest' as the body files the key/value lines as prose."""
+    nid = _id(9)
+    got = _parse(_jex({nid + ".md": _item("Title only", "", id=nid, type_=1, parent_id="",
+                                          created_time="2020-01-01T00:00:00.000Z",
+                                          updated_time="2020-01-01T00:00:00.000Z")}))
+    assert got.get("error") is None, got
+    n = got["notes"][0]
+    assert n["title"] == "Title only", n
+    assert n["body"].strip() == "", repr(n["body"])
+    assert "created_time" not in n["body"], "the metadata block was filed as the note's text"

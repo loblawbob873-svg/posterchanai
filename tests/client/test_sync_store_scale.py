@@ -112,3 +112,40 @@ class TestSyncStoreScale(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestChunkCeiling(unittest.TestCase):
+    """A chunk IS one upload, so it may never be larger than the node will accept.
+
+    Two answers bound it and the smaller has to win: the PLATFORM says how much it can hold at once
+    (Android 4 MB, because every chunk crosses the Capacitor bridge as base64 held as UTF-16; the
+    desktop 16 MB), and the NODE says how large a single upload it takes. A node configured below the
+    platform's chunk rejects every chunk of every large file — so a folder of videos never syncs
+    while small files sail through, which is the confusing half.
+
+    The Files upload path always took the lower of the two. The sweep did not, and the sweep is the
+    path a Pictures folder goes through.
+    """
+
+    def setUp(self):
+        with open(os.path.join(HERE, "..", "..", "static", "js", "client", "sync.js"), encoding="utf-8") as fh:
+            self.src = fh.read()
+
+    def test_the_sweep_asks_for_the_clamped_size(self):
+        at = self.src.index("const rep = _forTheCard(await EXEC.sweep(")
+        call = self.src[at:self.src.index("onProgress:", at)]
+        self.assertIn("chunkBytes: await chunkSize()", call,
+                      "the sweep still sends the platform's chunk without asking what the node accepts")
+        self.assertIn("chunkAbove: await chunkSize()", call,
+                      "the threshold above which a file is chunked disagrees with the chunk size")
+
+    def test_the_clamp_takes_the_smaller_of_the_two(self):
+        body = self.src[self.src.index("async function chunkSize(){"):]
+        body = body[:body.index("\n  }")]
+        self.assertIn("(srv > 0 && srv < plat) ? srv : plat", body)
+
+    def test_a_node_that_does_not_say_leaves_the_platform_alone(self):
+        """`serverMaxBytes` answers 0 for "the node did not say" — that must not become a 0 chunk."""
+        body = self.src[self.src.index("async function chunkSize(){"):]
+        body = body[:body.index("\n  }")]
+        self.assertIn("srv > 0", body, "a node that reports no limit would collapse the chunk to zero")

@@ -16145,7 +16145,18 @@
         this._save().then(ok=>{ if(ok) this._retryN=0; });
       }, step);
     },
-    beginBatch(){ this._batch=true; },
+    /* A COUNT, NOT A FLAG — because two things batch this index at once.
+     *
+     * A Joplin import batches while it uploads attachments; a folder sync batches while it uploads
+     * files; the Music bulk delete batches while it forgets tracks. Any two of those can overlap —
+     * reported from exactly that: an import running while a sweep was going. With a boolean the
+     * FIRST endBatch turns batching off for everybody, so the other operation's remaining hundreds
+     * of pushes each schedule a full save of this single encrypted document, and its own endBatch
+     * then runs against a flag it no longer owns.
+     *
+     * Counted, the batch ends when the last holder lets go, which is what every caller already
+     * believes it is asking for. */
+    beginBatch(){ this._batchN = (this._batchN|0) + 1; this._batch=true; },
     /* Answers whether the batch actually REACHED the server, so a caller can stop claiming it did.
      *
      * The batch flag is dropped AFTER the save, not before: this awaits, the save can sit on a
@@ -16155,7 +16166,10 @@
      * what a batch is for. */
     async endBatch(){
       try{ return await this._save(); }
-      finally{ this._batch=false; }
+      finally{
+        this._batchN = Math.max(0, (this._batchN|0) - 1);
+        if(!this._batchN) this._batch=false;
+      }
     },
     folders(){ return this._norm().folders; },
     isEncFolder(name){ return name==='Music' || this._norm().encFolders.includes(name); },   // Music is always encrypted
@@ -27658,7 +27672,25 @@
       if(now - last < 1500 || shown > 8) return;
       last = now; shown++;
       const msg = (err && (err.message || err.reason && err.reason.message || err.reason)) || err || '';
-      try{ toast('⚠ ' + what + ': ' + String(msg).slice(0, 140)); }catch(_){ }
+      /* WHERE IT CAME FROM, on the screen, not only in a console nobody has open.
+       *
+       * "action failed: done is not defined" was reported from a real client and could not be
+       * located from the message alone: every candidate in every shipped file is declared, so the
+       * only way to place it is a stack — which lives in the console of a desktop app or a phone.
+       * One frame names the file and the line, and that is the difference between a bug report that
+       * can be acted on and an afternoon of grepping.
+       *
+       * Deliberately the first frame that belongs to US: the top of a stack is often inside a
+       * promise helper or the vendored bundle, which names nothing useful. */
+      let at = '';
+      try{
+        const st = String((err && err.stack) || '');
+        const frame = st.split('\n').slice(1).find(l => /client\/[a-z0-9_-]+\.js/i.test(l))
+                   || st.split('\n')[1] || '';
+        const m = frame.match(/([a-z0-9_.-]+\.js):(\d+)/i);
+        if(m) at = ' [' + m[1] + ':' + m[2] + ']';
+      }catch(_){ }
+      try{ toast('⚠ ' + what + ': ' + String(msg).slice(0, 140) + at); }catch(_){ }
     };
     // Restore the navigation whenever the class outlives its modal. Cheap, and it runs on the same events
     // that would otherwise leave it stranded.
@@ -30213,6 +30245,10 @@
                                      { noMirror:true, keep:true, noCompress:true });
         const got = _shaFromUrl(url);
         if(!got) throw new Error('upload returned no hash');
+        // The same check the chunked path makes, and for the same reason: content-addressed means
+        // the address is the hash, so a different answer is a different file.
+        if(got !== sha) throw new Error('the server stored a different file than the one sent ('
+                                        + sha.slice(0,8) + ' → ' + got.slice(0,8) + ')');
         return { sha: got, existed:false };
       },
       // Shared with the Files → synced-folder browser, so "which key opens a sync blob" has exactly
@@ -30307,6 +30343,20 @@
             const url = await uploadBlob(file, { noMirror:true, keep:true, noCompress:true });
             const got = _shaFromUrl(url);
             if(!got) throw new Error('upload returned no hash');
+            /* IT HAS TO LAND WHERE WE COMPUTED IT WOULD.
+             *
+             * Blossom is content-addressed: the address IS the sha256 of the bytes, and we hashed
+             * those bytes a moment ago. So a different answer does not mean "stored elsewhere", it
+             * means the server is holding something other than what we sent — a truncated body, a
+             * proxy that re-encoded it, a server that hashed something else. Recording its answer
+             * anyway writes a manifest entry pointing at bytes that are not this chunk, and nothing
+             * notices until some other device downloads it and fails its checksum, which can be a
+             * whole folder of uploads later.
+             *
+             * Not a paranoid check: this is the one comparison that turns "the upload returned 200"
+             * into "the bytes are stored". */
+            if(got !== sha) throw new Error('the server stored a different chunk than the one sent ('
+                                            + sha.slice(0,8) + ' → ' + got.slice(0,8) + ')');
             chunks.push(got); existed = false;
           }
           if(onProgress) { try{ onProgress(Math.min(off + want, size), size); }catch(_){} }

@@ -1300,8 +1300,17 @@
            * the copy's identity, so a re-upload from the other device clears it with no action from
            * anyone. */
           skipFetch: _badFetch(keyOf(f)),
-          // The platform decides how much it can hold at once; see fs-android.js.
-          chunkBytes: (FS() && FS().chunkBytes) || 0,
+          /* HOW BIG A CHUNK MAY BE IS TWO ANSWERS, AND THE SMALLER ONE WINS.
+           *
+           * The PLATFORM says how much it can hold at once (Android's 4 MB, because every chunk
+           * crosses the Capacitor bridge as base64 held as UTF-16; the desktop's 16 MB). The NODE
+           * says how large a single upload it will accept, and a chunk IS one upload — so a node
+           * configured below the platform's chunk rejects every chunk of every large file, and a
+           * folder of videos simply never syncs while small files sail through.
+           *
+           * The Files upload path has always taken the lower of the two. The sweep did not, which
+           * is the path that matters for a Pictures folder. */
+          chunkBytes: await chunkSize(),
           /* ABOVE ONE CHUNK A FILE GOES UP IN PIECES — AND "ONE CHUNK" IS THE PLATFORM'S, NOT A
            * NUMBER PICKED HERE.
            *
@@ -1319,7 +1328,7 @@
            *
            * Deriving it removes the class rather than moving the threshold: a platform that says how
            * much it can hold gets held to its own answer. */
-          chunkAbove: (FS() && FS().chunkBytes) || CHUNK_FALLBACK,
+          chunkAbove: await chunkSize() || CHUNK_FALLBACK,
           hash: decision.mode === 'full', dryRun: !!o.dryRun,
           forceTrash: !!o.forceTrash,
           forceResurrect: !!o.forceResurrect,
@@ -1713,6 +1722,14 @@
   // What a platform gets when it exposes readPart but no chunkBytes — the same figure syncrun uses
   // as `chunkAbove`, so "a chunk" means one thing on both sides of this file.
   const CHUNK_FALLBACK = 16 * 1024 * 1024;
+  /* The chunk size this device will actually use: the platform's, never above what the node accepts.
+   * Cached for the session like maxBytes — it is two settings, and neither moves under a sweep. */
+  async function chunkSize(){
+    const fs = FS();
+    const plat = (fs && fs.chunkBytes) || CHUNK_FALLBACK;
+    const srv = await serverMaxBytes();
+    return (srv > 0 && srv < plat) ? srv : plat;
+  }
   let _maxBytes = null;
   async function maxBytes(){
     if(_maxBytes !== null) return _maxBytes;

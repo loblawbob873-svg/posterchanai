@@ -39,8 +39,6 @@ public final class NativeSweep {
 
     private NativeSweep() { }
 
-    /** Past this a file goes up in pieces — the same figure syncrun.js uses as `chunkAbove`. */
-    static final long CHUNK_ABOVE = 16L * 1024 * 1024;
     /**
      * One chunk. 4 MB, matching fs-android.js — chosen there because every chunk crossed the
      * Capacitor bridge as base64. Nothing crosses a bridge here, but the SIZE IS PART OF THE FILE'S
@@ -49,6 +47,18 @@ public final class NativeSweep {
      * uploaded by the same phone through the page.
      */
     static final int CHUNK_BYTES = 4 * 1024 * 1024;
+    /**
+     * Past this a file goes up in pieces — and it is ONE CHUNK, not sixteen megabytes.
+     *
+     * It used to be 16 MB, borrowed from the desktop, which meant a 12 MB video went up whole on the
+     * NATIVE path while the page chunked the same file at 4 MB. Two costs, both real: a whole-file
+     * upload holds the plaintext, the ciphertext and the request body at once — some 36 MB of Java
+     * heap for that video, on a device whose heap is a couple of hundred megabytes and which is also
+     * running a WebView — and the two engines produced different shapes for the same file.
+     *
+     * A file bigger than one chunk goes in chunks. That is the whole rule, on both engines.
+     */
+    static final long CHUNK_ABOVE = CHUNK_BYTES;
     /** Past this the manifest's paths move into an encrypted blob — sync.js MANIFEST_INLINE_MAX. */
     static final int MANIFEST_INLINE_MAX = 45000;
     static final int CHECKPOINT = 200;

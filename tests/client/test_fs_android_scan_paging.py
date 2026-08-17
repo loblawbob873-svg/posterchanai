@@ -137,7 +137,7 @@ def test_a_file_is_never_held_whole_above_the_platforms_own_chunk_size():
     m = re.search(r"chunkAbove:\s*([^,\n]+)", src)
     assert m, "the sweep no longer passes chunkAbove at all"
     expr = m.group(1).strip()
-    assert "chunkBytes" in expr, (
+    assert "chunkSize()" in expr, (
         "chunkAbove is a fixed number again (%s) — on any platform whose chunk is smaller, every "
         "file in between is held whole on the device least able to afford it" % expr
     )
