@@ -381,7 +381,7 @@
      * is unambiguously worth paying — the alternative is re-uploading, or duplicating, everything. */
     step('reading the manifest');
     const remote = await store.manifest(key);           // {} when the folder has never synced
-    const base = (await store.base(key)) || {};
+    let base = (await store.base(key)) || {};   // `let`: a keeps-nothing plan discards it, see below
     const firstEver = !Object.keys(base).length;
 
     /* COLLECT ABANDONED `.part` FILES BEFORE SCANNING, and this needs a caller or it is decoration.
@@ -432,6 +432,39 @@
     // `let`, because a refused mass delete replaces it with a copy carrying no deletions — while
     // `report.plan` keeps the original, so the panel can still show what was refused.
     let plan = S.diff({ local, remote, base, device, now, excludes:o.excludes||[] });
+
+    /* A SWEEP THAT WOULD KEEP NOTHING IS NOT A SWEEP. IT IS A BROKEN AGREEMENT.
+     *
+     * "Move 6331 files on this device to the trash? ... this sweep keeps only 0." Reported over and
+     * over, on a folder whose files were all present and correct, because the local AGREEMENT still
+     * said they had been synced while the manifest said they were deleted elsewhere. Every rule
+     * fired correctly and the answer was still "destroy everything".
+     *
+     * There is no legitimate reading of that state. An agreement exists to say what this device and
+     * the folder last agreed about; when acting on it would leave the folder empty, the agreement is
+     * evidence of nothing — it has outlived the history it describes. So it is DISCARDED and the
+     * comparison is made again without it, which can only ever produce uploads: a deletion REQUIRES
+     * an agreement, and there is now none.
+     *
+     * That is the same direction the whole engine leans — delete loses to edit — and it is the
+     * recoverable one. Getting it wrong here costs somebody one more delete; getting it wrong the
+     * other way costs them the folder, and today it nearly did, repeatedly.
+     *
+     * BOUNDED so it cannot mask ordinary work: it needs a real number of deletions (the mass-guard
+     * floor), nothing kept, and nothing else to do. A folder genuinely emptied elsewhere while this
+     * device holds a handful of files does not qualify, and the mass-delete guard below still asks
+     * about everything that does. */
+    {
+      const del = (plan.deleteLocal || []).length;
+      const keeps = (plan.unchanged || 0) + (plan.upload || []).length
+                  + (plan.download || []).length + (plan.conflicts || []).length;
+      if(del >= 20 && keeps === 0 && Object.keys(base).length){
+        report.discardedBase = del;
+        base = {};
+        try{ await store.saveBase(key, {}); }catch(_){ /* the retry below stands either way */ }
+        plan = S.diff({ local, remote, base, device, now, excludes:o.excludes||[] });
+      }
+    }
     report.unchanged = plan.unchanged;
     report.excluded = plan.excluded;
     report.plan = plan;
