@@ -143,9 +143,15 @@
        * safe: this path only runs on an adapter with `scanPage`, which is the one with `readPart`
        * and chunked uploads — where the engine itself passes `maxBytes: 0`, because a file too big
        * to hold is not too big to send in pieces. */
+      /* PAUSE HAS TO BE ABLE TO LAND BETWEEN BATCHES. Inside one, `sweepOnce` checks between files;
+       * across them, this is the only place that can, and without it pressing pause waited for the
+       * whole folder. */
+      try{ if(typeof o.shouldStop === 'function' && o.shouldStop()){ merged.stopped = true; break; } }
+      catch(_){}
       let page;
       try{
-        page = await fs.scanPage(o.id, { hash: true, excludes: o.excludes || [], maxBytes: 0 },
+        page = await fs.scanPage(o.id, { hash: typeof fs.hashFile !== 'function',
+                                         excludes: o.excludes || [], maxBytes: 0 },
                                  offset, PAGE);
       }catch(e){
         merged.error = (e && e.message) || String(e);
@@ -303,7 +309,17 @@
      * because then the engine never even sees the file it is now able to handle. Shipping chunked
      * uploads without this left every file over the ceiling skipped exactly as before. */
     const chunky = typeof fs.readPart === 'function' && !!store.putParts;
-    const scanned = await fs.scan(id, { hash: !!o.hash || firstEver, excludes:o.excludes||[],
+    /* A FIRST SWEEP NO LONGER HASHES THE WHOLE FOLDER UP FRONT, where it can hash on demand.
+     *
+     * The up-front hash exists to give the conflict check a content identity for the local side.
+     * That check can now ask the adapter for one file at a time (`fs.hashFile`, streamed natively),
+     * so hashing everything first is reading tens of gigabytes to answer a question about the few
+     * hundred paths that turn out to conflict. It is also why PAUSE APPEARED TO HANG: the scan is a
+     * single call into the platform, nothing can interrupt one in flight, and `stopping…` sat there
+     * for as long as it took to read every photo on the device. Where the adapter cannot hash on
+     * demand, nothing changes — the up-front pass is still the only way to settle a join. */
+    const hashUpFront = !!o.hash || (firstEver && typeof fs.hashFile !== 'function');
+    const scanned = await fs.scan(id, { hash: hashUpFront, excludes:o.excludes||[],
                                         maxBytes: chunky ? 0 : (o.maxBytes || 0) });
     report.skipped = scanned.skipped || [];
     /* The scan reports the FILE's hash in `sha`; a manifest entry's `sha` is the address of its

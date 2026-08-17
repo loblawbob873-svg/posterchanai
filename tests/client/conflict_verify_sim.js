@@ -122,8 +122,30 @@ function opts(extra){
   check(tooBig.length === 0,
         tooBig.length + ' files larger than one chunk were still read whole (' + bigOnes + ' exist)');
 
+  // ---- the up-front hash, and why pause appeared to hang -----------------------------------------
+  const c = world(400);
+  let askedToHashEverything = false;
+  const innerScan = c.fs.scan;
+  c.fs.scan = async (id, so) => { if(so && so.hash) askedToHashEverything = true; return innerScan(id, so); };
+  c.state.base = {};
+  await RUN.sweep(c.fs, c.store, opts());
+  check(!askedToHashEverything,
+        'a first sweep still hashes the WHOLE folder up front even though it can hash on demand — '
+        + 'that is tens of gigabytes before anything moves, and it is why pause sat on "stopping…"');
+
+  // ...and a platform that CANNOT hash on demand must still do it, or a joining device duplicates
+  // every file it already has.
+  const d = world(50, { noHashFile: true });
+  let hashedUpFront = false;
+  const innerScanD = d.fs.scan;
+  d.fs.scan = async (id, so) => { if(so && so.hash) hashedUpFront = true; return innerScanD(id, so); };
+  await RUN.sweep(d.fs, d.store, opts());
+  check(hashedUpFront,
+        'a platform with no native hash stopped hashing up front, so it has no way to settle a join');
+
   console.log(JSON.stringify({
     conflicts: N,
+    upFrontHash: { withNativeHash: askedToHashEverything, without: hashedUpFront },
     withNativeHash: { wholeFileReads: a.state.reads.length, nativeHashes: a.state.hashed.length,
                       unsettled: (rep.conflicted || []).length, copies: a.state.moved.length,
                       settled: rep.unchanged },

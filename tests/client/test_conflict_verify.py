@@ -60,3 +60,19 @@ def test_a_platform_that_cannot_hash_natively_still_settles_what_it_can_hold():
     f = got["fallback"]
     assert f["reads"] > 0, "it stopped settling conflicts altogether"
     assert f["oversizedReads"] == 0, "a file larger than one chunk was still read whole"
+
+
+def test_a_first_sweep_does_not_hash_the_whole_folder_when_it_can_hash_on_demand():
+    """WHY PAUSE APPEARED TO HANG. The scan is a single call into the platform and nothing can
+    interrupt one in flight, so hashing every photo on the device before anything moves left
+    "stopping…" on screen for as long as that took.
+
+    The up-front hash exists to give the conflict check a local content identity. That check asks the
+    adapter per file now, so hashing everything first is reading tens of gigabytes to answer a
+    question about the few hundred paths that actually conflict. A platform WITHOUT a native hash must
+    still do it — otherwise a joining device duplicates every file it already has — and that half is
+    asserted too."""
+    got = _run(1927)
+    up = got["upFrontHash"]
+    assert up["withNativeHash"] is False, "it still hashes the whole folder before it starts"
+    assert up["without"] is True, "a platform with no native hash lost its only way to settle a join"

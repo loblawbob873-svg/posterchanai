@@ -1250,8 +1250,29 @@
    * So the worst case is the worst case of a normal delete, and everything is still on disk. */
   /* Reading two whole files to retire one duplicate is worth it; reading two 4 GB ones is not —
    * that is the renderer kill chunking exists to avoid, and the same bound the sweep's own
-   * conflict verification uses. */
+   * conflict verification uses.
+   *
+   * AND IT IS THE SAME BOUND IN THE SAME WRONG UNITS. Two gigabytes is generous on a desktop and
+   * meaningless on a phone, where `fs.read` crosses the bridge as base64 before anything reads a
+   * byte of it: this button crashed the app on a folder of ordinary photos, exactly as the sweep's
+   * conflict verification did. Where the adapter can hash a file ITSELF the read never happens and
+   * the old generosity costs nothing; where it cannot, the pair is only compared if this platform
+   * can hold it. */
   const _TIDY_VERIFY_MAX = 2 * 1024 * 1024 * 1024;
+  function _tidyMax(fs){
+    if(fs && typeof fs.hashFile === 'function') return _TIDY_VERIFY_MAX;
+    const chunk = (fs && fs.chunkBytes) || 0;
+    return chunk > 0 ? chunk : _TIDY_VERIFY_MAX;
+  }
+  /* One file's content identity, the cheapest way this platform allows — native and streamed where
+   * that exists, otherwise the read this function has always done. */
+  async function _csumOf(fs, id, rel){
+    if(typeof fs.hashFile === 'function'){
+      const sha = await fs.hashFile(id, rel);
+      if(sha) return sha;
+    }
+    return store.hashBytes(await fs.read(id, rel));
+  }
   async function conflictCleanup(f, opts){
     const fs = FS();
     if(!fs) throw new Error('this device has no filesystem access');
@@ -1278,10 +1299,10 @@
      * proof is deleting somebody's file. */
     if(!(opts && opts.noVerify) && store.hashBytes && typeof fs.read === 'function' && S.conflictCandidates){
       for(const c of S.conflictCandidates(man)){
-        if(c.size > _TIDY_VERIFY_MAX) continue;
+        if(c.size > _tidyMax(fs)) continue;
         try{
-          const a = await store.hashBytes(await fs.read(f.id, c.path));
-          const b = await store.hashBytes(await fs.read(f.id, c.original));
+          const a = await _csumOf(fs, f.id, c.path);
+          const b = await _csumOf(fs, f.id, c.original);
           if(a && b && a === b) list.push(Object.assign({}, c, { byRead: true }));
         }catch(_){ /* not on this disk, or unreadable — leave it for a device that has it */ }
       }
