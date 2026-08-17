@@ -290,7 +290,39 @@ function initUpdater() {
   try { ({ autoUpdater } = require('electron-updater')); } catch (_) { return; }
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  /* A DOWNLOADED UPDATE THAT IS NOT NEWER MUST NOT BE OFFERED.
+   *
+   * electron-updater caches the installer it downloaded and keeps offering it until it is applied.
+   * Install a build by hand in the meantime — which is what anybody does when they are waiting on a
+   * fix — and the cache is now BEHIND the running app, so "PosterChan 1.0.467 is ready to install"
+   * appears for ever on a machine already running 1.0.468. Reported exactly that way. Accepting it
+   * would be a downgrade, and the version scheme is 1.0.<build number>, so the comparison is a
+   * number.
+   *
+   * The stale download is deleted as well, so the check that follows re-downloads whatever the feed
+   * actually offers instead of finding the old one and stopping. Both halves are best-effort: being
+   * unable to tidy up is not a reason to nag somebody about a downgrade. */
+  const buildOf = (v) => {
+    const m = /(\d+)\s*$/.exec(String(v || ''));
+    return m ? parseInt(m[1], 10) : NaN;
+  };
+  const isNewer = (v) => {
+    const a = buildOf(v), b = buildOf(app.getVersion());
+    return !(Number.isFinite(a) && Number.isFinite(b)) || a > b;
+  };
+  const dropStaleDownload = () => {
+    try {
+      const dir = path.join(app.getPath('cache'), app.getName() + '-updater');
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch (_) { /* nothing to tidy, or not ours to remove */ }
+  };
   autoUpdater.on('update-downloaded', async (info) => {
+    if (!isNewer(info && info.version)) {
+      console.warn('[update] ignoring a cached', info && info.version,
+                   '— this app is', app.getVersion());
+      dropStaleDownload();
+      return;
+    }
     const r = await dialog.showMessageBox(win, {
       type: 'info',
       buttons: ['Restart now', 'Later'],
