@@ -315,6 +315,9 @@
       if(Array.isArray(rep[k])) into[k] = into[k].concat(rep[k]);
     for(const k of ['excluded','unchanged']) into[k] = (into[k] || 0) + (rep[k] || 0);
     if(rep.resurrected) into.resurrected = (into.resurrected || []).concat(rep.resurrected);
+    if(rep.unfetchable) into.unfetchable = (into.unfetchable || []).concat(rep.unfetchable);
+    // Batches each report their own; the caller persists the union.
+    if(rep.badFetch) into.badFetch = Object.assign(into.badFetch || {}, rep.badFetch);
     if(rep.refusedTrash) into.refusedTrash = rep.refusedTrash;
     if(rep.partsCollected) into.partsCollected = rep.partsCollected;
   }
@@ -356,6 +359,9 @@
      * (interrupting mid-upload just wastes the transfer), then the sweep stores what it has agreed
      * and returns. Everything already done stays done, and the next run resumes from the checkpoint,
      * because that is what checkpoints are for. */
+    /* path -> the identity of a copy this device has already failed to verify. Supplied by the
+     * caller, which persists it; see report.badFetch for what comes back. */
+    const skipFetch = o.skipFetch || {};
     const stopping = () => { try{ return typeof o.shouldStop === 'function' && !!o.shouldStop(); }catch(_){ return false; } };
     const halt = async () => { report.stopped = true; await checkpointRef.fn(true); return report; };
     const checkpointRef = { fn: async () => {} };
@@ -531,7 +537,15 @@
                       + String(R.csum).slice(0, 12) + ', got ' + String(got).slice(0, 12) + ')');
     };
     const fail = (path, e, what) => {
-      report.failed.push({ path, what, error: (e && e.message) || String(e) });
+      const msg = (e && e.message) || String(e);
+      report.failed.push({ path, what, error: msg });
+      /* Remember WHICH copy failed its checksum, so the loop above can refuse that one and only
+       * that one. Recorded against the remote identity rather than the path, for the reason stated
+       * there: a re-upload publishes a different identity and clears this for free. */
+      if(what === 'download' && /checksum mismatch/.test(msg)){
+        const id2 = (remote[path] && (remote[path].csum || remote[path].sha)) || '';
+        if(id2) (report.badFetch = report.badFetch || {})[path] = id2;
+      }
     };
 
     /* GIVE EVERY ENTRY A CONTENT IDENTITY WHILE WE ARE HERE.
@@ -739,6 +753,29 @@
     let di=0;
     for(const d of plan.download){
       if(stopping()) return await halt();
+      /* A COPY THAT HAS ALREADY FAILED ITS CHECKSUM IS NOT WORTH FETCHING AGAIN, EVER.
+       *
+       * The chunks are content-addressed, so reassembling them is deterministic: the same stored
+       * copy produces the same wrong hash every time. Retrying it is an infinite loop that moves
+       * real bytes over somebody's connection — reported exactly that way, the same two videos
+       * failing on every sweep for ever.
+       *
+       * The block is keyed on the IDENTITY of the copy, not on the path, so it lifts by itself the
+       * moment the holder publishes a different one: nothing to clear, no state to go stale, and a
+       * genuinely repaired file downloads on the next sweep without anybody being told to do
+       * anything.
+       *
+       * DROPPING THE MANIFEST ENTRY WOULD BE THE OBVIOUS REPAIR AND IS A CATASTROPHE: the device
+       * that HAS the file holds it in its own `base`, so an entry that vanishes reads as "deleted
+       * elsewhere" and it would trash its only good copy. */
+      const badId = (skipFetch && skipFetch[d.path]) || '';
+      const wantId = (remote[d.path] && (remote[d.path].csum || remote[d.path].sha)) || '';
+      if(badId && wantId && badId === wantId){
+        report.unfetchable = (report.unfetchable || []);
+        report.unfetchable.push({ path: d.path, why: 'the copy in the store fails its checksum — '
+                                  + 'the device that has this file must send it again' });
+        continue;
+      }
       step('downloading', d.path, ++di, plan.download.length);
       try{
         const R = remote[d.path] || {};

@@ -187,6 +187,26 @@
     // Pre-IndexedDB devices, and the small folders that fitted. Read once; the next save moves it.
     try{ return JSON.parse(localStorage.getItem(BASE_KEY(key)) || '{}') || {}; }catch(_){ return {}; }
   }
+  /* COPIES THIS DEVICE COULD NOT VERIFY — path -> the identity that failed.
+   *
+   * Small, per folder, and deliberately in localStorage rather than in the shared manifest: it is
+   * this device's experience of a copy, not a fact about the folder, and writing it to the manifest
+   * would tell every other device something only this one observed. It is keyed on the copy's
+   * identity so a re-upload clears it automatically — there is nothing to expire and nothing to go
+   * stale. */
+  const _BADF = 'pc-sync-badfetch:';
+  function _badFetch(key){
+    try{ return JSON.parse(localStorage.getItem(_BADF + key) || '{}') || {}; }catch(_){ return {}; }
+  }
+  function _rememberBadFetch(key, add){
+    try{
+      const cur = _badFetch(key);
+      let changed = false;
+      for(const p in (add || {})) if(cur[p] !== add[p]){ cur[p] = add[p]; changed = true; }
+      if(changed) localStorage.setItem(_BADF + key, JSON.stringify(cur));
+    }catch(_){}
+  }
+
   async function _saveBase(key, base){
     // NOT swallowed. A base that silently fails to persist is an infinite resync, and the only way
     // anyone would ever find out is by watching their upload counter start again from one.
@@ -1004,6 +1024,11 @@
           id: f.id, key: keyOf(f), device: deviceName(), now: Date.now(),
           excludes: f.excludes || [], maxBytes: await maxBytes(),
           shouldStop: () => stopping.has(f.id),
+          /* WHICH COPIES THIS DEVICE HAS ALREADY FAILED TO VERIFY, so a bad one in the store is not
+           * re-fetched on every sweep for ever — measured, two videos looping all evening. Keyed on
+           * the copy's identity, so a re-upload from the other device clears it with no action from
+           * anyone. */
+          skipFetch: _badFetch(keyOf(f)),
           // The platform decides how much it can hold at once; see fs-android.js.
           chunkBytes: (FS() && FS().chunkBytes) || 0,
           /* ABOVE ONE CHUNK A FILE GOES UP IN PIECES — AND "ONE CHUNK" IS THE PLATFORM'S, NOT A
@@ -1056,6 +1081,7 @@
           },
         });
         if(!o.dryRun){
+          if(rep && rep.badFetch) _rememberBadFetch(keyOf(f), rep.badFetch);
           // Tell the background checker what "synced" now looks like, or its next run compares
           // against a stale signature and notifies about changes that are already up.
           try{ if(fs.markSynced) await fs.markSynced(); }catch(_){}
