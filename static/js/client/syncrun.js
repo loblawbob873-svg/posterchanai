@@ -122,7 +122,13 @@
     const key0 = o.key || o.id;
     // Only where the adapter can hand its listing over in pages (Android). Anywhere else, and for a
     // dry run, nothing changes.
-    if(typeof fs.scanPage !== 'function' || o.dryRun) return sweepOnce(fs, store, opts);
+    /* A DRY RUN TAKES THE SAME PATH AS THE SWEEP IT IS PREDICTING.
+     *
+     * It used to be excluded from batching, which made "would upload 5 files" and "in step · nothing
+     * to sync" two answers from two different engines about one folder — reported exactly that way,
+     * and impossible to tell from a bug in the sweep itself. A preview whose job is to say what the
+     * sweep will do has to be the sweep, minus the writing. */
+    if(typeof fs.scanPage !== 'function') return sweepOnce(fs, store, opts);
     let base0 = null;
     try{ base0 = await store.base(key0); }catch(_){ base0 = null; }
     if(base0 && Object.keys(base0).length) return sweepOnce(fs, store, opts);  // not a first sweep
@@ -132,7 +138,13 @@
   async function firstSweepInBatches(fs, store, o, PAGE){
     const key = o.key || o.id;
     const merged = { uploaded:[], downloaded:[], trashed:[], conflicted:[], removedRemote:[],
-                     failed:[], skipped:[], excluded:0, unchanged:0, batches:0, dryRun:false };
+                     failed:[], skipped:[], excluded:0, unchanged:0, batches:0, dryRun:!!o.dryRun,
+                     /* THE PLAN IS PART OF THE REPORT, and leaving it out is what made a batched
+                      * sweep unable to say what it had decided: `summarise` reads `rep.plan` for the
+                      * preview and `details` reads it for the card, so a report without one is a
+                      * folder that says "in step" whatever it found. */
+                     plan: { upload:[], download:[], deleteLocal:[], deleteRemote:[], conflicts:[],
+                             unchanged:0, excluded:0, notes:[] } };
     const acc = {};                     // the agreement, accumulated across batches
     let remoteAll = {};
     try{ remoteAll = (await store.manifest(key)) || {}; }catch(_){ remoteAll = {}; }
@@ -219,6 +231,12 @@
 
   function absorb(into, rep){
     if(!rep) return;
+    if(rep.plan && into.plan){
+      for(const k of ['upload','download','deleteLocal','deleteRemote','conflicts','notes'])
+        if(Array.isArray(rep.plan[k])) into.plan[k] = into.plan[k].concat(rep.plan[k]);
+      for(const k of ['unchanged','excluded'])
+        into.plan[k] = (into.plan[k] || 0) + (rep.plan[k] || 0);
+    }
     for(const k of ['uploaded','downloaded','trashed','conflicted','removedRemote','failed','skipped'])
       if(Array.isArray(rep[k])) into[k] = into[k].concat(rep[k]);
     for(const k of ['excluded','unchanged']) into[k] = (into[k] || 0) + (rep[k] || 0);
