@@ -1710,6 +1710,14 @@
       try{
         const picked = await FS().pick();
         if(!picked) return;
+        /* A FOLDER THAT WILL BE FORGOTTEN ON RESTART HAS TO SAY SO NOW. The desktop stores this
+         * mapping in the app's own config; if that write failed the pick works, the sweep works, and
+         * on the next launch the folder's handle resolves to nothing and the app asks the user to
+         * point at it again — every launch, with nothing to explain it. */
+        if(picked.persisted === false){
+          PC.toast('added — but this device could not save the folder mapping ('
+                   + (picked.why || 'unknown error') + '), so it will ask again after a restart');
+        }
         const list2 = folders();
         if(list2.some(x => x.id === picked.id)){ PC.toast('that folder is already syncing'); return; }
         // Picked a directory this identity has paired before? Then it already has a name on the

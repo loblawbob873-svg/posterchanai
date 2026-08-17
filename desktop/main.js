@@ -63,6 +63,7 @@ function cfgPath() { return path.join(app.getPath('userData'), 'config.json'); }
  * never be written back over a full one.
  */
 let cfgLoadFailed = false;
+let cfgSaveFailed = null;   // the last save error, or null — see saveCfg
 function loadCfg() {
   let raw = null;
   try { raw = fs.readFileSync(cfgPath(), 'utf8'); }
@@ -95,7 +96,22 @@ function saveCfg() {
       fs.fsyncSync(fd);                       // the rename is only atomic if the BYTES landed first
     } finally { fs.closeSync(fd); }
     fs.renameSync(tmp, cfgPath());
-  } catch (_) {}
+    cfgSaveFailed = null;
+  } catch (e) {
+    /* NOT SWALLOWED. This file holds the desktop's SYNC ROOTS — the mapping from a folder pair to a
+     * directory on this disk — so a write that fails without a word means the pick works, the sweep
+     * works for that session, and on the next launch the bridge has no roots at all: the folder is
+     * still listed by the page (that lives in localStorage and survives), its handle resolves to
+     * nothing, and the app asks the user to point at the folder again. Every launch, for ever, with
+     * nothing in any log. Reported as "why do I have to keep pointing Pictures to the Pictures
+     * folder on Desktop!".
+     *
+     * Recorded rather than thrown: the caller is usually a UI action that has already happened, and
+     * the useful thing is that the NEXT thing to persist a root can say it did not stick. */
+    cfgSaveFailed = (e && e.message) || String(e);
+    console.error('[cfg] could not save', cfgPath(), '-', cfgSaveFailed,
+                  '\n[cfg] sync folders picked in this session will be forgotten on restart');
+  }
 }
 /* The configured instance, or '' for "relays only".
  *
@@ -814,7 +830,14 @@ ipcMain.handle('pc:fs:pick', async (e) => {
     properties: ['openDirectory', 'createDirectory'],
   });
   if (r.canceled || !r.filePaths || !r.filePaths[0]) return null;
-  return fsbridge.addRoot(r.filePaths[0]);
+  const root = fsbridge.addRoot(r.filePaths[0]);
+  /* SAY SO IF IT WILL NOT SURVIVE A RESTART. The root has just been written to the app's config, and
+   * if that write failed the folder works for this session and is gone on the next launch — the user
+   * is then asked to point at it again, with nothing anywhere explaining why. Reported as having to
+   * do it over and over. The pick still succeeds: the folder DOES work now, and refusing it would
+   * trade a recurring annoyance for a feature that cannot be used at all. */
+  return cfgSaveFailed ? Object.assign({}, root, { persisted: false, why: cfgSaveFailed })
+                       : Object.assign({}, root, { persisted: true });
 });
 ipcMain.handle('pc:fs:forget', (e, id) => { fsGuard(e); return fsbridge.removeRoot(String(id || '')); });
 ipcMain.handle('pc:fs:scan', (e, id, opts) => { fsGuard(e); return fsbridge.scan(String(id || ''), opts || {}); });
@@ -889,7 +912,26 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
    * what the main process had dropped. */
   fsbridge.init({
     roots: Array.isArray(cfg.syncRoots) ? cfg.syncRoots : [],
-    save: (roots) => { cfg.syncRoots = roots; saveCfg(); },
+    /* VERIFIED BY READING IT BACK. A root that is not on disk is a folder the user will be asked to
+     * point at again on the next launch, and that question is indistinguishable from the feature
+     * simply not working. */
+    save: (roots) => {
+      cfg.syncRoots = roots;
+      saveCfg();
+      if (!cfgSaveFailed) {
+        try {
+          const back = JSON.parse(fs.readFileSync(cfgPath(), 'utf8'));
+          const kept = Array.isArray(back.syncRoots) ? back.syncRoots.length : 0;
+          if (kept !== roots.length) {
+            cfgSaveFailed = 'wrote ' + roots.length + ' folder(s), read back ' + kept;
+            console.error('[cfg] sync roots did not persist -', cfgSaveFailed);
+          }
+        } catch (e) {
+          cfgSaveFailed = 'could not read the config back: ' + ((e && e.message) || e);
+          console.error('[cfg]', cfgSaveFailed);
+        }
+      }
+    },
   });
   wireInsecureContent();
   wireWaylandCapture();
