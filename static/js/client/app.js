@@ -18339,7 +18339,8 @@
           <svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download ${wantable.length}</button>` : ''}
         <button class="btn btn-ghost small" id="mus-refresh" title="Fetch the library again — songs added on another device appear here">
           <svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg>Refresh</button>
-        ${gone ? `<button class="btn btn-ghost small" id="mus-tidy">Remove ${gone} missing</button>` : ''}</div>`;
+        ${gone ? `<button class="btn btn-ghost small" id="mus-tidy">Remove ${gone} missing</button>` : ''}
+        ${(tracks.length && !only) ? `<button class="btn btn-ghost small" id="mus-delall" title="${needle ? 'Delete the songs matching this search — from your library, not just this view' : 'Delete every song in your library'}">Delete ${needle ? `these ${tracks.length}` : 'all'}</button>` : ''}</div>`;
     /* THE WHOLE LIBRARY USED TO BE ON SCREEN AT ONCE, and a big one made the entire app sluggish for
      * as long as the window was open — with nothing playing. Reported as "the music player on the
      * desktop slows everything down, window movement included; it's fast again once Music is closed",
@@ -18380,6 +18381,55 @@
      * list has actually been read (_blobHave non-null) — "we have not looked yet" must never be
      * mistaken for "it is gone", or this would delete a working library on a failed fetch. It only
      * drops INDEX entries; there is nothing on the server left to delete. */
+    /* DELETE THE LIBRARY, OR WHATEVER THE SEARCH IS SHOWING.
+     *
+     * There was no way to do this at all: the Files grid hides encrypted music on purpose (it is
+     * ciphertext with no useful name), and this screen only ever deleted ONE track at a time — which
+     * for a few hundred songs is not a feature, it is a dare. Reported as exactly that.
+     *
+     * It deletes what is ON SCREEN, so a search narrows it and the button says so. The confirmation
+     * names the count and does not pretend to be reversible: the bytes go from the server.
+     *
+     * The index save is BATCHED and checkpointed every 25, because forget() otherwise re-uploads the
+     * whole encrypted index per track — the same reason the bulk import batches — and a crash
+     * halfway then keeps the progress instead of losing it. The verdict comes from endBatch, not
+     * from having asked: a tidy that never reached the server once reported success and the entries
+     * were all back on the next load, twice, for 2422 tracks. */
+    /* NOT INSIDE A PLAYLIST. There, the same button reads as "empty this playlist" and would delete
+     * the songs themselves — beside a Delete-playlist control that deliberately does not. The
+     * comment on that one already says why: "delete" next to a list of songs reads like it might. */
+    { const da=$('#mus-delall',grid);
+      if(da) da.onclick=async ()=>{
+        const doomed = tracks.map(t=>t.sha);
+        if(!doomed.length) return;
+        const what = needle ? `the ${doomed.length} song${doomed.length>1?'s':''} matching “${needle}”`
+                            : `all ${doomed.length} song${doomed.length>1?'s':''} in your library`;
+        if(!await uiConfirm(`Delete ${what}?\n\nThe files are removed from the server. This cannot be `
+                          + `undone, and any copy kept on this device goes too.`)) return;
+        da.disabled = true;
+        const was = da.textContent;
+        FilesIdx.beginBatch();
+        let done = 0, failed = 0;
+        for(const sha of doomed){
+          if(!await deleteBlobQuiet(sha)) failed++;
+          if(++done % 25 === 0){
+            await FilesIdx.endBatch(); FilesIdx.beginBatch();
+            da.textContent = `Deleting ${done}/${doomed.length}…`;
+          }
+        }
+        const saved = await FilesIdx.endBatch();
+        // A playlist that still names a deleted track draws as a gap, and "delete my music" that
+        // leaves the names behind is not what anybody meant. One save per playlist that changes.
+        try{ if(PL()) await PL().pruneTracks(doomed); }catch(_){}
+        da.disabled = false; da.textContent = was;
+        toast(!saved ? 'not saved — your library on the server is unchanged'
+                     : failed ? `deleted ${doomed.length - failed}, ${failed} could not be removed`
+                              : `deleted ${doomed.length} song${doomed.length>1?'s':''}`);
+        try{ await FilesIdx.pull(); }catch(_){}
+        _renderMusicList(grid, list, q, only);
+        try{ _musicAppNow(); }catch(_){}
+        try{ if(window.PCOS && PCOS.musicChanged) PCOS.musicChanged(); }catch(_){}
+      }; }
     { const td=$('#mus-tidy',grid);
       if(td) td.onclick=async ()=>{
         const dead=musicEntries(list).filter(t=>t.missing).map(t=>t.sha);

@@ -261,6 +261,32 @@
     return fresh.length;
   }
 
+  /* Drop a whole SET of tracks from every playlist — one save per playlist that actually changes.
+   *
+   * Deleting a library one track at a time through removeTrack() is a save per (playlist, track)
+   * pair, which for a few hundred songs is thousands of encrypted writes to the relay. A playlist
+   * that references a deleted track is not harmless either: it draws as a gap, and "delete my music"
+   * that leaves the names behind is not what anybody meant.
+   *
+   * Returns how many playlists were touched. A playlist whose save is refused keeps its old order —
+   * the same rule the single-track path uses, and for the same reason: a list that silently loses
+   * its order is worse than one that still names a track that has gone. */
+  async function pruneTracks(shas){
+    const drop = new Set((shas || []).map(x => String(x || '').toLowerCase()));
+    if(!drop.size) return 0;
+    let touched = 0;
+    for(const pl of all()){
+      const before = pl.tracks.slice();
+      const next = before.filter(s => !drop.has(s));
+      if(next.length === before.length) continue;
+      pl.tracks = next;
+      const r = await _save(pl);
+      if(_stuck(r)){ pl.tracks = before; _changed(); continue; }
+      touched++;
+    }
+    return touched;
+  }
+
   async function removeTrack(id, sha){
     const pl = get(id); if(!pl) return false;
     const k = String(sha||'').toLowerCase();
@@ -356,7 +382,7 @@
 
   window.PCPlaylists = {
     load, all, get, count, playlistsWith,
-    create, rename, add, removeTrack, move, remove,
+    create, rename, add, removeTrack, pruneTracks, move, remove,
     flush, unwatch, reorder,          // reorder is pure — exported for tests
     onChange(fn){ _watchers.add(fn); return () => _watchers.delete(fn); },
     _BODY_MAX: BODY_MAX, _D: D_PL, _L: L_TAG,
