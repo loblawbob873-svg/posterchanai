@@ -485,7 +485,17 @@
       }
       const live = Object.keys(paths).filter(p => paths[p] && !paths[p].deletedAt).length;
       const json = JSON.stringify(paths);
-      const doc = { n: live };
+      /* `entries` IS PLAINTEXT AND HAS TO BE, for the same reason `n` is.
+       *
+       * The paths are sealed, so a server looking at this document cannot tell "no entries at all"
+       * from "every entry is a tombstone" — both report n = 0. That difference decides whether a
+       * folder still exists: a forgotten folder must leave the account's list, and a folder whose
+       * files were all deleted must NOT, because its tombstones are how another device learns they
+       * were deleted. Without this the wipe worked and the folder stayed listed for ever.
+       *
+       * It discloses one number — how many paths the manifest holds — to a server that already
+       * learns the live count for the collapse guard. It says nothing about what they are. */
+      const doc = { n: live, entries: Object.keys(paths).length };
       if(json.length < MANIFEST_INLINE_MAX){
         doc.sealed = await PC.nip44enc(PC.me().pubkey, json);
       } else {
@@ -808,11 +818,39 @@
      * guard would catch it and ask, but the honest thing is to say so in the confirmation rather
      * than rely on the last line of defence. */
     async forget(key){
-      const paths = await store.manifest(key);
-      const all = Object.keys(paths || {});
-      if(!all.length) return { removed: 0 };
-      await store.save(key, { manifest: {}, touched: all, removed: all.length });
-      return { removed: all.length };
+      const paths = await store.manifest(key) || {};
+      const all = Object.keys(paths);
+      if(!all.length) return { removed: 0, live: 0, tombstones: 0 };
+      /* COUNTED SEPARATELY, because the two numbers mean opposite things and reporting only the
+       * total reads as a contradiction. A folder shown as "0 files" can hold thousands of ENTRIES:
+       * the live ones are files your devices agree exist, the rest are tombstones — "this was
+       * deleted" — and it is the tombstones that make a name unusable. "8,000 entries cleared" on a
+       * folder displaying 0 files is alarming and was reported as such; "0 live files and 8,000
+       * deletion markers" is the same fact and explains itself. */
+      const live = all.filter(p => paths[p] && !paths[p].deletedAt).length;
+      /* NO `touched`, AND THAT IS THE WHOLE BUG THIS HAD.
+       *
+       * `save()` re-reads and merges when it is given a `touched` list, and the merge writes a path
+       * only `if(paths[p] !== undefined)` — a missing key means "leave it alone", which is why every
+       * deletion in this file is a TOMBSTONE and not a removed key. A wipe cannot be expressed that
+       * way: passing `{}` with all 8,132 paths listed made every lookup undefined, every assignment
+       * was skipped, and the document was written back UNCHANGED. The POST succeeded, so it reported
+       * "8,132 entries cleared" — every time, for ever, while nothing was ever cleared. Reported as
+       * "how can 8K always be removed".
+       *
+       * Without `touched`, `save` writes exactly what it is given. Losing a concurrent device's
+       * additions is the point of forgetting a folder, not a hazard to guard against. */
+      await store.save(key, { manifest: {}, removed: all.length });
+      /* AND CHECK. This reported success on a write that did nothing; it does not get to claim that
+       * twice. A read-back is one request and it is the only thing that can tell the difference. */
+      let after = null;
+      try{ after = await store.manifest(key); }catch(_){ after = null; }
+      const left = after && typeof after === 'object' ? Object.keys(after).length : null;
+      if(left){
+        throw new Error('the shared record still holds ' + left + ' entr'
+                        + (left === 1 ? 'y' : 'ies') + ' — nothing was cleared');
+      }
+      return { removed: all.length, live, tombstones: all.length - live, verified: left === 0 };
     },
     async remove(key, path, expect){
       return _mutate(key, api => {

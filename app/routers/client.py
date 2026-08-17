@@ -4329,6 +4329,16 @@ async def sync_folders(data: SyncFoldersReq, db: Session = Depends(get_db)):
     except Exception as e:
         logger.warning("[client] sync-folders: unreadable: %s", e)
         return JSONResponse({"ok": False, "error": "folder list unavailable"}, status_code=503)
+    return JSONResponse({"ok": True, "folders": _sync_folder_rows(docs)})
+
+
+def _sync_folder_rows(docs: dict) -> list:
+    """The folder list, as rows — separated from the endpoint so the RULE can be tested directly.
+
+    It was not, and the gap shipped: "Forget this folder" wipes the manifest but cannot delete the
+    EVENT, and this listing enumerates events — so a forgotten folder came straight back, at 0 files,
+    for ever, and pressing forget again cleared nothing because nothing was left to clear.
+    """
     out = []
     for d_tag, (doc, at) in docs.items():
         key = d_tag[len("pcai:sync:"):]
@@ -4338,12 +4348,37 @@ async def sync_folders(data: SyncFoldersReq, db: Session = Depends(get_db)):
         # `n` is the count the collapse guard reads. Pre-seal manifests kept the paths in the clear,
         # so fall back to counting them — those documents are still perfectly readable.
         n = doc.get("n")
+        paths = doc.get("paths")
         if n is None:
-            paths = doc.get("paths") or {}
+            paths = paths or {}
             n = sum(1 for p in paths.values() if isinstance(p, dict) and not p.get("deletedAt"))
+        # AN EMPTY RECORD IS NOT A FOLDER.
+        #
+        # "Forget this folder" wipes the document; it cannot delete the EVENT, and this endpoint
+        # enumerates events. So a forgotten folder came straight back into the list — for ever, at 0
+        # files — and pressing forget again cleared nothing, because there was nothing left to clear.
+        # Reported exactly that way.
+        #
+        # `n == 0` alone is not enough to skip on: a folder whose files were all deleted still has a
+        # manifest full of tombstones, and that IS a folder — it is how a device learns those files
+        # are gone. The empty case is having no entries at all, which is what forget leaves behind
+        # and what a manifest has never otherwise been.
+        # `entries` is the client's own plaintext count of every path the manifest holds, live and
+        # tombstoned. It exists because the paths are SEALED: without it this cannot tell a forgotten
+        # folder (nothing at all) from one whose files were deleted (tombstones, n = 0), and those
+        # decide opposite things — the first must leave the list, the second must stay, because its
+        # tombstones are how another device learns those files are gone.
+        entries = doc.get("entries")
+        if entries is None and isinstance(paths, dict):
+            entries = len(paths)          # readable manifest, or one written before `entries`
+        if entries == 0 and not n:
+            continue
+        # An older client seals without `entries` and there is no way to look inside, so it stays
+        # listed: keeping a folder that should have gone is a nuisance, dropping one that should
+        # have stayed loses a deletion.
         out.append({"key": key, "n": int(n or 0), "updated_at": int(at or 0)})
     out.sort(key=lambda f: f["key"].lower())
-    return JSONResponse({"ok": True, "folders": out})
+    return out
 
 
 class FilesIndexReq(BaseModel):

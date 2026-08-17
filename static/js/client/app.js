@@ -16667,7 +16667,14 @@
         const S = window.PCSync;
         if(!S || !S.edit || !S.edit.forget) throw new Error('this build cannot forget a folder');
         const out = await S.edit.forget(key);
-        toast('forgot “' + key + '” — ' + (out && out.removed ? out.removed + ' entries' : 'nothing') + ' cleared');
+        /* Say which is which. "8,000 entries cleared" under a folder showing "0 files" reads as a
+           contradiction and was reported as one; the live count and the deletion markers are
+           different things and the markers are the reason the folder was stuck. */
+        const n = (out && out.removed) || 0, lv = (out && out.live) || 0, tb = (out && out.tombstones) || 0;
+        toast(!n ? ('“' + key + '” had nothing left to clear')
+                 : ('forgot “' + key + '” — ' + lv.toLocaleString() + ' live file'
+                    + (lv === 1 ? '' : 's') + ' and ' + tb.toLocaleString() + ' deletion marker'
+                    + (tb === 1 ? '' : 's') + ' cleared. No file was deleted.'));
         if(_syncRoot === key){ _syncRoot = ''; _syncPath = ''; }
         _syncManifests.delete(key);
         await S.accountFolders(true);
