@@ -42,15 +42,15 @@ def test_the_reported_state_uploads_instead_of_trashing():
     got = _run()
     p = got["poisoned"]
     assert p["trashed"] == 0, "it still moved files to the trash"
-    assert p["askedToTrash"] is False, "it still offered to trash the folder"
-    assert p["discarded"] >= 300, "the agreement was not discarded"
+    assert p["asked"] is True, "it emptied the folder without asking"
     assert p["uploaded"] == 300, "the files were not republished"
 
 
 def test_it_stays_fixed_on_the_next_sweep():
-    """The loop is the actual complaint — the dialog came back every time."""
+    """The loop is the actual complaint — the dialog came back every time. Once the files are
+    republished the manifest holds them again, so there is nothing left to ask about."""
     got = _run()
-    assert got["secondSweep"]["askedToTrash"] is False
+    assert got["secondSweep"]["askedToTrash"] is False, "it asked again after the folder was fixed"
     assert got["secondSweep"]["uploads"] == 0
 
 
@@ -58,6 +58,6 @@ def test_an_ordinary_mass_delete_is_still_asked_about():
     """The rule needs a real number of deletions AND nothing kept. A folder partly deleted elsewhere
     is ordinary work, and swallowing it would be a worse bug than the one this fixes."""
     got = _run()
-    assert got["ordinaryPartialDelete"]["discarded"] == 0, "the rule is too broad"
+    assert got["ordinaryPartialDelete"]["uploaded"] == 0, "the rule is too broad"
     assert got["ordinaryPartialDelete"]["askedToTrash"] is True, \
         "a real mass delete stopped being asked about"

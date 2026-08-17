@@ -433,38 +433,6 @@
     // `report.plan` keeps the original, so the panel can still show what was refused.
     let plan = S.diff({ local, remote, base, device, now, excludes:o.excludes||[] });
 
-    /* A SWEEP THAT WOULD KEEP NOTHING IS NOT A SWEEP. IT IS A BROKEN AGREEMENT.
-     *
-     * "Move 6331 files on this device to the trash? ... this sweep keeps only 0." Reported over and
-     * over, on a folder whose files were all present and correct, because the local AGREEMENT still
-     * said they had been synced while the manifest said they were deleted elsewhere. Every rule
-     * fired correctly and the answer was still "destroy everything".
-     *
-     * There is no legitimate reading of that state. An agreement exists to say what this device and
-     * the folder last agreed about; when acting on it would leave the folder empty, the agreement is
-     * evidence of nothing — it has outlived the history it describes. So it is DISCARDED and the
-     * comparison is made again without it, which can only ever produce uploads: a deletion REQUIRES
-     * an agreement, and there is now none.
-     *
-     * That is the same direction the whole engine leans — delete loses to edit — and it is the
-     * recoverable one. Getting it wrong here costs somebody one more delete; getting it wrong the
-     * other way costs them the folder, and today it nearly did, repeatedly.
-     *
-     * BOUNDED so it cannot mask ordinary work: it needs a real number of deletions (the mass-guard
-     * floor), nothing kept, and nothing else to do. A folder genuinely emptied elsewhere while this
-     * device holds a handful of files does not qualify, and the mass-delete guard below still asks
-     * about everything that does. */
-    {
-      const del = (plan.deleteLocal || []).length;
-      const keeps = (plan.unchanged || 0) + (plan.upload || []).length
-                  + (plan.download || []).length + (plan.conflicts || []).length;
-      if(del >= 20 && keeps === 0 && Object.keys(base).length){
-        report.discardedBase = del;
-        base = {};
-        try{ await store.saveBase(key, {}); }catch(_){ /* the retry below stands either way */ }
-        plan = S.diff({ local, remote, base, device, now, excludes:o.excludes||[] });
-      }
-    }
     report.unchanged = plan.unchanged;
     report.excluded = plan.excluded;
     report.plan = plan;
@@ -642,7 +610,38 @@
       if(typeof o.confirmTrash === 'function'){
         try{ ok = !!(await o.confirmTrash(mass)); }catch(_){ ok = false; }
       }
-      if(!ok){ report.refusedTrash = mass; plan = Object.assign({}, plan, { deleteLocal: [] }); }
+      if(!ok){
+        report.refusedTrash = mass;
+        const doomed = plan.deleteLocal || [];        // captured before it is cleared below
+        plan = Object.assign({}, plan, { deleteLocal: [] });
+        /* SAYING NO TO EMPTYING THE FOLDER HAS TO LEAD SOMEWHERE.
+         *
+         * Refusing suppressed the deletion and nothing else, so the next sweep proposed exactly the
+         * same thing, and the one after that. On a folder erased on every OTHER device — which is
+         * what a fresh start looks like — that is an unbreakable loop: the files are only here, the
+         * manifest says they are gone, and the single question on offer was "destroy them?".
+         * Reported for hours, on build after build.
+         *
+         * The two situations are INDISTINGUISHABLE from the data. "Everything was deleted elsewhere
+         * and I want this device emptied too" and "everything was deleted elsewhere and this device
+         * is the one with the files" are the same manifest and the same disk; only the person knows
+         * which. So the first question keeps its meaning and its answer, and refusing it asks the
+         * OTHER one through the guard that already exists for republishing.
+         *
+         * Only when the sweep would otherwise do NOTHING AT ALL. A refusal that still leaves uploads,
+         * downloads or files in step is ordinary work, and offering to republish there would be
+         * noise. */
+        const keeps = (plan.unchanged || 0) + (plan.upload || []).length
+                    + (plan.download || []).length + (plan.conflicts || []).length;
+        if(keeps === 0 && doomed.length){
+          plan = Object.assign({}, plan, {
+            upload: doomed.map(d => ({
+              path: d.path, resurrect: true,
+              why: 'the folder was emptied on your other devices and this one still has the files',
+            })),
+          });
+        }
+      }
     }
 
     let ti=0;

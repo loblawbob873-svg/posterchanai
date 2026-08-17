@@ -83,8 +83,11 @@ const opts = (e) => Object.assign({
   const w = world();
   const r1 = await RUN.sweep(w.fs, w.store, opts({ confirmResurrect: async () => true,
                                                    confirmTrash: async () => false }));
-  check((r1.discardedBase || 0) >= N, 'the agreement was not discarded: ' + (r1.discardedBase || 0));
-  check(!r1.refusedTrash, 'it still proposed trashing the folder');
+  /* The mechanism changed after the end-to-end test showed the first one could not work: the delete
+   * verdict comes from comparing the file's mtime with the TOMBSTONE's, not from the agreement, so
+   * discarding the agreement changed nothing. Refusing to empty the folder now offers to republish
+   * it instead — the two situations are indistinguishable from the data, so the person decides. */
+  check(!!r1.refusedTrash, 'it did not even ask before emptying the folder');
   check(w.state.trashed.length === 0, w.state.trashed.length + ' files were moved to the trash');
   check((r1.uploaded || []).length === N,
         'it uploaded ' + (r1.uploaded || []).length + ' of ' + N + ' — the files were not republished');
@@ -99,16 +102,16 @@ const opts = (e) => Object.assign({
   const p = world({ someKept: true });
   const r3 = await RUN.sweep(p.fs, p.store, opts({ confirmTrash: async () => false,
                                                    confirmResurrect: async () => false }));
-  check(!(r3.discardedBase || 0),
-        'an ordinary partial delete was treated as a poisoned agreement — the rule is too broad');
+  check((r3.uploaded || []).length === 0,
+        'an ordinary partial delete was turned into a republish — the rule is too broad');
   check(!!r3.refusedTrash, 'a real mass delete stopped being asked about');
 
   console.log(JSON.stringify({
     files: N,
-    poisoned: { discarded: r1.discardedBase || 0, trashed: w.state.trashed.length,
-                uploaded: (r1.uploaded || []).length, askedToTrash: !!r1.refusedTrash },
+    poisoned: { asked: !!r1.refusedTrash, trashed: w.state.trashed.length,
+                uploaded: (r1.uploaded || []).length },
     secondSweep: { uploads: (r2.uploaded || []).length, askedToTrash: !!r2.refusedTrash },
-    ordinaryPartialDelete: { discarded: r3.discardedBase || 0, askedToTrash: !!r3.refusedTrash },
+    ordinaryPartialDelete: { uploaded: (r3.uploaded||[]).length, askedToTrash: !!r3.refusedTrash },
     failures: fail,
   }, null, 1));
   process.exit(fail.length ? 1 : 0);
