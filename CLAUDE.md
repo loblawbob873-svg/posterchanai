@@ -697,213 +697,93 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   treated as "not configured" rather than honoured, since the box behind it is gone.
   See `docs/WEBSEARCH.md`; `tests/test_websearch.py` + `scripts/check_websearch_mobile.py` (the
   generic `check_client_mobile.py` never opens this screen).
-- **Folder Sync** (`static/js/client/foldersync.js` + `syncrun.js` + `sync.js`, `desktop/fsbridge.js` /
-  `FolderSyncPlugin.java`; sidebar → Folder Sync): Documents/Pictures kept in step across devices in
-  encrypted Blossom. **Desktop + Android only** — a browser has no filesystem, and Firefox has no File
-  System Access API at all. The split is load-bearing: everything that can get the ANSWER wrong is
-  pure and tested (`diff()`'s three-way merge, the battery policy, the exclusion matcher), everything
-  that can destroy a FILE is a thin platform adapter.
-  **THE PAIR KEY.** `f.id` is the PLATFORM's handle for a directory — random hex on desktop, a SAF
-  tree URI on Android — and is device-local by construction. Keying the manifest on it meant every
-  device wrote and read a DIFFERENT document, so each synced happily with itself and **cross-device
-  sync could not work at all**; every test passed because they all inject the "remote" snapshot by
-  hand, which is the one thing the bug prevents two devices from sharing. It is keyed on `f.key`, the
-  NAME the user gives the pair ("Documents"), the same on every device; the local path stays local,
-  and that IS the per-device mapping. `tests/client/two_device_sim.js` now runs two (and once three)
-  independent devices — own filesystem, own `base`, own platform id — against ONE manifest addressed
-  the way the server addresses it, so this cannot come back silently.
-  **Rules that cost data if changed**, each with a test verified to bite: THREE snapshots (`base` per
-  PATH is what tells "new here" from "deleted there"); a conflict renames the local copy BEFORE
-  writing the incoming one; delete loses to edit both ways; identical bytes arriving independently is
-  NOT a conflict; `base` advances PER FILE and only on success; excluding a folder drops it from ALL
-  THREE snapshots so it is never DELETED elsewhere; nothing is deleted in place (`.pc-trash/<date>/`).
-  **And `base` must be cleared under the key it was WRITTEN under** — it moved to the pair key and
-  "Stop syncing"'s `removeItem` did not, so re-adding a folder started from an agreement claiming
-  files were synced that were no longer on disk, and the engine correctly deleted them everywhere.
-  The manifest goes through the SERVER (`/client/sync-manifest`) purely for the collapse guard — the
-  same one that saved the drive index — because an empty read written back over a full manifest does
-  not lose a setting, it loses the folder. `/client/sync-folders` enumerates the manifests' own
-  d-tags so a device that syncs NOTHING can still browse a folder from Files; there is deliberately
-  no index document, since an index is a second source of truth one empty read can wipe.
-  **THE FEATURE HAD A HARD CEILING AT ~376 FILES, and every symptom of it was "it synced fine, then
-  synced everything again".** NIP-44 refuses a plaintext over 65535 bytes and a manifest entry is
-  ~174, so past that `store.save()` threw at the LAST step of every sweep: the blobs were all
-  uploaded, the manifest was never stored, `base` was never written, and the next sweep read the
-  whole folder as new. Measured on a real 15790-file folder. Past 45 KB the paths now go to an
-  encrypted Blossom blob with a pointer in the doc (what `FilesIdx` already does) — and `sealed` is
-  still set, to an undecryptable marker, because a client older than this reads `sealed`, falls back
-  to `doc.paths`, and would take a v2 document as an EMPTY manifest: every file "deleted elsewhere",
-  trashed locally and tombstoned for the others. Two more of the same shape: `base` (same size as the
-  manifest) was in localStorage under a `catch` that swallowed the quota error — it is in IndexedDB
-  now and a failed write is reported; and `base` was persisted ONCE at the end of a sweep, so an
-  interrupted sweep resumed from file one — it checkpoints during the sweep now, bounded to ~20
-  manifest writes however big the folder is. `tests/client/test_sync_store_scale.py` drives the real
-  store at those sizes with the real ceilings stubbed in.
-  **AND THE SAME THING POINTING THE OTHER WAY — A RESTORED MACHINE REFILLS THE FOLDER EVERYWHERE.**
-  `delete loses to edit` republishes a tombstoned path whenever it looks changed here, and on an
-  ordinary sweep "changed" is size+mtime (no hashing — that is the point of `incremental`). So a
-  device whose timestamps moved under it (a backup restore, a copy, `rsync` without `-t`) resurrects
-  EVERY deletion at once, undoing it on every device that had correctly applied it. The mass-delete
-  guard is blind to this: it only suppresses `deleteLocal` and it runs AFTER the upload loop, so the
-  files are already back before anything asks. `massResurrect()` is an **absolute floor (20), NOT a
-  ratio** — a restore makes everything look edited, so the resurrections arrive beside thousands of
-  ordinary uploads and 3,930-beside-11,884 clears any ratio. It was also INVISIBLE: those uploads
-  were counted as ordinary ones, so the card read "3,930 up" on a sweep that had just reversed a
-  delete. `resurrect:true` is a FLAG on the plan action, never a substring match on the `why` prose
-  (two other `why` strings open with the same two words, and a reword would silently disarm the
-  guard); the counter is incremented at the two points an upload actually LANDED, not at the top of
-  the loop, or a sweep whose uploads all failed still claims it republished them. Covered by
-  `tests/client/test_fs_bridge.py`, which is also the first test anywhere to run the real executor
-  against the real desktop bridge against real files on disk — every other folder-sync test uses stub
-  adapters, which is why "another device deleted 3,930 files and this one still has them" had no test
-  that could fail. **`rep.excluded` must NOT go in the summary's `bits`**: it is a standing property
-  of the folder, set on every sweep, so pushing it made the list never empty and an idle folder with
-  an exclusion lost its "in step · nothing to sync (N checked)" line entirely.
-  **EVERY RULE ABOVE DECIDES ONE PATH, AND A BROKEN MANIFEST DOES NOT PRODUCE ONE BAD DECISION — IT
-  PRODUCES TEN THOUSAND IDENTICAL ONES.** Measured: the shared `pcai:sync:Pictures` doc held ~10k
-  paths and every one was a tombstone (`n=0` live, readable on the server — the count is the only
-  plaintext in the doc), so re-adding the folder on the Windows box that still had the files read
-  "deleted elsewhere" for all of them and moved the entire folder into `.pc-trash` — correctly, per
-  path, by rules that are each right, and silently. **The server's collapse guard is blind to it: a
-  mass LOCAL delete writes no manifest at all, it only advances `base`**, which is why every
-  `sync-manifest` call in that window logged 200. So the guard is client-side and it is the phone
-  book's rule — `foldersync.js massDelete()` refuses to delete more than it keeps, above a floor of
-  20 (an everyday 3-file delete must never raise a dialog, or people learn to click through the one
-  that matters). Three properties, each with a test verified to fail without it: a refusal
-  **suppresses deletion only** (uploads/downloads still run — a guard that aborts the sweep is the
-  same bug with the sign flipped, which is exactly what happened to the contacts sweep); it is
-  **never written to `base`**, so the next sweep re-proposes and re-asks rather than recording
-  "agreed" once; and only a MANUAL sweep may ask (`confirmTrash`), since a background one has nobody
-  in front of it and must fail closed. `tests/client/test_folder_sync.py::TestMassDelete` +
-  `tests/client/test_sync_run.py` (which also runs the pre-fix behaviour via `forceTrash`, so the
-  guard tests cannot pass vacuously). Also fixed alongside: `/client/sync-manifest` answered
-  `{"ok":true,"manifest":{}}` when the signed npub had no `User` row — an empty manifest handed out
-  as a SUCCESS is the folder wipe the endpoint exists to prevent, and it is reachable by a device
-  that has synced for months (a restore onto a fresh node, a re-pointed instance). It is a 403 now.
-  **An empty `base` must not conflict the whole folder.** Both sides look changed for every path at
-  once (re-adding a synced folder, a cleared agreement), and an ordinary sweep does NOT hash — so a
-  convergence test written as `L.sha === R.sha` can never fire, and every file becomes a
-  "(conflict from …)" copy on every device. It is `same(L, R)`, which falls back to size+mtime.
-  **A DEVICE THAT LOSES ITS MAPPING MUST NOT LOOK LIKE AN ACCOUNT THAT SYNCS NOTHING.** The mapping is
-  localStorage, so a reinstall or an app update that moves the storage origin takes it — reported as
-  "I updated the windows app and my existing Folder sync was no longer there". `/client/sync-folders`
-  is what makes that recoverable: anything the ACCOUNT syncs that this device has no directory for is
-  offered back under "Synced on your other devices", and re-attaching asks only WHERE, never for the
-  name (a different name is a second folder that never meets the first). Nothing is re-uploaded —
-  that is the empty-base rule above doing its job. The cache lives in `sync.js` and Files borrows it
-  through `PCSync.accountFolders()`, so the same question is not asked twice per visit.
-  **Superseded manifest blobs are RELEASED, not expired.** `expire_blob_in` cannot collect them: the
-  cleanup sweep filters `keep.is_(False)` and a manifest blob is a `keep` blob. The doc carries a
-  one-deep chain (`pathsSha`/`prevSha`, written server-side) and `_release_sync_blob` releases the
-  generation behind it — ownership-checked, because the sha comes out of a client-written document.
-  **A mass delete has to be able to complete.** The collapse guard refused the save, so the agreement
-  was never written and every later sweep re-proposed the same delete and was refused again. The 409
-  now carries `old`/`new`, and the sweep passes `removed`: when it accounts for the shrink the store
-  re-sends with `force`, otherwise it asks and honours a no.
-  **The UNATTENDED background job cannot upload and that is not a bug**: every network step is signed
-  by the user's Nostr key, which with Amber/NIP-46 is not on the device — so `SyncCheckWorker` holds
-  no key, opens no socket, notices changes and notifies.
-  **BACKGROUND SYNC RODE "STAY CONNECTED", AND THAT ONE FACT IS WHY EVERY FIX BEFORE IT WAS
-  INVISIBLE.** The alarm lived in `StayAwakeService` — a NOTIFICATIONS feature, **off by default**,
-  for DMs and calls where no push distributor is installed. On a phone that had never touched that
-  switch there was NO CLOCK AT ALL, so the Doze alarm, the wake lock, its renewal, `resumeTimers` and
-  finally an entire native sweep engine were all downstream of a tick nothing emitted: sync worked
-  with the screen on (the page's own heartbeat) and stopped when it went off. Reported that way on a
-  phone AND a tablet, across several rounds of "fixed". **A feature asks for what it needs itself** —
-  the same lesson the background signer cost. It is now `sync/SyncClock` (armed from
-  `FolderSyncPlugin.configure` and from `BootReceiver`, cancelled when nothing syncs) →
-  `sync/SyncTickReceiver` → `sync/SyncService`. Three things were separately missing and all three
-  are load-bearing: (a) **the clock**, owned by folder sync — and it asks for an **EXACT** alarm
-  where the platform allows one, which reads as a detail about punctuality and is the thing that
-  decides (b): Android 12+ only lets an *exact* alarm start a background FGS, an inexact
-  `setAndAllowWhileIdle` is temp-allowlisted with FGS explicitly NOT allowed; (b) **somewhere to run
-  that Android will not freeze** — a wake lock is the CPU and says nothing about the PROCESS, and a
-  cached process on 12+ is FROZEN, which is exactly "runs for a moment after the screen goes off and
-  then stops"; a receiver's ~10s is not a sweep. `SyncService` is `specialUse` (NOT `dataSync` —
-  Android 15 caps that at 6h/day app-wide and a first Pictures sync is hours), joins `RunningNote`'s
-  single notification, handles `onTimeout`, and a REFUSED FGS start falls back to `sync/SyncWork`,
-  an **expedited job** (no background-start restriction, also un-freezable) — never to a bare thread,
-  which IS the original bug. On 13+ the exact-alarm permission is the user's to grant, so the job
-  route is the ordinary one, not an edge case. Every route is counted; (c) **the key** —
-  `NativeRunner` needs a Keystore secret and the only two things that ever
-  stored one were the NIP-55 "sign for other apps" switch and a NIP-46 pairing, so an ordinary
-  account got "the account key is not on this device" about a key the page was holding and the native
-  sweep never ran once. `sync.js _pushNativeConfig` calls `PC.armNativeSigner()` (→ `Signer.arm`,
-  which does NOT set `exposed`) before configuring — **gated on the same four facts as `enabled`**,
-  or every local-key Android user gets their nsec sealed for a feature they never opened; matched on
-  PUBKEY, not on "a key exists", or a switched account signs as the previous one; and cleared by
-  `logout()` (`Signer.disable`), which used to be unnecessary because only `Session` held the secret.
-  **`RunningNote.othersRunning` takes an int, not a boolean**: "the OTHER one" stopped meaning
-  anything at three services, and getting it wrong deletes the shared notification out from under a
-  service that is still foreground.
-  **AND THE ROOT CAUSE WAS ONE LINE, UNDER ALL OF THAT:** `NativeRunner.deviceState` did
-  `s.put("online", nc != null)` — but a null from `getNetworkCapabilities(getActiveNetwork())` means
-  "I could not read the network", NOT "offline", and it is what a DOZING device answers. The alarm
-  exists to fire while dozing, so the one moment the feature was built for was the moment it read
-  itself offline → `shouldSync` `why:offline` → `plan()` "no folder is due" → nothing swept. It
-  worked with the app open and never with the screen off. Unreadable is UNSET now (`shouldSync`
-  guards on `!= null`); a READABLE manager with no active network is still a real offline. The same
-  file already stated this rule for `metered` — **failing closed on an unreliable read stops the
-  feature outright, which is the worse error.**
-  **`tests/test_android_sync_state.py` RUNS this** (javac + `java` against `tests/androidstubs`, with
-  a `Fake extends Context` backed by a HashMap) — every finding mutation-verified. Two days went into
-  text-matching tests that were all green while the logic was wrong: **grep the WIRING, RUN the
-  LOGIC.** Also there: `nativeEnabled()` is DERIVED from disk (the page pushed it as a boolean, and a
-  cold start with no `mk` wrote `false` over a working config on every launch), the native sweep
-  stands down while `FolderSyncPlugin.appInForeground()` (two engines racing meant "already syncing,
-  no progress" on the screen the user was watching), and a claim EXPIRES at 20 min and is stolen, or
-  one wedged sweep bricks the folder until force-stop.
-  **AND "STOPS SHORTLY AFTER THE SCREEN GOES OFF" MEANT EXACTLY THAT — a sweep that is RUNNING, not
-  one that never starts.** The page's sweep is JS; a hidden page is throttled to ~1 timer/min, so it
-  STALLS mid-folder still holding the per-folder claim, and the next alarm (≤16 min) skips that
-  folder as claimed. Nothing resumes until the claim expires or the app is reopened.
-  `FolderSyncPlugin.handleOnPause` is a HANDOVER: release the page's claims and start the native
-  sweep NOW. onPause is also the one moment an FGS start cannot be refused (still foreground).
-  The WebView tick remains for the accounts Java cannot sign for — `FolderSyncPlugin.tick()` →
-  `folderSyncTick` → `fs-android.onTick` → `sync.js nudge(force)` — and four things about it are
-  load-bearing, each verified by a test: (1) it is an
-  **`AlarmManager.setAndAllowWhileIdle`, NEVER a `Handler`** — `postDelayed` is scheduled on
-  `uptimeMillis()`, which STOPS in deep sleep, and a foreground service keeps the process resident
-  without keeping the CPU awake, so a Handler fires only when something else happens to wake the
-  phone: it looks like a fix and behaves like the bug; (2) the period is **just OVER** the client's
-  15-minute `minIntervalMs`, because nothing is ever dirty on Android and a 10-minute alarm therefore
-  aliases into a 20-minute effective period (refused at 10, runs at 20); (3) the nudge is **forced
-  past `_idle()`** and that flag must survive nudge()'s coalescing — one shared timer meant a later
-  unforced `online`/resume nudge replaced the forced one and the sweep was skipped for another whole
-  period; (4) it skips the "is anyone looking" test and **nothing else** — `shouldSync` still decides,
-  which is what "only when plugged in" and "Wi-Fi only" mean. `tests/client/sync_tick_sim.js` drives
-  the real sync.js in a screen-off world (and reproduces the bug without the tick, so the check cannot
-  pass vacuously); `tests/test_android_folder_sync.py` guards all four Java↔JS links, since Android
-  only builds on CI. See `docs/FOLDER_SYNC.md`.
-  **Files → Synced folders can now ADD/RENAME/DELETE, and what it edits is the MANIFEST, never a file**
-  (`PCSync.edit` in sync.js; the browser half is `_renderSyncedRoot`). Devices apply it on their next
-  sweep through the paths they already use — new entry → download, tombstone → `.pc-trash`, rename →
-  both — so a browser that syncs nothing can reorganise a folder and nothing here touches a disk. It
-  goes through `store.save` like a sweep, inheriting the re-read+merge, the server collapse guard and
-  the `removed` count that lets a deliberate mass delete through. **A delete is a TOMBSTONE, never a
-  removed key** — the same record `plan.deleteRemote` writes, so `same()`/`live()`/`gone()` read a web
-  edit exactly as they read a device's, and the document can still say a file was deleted rather than
-  never existing. What NEITHER shape can do is stop a device whose `base` was cleared (a reinstall,
-  "Stop syncing" and back) re-uploading a file it still holds — both sides look changed and diff()
-  applies DELETE LOSES TO EDIT on purpose. **That is engine policy and it fires identically for a
-  delete made on a device**, which is the point of
-  `tests/client/two_device_sim.js::a-web-delete-behaves-exactly-like-a-device-delete`: three arms, one
-  outcome, so this screen cannot become a second and subtly different way to delete. A rename is a
-  tombstone plus a new entry pointing at the SAME blob (no bytes move, asserted). Dropping a FOLDER on
-  that screen is refused on purpose: a half-walked directory tree is a half-created folder on every
-  device.
-  **Three more rules, each one a review finding with teeth:** (1) a manifest has no directories and a
-  filesystem does, so `_blockedBy` refuses a file at a path other entries live under (and vice versa) —
-  otherwise every device is asked to write a FILE where it has a DIRECTORY, fails on every sweep for
-  ever, and the bad entry draws as ONE file while deleting it covers the whole subtree. (2) The delete
-  confirmation's count is read FRESH and travels to `edit.remove` as `expect`, which refuses if it has
-  grown: a screen left open while another device fills the folder would otherwise ask about 3 files and
-  tombstone 403 — and `removed` accounting for the shrink is exactly what waves that past the server's
-  collapse guard. (3) `rename` re-checks its destinations inside `store.save`'s merge (`verify`), not
-  only against the manifest it read: the merge is what would otherwise overwrite a path another device
-  published seconds earlier. Uploads batch through `edit.uploadMany` (one manifest write per 20 files),
-  because each write is a fresh encrypted copy of the WHOLE document — per file, a 50-photo drop moves
-  more manifest than photos.
+- **Folder Sync** (`static/js/client/syncengine.js` + `syncexec.js` + `sync.js`, `desktop/fsbridge.js` /
+  `FolderSyncPlugin.java` + `SyncReconcile.java`; sidebar → Folder Sync): Documents/Pictures kept in
+  step across devices in encrypted Blossom. **Desktop + Android only** — a browser has no filesystem,
+  and Firefox has no File System Access API at all.
+  **THERE IS NO SHARED DOCUMENT. Every device publishes its own and the folder is the MERGE.**
+  `pcai:sync:<pair>:<device>`, one writer for ever. That single fact is the rewrite (2026-08-17), and
+  it exists because the previous shape could not be made safe: one document that every device read,
+  edited and wrote back is last-writer-wins on the record of whether your files exist. It needed a
+  merge on save, a re-read per checkpoint and a server-side collapse guard, and it still lost writes —
+  and worse, a document that failed to load, came back empty, or lost a race read as *"every file you
+  have was deleted"*, which put a real 6,331-file Pictures folder into `.pc-trash`. Now: two devices
+  syncing at once cannot overwrite each other, and **no single document can empty the folder** — a
+  view that is missing, unreadable or wrong is one device's opinion, and the checker refuses every
+  deletion while any view is unreadable.
+  **ABSENCE IS NOT A DELETION.** A deletion is a tombstone somebody published, at a version, and it
+  survives in that device's view. A path nobody claims is a path nobody claims. Under the old shape
+  those were the same thing, which is why an empty read was a delete order for the whole folder.
+  **VERSIONS, NOT TIMESTAMPS.** Each entry carries `v` (a counter a device raises when it publishes a
+  change to that path) and `by`. Two devices publishing the SAME version with different content is a
+  concurrent edit, and every device resolves it identically — winner keeps the name, loser is written
+  beside it under a conflict name — so three devices cannot each pick a different answer. This removes
+  every clock heuristic the old engine needed ("was the deletion later than this copy" cannot be asked
+  of two machines' clocks); entries written before versions carry `v=0` and fall back to comparing
+  content, so an old pair keeps working and upgrades itself one publish at a time.
+  **THE JOURNAL IS THIS DEVICE'S RECORD, NOT AN OPINION.** `index[path] = {…entry, local:{size,mtime,
+  csum}}` — what was applied, and what the file looked like on disk when it was. `local` is compared
+  against the scan; a PUBLISHED entry never is, because a downloaded file gets whatever last-modified
+  the platform hands out (SAF assigns its own) and comparing the two reports every downloaded file as
+  edited on every sweep, for ever. With a csum in the journal a restored backup (an rsync without
+  `-t`) is not even an edit — the case that once republished 3,930 deleted files does not arise.
+  **Split:** `syncengine.js` decides (pure: merge → reconcile → check → apply) and cannot touch a
+  file; `syncexec.js` moves bytes and decides nothing. `foldersync.js` keeps only what was never
+  wrong — content identity (`same`), the exclusion matcher, conflict/trash naming, the battery policy
+  (`shouldSync`) — and `syncrun.js` is now just `due()`.
+  **Rules that cost data if changed**, each with a test verified to bite: a conflict renames the local
+  copy BEFORE writing the incoming one; delete loses to edit both ways; identical bytes arriving
+  independently is NOT a conflict; nothing is deleted in place (`.pc-trash/<date>/`); excluding a
+  folder drops it from all three inputs so it can never be deleted anywhere; a refusal suppresses ONE
+  BUCKET, never the sweep (a guard that aborts everything is the same bug with its sign flipped —
+  that is what stopped the contacts sweep syncing at all).
+  **Guards, all in one `check()` the executor cannot bypass:** never trash more than survives the
+  sweep (floor 20), the same pointing outwards for tombstones, mass-resurrect as an ABSOLUTE floor
+  (a restore makes everything look edited, so resurrections arrive beside thousands of ordinary
+  uploads and any ratio waves them through), a file/folder collision, and `partialViews` — fatal, not
+  overridable — whenever a device could not be read.
+  **Resume, checksums, memory:** the journal is written in batches so an interruption costs the last
+  few files (and redoing one is nearly free: an upload the server already holds is skipped, a download
+  already on disk hashes equal and settles); every transfer is checksummed in both directions, written
+  to a `.part` file, verified, then renamed; small files go four at a time (a download is a round trip,
+  and serialising 6,000 photos leaves the connection idle) and large ones one at a time (a chunked
+  transfer holds a chunk of plaintext and a chunk of ciphertext — four at once undoes the ceiling
+  chunking exists to impose); the scan is paged (1,000 paths per bridge call) because a whole Pictures
+  folder in one JSON string is what killed the WebView renderer; a copy that fails its checksum is
+  never fetched again (keyed on the copy's IDENTITY, so it unblocks by itself when the holder
+  republishes). Past ~45 KB a view's paths move into an encrypted blob with a pointer — NIP-44 refuses
+  a plaintext over 65535 bytes, which is about 376 files.
+  **Check my files** (`EXEC.verify`) is read-only: it re-hashes every local file against the merged
+  record, asks the store whether the bytes behind each entry are still there, and reports which
+  devices disagree. Repair can only PULL — a deep *sweep* cannot fix corruption, because re-hashing
+  makes damaged bytes look like an edit made here and publishes them; repair trashes the local copy
+  and forgets that path's journal entry so the next sweep fetches it fresh.
+  **Android runs the same rules in Java** (`SyncReconcile.java`), because a hidden WebView's
+  JavaScript is throttled to ~1 timer/minute and screen-off sync cannot be the JS one.
+  `tests/test_android_reconcile_parity.py` RUNS both engines over hundreds of generated folder states
+  and compares the plans decision for decision. The alarm/foreground-service/wake-lock work is
+  unchanged and is still what makes screen-off sync happen at all: `SyncClock` (an EXACT alarm where
+  the platform allows one — Android 12+ only lets an exact alarm start a background FGS) →
+  `SyncTickReceiver` → `SyncService` (`specialUse`, NOT `dataSync`), falling back to an expedited
+  `SyncWork` job when an FGS start is refused, never to a bare thread. `NativeRunner.deviceState`
+  treats an unreadable network as UNSET, never as offline — a dozing device answers null, which is
+  the exact moment the feature exists for. The CPU lease is TIMED and is renewed from `step()`.
+  **The server** (`/client/sync-manifest`) writes only the caller's own document (`device`), answers
+  `views:true` with every device's document for a pair, and `forgetAll:true` — the one deliberate
+  exception to single-writer — empties them all when a folder is retired for the account.
+  `/client/sync-folders` lists one row per PAIR, not per document.
+  **Files → Synced folders** can add/rename/delete: the edit is published as THIS device's claim at a
+  version above what the folder shows, and the devices carry it out on their next sweep. A delete is a
+  tombstone, never a removed key. Deleting is refused while any device is unreadable, because the
+  count the confirmation quotes comes from the merged folder.
+  Tests: `tests/client/engine_sim.js` (merge determinism, concurrency, the whole state table, every
+  guard), `tests/client/exec_sim.js` (20 end-to-end scenarios named after the reports that produced
+  them — three-host convergence, an unreadable device, an emptied store, a lost folder handle, a
+  reinstall, an interrupted sweep, corruption on both transfer paths, a lost own-document,
+  6,000 files), `tests/client/test_fs_bridge.py` (the real desktop bridge against real files),
+  `tests/client/sync_store_sim.js` (the NIP-44 ceiling), `tests/client/test_folder_sync.py` (the rules
+  and the battery policy), `tests/client/sync_tick_sim.js` (screen-off ticking). See
+  `docs/FOLDER_SYNC.md`.
 - **The nostr-only Docker image downloads NO model weights.** `DOWNLOAD_MODEL` /
   `DOWNLOAD_DEPTH_MODEL` / `DOWNLOAD_U2NET_MODEL` are `ENV …=1` in the Dockerfile's **shared** final
   stage, so they are on in EVERY image — including `GPU=nostr`, which installs

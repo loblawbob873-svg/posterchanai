@@ -107,6 +107,8 @@ function boot(opts){
   ctx.PC = ctx.__PC;
   ctx.PCFolderSync = require(path.join(CLIENT, 'foldersync.js'));
   ctx.PCSyncRun = require(path.join(CLIENT, 'syncrun.js'));
+  ctx.PCSyncEngine = require(path.join(CLIENT, 'syncengine.js'));
+  ctx.PCSyncExec = require(path.join(CLIENT, 'syncexec.js'));
   ctx.ClientSettings = { get: (k, d) => d, set(){} };
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(CLIENT, 'sync.js'), 'utf8'), ctx, { filename: 'sync.js' });

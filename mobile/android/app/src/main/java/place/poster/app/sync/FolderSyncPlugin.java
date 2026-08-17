@@ -323,6 +323,24 @@ public class FolderSyncPlugin extends Plugin {
   /** The body of {@link #releaseSweep} without the bridge, so the ownership rule can be RUN. */
   static void releaseForTest(String key) { if (pageClaims.remove(key)) NativeSweep.release(key); }
 
+  /* WHAT THE OTHER ENGINE IS DOING RIGHT NOW, for the card that could not take the claim.
+   *
+   * The page refuses to sweep a folder the native engine holds — correctly, since two sweeps writing
+   * one manifest is last-writer-wins on the document that decides whether files exist — and then had
+   * nothing to say but "syncing in the background, it will finish on its own". On six thousand files
+   * that is a sentence indistinguishable from a hang, and it was reported as one.
+   *
+   * Volatile reads and a small map: cheap enough to answer on the bridge thread, and it is polled
+   * about once a second by a screen somebody is looking at. */
+  @PluginMethod
+  public void nativeLive(PluginCall call) {
+    JSObject o = new JSObject();
+    java.util.Map<String, Object> live = NativeSweep.live();
+    o.put("running", live != null);
+    if (live != null) for (java.util.Map.Entry<String, Object> e : live.entrySet()) o.put(e.getKey(), e.getValue());
+    call.resolve(o);
+  }
+
   @PluginMethod
   public void claimSweep(PluginCall call) {
     String key = call.getString("key", "");

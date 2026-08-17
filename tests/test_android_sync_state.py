@@ -445,3 +445,31 @@ def test_the_service_starts_its_sweep_off_the_main_thread():
     # The looper used to BE the lock. Off it, two starts can interleave on the flag that decides
     # whether a second sweep runs on a folder already being written.
     assert "synchronized (GATE)" in svc
+
+
+def test_live_progress_is_only_reported_while_that_folder_is_actually_claimed():
+    """The page shows this on a card whose own claim was refused, so a stale line is a lie.
+
+    Reported as "this folder is syncing in the background — it will finish on its own ... what
+    bullshit is that! i need to see activity": the numbers existed on the sweep thread and nothing
+    published them. Now that they are published, the rules that make them trustworthy are:
+    `live()` answers only for a folder something is holding, and a finished sweep clears its own.
+    """
+    out = run_java(
+        'System.out.println("unclaimed=" + (NativeSweep.live() == null));\n'
+        '    NativeSweep.claim("Pictures");\n'
+        '    NativeSweep.progress("Pictures", "downloading", "DCIM/a.jpg", 41, 6331);\n'
+        '    java.util.Map<String,Object> m = NativeSweep.live();\n'
+        '    System.out.println("phase=" + m.get("phase") + " done=" + m.get("done")'
+        ' + " total=" + m.get("total") + " path=" + m.get("path"));\n'
+        '    System.out.println("other=" + (NativeSweep.live().get("key").equals("Pictures")));\n'
+        '    NativeSweep.progressDone("Pictures");\n'
+        '    System.out.println("cleared=" + (NativeSweep.live() == null));\n'
+        '    NativeSweep.progress("Pictures", "uploading", "b.jpg", 1, 2);\n'
+        '    NativeSweep.release("Pictures");\n'
+        '    System.out.println("released=" + (NativeSweep.live() == null));')
+    assert "unclaimed=true" in out, out
+    assert "phase=downloading done=41 total=6331 path=DCIM/a.jpg" in out, out
+    assert "cleared=true" in out, out
+    # …and a claim that goes away takes the line with it, however the sweep ended.
+    assert "released=true" in out, out

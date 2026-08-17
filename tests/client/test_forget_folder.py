@@ -40,8 +40,9 @@ def _fn(src, name):
 
 def test_forget_wipes_the_document_rather_than_tombstoning_it():
     body = _fn(_src(SYNC), "forget")
-    assert "manifest: {}" in body, \
-        "it writes something other than an empty document — tombstones are what poison a record"
+    assert "forgetAll: true" in body, (
+        "forget no longer clears every device's document — leave one behind and the folder comes "
+        "back the moment that device publishes again, and the name stays unusable")
     assert "drop(" not in body, "it tombstones the paths, which is the state being escaped from"
     assert "removed:" in body, \
         "no `removed` count, so the server's collapse guard will refuse the write"
@@ -49,7 +50,7 @@ def test_forget_wipes_the_document_rather_than_tombstoning_it():
 
 def test_it_does_nothing_when_there_is_nothing_to_forget():
     body = _fn(_src(SYNC), "forget")
-    assert "if(!all.length) return" in body, "an empty record is rewritten for no reason"
+    assert "if(!all.length && !devices) return" in body, "an empty record is rewritten for no reason"
 
 
 def test_the_button_exists_and_says_what_it_does_not_do():

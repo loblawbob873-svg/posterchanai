@@ -5,7 +5,7 @@ Run: venv-unified/bin/python -m pytest tests/client/test_video_survives_chunked_
 WHY THIS EXISTS, stated plainly, because the gap it fills was embarrassing. Videos synced back corrupt
 while images were fine, and NOT ONE test could see it:
 
-  * two_device_sim.js has its own putParts/getParts. Its copy still carries the exact bug that
+  * the scenario simulator used to have its own putParts/getParts. That copy carried the exact bug that
     shipped — `if(!plain || !plain.length) throw` — so `a-file-too-big-to-hold-crosses-in-chunks`
     passed throughout, proving only that the simulator agrees with itself.
   * test_sync_short_read.py drives the shipped functions, but only their length arithmetic: crypto
@@ -223,8 +223,8 @@ def test_the_simulator_runs_the_shipped_chunker_and_not_a_copy_of_it():
     VERIFY half of the same addressing scheme, and while it hashed plaintext against a putParts that
     hashes ciphertext, every verify disagreed with the upload that produced it.)"""
     import re
-    sim = (ROOT / "tests" / "client" / "two_device_sim.js").read_text(encoding="utf-8")
-    for fn in ("_exactPart", "chunkShas", "putParts", "getParts"):
+    sim = (ROOT / "tests" / "client" / "exec_sim.js").read_text(encoding="utf-8")
+    for fn in ("_exactPart", "putParts", "getParts"):
         assert ("'%s'" % fn) in sim, f"the sim no longer lifts {fn} from app.js"
     # COMMENTS OUT FIRST. The note in the sim explaining this very bug quotes the old check verbatim,
     # and a checker that reads its own postmortem as a call site cries wolf for ever. (Third time

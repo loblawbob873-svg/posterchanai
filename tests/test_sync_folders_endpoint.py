@@ -101,7 +101,10 @@ class TestSyncFolders(unittest.TestCase):
                                            "gone.txt": {"deletedAt": 123}}}, 1780000000),
         })
         self.assertEqual(status, 200)
-        self.assertEqual(body["folders"][0], {"key": "Notes", "n": 2, "updated_at": 1780000000})
+        # `devices` counts the documents a pair was assembled from — one here, because a manifest
+        # written before the per-device split is the account's single legacy record.
+        self.assertEqual(body["folders"][0],
+                         {"key": "Notes", "n": 2, "updated_at": 1780000000, "devices": 1})
 
     def test_the_folder_key_cannot_address_another_document(self):
         """The d-tag namespace is shared with notes, calendars, contacts and the files index."""

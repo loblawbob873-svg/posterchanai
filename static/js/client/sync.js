@@ -30,7 +30,8 @@
 (function(){
   'use strict';
   const PC = window.__PC || {};
-  const S = window.PCFolderSync, RUN = window.PCSyncRun;
+  const S = window.PCFolderSync, RUN = window.PCSyncRun, EXEC = window.PCSyncExec;
+  const S_ENGINE = window.PCSyncEngine;
   const FS = () => window.pcFs || null;            // desktop only, for now — Android SAF lands next
   /* Sizes for the humans reading this screen.
    *
@@ -312,6 +313,27 @@
       Promise.resolve(p).then(v => { if(!done){ done = true; clearTimeout(t); res(v); } },
                               e => { if(!done){ done = true; clearTimeout(t); rej(e); } });
     });
+  }
+
+  /* ---- WHO THIS DEVICE IS -----------------------------------------------------------------------
+   *
+   * A stable id, because it names the document only this device ever writes. The human name is not
+   * enough: two Windows machines would share it, and sharing a document is the whole thing this
+   * design exists to stop. Generated once and kept — losing it costs one extra document holding a
+   * view nobody updates any more, which the merge simply outvotes as the others move on. */
+  function deviceId(){
+    let id = '';
+    try{ id = localStorage.getItem('pc_sync_device_id') || ''; }catch(_){}
+    if(!id){
+      // `typeof`, not a bare reference: an undefined global THROWS rather than being falsy, and this
+      // runs during boot on every platform including two shells and a test VM.
+      const rnd = (typeof crypto !== 'undefined' && crypto.getRandomValues)
+        ? [...crypto.getRandomValues(new Uint8Array(4))].map(b => b.toString(16).padStart(2,'0')).join('')
+        : String(Date.now()).slice(-8);
+      id = String(deviceName() || 'device').replace(/[^A-Za-z0-9_-]/g, '') + '-' + rnd;
+      try{ localStorage.setItem('pc_sync_device_id', id); }catch(_){}
+    }
+    return id;
   }
 
   // ---- the store -------------------------------------------------------------------------------
@@ -601,6 +623,113 @@
         } : null,
   };
 
+  /* ---- THE FOLDER, AS EVERY DEVICE DESCRIBES IT -------------------------------------------------
+   *
+   * One document per device, and nothing but that device ever writes it:
+   *
+   *     pcai:sync:<pair>:<device>
+   *
+   * Reading is therefore a plain read of them all, and writing is a plain write of ours. There is no
+   * merge on save, no re-read per checkpoint, no compare-and-swap and no server-side collapse guard
+   * to get wrong — those all existed to make ONE document survive several writers, and it did not.
+   *
+   * A DEVICE THAT COULD NOT BE READ IS COUNTED, NEVER SKIPPED. Left out, its files are absent from
+   * the merge, and absent is indistinguishable from deleted — which is the confusion that emptied a
+   * Pictures folder. The count travels with the answer and the checker refuses every deletion while
+   * it is above zero.
+   */
+  const docs = {
+    /** {views: {device: {path: entry}}, missing: n} — throws if the server could not be asked. */
+    async views(key){
+      const j = await store._post({ folder: key, views: true });
+      const raw = (j && j.views) || {};
+      const views = {};
+      let missing = +(j && j.unreadable) || 0;
+      for(const dev of Object.keys(raw)){
+        try{ views[dev] = await _openDoc(raw[dev]); }
+        catch(e){ missing++; console.warn('folder sync: could not open ' + dev + '\u2019s view', e); }
+      }
+      /* The single shared document older builds still write, read as one more view. It carries no
+       * versions, so its entries compare by content — which is exactly what this engine did before
+       * versions existed, and it is how a pair that predates this upgrade keeps working. */
+      if(j && j.legacy){
+        try{ const v = await _openDoc(j.legacy); if(Object.keys(v).length) views['(shared)'] = v; }
+        catch(e){ missing++; }
+      }
+      return { views, missing };
+    },
+    /** Publish OUR view. One writer, so this is a write and nothing else. */
+    async publish(key, entries){
+      const doc = await _sealDoc(entries);
+      await store._post({ folder: key, device: deviceId(), manifest: doc, force: true });
+    },
+    index: (key) => _loadBase(key),
+    saveIndex: (key, idx) => _saveBase(key, idx),
+    getBlob: (sha) => store.getBlob(sha),
+    putBlob: (bytes) => store.putBlob(bytes),
+    getParts: store.getParts,
+    putParts: store.putParts,
+    hashBytes: (b) => store.hashBytes(b),
+    blobSha: store.blobSha,
+    chunkShas: store.chunkShas,
+    /** Does the store still hold these bytes? For the consistency check; unknown is never "missing". */
+    async hasBlob(sha){
+      const r = await fetch(PC.mediaServer() + '/' + sha, { method:'HEAD', cache:'no-store' });
+      return !!(r && r.ok);
+    },
+  };
+
+  /* A document's paths, whether they are sealed inline or in an encrypted blob. Fetch and decrypt
+   * fail for opposite reasons and must not share a message: one is a media-server problem and the
+   * other is a key problem, and the fix for each is the other's mistake. */
+  async function _openDoc(doc){
+    if(!doc || typeof doc !== 'object') return {};
+    if(doc.pathsSha){
+      let bytes;
+      /* BOUNDED. `fetch` imposes no timeout of its own, and this is a media-server request made from
+       * a SCREEN — Files → Synced folders opens a folder by reading its records. A server that
+       * accepts the connection and never answers leaves that await pending for ever: the view sits
+       * blank, nothing errors, and nothing can be retried. Reported as "Blossom is hanging trying to
+       * load the Posts folder that emptied". */
+      try{ bytes = await _bounded(PC.syncBlobs.get(doc.pathsSha), 'media server', _POST_TIMEOUT_MS); }
+      catch(e){
+        const m = String((e && e.message) || e);
+        if(/OperationError|decrypt|importKey|drive key/i.test(m))
+          throw new Error('this device cannot decrypt that folder list (' + m + ')');
+        throw new Error('could not fetch that folder list from the media server (' + m + ')');
+      }
+      try{ return JSON.parse(new TextDecoder().decode(bytes)) || {}; }
+      catch(_){ throw new Error('that stored folder list is damaged'); }
+    }
+    if(doc.sealed){
+      try{ return JSON.parse(await PC.nip44dec(PC.me().pubkey, doc.sealed)) || {}; }
+      catch(e){ throw new Error('could not decrypt that folder list'); }
+    }
+    return doc.paths || {};
+  }
+
+  /* Our view, ready to publish. Past ~45 KB the paths move into an encrypted blob and the document
+   * keeps a pointer — NIP-44 refuses a plaintext over 65535 bytes, and at ~174 bytes an entry that
+   * ceiling arrives at about 376 files. `n` and `entries` stay in the clear because the server reads
+   * them: one is the count it guards on, the other is how it tells a folder somebody forgot from one
+   * whose files were all deleted. Neither says anything about what the files are. */
+  async function _sealDoc(entries){
+    const paths = entries || {};
+    const live = Object.keys(paths).filter(p => paths[p] && !paths[p].deletedAt).length;
+    const json = JSON.stringify(paths);
+    const doc = { n: live, entries: Object.keys(paths).length, by: deviceId() };
+    if(json.length < MANIFEST_INLINE_MAX){
+      doc.sealed = await PC.nip44enc(PC.me().pubkey, json);
+    } else {
+      const put = await PC.syncBlobs.put(new TextEncoder().encode(json));
+      doc.pathsSha = (put && typeof put === 'object') ? put.sha : put;
+      /* Still set, to something that cannot decrypt: a client older than the blob split looks for
+       * `sealed`, falls back to `doc.paths`, and would read this as an EMPTY view. */
+      doc.sealed = 'v2:' + doc.pathsSha;
+    }
+    return doc;
+  }
+
   /* ---- WHAT THIS ACCOUNT SYNCS, as opposed to what THIS DEVICE maps ---------------------------
    *
    * The mapping is device-local by necessity — a path on a laptop means nothing on a phone — but it
@@ -704,30 +833,48 @@
   /* One read-modify-write of the shared manifest. `build` is SYNCHRONOUS on purpose — anything slow
    * (hashing, uploading) happens before it is called, so the window between reading the manifest and
    * saving it stays as short as it can be, and the merge in store.save covers the rest. */
+  /* AN EDIT MADE FROM FILES IS THIS DEVICE'S CLAIM, LIKE ANY OTHER.
+   *
+   * Files → Synced folders can add, rename and delete in a folder this browser does not hold — it
+   * edits the record, and the devices carry it out on their next sweep through the same paths they
+   * always use. Under one shared document that needed a read, a merge, a compare-and-swap and a
+   * server-side guard. It needs none of them now: the edit is published into THIS device's own
+   * document, at a version above whatever the folder currently shows, and the merge does the rest.
+   *
+   * A device that could not be read makes this refuse to DELETE. The count a deletion is confirmed
+   * against comes from the merged folder, so a missing view makes that number too small — and a
+   * confirmation for the wrong number of files is not a confirmation.
+   */
   async function _mutate(key, build, verify){
-    const paths = await store.manifest(key);
-    const next = Object.assign({}, paths);
+    const got = await docs.views(key);
+    const m = S_ENGINE.merge(got.views || {});
+    const meId = deviceId();
+    const mine = Object.assign({}, (got.views || {})[meId] || {});
     const touched = [], now = Date.now();
     let removed = 0;
     // A build that THROWS saves nothing: every check a caller wants to make against the current
-    // manifest belongs in here, where it is reading the copy that is about to be written.
+    // folder belongs in here, where it is reading what is about to be published against.
     build({
-      paths, now,
-      put(p, entry){ next[p] = entry; touched.push(p); },
+      paths: m.global, now,
+      put(p, entry){
+        mine[p] = Object.assign({}, entry, { v: S_ENGINE.versionOf(m.global[p]) + 1, by: meId });
+        touched.push(p);
+      },
       drop(p){
-        if(!next[p] || next[p].deletedAt) return;      // already gone — not a deletion, and not a shrink
-        next[p] = { deletedAt: now }; touched.push(p); removed++;
+        const cur = m.global[p];
+        if(!cur || cur.deletedAt) return;          // already gone: not a deletion
+        if(got.missing) throw new Error('one of your devices could not be read, so this cannot be '
+                                        + 'counted safely — nothing was deleted. Try again in a moment.');
+        mine[p] = { v: S_ENGINE.versionOf(cur) + 1, by: meId, deletedAt: now };
+        touched.push(p); removed++;
       },
     });
     if(!touched.length) return { touched: [], removed: 0 };
-    /* NO `base`. An edit made here is not this device's agreement about anything — it may not even
-     * hold the folder — and writing one back would do two bad things: roll back the agreement a
-     * sweep running in this same tab has just advanced, and let an IndexedDB failure throw AFTER the
-     * manifest is safely published, reporting a committed edit as a failure. store.save skips the
-     * write entirely when no base is passed. */
-    await store.save(key, { manifest: next, touched, removed, verify });
+    if(typeof verify === 'function') verify(m.global);
+    await docs.publish(key, mine);
     return { touched, removed };
   }
+
   /* The per-blob ceiling this NODE will accept, which is not the same question as maxBytes() asks:
    * that one is about a platform's filesystem adapter, and a browser upload always has File.slice.
    * Cached for the session like maxBytes, and 0 means "the node did not say". */
@@ -817,40 +964,32 @@
      * agreement, and to that device an empty manifest reads as "deleted elsewhere" — the mass-delete
      * guard would catch it and ask, but the honest thing is to say so in the confirmation rather
      * than rely on the last line of defence. */
+    /* RETIRE A FOLDER FOR THE WHOLE ACCOUNT.
+     *
+     * Every other write in this feature touches only this device's own document — that single-writer
+     * rule is what makes concurrent devices safe. Retiring a pair is the one deliberate exception:
+     * it has to empty every device's document, or the folder comes straight back the moment another
+     * device publishes again, and the name stays unusable. So it is done in one place, by the
+     * server, which holds the account's storage key, and only when somebody asks for it by name.
+     *
+     * IT IS CHECKED. This once reported "8,132 entries cleared" on a write that changed nothing, and
+     * repeated it every time it was pressed; a read-back is one request and it is the only thing
+     * that can tell the difference. */
     async forget(key){
-      const paths = await store.manifest(key) || {};
-      const all = Object.keys(paths);
-      if(!all.length) return { removed: 0, live: 0, tombstones: 0 };
-      /* COUNTED SEPARATELY, because the two numbers mean opposite things and reporting only the
-       * total reads as a contradiction. A folder shown as "0 files" can hold thousands of ENTRIES:
-       * the live ones are files your devices agree exist, the rest are tombstones — "this was
-       * deleted" — and it is the tombstones that make a name unusable. "8,000 entries cleared" on a
-       * folder displaying 0 files is alarming and was reported as such; "0 live files and 8,000
-       * deletion markers" is the same fact and explains itself. */
-      const live = all.filter(p => paths[p] && !paths[p].deletedAt).length;
-      /* NO `touched`, AND THAT IS THE WHOLE BUG THIS HAD.
-       *
-       * `save()` re-reads and merges when it is given a `touched` list, and the merge writes a path
-       * only `if(paths[p] !== undefined)` — a missing key means "leave it alone", which is why every
-       * deletion in this file is a TOMBSTONE and not a removed key. A wipe cannot be expressed that
-       * way: passing `{}` with all 8,132 paths listed made every lookup undefined, every assignment
-       * was skipped, and the document was written back UNCHANGED. The POST succeeded, so it reported
-       * "8,132 entries cleared" — every time, for ever, while nothing was ever cleared. Reported as
-       * "how can 8K always be removed".
-       *
-       * Without `touched`, `save` writes exactly what it is given. Losing a concurrent device's
-       * additions is the point of forgetting a folder, not a hazard to guard against. */
-      await store.save(key, { manifest: {}, removed: all.length });
-      /* AND CHECK. This reported success on a write that did nothing; it does not get to claim that
-       * twice. A read-back is one request and it is the only thing that can tell the difference. */
+      const got = await docs.views(key);
+      const m = S_ENGINE.merge(got.views || {});
+      const all = Object.keys(m.global);
+      const live = all.filter(p => m.global[p] && !m.global[p].deletedAt).length;
+      const devices = Object.keys(got.views || {}).length;
+      if(!all.length && !devices) return { removed: 0, live: 0, tombstones: 0, devices: 0 };
+      await store._post({ folder: key, forgetAll: true });
       let after = null;
-      try{ after = await store.manifest(key); }catch(_){ after = null; }
-      const left = after && typeof after === 'object' ? Object.keys(after).length : null;
-      if(left){
-        throw new Error('the shared record still holds ' + left + ' entr'
-                        + (left === 1 ? 'y' : 'ies') + ' — nothing was cleared');
-      }
-      return { removed: all.length, live, tombstones: all.length - live, verified: left === 0 };
+      try{ after = await docs.views(key); }catch(_){ after = null; }
+      const left = after ? Object.keys(S_ENGINE.merge(after.views || {}).global).length : null;
+      if(left) throw new Error('the record still holds ' + left + ' entr' + (left === 1 ? 'y' : 'ies')
+                               + ' — nothing was cleared');
+      return { removed: all.length, live, tombstones: all.length - live, devices,
+               verified: left === 0 };
     },
     async remove(key, path, expect){
       return _mutate(key, api => {
@@ -864,7 +1003,8 @@
     // How many live files a remove would take. Read fresh, because it is what the confirmation
     // promises and what `expect` is then checked against.
     async count(key, path){
-      return _liveUnder(await store.manifest(key), path).length;
+      const got = await docs.views(key);
+      return _liveUnder(S_ENGINE.merge(got.views || {}).global, path).length;
     },
     /* Rename a file or a directory. `to` is a full path, not a leaf, so this is also a move.
      *
@@ -949,7 +1089,7 @@
        * against the manifest actually being written — this only saves sending a 2 GB file to a path
        * that was never going to be accepted, and leaving its blobs referenced by nothing. */
       let known = null;
-      try{ known = await store.manifest(key); }catch(_){}
+      try{ known = S_ENGINE.merge((await docs.views(key)).views || {}).global; }catch(_){}
       for(let i = 0; i < files.length; i++){
         const f = files[i];
         try{
@@ -1054,6 +1194,20 @@
       if(o.dryRun) return { skipped:true, why:'a sync is already running on this folder' };
       return running.get(f.id);
     }
+    /* PRESSING SYNC NOW CLEARS THE STOP FLAG, because that is what the button means.
+     *
+     * Pause sets it to interrupt the sweep that is running, and until now only the Start button ever
+     * cleared it — so a paused folder answered every later "Sync now" by halting on its first check
+     * and reporting a sweep that had done nothing. Which summarised as "in step · nothing to sync",
+     * about a folder with six thousand files outstanding, while Check — which returns its plan
+     * before any stop check exists — offered to download all of them. Two buttons, one engine,
+     * opposite answers: "check would download all this shit but sync now says nothing to sync".
+     *
+     * Safe here specifically: this is BELOW the `running` guard, so nothing is sweeping this folder
+     * — the flag can only be a leftover from a sweep that has already ended. It does not un-pause
+     * the folder; Sync now is one run, not a policy change. */
+    if(o.manual && !o.dryRun) stopping.delete(f.id);
+
     const fs = FS();
     if(!fs) throw new Error('this device has no filesystem access');
 
@@ -1122,16 +1276,25 @@
           running.delete(f.id);
           if(_wakeTimer){ clearInterval(_wakeTimer); _wakeTimer = null; }
           if(_wake.wakeEnd){ try{ await _wake.wakeEnd(); }catch(_){} }
+          /* AND IT SAYS WHAT THAT SWEEP IS DOING, instead of asking somebody to take it on trust.
+           *
+           * A refused claim means the native engine is mid-sweep on this folder — correct, and the
+           * page must not join in — but the card then printed one static sentence, which on six
+           * thousand files is indistinguishable from a hang and was reported as one ("what bullshit
+           * is that, i need to see activity"). The sweep already knows its phase, its file and its
+           * position; nothing was reading it. */
           const why = 'this folder is syncing in the background — it will finish on its own';
           setStatus(f.id, why, null, true);
+          _watchNative(f, why);
           return { skipped:true, why };
         }
       }
       try{
-        const rep = await RUN.sweep(fs, store, {
-          id: f.id, key: keyOf(f), device: deviceName(), now: Date.now(),
+        const rep = _forTheCard(await EXEC.sweep(fs, docs, {
+          id: f.id, key: keyOf(f), device: deviceId(), now: Date.now(),
           excludes: f.excludes || [], maxBytes: await maxBytes(),
           shouldStop: () => stopping.has(f.id),
+          manual: !!o.manual,
           /* WHICH COPIES THIS DEVICE HAS ALREADY FAILED TO VERIFY, so a bad one in the store is not
            * re-fetched on every sweep for ever — measured, two videos looping all evening. Keyed on
            * the copy's identity, so a re-upload from the other device clears it with no action from
@@ -1160,25 +1323,11 @@
           hash: decision.mode === 'full', dryRun: !!o.dryRun,
           forceTrash: !!o.forceTrash,
           forceResurrect: !!o.forceResurrect,
-          /* Same rule as confirmTrash: only a sweep somebody is watching may ask, and a background
-           * one fails closed — which here means the deletions STAY deleted until a human says
-           * otherwise, the safe direction when the alternative is refilling every device. */
-          confirmResurrect: (o.manual && !o.dryRun) ? (m => PC.uiConfirm(
-            '“' + keyOf(f) + '” — put ' + m.n + ' file' + (m.n === 1 ? '' : 's')
-            + ' back on your other devices?\n\nYour other devices deleted them, but they look '
-            + 'changed on this one, so syncing would republish them everywhere.\n\nIf these files '
-            + 'were restored from a backup or copied in, their timestamps just look new and this is '
-            + 'not an edit — cancel, and the deletions stand.')) : null,
-          /* ONLY A SWEEP SOMEBODY IS WATCHING MAY ASK. An automatic one — the watcher, a resume, the
-           * heartbeat — has no one in front of it, so a dialog there is a modal nobody answers
-           * blocking a background job; it refuses instead and says so on the card, where "Delete
-           * anyway" is waiting. `o.manual` is the button. */
-          confirmTrash: (o.manual && !o.dryRun) ? (m => PC.uiConfirm(
-            '“' + keyOf(f) + '” — move ' + m.n + ' file' + (m.n === 1 ? '' : 's')
-            + ' on this device to the trash?\n\nThey are marked deleted on your other devices, and '
-            + 'this sweep keeps only ' + m.keep + '. If you did not delete them somewhere else, '
-            + 'cancel — nothing is removed and your files stay where they are.\n\nNothing is erased '
-            + 'either way: a delete here is a move into .pc-trash.')) : null,
+          /* ONLY A SWEEP SOMEBODY IS WATCHING MAY ASK. An automatic one — the watcher, a resume,
+           * the heartbeat — has nobody in front of it, so a dialog there is a modal no one answers
+           * blocking a background job. It refuses instead and says so on the card. `o.manual` is
+           * the button, and a fatal verdict is never offered at all. */
+          confirm: (o.manual && !o.dryRun) ? (v => PC.uiConfirm(_ask(keyOf(f), v))) : null,
           // The first sweep of a Pictures folder is minutes of silence, and silence is
           // indistinguishable from a hang, a failed login or a 404 on the manifest — which is
           // exactly how this looked the first time it was tried for real.
@@ -1187,7 +1336,7 @@
             const of = ev.n > 1 ? ' ' + ev.i + '/' + ev.n : '';
             setStatus(f.id, ev.phase + of + where, null, true);
           },
-        });
+        }));
         if(!o.dryRun){
           if(rep && rep.badFetch) _rememberBadFetch(keyOf(f), rep.badFetch);
           // Tell the background checker what "synced" now looks like, or its next run compares
@@ -1217,6 +1366,47 @@
     return job;
   }
 
+  /* What a person is actually being asked. One sentence per kind of refusal, in the terms of what
+   * happens to their files — never in the engine's terms. Nothing erases anything either way: a
+   * delete here is a move into `.pc-trash`. */
+  function _ask(key, v){
+    if(v.kind === 'massTrash')
+      return '“' + key + '” — move ' + v.n + ' file' + (v.n === 1 ? '' : 's')
+           + ' on this device to the trash?\n\nThey are marked deleted on your other devices, and '
+           + 'this sweep keeps only ' + v.keep + '. If you did not delete them somewhere else, '
+           + 'cancel — nothing is removed and your files stay where they are.\n\nNothing is erased '
+           + 'either way: a delete here is a move into .pc-trash.';
+    if(v.kind === 'massTombstone')
+      return '“' + key + '” — tell your other devices to delete ' + v.n + ' file'
+           + (v.n === 1 ? '' : 's') + '?\n\nThey are gone from this device and this sweep keeps '
+           + 'only ' + v.keep + '. If this device lost sight of the folder rather than you deleting '
+           + 'them, cancel — nothing changes anywhere.';
+    if(v.kind === 'massResurrect')
+      return '“' + key + '” — put ' + v.n + ' file' + (v.n === 1 ? '' : 's')
+           + ' back on your other devices?\n\nYour other devices deleted them, but they look '
+           + 'changed on this one, so syncing would republish them everywhere.\n\nIf these files '
+           + 'were restored from a backup or copied in, their timestamps just look new and this is '
+           + 'not an edit — cancel, and the deletions stand.';
+    return '“' + key + '” — ' + (v.why || 'something unexpected') + '. Go ahead?';
+  }
+
+  /* The report in the words the card already speaks. The executor names its buckets after what it
+   * does — fetch, send, trash, tombstone — and every screen here was written against the older
+   * names, so the translation is done ONCE, here, rather than in fifteen places. */
+  function _forTheCard(rep){
+    if(!rep) return rep;
+    const p = rep.plan || {};
+    rep.plan = { upload: p.send || [], download: p.fetch || [], deleteLocal: p.trash || [],
+                 deleteRemote: p.tombstone || [], conflicts: p.keepBoth || [],
+                 notes: p.settle || [], unchanged: p.unchanged || 0, excluded: p.excluded || 0 };
+    for(const v of rep.refused || []){
+      if(v.kind === 'massTrash' || v.kind === 'partialViews') rep.refusedTrash = v;
+      else if(v.kind === 'massResurrect') rep.refusedResurrect = v;
+      else if(v.kind === 'massTombstone' || v.kind === 'partialViewsOut') rep.refusedRemoteDelete = v;
+    }
+    return rep;
+  }
+
   function summarise(rep, decision){
     if(rep.dryRun){
       const p = rep.plan || {};
@@ -1229,6 +1419,21 @@
        * when a real sweep would have settled every one of them without making a copy. */
       return n + ' change' + (n>1?'s':'') + ' to make'
              + (c ? ' (' + c + ' of them only if the bytes really differ)' : '');
+    }
+    /* A SWEEP THAT WAS STOPPED DID NOT FIND A FOLDER IN STEP — it never finished looking.
+     *
+     * Every line below describes work, so a halted sweep produced an EMPTY list of them and fell
+     * through to "in step · nothing to sync": the single most reassuring sentence this card can
+     * print, about the one state in which nothing has been checked. Said in front of a folder that
+     * was mid-transfer when Pause was pressed, and in front of one whose stop flag was simply never
+     * cleared. What it did before it stopped is still worth saying, so it is said. */
+    if(rep.stopped){
+      const did = [];
+      if(rep.uploaded.length) did.push(rep.uploaded.length + ' up');
+      if(rep.downloaded.length) did.push(rep.downloaded.length + ' down');
+      if(rep.trashed.length) did.push(rep.trashed.length + ' to trash');
+      return 'stopped' + (did.length ? ' after ' + did.join(' · ') : ' before anything moved')
+             + ' — press Sync now to carry on';
     }
     const bits = [];
     if(rep.uploaded.length) bits.push(rep.uploaded.length + ' up');
@@ -1285,6 +1490,110 @@
       : 'in step · nothing to sync') + _exc;
     return bits.join(' · ') + _exc;
   }
+  /* ---- WATCHING THE OTHER ENGINE --------------------------------------------------------------
+   *
+   * Only ever a READER. It takes no claim, moves no bytes and writes nothing: it asks the plugin
+   * what the native sweep is doing and paints it on the card that could not take the claim.
+   *
+   * It stops by itself — when the sweep ends, when the numbers stop moving for long enough that
+   * they cannot be trusted (a process killed mid-sweep leaves the last line frozen for ever), or
+   * when this page starts its own sweep of the same folder. One at a time per folder.
+   *
+   * A build whose plugin has no `nativeLive` answers null, and null keeps the old sentence — the
+   * one honest thing to print about a sweep that cannot say what it is doing. */
+  const _natWatch = new Map();
+  const _NAT_POLL_MS = 1200, _NAT_STALE_MS = 90000;
+  function _watchNative(f, fallback){
+    const fs = FS();
+    if(!fs || typeof fs.nativeLive !== 'function') return;
+    const id = f.id;
+    if(_natWatch.has(id)) return;
+    const t = setInterval(async () => {
+      // The page won the folder in the meantime — its own progress is the better answer.
+      if(running.has(id)) return _stopWatchNative(id);
+      let live = null;
+      try{ live = await fs.nativeLive(); }catch(_){ live = null; }
+      if(!live) return _stopWatchNative(id);                    // an APK that cannot answer: leave the line alone
+      if(!live.running){
+        _stopWatchNative(id);
+        // It finished while nobody was looking. Whatever it did is in the stored report, and the
+        // next repaint reads that; asking for one is cheaper than duplicating the summary here.
+        try{ paint(); }catch(_){}
+        return;
+      }
+      if(live.at && (Date.now() - live.at) > _NAT_STALE_MS){
+        setStatus(id, 'syncing in the background — no progress for a while', null, true);
+        return;
+      }
+      const phase = live.phase || 'syncing';
+      const n = +live.total || 0, i = +live.done || 0;
+      const where = live.path ? ' · ' + String(live.path).split('/').pop() : '';
+      setStatus(id, 'in the background: ' + phase + (n ? ' ' + i + '/' + n : '') + where, null, true);
+    }, _NAT_POLL_MS);
+    _natWatch.set(id, t);
+    // Fallback stays on screen until the first answer lands, so nothing flickers through blank.
+    if(fallback) setStatus(id, fallback, null, true);
+  }
+  function _stopWatchNative(id){
+    const t = _natWatch.get(id);
+    if(t){ clearInterval(t); _natWatch.delete(id); }
+  }
+
+  /* ---- IS WHAT I HAVE ACTUALLY WHAT THE FOLDER SAYS IT IS? -------------------------------------
+   *
+   * The sweep answers "what should change". This answers the question a sweep cannot: are the bytes
+   * on this disk the bytes the folder agreed on. It re-hashes every file against the merged record,
+   * asks the store whether it still holds what the entries point at, and says which devices disagree
+   * with each other. It writes nothing, fetches nothing and deletes nothing.
+   *
+   * REPAIR IS A SEPARATE, EXPLICIT STEP, and it can only ever pull. A deep SWEEP cannot fix
+   * corruption — it re-hashes, sees bytes that differ from the record, and correctly reads that as
+   * an edit made here, which would publish the damage to every device. So a repair trashes the local
+   * copy (into `.pc-trash`, like every other deletion here) and forgets this device's agreement for
+   * that path, which is exactly the state in which the next sweep fetches a fresh copy.
+   */
+  async function verifyFolder(f){
+    const fs = FS();
+    if(!fs){ PC.toast('this device has no filesystem access'); return; }
+    setStatus(f.id, 'checking your files…', null, true);
+    let v;
+    try{
+      v = await EXEC.verify(fs, docs, { id: f.id, key: keyOf(f), deep: true,
+        excludes: f.excludes || [],
+        onProgress: (ev) => setStatus(f.id, ev.phase + (ev.n ? ' ' + ev.i + '/' + ev.n : ''), null, true) });
+    }catch(e){
+      setStatus(f.id, 'could not check: ' + ((e && e.message) || e), null, true);
+      return;
+    }
+    const bits = [];
+    if(v.checked) bits.push(v.checked + ' verified');
+    if(v.corrupt.length) bits.push(v.corrupt.length + ' damaged here');
+    if(v.missingHere.length) bits.push(v.missingHere.length + ' missing here');
+    if(v.missingBytes.length) bits.push(v.missingBytes.length + ' the store no longer holds');
+    if(v.extra.length) bits.push(v.extra.length + ' here only');
+    if(v.unverified.length) bits.push(v.unverified.length + ' could not be checked');
+    if(v.disagree.length) bits.push(v.disagree.length + ' your devices disagree about');
+    if(v.missingViews) bits.push(v.missingViews + ' device(s) unreadable');
+    setStatus(f.id, bits.length ? bits.join(' · ') : 'everything checks out', null, true);
+
+    const bad = v.corrupt.map(c => c.path);
+    if(!bad.length) return;
+    const ok = await PC.uiConfirm('“' + keyOf(f) + '” — ' + bad.length + ' file'
+      + (bad.length === 1 ? '' : 's') + ' on this device do not match what your devices agreed.\n\n'
+      + 'Fetch fresh copies? The copies here move to .pc-trash first — nothing is erased, and '
+      + 'nothing damaged is sent to your other devices.');
+    if(!ok) return;
+    let done = 0;
+    const idx = await docs.index(keyOf(f));
+    for(const p of bad){
+      try{ await fs.trash(f.id, p, Date.now()); delete idx[p]; done++; }
+      catch(e){ console.warn('folder sync: could not set aside ' + p, e); }
+    }
+    await docs.saveIndex(keyOf(f), idx);
+    setStatus(f.id, done + ' set aside — syncing fresh copies', null, true);
+    swept(f, { manual: true });
+  }
+
   /* A SWEEP THAT THREW MUST SAY SO ON THE CARD.
    *
    * Every automatic caller wrote `sweep(f).catch(()=>{})`, which is right about not wanting an
@@ -1466,7 +1775,7 @@
     const fs = FS();
     if(!fs) throw new Error('this device has no filesystem access');
     const key = keyOf(f);
-    const man = await store.manifest(key);
+    const man = S_ENGINE.merge((await docs.views(key)).views || {}).global;
     const list = S.redundantConflicts(man);
     /* IF THE MANIFEST CANNOT PROVE IT, READ THE FILES — this is the one operation where that is the
      * right trade, and without it the button could not clean up the copies it exists for.
@@ -1613,6 +1922,7 @@
                       : '<button class="btn btn-neon small sync-now">Sync now</button>'}
           ${pr.paused ? '' : '<button class="btn btn-ghost small sync-pause" title="Stop this folder syncing until you press Start. Nothing is deleted and nothing is undone.">Pause</button>'}
           <button class="btn btn-ghost small sync-deep" title="Re-read and re-hash every file. Slow on a big folder — for a file edited in place without changing its size or timestamp.">Deep check</button>
+          <button class="btn btn-ghost small sync-verify" title="Read every file on this device and check it against what your devices agree the folder holds. Changes nothing.">Check my files</button>
           <button class="btn btn-ghost small sync-tidy">Tidy up conflict copies</button>
           <button class="btn btn-ghost small sync-trash">Empty trash</button>
           ${(FS() && FS().tickStats) ? '<button class="btn btn-ghost small sync-bg" title="What this phone measured about background syncing: alarms scheduled, alarms that fired, and ticks that reached the app.">Background details</button>' : ''}
@@ -1814,6 +2124,8 @@
           swept(get(), { manual:true });
         }; }
       card.querySelector('.sync-deep').onclick = () => swept(get(), { manual:true, deep:true });
+      { const vb = card.querySelector('.sync-verify');
+        if(vb) vb.onclick = () => verifyFolder(get()); }
       /* RECONNECT, rather than "remove it and add it again".
        *
        * A grant can go without the folder going: a desktop config file truncated by a crash, an
@@ -2103,7 +2415,11 @@
         apiBase: api,
         mediaBase: media,
         mkWrapped: mk,
-        device: deviceName(),
+        /* THE ID, NOT THE NAME. It names the document this device publishes, and the native sweep
+         * must write the same one the page does — two ids is two documents for one device, each
+         * holding half the folder's history and each looking to the other like a device that has
+         * gone quiet. */
+        device: deviceId(),
         folders: list,
       });
     }catch(_){}
@@ -2302,6 +2618,8 @@
   // roots. One fetch, one cache, one answer about what this account syncs.
   // `edit` is how Files → Synced folders adds, renames and deletes: it writes the shared manifest
   // through the same guarded save a sweep uses, and the devices carry the change out.
-  window.PCSync = { paint, folders, sweep, startAll, store, status, edit,
-                    accountFolders, acct: () => _acct };
+  // `docs` is the per-device document layer: Files borrows it to read a folder it does not hold,
+  // and the tests drive it directly at the sizes where NIP-44's ceiling used to lose whole folders.
+  window.PCSync = { paint, folders, sweep, startAll, store, docs, status, edit, verifyFolder,
+                    accountFolders, acct: () => _acct, deviceId };
 })();

@@ -28,8 +28,50 @@ This was not always true, and it is worth knowing why it is stated this loudly: 
 be keyed on the *platform's* handle for the directory — a random id on desktop, a SAF tree URI on
 Android — which is device-local by construction. Every device wrote and read a different document, so
 each one synced happily with itself and cross-device sync could not work at all.
-`tests/client/two_device_sim.js` now runs two independent devices against one manifest so that
+`tests/client/exec_sim.js` now runs two and three independent devices against one folder so that
 cannot come back silently.
+
+## Every device publishes its own record
+
+There is **no shared document**. Each device writes exactly one, and nothing else ever writes it:
+
+```
+pcai:sync:Documents:laptop-a1b2     ← only the laptop writes this
+pcai:sync:Documents:phone-c3d4      ← only the phone writes this
+pcai:sync:Documents:tablet-9f7e     ← only the tablet writes this
+```
+
+The folder is the **merge** of them: per path, the entry with the highest version wins, and every
+device computes the same answer from the same records. Two consequences, and they are the reason the
+feature was rebuilt this way:
+
+* **Two devices syncing at the same time cannot lose each other's work.** The previous shape was one
+  document that every device read, edited and wrote back, which is last-writer-wins on the record of
+  whether your files exist. It needed a merge on save, a re-read per checkpoint and a server-side
+  guard against sudden shrinkage, and it still lost writes.
+* **No single record can empty the folder.** One that is missing, unreadable or simply wrong is one
+  device's opinion. The others still assert their files, and a deletion requires a positive
+  *tombstone* published by the device that made it — **absence is never a deletion**. Under the old
+  shape those were the same thing, which is how a document that failed to load once read as "every
+  file you have was deleted" and moved a 6,331-file Pictures folder into `.pc-trash`.
+
+Each entry carries a **version** (`v`) that a device raises when it publishes a change to that path,
+and the device that wrote it. Two devices publishing the same version with different content is
+exactly what a concurrent edit looks like: both copies are kept, the winner takes the name and the
+other is written beside it under a conflict name — and every device works that out identically,
+without anybody coordinating. This is what removes the clock guesswork the old engine needed; "was
+the deletion later than this copy" cannot be asked of two machines' clocks and reliably answered, and
+the times it was answered wrong it either emptied a folder or refilled one.
+
+Entries written before versions existed compare by content instead, so a folder that predates this
+keeps working and upgrades itself one publish at a time.
+
+Alongside the shared records, each device keeps a private **journal**: which version of each path it
+has applied, and what the file looked like on disk when it did. That is the only thing a later scan
+is ever compared against — comparing a local file to a *published* entry reports every downloaded
+file as edited for ever, because a downloaded file gets whatever last-modified the platform hands it
+(Android's SAF assigns its own). It is also what makes a sweep resumable, and what makes a restored
+backup harmless: if the bytes still hash the same, moving the timestamps is not an edit.
 
 ## What is encrypted, and what this node can see
 
@@ -268,35 +310,49 @@ so a preview costs a full download and a decrypt per file, and a folder of 4000 
 
 | Piece | File |
 |---|---|
-| The decision engine (pure: three snapshots → a plan) | `static/js/client/foldersync.js` |
-| The executor (what order, and what to do when a step fails) | `static/js/client/syncrun.js` |
+| The reconciler (pure: merge the devices' records → a plan → check it) | `static/js/client/syncengine.js` |
+| The executor (moves bytes; decides nothing) | `static/js/client/syncexec.js` |
+| Content identity, exclusions, naming, the battery policy | `static/js/client/foldersync.js` (+ `syncrun.js` for `due()`) |
 | Store, scheduler, the screen | `static/js/client/sync.js` |
 | Desktop adapter | `desktop/fsbridge.js` (+ `main.js` IPC, `preload.js` → `window.pcFs`) |
 | Android adapter | `FolderSyncPlugin.java` + `static/js/client/fs-android.js` |
-| The manifest, and the collapse guard | `POST /client/sync-manifest` (`app/routers/client.py`) |
+| The same rules again, for screen-off sweeps | `SyncReconcile.java` + `NativeSweep.java` |
+| Read/write a device's record | `POST /client/sync-manifest` (`app/routers/client.py`) |
 | The account's folder list | `POST /client/sync-folders` |
 
 The split is load-bearing: everything that can get the *answer* wrong is pure and tested, and
-everything that can destroy a *file* is a thin adapter.
+everything that can destroy a *file* is a thin adapter. The reconciler cannot touch a file; the
+executor cannot be reached without a plan that has been checked.
 
-The manifest goes through the server, which is a deliberate exception to "prefer Nostr over a server".
-It is the only record of what every device agreed a folder contains, so an empty read written back
-over a full one does not lose a setting — it loses the folder, because every other device then reads
-the missing paths as "deleted elsewhere" and trashes its copies. The collapse guard refuses that write
-server-side, where no client build can route around it.
+The records go through the server rather than straight to the relay because the server holds the
+account's storage key and is where the write is signed. It no longer needs to guard them: a document
+with one writer for ever cannot be clobbered by a stale reader, which is what the old shrink guard
+existed to prevent.
+
+The rules exist twice — once in JavaScript, once in Java — because a hidden WebView's JavaScript is
+throttled to about one timer a minute, so a sweep that runs while the phone is asleep cannot be the
+JS one. `tests/test_android_reconcile_parity.py` runs both over hundreds of generated folder states
+and compares the plans decision for decision.
 
 ## Tests
 
 ```
-venv-unified/bin/python -m unittest tests.client.test_folder_sync      # the merge, thousands of scenarios
-venv-unified/bin/python -m unittest tests.client.test_sync_run         # the ordering rules
-venv-unified/bin/python -m unittest tests.client.test_two_device_sync  # two devices, one manifest
-venv-unified/bin/python -m unittest tests.client.test_sync_store_scale # a 15790-file folder's store
-venv-unified/bin/python -m unittest tests.test_sync_folders_endpoint   # the account's folder list
+node tests/client/engine_sim.js                                        # merge, concurrency, the state table, the guards
+node tests/client/exec_sim.js                                          # 20 end-to-end scenarios, real bytes
+venv-unified/bin/python -m pytest tests/client/test_folder_sync.py     # the rules and the battery policy
+venv-unified/bin/python -m pytest tests/client/test_fs_bridge.py       # the real desktop bridge, real files
+venv-unified/bin/python -m pytest tests/client/test_sync_store_scale.py # a 15790-file folder's record
+venv-unified/bin/python -m pytest tests/test_android_reconcile_parity.py # JS and Java decide identically
+venv-unified/bin/python -m pytest tests/test_sync_folders_listing.py   # the account's folder list
 venv-unified/bin/python scripts/check_files_explorer.py                # the Files layout, phone + desktop
 ```
 
-`test_two_device_sync` is the one to keep honest: it runs two (and in one scenario three) independent
-devices with their own filesystems, their own agreement and their own platform ids, against one shared
-manifest. It does **not** exercise the platform adapters, the signing or the real Blossom round trip —
-a real desktop → phone trip is still the only thing that covers those.
+`exec_sim.js` is the one to keep honest. Every scenario in it is named after the report that produced
+it, it drives the **shipped** chunker lifted out of `app.js` rather than a copy, and the files carry
+real content — a wrong offset, a dropped chunk or a truncation changes a hash and fails the run. It
+covers three devices writing at once, a device that cannot be read, an emptied store, a lost folder
+handle, a reinstall, an interrupted sweep resuming, corruption on both transfer paths, a device whose
+own record was lost, and 6,000 files.
+
+What no simulation covers: the signing, the real Blossom round trip and the platform adapters on a
+real phone. A desktop → phone trip is still the only thing that exercises those together.

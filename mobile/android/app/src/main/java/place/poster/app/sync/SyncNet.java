@@ -212,13 +212,38 @@ public final class SyncNet {
      */
     public Map<String, Object> manifest(String folder, Map<String, Object> manifest, boolean force)
             throws IOException, Collapse {
+        return manifest(folder, manifest, force, null);
+    }
+
+    /** Every device's document for a folder. The folder is the merge of these. */
+    public Map<String, Object> views(String folder) throws IOException, Collapse {
+        Map<String, Object> extra = new LinkedHashMap<String, Object>();
+        extra.put("views", Boolean.TRUE);
+        return post(folder, extra);
+    }
+
+    /**
+     * `device` names the document to write, and only this device ever writes it — which is what
+     * makes two devices syncing at once safe, and why `force` is ordinary here rather than an
+     * override: the server's shrink guard exists for a shared document, and this one has one writer.
+     */
+    public Map<String, Object> manifest(String folder, Map<String, Object> manifest, boolean force,
+                                        String device) throws IOException, Collapse {
+        Map<String, Object> extra = new LinkedHashMap<String, Object>();
+        if (manifest != null) extra.put("manifest", manifest);
+        if (force) extra.put("force", Boolean.TRUE);
+        if (device != null && !device.isEmpty()) extra.put("device", device);
+        return post(folder, extra);
+    }
+
+    private Map<String, Object> post(String folder, Map<String, Object> extra)
+            throws IOException, Collapse {
         Map<String, Object> body = new LinkedHashMap<String, Object>();
         body.put("pubkey", pub);
         body.put("auth", Crypt.b64(SyncCrypto.utf8(
                 signedEvent(27235, "sync-manifest", Arrays.asList(tag("p", pub))))));
         body.put("folder", folder);
-        if (manifest != null) body.put("manifest", manifest);
-        if (force) body.put("force", Boolean.TRUE);
+        body.putAll(extra);
 
         HttpURLConnection c = open(apiBase + "/client/sync-manifest", "POST", POST_TIMEOUT_MS);
         try {

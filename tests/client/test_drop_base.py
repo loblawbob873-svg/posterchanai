@@ -78,6 +78,6 @@ def test_adding_a_folder_clears_any_record_left_under_that_name():
     at = src.index("const add = document.getElementById('sync-add')")
     block = src[at:src.index("feed.querySelectorAll('.sync-card')", at)]
     assert "_dropBase(key)" in block, "adding a folder does not clear a stale agreement for its name"
-    assert block.index("_dropBase(key)") < block.index("list2.push("), \
+    assert block.index("_dropBase(key)") < block.index("list3.push("), \
         "it is cleared AFTER the folder is added, so the first sweep can still see the old record"
     assert "was NOT added" in block, "a failed clear adds the folder anyway, which is the bug"

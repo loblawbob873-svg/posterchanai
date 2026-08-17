@@ -55,8 +55,15 @@ def test_live_files_and_tombstones_are_counted_separately():
     assert got["tombstones"] == got["entriesBefore"] - 1
 
 
-def test_the_wipe_does_not_ask_save_to_merge():
-    """The mechanism behind the bug, pinned so it cannot come back: `save()` merges when given a
-    `touched` list, and a merge cannot express "remove this key" — a missing key means "leave it
-    alone". Passing `touched` is what made 8,132 entries "clear" while nothing changed."""
-    assert _run()["passedTouched"] is False
+def test_it_clears_every_devices_record_not_just_this_ones():
+    """The mechanism behind the bug, in its current form.
+
+    Under one shared document the failure was `touched`: a merge cannot express "remove this key",
+    so a wipe that passed one changed nothing while reporting 8,132 entries cleared. Under one
+    document PER DEVICE the same shape is different — clearing only our own leaves the others, and
+    the folder returns the moment one of them publishes again. So the sim holds two devices, and the
+    counts below are the merged record after the wipe."""
+    got = _run()
+    assert got["devices"] == 2, got
+    assert got["entriesAfter"] == 0, got
+    assert got["secondPress"] == 0, got

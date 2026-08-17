@@ -92,16 +92,17 @@ class TestSyncStoreScale(unittest.TestCase):
         folder — so it has to stay truthful when the paths move into a blob."""
         self.check("the-collapse-guard-still-gets-a-count")
 
-    def test_a_deliberate_mass_delete_completes_without_asking(self):
-        """The guard made a real mass delete impossible: the save was refused, the agreement was
-        never written, and every sweep afterwards proposed the same delete and was refused again.
-        The client knows how many paths it removed, so when that accounts for the shrink there is
-        nothing to ask about — it re-sends with force."""
-        self.check("a-deliberate-mass-delete-completes-without-asking")
+    def test_our_own_document_is_restored_from_the_journal(self):
+        """THE COLLAPSE GUARD IS GONE, AND ITS ABSENCE IS THE POINT.
 
-    def test_an_unexplained_collapse_asks_and_honours_no(self):
-        """...and forcing past a shrink the sweep cannot explain would make the guard decorative."""
-        self.check("an-unexplained-collapse-asks-and-honours-no")
+        It existed because one document had many writers: a device with a stale copy could write it
+        back and erase what another had added, and a server refusing a sharp shrink was the only
+        thing between that and an emptied folder. A document with ONE writer cannot have that
+        problem — a shrink in this device's own record is this device's own doing.
+
+        What replaces it is this: our view is rebuilt from our journal on every sweep, so a document
+        that is somehow lost or emptied comes back without re-uploading a byte."""
+        self.check("our own document is restored from the journal, not from the network")
 
     def test_each_save_points_at_a_fresh_blob(self):
         """The server keeps one generation of manifest blob and releases the one behind it; that is

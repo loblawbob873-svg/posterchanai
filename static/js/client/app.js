@@ -16489,9 +16489,13 @@
     // not stay wrong until reload either.
     const hit = _syncManifests.get(key);
     if(!force && hit && (Date.now() - hit.at) < _SYNC_TTL) return hit.paths;
-    const S = window.PCSync;
-    if(!S || !S.store) throw new Error('folder sync is not loaded on this build');
-    const paths = await S.store.manifest(key) || {};
+    const S = window.PCSync, E = window.PCSyncEngine;
+    if(!S || !S.docs || !E) throw new Error('folder sync is not loaded on this build');
+    /* THE MERGE OF EVERY DEVICE'S RECORD, not one document. There is no shared manifest any more —
+     * each device publishes its own and the folder is what they say between them, so a screen that
+     * reads only one would show whatever that device happened to know. */
+    const got = await S.docs.views(key);
+    const paths = E.merge((got && got.views) || {}).global || {};
     _syncManifests.set(key, { at: Date.now(), paths });
     return paths;
   }

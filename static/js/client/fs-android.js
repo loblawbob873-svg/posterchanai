@@ -229,6 +229,10 @@
     configureNative: (o) => P.configure(o || {}).then(() => true).catch(() => false),
     forgetNative: () => P.forgetNative().catch(() => {}),
     nativeReport: () => P.nativeReport().catch(() => null),
+    /* WHAT THE NATIVE SWEEP IS DOING RIGHT NOW, for a card whose claim was refused. Null on any
+     * build without it, which is how the caller tells "nothing to show" from "this APK cannot say"
+     * — the first keeps the old sentence, the second is the only honest thing to print. */
+    nativeLive: () => P.nativeLive().catch(() => null),
     /* ONE SWEEP PER FOLDER ACROSS BOTH ENGINES. Two sweeps writing the same manifest is
      * last-writer-wins on the document that decides whether files exist, and the moment it is most
      * likely is somebody opening the app while the alarm is mid-sweep. A build without the lock

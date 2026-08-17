@@ -88,10 +88,23 @@ function makeWorld(){
   w.fetch = async (_url, opts) => {
     const body = JSON.parse((opts && opts.body) || '{}');
     w.posts.push(body);
+    /* Every device's document for a folder. Keyed the way the server keys them —
+     * `pcai:sync:<pair>:<device>` — so the store's own splitting is exercised rather than assumed. */
+    if(body.views){
+      const views = {};
+      for(const [k, doc] of w.docs){
+        const at = k.indexOf(':');
+        if(at < 0 || k.slice(0, at) !== body.folder) continue;
+        views[k.slice(at + 1)] = doc;
+      }
+      return { ok: true, json: async () => ({ ok: true, views, legacy: w.docs.get(body.folder) || null,
+                                              unreadable: w.unreadable || 0 }) };
+    }
     if(body.manifest === undefined){
       return { ok: true, json: async () => ({ ok: true, manifest: w.docs.get(body.folder) || {} }) };
     }
-    const prev = w.docs.get(body.folder);
+    const at = body.device ? body.folder + ':' + body.device : body.folder;
+    const prev = w.docs.get(at);
     const oldN = prev && typeof prev.n === 'number' ? prev.n : null;
     const newN = typeof body.manifest.n === 'number' ? body.manifest.n : null;
     if(w.collapseGuard && !body.force && oldN !== null && newN !== null && oldN >= 10 && newN < Math.floor(oldN / 2)){
@@ -101,7 +114,7 @@ function makeWorld(){
     }
     w.saves++;
     if(body.force) w.forced = (w.forced || 0) + 1;
-    w.docs.set(body.folder, JSON.parse(JSON.stringify(body.manifest)));
+    w.docs.set(at, JSON.parse(JSON.stringify(body.manifest)));
     return { ok: true, json: async () => ({ ok: true }) };
   };
 
@@ -139,7 +152,7 @@ function boot(){
   const ctx = {
     console, setTimeout, clearTimeout, setInterval, clearInterval,
     JSON, Promise, Date, Math, Object, Array, String, Number, Error, Boolean, Map, Set, RegExp,
-    TextEncoder, TextDecoder, Buffer,
+    TextEncoder, TextDecoder, Buffer, crypto: require('crypto').webcrypto,
     localStorage: world.localStorage,
     indexedDB: world.indexedDB,
     navigator: { onLine: true, userAgent: 'node' },
@@ -152,10 +165,12 @@ function boot(){
   ctx.__PC = world.PC;
   ctx.PCFolderSync = require(path.join(CLIENT, 'foldersync.js'));
   ctx.PCSyncRun = require(path.join(CLIENT, 'syncrun.js'));
+  ctx.PCSyncEngine = require(path.join(CLIENT, 'syncengine.js'));
+  ctx.PCSyncExec = require(path.join(CLIENT, 'syncexec.js'));
   ctx.ClientSettings = { get: (k, d) => d, set(){} };
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(CLIENT, 'sync.js'), 'utf8'), ctx, { filename: 'sync.js' });
-  return { world, ctx, store: ctx.PCSync.store };
+  return { world, ctx, store: ctx.PCSync.store, docs: ctx.PCSync.docs };
 }
 
 // A manifest of `n` files, shaped like a real one: a path, a sha, a size, an mtime, a device.
@@ -175,12 +190,14 @@ const scenario = (name, fn) => scenarios.push({ name, fn });
 /* THE ONE THIS FILE EXISTS FOR. A real 15790-file folder found this; 2000 is five times over the
  * ceiling and quick to build. */
 scenario('a-folder-past-the-nip44-ceiling-saves', async () => {
-  const { world, store } = boot();
+  const { world, docs } = boot();
   const paths = manifest(2000);
   let err = '';
-  try{ await store.save('Documents', { manifest: paths, base: paths }); }
+  try{ await docs.publish('Documents', paths); await docs.saveIndex('Documents', paths); }
   catch(e){ err = (e && e.message) || String(e); }
-  const doc = world.docs.get('Documents') || {};
+  // Stored under `<pair>:<device>` now: one document per device, and only that device writes it.
+  let doc = {};
+  for(const [k, d] of world.docs) if(k.indexOf('Documents:') === 0) doc = d;
   return {
     ok: !err && !!doc.pathsSha && doc.n === 2000,
     detail: { plaintextBytes: JSON.stringify(paths).length, ceiling: NIP44_MAX, error: err,
@@ -189,10 +206,11 @@ scenario('a-folder-past-the-nip44-ceiling-saves', async () => {
 });
 
 scenario('a-huge-manifest-round-trips', async () => {
-  const { store } = boot();
+  const { docs } = boot();
   const paths = manifest(2000);
-  await store.save('Documents', { manifest: paths, base: {} });
-  const back = await store.manifest('Documents');
+  await docs.publish('Documents', paths);
+  const got = await docs.views('Documents');
+  const back = got.views[Object.keys(got.views)[0]] || {};
   const keys = Object.keys(paths);
   return {
     ok: Object.keys(back).length === keys.length
@@ -207,9 +225,11 @@ scenario('a-huge-manifest-round-trips', async () => {
  * not a harmless misread: every file becomes "deleted elsewhere", and that device trashes all of
  * them and publishes tombstones the other devices honour. */
 scenario('an-old-client-cannot-read-a-v2-manifest-as-empty', async () => {
-  const { world, store } = boot();
-  await store.save('Documents', { manifest: manifest(2000), base: {} });
-  const doc = world.docs.get('Documents') || {};
+  const { world, docs } = boot();
+  await docs.publish('Documents', manifest(2000));
+  // Stored under `<pair>:<device>` now: one document per device, and only that device writes it.
+  let doc = {};
+  for(const [k, d] of world.docs) if(k.indexOf('Documents:') === 0) doc = d;
 
   // Exactly what the pre-v2 client did with a document: seal first, `paths` otherwise.
   let oldResult = null, threw = '';
@@ -291,68 +311,38 @@ scenario('a-small-folder-stays-inline', async () => {
 /* The count the server's collapse guard reads must stay truthful when the paths are in a blob — it
  * is the ONLY thing the server can see, and it is what stands between a bug and a wiped folder. */
 scenario('the-collapse-guard-still-gets-a-count', async () => {
-  const { world, store } = boot();
+  const { world, docs } = boot();
   const paths = manifest(2000);
   paths['Pictures/gone.jpg'] = { deletedAt: 1786000000000 };     // a tombstone is not a live file
-  await store.save('Documents', { manifest: paths, base: {} });
-  const doc = world.docs.get('Documents') || {};
+  await docs.publish('Documents', paths);
+  // Stored under `<pair>:<device>` now: one document per device, and only that device writes it.
+  let doc = {};
+  for(const [k, d] of world.docs) if(k.indexOf('Documents:') === 0) doc = d;
   return { ok: doc.n === 2000, detail: { n: doc.n, entries: Object.keys(paths).length } };
 });
 
-/* A DELIBERATE MASS DELETE MUST BE ABLE TO COMPLETE.
+/* THE COLLAPSE GUARD IS GONE, AND ITS ABSENCE IS THE POINT.
  *
- * The server refuses a sharp shrink because it holds a count and nothing else — a real mass delete
- * and a broken client about to empty the folder everywhere look identical from there. But the client
- * knows how many paths this sweep deleted, so when that accounts for the shrink there is nothing to
- * ask: it re-sends with force. Without this the save fails, the agreement is never written, and
- * every sweep from then on proposes the same delete and is refused again — the delete can never
- * land, for ever. */
-scenario('a-deliberate-mass-delete-completes-without-asking', async () => {
-  const { world, store } = boot();
+ * It existed because one document had many writers: a device with a stale copy could write it back
+ * and erase everything another device had added, and the server refusing a sharp shrink was the only
+ * thing standing between that and an emptied folder. A document with ONE writer for ever cannot have
+ * that problem — a shrink in this device's own record is this device's own doing, and the other
+ * devices' records are untouched by it.
+ *
+ * What replaces it is the self-heal below: our view is rebuilt from our journal on every sweep, so
+ * even a document that is somehow emptied comes back without re-uploading a byte. */
+scenario('our own document is restored from the journal, not from the network', async () => {
+  const { world, docs } = boot();
   const paths = manifest(40);
-  await store.save('Documents', { manifest: paths, base: {} });
-
-  const kept = {};                                        // 38 deleted, 2 left
-  const keys = Object.keys(paths);
-  keys.slice(0, 2).forEach(k => { kept[k] = paths[k]; });
-  keys.slice(2).forEach(k => { kept[k] = { deletedAt: 1786000000000 }; });
-
-  let asked = false;
-  world.PC.uiConfirm = async () => { asked = true; return true; };
-  let err = '';
-  try{ await store.save('Documents', { manifest: kept, base: {}, removed: 38 }); }
-  catch(e){ err = (e && e.message) || String(e); }
-
-  const doc = world.docs.get('Documents') || {};
-  return {
-    ok: !err && !asked && world.refusals === 1 && world.forced === 1 && doc.n === 2,
-    detail: { error: err, asked, refusals: world.refusals || 0, forced: world.forced || 0, n: doc.n },
-  };
+  await docs.publish('Documents', paths);
+  let key = null;
+  for(const [k] of world.docs) if(k.indexOf('Documents:') === 0) key = k;
+  world.docs.delete(key);
+  await docs.publish('Documents', paths);              // the sweep republishes what it knows
+  const back = world.docs.get(key);
+  return { ok: !!back && back.n === 40, detail: { restored: !!back, n: back && back.n } };
 });
 
-/* ...and a shrink this device CANNOT account for must ask, and must honour a no. That is the bug
- * case: a manifest collapsing for a reason the sweep cannot explain is the one the guard exists for,
- * and forcing past it unasked would make the guard decorative. */
-scenario('an-unexplained-collapse-asks-and-honours-no', async () => {
-  const { world, store } = boot();
-  await store.save('Documents', { manifest: manifest(40), base: {} });
-
-  let asked = false;
-  world.PC.uiConfirm = async () => { asked = true; return false; };      // the user says no
-  let err = '';
-  try{ await store.save('Documents', { manifest: manifest(1), base: {}, removed: 0 }); }
-  catch(e){ err = (e && e.message) || String(e); }
-
-  const doc = world.docs.get('Documents') || {};
-  return {
-    ok: asked && !!err && !world.forced && doc.n === 40,      // nothing written, the folder intact
-    detail: { asked, error: err, forced: world.forced || 0, stillHolds: doc.n },
-  };
-});
-
-/* The manifest blob chain: the server keeps ONE generation and releases the one behind it. The
- * client's half of that contract is simply that a pointer save carries a fresh sha each time, so a
- * generation can be identified at all. */
 scenario('each-save-points-at-a-fresh-blob', async () => {
   const { world, store } = boot();
   const paths = manifest(2000);

@@ -1,16 +1,20 @@
-/* FORGETTING A FOLDER MUST ACTUALLY EMPTY THE RECORD.
+/* FORGETTING A FOLDER MUST ACTUALLY EMPTY THE RECORD — on every device, not just this one.
  *
  * Reported as "how can 8K always be removed": pressing forget said "8,132 entries cleared" every
  * single time, and the folder never went away. It never cleared anything.
  *
- * `save()` re-reads and merges whenever it is given a `touched` list, and the merge writes a path
- * only `if(paths[p] !== undefined)` — a missing key means "leave it alone", which is why every
- * deletion in this feature is a TOMBSTONE rather than a removed key. `forget` passed an EMPTY
- * manifest plus all 8,132 paths, so every lookup was undefined, every assignment was skipped, and the
- * document was written back unchanged. The POST succeeded, so it reported success.
+ * The mechanism has changed with the storage. There is no shared document any more — each device
+ * publishes its own, and only that device ever writes it — so retiring a pair for the ACCOUNT is the
+ * one deliberate exception to that rule: the server, which holds the storage key, empties them all.
+ * Leave one behind and the folder returns the moment that device publishes again, and the name stays
+ * unusable.
  *
- * The stub below implements that merge EXACTLY as sync.js does, because a stub that simply stored
- * whatever it was handed would have passed against the broken code — which is how this shipped.
+ * What has NOT changed is why this test exists: the report is checked against a re-read, because
+ * this once claimed success on a write that did nothing, and repeated the claim every time it was
+ * pressed.
+ *
+ * The shipped forget() is lifted out of sync.js and RUN, so this drives the real logic rather than a
+ * paraphrase of it.
  *
  * Usage: node forget_sim.js
  */
@@ -18,30 +22,32 @@
 const fail = [];
 const check = (c, w) => { if(!c) fail.push(w); };
 
-function makeStore(initial){
-  let doc = Object.assign({}, initial);
-  return {
-    saves: 0,
-    async manifest(){ return JSON.parse(JSON.stringify(doc)); },
-    /* The real merge, copied in shape from sync.js's store.save: with `touched`, a path is written
-     * only when it is PRESENT in the manifest handed in. Without `touched`, the manifest replaces
-     * the document wholesale. */
-    async save(key, s){
-      this.saves++;
-      this.lastSave = s;
-      let paths = s.manifest || {};
-      if(Array.isArray(s.touched)){
-        const merged = Object.assign({}, doc);
-        for(const p of s.touched) if(paths[p] !== undefined) merged[p] = paths[p];
-        paths = merged;
-      }
-      doc = JSON.parse(JSON.stringify(paths));
+/* The world forget() talks to: the per-device documents, and a server that can clear them all.
+ *
+ * `forgetAll` is modelled the way the endpoint implements it — every document for that pair replaced
+ * with an empty one — so a forget that clears only its OWN document fails here, which is exactly the
+ * bug this shape can have. */
+function makeWorld(views){
+  const docs = JSON.parse(JSON.stringify(views));
+  const w = {
+    docs,
+    posts: [],
+    async views(){ return { views: JSON.parse(JSON.stringify(docs)), missing: 0 }; },
+    async publish(key, mine){ docs[w.me] = JSON.parse(JSON.stringify(mine)); },
+    store: {
+      async _post(body){
+        w.posts.push(body);
+        if(body.forgetAll){ for(const dev in docs) docs[dev] = {}; return { ok: true }; }
+        return { ok: true };
+      },
     },
   };
+  w.me = 'laptop-a1b2';
+  return w;
 }
 
-/* The shipped forget(), lifted from sync.js so this drives the real logic rather than a paraphrase. */
-function loadForget(store){
+/** The shipped forget(), lifted from sync.js. */
+function loadForget(world, engine){
   const fs = require('fs'), path = require('path');
   const src = fs.readFileSync(path.join(__dirname, '..', '..', 'static', 'js', 'client', 'sync.js'), 'utf8');
   const at = src.indexOf('async forget(key){');
@@ -54,39 +60,46 @@ function loadForget(store){
   }
   const body = src.slice(at, end + 1);
   // eslint-disable-next-line no-new-func
-  return new Function('store', 'return ({ ' + body + ' }).forget;')(store);
+  return new Function('docs', 'store', 'S_ENGINE', 'return ({ ' + body + ' }).forget;')(
+    world, world.store, engine);
 }
 
 (async () => {
-  const N = 8132;
-  const initial = {};
-  for(let i = 0; i < N; i++) initial['Pictures/p' + i + '.jpg'] = { deletedAt: 4000 };
-  initial['Pictures/live.jpg'] = { size: 10, mtime: 1 };
+  const path = require('path');
+  require(path.join(__dirname, '..', '..', 'static', 'js', 'client', 'foldersync.js'));
+  const engine = require(path.join(__dirname, '..', '..', 'static', 'js', 'client', 'syncengine.js'));
 
-  const store = makeStore(initial);
-  const forget = loadForget(store);
+  const N = 8132;
+  const laptop = {}, phone = {};
+  for(let i = 0; i < N; i++) laptop['Pictures/p' + i + '.jpg'] = { v: 2, by: 'laptop', deletedAt: 4000 };
+  laptop['Pictures/live.jpg'] = { v: 1, by: 'laptop', size: 10, mtime: 1 };
+  // A second device holding the same folder. Clearing only our own document leaves this one, and the
+  // folder comes straight back — the exact shape of "Pictures never removed in Blossom".
+  phone['Pictures/live.jpg'] = { v: 1, by: 'phone', size: 10, mtime: 1 };
+
+  const world = makeWorld({ 'laptop-a1b2': laptop, 'phone-c3d4': phone });
+  const forget = loadForget(world, engine);
 
   const out = await forget('Pictures');
-  const left = Object.keys(await store.manifest('Pictures')).length;
+  const after = engine.merge((await world.views('Pictures')).views).global;
+  const left = Object.keys(after).length;
 
   check(left === 0, 'the record still holds ' + left + ' entries — nothing was cleared');
+  check(Object.keys(world.docs['phone-c3d4']).length === 0,
+        'the other device’s document was left behind, so the folder comes back');
   check(out && out.removed === N + 1, 'reported ' + (out && out.removed) + ' cleared, expected ' + (N + 1));
   check(out && out.live === 1, 'the live count was ' + (out && out.live) + ', expected 1');
   check(out && out.tombstones === N, 'the tombstone count was wrong');
+  check(out && out.devices === 2, 'it reported ' + (out && out.devices) + ' devices, expected 2');
+  check(world.posts.some(p => p && p.forgetAll), 'it never asked the server to retire the pair');
 
   // …and a second press finds nothing, which is the thing that never happened before.
   const again = await forget('Pictures');
   check(again && again.removed === 0,
         'a second forget reported ' + (again && again.removed) + ' cleared — it is still lying');
 
-  /* The wipe has to be RECOGNISABLE to the server, which cannot read a sealed manifest. sync.js's
-   * save() publishes a plaintext `entries` count beside `n`; without it a forgotten folder stays in
-   * the account list for ever, which is what "Pictures never removed in Blossom" was. */
-  check(store.lastSave && !Array.isArray(store.lastSave.touched),
-        'the wipe still passes `touched`, which makes save() merge and change nothing');
-
   console.log(JSON.stringify({ entriesBefore: N + 1, entriesAfter: left,
-                               passedTouched: !!(store.lastSave && store.lastSave.touched),
+                               devices: out && out.devices,
                                reported: out && out.removed, live: out && out.live,
                                tombstones: out && out.tombstones,
                                secondPress: again && again.removed, failures: fail }, null, 1));

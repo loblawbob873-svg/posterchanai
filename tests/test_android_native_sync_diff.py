@@ -1,4 +1,12 @@
-"""Two implementations of the code that decides whether your files get deleted, held to one answer.
+"""WHEN to sync, held to one answer on both sides.
+
+The rules for WHAT to sync moved to syncengine.js / SyncReconcile.java, and their parity is covered
+by tests/test_android_reconcile_parity.py. What stays here is the battery and network policy — the
+one piece of the old engine that was never the problem and is still shared: it decides whether the
+phone wakes at all, and a Java port that answers differently either flattens somebody's battery or
+never syncs.
+
+Originally:
 
 The background sweep on Android has to run without the WebView, so `foldersync.js` — the three-way
 merge, the conflict rule, delete-loses-to-edit, the mass-delete and mass-resurrect guards — now
@@ -198,93 +206,14 @@ NAMED = [
 ]
 
 
-def test_the_named_scenarios_get_the_same_plan_from_both_engines():
-    _agree(NAMED)
+POLICY_NODE = r"""
+const S = require(%s);
+const fs = require('fs');
+for (const c of JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))) {
+  console.log(JSON.stringify(S.shouldSync(c.state, c.prefs)));
+}
+"""
 
-
-def test_the_mass_delete_guard_answers_the_same_on_both_sides():
-    """A short list is a delete order. The floor, the keep count and what counts as kept all have to
-    match, or the phone waves through a sweep the browser would refuse."""
-    big_delete = {"local": {}, "remote": {}, "base": {}}
-    for i in range(40):
-        big_delete["local"]["f%02d.txt" % i] = f("C%d" % i)
-        big_delete["remote"]["f%02d.txt" % i] = {"deletedAt": 4 * DAY}
-        big_delete["base"]["f%02d.txt" % i] = m("s%d" % i, "C%d" % i)
-
-    # …and one just under the floor, which must never ask.
-    small = {"local": {}, "remote": {}, "base": {}}
-    for i in range(19):
-        small["local"]["f%02d.txt" % i] = f("C%d" % i)
-        small["remote"]["f%02d.txt" % i] = {"deletedAt": 4 * DAY}
-        small["base"]["f%02d.txt" % i] = m("s%d" % i, "C%d" % i)
-
-    # …and one over the floor where MORE is kept than trashed, which must also never ask.
-    kept = json.loads(json.dumps(big_delete))
-    for i in range(100):
-        kept["local"]["keep%03d.txt" % i] = f("K%d" % i)
-        kept["remote"]["keep%03d.txt" % i] = m("k%d" % i, "K%d" % i)
-        kept["base"]["keep%03d.txt" % i] = m("k%d" % i, "K%d" % i)
-
-    out = _agree([big_delete, small, kept])
-    assert out[0]["massDelete"] and out[0]["massDelete"]["n"] == 40
-    assert out[1]["massDelete"] is None, "a 19-file delete asked a question"
-    assert out[2]["massDelete"] is None, "a delete smaller than what it keeps asked a question"
-
-
-def test_the_mass_resurrect_guard_answers_the_same_on_both_sides():
-    """The mirror: a restored machine republishing other devices' deletions. An absolute floor, not a
-    ratio — the resurrections arrive beside thousands of ordinary uploads."""
-    world = {"local": {}, "remote": {}, "base": {}}
-    for i in range(25):
-        world["local"]["r%02d.txt" % i] = f("R%d" % i, mtime=9 * DAY)
-        world["remote"]["r%02d.txt" % i] = {"deletedAt": 4 * DAY}
-    for i in range(500):
-        world["local"]["plain%03d.txt" % i] = f("P%d" % i)
-    out = _agree([world])
-    assert out[0]["massResurrect"] and out[0]["massResurrect"]["n"] == 25
-
-
-def _random_entry(rnd, remote):
-    kind = rnd.choice(["live", "live", "live", "tomb", "nohash", "chunked"])
-    if kind == "tomb":
-        return {"deletedAt": rnd.choice([1 * DAY, 4 * DAY, 9 * DAY])}
-    e = {"size": rnd.choice([10, 10, 11, 4096]), "mtime": rnd.choice([1000, 1001, 3000, 9 * DAY])}
-    if kind == "live":
-        e["csum"] = rnd.choice(["A", "B", "C"])
-    elif kind == "chunked":
-        e["chunks"] = rnd.choice([["c1"], ["c1", "c2"], ["c9"]])
-        e["cs"] = rnd.choice([0, 4, 16])
-    if remote:
-        if rnd.random() < 0.9:
-            e["sha"] = rnd.choice(["s1", "s2"])
-        if rnd.random() < 0.4:
-            e["device"] = rnd.choice(["laptop", "phone", "the tablet"])
-    return e
-
-
-def test_a_few_hundred_generated_worlds_get_the_same_plan():
-    """The fixed cases above are the ones somebody thought of. This is the part that protects the
-    port: three snapshots filled independently, so every combination of present / absent / tombstone /
-    hashed / unhashed / chunked turns up, including the ones that only matter together."""
-    rnd = random.Random(20260815)
-    cases = []
-    for _ in range(300):
-        paths = ["a.txt", "b/c.txt", "b/d.jpg", "Old/e.txt", "f.tmp", "É.txt"]
-        case = {"local": {}, "remote": {}, "base": {}, "device": rnd.choice(["laptop", "phone"]),
-                "now": rnd.choice([0, 5 * DAY]),
-                "excludes": rnd.choice([[], ["Old"], ["*.tmp"], ["**/b"], ["/Old", "*.tmp"]])}
-        for p in paths:
-            if rnd.random() < 0.7:
-                case["local"][p] = _random_entry(rnd, False)
-            if rnd.random() < 0.7:
-                case["remote"][p] = _random_entry(rnd, True)
-            if rnd.random() < 0.5:
-                case["base"][p] = _random_entry(rnd, True)
-        cases.append(case)
-    _agree(cases)
-
-
-# ---- the battery policy -------------------------------------------------------------------------
 
 POLICY_DRIVER = r"""
     String text = new String(java.nio.file.Files.readAllBytes(
@@ -294,14 +223,6 @@ POLICY_DRIVER = r"""
       System.out.println(Json.write(SyncDiff.shouldSync(Json.obj(m.get("state")),
                                                         Json.obj(m.get("prefs")))));
     }
-"""
-
-POLICY_NODE = r"""
-const S = require(%s);
-const fs = require('fs');
-for (const c of JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))) {
-  console.log(JSON.stringify(S.shouldSync(c.state, c.prefs)));
-}
 """
 
 

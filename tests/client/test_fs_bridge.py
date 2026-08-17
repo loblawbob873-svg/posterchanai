@@ -92,34 +92,51 @@ class TestFsBridge(unittest.TestCase):
             if rel in base and "mtime" not in base[rel]:
                 st = os.stat(full)
                 base[rel] = dict(base[rel], size=st.st_size, mtime=int(st.st_mtime * 1000))
-        run = os.path.join(REPO, "static", "js", "client", "syncrun.js")
+        eng = os.path.join(REPO, "static", "js", "client", "syncengine.js")
+        exe = os.path.join(REPO, "static", "js", "client", "syncexec.js")
+        fold = os.path.join(REPO, "static", "js", "client", "foldersync.js")
+        # The journal records what the file looked like when this device applied — the real stat,
+        # taken above — so a case that wants a STALE agreement (a restore, an rsync without -t) is
+        # the one that states its own mtime.
+        index = {}
+        for rel, e in base.items():
+            local = {"size": e.get("size"), "mtime": e.get("mtime")}
+            if e.get("csum"):
+                local["csum"] = e["csum"]
+            index[rel] = dict(e, local=local)
         js = textwrap.dedent("""
             const B = require(%s);
-            const R = require(%s);
+            require(%s); require(%s);
+            const X = require(%s);
             B.init({ roots: [{id:'r1', dir: %s}], save(){} });
-            const manifest = %s, base = %s;
-            const store = {
-              saved: [],
-              async manifest(){ return JSON.parse(JSON.stringify(manifest)); },
-              async base(){ return JSON.parse(JSON.stringify(base)); },
+            const view = %s, index = %s;
+            const io = {
+              published: [],
+              async views(){ return { views: { other: JSON.parse(JSON.stringify(view)) }, missing: 0 }; },
+              async publish(k, mine){ this.published.push(mine); },
+              async index(){ return JSON.parse(JSON.stringify(index)); },
+              async saveIndex(){},
               async getBlob(){ return new Uint8Array([1]); },
-              async putBlob(){ return 'SHA'; },
-              async save(id, s){ this.saved.push(s); },
+              async putBlob(){ return { sha: 'SHA' }; },
+              async hashBytes(){ return 'HASH'; },
             };
             (async () => {
-              const rep = await R.sweep(B, store, {id:'r1', key:'Documents', device:'laptop',
-                                                   now: 99000, excludes: %s,
-                                                   forceResurrect: %s});
+              const rep = await X.sweep(B, io, {id:'r1', key:'Documents', device:'laptop',
+                                                now: 99000, excludes: %s, manual: %s,
+                                                confirm: async () => %s});
               process.stdout.write(JSON.stringify({
-                trashed: rep.trashed.length, failed: rep.failed, refused: rep.refusedTrash || null,
+                trashed: rep.trashed.length, failed: rep.failed,
+                refused: (rep.refused.find(v => v.kind === 'massTrash' || v.kind === 'partialViews') || null),
                 excluded: rep.excluded, unchanged: rep.unchanged,
-                resurrected: (rep.resurrected || []).map(r => r.path),
-                refusedResurrect: rep.refusedResurrect || null,
+                resurrected: rep.resurrected || [],
+                refusedResurrect: (rep.refused.find(v => v.kind === 'massResurrect') || null),
                 uploaded: rep.uploaded.length,
               }));
             })().catch(e => { process.stderr.write(String(e && e.stack || e)); process.exit(1); });
-        """) % (json.dumps(MOD), json.dumps(run), json.dumps(self.root),
-                json.dumps(manifest), json.dumps(base), json.dumps(excludes or []),
+        """) % (json.dumps(MOD), json.dumps(fold), json.dumps(eng), json.dumps(exe),
+                json.dumps(self.root), json.dumps(manifest), json.dumps(index),
+                json.dumps(excludes or []),
+                "true" if force_resurrect else "false",
                 "true" if force_resurrect else "false")
         r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=180)
         if r.returncode != 0:

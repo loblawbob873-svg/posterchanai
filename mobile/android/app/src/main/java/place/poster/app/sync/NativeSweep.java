@@ -56,6 +56,12 @@ public final class NativeSweep {
 
     /** What one sweep did, in the shape the panel reads. */
     public static final class Report {
+        /** How many devices answered, and how many could not be read — a missing view is what makes
+         *  this sweep refuse every deletion, so it is reported rather than inferred. */
+        public int devices = 0;
+        public int missingViews = 0;
+        /** Set when this sweep refused to tell the other devices to delete in bulk. */
+        public String refusedRemoteDelete = null;
         public final List<String> uploaded = new ArrayList<String>();
         public final List<String> downloaded = new ArrayList<String>();
         public final List<String> trashed = new ArrayList<String>();
@@ -159,22 +165,31 @@ public final class NativeSweep {
      * on a folder of any size is indistinguishable from a hang — and was reported as exactly that.
      * These are written on the sweep thread and read from the plugin; ints, so no lock is needed for
      * a number that is only ever displayed. */
-    private static volatile String liveKey = "";
+    private static volatile String liveKey = "", livePhase = "", livePath = "";
     private static volatile int liveDone = 0, liveTotal = 0;
     private static volatile long liveAt = 0;
 
-    static void progress(String key, int done, int total) {
+    static void progress(String key, String phase, String path, int done, int total) {
         liveKey = key == null ? "" : key;
+        livePhase = phase == null ? "" : phase;
+        livePath = path == null ? "" : path;
         liveDone = done;
         liveTotal = total;
         liveAt = System.currentTimeMillis();
     }
 
-    /** {key, done, total, at} for whatever is sweeping, or null when nothing is. */
+    /** Nothing is running any more — so the page stops drawing a line that has stopped moving. */
+    static void progressDone(String key) {
+        if (liveKey.equals(key == null ? "" : key)) { liveKey = ""; livePhase = ""; livePath = ""; }
+    }
+
+    /** {key, phase, path, done, total, at} for whatever is sweeping, or null when nothing is. */
     public static synchronized Map<String, Object> live() {
         if (liveKey.isEmpty() || !BUSY.contains(liveKey)) return null;
         Map<String, Object> m = new LinkedHashMap<String, Object>();
         m.put("key", liveKey);
+        m.put("phase", livePhase);
+        m.put("path", livePath);
         m.put("done", (long) liveDone);
         m.put("total", (long) liveTotal);
         m.put("at", liveAt);
@@ -229,6 +244,9 @@ public final class NativeSweep {
         } catch (Throwable t) {
             rep.error = String.valueOf(t.getMessage() == null ? t : t.getMessage());
         } finally {
+            // Before the claim goes: the page reads `live()` only while the folder is claimed, and a
+            // line left behind by a finished sweep is exactly the stale progress this exists to end.
+            progressDone(f.key);
             release(f.key);
         }
         return rep;
@@ -242,40 +260,34 @@ public final class NativeSweep {
         byte[] mk = SyncCrypto.unwrapMasterKey(sec, store.wrappedDriveKey());
         SafFs fs = new SafFs(ctx, f.id);
 
-        Map<String, Map<String, Object>> remote = readManifest(net, sec, mk, f.key);
-        Map<String, Map<String, Object>> base = store.base(f.key);
+        /* EVERY DEVICE'S VIEW, and a device that could not be read is COUNTED rather than left out.
+         * Left out, its files are absent from the merge — and absent is indistinguishable from
+         * deleted, which is the confusion that emptied a Pictures folder. */
+        Views v = readViews(net, sec, mk, f.key);
+        SyncReconcile.Merged m = SyncReconcile.merge(v.views);
+        Map<String, Map<String, Object>> index = store.base(f.key);
+        rep.devices = v.views.size();
+        rep.missingViews = v.missing;
 
-        /* AN EMPTY AGREEMENT FORCES A HASH, IT DOES NOT STOP THE SWEEP — and the first version of
-         * this got that exactly backwards.
+        /* AN EMPTY JOURNAL FORCES A HASH, IT DOES NOT STOP THE SWEEP.
          *
-         * It deferred instead, on the reasoning that a first sweep is expensive and dangerous. The
-         * reasoning was fine and the consequence was that the whole native path could never run
-         * ONCE, on any device: `base` here is written only by this sweep, the page keeps its own copy
-         * in IndexedDB where Java cannot reach it, so the agreement was empty for ever and every
-         * alarm answered "first sync — open the app once". Opening the app did nothing, because the
-         * page writes only its own copy. Dead on arrival, and reported as success.
+         * The first version deferred instead, and the consequence was that the native path could
+         * never run ONCE on any device: this journal is written only by this sweep, the page keeps
+         * its own in IndexedDB where Java cannot reach it, so it was empty for ever and every alarm
+         * answered "first sync — open the app once". Opening the app did nothing, because the page
+         * writes only its own copy. Dead on arrival, and reported as success.
          *
-         * What the deferral was actually protecting against is covered elsewhere: with no `base` both
-         * sides look changed for every path at once, so the answer has to come from CONTENT — that is
-         * the hash — and the thing that would go wrong without it is a conflict copy of every file.
-         * Conflicts are deferred by this sweep regardless (see the class comment), the mass-delete and
-         * mass-resurrect guards refuse in bulk, and a folder nobody has pressed Start on is `paused`,
-         * which `shouldSync` declines before we ever get here. So the honest move is to pay for the
-         * hash and settle the folder, which is what the browser's first sweep does too.
-         *
-         * OTHERWISE hashing is the charging-time job the caller already decided about: `shouldSync`
-         * answers `full` when plugged in and it has been a day. Rehashing on every sweep is the space
-         * heater the battery policy exists to avoid; never rehashing means an entry with no content
-         * identity never gains one, and every device that joins later falls back to size+mtime —
-         * which on Android can never match, because SAF assigns its own last-modified. */
-        boolean firstEver = base.isEmpty();
+         * With no journal both sides look changed for every path at once, so the answer has to come
+         * from CONTENT — that is the hash. Otherwise hashing is the charging-time job `shouldSync`
+         * already decided about. */
+        boolean firstEver = index.isEmpty();
         if (firstEver) { hash = true; rep.hashed = true; }
         SafFs.Scan scan = fs.scan(hash, 0, f.excludes);
         Map<String, Map<String, Object>> local = new LinkedHashMap<String, Map<String, Object>>();
         for (Map.Entry<String, Map<String, Object>> e : scan.files.entrySet()) {
-            /* The scan reports the FILE's hash in `sha`; a manifest entry's `sha` is the address of
-             * its encrypted blob. Renaming it to `csum` here is what stops the engine ever comparing
-             * the two — which it used to, and called every identical file divergent. */
+            /* The scan reports the FILE's hash in `sha`; an entry's `sha` is the address of its
+             * encrypted blob. Renaming it to `csum` here is what stops the engine ever comparing the
+             * two — which it used to, and called every identical file divergent. */
             Map<String, Object> src = e.getValue();
             Map<String, Object> out = new LinkedHashMap<String, Object>();
             out.put("size", src.get("size"));
@@ -285,160 +297,136 @@ public final class NativeSweep {
             local.put(e.getKey(), out);
         }
 
-        final Map<String, Map<String, Object>> nextRemote0 =
-                new LinkedHashMap<String, Map<String, Object>>(remote);
-        final Set<String> touched0 = new LinkedHashSet<String>();
-        SyncDiff.Plan plan = SyncDiff.diff(local, remote, base, f.excludes, device, now);
+        SyncReconcile.Plan planned = SyncReconcile.reconcile(local, m, index, f.excludes, device, now);
+        List<Map<String, Object>> verdicts = SyncReconcile.check(planned, v.missing);
+        /* NOBODY IS WATCHING, SO A REFUSAL IS THE ANSWER — and it suppresses one bucket, never the
+         * sweep. The refused paths are deliberately NOT journalled, so the next sweep proposes
+         * exactly this again and a foreground one can ask. */
+        for (Map<String, Object> vd : verdicts) {
+            String kind = Json.str(vd.get("kind"), "");
+            if ("massTrash".equals(kind) || "partialViews".equals(kind)) rep.refusedTrash = kind;
+            else if ("massResurrect".equals(kind)) rep.refusedResurrect = kind;
+            else if ("massTombstone".equals(kind) || "partialViewsOut".equals(kind))
+                rep.refusedRemoteDelete = kind;
+        }
+        SyncReconcile.Plan plan = SyncReconcile.apply(planned, verdicts);
         rep.unchanged = plan.unchanged;
         rep.excluded = plan.excluded;
-        rep.deferred += plan.conflicts.size();
-        if (!plan.conflicts.isEmpty()) {
-            rep.deferredWhy = plan.conflicts.size() + " conflict"
-                    + (plan.conflicts.size() == 1 ? "" : "s") + " need the app open";
+        rep.deferred += plan.keepBoth.size();
+        if (!plan.keepBoth.isEmpty()) {
+            rep.deferredWhy = plan.keepBoth.size() + " conflict"
+                    + (plan.keepBoth.size() == 1 ? "" : "s") + " need the app open";
         }
 
-        /* NOBODY IS WATCHING, SO A REFUSAL IS THE ANSWER — and it suppresses one bucket, never the
-         * sweep. The refused paths are deliberately NOT agreed, so the next sweep proposes exactly
-         * this again and a foreground one can ask. */
-        Map<String, Object> mass = SyncDiff.massDelete(plan);
-        List<Map<String, Object>> deleteLocal = plan.deleteLocal;
-        if (mass != null) {
-            rep.refusedTrash = Json.str(mass.get("why"), "refused");
-            deleteLocal = new ArrayList<Map<String, Object>>();
-        }
-        List<Map<String, Object>> uploads = plan.upload;
-        Map<String, Object> massUp = SyncDiff.massResurrect(plan);
-        if (massUp != null) {
-            rep.refusedResurrect = Json.str(massUp.get("why"), "refused");
-            uploads = new ArrayList<Map<String, Object>>();
-            for (Map<String, Object> u : plan.upload) {
-                if (!Json.bool(u.get("resurrect"), false)) uploads.add(u);
-            }
-        }
-
-        final Map<String, Map<String, Object>> nextRemote = nextRemote0;
-        final Map<String, Map<String, Object>> nextBase =
-                new LinkedHashMap<String, Map<String, Object>>(base);
-        final Set<String> touched = touched0;
+        Journal j = new Journal(net, store, sec, mk, f.key, device, index,
+                                v.views.get(device), rep);
 
         /* GIVE EVERY ENTRY A CONTENT IDENTITY WHILE WE ARE HERE.
          *
          * An entry written before `csum` existed can never be compared by content, so every device
          * that hashes falls back to size+mtime — which Android can never match, because SAF assigns
-         * its own last-modified. Those paths conflict for ever, and a conflict is exactly what this
-         * sweep DEFERS, so without this a folder full of them would be re-swept every sixteen
-         * minutes and settle nothing, on every phone, permanently.
-         *
-         * It is not a new fact — it is the one this sweep just established, written down where the
-         * other devices can use it. `same()` had to be true to get here, so a path that is genuinely
-         * different is untouched. */
+         * its own last-modified. Those paths conflict for ever, and a conflict is what this sweep
+         * DEFERS, so without this a folder full of them is re-swept every sixteen minutes and settles
+         * nothing. It is not a new fact — it is the one this sweep just established, published where
+         * the other devices can use it. */
         int repaired = 0;
         for (Map.Entry<String, Map<String, Object>> e : local.entrySet()) {
-            Map<String, Object> L = e.getValue(), R = remote.get(e.getKey());
+            Map<String, Object> L = e.getValue(), R = m.global.get(e.getKey());
             if (L == null || Json.str(L.get("csum"), "").isEmpty()) continue;
             if (R == null || R.get("csum") != null || SyncDiff.gone(R)) continue;
             if (!SyncDiff.same(L, R)) continue;
             Map<String, Object> up = new LinkedHashMap<String, Object>(R);
             up.put("csum", L.get("csum"));
-            nextRemote0.put(e.getKey(), up);
-            touched0.add(e.getKey());
+            up.put("v", SyncReconcile.versionOf(R) + 1);
+            up.put("by", device);
+            j.applied(e.getKey(), up, L);
             repaired++;
         }
         rep.repaired = repaired;
 
-        int work = deleteLocal.size() + plan.download.size() + uploads.size();
-        int every = Math.max(CHECKPOINT, (int) Math.ceil(work / (double) MAX_CHECKPOINTS));
-        Check check = new Check(net, store, sec, mk, f.key, nextRemote, nextBase, touched, every, rep);
-        if (repaired > 0) check.markDirty();
-
         /* DELETIONS FIRST, BEFORE ANY BYTE MOVES. Queued behind hours of transfer they are simply
          * never reached: a sweep is interrupted, restarts its transfer loops from the top, and the
          * deletions sit there across sweep after sweep. A local delete is a rename into .pc-trash —
-         * instant, no network — so there is no reason for it to wait behind a 40 GB upload. It does
-         * not break "download before delete": diff() puts each path in exactly one bucket. */
-        for (Map<String, Object> t : deleteLocal) {
-            if (stop != null && stop.stopping()) { check.flush(); return; }
+         * instant, no network — so there is no reason for it to wait behind a 40 GB upload. */
+        int ti = 0;
+        for (Map<String, Object> t : plan.trash) {
+            if (stop != null && stop.stopping()) { j.flush(); return; }
             String path = Json.str(t.get("path"), "");
+            progress(f.key, "to trash", path, ++ti, plan.trash.size());
             try {
                 fs.trash(path, now);
+                Map<String, Object> entry = Json.obj(t.get("entry"));
                 Map<String, Object> tomb = new LinkedHashMap<String, Object>();
-                Map<String, Object> R = remote.get(path);
-                tomb.put("deletedAt", R == null ? now : Json.num(R.get("deletedAt"), now));
-                check.agree(path, tomb);
+                tomb.put("v", t.get("v"));
+                tomb.put("by", Json.str(entry.get("by"), device));
+                tomb.put("deletedAt", Json.num(entry.get("deletedAt"), now));
+                j.applied(path, tomb, null);
                 rep.trashed.add(path);
             } catch (Exception e) { fail(rep, path, "delete", e); }
-            check.maybe();
+            j.maybe();
         }
 
-        for (Map<String, Object> d : plan.download) {
-            if (stop != null && stop.stopping()) { check.flush(); return; }
+        int di = 0;
+        for (Map<String, Object> d : plan.fetch) {
+            if (stop != null && stop.stopping()) { j.flush(); return; }
             String path = Json.str(d.get("path"), "");
-            Map<String, Object> R = remote.get(path);
-            if (R == null) continue;
+            Map<String, Object> R = Json.obj(d.get("entry"));
+            progress(f.key, "downloading", path, ++di, plan.fetch.size());
             try {
                 long[] st = download(net, fs, mk, path, R, now);
-                Map<String, Object> agreed = new LinkedHashMap<String, Object>();
-                // Absent, never null: a chunked entry has no `sha` at all — its address is the LIST —
-                // and writing an explicit null would be a value the next sweep has to reason about.
-                if (R.get("sha") != null) agreed.put("sha", R.get("sha"));
-                if (R.get("csum") != null) agreed.put("csum", R.get("csum"));
-                /* `cs` TRAVELS WITH `chunks`, always. An entry is comparable only to one made at the
-                 * same chunk size, so an agreement that kept the list and dropped the size can never
-                 * match the manifest entry it came from — and the file is re-downloaded on every
-                 * sweep for ever, each commit moving the previous copy into .pc-trash. */
-                if (R.get("chunks") != null) {
-                    agreed.put("chunks", R.get("chunks"));
-                    if (R.get("cs") != null) agreed.put("cs", R.get("cs"));
-                }
-                agreed.put("size", st[0]);
-                agreed.put("mtime", st[1]);
-                check.agree(path, agreed);
+                j.applied(path, R, stat(st, Json.str(R.get("csum"), "")));
                 rep.downloaded.add(path);
             } catch (Exception e) { fail(rep, path, "download", e); }
-            check.maybe();
+            j.maybe();
         }
 
-        for (Map<String, Object> u : uploads) {
-            if (stop != null && stop.stopping()) { check.flush(); return; }
+        int ui = 0;
+        for (Map<String, Object> u : plan.send) {
+            if (stop != null && stop.stopping()) { j.flush(); return; }
             String path = Json.str(u.get("path"), "");
             Map<String, Object> meta = local.get(path);
             if (meta == null) continue;
+            progress(f.key, "uploading", path, ++ui, plan.send.size());
             try {
                 Map<String, Object> entry = upload(net, fs, mk, path, meta, device, now, rep);
-                check.remember(path, entry);
-                check.agree(path, entry);
+                entry.put("v", u.get("v"));
+                entry.put("by", device);
+                j.applied(path, entry, meta);
                 rep.uploaded.add(path);
             } catch (Exception e) { fail(rep, path, "upload", e); }
-            check.maybe();
+            j.maybe();
         }
 
-        for (Map<String, Object> r : plan.deleteRemote) {
-            String path = Json.str(r.get("path"), "");
+        for (Map<String, Object> t : plan.tombstone) {
+            String path = Json.str(t.get("path"), "");
             Map<String, Object> tomb = new LinkedHashMap<String, Object>();
+            tomb.put("v", t.get("v"));
+            tomb.put("by", device);
             tomb.put("deletedAt", now);
-            check.remember(path, tomb);              // a tombstone, so other devices learn of it
-            check.agree(path, tomb);
+            j.applied(path, tomb, null);
             rep.removedRemote.add(path);
         }
 
         // Paths the engine settled with no I/O still have to be recorded, or every sweep re-decides
-        // them for ever. (`deleted on both`, `same content both sides`.)
-        for (Map<String, Object> n : plan.notes) {
+        // them for ever. (`deleted on both`, `same content both sides`, `already gone here`.)
+        for (Map<String, Object> n : plan.settle) {
             String path = Json.str(n.get("path"), "");
-            Map<String, Object> L = local.get(path), R = remote.get(path);
-            Map<String, Object> agreed = new LinkedHashMap<String, Object>();
-            if (L != null) {
-                if (L.get("csum") != null) agreed.put("csum", L.get("csum"));
-                if (R != null && R.get("chunks") != null) agreed.put("chunks", R.get("chunks"));
-                agreed.put("size", L.get("size"));
-                agreed.put("mtime", L.get("mtime"));
-            } else {
-                agreed.put("deletedAt", R == null ? now : Json.num(R.get("deletedAt"), now));
-            }
-            check.agree(path, agreed);
+            j.applied(path, Json.obj(n.get("entry")), local.get(path));
         }
 
-        check.flush();
+        j.flush();
+    }
+
+    /** What a file looked like on this disk when we applied something to it — the journal's own
+     *  record, which is the only thing a later scan may be compared against. A downloaded file gets
+     *  whatever last-modified the platform hands out (SAF assigns its own), so comparing a scan to a
+     *  PUBLISHED entry reports every downloaded file as edited, on every sweep, for ever. */
+    private static Map<String, Object> stat(long[] st, String csum) {
+        Map<String, Object> m = new LinkedHashMap<String, Object>();
+        m.put("size", st[0]);
+        m.put("mtime", st[1]);
+        if (csum != null && !csum.isEmpty()) m.put("csum", csum);
+        return m;
     }
 
     private static void fail(Report rep, String path, String what, Exception e) {
@@ -576,10 +564,45 @@ public final class NativeSweep {
 
     // -------------------------------------------------------------------------- the manifest
 
-    /** The shared agreement, decrypted — v2 pointer blob, sealed inline, or a pre-seal document. */
-    static Map<String, Map<String, Object>> readManifest(SyncNet net, byte[] sec, byte[] mk, String key)
-            throws Exception {
-        Map<String, Object> doc = Json.obj(net.manifest(key, null, false).get("manifest"));
+    /** Every device's view of a folder, plus how many could not be read. */
+    static final class Views {
+        final Map<String, Map<String, Map<String, Object>>> views =
+                new LinkedHashMap<String, Map<String, Map<String, Object>>>();
+        int missing = 0;
+    }
+
+    /**
+     * Read them all.
+     *
+     * A view that fails to open is COUNTED, never skipped: absent from the merge is indistinguishable
+     * from "that device holds nothing", and the checker refuses every deletion while the count is
+     * above zero. The single shared document older builds still write is read as one more view — it
+     * carries no versions, so its entries compare by content, which is what this engine did before
+     * versions existed.
+     */
+    static Views readViews(SyncNet net, byte[] sec, byte[] mk, String key) throws Exception {
+        Views out = new Views();
+        Map<String, Object> answer = net.views(key);
+        out.missing = (int) Json.num(answer.get("unreadable"), 0);
+        Map<String, Object> raw = Json.obj(answer.get("views"));
+        for (Map.Entry<String, Object> e : raw.entrySet()) {
+            try {
+                out.views.put(e.getKey(), openDoc(sec, mk, net, Json.obj(e.getValue())));
+            } catch (Exception ex) { out.missing++; }
+        }
+        Object legacy = answer.get("legacy");
+        if (legacy instanceof Map) {
+            try {
+                Map<String, Map<String, Object>> v = openDoc(sec, mk, net, Json.obj(legacy));
+                if (!v.isEmpty()) out.views.put("(shared)", v);
+            } catch (Exception ex) { out.missing++; }
+        }
+        return out;
+    }
+
+    /** One document's paths, decrypted — v2 pointer blob, sealed inline, or a pre-seal document. */
+    static Map<String, Map<String, Object>> openDoc(byte[] sec, byte[] mk, SyncNet net,
+                                                    Map<String, Object> doc) throws Exception {
         String pathsSha = Json.str(doc.get("pathsSha"), "");
         String json;
         if (!pathsSha.isEmpty()) {
@@ -611,107 +634,107 @@ public final class NativeSweep {
      * Store the agreement, then the local one. Never the other way round: a `base` that runs ahead of
      * the manifest makes this device believe in an agreement the others never saw.
      */
-    static void saveManifest(SyncNet net, SyncStore store, byte[] sec, byte[] mk, String key,
-                             Map<String, Map<String, Object>> paths,
-                             Map<String, Map<String, Object>> base,
-                             Set<String> touched, int removed) throws Exception {
-        /* MERGE, DO NOT OVERWRITE. The manifest is one replaceable document and our copy is a
-         * snapshot from when this sweep started, so writing it whole means the later of two devices
-         * erases every path the other added — silently, because the blobs are still there and only
-         * the entries are gone. A read that FAILS falls back to our snapshot, which is worse than
-         * merging and better than not saving at all; the server's collapse guard still stands behind
-         * it, because a merge can only ever add. */
-        Map<String, Map<String, Object>> out = paths;
-        try {
-            Map<String, Map<String, Object>> fresh = readManifest(net, sec, mk, key);
-            for (String p : touched) if (paths.containsKey(p)) fresh.put(p, paths.get(p));
-            out = fresh;
-        } catch (Exception ignored) { }
-
+    /**
+     * Publish THIS device's view. One writer for ever, so this is a write and nothing else.
+     *
+     * No merge, no re-read, no compare-and-swap. Those all existed to make one shared document
+     * survive several writers, and it did not: the later of two devices erased every path the other
+     * had added, silently, because the blobs were still there and only the entries were gone.
+     */
+    static void publishView(SyncNet net, byte[] sec, byte[] mk, String key, String device,
+                            Map<String, Map<String, Object>> mine) throws Exception {
         int live = 0;
-        for (Map<String, Object> e : out.values()) if (SyncDiff.live(e)) live++;
-        String json = Json.write(out);
+        for (Map<String, Object> e : mine.values()) if (SyncDiff.live(e)) live++;
+        String json = Json.write(mine);
         Map<String, Object> doc = new LinkedHashMap<String, Object>();
         doc.put("n", (long) live);
+        doc.put("entries", (long) mine.size());
+        doc.put("by", device);
         if (json.length() < MANIFEST_INLINE_MAX) {
             doc.put("sealed", SyncCrypto.sealToSelf(sec, json));
         } else {
             /* NIP-44 refuses a plaintext over 65535 bytes and an entry is ~174 of them, so this
              * document could hold about 376 files and a bigger folder COULD NOT BE SAVED AT ALL: the
-             * blobs all uploaded, the save threw at the very last step, `base` was never written, and
-             * the next sweep started from the beginning. For ever. */
+             * blobs all uploaded, the save threw at the very last step, the journal was never
+             * written, and the next sweep started from the beginning. For ever. */
             String sha = net.putBlob(SyncCrypto.encrypt(mk, SyncCrypto.utf8(json)));
             doc.put("pathsSha", sha);
-            doc.put("sealed", "v2:" + sha);               // the marker above — deliberately undecryptable
+            doc.put("sealed", "v2:" + sha);           // deliberately undecryptable — see openDoc
         }
-        try {
-            net.manifest(key, doc, false);
-        } catch (SyncNet.Collapse c) {
-            /* THE SERVER REFUSED A SHRINK. It holds a count and nothing else, so a deliberate mass
-             * delete and a broken client about to empty the folder look identical from there. THIS
-             * side is not guessing: if the deletions this sweep made account for the shrink, the
-             * write is precisely what was asked for. If they do not, a background sweep has nobody to
-             * ask — so it refuses, and the agreement is not written, and the next foreground sweep
-             * proposes the same thing to somebody who can answer. */
-            if (removed > 0 && removed >= c.shrink()) net.manifest(key, doc, true);
-            else throw new java.io.IOException("the server refused a write that shrinks “" + key
-                                               + "” from " + c.oldCount + " to " + c.newCount
-                                               + " — open the app to confirm it");
-        }
-        store.saveBase(key, base);
+        net.manifest(key, doc, true, device);
     }
 
-    /** Checkpointing, so an interrupted sweep resumes instead of starting from file one. */
-    private static final class Check {
+    /**
+     * What this device has applied, and what it publishes.
+     *
+     * Two records that move together: the JOURNAL (this device's own, in SharedPreferences) says
+     * which version of each path has actually landed here, and the VIEW is the same thing published
+     * for the other devices to merge. Written in batches — per file would be correct and far too
+     * expensive — so an interruption costs at most the last few files, and redoing one is nearly
+     * free: an upload whose bytes the server already holds is skipped, and a download already on
+     * disk hashes equal and settles.
+     *
+     * THE VIEW GOES FIRST, ALWAYS. A journal that ran ahead of what has been published would make
+     * this device believe in an agreement no other device has seen.
+     */
+    private static final class Journal {
         private final SyncNet net;
         private final SyncStore store;
         private final byte[] sec, mk;
-        private final String key;
-        private final Map<String, Map<String, Object>> remote, base;
-        private final Set<String> touched;
-        private final int every;
+        private final String key, me;
+        private final Map<String, Map<String, Object>> index, mine;
         private final Report rep;
         private boolean dirty = false;
         private int since = 0;
 
-        Check(SyncNet net, SyncStore store, byte[] sec, byte[] mk, String key,
-              Map<String, Map<String, Object>> remote, Map<String, Map<String, Object>> base,
-              Set<String> touched, int every, Report rep) {
-            this.net = net; this.store = store; this.sec = sec; this.mk = mk; this.key = key;
-            this.remote = remote; this.base = base; this.touched = touched; this.every = every;
-            this.rep = rep;
+        Journal(SyncNet net, SyncStore store, byte[] sec, byte[] mk, String key, String me,
+                Map<String, Map<String, Object>> index, Map<String, Map<String, Object>> mine,
+                Report rep) {
+            this.net = net; this.store = store; this.sec = sec; this.mk = mk;
+            this.key = key; this.me = me; this.index = index; this.rep = rep;
+            this.mine = mine == null ? new LinkedHashMap<String, Map<String, Object>>()
+                                     : new LinkedHashMap<String, Map<String, Object>>(mine);
+            // Anything this device already knew but has never published — a journal restored from a
+            // sweep that was interrupted before its first publish — belongs in our view too.
+            for (Map.Entry<String, Map<String, Object>> e : index.entrySet()) {
+                if (!this.mine.containsKey(e.getKey())) this.mine.put(e.getKey(), strip(e.getValue()));
+            }
         }
 
-        /** A repair changed the manifest without agreeing anything, and it still has to be stored. */
-        void markDirty() { dirty = true; }
-
-        void remember(String path, Map<String, Object> entry) {
-            remote.put(path, entry);
-            touched.add(path);
+        private static Map<String, Object> strip(Map<String, Object> e) {
+            Map<String, Object> c = new LinkedHashMap<String, Object>(e);
+            c.remove("local");
+            return c;
         }
 
-        void agree(String path, Map<String, Object> entry) {
-            base.put(path, entry);
+        /** This path is now settled at `entry`, and the file here looked like `local` when it was. */
+        void applied(String path, Map<String, Object> entry, Map<String, Object> local) {
+            Map<String, Object> keep = new LinkedHashMap<String, Object>(entry);
+            if (local != null) keep.put("local", local); else keep.remove("local");
+            index.put(path, keep);
+            mine.put(path, strip(entry));
             dirty = true;
         }
 
         /** A FAILED CHECKPOINT IS NOT A FAILED SWEEP — the work is real either way. */
         void maybe() {
-            if (!dirty || ++since < every) return;
+            if (!dirty || ++since < CHECKPOINT) return;
             since = 0;
-            try {
-                saveManifest(net, store, sec, mk, key, remote, base, touched, rep.removedRemote.size());
-                rep.checkpoints++;
-            } catch (Exception e) {
-                rep.error = "checkpoint: " + e.getMessage();
-            }
+            try { write(); rep.checkpoints++; }
+            catch (Exception e) { rep.error = "checkpoint: " + e.getMessage(); }
         }
 
-        /** The final save is deliberately NOT a checkpoint: this one failing means the sweep's whole
+        /** The final write is deliberately NOT a checkpoint: this one failing means the sweep's whole
          *  result was never recorded, so it throws. */
         void flush() throws Exception {
             if (!dirty) return;
-            saveManifest(net, store, sec, mk, key, remote, base, touched, rep.removedRemote.size());
+            write();
+            dirty = false;
+        }
+
+        private void write() throws Exception {
+            publishView(net, sec, mk, key, me, mine);
+            store.saveBase(key, index);
         }
     }
 }

@@ -16,7 +16,7 @@ The distinction that has to hold, and it is NOT "n == 0":
 """
 import unittest
 
-from app.routers.client import _sync_folder_rows
+from app.routers.client import _sync_folder_rows, _sync_folder_key, _sync_split_key
 
 
 class ListingTests(unittest.TestCase):
@@ -82,3 +82,49 @@ class ListingTests(unittest.TestCase):
             "pcai:sync:Alpha": ({"paths": {"a": {"size": 1}}}, 2),
         })
         self.assertEqual([r["key"] for r in rows], ["Alpha", "zeta"])
+
+
+def test_one_row_per_pair_however_many_devices_publish_it():
+    """Every device publishes its own view now, so a three-device pair is three documents.
+
+    Listing them as three folders would put "Pictures" in the sidebar three times; listing only one
+    would make the count depend on which device happened to be read first.
+    """
+    rows = _sync_folder_rows({
+        "pcai:sync:Pictures:laptop": ({"n": 6331, "entries": 6400}, 1000),
+        "pcai:sync:Pictures:phone": ({"n": 6000, "entries": 6400}, 1200),
+        "pcai:sync:Pictures:tablet": ({"n": 10, "entries": 10}, 900),
+        "pcai:sync:Documents:laptop": ({"n": 12, "entries": 12}, 500),
+    })
+    assert [r["key"] for r in rows] == ["Documents", "Pictures"], rows
+    pics = [r for r in rows if r["key"] == "Pictures"][0]
+    assert pics["n"] == 6331, "the count is not the fullest view: %r" % pics
+    assert pics["updated_at"] == 1200, "the timestamp is not the most recent: %r" % pics
+    assert pics["devices"] == 3, pics
+
+
+def test_a_pair_survives_one_device_forgetting_it():
+    """Forget on one device empties THAT device's document. The folder still exists everywhere else,
+    and this is the listing that decides whether it stays on screen."""
+    rows = _sync_folder_rows({
+        "pcai:sync:Pictures:laptop": ({"n": 0, "entries": 0}, 2000),
+        "pcai:sync:Pictures:phone": ({"n": 6331, "entries": 6400}, 1000),
+    })
+    assert len(rows) == 1 and rows[0]["n"] == 6331, rows
+
+
+def test_a_pair_every_device_has_forgotten_leaves_the_list():
+    rows = _sync_folder_rows({
+        "pcai:sync:Pictures:laptop": ({"n": 0, "entries": 0}, 2000),
+        "pcai:sync:Pictures:phone": ({"n": 0, "entries": 0}, 1000),
+    })
+    assert rows == [], rows
+
+
+def test_a_device_name_cannot_reach_into_another_folders_documents():
+    assert _sync_folder_key("Pictures", "../Documents") == "pcai:sync:Pictures:Documents"
+    assert _sync_folder_key("Pictures", "a:b") == "pcai:sync:Pictures:ab"
+    assert _sync_folder_key("Pictures", "") is None
+    assert _sync_folder_key("Pictures") == "pcai:sync:Pictures"
+    assert _sync_split_key("pcai:sync:Pictures:laptop") == ("Pictures", "laptop")
+    assert _sync_split_key("pcai:sync:Pictures") == ("Pictures", None)

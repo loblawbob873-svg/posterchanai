@@ -28,6 +28,7 @@ import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MOD = os.path.join(REPO, "static", "js", "client", "foldersync.js")
+ENGINE = os.path.join(os.path.dirname(MOD), "syncengine.js")
 NODE = shutil.which("node") or shutil.which("nodejs")
 
 DAY = 86400000
@@ -47,12 +48,31 @@ def f(csum, size=10, mtime=1000):
 @unittest.skipIf(not NODE, "no node on this node")
 class TestFolderSync(unittest.TestCase):
     def plan(self, local, remote, base, device="laptop", now=5 * DAY):
+        """The rules, against the CURRENT engine, stated the way this file has always stated them.
+
+        The decision code moved from foldersync.js to syncengine.js when the storage shape changed —
+        one document per device instead of one shared one — but the RULES did not, and these are the
+        rules. So the inputs are translated rather than the tests rewritten: `remote` is one other
+        device's view, and `base` becomes this device's journal, which records what a file looked
+        like on disk when it was applied (the old engine compared the local scan against `base`
+        directly, which is the same comparison).
+        """
+        index = {}
+        for path, e in (base or {}).items():
+            local_stat = {k: e[k] for k in ("size", "mtime", "csum") if k in e}
+            index[path] = dict(e, local=local_stat)
         js = (
-            "const S=require(%s);"
-            "const out=S.diff({local:%s, remote:%s, base:%s, device:%s, now:%d});"
-            "process.stdout.write(JSON.stringify(out));"
-        ) % (json.dumps(MOD), json.dumps(local), json.dumps(remote),
-             json.dumps(base), json.dumps(device), now)
+            "const path=require('path');"
+            "require(%s);"
+            "const E=require(%s);"
+            "const m=E.merge({other: %s});"
+            "const p=E.reconcile({disk:%s, global:m.global, rivals:m.rivals, by:m.by,"
+            "                     index:%s, device:%s, now:%d});"
+            "process.stdout.write(JSON.stringify({upload:p.send, download:p.fetch,"
+            " deleteLocal:p.trash, deleteRemote:p.tombstone, conflicts:p.keepBoth, notes:p.settle,"
+            " unchanged:p.unchanged, excluded:p.excluded}));"
+        ) % (json.dumps(MOD), json.dumps(ENGINE), json.dumps(remote), json.dumps(local),
+             json.dumps(index), json.dumps(device), now)
         r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
         if r.returncode != 0:
             raise AssertionError("node failed:\n" + r.stderr[-2000:])
@@ -69,8 +89,15 @@ class TestFolderSync(unittest.TestCase):
         self.assertEqual(p["deleteLocal"], [])
 
     def test_deleted_there_is_deleted_here_not_re_uploaded(self):
-        """Same local/remote shape as the case above — only `base` tells them apart."""
-        p = self.plan(local={"a.txt": f("A")}, remote={}, base={"a.txt": f("A")})
+        """Same local shape as the case above — only the TOMBSTONE tells them apart.
+
+        A deletion is a tombstone somebody published, never a path missing from a document. That
+        distinction is the whole per-device design: a view that failed to load, or came back empty,
+        used to be indistinguishable from "every file you have was deleted", and it emptied a real
+        Pictures folder into the trash.
+        """
+        p = self.plan(local={"a.txt": f("A")}, remote={"a.txt": {"deletedAt": 2 * DAY}},
+                      base={"a.txt": f("A")})
         self.assertEqual(self.paths(p, "deleteLocal"), ["a.txt"])
         self.assertEqual(p["upload"], [])
 
@@ -125,7 +152,8 @@ class TestFolderSync(unittest.TestCase):
         self.assertEqual(p["deleteLocal"], [])
 
     def test_deleted_on_both_is_not_an_action(self):
-        p = self.plan(local={}, remote={}, base={"x.txt": f("OLD")})
+        p = self.plan(local={}, remote={"x.txt": {"deletedAt": 2 * DAY}},
+                      base={"x.txt": {"deletedAt": 2 * DAY}})
         for k in ("upload", "download", "deleteLocal", "deleteRemote", "conflicts"):
             self.assertEqual(p[k], [], f"{k} should be empty when both sides deleted it")
 
@@ -178,16 +206,22 @@ class TestFolderSync(unittest.TestCase):
     def test_advance_makes_the_next_run_a_no_op(self):
         """Folding a completed plan back into `base` is what stops a sync looping — re-uploading
         what it just downloaded, forever."""
-        js = ("const S=require(%s);"
-              "const base=S.advance({base:{}, done:{'a.txt':{sha:'A',size:10,mtime:1000}}, now:%d});"
-              "const p=S.diff({local:{'a.txt':{sha:'A',size:10,mtime:1000}},"
-              " remote:{'a.txt':{sha:'A',size:10,mtime:1000}}, base});"
-              "process.stdout.write(JSON.stringify({base,p}));") % (json.dumps(MOD), 5 * DAY)
+        entry = {"csum": "A", "size": 10, "mtime": 1000}
+        js = ("const S=require(%s); const E=require(%s);"
+              "const base=S.advance({base:{}, done:{'a.txt':%s}, now:%d});"
+              "const idx={'a.txt': Object.assign({}, base['a.txt'], {local:%s})};"
+              "const m=E.merge({other:{'a.txt':%s}});"
+              "const p=E.reconcile({disk:{'a.txt':%s}, global:m.global, rivals:m.rivals, by:m.by,"
+              " index:idx, device:'laptop', now:%d});"
+              "process.stdout.write(JSON.stringify({base, unchanged:p.unchanged,"
+              " upload:p.send, download:p.fetch}));"
+              ) % (json.dumps(MOD), json.dumps(ENGINE), json.dumps(entry), 5 * DAY,
+                   json.dumps(entry), json.dumps(entry), json.dumps(entry), 5 * DAY)
         out = json.loads(subprocess.run([NODE, "-e", js], capture_output=True, text=True,
                                         timeout=60).stdout)
-        self.assertEqual(out["p"]["unchanged"], 1)
-        self.assertEqual(out["p"]["upload"], [])
-        self.assertEqual(out["p"]["download"], [])
+        self.assertEqual(out["unchanged"], 1)
+        self.assertEqual(out["upload"], [])
+        self.assertEqual(out["download"], [])
 
     def test_tombstones_are_only_dropped_when_old(self):
         js = ("const S=require(%s);"
@@ -432,11 +466,18 @@ class TestExclusions(unittest.TestCase):
     """
 
     def plan(self, local, remote, base, excludes):
-        js = ("const S=require(%s);"
-              "process.stdout.write(JSON.stringify(S.diff({local:%s, remote:%s, base:%s,"
-              " excludes:%s, device:'laptop', now:%d})));"
-              ) % (json.dumps(MOD), json.dumps(local), json.dumps(remote), json.dumps(base),
-                   json.dumps(excludes), 5 * DAY)
+        index = {}
+        for path, e in (base or {}).items():
+            index[path] = dict(e, local={k: e[k] for k in ("size", "mtime", "csum") if k in e})
+        js = ("require(%s); const E=require(%s);"
+              "const m=E.merge({other: %s});"
+              "const p=E.reconcile({disk:%s, global:m.global, rivals:m.rivals, by:m.by, index:%s,"
+              " excludes:%s, device:'laptop', now:%d});"
+              "process.stdout.write(JSON.stringify({upload:p.send, download:p.fetch,"
+              " deleteLocal:p.trash, deleteRemote:p.tombstone, conflicts:p.keepBoth,"
+              " notes:p.settle, unchanged:p.unchanged, excluded:p.excluded}));"
+              ) % (json.dumps(MOD), json.dumps(ENGINE), json.dumps(remote), json.dumps(local),
+                   json.dumps(index), json.dumps(excludes), 5 * DAY)
         r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
         if r.returncode != 0:
             raise AssertionError("node failed:\n" + r.stderr[-2000:])
@@ -508,17 +549,16 @@ class TestMassDelete(unittest.TestCase):
     """
 
     def mass(self, plan):
-        """The plan is BUILT IN NODE from counts, never serialised into argv — the case this guard
-        exists for is ten thousand paths, and `node -e` with ten thousand paths in it is E2BIG."""
-        js = (
-            "const S=require(%s);"
-            "const s=%s;"
-            "const list=(n,w)=>Array.from({length:n},(_,i)=>({path:'p'+i+'.jpg',why:w}));"
-            "const plan={upload:list(s.upload,'new here'),download:list(s.download,'new elsewhere'),"
-            " conflicts:list(s.conflicts,'both'),notes:list(s.notes,s.noteWhy),"
-            " deleteLocal:list(s.deleteLocal,'deleted elsewhere'),deleteRemote:[],unchanged:s.unchanged};"
-            "process.stdout.write(JSON.stringify(S.massDelete(plan)));"
-        ) % (json.dumps(MOD), json.dumps(plan))
+        """Run the shipped checker over a plan of that shape and hand back the massTrash verdict."""
+        js = ("require(%s); const E=require(%s);"
+              "const c=%s;"
+              "const mk=(n,extra)=>Array.from({length:n},(_,i)=>Object.assign({path:'p'+i},extra||{}));"
+              "const plan={fetch:mk(c.download), send:mk(c.upload), trash:mk(c.deleteLocal),"
+              " tombstone:[], keepBoth:mk(c.conflicts), settle:mk(c.notes,{why:c.noteWhy}),"
+              " unchanged:c.unchanged, excluded:0};"
+              "const v=E.check(plan, {}).find(x=>x.kind==='massTrash')||null;"
+              "process.stdout.write(JSON.stringify(v));"
+              ) % (json.dumps(MOD), json.dumps(ENGINE), json.dumps(plan))
         r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
         if r.returncode != 0:
             raise AssertionError("node failed:\n" + r.stderr[-2000:])

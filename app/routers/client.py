@@ -4135,15 +4135,43 @@ class SyncManifestReq(BaseModel):
     # without a count it has no way to notice a save turning 4000 files into 3.
     manifest: dict | None = None       # present -> save; absent -> load
     force: bool = False                # a deliberate mass-delete
+    # WHICH DEVICE IS SPEAKING. Every device publishes its own document and nothing else ever writes
+    # it, so two of them syncing at once cannot overwrite each other's record of what the folder
+    # holds — the failure that needed a merge-on-save, a re-read per checkpoint and a collapse guard,
+    # and still lost writes. Absent means an older client, which still reads and writes the single
+    # shared document; that one is served read-only to new clients as one more view.
+    device: str | None = None
+    views: bool = False                # read: hand back EVERY device's document for this folder
+    # Retire the pair for the whole account. The one deliberate exception to "a device writes only
+    # its own document": leave any device's copy behind and the folder returns the moment that
+    # device publishes again, and the name stays unusable.
+    forgetAll: bool = False
 
 
-def _sync_folder_key(folder: str) -> str | None:
-    """`pcai:sync:<id>` — and the id has to be sanitised, because it becomes a d-tag on a replaceable
-    event. An id carrying a colon or a wildcard could address (and therefore overwrite) a DIFFERENT
-    document of the same user's — their files index, their notes, their calendar — all of which live
-    in this same namespace under the same key."""
+def _sync_folder_key(folder: str, device: str | None = None) -> str | None:
+    """`pcai:sync:<pair>` or `pcai:sync:<pair>:<device>` — and both parts have to be sanitised,
+    because they become a d-tag on a replaceable event. A component carrying a colon or a wildcard
+    could address (and therefore overwrite) a DIFFERENT document of the same user's — their files
+    index, their notes, their calendar — all of which live in this namespace under the same key.
+
+    The device suffix is what makes the document single-writer. Sanitising it is what keeps a device
+    name from reaching sideways into another folder's documents."""
     f = "".join(c for c in str(folder or "") if c.isalnum() or c in "-_")
-    return f"pcai:sync:{f}" if 4 <= len(f) <= 64 else None
+    if not (4 <= len(f) <= 64):
+        return None
+    if device is None:
+        return f"pcai:sync:{f}"
+    d = "".join(c for c in str(device or "") if c.isalnum() or c in "-_")
+    return f"pcai:sync:{f}:{d}" if 1 <= len(d) <= 64 else None
+
+
+def _sync_split_key(d_tag: str) -> tuple[str, str | None]:
+    """`pcai:sync:Pictures:laptop-a1b2` -> ("Pictures", "laptop-a1b2"); the shared one -> (key, None)."""
+    rest = d_tag[len("pcai:sync:"):]
+    if ":" in rest:
+        pair, dev = rest.split(":", 1)
+        return pair, dev
+    return rest, None
 
 
 @router.post("/sync-manifest")
@@ -4163,7 +4191,7 @@ async def sync_manifest(data: SyncManifestReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
-    key = _sync_folder_key(data.folder)
+    key = _sync_folder_key(data.folder, data.device)
     if not key:
         return JSONResponse({"ok": False, "error": "invalid folder id"}, status_code=400)
     user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
@@ -4177,6 +4205,59 @@ async def sync_manifest(data: SyncManifestReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "no account here for that key"}, status_code=403)
     sk = store.user_storage_seckey(db, user)
     port = int(_setting(db, "nostr_relay_port", "3052"))
+
+    if data.forgetAll:
+        pair = _sync_folder_key(data.folder)
+        try:
+            found = await store.list_docs(port, pair, seckey=sk, strict=True, with_meta=True)
+        except Exception as e:
+            logger.warning("[client] sync-manifest: forgetAll could not read %s: %s", pair, e)
+            return JSONResponse({"ok": False, "error": "folder list unavailable"}, status_code=503)
+        cleared, failed = 0, 0
+        for d_tag in list(found.keys()):
+            got_pair, _dev = _sync_split_key(d_tag)
+            if got_pair != pair[len("pcai:sync:"):]:
+                continue
+            if await store.put_doc(port, sk, d_tag, {"n": 0, "entries": 0}):
+                cleared += 1
+            else:
+                failed += 1
+        logger.info("[client] sync-manifest: forgetAll %s -> cleared %d, failed %d",
+                    pair, cleared, failed)
+        if failed:
+            return JSONResponse({"ok": False, "error": "some devices' records could not be cleared",
+                                 "cleared": cleared, "failed": failed}, status_code=503)
+        return JSONResponse({"ok": True, "cleared": cleared})
+
+    if data.views:
+        # EVERY DEVICE'S DOCUMENT FOR THIS FOLDER, in one read.
+        #
+        # The folder is the merge of these, so a device that cannot be read has to be reported AS
+        # unreadable rather than left out: absent from the merge is indistinguishable from "that
+        # device holds nothing", and this feature has twice turned that confusion into a deleted
+        # folder. list_docs(strict) raises rather than answering {} for the same reason.
+        pair = _sync_folder_key(data.folder)
+        try:
+            docs = await store.list_docs(port, pair, seckey=sk, strict=True, with_meta=True)
+        except Exception as e:
+            logger.warning("[client] sync-manifest: views unreadable %s: %s", pair, e)
+            return JSONResponse({"ok": False, "error": "views unavailable"}, status_code=503)
+        views, legacy, unreadable = {}, None, 0
+        for d_tag, (doc, at) in docs.items():
+            got_pair, dev = _sync_split_key(d_tag)
+            if got_pair != pair[len("pcai:sync:"):]:
+                continue                      # a different folder whose name starts the same way
+            if doc is None:
+                unreadable += 1               # present, and this node could not open it
+                continue
+            if dev is None:
+                legacy = doc
+            else:
+                views[dev] = doc
+        logger.info("[client] sync-manifest: views %s -> %d device(s)%s", pair, len(views),
+                    " + the shared document" if legacy else "")
+        return JSONResponse({"ok": True, "views": views, "legacy": legacy,
+                             "unreadable": unreadable})
 
     if data.manifest is None:
         try:
@@ -4339,9 +4420,13 @@ def _sync_folder_rows(docs: dict) -> list:
     EVENT, and this listing enumerates events — so a forgotten folder came straight back, at 0 files,
     for ever, and pressing forget again cleared nothing because nothing was left to clear.
     """
-    out = []
+    # ONE ROW PER PAIR, NOT PER DOCUMENT. Every device publishes its own view of a folder now, so a
+    # pair with three devices has three documents — and the folder exists if ANY of them says so.
+    # The count shown is the largest any device reports, which is the closest a plaintext number can
+    # get to "how many files are in this folder" without opening a seal the server cannot open.
+    rows: dict = {}
     for d_tag, (doc, at) in docs.items():
-        key = d_tag[len("pcai:sync:"):]
+        key, _dev = _sync_split_key(d_tag)
         if not key:
             continue
         doc = doc if isinstance(doc, dict) else {}
@@ -4376,7 +4461,14 @@ def _sync_folder_rows(docs: dict) -> list:
         # An older client seals without `entries` and there is no way to look inside, so it stays
         # listed: keeping a folder that should have gone is a nuisance, dropping one that should
         # have stayed loses a deletion.
-        out.append({"key": key, "n": int(n or 0), "updated_at": int(at or 0)})
+        row = rows.get(key)
+        if row is None:
+            rows[key] = {"key": key, "n": int(n or 0), "updated_at": int(at or 0), "devices": 1}
+        else:
+            row["n"] = max(row["n"], int(n or 0))
+            row["updated_at"] = max(row["updated_at"], int(at or 0))
+            row["devices"] += 1
+    out = list(rows.values())
     out.sort(key=lambda f: f["key"].lower())
     return out
 

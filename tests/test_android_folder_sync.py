@@ -540,7 +540,7 @@ def test_a_long_sweep_renews_the_cpu_lease():
     The bound must STAY (a renderer killed mid-sweep cannot be allowed to hold the processor all
     night), so the sweep renews it while there is still work — from `step`, the one call every loop
     already makes per file, throttled because it crosses the Capacitor bridge."""
-    run = _read(CLIENT, "syncrun.js")
+    run = _read(CLIENT, "syncexec.js")
     assert "_keepAwake" in run, "nothing renews the wake lock during a long sweep"
     body = run[run.index("const _keepAwake ="):]
     body = body[:body.index("\n    };")]
@@ -673,17 +673,19 @@ def test_the_unattended_sweep_refuses_what_it_cannot_ask_about():
     bug with the sign flipped, which is exactly what happened to the contacts sweep: "it deleted
     everything" became "it syncs nothing, for ever"."""
     sweep = _read(JAVA, "sync", "NativeSweep.java")
-    body = sweep[sweep.index("Map<String, Object> mass = SyncDiff.massDelete(plan);"):]
-    body = body[:body.index("final Map<String, Map<String, Object>> nextRemote")]
-    assert "deleteLocal = new ArrayList" in body and "return" not in body, (
+    body = sweep[sweep.index("List<Map<String, Object>> verdicts = SyncReconcile.check("):]
+    body = body[:body.index("Journal j = new Journal(")]
+    assert "SyncReconcile.apply(planned, verdicts)" in body and "return" not in body, (
         "a refused mass delete aborts the whole sweep instead of dropping the deletions"
     )
-    assert "uploads = new ArrayList" in body, "a mass resurrect is not refused"
+    # The refusals are RECORDED, or the next foreground sweep has no idea there is something to ask.
+    for kind in ("refusedTrash", "refusedResurrect", "refusedRemoteDelete"):
+        assert kind in body, "a background sweep no longer reports that it refused: " + kind
     # An empty agreement FORCES A HASH; it must not stop the sweep. The first version deferred
     # instead, and since `base` here is written only by this sweep and the page keeps its own copy
     # where Java cannot read it, the whole native path could never run once on any device — every
     # alarm answered "first sync — open the app once" and opening the app did nothing.
-    assert "boolean firstEver = base.isEmpty();" in sweep
+    assert "boolean firstEver = index.isEmpty();" in sweep
     assert "if (firstEver) { hash = true;" in sweep
     assert 'rep.deferredWhy = "first sync' not in sweep, (
         "the native sweep defers on an empty agreement again — nothing else ever writes one, so it "
@@ -1053,3 +1055,30 @@ def test_the_two_engines_fold_case_the_same_way():
     and the two sync different sets from one exclusion list."""
     diff = _read(JAVA, "sync", "SyncDiff.java")
     assert "Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE" in diff
+
+
+def test_the_background_sweeps_progress_reaches_the_card():
+    """Four links, and the chain is dead if any one of them is missing.
+
+    Android only builds in CI, so the wiring is grepped and the logic is run elsewhere
+    (tests/test_android_sync_state.py drives NativeSweep.progress/live under java).
+
+    The page refuses to sweep a folder the native engine holds — correctly — and used to print one
+    static sentence, which on a folder of any size is indistinguishable from a hang.
+    """
+    java = os.path.join(ROOT, "mobile", "android", "app", "src", "main", "java",
+                        "place", "poster", "app", "sync")
+    sweep = _read(java, "NativeSweep.java")
+    plugin = _read(java, "FolderSyncPlugin.java")
+    adapter = _read(CLIENT, "fs-android.js")
+    page = _read(CLIENT, "sync.js")
+
+    assert 'progress(f.key, "downloading"' in sweep, "the native sweep no longer reports downloads"
+    assert 'progress(f.key, "uploading"' in sweep, "the native sweep no longer reports uploads"
+    assert "progressDone(f.key)" in sweep, "a finished sweep leaves its last line on the card for ever"
+    assert "public void nativeLive(" in plugin, "the plugin no longer exposes the live progress"
+    assert "nativeLive: () => P.nativeLive()" in adapter, "the adapter no longer asks for it"
+    assert "_watchNative(f" in page, "a refused claim no longer watches the sweep that won it"
+    # A build whose plugin cannot answer keeps the old sentence — the only honest thing to print.
+    assert "typeof fs.nativeLive !== 'function'" in page, \
+        "an older APK would now show a blank status instead of the fallback sentence"
