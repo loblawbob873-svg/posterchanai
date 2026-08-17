@@ -208,6 +208,19 @@ function hashPart(id, rel){
   return resolveIn(id, rel).then(abs => sha256(abs + PART));
 }
 
+/* THE CONTENT IDENTITY OF A WHOLE FILE, so what this device uploads can be VERIFIED by whatever
+ * receives it.
+ *
+ * `csum` is what the far side checks a download against — verifyPart returns early without one — and
+ * a chunked upload only gets one if the adapter can produce it. Android can (SafFs.sha256Of); the
+ * desktop could not, so every large file it sent arrived somewhere unverifiable, and a truncated or
+ * mis-assembled video was written and played. That is not hypothetical: it is what happened.
+ *
+ * Streamed, like sha256 above — a 4 GB video is never in memory. */
+function hashFile(id, rel){
+  return resolveIn(id, rel).then(abs => sha256(abs));
+}
+
 /* How much of an interrupted download is already on disk, so the next attempt can carry on.
  *
  * A download used to restart at byte zero every time: getParts walks the chunk list from the
@@ -506,4 +519,4 @@ function removeRoot(id){
 
 module.exports = { init, list, addRoot, removeRoot, resolveIn, scan, sha256,
                    readPart, writePart, writeCommit,
-                   read, write, move, trash, emptyTrash, trashStat, hashPart, discardPart, partSize, sweepParts, watch, unwatch, IGNORE };
+                   read, write, move, trash, emptyTrash, trashStat, hashPart, hashFile, discardPart, partSize, sweepParts, watch, unwatch, IGNORE };

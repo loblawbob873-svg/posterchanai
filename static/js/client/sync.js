@@ -792,6 +792,28 @@
      * "delete these 3 files?" and delete four hundred — and `removed` accounting for the shrink is
      * exactly what waves that past the server's collapse guard, so nothing downstream would query
      * it either. */
+    /* FORGET A FOLDER'S SHARED RECORD ENTIRELY — the thing that had no way to happen.
+     *
+     * Removing a folder from every device leaves the manifest behind: it is keyed on the NAME, not
+     * on any device, so the pair goes on existing with its whole history. It shows up in the account
+     * list as "🔄 Pictures · 0 files" — every path a tombstone — and any device that later pairs that
+     * name inherits it. The only escape was a name nobody had used, which is not an answer.
+     *
+     * This WIPES the document rather than tombstoning what is in it. Tombstones are precisely what
+     * makes a record poisonous: they say "these files were deleted", for ever, to everyone who ever
+     * joins. An empty document says nothing, which is the truth about a folder nobody syncs.
+     *
+     * IT IS FOR A FOLDER NOTHING IS SYNCING. A device that still holds this pair keeps its own
+     * agreement, and to that device an empty manifest reads as "deleted elsewhere" — the mass-delete
+     * guard would catch it and ask, but the honest thing is to say so in the confirmation rather
+     * than rely on the last line of defence. */
+    async forget(key){
+      const paths = await store.manifest(key);
+      const all = Object.keys(paths || {});
+      if(!all.length) return { removed: 0 };
+      await store.save(key, { manifest: {}, touched: all, removed: all.length });
+      return { removed: all.length };
+    },
     async remove(key, path, expect){
       return _mutate(key, api => {
         const list = _liveUnder(api.paths, path);

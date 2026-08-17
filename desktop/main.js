@@ -841,6 +841,7 @@ ipcMain.handle('pc:fs:trash', (e, id, rel, when) => { fsGuard(e); return fsbridg
 ipcMain.handle('pc:fs:empty-trash', (e, id, days) => { fsGuard(e); return fsbridge.emptyTrash(String(id || ''), days); });
 ipcMain.handle('pc:fs:trash-stat', (e, id) => { fsGuard(e); return fsbridge.trashStat(String(id || '')); });
 ipcMain.handle('pc:fs:hash-part', (e, id, rel) => { fsGuard(e); return fsbridge.hashPart(String(id || ''), String(rel || '')); });
+ipcMain.handle('pc:fs:hash-file', (e, id, rel) => { fsGuard(e); return fsbridge.hashFile(String(id || ''), String(rel || '')); });
 ipcMain.handle('pc:fs:discard-part', (e, id, rel) => { fsGuard(e); return fsbridge.discardPart(String(id || ''), String(rel || '')); });
 ipcMain.handle('pc:fs:part-size', (e, id, rel) => { fsGuard(e); return fsbridge.partSize(String(id || ''), String(rel || '')); });
 ipcMain.handle('pc:fs:sweep-parts', (e, id, ms) => { fsGuard(e); return fsbridge.sweepParts(String(id || ''), ms); });

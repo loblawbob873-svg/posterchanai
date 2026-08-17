@@ -433,6 +433,58 @@
     // `report.plan` keeps the original, so the panel can still show what was refused.
     let plan = S.diff({ local, remote, base, device, now, excludes:o.excludes||[] });
 
+    /* A DELETION REQUIRES AN AGREEMENT — you cannot be told to delete something you never agreed
+     * to have.
+     *
+     * I assumed this was already true and built three fixes on top of it. It is not: `deleteLocal`
+     * is decided by comparing the file's mtime against the TOMBSTONE's, so a device that has agreed
+     * NOTHING — a folder just added, a reinstall, a fresh start — is still told to empty itself if
+     * the deletions happen to be newer than the files. On a folder erased on the other devices that
+     * is every file, and the person adding it is asked to choose between destroying their only copy
+     * and a dialog that comes back on the next sweep. Reported for hours.
+     *
+     * A path in `base` is one this device saw synced and can therefore see deleted. A path that is
+     * NOT is a file this device brought to the folder, and a tombstone from before it ever joined
+     * says nothing about it. For an established sync this changes nothing — the paths being deleted
+     * are in `base` by construction — so it costs the ordinary case nothing at all.
+     *
+     * The mass-delete guard still governs everything that survives this, and a folder somebody
+     * genuinely wants emptied still empties: those paths ARE agreed. */
+    {
+      /* …AND ONLY WHEN THE FOLDER IS DEAD EVERYWHERE ELSE.
+       *
+       * "This device never agreed anything" describes two different worlds, and the first version of
+       * this rule could not tell them apart:
+       *   * the pair is DEAD — every entry in the shared manifest is a tombstone, nothing is live
+       *     anywhere, and this device is holding the only copies. Uploading is the only reading that
+       *     does not end in an empty folder.
+       *   * the folder is ALIVE elsewhere and somebody deleted some of it. A device whose agreement
+       *     was cleared — a reinstall, "Stop syncing" and back — must NOT read "I still have this
+       *     file" as an edit and republish every deleted picture over its tombstone. That is the
+       *     restored-machine bug, it undoes deletions fleet-wide, and the engine already answers it
+       *     correctly by comparing timestamps.
+       *
+       * So the gate is the manifest itself: no live entries at all means the folder exists nowhere
+       * but here. `two_device_sim.js` pins the other side of this — the delete stands, both ways. */
+      const liveElsewhere = Object.keys(remote).some(p2 => remote[p2] && !remote[p2].deletedAt);
+      const agreedDel = [], neverAgreed = [];
+      for(const d of (plan.deleteLocal || []))
+        (liveElsewhere || Object.prototype.hasOwnProperty.call(base, d.path) ? agreedDel : neverAgreed).push(d);
+      if(neverAgreed.length){
+        /* …and they become UPLOADS, not nothing. Dropping them from the plan would leave the files
+         * in no bucket at all: not deleted, not sent, silently ignored on every sweep for ever. A
+         * file this device brought to the folder is a file the folder should carry. */
+        report.neverAgreed = neverAgreed.length;
+        plan = Object.assign({}, plan, {
+          deleteLocal: agreedDel,
+          upload: (plan.upload || []).concat(neverAgreed.map(d => ({
+            path: d.path,
+            why: 'this device has never agreed anything about this folder, so it is sending what it has',
+          }))),
+        });
+      }
+    }
+
     report.unchanged = plan.unchanged;
     report.excluded = plan.excluded;
     report.plan = plan;
@@ -876,7 +928,12 @@
      * Refusing drops only the resurrections. Ordinary uploads, downloads and deletions still run,
      * and the refused paths are NOT agreed — so the next sweep proposes them again and asks again,
      * rather than recording a decision nobody made. */
-    const massUp = S.massResurrect(plan);
+    /* NOT ON A FIRST SWEEP. `massResurrect` exists to catch a restored backup republishing files
+     * other devices deleted — a machine whose timestamps moved under it. A device that has agreed
+     * NOTHING is not that: it is somebody adding a folder, and uploading what is in it is the entire
+     * point of the action they just took. Asking there turns an initial sync into a dialog about
+     * undoing deletions they never made. */
+    const massUp = Object.keys(base).length ? S.massResurrect(plan) : null;
     if(massUp && !o.forceResurrect){
       let ok = false;
       if(typeof o.confirmResurrect === 'function'){

@@ -43,22 +43,53 @@ def _run(n, timeout=900):
 
 
 def test_the_reported_case_end_to_end():
-    """6,331 files, the exact number reported, through every step."""
+    """6,331 files, the exact number reported, through every step — plus three videos, so the run
+    covers the chunked path as well as the whole-file one."""
     got = _run(6331)
     d, p = got["desktop"], got["phone"]
+    total = 6331 + len(got["videos"])
     assert d["trashed"] == 0, "it trashed files"
-    assert d["uploaded"] == 6331, "it did not republish the folder"
-    assert got["manifestLive"] == 6331, 'the folder would still show "0 files"'
+    assert d["uploaded"] == total, "it did not send the whole folder"
+    assert got["manifestLive"] == total, 'the folder would still show "0 files"'
     assert d["secondSweepQuiet"] is True, "the desktop kept working after it was in step"
-    assert p["downloaded"] == 6331, "the phone did not receive the folder"
+    assert p["downloaded"] == total, "the phone did not receive the folder"
     assert p["missing"] == 0 and p["corrupt"] == 0, "files were lost or corrupted in transit"
-    assert p["verified"] >= 6331, "the phone wrote files it had not checked"
+    assert p["verified"] >= total, "the phone wrote files it had not checked"
     assert p["secondSweepQuiet"] is True, "the phone kept working after it was in step"
 
 
 def test_a_small_folder_takes_the_same_journey():
     """The same sequence where nothing batches, so the rule is not incidentally load-bearing."""
-    got = _run(60, timeout=300)
+    got = _run(60, timeout=600)
     assert got["desktop"]["trashed"] == 0
-    assert got["desktop"]["uploaded"] == 60
+    assert got["desktop"]["uploaded"] == 60 + len(got["videos"])
     assert got["phone"]["corrupt"] == 0 and got["phone"]["missing"] == 0
+
+
+def test_videos_survive_the_round_trip_and_are_verifiable():
+    """ITS OWN BUG, ITS OWN TEST. "Videos synced and would not play" was not the folder failing — it
+    was a CHUNKED upload published with no checksum, so the receiving device wrote whatever arrived
+    and nothing anywhere could tell. Small files were unaffected (they take the whole-file path,
+    which always hashed), which is why it hid.
+
+    Three real videos, over both devices' chunk sizes so they cannot take the whole-file path, with
+    content that changes if a chunk lands at the wrong offset."""
+    got = _run(60, timeout=600)
+    assert got["videos"], "no videos in the run at all"
+    for v in got["videos"]:
+        assert v["chunked"] is True, "%s did not take the chunked path — proves nothing" % v["path"]
+        assert v["hasCsum"] is True, \
+            "%s was published with NO checksum: nothing can verify it on arrival" % v["path"]
+        assert v["arrived"] is True, "%s never arrived" % v["path"]
+        assert v["identical"] is True, \
+            "%s arrived CORRUPT — this is the unplayable-video bug" % v["path"]
+        assert v["verifiedBeforeWrite"] is True, \
+            "%s was written without being hashed first" % v["path"]
+
+
+def test_a_video_is_actually_big_enough_to_span_chunks():
+    """Otherwise the test above could pass on a 'video' that fits in one chunk and never exercises
+    reassembly, which is where a wrong offset shows up."""
+    got = _run(60, timeout=600)
+    for v in got["videos"]:
+        assert v["bytes"] >= 20 * 1024 * 1024, "%s is only %s bytes" % (v["path"], v["bytes"])

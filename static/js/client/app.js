@@ -16473,8 +16473,12 @@
       + '<div class="muted small fx-secnote">looking…</div></div>';
     if(!p.length) return '';        // nothing synced — Folder Sync is its own screen; no empty shelf here
     return '<div class="fx-sec"><b>Synced folders</b>' + p.map(f =>
-      `<button class="folder-chip syncroot${_syncRoot===f.key?' active':''}" data-synckey="${enc(f.key)}"
-         title="${enc(f.key)} — ${f.n} file${f.n===1?'':'s'}">🔄 ${enc(f.key)}<span class="fx-n">${f.n}</span></button>`).join('')
+      `<span class="fx-syncwrap"><button class="folder-chip syncroot${_syncRoot===f.key?' active':''}" data-synckey="${enc(f.key)}"
+         title="${enc(f.key)} — ${f.n} file${f.n===1?'':'s'}">🔄 ${enc(f.key)}<span class="fx-n">${f.n}</span></button>`
+      /* Removing a folder from every device leaves its shared record behind for ever — keyed on the
+         NAME, so the pair goes on existing with all its history and any device that pairs that name
+         later inherits it. There was no way to clear it from anywhere in the app. */
+      + `<button class="fx-syncx" data-syncforget="${enc(f.key)}" title="Forget “${enc(f.key)}” — remove this folder's shared record">✕</button></span>`).join('')
       + '</div>';
   }
   // The manifest for one pair, decrypted by sync.js's store (NIP-44 to the user's own key — this
@@ -16645,6 +16649,31 @@
     const r = root || document;
     $$('.folder-chip[data-folder]', r).forEach(b=> b.onclick=()=>{ _syncRoot=''; _syncPath=''; _filesFolder=b.dataset.folder; renderBlossom(); });
     $$('.folder-chip[data-synckey]', r).forEach(b=> b.onclick=()=>{ _syncRoot=b.dataset.synckey; _syncPath=''; renderBlossom(); });
+    $$('.fx-syncx[data-syncforget]', r).forEach(b => b.onclick = async (e) => {
+      e.stopPropagation();
+      const key = b.dataset.syncforget;
+      const rec = Array.isArray(_syncPairs) ? _syncPairs.find(x => x && x.key === key) : null;
+      const n = rec ? rec.n : 0;
+      /* SAY WHAT IT DOES AND WHAT IT DOES NOT. It removes the shared record; it does not touch a
+         file on any disk. The one situation it is wrong in is a folder something is still syncing,
+         because to that device an empty manifest reads as "deleted elsewhere" — so that is the
+         sentence in the dialog, not a footnote. */
+      const ok = await uiConfirm('Forget “' + key + '”?\n\nThis removes the shared record for '
+        + 'this folder — the list of files your devices agree on' + (n ? ' (' + n + ' live)' : '')
+        + '. No file is deleted anywhere.\n\nDo this only when NO device is still syncing this '
+        + 'folder. A device that is would see an empty record and offer to delete its copy.');
+      if(!ok) return;
+      try{
+        const S = window.PCSync;
+        if(!S || !S.edit || !S.edit.forget) throw new Error('this build cannot forget a folder');
+        const out = await S.edit.forget(key);
+        toast('forgot “' + key + '” — ' + (out && out.removed ? out.removed + ' entries' : 'nothing') + ' cleared');
+        if(_syncRoot === key){ _syncRoot = ''; _syncPath = ''; }
+        _syncManifests.delete(key);
+        await S.accountFolders(true);
+        renderBlossom();
+      }catch(err){ toast('could not forget it: ' + ((err && err.message) || err)); }
+    });
     { const nf=$('#bl-newfolder',r); if(nf) nf.onclick=_newFolderModal; }
     { const df=$('#bl-delfolder',r); if(df) df.onclick=async()=>{ if(await uiConfirm('Delete folder “'+_filesFolder+'”? Its files move to All — the files themselves aren\'t deleted.')){ FilesIdx.removeFolder(_filesFolder); _filesFolder=''; renderBlossom(); } }; }
     _fxBindChipDrop(r);

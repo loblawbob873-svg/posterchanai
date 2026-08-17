@@ -2367,6 +2367,14 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* Files: folder bar + drag-drop upload zone (cyberpunk) */
 .folder-bar{display:flex;gap:8px;flex-wrap:wrap;padding:12px 16px 0}
 .folder-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:13px;border:1px solid var(--line);background:rgba(0,240,255,.06);color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;transition:.12s;white-space:nowrap}
+/* A synced folder and the button that forgets its shared record, as one unit — so the ✕ cannot be
+   mistaken for part of the chip next to it. `fx-syncx` is deliberately quiet until hovered: removing
+   a folder's shared history is not a thing to invite with a bright control. */
+.fx-syncwrap{display:inline-flex;align-items:center;gap:2px;margin:0 2px}
+.fx-syncx{border:1px solid transparent;background:none;color:var(--muted);opacity:.45;cursor:pointer;
+  font-size:12px;line-height:1;padding:6px 7px;border-radius:11px;transition:.12s}
+.fx-syncwrap:hover .fx-syncx{opacity:.85}
+.fx-syncx:hover{color:var(--danger,#ff5c7a);border-color:var(--danger,#ff5c7a);background:rgba(255,92,122,.10);opacity:1}
 .folder-chip:hover{color:var(--text);border-color:var(--cyan);background:rgba(0,240,255,.13)}
 .folder-chip.active{color:#04121a;background:linear-gradient(135deg,var(--neon,#0ff),var(--neon2,#0cf));border-color:transparent;text-shadow:none;box-shadow:0 0 12px rgba(0,240,255,.4)}
 .folder-chip.newfolder{color:var(--neon2,#0cf);border-style:dashed}

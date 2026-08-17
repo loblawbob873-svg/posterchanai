@@ -127,18 +127,15 @@ function device(disk, sky, o){
 const opts = (chunk, extra) => Object.assign({
   id: 't', key: 'Pictures', device: 'dev', now: Date.now(), excludes: [],
   maxBytes: 8 * 1024 * MB, chunkBytes: chunk, chunkAbove: chunk, manual: true,
-  /* THE TWO QUESTIONS, ANSWERED THE WAY SOMEBODY IN THIS POSITION ANSWERS THEM.
+  /* NO CONFIRM HANDLERS AT ALL, DELIBERATELY.
    *
-   * "Everything was deleted elsewhere and I want this device emptied too" and "everything was
-   * deleted elsewhere and this device is the one with the files" are the SAME manifest and the same
-   * disk — indistinguishable from the data, so only the person can say which. The sweep asks about
-   * emptying first; saying no now leads to the other question instead of to nothing, which is what
-   * made it an unbreakable loop.
+   * Every guard in this engine fails CLOSED when nobody answers, so if any part of this journey
+   * needed a dialog the sweep would refuse it and this run would show 0 uploads. Passing with none
+   * attached is the proof that adding a folder full of files, to a pair whose shared record is
+   * nothing but tombstones, is a plain upload — not a question about destroying anything.
    *
-   * What must never happen is a file moved to the trash on the way through, and that is asserted
-   * below rather than here. */
-  confirmTrash: async () => false,          // no, do not empty this device
-  confirmResurrect: async () => true,       // yes, put them back on the others
+   * A folder removed from every device leaves each one with no agreement, and a deletion requires an
+   * agreement: you cannot be told to delete something you never agreed to have. */
 }, extra || {});
 
 (async () => {
@@ -150,22 +147,49 @@ const opts = (chunk, extra) => Object.assign({
     const b = content(i);
     deskDisk[r] = b; want[r] = sha(b);
     manifest[r] = { deletedAt: 4000, device: 'phone' };     // erased everywhere else
-    agreed[r] = { size: b.length, mtime: 1000 };            // …but this device agreed them once
+    /* NO AGREEMENT. The folder was removed from every device, which is what a fresh start looks
+     * like, so no device has agreed anything about these paths — and the tombstones are older news
+     * than the files are. This is the state the whole evening was actually spent in. */
   }
   sky.manifest = manifest;
 
-  const desk = device(deskDisk, sky, { chunk: 16 * MB, hashFile: false, base: agreed });
+  /* THREE REAL VIDEOS, over both devices' chunk sizes, so they take the CHUNKED path — the one
+   * where the checksum went missing and where files arrived unplayable. Big enough to span several
+   * chunks at 4 MB and more than one at 16 MB, which is where a wrong offset shows up. */
+  const VIDEOS = [];
+  for(let v = 0; v < 3; v++){
+    const r = 'Pictures/VID_' + v + '.mp4';
+    const b = Buffer.alloc(20 * MB + v * MB);
+    for(let o = 0; o + 4 <= b.length; o += 4) b.writeUInt32BE(((v * 40503 + o) >>> 0), o);
+    deskDisk[r] = b; want[r] = sha(b); VIDEOS.push(r);
+    manifest[r] = { deletedAt: 4000, device: 'phone' };
+  }
+
+  const desk = device(deskDisk, sky, { chunk: 16 * MB, hashFile: true, base: {} });
   const t0 = Date.now();
 
   // 1. the desktop sweeps
   const d1 = await RUN.sweep(desk.fs, desk.store, opts(16 * MB));
   check(desk.state.trashed.length === 0,
         desk.state.trashed.length + ' files were moved to the trash');
-  check((d1.uploaded || []).length === N,
-        'uploaded ' + (d1.uploaded || []).length + ' of ' + N);
+  const TOTAL = N + VIDEOS.length;                    // the photos plus the three videos
+  check((d1.uploaded || []).length === TOTAL,
+        'uploaded ' + (d1.uploaded || []).length + ' of ' + TOTAL);
   const live = Object.keys(sky.manifest).filter(p => !sky.manifest[p].deletedAt).length;
-  check(live === N, 'the manifest holds ' + live + ' live files, want ' + N
+  check(live === TOTAL, 'the manifest holds ' + live + ' live files, want ' + TOTAL
         + ' — the folder would still show "0 files"');
+
+  /* EVERY ENTRY CARRIES A CONTENT IDENTITY. Without it verifyPart returns early and the receiving
+   * device writes whatever arrives — which is how videos synced and would not play. */
+  for(const v of VIDEOS){
+    const e = sky.manifest[v] || {};
+    check(!!e.chunks && e.chunks.length > 1,
+          v + ' did not take the chunked path, so this proves nothing about videos');
+    check(!!e.csum, v + ' was published with NO checksum — nothing can verify it on arrival');
+  }
+  const noCsum = Object.keys(sky.manifest).filter(p2 => !sky.manifest[p2].csum);
+  check(noCsum.length === 0,
+        noCsum.length + ' entries were published with NO checksum — nothing can verify those files');
 
   // 2. and again: quiet
   const d2 = await RUN.sweep(desk.fs, desk.store, opts(16 * MB));
@@ -176,8 +200,8 @@ const opts = (chunk, extra) => Object.assign({
   const phoneDisk = {};
   const phone = device(phoneDisk, sky, { chunk: 4 * MB, hashFile: true, base: {} });
   const p1 = await RUN.sweep(phone.fs, phone.store, opts(4 * MB));
-  check((p1.downloaded || []).length === N,
-        'the phone downloaded ' + (p1.downloaded || []).length + ' of ' + N);
+  check((p1.downloaded || []).length === TOTAL,
+        'the phone downloaded ' + (p1.downloaded || []).length + ' of ' + TOTAL);
   let bad = 0, missing = 0;
   for(const r in want){
     if(!phoneDisk[r]){ missing++; continue; }
@@ -185,8 +209,15 @@ const opts = (chunk, extra) => Object.assign({
   }
   check(missing === 0, missing + ' files never arrived on the phone');
   check(bad === 0, bad + ' files arrived CORRUPT');
-  check(phone.state.verified.length >= N,
-        'only ' + phone.state.verified.length + ' of ' + N + ' were verified before being written');
+  for(const v of VIDEOS){
+    check(!!phoneDisk[v], v + ' never arrived');
+    check(phoneDisk[v] && sha(phoneDisk[v]) === want[v],
+          v + ' arrived CORRUPT — this is the unplayable-video bug');
+    check(phone.state.verified.indexOf(v) >= 0,
+          v + ' was written WITHOUT being hashed first');
+  }
+  check(phone.state.verified.length >= TOTAL,
+        'only ' + phone.state.verified.length + ' of ' + TOTAL + ' were verified before being written');
 
   // 4. both quiet, and the disks agree
   const p2 = await RUN.sweep(phone.fs, phone.store, opts(4 * MB));
@@ -198,8 +229,21 @@ const opts = (chunk, extra) => Object.assign({
   check(Object.keys(phoneDisk).length === Object.keys(deskDisk).length,
         'the two devices hold different numbers of files');
 
+  /* Reported separately, because "videos would not play" was its own bug with its own cause: a
+   * chunked upload with no checksum, which nothing on the receiving side could verify. */
+  const videoReport = VIDEOS.map(v => ({
+    path: v,
+    chunked: !!(sky.manifest[v] && (sky.manifest[v].chunks || []).length > 1),
+    hasCsum: !!(sky.manifest[v] && sky.manifest[v].csum),
+    arrived: !!phoneDisk[v],
+    identical: !!(phoneDisk[v] && sha(phoneDisk[v]) === want[v]),
+    verifiedBeforeWrite: phone.state.verified.indexOf(v) >= 0,
+    bytes: phoneDisk[v] ? phoneDisk[v].length : 0,
+  }));
+
   console.log(JSON.stringify({
     files: N, seconds: Math.round((Date.now() - t0) / 1000),
+    videos: videoReport,
     desktop: { trashed: desk.state.trashed.length, uploaded: (d1.uploaded || []).length,
                discardedBase: d1.discardedBase || 0, secondSweepQuiet: (d2.uploaded || []).length === 0 },
     manifestLive: live,
