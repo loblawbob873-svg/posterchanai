@@ -883,7 +883,26 @@
            * sync.js's web-upload path has always written it (`cs: res.cs || CH`); this one, the one
            * every actual sweep goes through, did not. It is also what lets an interrupted download
            * resume, since resuming needs to know how big a whole chunk is. */
-          const entry = { csum:meta.csum, chunks:res.chunks, cs:res.cs || 0,
+          /* A CHUNKED UPLOAD CARRIES A CONTENT CHECKSUM AGAIN, and this is the difference between a
+           * bad file being caught and a bad file being played.
+           *
+           * `csum` is what the RECEIVING side verifies a download against — `verifyPart` returns
+           * early without one — and it is also what lets a resumed download reuse a part file at
+           * all. It used to arrive from the scan, which hashed everything on a first sweep. Skipping
+           * that hash (rightly: it reads tens of gigabytes to answer a question about a few hundred
+           * paths, and it is what made Pause appear to hang) quietly made "no checksum" the NORMAL
+           * state for every large file a phone uploads — so a truncated or mis-assembled video was
+           * written to the other device unchecked, and nothing ever noticed. Reported as videos that
+           * arrived and would not play.
+           *
+           * Hashing here costs nothing now: `fs.hashFile` is native and streamed, and this is one
+           * file we have just finished reading anyway. Where the adapter cannot, the entry keeps its
+           * chunk list as identity exactly as before — unverified, but no worse than it was. */
+          let csum = meta.csum;
+          if(!csum && typeof fs.hashFile === 'function'){
+            try{ csum = await fs.hashFile(id, u.path); }catch(_){ csum = meta.csum; }
+          }
+          const entry = { csum, chunks:res.chunks, cs:res.cs || 0,
                           size:meta.size, mtime:meta.mtime || now, device };
           if(!entry.csum) delete entry.csum;   // `chunks` is the identity when the scan did not hash
           if(!entry.cs) delete entry.cs;       // absent means "the one size that existed before cs did"
