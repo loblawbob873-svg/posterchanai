@@ -444,13 +444,19 @@ DRIVE = r"""(async () => {
   {
     const before = document.querySelectorAll('.osw').length;
     const task = re => [...document.querySelectorAll('.os-task')].find(t => re.test(t.textContent));
-    document.querySelector('.os-icon[data-view="calendar"]').click(); await sleep(150);
+    /* ANY feature window with a view name of its own will do — the point of this block is the
+     * hand-back between a named view and a DOC window, not which app it is. It was Calendar, which
+     * stopped being a desktop ICON the moment the built-in Office folder claimed it, and this line
+     * then read null and threw: the whole script stopped evaluating and the check reported SKIP,
+     * which is not a pass and correctly refused the deploy. Bookmarks is top level and in no
+     * built-in folder. */
+    document.querySelector('.os-icon[data-view="bookmarks"]').click(); await sleep(150);
     PCOS.openDoc('prof:zz', 'Profile', 'i-user', () => {
       window.__view = 'profile';    // renderProfileView sets VIEW itself on the way in
       document.getElementById('feed').innerHTML = '<div class="stub-doc">PROFILE</div>';
     });
     await sleep(150);
-    task(/Calendar/i).click(); await sleep(150);
+    task(/Bookmarks/i).click(); await sleep(150);
     out.viewOnFeature = window.__view;
     task(/Profile/i).click(); await sleep(200);
     out.viewOnDoc     = window.__view;
@@ -556,6 +562,10 @@ DRIVE = r"""(async () => {
   out.hasBar    = !!document.querySelector('.os-bar');
   out.hasStart  = !!document.querySelector('#os-start');
   out.icons     = [...document.querySelectorAll('.os-icon')].map(b => b.dataset.view);
+  // What each folder tile stands for, so the comparison against the sidebar can expand it.
+  out.folderApps = {};
+  for(const b of document.querySelectorAll('.os-icon[data-apps]'))
+    out.folderApps[b.dataset.view] = (b.dataset.apps || '').split(' ').filter(Boolean);
   out.navViews  = [...document.querySelectorAll('.sidebar .nav .nav-item[data-view]')].map(b => b.dataset.view);
   // Distinct left edges = number of icon columns. With ~18 entries a grid would spill into a
   // second column marching across the desktop and over the windows.
@@ -596,8 +606,11 @@ DRIVE = r"""(async () => {
 
   // Open two windows from the desktop icons.
   const ic = v => document.querySelector('.os-icon[data-view="'+v+'"]');
-  ic('calendar').click(); await sleep(150);
-  ic('contacts').click(); await sleep(150);
+  /* Two apps that are on the DESKTOP, which Calendar and Contacts stopped being when the built-in
+   * Office folder claimed them — `ic()` then returned null and the script died here. Notes and
+   * Passwords are top level and in no built-in folder. */
+  ic('notes').click(); await sleep(150);
+  ic('vault').click(); await sleep(150);
   out.windows   = document.querySelectorAll('.osw').length;
   out.tasks     = document.querySelectorAll('.os-task').length;
   out.feedCount = feeds();
@@ -1147,10 +1160,19 @@ LAYOUT = r"""(async () => {
   await drag(icon('notes'), ...mid(icon('news')));
   await sleep(220);                        // the rename prompt resolves and saves a second time
   out.afterMerge = views();
-  out.folderKey = (views().find(v => v.indexOf('folder:') === 0) || '');
+  /* THE FOLDER THIS TEST JUST MADE, not "the first folder on the desktop".
+   *
+   * The built-in FOLDERS are a growing default — Nostr Games, then Office — and the stub sidebar
+   * above carries Calendar and Contacts, so from the moment Office existed there were TWO folder
+   * tiles and every lookup here silently picked the wrong one. The script threw and the check
+   * reported SKIP: "the desktop script did not evaluate", which is not a pass and correctly blocked
+   * the deploy. Compare against what was on screen BEFORE the drag instead. */
+  const madeKey = views().find(v => v.indexOf('folder:') === 0 && before.indexOf(v) < 0) || '';
+  out.folderKey = madeKey;
+  const tileFor = (key) => [...document.querySelectorAll('.os-icons .os-icon')]
+      .find(b => b.dataset.view === key);
   // The LAST span: a folder tile leads with .os-fold (its members' glyphs), and the label follows.
-  out.folderLabel = (() => { const b = [...document.querySelectorAll('.os-icons .os-icon')]
-      .find(b => b.dataset.view.indexOf('folder:') === 0);
+  out.folderLabel = (() => { const b = tileFor(madeKey);
     return b ? ([...b.querySelectorAll('span')].pop() || {}).textContent || '' : ''; })();
   out.mergedAway = before.length - views().length;      // two icons became one
   // The drag must not ALSO open the app it dragged.
@@ -1159,7 +1181,7 @@ LAYOUT = r"""(async () => {
   out.savedDoc = window.__relayDoc ? window.__relayDoc.content : '';
 
   // 2. Open the folder window and check its members, then take an icon back out to the desktop.
-  const fb = [...document.querySelectorAll('.os-icons .os-icon')].find(b => b.dataset.view.indexOf('folder:') === 0);
+  const fb = tileFor(madeKey);
   if (fb) { fb.click(); await sleep(160); }
   const slot = document.querySelector('.osw-slot.os-folder');
   out.folderMembers = slot ? [...slot.querySelectorAll('.os-icon')].map(b => b.dataset.view) : null;
@@ -1173,7 +1195,8 @@ LAYOUT = r"""(async () => {
   // One member left is not a folder: it dissolves, its last app goes back on the desktop in the
   // folder's place, and the window — which now has nothing to show — closes with it.
   out.folderGone = !document.querySelector('.osw-slot.os-folder');
-  out.folderTileGone = !views().some(v => v.indexOf('folder:') === 0);
+  // …the one this test made. A built-in folder standing beside it is not a failure.
+  out.folderTileGone = !views().some(v => v === madeKey);
 
   // 3. Reorder: drag Social to the left edge of whatever is first, which must put it first.
   {
@@ -1321,7 +1344,9 @@ GATE = r"""(() => { PCOS.enter(); const on = PCOS.isOn(); if (on) PCOS.exit();
 TOUCH = r"""(async () => {
   const sleep = ms => new Promise(r=>setTimeout(r,ms));
   PCOS.enter(); await sleep(150);
-  document.querySelector('.os-icon[data-view="calendar"]').click(); await sleep(150);
+  /* A TOP-LEVEL app: Calendar is inside the built-in Office folder now, so this returned null
+   and the touch test silently did not run at all. */
+  document.querySelector('.os-icon[data-view="notes"]').click(); await sleep(150);
   const w = document.querySelector('.osw');
   const bar = w.querySelector('.osw-bar');
   const cs = getComputedStyle(bar);
@@ -1500,7 +1525,7 @@ async def drive(url):
                                      "succession of queries, so its render has to be replaced "
                                      f"(windows={r.get('searchWins')} last-render={r.get('searchLast')!r} "
                                      f"on-screen={r.get('searchShown')!r} left-open={r.get('searchClosed')})"))
-                if r.get("viewOnDoc") != "profile" or r.get("viewOnFeature") != "calendar" \
+                if r.get("viewOnDoc") != "profile" or r.get("viewOnFeature") != "bookmarks" \
                         or not r.get("docFeedBack") or r.get("viewWinsClosed") != 0:
                     problems.append((label, "stale-view",
                                      "refocusing a window did not hand the client back the view that "
@@ -1554,12 +1579,24 @@ async def drive(url):
                 if not (1 <= r.get("iconCols", 0) <= 3):
                     problems.append((label, "icons-not-left",
                                      f"the desktop icons form {r['iconCols']} columns — want 1-3"))
-                if r["icons"] != r["navViews"]:
+                # A FOLDER TILE STANDS FOR ITS MEMBERS. The rule being checked is that every app the
+                # sidebar has is reachable from the desktop — not that every one has a tile of its
+                # own, which stopped being true the moment a built-in folder existed. `flat` expands
+                # each folder from its data-apps; order is compared as a SET for the same reason,
+                # since a folder sits where its first member did.
+                def flat(seq):
+                    out = []
+                    for v in seq:
+                        out.extend(r.get("folderApps", {}).get(v, [v]) if str(v).startswith("folder:")
+                                   else [v])
+                    return out
+                if sorted(flat(r["icons"])) != sorted(r["navViews"]):
                     problems.append((label, "apps-missing",
-                                     f"desktop icons {r['icons']} do not match the sidebar {r['navViews']}"))
-                if r["menuApps"] != r["navViews"]:
+                                     f"desktop icons {flat(r['icons'])} do not match the sidebar "
+                                     f"{r['navViews']}"))
+                if sorted(flat(r["menuApps"])) != sorted(r["navViews"]):
                     problems.append((label, "apps-missing",
-                                     f"the start menu lists {r['menuApps']}"))
+                                     f"the start menu lists {flat(r['menuApps'])}"))
                 # "cal" legitimately matches Calendar AND Calls — the filter is a substring match
                 # on the label, and narrowing it further would be worse.
                 if r.get("badIcons"):
@@ -1591,7 +1628,9 @@ async def drive(url):
                 if not r["feedMoved"]:
                     problems.append((label, "feed-not-handed-over",
                                      "focusing another window did not move id=feed to it"))
-                if r["renderedAfterFocus"] != "contacts" and r["renderedAfterFocus"] != "calendar":
+                # The two apps the two-window test opens — they must be TOP-LEVEL apps, which
+                # Calendar and Contacts stopped being when the Office folder claimed them.
+                if r["renderedAfterFocus"] not in ("notes", "vault"):
                     problems.append((label, "feed-not-handed-over",
                                      f"focusing did not re-render a feature (last was {r['renderedAfterFocus']})"))
 

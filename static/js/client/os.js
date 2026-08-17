@@ -1694,8 +1694,17 @@
   const folderGlyph = f =>
     `<span class="os-fold">${f.members.slice(0, 4).map(m => iconSvg(m.icon)).join('')}</span>`;
 
+  /* A FOLDER TILE SAYS WHAT IS INSIDE IT, in `data-apps`.
+   *
+   * The desktop must show every app the sidebar has — that is the rule the whole layout is built on
+   * — and a folder makes that rule unreadable from the outside: the tile is one element standing for
+   * several apps, and its members exist in the DOM only while its window is open. So a check
+   * comparing the desktop against the sidebar sees apps "missing" the moment any built-in folder
+   * claims one, which is exactly what happened when Office claimed Calendar and Contacts. */
   const iconHtml = a =>
-    `<button class="os-icon${a.folder ? ' is-folder' : ''}" data-view="${enc(a.view)}" title="${enc(a.label)}">
+    `<button class="os-icon${a.folder ? ' is-folder' : ''}" data-view="${enc(a.view)}"${
+        a.folder ? ` data-apps="${enc(a.folder.members.map(m => m.view).join(' '))}"` : ''
+      } title="${enc(a.label)}">
        ${a.folder ? folderGlyph(a.folder) : iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`;
 
   function drawDesktop(){

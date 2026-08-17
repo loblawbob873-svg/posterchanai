@@ -110,11 +110,26 @@ class NotificationTests(unittest.TestCase):
 
 
 class SurfaceTests(unittest.TestCase):
-    def test_classic_mode_lists_email_under_messages(self):
-        nav = [m.group(1) for m in re.finditer(r'class="nav-item"[^>]*data-view="([a-z0-9]+)"', SHELL)]
+    def test_classic_mode_lists_email(self):
+        """Email is a row of its own in the sidebar, and it is inside the OFFICE group.
+
+        It used to have to sit directly under Messages, on the reasoning that the two are one
+        metaphor. That was superseded deliberately: Contacts, Calendar and Email are one thing to
+        reach for and were three rows apart, so they were grouped. The rule that remains — and the
+        one the original test was really protecting — is that Email is its own row and not a tab
+        inside Messages, which is how it was invisible on a phone and could not be a window of its
+        own in desktop mode.
+
+        The pattern allows `nav-item sub` because a grouped row carries it."""
+        nav = [m.group(1) for m in re.finditer(r'class="nav-item[^"]*"[^>]*data-view="([a-z0-9]+)"',
+                                               SHELL)]
         self.assertIn("mail", nav)
-        self.assertEqual(nav[nav.index("messages") + 1], "mail",
-                         "Email must sit directly under Messages in the sidebar")
+        self.assertIn("messages", nav)
+        office = SHELL[SHELL.index('id="office-sub"'):]
+        office = office[:office.index("</div>")]
+        for v in ("contacts", "calendar", "mail"):
+            self.assertIn('data-view="%s"' % v, office,
+                          "%s belongs in the Office group" % v)
 
     def test_the_two_do_not_share_an_icon(self):
         """They did — both were the envelope — which is confusing the moment they are two rows."""
@@ -136,7 +151,8 @@ class SurfaceTests(unittest.TestCase):
 
     def test_nostr_only_hides_it(self):
         """No instance, no IMAP. Hidden in the template AND filtered out of the phone sheet."""
-        self.assertIn('{% if not nostr_only %}<button class="nav-item" data-view="mail"', SHELL)
+        # `nav-item sub` since Email joined the Office group — the gate is what this asserts.
+        self.assertIn('{% if not nostr_only %}<button class="nav-item sub" data-view="mail"', SHELL)
         self.assertIn("!(window.PC_NOSTR_ONLY && v==='mail')", APP)
 
     def test_desktop_mode_reaches_the_mail_app(self):
