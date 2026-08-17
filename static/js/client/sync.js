@@ -1752,9 +1752,21 @@
                    + 'offer to delete your files.');
           return;
         }
-        list2.push({ id: picked.id, key, dir: picked.dir, name: key,
+        /* RE-READ THE LIST HERE, NOT BEFORE THE PROMPT.
+         *
+         * `list2` was taken before `PC.uiPrompt` — seconds of somebody typing a name — and then
+         * written back afterwards, so any other writer in that window either lost its change or
+         * overwrote this one with its own older copy. A sweep recording `lastSyncAt`, the watcher,
+         * a repaint: all of them write this list. The folder was added and then quietly vanished,
+         * which is why it took a second attempt to stick.
+         *
+         * The stale copy is still used for the duplicate check above — that is a question about what
+         * existed when the user picked, and asking it again here would only re-answer it. */
+        const list3 = folders();
+        if(list3.some(x => x.id === picked.id)){ PC.toast('that folder is already syncing'); return; }
+        list3.push({ id: picked.id, key, dir: picked.dir, name: key,
                      excludes: [], prefs: { paused: true }, lastSyncAt: 0, lastFullScanAt: 0 });
-        saveFolders(list2); rememberPair(picked.id, picked.dir, key); watch(picked.id); paint();
+        saveFolders(list3); rememberPair(picked.id, picked.dir, key); watch(picked.id); paint();
       }catch(e){ PC.toast('could not add: ' + ((e && e.message) || e)); }
     };
 
