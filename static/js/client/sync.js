@@ -213,8 +213,19 @@
     await _IDB._tx('readwrite', st => st.put(base, key));
     try{ localStorage.removeItem(BASE_KEY(key)); }catch(_){}   // the old copy is now stale, not a fallback
   }
+  /* CLEARING THE AGREEMENT MUST NOT FAIL QUIETLY.
+   *
+   * "Stop syncing" exists almost entirely to clear this, and the agreement is what decides whether
+   * the next sweep sees a folder full of files or a folder full of deletions. A swallowed failure
+   * here reports success, removes the card, and leaves the agreement in IndexedDB — so re-adding the
+   * folder proposes moving every file to the trash, exactly as it did before, however many times
+   * somebody repeats the process. Reported as precisely that, and it was unfalsifiable from the
+   * outside because nothing anywhere said the clear had not happened.
+   *
+   * The localStorage half stays best-effort: it is the OLD location, it may legitimately not exist,
+   * and its removal is not what decides anything. */
   async function _dropBase(key){
-    try{ await _IDB._tx('readwrite', st => st.delete(key)); }catch(_){}
+    await _IDB._tx('readwrite', st => st.delete(key));
     try{ localStorage.removeItem(BASE_KEY(key)); }catch(_){}
   }
 
@@ -1825,6 +1836,19 @@
         if(!await PC.uiConfirm('Stop syncing this folder?\n\nNothing is deleted — the files stay on this '
                                + 'device and on your other devices. It simply stops being kept in step.')) return;
         try{ await FS().forget(id); }catch(_){}
+        // If the agreement cannot be cleared, STOP: removing the card while it survives is what
+        // makes the next re-add propose trashing the whole folder, with nothing to explain why.
+        let cleared = true, why = '';
+        try{
+          const f0 = folders().find(x => x.id === id);
+          await _dropBase(id);
+          if(f0) await _dropBase(keyOf(f0));
+        }catch(e){ cleared = false; why = (e && e.message) || String(e); }
+        if(!cleared){
+          PC.toast('could not clear this folder\u2019s sync record — ' + why
+                   + '. Nothing was changed; re-adding it now would offer to delete your files.');
+          return;
+        }
         /* CLEAR THE AGREEMENT UNDER THE KEY IT WAS WRITTEN WITH — and under the old one too.
          *
          * `base` moved from the platform id to the pair key when the manifest did; this removeItem
@@ -1833,9 +1857,6 @@
          * the engine correctly reads that as "deleted here", and they are removed from every other
          * device. Both keys go, because a build older than the pair key wrote the id one.
          * tests/client/two_device_sim.js — 'stale-base-is-what-deletes-everything'. */
-        const f = folders().find(x => x.id === id);
-        await _dropBase(id);                       // a build older than the pair key wrote this one
-        if(f) await _dropBase(keyOf(f));
         saveFolders(folders().filter(x => x.id !== id));
         paint();
       };
