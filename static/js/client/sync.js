@@ -225,8 +225,45 @@
    * The localStorage half stays best-effort: it is the OLD location, it may legitimately not exist,
    * and its removal is not what decides anything. */
   async function _dropBase(key){
-    await _IDB._tx('readwrite', st => st.delete(key));
+    /* IT IS NOT CLEARED UNTIL A READ SAYS SO.
+     *
+     * Deleting the key and assuming it worked is what produced "I already went through that process
+     * a few times": the delete threw, the failure was swallowed, the card went away, and the
+     * agreement stayed — so re-adding the folder proposed moving every file in it to the trash,
+     * again and again, with nothing anywhere admitting the clear had not happened.
+     *
+     * Three ways, in increasing order of violence, each CHECKED by reading the value back:
+     *   1. delete the key;
+     *   2. overwrite it with an EMPTY agreement — to the engine that is the same thing, and a store
+     *      that refuses deletes may still accept a put;
+     *   3. drop the whole database, which holds nothing but these agreements.
+     * Only if the value survives all three does this throw, and then the caller keeps the folder and
+     * says so rather than removing a card whose record is still live. */
+    const cleared = async () => {
+      try{
+        const v = await _IDB._tx('readonly', st => st.get(key));
+        return !(v && typeof v === 'object' && Object.keys(v).length);
+      }catch(_){ return false; }          // cannot read ≠ cleared
+    };
+    let err = null;
+    try{ await _IDB._tx('readwrite', st => st.delete(key)); }catch(e){ err = e; }
     try{ localStorage.removeItem(BASE_KEY(key)); }catch(_){}
+    if(await cleared()) return;
+
+    try{ await _IDB._tx('readwrite', st => st.put({}, key)); }catch(e){ err = err || e; }
+    if(await cleared()) return;
+
+    try{
+      if(_IDB._db){ try{ _IDB._db.close(); }catch(_){} _IDB._db = null; }
+      await new Promise((res, rej) => {
+        const rq = indexedDB.deleteDatabase(_IDB.DB);
+        rq.onsuccess = res; rq.onblocked = res;
+        rq.onerror = () => rej(rq.error || new Error('the database refused to be deleted'));
+      });
+    }catch(e){ err = err || e; }
+    if(await cleared()) return;
+
+    throw err || new Error('the sync record is still there after three attempts');
   }
 
   /* How long a manifest request may hang before it is treated as failed. Generous — this is a
@@ -1627,6 +1664,26 @@
           + 'folder can be anywhere on each one.', guess) || '');
         if(!key) return;
         if(key.length < 4){ PC.toast('use at least 4 letters or digits'); return; }
+        /* ADDING A FOLDER STARTS IT CLEAN, WHATEVER WAS LEFT BEHIND.
+         *
+         * The agreement is keyed on the NAME, so a record from a previous pairing of that name
+         * survives the folder being removed — and "Stop syncing" could fail to clear it while
+         * reporting success, which left the record live. The next sweep then read a manifest whose
+         * entries were deleted elsewhere and offered to move every file in the folder to the trash;
+         * repeating the remove-and-re-add did nothing, because the thing that had to change was the
+         * record neither step could be trusted to clear.
+         *
+         * Clearing here removes the whole class: a folder you have just added has, by definition,
+         * agreed nothing yet. It is also the SAFE direction — deletion requires an agreement, so a
+         * folder with none can only upload, never delete. If it cannot be cleared, say so and stop,
+         * because adding the folder anyway is what produces the dialog. */
+        try{ await _dropBase(key); await _dropBase(picked.id); }
+        catch(e){
+          PC.toast('could not clear the old sync record for \u201c' + key + '\u201d — '
+                   + ((e && e.message) || e) + '. The folder was NOT added: syncing it now would '
+                   + 'offer to delete your files.');
+          return;
+        }
         list2.push({ id: picked.id, key, dir: picked.dir, name: key,
                      excludes: [], prefs: { paused: true }, lastSyncAt: 0, lastFullScanAt: 0 });
         saveFolders(list2); rememberPair(picked.id, picked.dir, key); watch(picked.id); paint();
