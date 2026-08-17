@@ -210,6 +210,32 @@
    * there was not: past this the socket is dead rather than slow, and waiting longer only means
    * waiting for ever. */
   const _XFER_TIMEOUT_MS = 5 * 60 * 1000;
+  /* HOW LONG A CHUNKED TRANSFER MAY SHOW NO MOVEMENT AT ALL.
+   *
+   * Not a ceiling on the transfer — see the chunked pair below — a ceiling on SILENCE. Generous
+   * enough that one 4 MB chunk on a bad radio still lands (that is minutes, not seconds, at the
+   * speeds a phone can reach in a basement), short enough that a dead socket is admitted while
+   * somebody is still watching. */
+  const _STALL_MS = 3 * 60 * 1000;
+  function _stallGuard(what, ms){
+    let timer = null, boom = null, over = false;
+    const tripped = new Promise((_res, rej) => { boom = rej; });
+    const bump = () => {
+      if(over) return;
+      if(timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        if(over) return;
+        over = true;
+        boom(new Error('the ' + what + ' stopped moving — will try again'));
+      }, ms || _STALL_MS);
+    };
+    const stop = () => { over = true; if(timer){ clearTimeout(timer); timer = null; } };
+    bump();
+    /* A rejection nobody is awaiting yet is an unhandled rejection in some runtimes; the race below
+     * always awaits it, and this keeps that true even if a caller forgets. */
+    tripped.catch(() => {});
+    return { tripped, bump, stop };
+  }
   function _bounded(p, what, ms){
     return new Promise((res, rej) => {
       let done = false;
@@ -458,14 +484,43 @@
     getBlob: (sha) => _bounded(PC.syncBlobs.get(sha), 'download'),
     // The chunked pair. Present only when the client build has them, so an older bundle simply does
     // not take the chunked path rather than calling something undefined.
-    /* The chunked pair is deliberately NOT bounded as a whole: it moves a file of any size and
-     * reports progress per chunk, so a ceiling here would be a guess about someone's connection.
-     * Each chunk inside it is an ordinary request and a stall shows up as no progress, which is what
-     * the resume path already handles. */
+    /* THE CHUNKED PAIR IS BOUNDED BY PROGRESS, NOT BY TOTAL TIME.
+     *
+     * It moves a file of any size, so a ceiling on the whole transfer would be a guess about
+     * somebody's connection — that part of the original reasoning stands. What did not: "a stall
+     * shows up as no progress, which the resume path already handles". The resume path only helps if
+     * the sweep ENDS, and a chunk whose socket dies without an RST leaves an await that never
+     * settles. The sweep stops there for ever, `running` never clears, and Pause cannot rescue it
+     * because `stopping()` is checked between FILES and the sweep is stuck inside one. Reported from
+     * a tablet: "stuck on 14/2291, never progressing".
+     *
+     * So the watchdog measures the thing that actually distinguishes slow from dead: every chunk
+     * read and every progress report bumps it, and only a total absence of movement trips it. A file
+     * that takes an hour is fine; a file that has not moved a byte in three minutes is not coming
+     * back, and the sweep is better off recording it as failed and going on to file 15 — one failure
+     * is not a failed sweep, and the next run resumes from the checkpoint.
+     *
+     * The loser of the race keeps running and is collected; what matters is that the SWEEP stops
+     * waiting. Threading a real abort through PC.syncBlobs — shared with the drive, Notes and the
+     * music library — is a much larger change than this is worth. */
     putParts: PC.syncBlobs && PC.syncBlobs.putParts
-      ? (read, size, onProgress, cs) => PC.syncBlobs.putParts(read, size, onProgress, cs) : null,
+      ? (read, size, onProgress, cs) => {
+          const w = _stallGuard('upload');
+          return Promise.race([
+            PC.syncBlobs.putParts((off, len) => { w.bump(); return read(off, len); }, size,
+                                  (done, total) => { w.bump(); if(onProgress) onProgress(done, total); },
+                                  cs),
+            w.tripped,
+          ]).then(v => { w.stop(); return v; }, e => { w.stop(); throw e; });
+        } : null,
     getParts: PC.syncBlobs && PC.syncBlobs.getParts
-      ? (chunks, write) => PC.syncBlobs.getParts(chunks, write) : null,
+      ? (chunks, write) => {
+          const w = _stallGuard('download');
+          return Promise.race([
+            PC.syncBlobs.getParts(chunks, (off, bytes) => { w.bump(); return write(off, bytes); }),
+            w.tripped,
+          ]).then(v => { w.stop(); return v; }, e => { w.stop(); throw e; });
+        } : null,
   };
 
   /* ---- WHAT THIS ACCOUNT SYNCS, as opposed to what THIS DEVICE maps ---------------------------
