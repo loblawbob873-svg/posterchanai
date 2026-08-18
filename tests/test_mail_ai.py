@@ -76,6 +76,33 @@ class EndpointTests(unittest.TestCase):
         self.assertIn("refers to what the sender actually wrote", sys_msg)
         self.assertIn("What it should convey:", chat.calls[0][-1]["content"])
 
+    def test_a_placeholder_signature_is_stripped_no_matter_what_the_model_thinks(self):
+        """A rule a model follows most of the time is a rule; a line of code is a guarantee."""
+        chat = _FakeChat("Thanks for these!\n\nBest,\n[Your Name]")
+        out = _run(M.MailAiReq(mode="reply", text="hi", instruction="thanks"), chat)
+        self.assertEqual(out["content"], "Thanks for these!")
+        chat2 = _FakeChat("All good.\n[Name]")
+        out2 = _run(M.MailAiReq(mode="reply", text="hi", instruction="ok"), chat2)
+        self.assertEqual(out2["content"], "All good.")
+        # …and a reply with a REAL signature is left alone.
+        chat3 = _FakeChat("On it.\n\nBest,\nDustin")
+        out3 = _run(M.MailAiReq(mode="reply", text="hi", instruction="ok"), chat3)
+        self.assertEqual(out3["content"], "On it.\n\nBest,\nDustin")
+
+    def test_drafting_runs_at_task_temperature(self):
+        chat = _FakeChat("ok")
+        _run(M.MailAiReq(mode="reply", text="hi", instruction="ok"), chat)
+        self.assertEqual(getattr(chat, "temperature", None), 0.2,
+                         "the drafting call runs at chat temperature and varies run to run")
+
+    def test_the_to_line_travels_with_the_message(self):
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        app = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+        at = app.index("_msgText(msg){")
+        self.assertIn("msg.to", app[at:at + 1200],
+                      "without To: the model cannot know the user's name and invents placeholders")
+
     def test_a_reply_with_no_instruction_is_refused(self):
         with self.assertRaises(HTTPException) as c:
             _run(M.MailAiReq(mode="reply", text="hi"), _FakeChat("x"))

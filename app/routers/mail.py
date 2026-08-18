@@ -52,6 +52,13 @@ async def mail_ai(req: MailAiReq, db: Session = Depends(get_db),
         raise HTTPException(status_code=400, detail="mode must be summarize or reply")
     from app.services.command_service import CommandService
     cs = CommandService(db, user=current_user)
+    # Task temperature, not chat temperature. At the default 0.7 the same instruction drafted a
+    # different reply every run ("looking better 2nd and 4th time"); at 0.2 two runs agree in
+    # substance and differ only in phrasing. This is a drafting tool, not a muse.
+    try:
+        cs.chat_service.temperature = 0.2
+    except Exception:
+        pass
     if mode == "summarize":
         msgs = [
             {"role": "system", "content": (
@@ -81,8 +88,10 @@ async def mail_ai(req: MailAiReq, db: Session = Depends(get_db),
                 "You write email replies. Rules: never repeat or continue the original email; "
                 "never paste the instruction into the reply — it only says what the reply should "
                 "CONVEY; the reply is a complete, natural response that refers to what the sender "
-                "actually wrote (at least one full sentence). Output only the body of the NEW "
-                "reply, plain text: no subject line, no quoting, no [Your Name] placeholders, no "
+                "actually wrote (at least one full sentence). If a sign-off fits, sign with the "
+                "recipient's real name from the To line or the greeting — never a placeholder "
+                "like [Your Name]; with no name available, end without a signature. Output only "
+                "the body of the NEW reply, plain text: no subject line, no quoting, no "
                 "commentary. Match the sender's language unless the instruction says otherwise.")},
             {"role": "user", "content": "An email I received:\n<<<EMAIL\n" + text
                 + "\nEMAIL\n\nWrite my reply. What it should convey: " + instr
@@ -94,6 +103,13 @@ async def mail_ai(req: MailAiReq, db: Session = Depends(get_db),
         logger.warning("[MAIL] ai %s failed: %s", mode, e)
         raise HTTPException(status_code=502, detail="the model did not answer")
     out = out.strip()
+    # Belt over the prompt's braces: a placeholder signature still slips out sometimes, and a rule
+    # a model follows most of the time is a rule — a line of code is a guarantee. Trailing
+    # `[Anything]` lines are stripped, plus a valediction left orphaned directly above one.
+    import re as _re
+    cleaned = _re.sub(r"(\n\s*(?:best|regards|thanks|sincerely|cheers)[,!.]?\s*)?\n\s*\[[^\]\n]{1,40}\]\s*$",
+                      "", out, flags=_re.I).rstrip()
+    out = cleaned or out
     if not out:
         raise HTTPException(status_code=502, detail="the model did not answer")
     return {"ok": True, "content": out}

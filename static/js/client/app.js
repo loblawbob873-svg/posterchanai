@@ -21743,7 +21743,10 @@
         catch(_){ body = String(msg.body_html).replace(/<[^>]+>/g, ' '); }
       }
       if(!body.trim()) return '';
+      /* To: is the line that knows the USER'S name — without it the model literally cannot sign
+       * a reply correctly, which is where every [Your Name] placeholder came from. */
       return 'Subject: ' + (msg.subject || '') + '\nFrom: ' + (msg.from || msg.from_email || '')
+           + '\nTo: ' + (msg.to || '')
            + '\nDate: ' + (msg.ts ? new Date(msg.ts * 1000).toISOString().slice(0, 10) : '')
            + '\n\n' + body.slice(0, 16000);
     },
