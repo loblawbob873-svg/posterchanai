@@ -5290,7 +5290,22 @@
     const inmem = kind===10001 ? PINNED : kind===10003 ? BOOKMARKS : new Set();
     const eset = new Set([...inmem, ...(cur?cur.tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]):[])]);
     if(add) eset.add(eid); else eset.delete(eid);
-    const nonE = cur ? cur.tags.filter(t=>t[0]!=='e') : [];
+    /* FOREIGN TAGS SURVIVE A STALE READ. Kind 10003 is a STANDARD list other apps write too —
+     * gitworkshop keeps repo stars in it as `a` tags — and carrying non-e tags from `cur` alone
+     * re-publishes whatever version this read happened to see: one post bookmarked against a stale
+     * copy erased a repo star made elsewhere, permanently (replaceable events keep no history).
+     * So the carry is the UNION of every version the query returned, deduped whole-tag; `client`
+     * is skipped because publish() stamps its own. We only ever EDIT e-tags, so a union cannot
+     * resurrect one of our own deletions — and for tags we don't manage, resurrecting a foreign
+     * unstar for a while is the safe side of destroying a foreign star for ever. */
+    const nonE = []; const seenT = new Set();
+    for(const v of evs.sort((a,b)=>b.created_at-a.created_at)){
+      for(const t of (v.tags||[])){
+        if(!t || t[0]==='e' || t[0]==='client') continue;
+        const k=JSON.stringify(t);
+        if(!seenT.has(k)){ seenT.add(k); nonE.push(t); }
+      }
+    }
     const r = await publish(kind, cur?cur.content:'', nonE.concat([...eset].map(id=>['e',id])));
     return !!(r && r.ok);
   }
