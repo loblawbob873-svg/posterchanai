@@ -7992,3 +7992,8 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 .nav-ord .mini{background:none;border:1px solid var(--line,rgba(255,255,255,.15));border-radius:6px;
   color:var(--muted);cursor:pointer;font-size:10px;line-height:1;padding:4px 6px}
 .nav-ord .mini:hover{color:var(--cyan,#0ff);border-color:var(--cyan,#0ff)}
+/* The 🔒 sits in the switch's column, so every label starts at the same x whether a row toggles
+ * or not — the clustered layout ("enable buttons next to the up-down buttons") only reads clean
+ * when the name column is actually a column. */
+.nav-lock{display:inline-flex;width:44px;flex:0 0 44px;justify-content:center}
+

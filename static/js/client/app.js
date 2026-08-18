@@ -730,14 +730,15 @@
       <div class="nav-hide-list" id="nav-hide-list">${rows.map(r=>`
         <label class="fld nav-hide-row${r.sub?' sub':''}${r.group?' grp':''}" data-navrow="${enc(r.key)}" style="flex-direction:row;align-items:center;gap:8px">
           ${r.sub?'<span class="nav-ord"></span>':`<span class="nav-ord"><button type="button" class="mini" data-ordup="${enc(r.key)}" title="Move up">\u25b2</button><button type="button" class="mini" data-orddown="${enc(r.key)}" title="Move down">\u25bc</button></span>`}
-          <span style="flex:1;min-width:0">${enc(r.label)}${r.group?' <span class="muted small">(whole group)</span>':''}</span>
-          ${r.locked?'<span class="muted small" title="Always shown — it is how you get back here">\ud83d\udd12</span>'
+          ${r.locked?'<span class="nav-lock muted small" title="Always shown — it is how you get back here">\ud83d\udd12</span>'
                     :`<label class="switch"><input type="checkbox" data-navkey="${enc(r.key)}"${r.off?'':' checked'}><span class="slider"></span></label>`}
+          <span style="flex:1;min-width:0">${enc(r.label)}${r.group?' <span class="muted small">(whole group)</span>':''}</span>
         </label>${r.key === 'global' ? (() => { const off = tlHiddenSet(); return [['home','Home timeline'],['global','Nostrverse timeline'],['trending','Trending timeline']]
           .map(([t,l]) => `
-        <label class="fld nav-hide-row sub" style="flex-direction:row;justify-content:space-between;align-items:center;gap:8px">
-          <span style="flex:1;min-width:0">${l}</span>
+        <label class="fld nav-hide-row sub" style="flex-direction:row;align-items:center;gap:8px">
+          <span class="nav-ord"></span>
           <label class="switch"><input type="checkbox" data-tltab="${t}"${off.has(t)?'':' checked'}><span class="slider"></span></label>
+          <span style="flex:1;min-width:0">${l}</span>
         </label>`).join(''); })() : ''}`).join('')}</div>`;
   }
   function _wireNavHide(){
