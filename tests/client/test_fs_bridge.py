@@ -735,3 +735,35 @@ class TestTrashRestore(TestFsBridge):
         """)
         self.assertFalse(out["free"]["value"]["gone"], "an existing file read as free to overwrite")
         self.assertEqual(len(out["still"]["value"]), 1, "the trash copy went somewhere")
+
+
+@unittest.skipIf(not NODE, "no node on this node")
+class TestConfirmGoneSubtree(TestFsBridge):
+    """A deleted DIRECTORY must be provable ("i wanted to simulate a restore event" — deleting
+    .ssh outright parked six deletions as unconfirmable, because the per-file probe wanted the
+    parent healthy and the parent died with the folder). The proof walks up to the nearest live
+    ancestor; only the folder ROOT being unreachable stays unprovable — that's an unplugged
+    drive, not a deletion."""
+
+    def test_a_deleted_directory_is_provably_gone(self):
+        os.makedirs(os.path.join(self.root, "keys"))
+        with open(os.path.join(self.root, "keys", "id_rsa"), "w") as fh:
+            fh.write("k")
+        shutil.rmtree(os.path.join(self.root, "keys"))
+        out = self.run_js("""
+            await attempt('gone', () => B.confirmGone('r1', 'keys/id_rsa'));
+        """)
+        v = out["gone"]["value"]
+        self.assertTrue(v["gone"], "a genuinely deleted folder's file is not provable — its "
+                                   "tombstone would be held for ever")
+        self.assertTrue(v["parentAlive"])
+
+    def test_a_vanished_root_is_still_unprovable(self):
+        out = self.run_js("""
+            const fsp = require('fs/promises');
+            await fsp.rm(%s, { recursive: true, force: true });   // the drive left the building
+            await attempt('gone', () => B.confirmGone('r1', 'keys/id_rsa'));
+        """ % json.dumps(self.root))
+        v = out["gone"]["value"]
+        self.assertFalse(v["gone"], "an unplugged root read as a proven deletion — THE disaster")
+        self.assertFalse(v["parentAlive"])

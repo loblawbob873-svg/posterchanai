@@ -181,13 +181,32 @@ async function read(id, rel){
 async function confirmGone(id, rel){
   try{
     const abs = await resolveIn(id, rel);
+    const rootAbs = await resolveIn(id, '');
     try{ await fsp.stat(abs); return { gone: false, parentAlive: true }; }
     catch(e){
-      if(e && e.code === 'ENOENT'){
-        try{ await fsp.stat(path.dirname(abs)); return { gone: true, parentAlive: true }; }
-        catch(_){ return { gone: false, parentAlive: false }; }
+      if(!e || e.code !== 'ENOENT') return { gone: false, parentAlive: false };   // EACCES/EIO
+      /* WALK UP. A deleted FOLDER takes its children's parents with it, so "is the parent
+       * healthy" answered no for a genuine whole-directory deletion and the tombstones were held
+       * for ever ("i wanted to simulate a restore event" — deleting .ssh outright parked six
+       * deletions as unconfirmable). The proof for a subtree: climb until an ancestor stats,
+       * and require the topmost MISSING segment to be ENOENT under that live ancestor. Reaching
+       * the folder root without a live ancestor is the unmount case, and stays unprovable. */
+      let cur = abs;
+      while(true){
+        const up = path.dirname(cur);
+        if(cur === up || !up.startsWith(rootAbs)) return { gone: false, parentAlive: false };
+        try{
+          await fsp.stat(up);                              // live ancestor found
+          try{ await fsp.stat(cur); return { gone: false, parentAlive: false }; }  // raced back?
+          catch(e2){
+            return (e2 && e2.code === 'ENOENT') ? { gone: true, parentAlive: true }
+                                                : { gone: false, parentAlive: false };
+          }
+        }catch(e3){
+          if(!e3 || e3.code !== 'ENOENT') return { gone: false, parentAlive: false };
+          cur = up;                                        // parent missing too — keep climbing
+        }
       }
-      return { gone: false, parentAlive: false };     // EACCES/EIO: could not confirm
     }
   }catch(_){ return { gone: false, parentAlive: false }; }
 }

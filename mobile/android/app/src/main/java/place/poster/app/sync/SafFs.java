@@ -161,11 +161,21 @@ public final class SafFs implements SyncIo.Files {
      * nothing anywhere. Mirrors desktop fsbridge.confirmGone. */
     public boolean[] confirmGone(String rel) {
         try {
-            String parentId = resolve(dirName(rel), false);
-            if (parentId == null || statById(parentId) == null) return new boolean[]{false, false};
-            String childId = childId(parentId, baseName(rel));
-            if (childId == null) return new boolean[]{true, true};      // parent healthy, child absent
-            return new boolean[]{false, true};                          // still there
+            // Walk UP, mirroring the desktop bridge: a deleted directory takes its children's
+            // parents with it, so the proof climbs to the nearest live ancestor and requires the
+            // topmost missing segment to be absent under it. Only the ROOT being unreachable
+            // (the unmount / revoked-grant case) stays unprovable.
+            String cur = rel;
+            while (true) {
+                String up = dirName(cur);
+                String upId = resolve(up, false);
+                if (upId != null && statById(upId) != null) {
+                    String missing = childId(upId, baseName(cur));
+                    return missing == null ? new boolean[]{true, true} : new boolean[]{false, true};
+                }
+                if (up.isEmpty()) return new boolean[]{false, false};   // even the root is gone
+                cur = up;
+            }
         } catch (Exception e) { return new boolean[]{false, false}; }
     }
 
