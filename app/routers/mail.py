@@ -30,6 +30,7 @@ class MailAiReq(BaseModel):
     mode: str                    # 'summarize' | 'reply'
     text: str                    # the email, as plain text (subject/from/date headers + body)
     instruction: str | None = None   # reply mode: how the user wants it answered
+    myName: str | None = None    # the user's own name (the To header's display name), for the sign-off
 
 
 @router.post("/ai")
@@ -71,6 +72,7 @@ async def mail_ai(req: MailAiReq, db: Session = Depends(get_db),
         instr = (req.instruction or "").strip()[:1000]
         if not instr:
             raise HTTPException(status_code=400, detail="say how to reply")
+        myname = (req.myName or "").strip().strip('"<>').strip()[:60]
         # EMAIL FIRST, INSTRUCTION LAST, and an explicit cue to begin. The first shape put the
         # instruction at the top and the email underneath — and the local model, recency-biased,
         # CONTINUED the email instead of replying to it: a payroll summary came back verbatim as
@@ -84,15 +86,26 @@ async def mail_ai(req: MailAiReq, db: Session = Depends(get_db),
             # response that refers to what the sender wrote is what turned it into "Thanks! That's
             # very helpful. Have a great weekend!" (probed live on content-shaped, directive-shaped
             # and nonsense instructions before landing).
+            # TWO RULES BORN OF REAL DRAFTS. "I've called the front desk and scheduled the
+            # Mid-Year Review for next Tuesday at 10 AM" — a fabricated past-tense action over a
+            # vague "will do"; and "Best, Jordan" — a name that belongs to nobody, invented when
+            # the To line had no display name. Commitments may only come from the instruction, and
+            # the sign-off is GROUNDED: the client sends the user's name when it knows it, and with
+            # none the reply ends after the last content sentence (enforced again in code below).
             {"role": "system", "content": (
                 "You write email replies. Rules: never repeat or continue the original email; "
                 "never paste the instruction into the reply — it only says what the reply should "
-                "CONVEY; the reply is a complete, natural response that refers to what the sender "
-                "actually wrote (at least one full sentence). If a sign-off fits, sign with the "
-                "recipient's real name from the To line or the greeting — never a placeholder "
-                "like [Your Name]; with no name available, end without a signature. Output only "
-                "the body of the NEW reply, plain text: no subject line, no quoting, no "
-                "commentary. Match the sender's language unless the instruction says otherwise.")},
+                "CONVEY; the reply refers to what the sender actually wrote (at least one full "
+                "sentence). NEVER INVENT COMMITMENTS: no dates, times, deadlines, meetings, or "
+                "promised actions unless the instruction states them — when the instruction gives "
+                "no specifics, stay unspecific. "
+                + (("If a sign-off fits, sign exactly as: " + myname + ". Never any other name. ")
+                   if myname else
+                   "Do not add any sign-off, valediction or name at the end — stop after the "
+                   "last content sentence. ")
+                + "Output only the body of the NEW reply, plain text: no subject line, no "
+                "quoting, no commentary. Match the sender's language unless the instruction says "
+                "otherwise.")},
             {"role": "user", "content": "An email I received:\n<<<EMAIL\n" + text
                 + "\nEMAIL\n\nWrite my reply. What it should convey: " + instr
                 + "\n\nMy reply (a natural response to what the sender wrote):"},
@@ -109,6 +122,12 @@ async def mail_ai(req: MailAiReq, db: Session = Depends(get_db),
     import re as _re
     cleaned = _re.sub(r"(\n\s*(?:best|regards|thanks|sincerely|cheers)[,!.]?\s*)?\n\s*\[[^\]\n]{1,40}\]\s*$",
                       "", out, flags=_re.I).rstrip()
+    # With NO name known, any trailing valediction+name block is an invention ("Best,\nJordan" —
+    # signed as somebody who does not exist). Strip it whole; with a name known, the model was told
+    # exactly what to sign and a real signature is left alone.
+    if mode == "reply" and not (req.myName or "").strip():
+        cleaned = _re.sub(r"\n\s*(?:best|regards|thanks|thank you|sincerely|cheers|warmly)[,!.]?\s*\n\s*\S[^\n]{0,30}\s*$",
+                          "", cleaned, flags=_re.I).rstrip()
     out = cleaned or out
     if not out:
         raise HTTPException(status_code=502, detail="the model did not answer")

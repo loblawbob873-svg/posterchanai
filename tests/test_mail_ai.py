@@ -84,10 +84,47 @@ class EndpointTests(unittest.TestCase):
         chat2 = _FakeChat("All good.\n[Name]")
         out2 = _run(M.MailAiReq(mode="reply", text="hi", instruction="ok"), chat2)
         self.assertEqual(out2["content"], "All good.")
-        # …and a reply with a REAL signature is left alone.
+        # …and a signature is kept only when the name was GIVEN — with no myName, "Dustin" is as
+        # unverifiable as "Jordan", and both go.
         chat3 = _FakeChat("On it.\n\nBest,\nDustin")
-        out3 = _run(M.MailAiReq(mode="reply", text="hi", instruction="ok"), chat3)
+        out3 = _run(M.MailAiReq(mode="reply", text="hi", instruction="ok", myName="Dustin"), chat3)
         self.assertEqual(out3["content"], "On it.\n\nBest,\nDustin")
+
+    def test_commitments_may_only_come_from_the_instruction(self):
+        """"I've called the front desk and scheduled the Mid-Year Review for next Tuesday at 10 AM"
+        — a fabricated past-tense action over a vague "will do". The rule is in the prompt; probed
+        live 3/3 on the exact bait before landing."""
+        chat = _FakeChat("ok")
+        _run(M.MailAiReq(mode="reply", text="hi", instruction="will do"), chat)
+        self.assertIn("NEVER INVENT COMMITMENTS", chat.calls[0][0]["content"])
+
+    def test_the_signoff_is_grounded_or_absent(self):
+        chat = _FakeChat("ok")
+        _run(M.MailAiReq(mode="reply", text="hi", instruction="ok", myName="Dustin"), chat)
+        self.assertIn("sign exactly as: Dustin", chat.calls[0][0]["content"])
+        chat2 = _FakeChat("ok")
+        _run(M.MailAiReq(mode="reply", text="hi", instruction="ok"), chat2)
+        self.assertIn("Do not add any sign-off", chat2.calls[0][0]["content"])
+
+    def test_an_invented_name_is_stripped_when_no_name_was_given(self):
+        """"Best, Jordan" — signed as somebody who does not exist. With no myName, any trailing
+        valediction+name block is an invention and code removes it; with a name given, a real
+        signature is left alone."""
+        chat = _FakeChat("On it, thanks!\n\nBest,\nJordan")
+        out = _run(M.MailAiReq(mode="reply", text="hi", instruction="ok"), chat)
+        self.assertEqual(out["content"], "On it, thanks!")
+        chat2 = _FakeChat("On it, thanks!\n\nBest,\nDustin")
+        out2 = _run(M.MailAiReq(mode="reply", text="hi", instruction="ok", myName="Dustin"), chat2)
+        self.assertEqual(out2["content"], "On it, thanks!\n\nBest,\nDustin")
+
+    def test_the_client_grounds_the_name_from_the_to_header(self):
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        app = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+        at = app.index("async aiReply(msg")
+        body = app[at:at + 2200]
+        self.assertIn("myName", body)
+        self.assertIn("msg.to", body, "the name comes from somewhere other than the To header")
 
     def test_drafting_runs_at_task_temperature(self):
         chat = _FakeChat("ok")

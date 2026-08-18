@@ -21804,7 +21804,11 @@
       if(!text){ toast('this message has no text to read'); return; }
       const hold = this._aiHold('\u21a9\ufe0f AI reply', 'drafting your reply');
       try{
-        const d = await this._aiPost('/api/mail/ai', { mode:'reply', text, instruction: String(instr).trim() });
+        /* The user's own name, from the To header's display name — the ONLY grounded source. An
+         * ungrounded model signed a real reply "Best, Jordan": a person who does not exist. */
+        const myName = ((String(msg.to || '').match(/^\s*"?([^"<@]+?)"?\s*</) || [])[1] || '').trim();
+        const d = await this._aiPost('/api/mail/ai', { mode:'reply', text, instruction: String(instr).trim(),
+                                                       myName: myName || undefined });
         hold.done();
         /* Into the COMPOSER, never sent: the draft lands where every reply lands, with To/Subject
          * prefilled by the ordinary reply path and Send exactly one deliberate click away. */
