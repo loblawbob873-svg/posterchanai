@@ -188,7 +188,15 @@
     step('scanning');
     let disk, unread;
     try{ const got = await scan(fs, scanOpts, stopping); disk = got.disk; unread = got.unread; }
-    catch(e){ throw new Error('could not read the folder on this device — nothing has been changed. ('
+    catch(e){
+      /* "unknown sync folder" is not a read error — it is this device no longer holding the
+       * MAPPING for the folder (a cleared app profile, a reinstall). The files and the shared
+       * record are fine; only the handle is gone, and re-picking the folder mints a new one. */
+      if(/unknown sync folder/i.test(String((e && e.message) || e)))
+        throw new Error('this device no longer remembers where this folder lives — press '
+                      + '\u201cPoint at the folder again\u2026\u201d on its card (or remove and '
+                      + 're-add it). Your files and the shared record are untouched');
+      throw new Error('could not read the folder on this device — nothing has been changed. ('
                               + msg(e) + ')'); }
     if(stopping()) return halt(report);
     report.scanned = Object.keys(disk).length;
