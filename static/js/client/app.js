@@ -16793,6 +16793,16 @@
         // bug and wrong when the user genuinely just deleted a big folder — and since nothing else
         // ever sets `force`, without this branch the guard makes a legitimate mass-delete impossible.
         // So ASK, and honour the answer. Never report success for a write the server threw away.
+        /* The server KEEPS the account's first drive key (first-writer-wins) — if this save
+         * carried a losing key, the answer names the canonical one. Adopt it immediately: every
+         * further second on the losing key is another upload nobody else can open. What this
+         * device already sealed shows the wrong-key card line, whose fixer is "Send them again". */
+        try{ if(sr && sr.ok){ const jr=await sr.clone().json();
+          if(jr && jr.mk && jr.mk !== this._mkWrapped){
+            console.warn('files-index: this device held a losing drive key — adopting the account\u2019s');
+            this._mkWrapped = jr.mk; this.mk = null; this.saveLocal();
+            try{ toast('this device\u2019s drive key was out of step and has been corrected — if some files show \u201csealed with a different key\u201d, press \u201cSend them again\u201d on that folder'); }catch(_){}
+          } } }catch(_){}
         if(sr && sr.status===409){
           let why=''; try{ why=((await sr.json())||{}).error||''; }catch(_){}
           console.warn('files-index: server refused a collapsing save —', why);

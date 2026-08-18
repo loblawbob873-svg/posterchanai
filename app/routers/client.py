@@ -4523,6 +4523,21 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
             logger.warning("[client] files-index: cannot read current index, refusing to write: %s", e)
             return JSONResponse({"ok": False, "error": "index unavailable, not saved"}, status_code=503)
 
+        # THE DRIVE KEY IS FIRST-WRITER-WINS, FOREVER. Two fresh devices can both pull an empty
+        # index, both mint a master key, and both save — last-writer-wins on `mk` re-keyed the
+        # whole account under whichever device saved LAST, while the other had already sealed
+        # thousands of blobs under its own key. Measured on a brand-new pair the day this was
+        # written: the laptop could not open one file the desktop uploaded ("sealed with a
+        # different key", on a fresh sync). The server is the only place every client build passes
+        # through, so the rule lives here: once the account HAS a key, a save carrying a different
+        # one keeps the existing key, and the sender adopts it on its next pull (the client has
+        # done that since the minting bug). Same shape as the collapse guard below, for the same
+        # reason.
+        if isinstance(prev, dict) and prev.get("mk") and data.index.get("mk")                 and data.index.get("mk") != prev.get("mk"):
+            logger.warning("[client] files-index: KEPT the account's existing drive key for %s "
+                           "(a save tried to replace it)", pk[:12])
+            data.index["mk"] = prev["mk"]
+
         drop = _files_index_collapse(prev, data.index)
         if drop and not data.force:
             # THE invariant. Everything else protecting this document lives in client code, and the
@@ -4579,7 +4594,9 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
                 blossom_service.expire_blob_in(db, evicted_sha, _FILES_INDEX_BAK_DAYS)
         except Exception as e:
             logger.debug("[client] files-index: could not age out the old index blob: %s", e)
-        return JSONResponse({"ok": True})
+        # A kept key rides the answer so the sender adopts NOW — waiting for its next pull leaves a
+        # window in which it keeps sealing new uploads with the key that just lost.
+        return JSONResponse({"ok": True, "mk": mk_kept} if mk_kept else {"ok": True})
     doc = await store.get_doc(port, "pcai:files-index", seckey=sk)
     return JSONResponse({"ok": True, "index": doc if isinstance(doc, dict) else {}})
 
