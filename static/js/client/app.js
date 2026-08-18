@@ -692,23 +692,24 @@
     // Its own TAB, so an empty one has to say why rather than being a blank panel.
     if(!rows.length) return `<div class="muted small">Nothing to arrange — this install has no sidebar to read.</div>`;
     return `<div class="muted small">Turn off anything you don't use and it leaves the left sidebar, the phone's ☰ More sheet and the desktop. The \u25b2\u25bc arrows reorder — the sidebar and the ☰ sheet follow, and it syncs across your devices. Nothing is deleted and nothing stops working: the feature still runs and still opens from a link, and turning the switch back on brings it back everywhere. Syncs across your devices.<br>Settings, Bookmarks and Blossom aren't listed: Settings is how you get back to this screen, and the other two are the only lists of what you saved and uploaded.</div>
-      <div class="nav-hide-list" id="nav-hide-list">${rows.map(r=>`
-        <label class="fld nav-hide-row${r.sub?' sub':''}${r.group?' grp':''}" data-navrow="${enc(r.key)}" style="flex-direction:row;justify-content:space-between;align-items:center;gap:8px">
-          <span style="flex:1;min-width:0">${enc(r.label)}${r.group?' <span class="muted small">(whole group)</span>':''}</span>
-          ${r.sub?'':`<span class="nav-ord"><button type="button" class="mini" data-ordup="${enc(r.key)}" title="Move up">\u25b2</button><button type="button" class="mini" data-orddown="${enc(r.key)}" title="Move down">\u25bc</button></span>`}
-          <label class="switch"><input type="checkbox" data-navkey="${enc(r.key)}"${r.off?'':' checked'}><span class="slider"></span></label>
-        </label>`).join('')}</div>
+      <div class="search-section-title" style="margin-top:14px">Timelines</div>
+      <div class="muted small">Hide the Social tabs you never open. At least one stays.</div>
+      <div id="tl-hide-list">${(() => { const off = tlHiddenSet(); return [['home','Home'],['global','Nostrverse'],['trending','Trending']]
+        .map(([t,l]) => `<label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><span>${l}</span>
+          <label class="switch"><input type="checkbox" data-tltab="${t}"${off.has(t)?'':' checked'}><span class="slider"></span></label></label>`).join(''); })()}</div>
       <div class="search-section-title" style="margin-top:14px">Bottom bar (phone)</div>
       <div class="muted small">The four view buttons beside Compose and \u2630 More. Compose and More stay put \u2014 one is the point, the other is the way back.</div>
       <div id="mnav-slots">${mobileNavList().map((v,i)=>`
         <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><span class="muted small" style="width:52px">Slot ${i+1}</span>
           <select class="input" data-mnavslot="${i}">${mobileNavChoices().map(c=>`<option value="${enc(c.v)}"${c.v===v?' selected':''}>${enc(c.label)}</option>`).join('')}</select>
         </label>`).join('')}</div>
-      <div class="search-section-title" style="margin-top:14px">Timelines</div>
-      <div class="muted small">Hide the Social tabs you never open. At least one stays.</div>
-      <div id="tl-hide-list">${(() => { const off = tlHiddenSet(); return [['home','Home'],['global','Nostrverse'],['trending','Trending']]
-        .map(([t,l]) => `<label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><span>${l}</span>
-          <label class="switch"><input type="checkbox" data-tltab="${t}"${off.has(t)?'':' checked'}><span class="slider"></span></label></label>`).join(''); })()}</div>`;
+      <div class="search-section-title" style="margin-top:14px">Sidebar rows</div>
+      <div class="nav-hide-list" id="nav-hide-list">${rows.map(r=>`
+        <label class="fld nav-hide-row${r.sub?' sub':''}${r.group?' grp':''}" data-navrow="${enc(r.key)}" style="flex-direction:row;justify-content:space-between;align-items:center;gap:8px">
+          <span style="flex:1;min-width:0">${enc(r.label)}${r.group?' <span class="muted small">(whole group)</span>':''}</span>
+          ${r.sub?'':`<span class="nav-ord"><button type="button" class="mini" data-ordup="${enc(r.key)}" title="Move up">\u25b2</button><button type="button" class="mini" data-orddown="${enc(r.key)}" title="Move down">\u25bc</button></span>`}
+          <label class="switch"><input type="checkbox" data-navkey="${enc(r.key)}"${r.off?'':' checked'}><span class="slider"></span></label>
+        </label>`).join('')}</div>`;
   }
   function _wireNavHide(){
     const list = $('#nav-hide-list'); if(!list) return;

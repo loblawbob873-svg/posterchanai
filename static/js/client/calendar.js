@@ -212,6 +212,78 @@
      * inside all 42 cells, which on a 700-event calendar is ~30,000 parses per repaint. Recurrence
      * expansion on top of that would have made every month change visibly stutter.
      */
+    /* ---- The NOSTR layer: NIP-52 public calendar events (kinds 31922 date / 31923 time) ------
+     *
+     * The community's events, read straight off the relay pool the way Git reads repos — the WoT
+     * relay IS the discovery filter, so no author list is needed. A MIRROR like a subscribed .ics:
+     * drawn, openable, never written to CalDAV and never editable here. Latest replaceable wins per
+     * (kind, author, d). Off/on with one switch, remembered per device. */
+    const NOSTR_CAL = '__nostr';
+    const nostrOn = () => { try{ return localStorage.getItem('pc_cal_nostr') !== '0'; }catch(_){ return true; } };
+    const setNostrOn = (on) => { try{ localStorage.setItem('pc_cal_nostr', on ? '1' : '0'); }catch(_){}
+                                 if(on && _n52evs === null){ _n52evs = []; loadNostr(); }
+                                 S.rev++; paint(); };
+    let _n52evs = null;          // parsed events, or null = never loaded
+    function _n52parse(ev){
+      const tag = (n) => (((ev.tags || []).find(t => t[0] === n) || [])[1] || '');
+      const d = tag('d'); if(!d) return null;
+      const title = tag('title') || tag('name') || '(untitled event)';
+      let start = null, end = null, allDay = false;
+      if(ev.kind === 31922){
+        allDay = true;
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(tag('start')); if(!m) return null;
+        start = new Date(+m[1], +m[2] - 1, +m[3]);
+        const me2 = /^(\d{4})-(\d{2})-(\d{2})$/.exec(tag('end'));
+        end = me2 ? new Date(+me2[1], +me2[2] - 1, +me2[3]) : null;   // NIP-52: end is EXCLUSIVE
+      }else{
+        const t = parseInt(tag('start'), 10); if(!isFinite(t) || t <= 0) return null;
+        start = new Date(t * 1000);
+        const te = parseInt(tag('end'), 10);
+        end = (isFinite(te) && te > t) ? new Date(te * 1000) : null;
+      }
+      return { uid: ev.kind + ':' + ev.pubkey + ':' + d, pk: ev.pubkey, kind: ev.kind,
+               created_at: ev.created_at || 0, title: String(title).slice(0, 200),
+               location: tag('location').slice(0, 200), notes: String(ev.content || '').slice(0, 4000),
+               allDay, start, end };
+    }
+    async function loadNostr(){
+      if(typeof Relay === 'undefined' || !Relay.query) return;
+      let evs = [];
+      try{ if(Relay.ready) await Relay.ready(6000); }catch(_){}
+      try{ evs = await Relay.query([{ kinds: [31922, 31923], limit: 500 }], 8000) || []; }
+      catch(_){ evs = []; }
+      const best = {};                       // replaceable: latest per (kind, author, d)
+      for(const ev of evs){
+        const p2 = _n52parse(ev); if(!p2) continue;
+        if(!best[p2.uid] || best[p2.uid].created_at < p2.created_at) best[p2.uid] = p2;
+      }
+      _n52evs = Object.values(best);
+      S.rev++;
+      if(inView()) paint();
+    }
+    /** The layer's occurrences inside the 42-day window, in the shape the grid already draws. */
+    function _n52occ(start, end){
+      const out = [];
+      for(const e of (_n52evs || [])){
+        if(!e.start) continue;
+        if(e.allDay){
+          // A date-based event covers [start, end) — every day gets a chip, capped at the window.
+          let d = new Date(Math.max(e.start, start));
+          const stop = Math.min(e.end ? e.end.getTime() : e.start.getTime() + 86400000, end.getTime());
+          for(let n = 0; d.getTime() < stop && n < 62; n++){
+            out.push({ cal: NOSTR_CAL, uid: e.uid, title: e.title, location: e.location,
+                       notes: e.notes, allDay: true, start: new Date(d), key: ymd(d),
+                       component: 'VEVENT' });
+            d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+          }
+        }else if(e.start >= start && e.start < end){
+          out.push({ cal: NOSTR_CAL, uid: e.uid, title: e.title, location: e.location,
+                     notes: e.notes, allDay: false, start: e.start, key: ymd(e.start),
+                     component: 'VEVENT' });
+        }
+      }
+      return out;
+    }
     let _index = null, _indexSig = '';
     function occurrenceIndex(){
       const m = S.month || firstOf(new Date());
@@ -229,6 +301,7 @@
           for(const o of occ) (map[o.key] = map[o.key] || []).push(decorate(o));
         }
       }
+      if(nostrOn()) for(const o of _n52occ(start, end)) (map[o.key] = map[o.key] || []).push(decorate(o));
       for(const k of Object.keys(map)){
         map[k].sort((a, b) => (a.allDay === b.allDay) ? (a.time || '').localeCompare(b.time || '')
                                                       : (a.allDay ? -1 : 1));
@@ -238,6 +311,7 @@
     }
 
     const colorOf = cal => {
+      if(cal === NOSTR_CAL) return '#a78bfa';           // the network's events, one fixed violet
       const c = S.cals.find(c => c.id === cal);
       if(c && c.color) return c.color;
       const i = Math.max(0, S.cals.findIndex(c => c.id === cal));
@@ -449,6 +523,9 @@
     async function load(){
       S.loading = true; S.error = '';
       paint();
+      // The Nostr layer rides its own socket and its own clock: fired here, drawn when it lands,
+      // never blocking the personal calendar it sits beside. Once per session unless refreshed.
+      if(_n52evs === null && nostrOn()){ _n52evs = []; loadNostr(); }
       try{
         S.sync = await api('/api/calendar/config');
         // The config call reaching the server IS the proof that it is reachable, so this is the
@@ -550,7 +627,7 @@
             <div class="cal-evtitle">${enc(e.title)}</div>
             <div class="cal-evmeta">${e.allDay ? 'All day' : enc(e.time)}${e.location?' · '+enc(e.location):''}</div>
           </div>
-          <button class="btn btn-ghost small cal-edit" data-uid="${enc(e.uid)}" data-cal="${enc(e.cal)}">Edit</button>
+          ${e.cal === NOSTR_CAL ? '' : `<button class="btn btn-ghost small cal-edit" data-uid="${enc(e.uid)}" data-cal="${enc(e.cal)}">Edit</button>`}
         </div>`).join('')
         : '<div class="empty">Nothing on this day.</div>';
       return `<div class="cal-day-panel">
@@ -601,6 +678,7 @@
         if(rec) editEvent(Object.assign(parseItem(rec), { cal: b.dataset.cal }));
       });
       $$('.cal-ev', root).forEach(el => el.onclick = ()=>{
+        if(el.dataset.cal === NOSTR_CAL){ nostrDetails(el.dataset.uid); return; }
         const rec = (S.items[el.dataset.cal] || []).find(r => r.uid === el.dataset.uid);
         if(rec) editEvent(Object.assign(parseItem(rec), { cal: el.dataset.cal }));
       });
@@ -609,6 +687,67 @@
     }
 
     // ---- event editor ------------------------------------------------------------------------
+    /* A network event opens as a CARD: what, when, where, who — with the organizer's profile a tap
+     * away — and no Edit, because it is somebody's published statement, not a row of yours. */
+    function nostrDetails(uid){
+      const e = (_n52evs || []).find(x => x.uid === uid); if(!e) return;
+      const p2 = (PC.profOf && PC.profOf(e.pk)) || {}; if(PC.needProfile) PC.needProfile(e.pk);
+      const when = e.allDay
+        ? (ymd(e.start) + (e.end ? ' \u2192 ' + ymd(new Date(e.end.getTime() - 86400000)) : '') + ' \u00b7 all day')
+        : (e.start.toLocaleString() + (e.end ? ' \u2192 ' + e.end.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : ''));
+      PC.modal(`<h3>\ud83d\udfe3 ${enc(e.title)}</h3>
+        <div class="muted small">${enc(when)}${e.location ? ' \u00b7 \ud83d\udccd ' + enc(e.location) : ''}</div>
+        ${e.notes ? `<div style="white-space:pre-wrap;overflow-wrap:anywhere;margin-top:10px;max-height:50vh;overflow-y:auto">${enc(e.notes)}</div>` : ''}
+        <div class="row" style="margin-top:12px;align-items:center;gap:8px">
+          <img src="${enc(p2.picture || PC.LOGO)}" onerror="this.src='${PC.LOGO}'" style="width:28px;height:28px;border-radius:50%">
+          <button class="btn btn-ghost small" id="n52-who">${enc(p2.name || p2.display_name || 'organizer')}</button>
+        </div>`, root => {
+          const w = root.querySelector('#n52-who');
+          if(w) w.onclick = ()=>{ PC.closeModal(); PC.openProfile && PC.openProfile(e.pk); };
+        });
+    }
+    /* Publishing one is a plain signed 31923 — time-based, the common case — through the app's own
+     * publish(). Nothing touches CalDAV: a public event is a statement to the network, and your
+     * private calendar is a different thing on purpose. */
+    function publishNostrEvent(){
+      const today = todayKey();
+      PC.modal(`<h3>\ud83d\udfe3 Publish a Nostr event</h3>
+        <div class="muted small">Public: anyone on your relays can see it.</div>
+        <label class="fld">Title<input class="input" id="n52-t" maxlength="120"></label>
+        <label class="fld">Date<input class="input" id="n52-d" type="date" value="${enc(today)}"></label>
+        <div class="row" style="gap:8px">
+          <label class="fld" style="flex:1">Starts<input class="input" id="n52-s" type="time" value="18:00"></label>
+          <label class="fld" style="flex:1">Ends<input class="input" id="n52-e" type="time" value="19:00"></label>
+        </div>
+        <label class="fld">Location (optional)<input class="input" id="n52-l" maxlength="200"></label>
+        <label class="fld">Details (optional)<textarea class="input" id="n52-n" rows="4"></textarea></label>
+        <button class="btn btn-cyan full" id="n52-go">Publish</button>`, root => {
+          root.querySelector('#n52-go').onclick = async ()=>{
+            const v = (id) => (root.querySelector(id).value || '').trim();
+            const title = v('#n52-t'); if(!title) return PC.toast('give it a title');
+            const day = v('#n52-d'); if(!day) return PC.toast('pick a date');
+            const st = new Date(day + 'T' + (v('#n52-s') || '18:00'));
+            let en = new Date(day + 'T' + (v('#n52-e') || ''));
+            if(!(en > st)) en = new Date(st.getTime() + 3600000);
+            const tags = [['d', 'pc-' + Math.random().toString(36).slice(2, 10)],
+                          ['title', title],
+                          ['start', String(Math.floor(st.getTime() / 1000))],
+                          ['end', String(Math.floor(en.getTime() / 1000))]];
+            if(v('#n52-l')) tags.push(['location', v('#n52-l')]);
+            const btn = root.querySelector('#n52-go');
+            btn.disabled = true; btn.textContent = 'publishing\u2026';
+            try{
+              const r = await PC.publish(31923, v('#n52-n'), tags);
+              if(r && r.ok === false) throw new Error('the relay did not store it');
+              PC.closeModal(); PC.toast('\ud83d\udfe3 published');
+              loadNostr();
+            }catch(err){
+              btn.disabled = false; btn.textContent = 'Publish';
+              PC.toast('not published: ' + ((err && err.message) || err));
+            }
+          };
+        });
+    }
     function editEvent(ev){
       const isNew = !ev;
       const key = (ev && ev.key) || S.sel || todayKey();
@@ -705,7 +844,13 @@
             <a class="btn btn-ghost small" href="/api/calendar/export?cal=${encodeURIComponent(c.id)}"
                download><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Export</a>
             <button class="btn btn-ghost small cal-del" data-id="${enc(c.id)}">Delete</button>
-          </div>`).join('') || '<div class="empty">No calendars yet.</div>'}</div>
+          </div>`).join('') || '<div class="empty">No calendars yet.</div>'}
+        <div class="cal-row">
+            <i class="cal-dot" style="background:#a78bfa"></i>
+            <span class="cal-name">Nostr events <span class="cal-sub-tag">network</span></span>
+            <label class="switch" title="Show the network's public NIP-52 events on your grid"><input type="checkbox" id="cal-nostr-on"${nostrOn()?' checked':''}><span class="slider"></span></label>
+            <button class="btn btn-ghost small" id="cal-nostr-pub">\ud83d\udfe3 Publish an event</button>
+        </div></div>
         <div class="row" style="margin-top:14px;flex-wrap:wrap;gap:8px">
           <button class="btn btn-cyan small" id="cal-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New calendar</button>
           <button class="btn btn-cyan small" id="cal-sub"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Subscribe to a URL</button>
@@ -714,6 +859,10 @@
         </div>
         <input type="file" id="cal-file" accept=".ics,text/calendar" hidden>`, root => {
         $('#cal-add', root).onclick = ()=>{ closeModal(); makeCalendar(); };
+        { const nr = root.querySelector('#cal-nostr-on');
+          if(nr) nr.onchange = ()=> setNostrOn(nr.checked);
+          const np = root.querySelector('#cal-nostr-pub');
+          if(np) np.onclick = ()=>{ closeModal(); publishNostrEvent(); }; }
         $('#cal-sub', root).onclick = ()=>{ closeModal(); subscribePanel(); };
         $$('.cal-refresh', root).forEach(b => b.onclick = async ()=>{
           b.disabled = true; b.textContent = 'checking…';
