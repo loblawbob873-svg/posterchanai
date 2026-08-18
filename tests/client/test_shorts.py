@@ -128,3 +128,43 @@ class RendererDiscipline(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PostingTests(unittest.TestCase):
+    """Posting writes Divine's measured shape, and the upload files under the drive's Posts folder
+    like every composer attachment — the builder is LIFTED and RUN."""
+
+    def test_the_builder_emits_divines_shape(self):
+        js = "%s\nprocess.stdout.write(JSON.stringify(_shortTagsFor({url:'https://x/aa', sha:'f'.repeat(64)}, {mime:'video/mp4', size:123, title:'hi', poster:'https://x/p.jpg', dim:'1080x1920', dur:5.4})));" % _lift("_shortTagsFor")
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr[-800:])
+        tags = json.loads(r.stdout)
+        d = dict((t[0], t[1:]) for t in tags)
+        self.assertEqual(d["d"][0], "f" * 64)
+        im = d["imeta"]
+        self.assertIn("url https://x/aa", im)
+        self.assertIn("m video/mp4", im)
+        self.assertIn("image https://x/p.jpg", im)
+        self.assertIn("dim 1080x1920", im)
+        self.assertIn("x " + "f" * 64, im)
+        self.assertEqual(d["duration"][0], "5")
+        self.assertEqual(d["title"][0], "hi")
+        # …and our own reader must parse what our own writer produces (round trip)
+        js2 = "%s\n%s\nconst tags=_shortTagsFor({url:'https://x/aa', sha:'f'.repeat(64)},{mime:'video/mp4',title:'hi',poster:'https://x/p.jpg',dur:5});process.stdout.write(JSON.stringify(_shortOf({kind:34236,content:'hi',tags})));" % (_lift("_shortTagsFor"), _lift("_shortOf"))
+        r2 = subprocess.run([NODE, "-e", js2], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r2.returncode, 0, r2.stderr[-800:])
+        rt = json.loads(r2.stdout)
+        self.assertEqual(rt["url"], "https://x/aa")
+        self.assertEqual(rt["poster"], "https://x/p.jpg")
+
+    def test_uploads_file_under_the_posts_folder(self):
+        a = APP.index("async function _postShort(")
+        seg = APP[a:a + 3600]
+        self.assertEqual(seg.count("{folder:'Posts'}"), 2,
+                         "the video or its poster lands in Files as a bare sha instead of Posts")
+
+    def test_the_grid_offers_the_post_button(self):
+        g = APP.index("function _shortsGrid(")
+        seg = APP[g:g + 2600]
+        self.assertIn("short-post", seg)
+        self.assertIn('accept="video/*"', seg)

@@ -15810,12 +15810,72 @@
     }
     if(_shortsAt<0) _shortsGrid(host); else _shortsPlayer(host, _shortsAt);
   }
+  /* Build the 34236 tag set in DIVINE'S MEASURED SHAPE (d = the video's sha, imeta with url/m/
+   * image/dim/size/x, title, published_at, duration, alt) — so a short posted here renders in
+   * Divine and every NIP-71 reader, not only in our own view. Pure, so tests can lift and run it. */
+  function _shortTagsFor(up, meta){
+    const im=['imeta','url '+up.url,'m '+(meta.mime||'video/mp4')];
+    if(meta.poster) im.push('image '+meta.poster);
+    if(meta.dim) im.push('dim '+meta.dim);
+    if(meta.size) im.push('size '+String(meta.size));
+    if(up.sha) im.push('x '+up.sha);
+    const tags=[['d', up.sha || ('pc'+Math.random().toString(36).slice(2,10))], im,
+                ['title', String(meta.title||'').slice(0,140)],
+                ['published_at', String(Math.floor(Date.now()/1000))],
+                ['alt', String(meta.title||'a short video').slice(0,140)]];
+    if(meta.dur) tags.push(['duration', String(Math.max(1, Math.round(meta.dur)))]);
+    return tags;
+  }
+  async function _postShort(file, host){
+    if(!file || !/^video\//.test(file.type||'')){ toast('pick a video'); return; }
+    const title=await uiPrompt('Give your short a title', ''); if(title===null) return;
+    const hold=_aiHold ? null : null;
+    const st=document.createElement('div'); st.className='empty'; st.textContent='Uploading your short…';
+    host.prepend(st);
+    try{
+      /* Poster + duration + dimensions read from the file itself, client-side: a <video> over an
+       * object URL seeks to the first frame and a canvas captures it — the same first frame every
+       * other client will show. */
+      const meta={ mime:file.type, size:file.size, title:String(title||'').trim(), poster:'', dim:'', dur:0 };
+      try{
+        const ou=URL.createObjectURL(file);
+        const v=document.createElement('video'); v.muted=true; v.playsInline=true; v.src=ou;
+        await new Promise((res,rej)=>{ v.onloadeddata=res; v.onerror=()=>rej(new Error('unreadable video')); setTimeout(res, 8000); });
+        try{ v.currentTime=Math.min(0.1, (v.duration||1)/10); await new Promise(r=>{ v.onseeked=r; setTimeout(r,1500); }); }catch(_){}
+        meta.dur=v.duration||0;
+        if(v.videoWidth) meta.dim=v.videoWidth+'x'+v.videoHeight;
+        const c=document.createElement('canvas'); c.width=v.videoWidth||720; c.height=v.videoHeight||1280;
+        c.getContext('2d').drawImage(v,0,0,c.width,c.height);
+        const pb=await new Promise(r=>c.toBlob(r,'image/jpeg',0.82));
+        URL.revokeObjectURL(ou);
+        if(pb){ try{ meta.poster=await uploadBlob(new File([pb],'poster.jpg',{type:'image/jpeg'}), {folder:'Posts'}); }catch(_){} }
+      }catch(_){}
+      // Filed under the drive's Posts folder, exactly like a composer attachment — an upload with
+      // no folder is a bare sha in Files, which reads as clutter rather than as your own post.
+      const url=await uploadBlob(file, {folder:'Posts'});
+      const sha=(String(url).match(/([0-9a-f]{64})/)||[])[1]||'';
+      st.textContent='Publishing…';
+      const r=await publish(34236, meta.title, _shortTagsFor({url, sha}, meta));
+      if(r && r.ok===false) throw new Error(r.msg||'the relay refused it');
+      toast('short posted 🎬');
+      _shortsAt=-1; renderShorts();
+    }catch(e){
+      st.remove();
+      const m=String((e&&e.message)||e);
+      if(_blossomDenied(e)) { toast('no upload access here yet — ask the admin'); try{ requestBlossomAccess(); }catch(_){} }
+      else toast('couldn’t post: '+m);
+    }
+  }
   /* THE BROWSE GRID IS THE FRONT DOOR — "only one video at a time" is a player, not a feed. Poster
    * tiles with duration badges, so a page shows a dozen choices; tapping one opens the full-screen
    * player AT that short, and scrolling continues from there. */
   function _shortsGrid(host){
     const vids=_shortsList;
-    host.innerHTML=`<div class="shorts-grid">${vids.map((s,i)=>{ const p=profOf(s.e.pubkey)||{}; const nm=p.name||p.display_name||'anon';
+    host.innerHTML=`<div class="row" style="padding:6px 4px;gap:8px;align-items:center">
+        <button class="btn btn-neon small" id="short-post"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Post a short</button>
+        <input type="file" id="short-file" accept="video/*" style="display:none">
+        <span class="muted small">Short vertical videos — yours goes out in the format Divine and every NIP-71 app reads.</span>
+      </div><div class="shorts-grid">${vids.map((s,i)=>{ const p=profOf(s.e.pubkey)||{}; const nm=p.name||p.display_name||'anon';
       return `<div class="short-tile" data-i="${i}">
         ${s.poster?`<img src="${enc(s.poster)}" loading="lazy" onerror="this.remove()">`:`<div class="short-tile-blank">🎬</div>`}
         ${s.dur?`<span class="short-dur">${s.dur>=60?Math.floor(s.dur/60)+':'+String(s.dur%60).padStart(2,'0'):'0:'+String(s.dur).padStart(2,'0')}</span>`:''}
@@ -15823,6 +15883,8 @@
         <span class="short-tile-a"><img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">${enc(nm)}</span>
       </div>`; }).join('')}</div>`;
     $$('.short-tile',host).forEach(t=> t.onclick=()=>{ _shortsAt=+t.dataset.i; _shortsPlayer(host, _shortsAt); });
+    { const pb=$('#short-post',host), fi=$('#short-file',host);
+      if(pb&&fi){ pb.onclick=()=>fi.click(); fi.onchange=()=>{ const f=fi.files&&fi.files[0]; if(f) _postShort(f, host); fi.value=''; }; } }
   }
   function _shortsPlayer(host, start){
     const vids=_shortsList;
