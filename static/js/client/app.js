@@ -21548,6 +21548,97 @@
   // The mailbox lives as encrypted kind-30078 events server-side; this GUI talks to /api/mail. IMAP/
   // SMTP + at-rest encryption + Blossom attachments are all server-side. Themed via CSS vars (all 7
   // themes) and collapses to a single-pane flow on mobile (see .mail-* in client.css).
+  /* ===== nostr-mail (https://nostr-mail.com, spec v0.2.0-draft) ==================================
+   *
+   * Email that stays email: SMTP/IMAP transport, with the BODY carried in ASCII armor blocks —
+   * NIP-44/NIP-04 ciphertext or signed plaintext — between Nostr keys. This codec parses the
+   * armor (new AND legacy tags, `> ` quote prefixes tolerated per spec §3.5.4) and builds the one
+   * format encoders may produce.
+   *
+   * V1 BOUNDARIES, each the honest line rather than a guess:
+   *   · NIP-44: full support both ways. Sending uses "unsigned + SEAL" (§3.3) — the one shape every
+   *     signer can produce, because a remote signer signs EVENTS, not raw bytes.
+   *   · Signed plaintext: displayed (the spec keeps a readable copy above the armor for exactly
+   *     this), badge says "signature present" — raw Schnorr verify isn't exported by our bundle
+   *     yet, so no claim of VERIFIED is ever made.
+   *   · NIP-04: REFUSED, quoting the spec's own rule — §4.1 requires verify-then-decrypt, and
+   *     decrypting what we cannot verify first is the padding-oracle window the rule exists for.
+   *   · Glossia encoding: detected and named as unsupported; the plaintext-above-armor still shows.
+   */
+  const NMail = {
+    _TAG: /^(?:>\s*)*-{3,}\s*(BEGIN|END)\s+NOSTR\s+(.+?)\s*-{3,}\s*$/,
+    /** Parse the OUTERMOST nostr-mail message out of a text body. null = not nostr-mail. */
+    parse(text){
+      const lines = String(text || '').split(/\r?\n/);
+      const blocks = [];                    // [{tag, body:[lines]}] in order
+      let cur = null, sawAny = false;
+      for(const raw of lines){
+        const m = this._TAG.exec(raw);
+        if(m){
+          sawAny = true;
+          const kind = m[1], tag = m[2].toUpperCase();
+          if(kind === 'BEGIN'){ cur = { tag, body: [] }; blocks.push(cur); }
+          else cur = null;                 // END NOSTR MESSAGE / END NOSTR SEAL
+          continue;
+        }
+        if(cur) cur.body.push(raw.replace(/^(?:>\s*)+/, ''));
+      }
+      if(!sawAny || !blocks.length) return null;
+      const plainAbove = [];
+      for(const raw of lines){ if(this._TAG.test(raw)) break; plainAbove.push(raw); }
+      const first = blocks[0];
+      const enc = /^NIP-(44|04)\s+ENCRYPTED\s+(?:BODY|MESSAGE)$/.exec(first.tag);
+      const signedBody = /^SIGNED\s+(?:BODY|MESSAGE)$/.test(first.tag);
+      const sealOnly = /^SEAL$/.test(first.tag);
+      const idBlock = blocks.find(b => /^SIGNATURE$/.test(b.tag)) || blocks.find(b => /^SEAL$/.test(b.tag));
+      let name = '', pubkey = '', glossiaKey = false;
+      if(idBlock){
+        const bl = idBlock.body.map(x => x.trim()).filter(Boolean);
+        for(const ln of bl){
+          if(!name && ln[0] === '@'){ name = ln.slice(1); continue; }
+          const pk = this._pk(ln);
+          if(pk){ pubkey = pk; }
+          else if(!/^[0-9a-fA-F]+$/.test(ln) || (ln.length !== 128 && ln.length !== 64)){
+            // not hex-sig, not a pubkey we can read → possibly glossia-encoded identity
+            if(!pubkey) glossiaKey = true;
+          }
+        }
+      }
+      const body = (first.body || []).map(x => x.trim()).filter(Boolean).join('');
+      const looksB64 = /^[A-Za-z0-9+/=]+$/.test(body);
+      if(enc){
+        return { kind: 'nip' + enc[1], cipher: looksB64 ? body : '', glossia: !looksB64 || glossiaKey,
+                 pubkey, name, signed: blocks.some(b => /^SIGNATURE$/.test(b.tag)),
+                 plainAbove: plainAbove.join('\n').trim() };
+      }
+      if(signedBody){
+        return { kind: 'signed', cipher: '', glossia: true /* signed bodies are always glossia (§3.2) */,
+                 pubkey, name, signed: true, plainAbove: plainAbove.join('\n').trim() };
+      }
+      if(sealOnly){
+        return { kind: 'sealed-plain', cipher: '', glossia: glossiaKey, pubkey, name, signed: false,
+                 plainAbove: plainAbove.join('\n').trim() };
+      }
+      return null;
+    },
+    _pk(ln){
+      if(/^[0-9a-f]{64}$/i.test(ln)) return ln.toLowerCase();
+      if(/^npub1[a-z0-9]{20,}$/i.test(ln)){
+        try{ const d = NT().nip19.decode(ln); if(d && d.type === 'npub') return d.data; }catch(_){ }
+      }
+      return '';
+    },
+    /** The one format encoders may produce: NIP-44 unsigned + SEAL (§3.3). */
+    armor(cipherB64, myNpub, myName){
+      return '----- BEGIN NOSTR NIP-44 ENCRYPTED BODY -----\n'
+           + String(cipherB64).replace(/(.{76})/g, '$1\n').replace(/\n$/, '') + '\n'
+           + '----- BEGIN NOSTR SEAL -----\n'
+           + '@' + String(myName || 'anon').replace(/\n/g, ' ') + '\n'
+           + myNpub + '\n'
+           + '----- END NOSTR MESSAGE -----';
+    },
+  };
+
   function _mailDate(ts){ if(!ts) return ''; const d=new Date(ts*1000), now=new Date();
     return d.toDateString()===now.toDateString() ? d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})
       : d.toLocaleDateString([], {month:'short', day:'numeric', year: d.getFullYear()===now.getFullYear()?undefined:'numeric'}); }
@@ -22039,15 +22130,59 @@
        * Scripts and same-origin stay OFF, which is what actually keeps this safe.
        *
        * Same rule as a web-search result, and for the same reason: it is somebody else's page. */
-      const body = m.body_html
+      /* nostr-mail: armor in the text body wins over the HTML rendering — the text/plain part is
+       * the spec's source of truth, and the HTML part of such mail is a rendering aid only. */
+      const nm = (m.body_text && m.body_text.indexOf('BEGIN NOSTR') >= 0) ? NMail.parse(m.body_text) : null;
+      const body = nm
+        ? this._nmailHtml(nm, m)
+        : (m.body_html
         ? `<iframe class="mail-html" referrerpolicy="no-referrer"
                    sandbox="allow-popups allow-popups-to-escape-sandbox"
                    srcdoc="${enc('<base target="_blank"><meta name="referrer" content="no-referrer">' + m.body_html)}"></iframe>`
-        : `<div class="mail-text">${this._linkify(enc(m.body_text||'')).replace(/\n/g,'<br>')}</div>`;
+        : `<div class="mail-text">${this._linkify(enc(m.body_text||'')).replace(/\n/g,'<br>')}</div>`);
       return `<div class="mail-msg${expanded?' open':''}">
         <div class="mail-msg-hd"><div class="mm-who"><b class="mm-sender" data-from="${enc(m.from_email||m.from||'')}" data-name="${enc(m.from||'')}" title="Who sent this">${enc(m.from||'')}</b><div class="muted small">To: ${enc((m.to||'').slice(0,90))}</div></div><span class="muted small mm-date">${enc(_mailDate(m.ts))}</span></div>
         <div class="mail-msg-body">${atts?`<div class="mail-atts">${atts}</div>`:''}<div class="mail-body">${body}</div></div>
       </div>`;
+    },
+    /* The nostr-mail card. Decryption is a signer round trip, so the card paints its state first
+     * and swaps the plaintext in when it lands — the same rule every slow surface here follows. */
+    _nmailHtml(nm, m){
+      const who = nm.name ? '@' + nm.name : (nm.pubkey ? nm.pubkey.slice(0, 12) + '\u2026' : 'unknown sender');
+      const head = `<div class="muted small">\ud83d\udd10 nostr-mail \u00b7 ${enc(who)}`
+                 + (nm.signed ? ' \u00b7 signature present (not verified here yet)' : '') + `</div>`;
+      if(nm.kind === 'nip04'){
+        return `<div class="mail-text">${head}<div class="nt-warn" style="margin-top:8px">This message uses NIP-04, `
+             + `which must be signature-verified BEFORE decryption (spec \u00a74.1) \u2014 and this client `
+             + `cannot verify raw signatures yet, so it will not decrypt it. Ask the sender to use NIP-44.</div>`
+             + (nm.plainAbove ? `<div style="margin-top:8px">${this._linkify(enc(nm.plainAbove)).replace(/\n/g,'<br>')}</div>` : '') + `</div>`;
+      }
+      if(nm.kind === 'signed' || nm.kind === 'sealed-plain' || nm.glossia || !nm.cipher || !nm.pubkey){
+        const why = nm.kind === 'signed' ? '' :
+          (nm.glossia ? `<div class="muted small" style="margin-top:6px">Part of this message is glossia-encoded, which this client cannot decode yet.</div>` :
+           (!nm.pubkey ? `<div class="muted small" style="margin-top:6px">No readable sender key in the SEAL/SIGNATURE block \u2014 cannot decrypt.</div>` : ''));
+        return `<div class="mail-text">${head}${why}`
+             + (nm.plainAbove ? `<div style="margin-top:8px">${this._linkify(enc(nm.plainAbove)).replace(/\n/g,'<br>')}</div>`
+                              : `<div class="muted small" style="margin-top:8px">(no plaintext copy in this message)</div>`) + `</div>`;
+      }
+      const id = 'nm-' + Math.random().toString(36).slice(2, 8);
+      setTimeout(() => this._nmailReveal(id, nm), 0);
+      return `<div class="mail-text" id="${id}">${head}<div class="muted small" style="margin-top:8px"><span class="spinner"></span> decrypting\u2026 your signer may need to approve</div></div>`;
+    },
+    async _nmailReveal(id, nm){
+      /* `signer` is the app's own binding — inside app.js there is no `PC`, the trap this file has
+       * now sprung twice on other features. */
+      let out = null, err = '';
+      try{
+        if(!signer || !signer.nip44dec) throw new Error('this login method can\u2019t decrypt (needs NIP-44)');
+        out = await signer.nip44dec(nm.pubkey, nm.cipher);
+      }catch(e){ out = null; err = (e && e.message) || String(e); }
+      const el = document.getElementById(id); if(!el) return;
+      const head = el.querySelector('.muted.small');
+      const headHtml = head ? head.outerHTML : '';
+      el.innerHTML = headHtml + (out != null
+        ? `<div style="margin-top:8px">${this._linkify(enc(out)).replace(/\n/g,'<br>')}</div>`
+        : `<div class="nt-warn" style="margin-top:8px">couldn\u2019t decrypt: ${enc(err || 'the signer did not answer')} \u2014 was this encrypted to your key?</div>`);
     },
     _renderThread(pane, thread, folder, acct, seedUid){
       const latest=thread[thread.length-1];
@@ -22310,7 +22445,8 @@
         <input class="input" id="cm-cc" placeholder="Cc (optional)" value="${enc(cc)}" autocomplete="off">
         <input class="input" id="cm-subj" placeholder="Subject" value="${enc(subj)}">
         <textarea class="input" id="cm-body" placeholder="Write your message…">${enc(body)}</textarea>
-        <div class="row cm-actions"><button class="btn btn-ghost small" id="cm-contacts">👤 Contacts</button><button class="btn btn-ghost small" id="cm-attach">📎 Attach</button><button class="btn btn-ghost small" id="cm-blossom">🌸 Blossom</button><button class="btn btn-ghost small" id="cm-draft">💾 Save draft</button><input type="file" id="cm-file" multiple hidden><span id="cm-atts" class="muted small cm-atts"></span></div>`,
+        <div class="row cm-actions"><button class="btn btn-ghost small" id="cm-contacts">👤 Contacts</button><button class="btn btn-ghost small" id="cm-attach">📎 Attach</button><button class="btn btn-ghost small" id="cm-blossom">🌸 Blossom</button><button class="btn btn-ghost small" id="cm-draft">💾 Save draft</button><button class="btn btn-ghost small" id="cm-nmail" title="Encrypt the body to a Nostr key (nostr-mail): the mail travels as ordinary email, unreadable to every server on the way">🔐 Encrypt</button><input type="file" id="cm-file" multiple hidden><span id="cm-atts" class="muted small cm-atts"></span></div>
+        <div class="fld hidden" id="cm-nmail-row"><label class="muted small">Recipient's Nostr key (npub)<input class="input" id="cm-nmail-pk" placeholder="npub1\u2026" autocomplete="off" style="font-size:16px"></label><div class="muted small">The body is NIP-44-encrypted to this key; the subject stays readable. The recipient opens it with nostr-mail or PosterChan.</div></div>`,
         box => box.classList.add('mail-compose-modal'));
       const drawAtts=()=>{ const e=$('#cm-atts'); if(e) e.innerHTML=atts.map(a=>'📎 '+enc(a.name)).join('  '); };
       drawAtts();
@@ -22342,8 +22478,25 @@
           else { toast('save failed'); btn.disabled=false; btn.textContent='💾 Save draft'; } }
         catch(_){ toast('save failed'); btn.disabled=false; btn.textContent='💾 Save draft'; }
       };
+      { const nb=$('#cm-nmail'), nr=$('#cm-nmail-row');
+        if(nb&&nr) nb.onclick=()=>{ nr.classList.toggle('hidden'); nb.classList.toggle('btn-cyan', !nr.classList.contains('hidden')); }; }
       $('#cm-send').onclick=async()=>{
         const payload={account:sendAcct(), ...gather()};
+        /* nostr-mail: wrap the body in the spec's one producible format (NIP-44 unsigned + SEAL)
+         * BEFORE it leaves — encryption happens here, at the signer; the server relays ciphertext. */
+        { const nr=$('#cm-nmail-row');
+          if(nr && !nr.classList.contains('hidden')){
+            const raw=($('#cm-nmail-pk')&&$('#cm-nmail-pk').value||'').trim();
+            const pk=NMail._pk(raw);
+            if(!pk){ toast('give a valid npub (or hex key) to encrypt to'); return; }
+            if(!signer || !signer.nip44enc){ toast('this login method can\u2019t encrypt (needs NIP-44)'); return; }
+            try{
+              const ct=await signer.nip44enc(pk, String(payload.body||''));
+              const myNpub=NT().nip19.npubEncode(ME.pubkey);
+              const myName=((Store.profile(ME.pubkey)||{}).name)||'';
+              payload.body=NMail.armor(ct, myNpub, myName);
+            }catch(e){ toast('couldn\u2019t encrypt: '+((e&&e.message)||e)); return; }
+          } }
         let path='/send';
         if(opts.mode==='reply'||opts.mode==='replyall'){ path='/reply'; payload.uid=m.uid; payload.folder=opts.folder; payload.reply_all=opts.mode==='replyall'; }
         else if(opts.mode==='forward'){ path='/forward'; payload.uid=m.uid; payload.folder=opts.folder; }
