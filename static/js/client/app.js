@@ -17807,6 +17807,7 @@
    * it doesn't sync sees nothing, honestly. Grouped by the dated folders the engine writes;
    * restore reuses PCSync.restoreTrash (the card's exact loop: never overwrite, per-op timeouts). */
   let _fxTrash = null;      // {key, days:{date:count}} for the root last probed, or null
+  let _fxTrashOpen = false; // the block starts collapsed — a safety net, not a destination
   function _fxTrashHTML(){
     if(!_syncRoot || !window.pcFs || !window.pcFs.listTrash) return '';
     const S = window.PCSync;
@@ -17829,11 +17830,19 @@
     const keys = Object.keys(days).sort().reverse();
     if(!keys.length) return '';
     const total = keys.reduce((a, k) => a + days[k], 0);
-    return `<div class="fx-sec"><b>\ud83d\uddd1 Trash on this device</b>
-      <div class="muted small fx-secnote">what sync moved aside here \u2014 nothing in it is lost, and restoring never overwrites</div>
-      ${keys.map(d => `<span class="fx-syncwrap"><span class="folder-chip">\ud83d\uddd1 ${enc(d)}<span class="fx-n">${days[d]}</span></span>
-        <button class="fx-syncx" data-trashrestore="${enc(d)}" title="Restore these ${days[d]} file${days[d]===1?'':'s'}">\u267b</button></span>`).join('')}
-      <button class="folder-chip" id="fx-trash-restoreall">\u267b Restore all ${total}</button></div>`;
+    /* A SUBORDINATE block, not more chips: dates are not folders and must not dress like them.
+     * Collapsed by default — the trash is a safety net, not a destination. */
+    return `<div class="fx-trash">
+      <button class="fx-trash-hd" id="fx-trash-toggle">\ud83d\uddd1 Trash on this device
+        <span class="fx-n">${total}</span><span class="chev">${_fxTrashOpen?'\u25be':'\u25b8'}</span></button>
+      <div class="fx-trash-body${_fxTrashOpen?'':' hidden'}">
+        <div class="muted small">What sync moved aside on this machine \u2014 nothing here is lost, and restoring never overwrites a file that came back.</div>
+        ${keys.map(d => `<div class="fx-trash-row"><span>${enc(d)}</span>
+          <span class="muted small">${days[d]} file${days[d]===1?'':'s'}</span>
+          <button class="mini" data-trashrestore="${enc(d)}">\u267b Restore</button></div>`).join('')}
+        ${keys.length > 1 ? `<button class="mini fx-trash-all" id="fx-trash-restoreall">\u267b Restore all ${total}</button>` : ''}
+      </div>
+    </div>`;
   }
   /* Dropping a file onto a folder chip moves it. Lives in its own function because the sidebar can
    * repaint on its own — when the synced-folder list lands a moment after first paint — and a chip
@@ -17859,7 +17868,8 @@
         const d = b.dataset.trashrestore;
         const only = ((_fxTrash && _fxTrash.rows) || []).filter(x => String(x.at).split('/')[1] === d).map(x => x.at);
         go(only); });
-      const all = $('#fx-trash-restoreall', r); if(all) all.onclick = () => go(null); }
+      const all = $('#fx-trash-restoreall', r); if(all) all.onclick = () => go(null);
+      const tg = $('#fx-trash-toggle', r); if(tg) tg.onclick = () => { _fxTrashOpen = !_fxTrashOpen; renderBlossom(); }; }
     $$('.fx-syncx[data-syncforget]', r).forEach(b => b.onclick = async (e) => {
       e.stopPropagation();
       const key = b.dataset.syncforget;

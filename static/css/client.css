@@ -8051,3 +8051,14 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 .short-tile-a img{width:16px;height:16px;border-radius:50%;flex:none}
 .short-top{display:flex;justify-content:space-between;left:10px;right:10px;position:absolute;top:10px;z-index:3}
 .short-back{background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:10px;padding:6px 12px}
+
+/* Files → the per-device trash block: subordinate to the folder chips, never dressed like them */
+.fx-trash{margin:10px 4px 4px;border-left:3px solid var(--border,#333);border-radius:6px;
+  background:color-mix(in srgb, var(--panel,#16161c) 70%, transparent);padding:2px 8px 6px}
+.fx-trash-hd{display:flex;align-items:center;gap:8px;width:100%;background:none;border:none;
+  color:var(--muted,#9aa);font-size:13px;padding:6px 2px;cursor:pointer;text-align:left}
+.fx-trash-hd .chev{margin-left:auto}
+.fx-trash-body{padding:0 2px 4px}
+.fx-trash-row{display:flex;align-items:center;gap:10px;padding:4px 2px;font-size:13px}
+.fx-trash-row .mini{margin-left:auto}
+.fx-trash-all{margin-top:6px}
