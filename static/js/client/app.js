@@ -4571,12 +4571,13 @@
       if(!urls.length) return { offline:true, moved:0, total:0 };
       if(!quiet) toast(`copying ${want.length} private item(s) to ${urls.length} relay(s)…`);
       let moved = 0;
+      const accepted = {}; urls.forEach(u => { accepted[u] = 0; });
       for(const ev of want){
         let ok = 0;
         for(const u of urls){
           // publishTo opens its own socket, so it reports THAT relay's answer rather than the
           // pool's best one.
-          try{ ok += await Relay.publishTo([u], ev, { timeout:6000, max:1 }); }
+          try{ const got = await Relay.publishTo([u], ev, { timeout:6000, max:1 }); ok += got; accepted[u] += got; }
           catch(_){ }
         }
         if(ok >= urls.length) moved++;
@@ -4584,10 +4585,16 @@
         // worse than not starting — it looks finished.
         await new Promise(r => setTimeout(r, 40));
       }
+      /* NAME THE RELAY THAT IS BLOCKING IT. "copied 0 of 2" says something is wrong and nothing
+       * about what — and the answer is right here in the per-relay counts: the copy needs every
+       * relay to accept, so one dead or refusing relay pins the whole number at 0 for ever. */
+      const dead = urls.filter(u => !accepted[u]);
       if(!quiet) toast(moved === want.length
         ? `✅ ${moved} private item(s) now on all your relays`
-        : `copied ${moved} of ${want.length} — run it again from Settings when they are reachable`);
-      return { moved, total: want.length };
+        : `copied ${moved} of ${want.length}` + (dead.length
+            ? ` — ${dead.map(u => u.replace(/^wss?:\/\//,'')).join(', ')} accepted nothing; fix or remove that relay in Settings`
+            : ` — run it again from Settings when your relays are reachable`));
+      return { moved, total: want.length, dead };
     } finally { _carrying = false; }
   }
 
@@ -4604,9 +4611,29 @@
     // Wait for the pool rather than the first socket: status flips to 'ok' as soon as ANY relay
     // opens, and publishing into a half-open pool drops silently (Conn._send checks readyState).
     try{ if(Relay.ready) await Relay.ready(8000); }catch(_){ }
-    const r = await carryPrivateToRelays({});
+    /* QUIET, AND ANNOUNCE ONLY TRANSITIONS. This retry fires on EVERY reconnect — and a settings
+     * change reconnects — so with one dead relay in the set it toasted "copying 2 private items…
+     * copied 0 of 2" at the user on every visit to Settings, for ever, about the same standstill.
+     * The copy still runs each time (that is the flag's job); the TOASTS only happen when the
+     * outcome moves: first failure, progress, completion. A manual run from Settings stays loud. */
+    const r = await carryPrivateToRelays({ quiet: true });
     if(r.busy || r.noUser || r.offline) return;
-    if(r.moved === r.total){ try{ localStorage.removeItem(_CARRY_KEY); }catch(_){ } }
+    const outcome = r.moved + '/' + r.total + ':' + ((r.dead || []).join(',') || 'ok');
+    let last = null;
+    try{ last = localStorage.getItem(_CARRY_KEY + '_said'); }catch(_){ }
+    if(outcome !== last){
+      try{ localStorage.setItem(_CARRY_KEY + '_said', outcome); }catch(_){ }
+      if(r.total > 0){
+        toast(r.moved === r.total
+          ? `\u2705 ${r.moved} private item(s) now on all your relays`
+          : `copied ${r.moved} of ${r.total} private item(s)` + ((r.dead || []).length
+              ? ` \u2014 ${r.dead.map(u => u.replace(/^wss?:\/\//,'')).join(', ')} accepted nothing; fix or remove that relay in Settings`
+              : ''));
+      }
+    }
+    if(r.moved === r.total){
+      try{ localStorage.removeItem(_CARRY_KEY); localStorage.removeItem(_CARRY_KEY + '_said'); }catch(_){ }
+    }
   }
 
   /* Drafts whose post is sitting in the Outbox: eventId -> draftId.
