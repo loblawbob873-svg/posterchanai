@@ -407,3 +407,61 @@ class DesktopWiringTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SidebarOrderTests(unittest.TestCase):
+    """Reordering, run through the shipped block against the stub sidebar (2026-08)."""
+
+    S = [
+        {"cls": "nav-item", "view": "home", "label": "Home"},
+        {"cls": "nav-item", "view": "notes", "label": "Notes"},
+        {"cls": "nav-group", "children": [
+            {"cls": "nav-grouphd", "id": "files-toggle", "label": "Files"},
+            {"cls": "nav-item sub", "view": "blossom", "label": "Blossom"},
+        ]},
+        {"cls": "nav-item", "view": "vault", "label": "Passwords"},
+    ]
+
+    def test_the_saved_order_rearranges_the_nav(self):
+        out = run(sidebar=self.S, order=["vault", "group:files", "home", "notes"])
+        self.assertEqual(out["navSequence"], ["vault", "group:files", "home", "notes"])
+        self.assertEqual(out["navOrderSaved"], ["vault", "group:files", "home", "notes"])
+
+    def test_a_row_the_order_never_heard_of_keeps_a_place(self):
+        """The desktop-layout rule: decisions, not the list — a feature shipped after the
+        arrangement still appears, after the knowns, rather than vanishing."""
+        out = run(sidebar=self.S, order=["notes", "home"])
+        self.assertEqual(out["navSequence"][:2], ["notes", "home"])
+        self.assertEqual(sorted(out["navSequence"][2:]), ["group:files", "vault"])
+
+    def test_the_order_is_published_to_the_prefs_doc(self):
+        out = run(sidebar=self.S, order=["notes", "home"])
+        # `published` records the PATCHES handed to saveClientPrefsNostr — the doc-merge itself is
+        # the shipped generic path already covered by the hide tests.
+        pub = [p for p in out["published"] if "navOrder" in p]
+        self.assertTrue(pub, "the order never reached the Nostr prefs doc — it dies with the tab")
+        self.assertEqual(pub[-1]["navOrder"], ["notes", "home"])
+
+    def test_a_group_moves_as_one_thing(self):
+        out = run(sidebar=self.S, order=["group:files", "home", "notes", "vault"])
+        self.assertEqual(out["navSequence"][0], "group:files")
+
+
+class MobileNavPrefTests(unittest.TestCase):
+    S = SidebarOrderTests.S
+
+    def test_the_bar_choice_saves_and_reads_back(self):
+        out = run(sidebar=self.S, mobileNav=["notes", "vault", "home", "messages"])
+        self.assertEqual(out["mobileNavSaved"], ["notes", "vault", "home", "messages"])
+        self.assertEqual(out["mobileNavList"], ["notes", "vault", "home", "messages"])
+
+    def test_a_short_or_junk_choice_falls_back_to_the_defaults(self):
+        out = run(sidebar=self.S, mobileNav=["notes"])
+        self.assertEqual(out["mobileNavList"][0], "notes")
+        self.assertEqual(len(out["mobileNavList"]), 4, "a bar with empty slots")
+
+    def test_the_bar_choice_is_published_to_the_prefs_doc(self):
+        out = run(sidebar=self.S, mobileNav=["notes", "vault", "home", "messages"])
+        pub = [p for p in out["published"] if "mobileNav" in p]
+        self.assertTrue(pub, "the bar choice never reached the Nostr prefs doc")
+        self.assertEqual(pub[-1]["mobileNav"], ["notes", "vault", "home", "messages"])

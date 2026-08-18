@@ -56,6 +56,7 @@ class El {
   add(kid){ kid.parent = this; this.children.push(kid); return kid; }
   // Only the sidebar's own shape: a nav-item's <span> holds the label text plus badge elements.
   querySelector(sel){
+    if(sel === '.nav-grouphd' || sel === 'use') return this._q1(sel);
     if(sel !== 'span') throw new Error('stub querySelector: ' + sel);
     if(!this._cls.has('nav-item')) return null;
     const self = this;
@@ -65,6 +66,13 @@ class El {
   querySelectorAll(sel){
     if(sel !== '.nav-item.sub') throw new Error('stub querySelectorAll: ' + sel);
     return descend(this).filter(e => e._cls.has('nav-item') && e._cls.has('sub'));
+  }
+  // applyNavOrder resolves a group's key off its header; a use-element lookup answers null (the
+  // stub carries no SVG and mobileNavChoices tolerates that).
+  _q1(sel){
+    if(sel === '.nav-grouphd') return descend(this).find(e => e._cls.has('nav-grouphd')) || null;
+    if(sel === 'use') return null;
+    return null;
   }
   closest(sel){
     const c = sel.replace('.', '');
@@ -95,9 +103,30 @@ const ALL = descend(SIDEBAR);
 global.document = {
   querySelectorAll(sel){
     if(sel === '.sidebar .nav .nav-item') return ALL.filter(e => e._cls.has('nav-item'));
+    // The bottom-bar choices: every plain view row (the block grew mobileNav* in 2026-08).
+    if(sel === '.sidebar .nav .nav-item[data-view]')
+      return ALL.filter(e => e._cls.has('nav-item') && e.dataset && e.dataset.view);
     throw new Error('stub document.querySelectorAll: ' + sel);
   },
+  // applyNavOrder wants the nav CONTAINER; applyMobileNav wants the phone bar. The nav is the
+  // stub's own, so ordering is exercised for real; there is no bar here and null makes that path
+  // the no-op it is on any page without one.
+  querySelector(sel){
+    if(sel === '.sidebar .nav') return NAV;
+    if(sel === '.mobilenav') return null;
+    return null;
+  },
+  createComment(){ return { _comment: true }; },
 };
+// The container operations applyNavOrder performs on the stub nav.
+NAV.insertBefore = function(el, anchor){
+  const kids = NAV.children;
+  const i = kids.indexOf(el); if(i >= 0) kids.splice(i, 1);
+  const j = anchor ? kids.indexOf(anchor) : -1;
+  if(j < 0) kids.push(el); else kids.splice(j, 0, el);
+  el.parent = NAV; return el;
+};
+NAV.removeChild = function(el){ const i = NAV.children.indexOf(el); if(i >= 0) NAV.children.splice(i, 1); return el; };
 
 /* ---- the globals the block reaches for -------------------------------------------------------- */
 const store = Object.assign({}, opt.settings || {});
@@ -165,6 +194,30 @@ if(opt.editor){
   out.editorLocked = [...locked];
   out.hiddenSet = [...navHiddenSet()];
   out.visible = ALL.filter(e => e._cls.has('nav-item') && !gone(e)).map(e => _navKey(e) || e.label);
+}
+
+/* Drive the ORDER when asked: the shipped setNavOrder against the stub sidebar, then read the nav
+ * back as the sequence of movable units — exactly what a user sees top to bottom. */
+function _navSequence(){
+  const seq = [];
+  for(const el of NAV.children){
+    if(el._cls.has('nav-item') && !el._cls.has('sub')){ const k = _navKey(el); if(k) seq.push(k); }
+    else if(el._cls.has('nav-group')){
+      const hd = descend(el).find(e => e._cls.has('nav-grouphd'));
+      const k = hd ? _navKey(hd) : ''; if(k) seq.push(k);
+    }
+  }
+  return seq;
+}
+if(opt.order){
+  setNavOrder(opt.order);
+  out.navSequence = _navSequence();
+  out.navOrderSaved = store.navOrder || null;
+}
+if(opt.mobileNav){
+  setMobileNav(opt.mobileNav);
+  out.mobileNavSaved = store.mobileNav || null;
+  out.mobileNavList = mobileNavList();
 }
 
 process.stdout.write(JSON.stringify(out));

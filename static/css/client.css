@@ -1108,6 +1108,12 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .tl-cmp-ta:focus{border:0;box-shadow:none;outline:none}
 /* Always visible — the composer is a real box, not a one-line field that unfolds on focus. */
 .tl-cmp-tools{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:10px}   /* wrap, so a very narrow phone drops Post to its own line instead of overflowing */
+/* Phone: the tool row appears when the box is engaged (.cmp-open — focus, text, or a restored
+ * draft) and folds away otherwise, returning its height to the posts. Desktop never collapses. */
+@media(max-width:700px){
+  .tl-cmp:not(.cmp-open) .tl-cmp-tools{display:none}
+  .tl-cmp:not(.cmp-open) .tl-cmp-ta{min-height:38px}
+}
 /* Borderless icon buttons (📎 / ＋): the .btn outline boxed each one in and made the row look like a
    toolbar. Bigger hit area too — these were .btn.small, which is a text-button size, not an icon one. */
 .tl-cmp-btn,.cmp-ico{display:inline-flex;align-items:center;justify-content:center;width:46px;height:46px;padding:0;

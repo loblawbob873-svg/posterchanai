@@ -407,6 +407,7 @@
     // deployment has at all, the preference decides what to do with what is left. It folds the
     // groups on the way out, which is why there is no separate fold call here.
     applyNavHidden();
+    applyNavOrder();
     // Standing on a view that just went away → go somewhere that exists.
     if(solo && INSTANCE_VIEWS.has(VIEW)){ try{ switchView(_startTimeline()); }catch(_){} }
   }
@@ -480,6 +481,124 @@
     });
     return out;
   }
+  /* THE ORDER, LIKE THE HIDES: decisions, not the list. Only keys the user has arranged are
+   * stored; a row shipped after the arrangement keeps its default place at the end of the knowns,
+   * so a year-old preference never hides a new feature and an absent pref changes nothing. */
+  function navOrderList(){
+    let raw = ClientSettings.get('navOrder', []);
+    if(typeof raw === 'string'){ try{ raw = JSON.parse(raw); }catch(_){ raw = []; } }
+    const out = [];
+    if(Array.isArray(raw)) for(const k of raw){
+      const s = String(k == null ? '' : k).slice(0, 60);
+      if(s && out.indexOf(s) < 0) out.push(s);
+    }
+    return out;
+  }
+  function applyNavOrder(){
+    try{
+      const order = navOrderList();
+      if(!order.length) return;
+      const nav = document.querySelector('.sidebar .nav');
+      if(!nav) return;
+      /* The movable unit is a TOP-LEVEL row or a whole group — a group's children travel with it.
+       * Everything is re-inserted at the position of the first unit, so anything else living in the
+       * nav (stats, spacers) keeps its place. */
+      const units = [];
+      [...nav.children].forEach(el => {
+        let key = '';
+        if(el.classList.contains('nav-item') && !el.classList.contains('sub')) key = _navKey(el);
+        else if(el.classList.contains('nav-group')){
+          const hd = el.querySelector('.nav-grouphd'); key = hd ? _navKey(hd) : '';
+        }
+        if(key) units.push({ el, key });
+      });
+      if(units.length < 2) return;
+      const at = (k) => { const i = order.indexOf(k); return i < 0 ? order.length : i; };
+      const sorted = units.map((u, i) => ({ u, k: at(u.key) * 1000 + i }))
+                          .sort((a, b) => a.k - b.k).map(x => x.u);
+      const anchor = document.createComment('nav-order');
+      nav.insertBefore(anchor, units[0].el);
+      for(const u of sorted) nav.insertBefore(u.el, anchor);
+      nav.removeChild(anchor);
+    }catch(_){}
+    try{ window.PCOS && PCOS.navChanged && PCOS.navChanged(); }catch(_){}
+  }
+  function setNavOrder(keys){
+    const list = [];
+    for(const k of (keys || [])){
+      const s = String(k == null ? '' : k).slice(0, 60);
+      if(s && list.indexOf(s) < 0) list.push(s);
+    }
+    ClientSettings.set('navOrder', list);
+    _prefTouched.add('navOrder');
+    applyNavOrder();
+    return saveClientPrefsNostr({ navOrder: list });
+  }
+  /* THE PHONE'S BOTTOM BAR — four view slots around the fixed Compose and More. Compose is the
+   * bar's whole reason and More is the way to everything else, so neither is configurable; the
+   * four view buttons are, from the same views the sidebar offers. Badges (alerts, DMs) follow
+   * their views onto whichever slot holds them, and vanish with them — the counts still reach the
+   * ☰ badge, which never moves. */
+  const _MNAV_DEFAULT = ['home', 'global', 'notifications', 'messages'];
+  const _MNAV_ICON = { home:'#i-home', global:'#i-globe', notifications:'#i-bell', messages:'#i-mail' };
+  function mobileNavList(){
+    let raw = ClientSettings.get('mobileNav', []);
+    if(typeof raw === 'string'){ try{ raw = JSON.parse(raw); }catch(_){ raw = []; } }
+    const out = [];
+    if(Array.isArray(raw)) for(const k of raw){
+      const s = String(k == null ? '' : k).slice(0, 60);
+      if(s && out.indexOf(s) < 0) out.push(s);
+    }
+    while(out.length < 4) out.push(_MNAV_DEFAULT[out.length]);
+    return out.slice(0, 4);
+  }
+  /** Everything a bar slot may hold: the sidebar's plain view rows (this install's, gated). */
+  function mobileNavChoices(){
+    const out = [], seen = new Set();
+    document.querySelectorAll('.sidebar .nav .nav-item[data-view]').forEach(btn => {
+      const v = btn.dataset.view;
+      if(!v || seen.has(v) || btn.classList.contains('hidden')) return;
+      seen.add(v);
+      const use = btn.querySelector('use');
+      out.push({ v, label: _navLabel(btn) || v,
+                 icon: (use && (use.getAttribute('href') || use.getAttribute('xlink:href'))) || '#i-home' });
+    });
+    return out;
+  }
+  function applyMobileNav(){
+    try{
+      const bar = document.querySelector('.mobilenav'); if(!bar) return;
+      const slots = [...bar.querySelectorAll('.nav-item[data-view]')];
+      if(slots.length !== 4) return;               // an older shell — leave it exactly as shipped
+      const choice = mobileNavList();
+      const known = {}; mobileNavChoices().forEach(c => { known[c.v] = c; });
+      const cur = VIEW;
+      slots.forEach((btn, i) => {
+        const v = choice[i];
+        const c = known[v] || { v, label: v, icon: _MNAV_ICON[v] || '#i-home' };
+        const icon = _MNAV_ICON[v] || c.icon;
+        // Short labels only — the bar is five columns on a 360px phone.
+        const label = (c.label || v).slice(0, 10);
+        btn.dataset.view = v;
+        btn.innerHTML = `<svg class="ic"><use href="${enc(icon)}"></use></svg><b>${enc(label)}</b>`
+          + (v === 'notifications' ? '<i id="notif-badge-m" class="badge hidden"></i>' : '')
+          + (v === 'messages' ? '<i id="dm-badge-m" class="badge hidden"></i>' : '');
+        btn.classList.toggle('active', v === cur);
+        btn.onclick = () => switchView(v);
+      });
+    }catch(_){}
+  }
+  function setMobileNav(views){
+    const list = [];
+    for(const v of (views || [])){
+      const s = String(v == null ? '' : v).slice(0, 60);
+      if(s && list.indexOf(s) < 0) list.push(s);
+    }
+    ClientSettings.set('mobileNav', list.slice(0, 4));
+    _prefTouched.add('mobileNav');
+    applyMobileNav();
+    return saveClientPrefsNostr({ mobileNav: list.slice(0, 4) });
+  }
   function navHiddenSet(){
     let raw = ClientSettings.get('navHidden', []);
     if(typeof raw === 'string'){ try{ raw = JSON.parse(raw); }catch(_){ raw = []; } }
@@ -540,15 +659,58 @@
     const rows = navRows();
     // Its own TAB, so an empty one has to say why rather than being a blank panel.
     if(!rows.length) return `<div class="muted small">Nothing to arrange — this install has no sidebar to read.</div>`;
-    return `<div class="muted small">Turn off anything you don't use and it leaves the left sidebar, the phone's ☰ More sheet and the desktop. Nothing is deleted and nothing stops working: the feature still runs and still opens from a link, and turning the switch back on brings it back everywhere. Syncs across your devices.<br>Settings, Bookmarks and Blossom aren't listed: Settings is how you get back to this screen, and the other two are the only lists of what you saved and uploaded.</div>
+    return `<div class="muted small">Turn off anything you don't use and it leaves the left sidebar, the phone's ☰ More sheet and the desktop. The \u25b2\u25bc arrows reorder — the sidebar and the ☰ sheet follow, and it syncs across your devices. Nothing is deleted and nothing stops working: the feature still runs and still opens from a link, and turning the switch back on brings it back everywhere. Syncs across your devices.<br>Settings, Bookmarks and Blossom aren't listed: Settings is how you get back to this screen, and the other two are the only lists of what you saved and uploaded.</div>
       <div class="nav-hide-list" id="nav-hide-list">${rows.map(r=>`
-        <label class="fld nav-hide-row${r.sub?' sub':''}${r.group?' grp':''}" style="flex-direction:row;justify-content:space-between;align-items:center">
-          <span>${enc(r.label)}${r.group?' <span class="muted small">(whole group)</span>':''}</span>
+        <label class="fld nav-hide-row${r.sub?' sub':''}${r.group?' grp':''}" data-navrow="${enc(r.key)}" style="flex-direction:row;justify-content:space-between;align-items:center;gap:8px">
+          <span style="flex:1;min-width:0">${enc(r.label)}${r.group?' <span class="muted small">(whole group)</span>':''}</span>
+          ${r.sub?'':`<span class="nav-ord"><button type="button" class="mini" data-ordup="${enc(r.key)}" title="Move up">\u25b2</button><button type="button" class="mini" data-orddown="${enc(r.key)}" title="Move down">\u25bc</button></span>`}
           <label class="switch"><input type="checkbox" data-navkey="${enc(r.key)}"${r.off?'':' checked'}><span class="slider"></span></label>
+        </label>`).join('')}</div>
+      <div class="search-section-title" style="margin-top:14px">Bottom bar (phone)</div>
+      <div class="muted small">The four view buttons beside Compose and \u2630 More. Compose and More stay put \u2014 one is the point, the other is the way back.</div>
+      <div id="mnav-slots">${mobileNavList().map((v,i)=>`
+        <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><span class="muted small" style="width:52px">Slot ${i+1}</span>
+          <select class="input" data-mnavslot="${i}">${mobileNavChoices().map(c=>`<option value="${enc(c.v)}"${c.v===v?' selected':''}>${enc(c.label)}</option>`).join('')}</select>
         </label>`).join('')}</div>`;
   }
   function _wireNavHide(){
     const list = $('#nav-hide-list'); if(!list) return;
+    /* REORDER: a click moves the row's whole BLOCK — a group header carries the indented sub-rows
+     * under it — then the sequence of top-level rows IS the saved order. The editor list is the
+     * source of truth for the save, so what you see is exactly what you get. */
+    const _block = (row) => {
+      const out = [row]; let n = row.nextElementSibling;
+      while(n && n.classList.contains('sub')){ out.push(n); n = n.nextElementSibling; }
+      return out;
+    };
+    const _saveOrder = () => {
+      const keys = $$('.nav-hide-row:not(.sub)', list).map(r => r.dataset.navrow).filter(Boolean);
+      setNavOrder(keys);
+    };
+    list.addEventListener('click', (e) => {
+      const up = e.target.closest('[data-ordup]'), dn = e.target.closest('[data-orddown]');
+      if(!up && !dn) return;
+      e.preventDefault();
+      const row = e.target.closest('.nav-hide-row'); if(!row || row.classList.contains('sub')) return;
+      const blk = _block(row);
+      if(up){
+        let prev = row.previousElementSibling;
+        while(prev && prev.classList.contains('sub')) prev = prev.previousElementSibling;
+        if(!prev) return;
+        for(const el of blk) list.insertBefore(el, prev);
+      }else{
+        const nextRow = blk[blk.length - 1].nextElementSibling;
+        if(!nextRow) return;
+        const nextBlk = _block(nextRow);
+        const anchor = nextBlk[nextBlk.length - 1].nextElementSibling;   // null = append at the end
+        for(const el of blk) list.insertBefore(el, anchor);
+      }
+      _saveOrder();
+    });
+    { const slots = $('#mnav-slots');
+      if(slots) slots.addEventListener('change', () => {
+        setMobileNav($$('select[data-mnavslot]', slots).map(sel => sel.value));
+      }); }
     list.addEventListener('change', () => {
       const boxes = $$('input[data-navkey]', list);
       const shown = new Set(boxes.map(cb => cb.dataset.navkey));
@@ -3592,6 +3754,8 @@
     // already ran this once via applyInstanceGating; it is idempotent and reads localStorage, so the
     // sidebar is tidy before the relay has answered rather than reshuffling once it does.
     applyNavHidden();
+    applyNavOrder();
+    applyMobileNav();
     // Collapsible "Discover" group (Articles / Streams / Communities) in the sidebar.
     { const dt=$('#disc-toggle'); if(dt){ const sub=$('#disc-sub'), chev=$('#disc-chev');
         const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; try{ bumpChat(); }catch(_){} };   // the chat count moves between the header and the Chat item as this opens/closes
@@ -6127,6 +6291,19 @@
         mb.classList.toggle('on', _tlMedia); _drawTimeline(false); }; }
     const box=$('#tl-cmp',feed); if(!box) return;
     const ta=$('#tl-cmp-ta',box), st=$('#tl-cmp-status',box), post=$('#tl-cmp-post',box);
+    /* ON A PHONE THE TOOL ROW EARNS ITS SPACE ONLY ONCE YOU'RE TYPING. Six buttons and Post sit at
+     * the very top of the feed on every visit, paid for in posts-above-the-fold; until the box is
+     * engaged they are decoration. `.cmp-open` gates a mobile-only CSS collapse — focus opens it,
+     * blur closes it ONLY when the box is empty (a half-typed post must never lose its Post
+     * button), and a restored auto-draft opens it on arrival for the same reason. */
+    { const cmp=$('#tl-cmp',box)||box.closest&&box.closest('.tl-cmp')||$('#tl-cmp');
+      if(cmp && ta){
+        const openState=()=>cmp.classList.toggle('cmp-open', document.activeElement===ta || !!(ta.value&&ta.value.trim()));
+        ta.addEventListener('focus', ()=>cmp.classList.add('cmp-open'));
+        ta.addEventListener('blur', ()=>setTimeout(openState, 150));   // let a tool-button tap land first
+        ta.addEventListener('input', openState);
+        setTimeout(openState, 0);                                       // the restored draft case
+      } }
     attachMentionAutocomplete(ta);
     // Auto-draft parity with the modal composer: the inline box used to keep text only in a module var
     // (_tlCmpText), lost on reload/crash. Persist what you type as ONE rolling Draft (marked src:'tl' so
@@ -13255,6 +13432,13 @@
                    // sidebar on a phone, so a row hidden on the laptop that survived here would make
                    // the preference mean nothing on the device it declutters most.
                    && !_sheetOff(_navOffKeys, v));
+    /* The sheet follows the SAME order the sidebar does — it is the sidebar on a phone. Keys map
+     * through _SHEET_NAV_KEY (the three sub-sheets), unknowns keep their default position. */
+    { const ord = navOrderList();
+      if(ord.length){
+        const at = (v) => { const i = ord.indexOf(_SHEET_NAV_KEY[v] || v); return i < 0 ? ord.length : i; };
+        items.sort((a, b) => at(a[0]) - at(b[0]));     // stable: unknowns keep their default spot
+      } }
     const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
     // Live streams / calls ALWAYS show (even 0) so the counts are visible on phone too — matches the
     // desktop ticker. users/online/on-relay stay gated (they read "0" only before the first stats fetch).
@@ -14472,6 +14656,16 @@
         applyNavHidden();
         try{ const off=navHiddenSet();
              $$('#nav-hide-list input[data-navkey]').forEach(cb=>{ if(!cb.disabled) cb.checked = !off.has(cb.dataset.navkey); }); }catch(_){}
+      }
+      // The sidebar ORDER follows the same rules as the hides directly above: absent = untouched,
+      // applied on landing, and a locally-changed value wins over a late restore.
+      if(!_prefTouched.has('navOrder') && Array.isArray(pr.navOrder)){
+        ClientSettings.set('navOrder', pr.navOrder.map(v=>String(v==null?'':v).slice(0,60)).filter(Boolean).slice(0,200));
+        applyNavOrder();
+      }
+      if(!_prefTouched.has('mobileNav') && Array.isArray(pr.mobileNav)){
+        ClientSettings.set('mobileNav', pr.mobileNav.map(v=>String(v==null?'':v).slice(0,60)).filter(Boolean).slice(0,4));
+        applyMobileNav();
       }
       if(!_prefTouched.has('vimKeys') && typeof pr.vimKeys==='boolean') ClientSettings.set('vimKeys', pr.vimKeys);
       if(!_prefTouched.has('cleanLinks') && typeof pr.cleanLinks==='boolean') ClientSettings.set('cleanLinks', pr.cleanLinks);   // 🧹 link-tracker removal follows across devices
