@@ -775,3 +775,35 @@ class AbsoluteTrashCap(unittest.TestCase):
 
     def test_an_ordinary_sweep_is_untouched(self):
         self.assertEqual(self._check(30), 0)
+
+
+class FilesTrashSurface(unittest.TestCase):
+    """"Blossom should show the trash dirs and let you restore from that" — Files shows THIS
+    device's trash for the synced folder being browsed, grouped by date, and every restore path
+    funnels into PCSync.restoreTrash (one loop: never overwrite, per-op timeouts)."""
+
+    def setUp(self):
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.app = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+        self.sync = open(os.path.join(root, "static", "js", "client", "sync.js"), encoding="utf-8").read()
+
+    def test_one_restore_loop_shared_by_card_and_files(self):
+        self.assertIn("async function restoreTrash(folderId, only)", self.sync)
+        self.assertIn("restoreTrash,", self.sync.split("window.PCSync = {")[1][:200],
+                      "restoreTrash is not exported — Files would grow a second loop that drifts")
+        a = self.sync.index("async function restoreTrash(")
+        seg = self.sync[a:a + 2600]
+        self.assertIn("confirmGone", seg)
+        self.assertIn("timed(", seg, "the shared loop lost its per-operation timeouts")
+        # the card must CALL the shared loop, not carry its own copy
+        self.assertEqual(self.sync.count("Put ' + rows.length + ' file'"), 1,
+                         "two confirm strings = two loops")
+
+    def test_files_shows_the_trash_only_where_it_exists(self):
+        a = self.app.index("function _fxTrashHTML()")
+        seg = self.app[a:a + 1600]
+        self.assertIn("window.pcFs", seg, "the section would render on a phone with no bridge")
+        self.assertIn("_syncRoot", seg)
+        self.assertIn("PCSync", seg)
+        self.assertIn("data-trashrestore", self.app)
+        self.assertIn("fx-trash-restoreall", self.app)

@@ -17799,7 +17799,41 @@
         ${folders.map(f=>`<button class="folder-chip${(!_syncRoot&&_filesFolder===f)?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':(FilesIdx.isEncFolder(f)?'🔒':'📁')} ${enc(f)}</button>`).join('')}
         <button class="folder-chip newfolder" id="bl-newfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New folder</button>
         ${(!_syncRoot && _filesFolder && _filesFolder!=='Music') ? `<button class="folder-chip delfolder" id="bl-delfolder" title="Delete this folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete “${enc(_filesFolder)}”</button>` : ''}
-      </div>` + _fxSyncedHTML();
+      </div>` + _fxSyncedHTML() + _fxTrashHTML();
+  }
+  /* \ud83d\uddd1 THIS DEVICE'S TRASH for the synced folder being browsed. The trash is per-device
+   * by design (it never joins the shared record), so this section only appears where a filesystem
+   * bridge exists AND this device actually maps the pair being viewed — a phone browsing a folder
+   * it doesn't sync sees nothing, honestly. Grouped by the dated folders the engine writes;
+   * restore reuses PCSync.restoreTrash (the card's exact loop: never overwrite, per-op timeouts). */
+  let _fxTrash = null;      // {key, days:{date:count}} for the root last probed, or null
+  function _fxTrashHTML(){
+    if(!_syncRoot || !window.pcFs || !window.pcFs.listTrash) return '';
+    const S = window.PCSync;
+    const row = S && S.folders ? (S.folders() || []).find(f => (f.key || f.name) === _syncRoot) : null;
+    if(!row) return '';
+    if(!_fxTrash || _fxTrash.key !== _syncRoot){
+      _fxTrash = { key: _syncRoot, days: null };
+      (async () => {
+        try{
+          const rows = await window.pcFs.listTrash(row.id) || [];
+          const days = {};
+          for(const r of rows){ const d = String(r.at).split('/')[1] || '?'; days[d] = (days[d] || 0) + 1; }
+          _fxTrash = { key: _syncRoot, days, rows };
+          renderBlossom();
+        }catch(_){ _fxTrash = { key: _syncRoot, days: {} }; }
+      })();
+      return '';
+    }
+    const days = _fxTrash.days || {};
+    const keys = Object.keys(days).sort().reverse();
+    if(!keys.length) return '';
+    const total = keys.reduce((a, k) => a + days[k], 0);
+    return `<div class="fx-sec"><b>\ud83d\uddd1 Trash on this device</b>
+      <div class="muted small fx-secnote">what sync moved aside here \u2014 nothing in it is lost, and restoring never overwrites</div>
+      ${keys.map(d => `<span class="fx-syncwrap"><span class="folder-chip">\ud83d\uddd1 ${enc(d)}<span class="fx-n">${days[d]}</span></span>
+        <button class="fx-syncx" data-trashrestore="${enc(d)}" title="Restore these ${days[d]} file${days[d]===1?'':'s'}">\u267b</button></span>`).join('')}
+      <button class="folder-chip" id="fx-trash-restoreall">\u267b Restore all ${total}</button></div>`;
   }
   /* Dropping a file onto a folder chip moves it. Lives in its own function because the sidebar can
    * repaint on its own — when the synced-folder list lands a moment after first paint — and a chip
@@ -17815,6 +17849,17 @@
     const r = root || document;
     $$('.folder-chip[data-folder]', r).forEach(b=> b.onclick=()=>{ _syncRoot=''; _syncPath=''; _filesFolder=b.dataset.folder; renderBlossom(); });
     $$('.folder-chip[data-synckey]', r).forEach(b=> b.onclick=()=>{ _syncRoot=b.dataset.synckey; _syncPath=''; renderBlossom(); });
+    /* Trash restore, wired beside the chips it renders with. Per-date passes only that day's rows;
+     * Restore-all passes none (= everything). Both funnel into PCSync.restoreTrash — ONE loop. */
+    { const S = window.PCSync;
+      const row = _syncRoot && S && S.folders ? (S.folders() || []).find(f => (f.key || f.name) === _syncRoot) : null;
+      const go = async (only) => { if(!row || !S.restoreTrash) return;
+        await S.restoreTrash(row.id, only); _fxTrash = null; renderBlossom(); };
+      $$('[data-trashrestore]', r).forEach(b => b.onclick = () => {
+        const d = b.dataset.trashrestore;
+        const only = ((_fxTrash && _fxTrash.rows) || []).filter(x => String(x.at).split('/')[1] === d).map(x => x.at);
+        go(only); });
+      const all = $('#fx-trash-restoreall', r); if(all) all.onclick = () => go(null); }
     $$('.fx-syncx[data-syncforget]', r).forEach(b => b.onclick = async (e) => {
       e.stopPropagation();
       const key = b.dataset.syncforget;

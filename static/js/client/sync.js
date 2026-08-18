@@ -638,6 +638,41 @@
    * Pictures folder. The count travels with the answer and the checker refuses every deletion while
    * it is above zero.
    */
+  /* \u267b RESTORE FROM TRASH — shared by the folder card and Files \u2192 Synced folders.
+   * Bridge-level (below the exclusion machinery), never overwrites, per-operation timeouts so one
+   * stuck file is a counted failure rather than a hung button. `only` restricts to a subset of
+   * listTrash rows (Files' per-date restore). */
+  async function restoreTrash(folderId, only){
+    const fs2 = FS(); if(!fs2 || !fs2.listTrash){ PC.toast('this device has no filesystem access'); return null; }
+    let rows = [];
+    try{ rows = await fs2.listTrash(folderId) || []; }catch(_){}
+    if(only && only.length){ const want = new Set(only); rows = rows.filter(r => want.has(r.at)); }
+    if(!rows.length){ PC.toast('the trash is empty'); return { done:0, skipped:0, failed:0 }; }
+    if(!await PC.uiConfirm('Put ' + rows.length + ' file' + (rows.length === 1 ? '' : 's')
+         + ' back where they came from?\n\nNothing is overwritten: a file that already '
+         + 'exists again is skipped and its trash copy stays put.')) return null;
+    let done = 0, skipped = 0, failed = 0;
+    const timed = (pr, ms) => Promise.race([pr,
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), ms))]);
+    for(const r of rows){
+      try{
+        let free = true;
+        /* Free = provably absent, OR its parent directory is gone entirely (trash() prunes
+         * emptied dirs, and move() recreates them). Only a CONFIRMED still-there skips. */
+        try{ const ev = fs2.confirmGone ? await timed(fs2.confirmGone(folderId, r.to), 15000) : null;
+             free = !!(ev && (ev.gone === true || ev.parentAlive === false)); }catch(_){ free = false; }
+        if(!free){ skipped++; continue; }
+        await timed(fs2.move(folderId, r.at, r.to), 30000); done++;
+      }catch(_){ failed++; }
+      const n = done + skipped + failed;
+      if(n % 10 === 0) setStatus(folderId, 'restoring\u2026 ' + n + ' / ' + rows.length
+                                    + (failed ? ' (' + failed + ' failed)' : ''));
+    }
+    PC.toast('restored ' + done + (skipped ? ' \u00b7 ' + skipped + ' already back in place' : '')
+             + (failed ? ' \u00b7 ' + failed + ' failed' : ''));
+    return { done, skipped, failed };
+  }
+
   const docs = {
     /** {views: {device: {path: entry}}, missing: n} — throws if the server could not be asked. */
     async views(key){
@@ -2460,41 +2495,8 @@
                     + (rows.length === 1 ? '' : 's') + ' from trash';
                 rb.classList.remove('hidden'); } }catch(_){}
           })();
-          rb.onclick = async () => {
-            const fs2 = FS(); if(!fs2 || !fs2.listTrash) return;
-            let rows = [];
-            try{ rows = await fs2.listTrash(id) || []; }catch(_){}
-            if(!rows.length){ PC.toast('the trash is empty'); return; }
-            if(!await PC.uiConfirm('Put ' + rows.length + ' file' + (rows.length === 1 ? '' : 's')
-                 + ' back where they came from?\n\nNothing is overwritten: a file that already '
-                 + 'exists again is skipped and its trash copy stays put.')) return;
-            rb.disabled = true;
-            let done = 0, skipped = 0, failed = 0;
-            /* NO SINGLE FILE MAY WEDGE THE WHOLE RESTORE. Each operation is raced against a
-             * timeout: a file the platform won't answer about becomes one counted failure and the
-             * loop moves on — a button that hangs is indistinguishable from a broken one, which is
-             * exactly how it was reported. Status every 10, not 50, so progress is visible. */
-            const timed = (pr, ms) => Promise.race([pr,
-              new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), ms))]);
-            for(const r of rows){
-              try{
-                let free = true;
-                /* Free = provably absent, OR its parent directory is gone entirely (trash() prunes
-                 * emptied dirs, and move() recreates them) — a missing parent cannot be hiding a
-                 * file to overwrite. Only a CONFIRMED still-there skips. */
-                try{ const ev = fs2.confirmGone ? await timed(fs2.confirmGone(id, r.to), 15000) : null;
-                     free = !!(ev && (ev.gone === true || ev.parentAlive === false)); }catch(_){ free = false; }
-                if(!free){ skipped++; continue; }
-                await timed(fs2.move(id, r.at, r.to), 30000); done++;
-              }catch(_){ failed++; }
-              const n = done + skipped + failed;
-              if(n % 10 === 0) setStatus(id, 'restoring\u2026 ' + n + ' / ' + rows.length
-                                            + (failed ? ' (' + failed + ' failed)' : ''));
-            }
-            PC.toast('restored ' + done + (skipped ? ' \u00b7 ' + skipped + ' already back in place' : '')
-                     + (failed ? ' \u00b7 ' + failed + ' failed' : ''));
-            rb.disabled = false; paint();
-          };
+          rb.onclick = async () => { rb.disabled = true;
+            try{ await restoreTrash(id); }finally{ rb.disabled = false; paint(); } };
         } }
       card.querySelector('.sync-tidy').onclick = async () => {
         const f = get(); if(!f) return;
@@ -2964,6 +2966,6 @@
   // through the same guarded save a sweep uses, and the devices carry the change out.
   // `docs` is the per-device document layer: Files borrows it to read a folder it does not hold,
   // and the tests drive it directly at the sizes where NIP-44's ceiling used to lose whole folders.
-  window.PCSync = { paint, folders, sweep, startAll, store, docs, status, edit, verifyFolder,
+  window.PCSync = { paint, folders, sweep, startAll, store, docs, status, edit, verifyFolder, restoreTrash,
                     accountFolders, acct: () => _acct, deviceId };
 })();
