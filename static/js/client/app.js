@@ -16500,6 +16500,17 @@
       }
       this.mk=crypto.getRandomValues(new Uint8Array(32));
       this._mkWrapped=await signer.nip44enc(ME.pubkey, JSON.stringify({k:_u8b64(this.mk)})); this.saveLocal();
+      /* CLAIM THE KEY AT THE SERVER IN THE SAME BREATH IT IS MINTED. A folder-sync-only device
+       * never touches the drive index, so a locally minted key used to stay local — the server's
+       * first-writer-wins guard protected an empty slot while two fresh devices each sealed
+       * thousands of blobs under their own mint (measured by check_sync_full: A uploaded 12, B
+       * downloaded 12, B could open none). The save answers with the canonical key when this mint
+       * lost a race, _saveOnce adopts it on the spot, and the pull right after covers the
+       * both-saves-raced ordering. Failure here is tolerable: the next save retries, and every
+       * seal until then carries the named wrong-key fixer rather than silence. */
+      try{ this._dirty = true; await this._saveOnce(); }catch(_){}
+      try{ this._pullDone = false; this._pullOk = false; await this.pull(); }catch(_){}
+      if(this._mkWrapped && !this.mk) this.mk = await _unwrapMK(this._mkWrapped);
       return this.mk;
     },
     /* TOMBSTONES — a deletion the merge cannot otherwise express.
