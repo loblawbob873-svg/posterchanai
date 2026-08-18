@@ -1115,9 +1115,11 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
   /* The COMPACT row, for real: the inline grow() height is cleared by the collapse handler (an
    * inline style beats all of this), the box drops to one line, the avatar shrinks, and the row's
    * padding halves — ~130px of header becomes ~56px of "How was your weekend?". */
-  .tl-cmp:not(.cmp-open) .tl-cmp-ta{min-height:34px;height:34px;font-size:15px;padding:6px 0}
-  .tl-cmp:not(.cmp-open){padding:8px 16px}
-  .tl-cmp:not(.cmp-open) .tl-cmp-av{width:34px;height:34px}
+  .tl-cmp:not(.cmp-open) .tl-cmp-ta{min-height:32px;height:32px;font-size:15px;padding:6px 0}
+  .tl-cmp:not(.cmp-open){padding:6px 16px}
+  /* No avatar while idle — it is decoration, the placeholder already says what the box is, and on
+   * a phone every vertical pixel here is a post below the fold. Focus brings it back. */
+  .tl-cmp:not(.cmp-open) .tl-cmp-av{display:none}
 }
 /* Borderless icon buttons (📎 / ＋): the .btn outline boxed each one in and made the row look like a
    toolbar. Bigger hit area too — these were .btn.small, which is a text-button size, not an icon one. */
