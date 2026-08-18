@@ -238,8 +238,10 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
     # 3192x: NIP-52 calendar events + RSVPs. A member's events are usually published from ANOTHER
     # calendar app to OTHER relays — without these kinds here and in ingest_kinds, "Calendar isn't
     # showing my nostr events (or my follows')" is structural: the events exist and never arrive.
-    kinds = kinds or [0, 1, 3, 6, 7, 1111, 2003, 2004, 10002, 10050, 30023, 30311, 30617,
-                      31922, 31923, 31924, 31925]
+    # 10003/30003: NIP-51 bookmarks and bookmark sets — repo stars made in gitworkshop et al live
+    # there, and a member restored without them "loses" every star they made elsewhere.
+    kinds = kinds or [0, 1, 3, 6, 7, 1111, 2003, 2004, 10002, 10003, 10050, 30003, 30023, 30311,
+                      30617, 31922, 31923, 31924, 31925]
     logger.info("[nostr-relay] sync started for %s…", pubkey[:12])
     common = dict(direct=direct, pace=pace, max_total=max_total, max_pages=max_pages)
     stored = await _backfill_filter(store, server, upstream,
