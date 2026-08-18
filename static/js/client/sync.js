@@ -1536,6 +1536,9 @@
      * step", about paths this sweep never saw. */
     const _unr = (rep.unreadable || []).length;
     if(_unr) bits.push(_unr + ' path' + (_unr === 1 ? '' : 's') + ' couldn\u2019t be read on this device \u2014 left alone');
+    // Only when it matters: a sweep that peaked over a gigabyte of JS heap names the number and the
+    // phase, which is what turns the next out-of-memory report into a diagnosis.
+    if((rep.peakHeapMB || 0) > 1024) bits.push('peak memory ' + rep.peakHeapMB + ' MB during ' + (rep.peakHeapPhase || '?'));
     // Said out loud, because "900 up" for files that were never sent is how a working first sweep
     // gets mistaken for the resync bug it is recovering from.
     if(rep.alreadyStored) bits.push(rep.alreadyStored + ' already stored');

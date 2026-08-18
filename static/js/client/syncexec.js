@@ -90,7 +90,18 @@
       _wokeAt = t;
       try{ const r = fs.wakeBegin(); if(r && r.catch) r.catch(()=>{}); }catch(_){}
     };
-    const step = (phase, path, i, n) => { _keepAwake(); tick({ phase, path, i, n }); };
+    /* HEAP TELEMETRY, because this is the second "windows app runs out of memory while syncing"
+     * and the first was fixed by guessing right (PARALLEL_MAX). Chromium exposes usedJSHeapSize;
+     * the sweep samples it at every step and the report carries the peak — so the next crash report
+     * comes with a number and a phase attached instead of a feeling. */
+    let _peakHeap = 0, _peakPhase = '';
+    const _heap = () => { try{ return (performance && performance.memory && performance.memory.usedJSHeapSize) || 0; }catch(_){ return 0; } };
+    const step = (phase, path, i, n) => {
+      _keepAwake();
+      const h = _heap();
+      if(h > _peakHeap){ _peakHeap = h; _peakPhase = phase; }
+      tick({ phase, path, i, n });
+    };
 
     const report = { uploaded:[], downloaded:[], trashed:[], conflicted:[], removedRemote:[],
                      failed:[], skipped:[], unchanged:0, settledGone:0, excluded:0, refused:[], device: me,
@@ -518,6 +529,7 @@
      * step", and the caller stamped the clock — while a divergence sat unresolved AND the locally
      * edited copy went unpublished. Silence about that is exactly the shape this feature keeps
      * getting wrong. */
+    if(_peakHeap){ report.peakHeapMB = Math.round(_peakHeap / 1048576); report.peakHeapPhase = _peakPhase; }
     report.ok = report.failed.length === 0 && !(report.unfetchable || []).length;
     return report;
   }
@@ -604,14 +616,22 @@
     const small = items.filter(x => !isBig(x)), big = items.filter(isBig);
     const n = items.length;
     let done = 0, next = 0;
-    const lane = async () => {
+    /* BACKPRESSURE ON THE HEAP, NOT ON HOPE. Each in-flight small file holds plaintext, ciphertext
+     * and the request body at once, and Chromium's renderer dies quietly when the heap tops out —
+     * "windows app running out of memory while syncing" is that death. When the heap is already
+     * past ~1.5 GB the lanes drop to one; recovered, they resume. Costs nothing when memory is
+     * fine, and a slower sweep beats a dead window every time it comes up. */
+    const _fat = () => { try{ const m = performance && performance.memory;
+        return !!(m && m.usedJSHeapSize > 1.5 * 1024 * 1024 * 1024); }catch(_){ return false; } };
+    const lane = async (id) => {
       while(next < small.length && !stopping()){
+        if(id > 0 && _fat()){ await new Promise(r => setTimeout(r, 400)); continue; }
         const item = small[next++];
         await run(item, ++done, n);
         await journal.maybe();
       }
     };
-    await Promise.all(Array.from({ length: Math.max(1, Math.min(lanes, small.length)) }, lane));
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(lanes, small.length)) }, (_, i) => lane(i)));
     for(const item of big){
       if(stopping()) break;
       await run(item, ++done, n);

@@ -22475,7 +22475,9 @@
         <input class="input" id="cm-subj" placeholder="Subject" value="${enc(subj)}">
         <textarea class="input" id="cm-body" placeholder="Write your message…">${enc(body)}</textarea>
         <div class="row cm-actions"><button class="btn btn-ghost small" id="cm-contacts">👤 Contacts</button><button class="btn btn-ghost small" id="cm-attach">📎 Attach</button><button class="btn btn-ghost small" id="cm-blossom">🌸 Blossom</button><button class="btn btn-ghost small" id="cm-draft">💾 Save draft</button><button class="btn btn-ghost small" id="cm-nmail" title="Encrypt the body to a Nostr key (nostr-mail): the mail travels as ordinary email, unreadable to every server on the way">🔐 Encrypt</button><input type="file" id="cm-file" multiple hidden><span id="cm-atts" class="muted small cm-atts"></span></div>
-        <div class="fld hidden" id="cm-nmail-row"><label class="muted small">Recipient's Nostr key (npub)<input class="input" id="cm-nmail-pk" placeholder="npub1\u2026" autocomplete="off" style="font-size:16px"></label><div class="muted small">The body is NIP-44-encrypted to this key; the subject stays readable. The recipient opens it with nostr-mail or PosterChan.</div></div>`,
+        <div class="fld hidden" id="cm-nmail-row"><label class="muted small">Recipient's Nostr key (npub)<input class="input" id="cm-nmail-pk" placeholder="npub1\u2026" autocomplete="off" style="font-size:16px"></label>
+          <label class="bg-chk muted small"><input type="checkbox" id="cm-nmail-dm" checked> Also notify them by Nostr DM (sends the subject)</label>
+          <div class="muted small">The body is NIP-44-encrypted to this key; the subject stays readable. The recipient opens it with nostr-mail or PosterChan.</div></div>`,
         box => box.classList.add('mail-compose-modal'));
       const drawAtts=()=>{ const e=$('#cm-atts'); if(e) e.innerHTML=atts.map(a=>'📎 '+enc(a.name)).join('  '); };
       drawAtts();
@@ -22524,6 +22526,12 @@
               const myNpub=NT().nip19.npubEncode(ME.pubkey);
               const myName=((Store.profile(ME.pubkey)||{}).name)||'';
               payload.body=NMail.armor(ct, myNpub, myName);
+              /* The spec's optional notification: the SUBJECT as a Nostr DM, so the recipient's
+               * Nostr client tells them an encrypted email is waiting in an inbox they may not be
+               * watching. Fire-and-forget AFTER the mail is handed off, and its failure is only a
+               * note — the email is the message, the DM is a doorbell. */
+              const dmBox=$('#cm-nmail-dm');
+              payload._nmailDm = (dmBox && dmBox.checked) ? pk : '';
             }catch(e){ toast('couldn\u2019t encrypt: '+((e&&e.message)||e)); return; }
           } }
         let path='/send';
@@ -22531,8 +22539,15 @@
         else if(opts.mode==='forward'){ path='/forward'; payload.uid=m.uid; payload.folder=opts.folder; }
         if((path==='/send'||path==='/forward') && !payload.to){ toast('add a recipient'); return; }
         const btn=$('#cm-send'); btn.disabled=true; btn.textContent='Sending…';
+        const _nmailDm = payload._nmailDm; delete payload._nmailDm;   // client-side only — never sent to the server
         try{ const r=await self.api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
           if(r.ok){ toast('sent ✉️');
+            if(_nmailDm){
+              try{ sendDm(_nmailDm, '\ud83d\udce7\ud83d\udd10 I sent you an encrypted email'
+                + (payload.subject ? ': \u201c' + payload.subject + '\u201d' : '')
+                + ' \u2014 open it in a nostr-mail client.'); }
+              catch(_){ toast('the email went out, but the DM doorbell didn\u2019t'); }
+            }
             if(draftUid){ try{ await self.api('/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:sendAcct(),folder:'Drafts',uid:draftUid})}); }catch(_){} }
             closeModal();
             // Pull the SENT folder. The server files the sent copy over IMAP, but this client only

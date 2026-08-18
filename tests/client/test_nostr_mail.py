@@ -134,6 +134,19 @@ class WiringTests(unittest.TestCase):
         self.assertIn("signer.nip44dec", body)
         self.assertNotIn("PC.nip44dec", body, "the phantom PC binding, a third time")
 
+    def test_the_dm_doorbell_is_optional_after_send_and_never_reaches_the_server(self):
+        """The spec's optional notification: the subject as a Nostr DM. It fires only AFTER the
+        mail is accepted (the email is the message, the DM is a doorbell), its checkbox can turn it
+        off, and the recipient pubkey is stripped from the payload before the POST — the server has
+        no business learning which npub a mail was encrypted to."""
+        seg = self.src[self.src.index("cm-send').onclick"):][:3200]
+        self.assertIn("delete payload._nmailDm", seg)
+        self.assertLess(seg.index("delete payload._nmailDm"), seg.index("self.api(path"),
+                        "the recipient npub travels to the server in the send payload")
+        self.assertLess(seg.index("if(r.ok)"), seg.index("sendDm("),
+                        "the DM fires even when the mail was refused")
+        self.assertIn("cm-nmail-dm", self.src)
+
     def test_sending_produces_the_new_format_through_the_signer(self):
         at = self.src.index("cm-nmail-row")
         seg = self.src[self.src.index("cm-send').onclick"):][:2200]
