@@ -293,6 +293,13 @@ class RelayStore:
         # below) AND evades age-based retention (created_at never falls before the cutoff). 15-min skew
         # tolerance, matching common relay policy (NIP-22 upper bound).
         if created > int(time.time()) + 900:
+            # SAY THE SKEW. This refusal is otherwise a generic "not stored, retry" — and a device
+            # with a fast clock has EVERY write refused, silently, for as long as the clock is
+            # wrong: keys that never save, records that never persist, resets that never stick.
+            # One log line turns days of that into a sentence naming the device's clock.
+            logger.info("[nostr-relay] refused kind=%s from %s…: created_at %ds in the FUTURE — "
+                        "that device's clock is wrong", kind, str(pubkey)[:12],
+                        created - int(time.time()))
             return False
         tags = ev.get("tags") or []
         # NIP-40: parse the expiration timestamp (if any). An already-expired event is never
