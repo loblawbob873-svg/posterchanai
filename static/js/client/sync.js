@@ -2470,19 +2470,26 @@
                  + 'exists again is skipped and its trash copy stays put.')) return;
             rb.disabled = true;
             let done = 0, skipped = 0, failed = 0;
+            /* NO SINGLE FILE MAY WEDGE THE WHOLE RESTORE. Each operation is raced against a
+             * timeout: a file the platform won't answer about becomes one counted failure and the
+             * loop moves on — a button that hangs is indistinguishable from a broken one, which is
+             * exactly how it was reported. Status every 10, not 50, so progress is visible. */
+            const timed = (pr, ms) => Promise.race([pr,
+              new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), ms))]);
             for(const r of rows){
               try{
                 let free = true;
                 /* Free = provably absent, OR its parent directory is gone entirely (trash() prunes
                  * emptied dirs, and move() recreates them) — a missing parent cannot be hiding a
                  * file to overwrite. Only a CONFIRMED still-there skips. */
-                try{ const ev = fs2.confirmGone ? await fs2.confirmGone(id, r.to) : null;
+                try{ const ev = fs2.confirmGone ? await timed(fs2.confirmGone(id, r.to), 15000) : null;
                      free = !!(ev && (ev.gone === true || ev.parentAlive === false)); }catch(_){ free = false; }
                 if(!free){ skipped++; continue; }
-                await fs2.move(id, r.at, r.to); done++;
+                await timed(fs2.move(id, r.at, r.to), 30000); done++;
               }catch(_){ failed++; }
-              if((done + skipped + failed) % 50 === 0)
-                setStatus(id, 'restoring\u2026 ' + (done + skipped + failed) + ' / ' + rows.length);
+              const n = done + skipped + failed;
+              if(n % 10 === 0) setStatus(id, 'restoring\u2026 ' + n + ' / ' + rows.length
+                                            + (failed ? ' (' + failed + ' failed)' : ''));
             }
             PC.toast('restored ' + done + (skipped ? ' \u00b7 ' + skipped + ' already back in place' : '')
                      + (failed ? ' \u00b7 ' + failed + ' failed' : ''));
