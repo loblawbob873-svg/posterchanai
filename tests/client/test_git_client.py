@@ -270,6 +270,18 @@ class StarTests(unittest.TestCase):
         self.assertNotIn("git-repo-bookmark", self.git[at2:at2 + 2000],
                          "a write path touched gitworkshop's own set")
 
+    def test_stars_refresh_on_every_entry_not_once_per_page(self):
+        """"i starred a repo on ngit again and still does not appear" — the star was on the relay
+        and the view kept answering from the set it loaded at first open. The first load may block;
+        every later entry must refresh behind the cached paint and repaint on arrival."""
+        at = self.git.index("async function renderRepos()")
+        seg = self.git[at:at + 2200]
+        self.assertIn("if(_stars===null) await _loadStars();", seg)
+        self.assertIn("else _loadStars().then(", seg,
+                      "a page that loaded stars once never sees a star made elsewhere")
+        after = seg.split("else _loadStars().then(")[1][:120]
+        self.assertIn("paint()", after, "the refresh arrives and nothing redraws")
+
     def test_the_relay_syncs_the_bookmark_kinds_in(self):
         import os
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

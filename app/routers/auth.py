@@ -100,7 +100,6 @@ def _verify_nostr_auth(auth_b64: str, pubkey_hex: str) -> bool:
             and abs(int(ev.get("created_at", 0)) - int(time.time())) <= 300)
 
 
-@router.post("/nostr-login")
 def _can_ssh(db, user) -> bool:
     try:
         from app.services import ssh_service
@@ -109,6 +108,7 @@ def _can_ssh(db, user) -> bool:
         return False
 
 
+@router.post("/nostr-login")
 async def nostr_login(data: NostrLogin, response: Response, request: Request, db: Session = Depends(get_db)):
     """Log in / sign up with a Nostr key (NIP-07 / Amber / nsec — signed client-side). Finds the
     user by linked npub or creates a fresh, AI-gated account, then issues the normal session cookie

@@ -212,7 +212,13 @@ window.PCGitFactory = function(dep){
     // Ask for the relay's MAXIMUM (store.py clamps to 5000) rather than omitting the field: a filter
     // with no limit is read as `limit or 500`, so leaving it out is the 500 cap, not the absence of one.
     let evs=[]; try{ evs=await Relay.query([{ kinds:[30617], limit:5000 }]); }catch(_){}
+    /* Stars are re-read on EVERY entry, not latched for the page: a star made in another app (the
+     * ngit website) or on another device landed on the relay and this view kept answering from the
+     * set it loaded at first open — "i starred a repo on ngit again and still does not appear".
+     * The first load still blocks (a Starred chip that flashes empty is worse); after that the
+     * refresh happens on entry and repaints only if something changed. */
     if(_stars===null) await _loadStars();
+    else _loadStars().then(()=>{ try{ if(S.VIEW==='repos') paint(); }catch(_){} });
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     if(S.VIEW!=='repos') return;
     const repos=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
