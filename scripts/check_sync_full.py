@@ -232,7 +232,31 @@ async def drive(url):
         except Exception as e:
             print(f"SKIP  could not grant upload privilege: {e}")
             return 2
-        await asyncio.sleep(10)   # the relay's control tick admits the new account's keys
+        # Admit-and-VERIFY: the signup fires a relay reload, but this check must not depend on
+        # winning that race (a deploy restarting the relay can eat one). Trigger again from here
+        # and poll until a probe write for the account actually lands.
+        from app.services.nostr_relay.thread import trigger_block_reload
+        from app.services import nostr_store as _nstore
+        from app.services.nostr_store import user_storage_seckey as _ussk
+        from app.database import SessionLocal as _SL
+        from app.models import User as _User
+        from app.services.nostr import nostr_service as _ns2
+        _db = _SL()
+        _u = _db.query(_User).filter(_User.nostr_npub == _ns2.npub_of(
+            _b340.pubkey_from_seckey(_nsec_sk).hex())).first()
+        _sk2 = _ussk(_db, _u)
+        _db.close()
+        admitted = False
+        for _try in range(12):
+            trigger_block_reload()
+            await asyncio.sleep(4)
+            if await asyncio.get_event_loop().run_in_executor(None, lambda: asyncio.run(
+                    _nstore.put_doc(3052, _sk2, "pcai:sync-check-probe", {"t": _try}, encrypt=False))):
+                admitted = True
+                break
+        if not admitted:
+            print("SKIP  the relay never admitted the throwaway's keys")
+            return 2
 
         # ---- 1. A holds 12 files (one multi-MB); B must receive every byte -----------------------
         await a.js("""(() => { const D = window.__vdisk;

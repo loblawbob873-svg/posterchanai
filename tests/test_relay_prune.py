@@ -482,7 +482,11 @@ def test_a_replaceable_write_does_not_walk_the_authors_whole_kind(store_factory)
         ids = {e["id"] for e in await store.query([{"kinds": [30078], "authors": [pk], "limit": 200}])}
         assert f"{501:064x}" not in ids and f"{500:064x}" in ids, "an older version must not win"
 
-        # NIP-01 tie-break: equal created_at is settled by the LOWER id, both ways round.
+        # TIES, two different rules on purpose. A DIRECT write replacing the author's own DIRECT
+        # document wins a same-second tie — ids are random, so the spec's lowest-id rule made a
+        # device saving twice in one second lose half its own saves ("not stored, retry", measured
+        # six a second on a real account mid-sweep). SYNCED copies still settle by the spec's
+        # lowest-id rule, so two relays mirroring each other cannot flip-flop.
         same = (await store.query([{"kinds": [30078], "authors": [pk], "#d": ["pcai:cal:main:uid-7"],
                                     "limit": 5}]))[0]
         hi = "f" * 64
@@ -490,16 +494,23 @@ def test_a_replaceable_write_does_not_walk_the_authors_whole_kind(store_factory)
         e_hi["created_at"] = same["created_at"]
         await store.add_event(e_hi, origin="direct")
         ids = {e["id"] for e in await store.query([{"kinds": [30078], "authors": [pk], "limit": 200}])}
-        assert hi not in ids, "a tie must go to the LOWER id, so the higher-id newcomer loses"
+        assert hi in ids, "a device's own later save lost a coin flip to its own earlier one"
 
-        # Low enough to win the tie against 0x1f4, but NOT an id already used by a neighbour
-        # (ids 1-40 are 0…01 to 0…28, so 0…01 would have collided with uid-1's event).
+        # A SYNCED lower id wins the tie (spec), so cross-relay convergence is intact…
         lo = f"{0x100:064x}"
         e_lo = ev(0, "pcai:cal:main:uid-7", ident=lo)
         e_lo["created_at"] = same["created_at"]
-        await store.add_event(e_lo, origin="direct")
+        await store.add_event(e_lo, origin="wot")
         ids = {e["id"] for e in await store.query([{"kinds": [30078], "authors": [pk], "limit": 200}])}
-        assert lo in ids, "a tie must go to the LOWER id, so the lower-id newcomer wins"
+        assert lo in ids and hi not in ids, "a synced tie must go to the LOWER id"
+
+        # …and a synced HIGHER id still loses, both ways of the spec rule.
+        hi2 = f"{0x200:064x}"
+        e_syn = ev(0, "pcai:cal:main:uid-7", ident=hi2)
+        e_syn["created_at"] = same["created_at"]
+        await store.add_event(e_syn, origin="wot")
+        ids = {e["id"] for e in await store.query([{"kinds": [30078], "authors": [pk], "limit": 200}])}
+        assert hi2 not in ids and lo in ids, "a synced higher id must lose the tie"
 
         # A tagless document is its own coordinate and must not collide with the tagged ones.
         bare = _ev(600, kind=30078, pubkey=pk)

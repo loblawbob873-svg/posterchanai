@@ -324,7 +324,7 @@ class RelayStore:
             # Replaceable-event handling: drop older versions so only the newest survives.
             if _REPLACEABLE(kind):
                 cur = conn.execute(
-                    "SELECT id, created_at FROM events WHERE pubkey=? AND kind=?",
+                    "SELECT id, created_at, origin FROM events WHERE pubkey=? AND kind=?",
                     (pubkey, kind))
                 for row in cur.fetchall():
                     # Same NIP-01 tie-break as the addressable branch below: equal created_at is
@@ -333,7 +333,11 @@ class RelayStore:
                     # forever is most visible.
                     if row["id"] == eid:
                         continue
-                    if row["created_at"] < created or (row["created_at"] == created and eid < row["id"]):
+                    # Same direct-tie rule as the addressable branch below: a device saving its
+                    # own profile/contacts twice in one second must not lose to its own write.
+                    _tie_direct = (row["created_at"] == created and origin == "direct"
+                                   and str(row["origin"] or "") == "direct")
+                    if row["created_at"] < created or (row["created_at"] == created and eid < row["id"]) or _tie_direct:
                         self._delete_sync(conn, row["id"])
                     else:
                         return False  # a newer (or tie-winning) version already stored
@@ -354,7 +358,7 @@ class RelayStore:
                 # hence the LEFT JOIN branch rather than an inner join on a value that isn't there.
                 if d:
                     cur = conn.execute(
-                        "SELECT e.id, e.created_at FROM events e "
+                        "SELECT e.id, e.created_at, e.origin FROM events e "
                         "JOIN event_tags t ON t.event_id = e.id AND t.tag='d' AND t.value=? "
                         "WHERE e.pubkey=? AND e.kind=?", (d, pubkey, kind))
                 else:
@@ -362,7 +366,7 @@ class RelayStore:
                     # indexes the empty value, so a NOT EXISTS alone missed the explicit form and
                     # every revision of that coordinate accumulated instead of replacing.
                     cur = conn.execute(
-                        "SELECT e.id, e.created_at FROM events e "
+                        "SELECT e.id, e.created_at, e.origin FROM events e "
                         "WHERE e.pubkey=? AND e.kind=? AND (NOT EXISTS ("
                         "  SELECT 1 FROM event_tags t WHERE t.event_id = e.id AND t.tag='d')"
                         " OR EXISTS (SELECT 1 FROM event_tags t2 WHERE t2.event_id = e.id"
@@ -383,7 +387,16 @@ class RelayStore:
                         continue
                     older = row["created_at"] < created
                     tie_lost = row["created_at"] == created and eid < row["id"]
-                    if older or tie_lost:
+                    # A DIRECT write from the author updating their OWN document wins a tie.
+                    # The lowest-id rule is right for two RELAYS converging on one history and
+                    # wrong for one device saving twice in one second: ids are random, so half of
+                    # a user's rapid saves were refused "not stored, retry" — notes, prefs, sync
+                    # manifests, measured six-a-second on a real account. Scoped to origin='direct'
+                    # replacing origin='direct': mirrored copies still settle by the spec, so two
+                    # nodes syncing each other cannot flip-flop.
+                    tie_direct = (row["created_at"] == created and origin == "direct"
+                                  and str(row["origin"] if "origin" in row.keys() else "") == "direct")
+                    if older or tie_lost or tie_direct:
                         self._delete_sync(conn, row["id"])
                     else:
                         return False
