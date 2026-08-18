@@ -26,6 +26,24 @@ class InstallerSourceTests(unittest.TestCase):
         self.assertIn('out.put("installer", who == null ? "" : who)', src,
                       "an unknown installer must answer '' — which keeps the direct-download path")
 
+    def test_the_tap_launches_the_store_app_not_its_website(self):
+        """"Mine just tries to open zapstore.dev, not the actual zapstore app" — the native launch
+        opens the installer PACKAGE (the answer from installer() is the id); the site is only the
+        fallback for a vanished store or an APK too old to carry launch()."""
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        plug = open(os.path.join(root, "mobile", "android", "app", "src", "main", "java",
+                                 "place", "poster", "app", "share", "ShareTargetPlugin.java"),
+                    encoding="utf-8").read()
+        self.assertIn("public void launch(PluginCall call)", plug)
+        self.assertIn("getLaunchIntentForPackage", plug)
+        self.assertIn('out.put("ok", ok)', plug, "the caller cannot tell launch failed → no fallback")
+        app = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+        at = app.index("_fromZapstore()){")
+        seg = app[at:at + 1400]
+        self.assertIn("P.launch({pkg:_installer})", seg.replace(" ", ""))
+        self.assertIn("zapstore.dev", seg, "no fallback for a store that cannot be launched")
+
     def test_the_client_branches_on_zapstore(self):
         import os
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

@@ -20501,10 +20501,18 @@
     // resumable); Capacitor routes the external URL to the system browser → Android download → install.
     if(_apkUpdate){
       if(_fromZapstore()){
-        /* Their store, their update: open Zapstore itself (the app if launchable, its site as the
-         * fallback) rather than sideloading a download over a store-managed install. */
-        try{ window.open('https://zapstore.dev', '_blank'); }catch(_){ try{ location.href='https://zapstore.dev'; }catch(e){} }
-        try{ toast('Update it from Zapstore — this install came from there'); }catch(_){} return;
+        /* Their store, their update — and the STORE APP, not its website: "mine just tries to open
+         * zapstore.dev, not the actual zapstore app". The native launch opens whatever package
+         * installed us (the installer answer IS the package id); the site is only the fallback for
+         * a store that vanished or an APK too old to carry the launch method. */
+        (async()=>{
+          let ok=false;
+          try{ const P=window.Capacitor&&Capacitor.Plugins&&Capacitor.Plugins.ShareTarget;
+               if(P&&P.launch){ const r=await P.launch({pkg:_installer}); ok=!!(r&&r.ok); } }catch(_){}
+          if(!ok){ try{ window.open('https://zapstore.dev','_blank'); }catch(_){ try{ location.href='https://zapstore.dev'; }catch(e){} } }
+          try{ toast(ok?'Opening your store \u2014 update from there':'Update it from Zapstore \u2014 this install came from there'); }catch(_){}
+        })();
+        return;
       }
       const u=(window.__PC_API_BASE__||'')+'/apk';
       try{ window.open(u,'_blank'); }catch(_){ try{ location.href=u; }catch(e){} }

@@ -46,6 +46,22 @@ public class ShareTargetPlugin extends Plugin {
     call.resolve(out);
   }
 
+  /** Launch another installed app by package id — the updater uses it to open the STORE that
+   *  installed this APK (Zapstore et al.) instead of that store's website in a browser tab.
+   *  ok:false when the package has no launch intent here, so the caller can fall back. */
+  @PluginMethod
+  public void launch(PluginCall call) {
+    String pkg = call.getString("pkg", "");
+    boolean ok = false;
+    try {
+      Intent i = getContext().getPackageManager().getLaunchIntentForPackage(pkg);
+      if (i != null) { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); ok = true; }
+    } catch (Throwable ignored) { }
+    com.getcapacitor.JSObject out = new com.getcapacitor.JSObject();
+    out.put("ok", ok);
+    call.resolve(out);
+  }
+
   @PluginMethod
   public void getTarget(PluginCall call) {
     String cls = "";
