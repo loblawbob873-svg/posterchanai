@@ -129,6 +129,17 @@
     }
     if(!Object.keys(views).length && missing) throw new Error('none of your devices could be read — '
                                                               + 'nothing has been changed');
+    /* A DEVICE'S TRUTH IS ITS JOURNAL, NEVER ITS OWN STALE DOC. The published view under OUR device
+     * id is a derivative of the journal — but after a remove-and-re-add the journal is fresh while
+     * the doc still holds the previous life's entries, and merging it made a device meet its own
+     * GHOST as a rival: every path whose old claim diverges from the folder conflicts with itself,
+     * once per file ("i readded pictures on phone and it instantly has 373 conflicts"). The merge
+     * gets the journal-derived view for `me`; the stale doc is overwritten at the first publish. */
+    const publishedMine = views[me];   // as FETCHED — the lost-document restore decision needs it
+    { const mineNow = {};
+      for(const p2 in index){ const e2 = index[p2];
+        if(e2 && typeof e2 === 'object'){ const c2 = Object.assign({}, e2); delete c2.local; mineNow[p2] = c2; } }
+      views[me] = mineNow; }
     const merged = E.merge(views);
     report.devices = merged.devices.length;
     report.missingViews = missing;
@@ -546,7 +557,7 @@
     step('saving');
     if(journal.dirty){
       await journal.flush();                             // publishes first, then saves — one unit
-    } else if(!viewEquals(mine, views[me] || {})){
+    } else if(!viewEquals(mine, publishedMine || {})){
       await publish(io, key, mine, report);              // nothing new applied, but the relay is behind
     } else {
       report.published = report.published || 0;          // nothing to say, and nothing missing

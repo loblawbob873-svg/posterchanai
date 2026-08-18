@@ -294,6 +294,41 @@ async def drive(url):
         else:
             print(f"  replicated: {len(db['files'])} files byte-identical")
 
+        # ---- 1.5 THE DIRTY JOIN — the most common real join, and the one that was never tested:
+        # a THIRD cold device (fresh profile on A's port after A closes? — no: reuse B's page with
+        # cleared state) already HOLDING data: identical copies must settle to ZERO conflicts,
+        # divergent bytes must conflict EXACTLY once each, and old conflict-named debris syncs as
+        # ordinary files. "i readded pictures on phone and it instantly has 373 conflicts" — if
+        # identical bytes conflict, this fails loudly here instead of on somebody's phone.
+        await b.js("""(() => {
+          const D = window.__vdisk;
+          // wipe journal + folder rows to simulate a fresh install that kept its files
+          const me = window.__PC.me().pubkey;
+          for(const k of Object.keys(localStorage)) if(k.indexOf('pc_sync') === 0 || k.indexOf('pcsync') === 0) localStorage.removeItem(k);
+          localStorage.setItem('pc_sync_folders_' + me, JSON.stringify([
+            { id: 'vdisk', key: 'E2EPair', dir: '/vdisk', name: 'E2EPair',
+              excludes: [], prefs: {}, lastSyncAt: 0, lastFullScanAt: 0 }]));
+          // divergent DIFFERENT mtimes but identical bytes for 5 existing files (the settle case)
+          for(let i = 1; i <= 5; i++){ const f = D.files['dir' + (i % 3) + '/f' + i + '.bin'];
+            if(f) f.mtime = 9999 + i; }
+          // 2 genuinely divergent files
+          for(const p of ['dir0/f6.bin', 'dir1/f7.bin']){
+            if(D.files[p]){ const u = new Uint8Array(D.files[p].bytes.length + 3); u.fill(77); D.files[p] = { bytes: u, mtime: 8888 }; } }
+          // 1 piece of old conflict-named debris on disk
+          D.files['old (conflict from Android-dead, 2026-08-16).bin'] = { bytes: new Uint8Array([1,2,3]), mtime: 100 };
+          return true; })()""", aw=True)
+        rj = await b.js(f"({SWEEP})()", aw=True) or {}
+        print("  B dirty join:", json.dumps(rj))
+        conf = (rj.get("ok") and rj.get("failed") == []) and True
+        nconf = (rj.get("conflicts") if "conflicts" in (rj or {}) else None)
+        dbj = await b.js(f"({DISK})()", aw=True) or {}
+        made = [p for p in dbj.get("files", {}) if "(conflict from" in p and "Android-dead" not in p]
+        if len(made) != 2:
+            problems.append(f"dirty join minted {len(made)} conflict copies, wanted EXACTLY 2 "
+                            f"(the divergent pair) — identical bytes must settle: {made[:5]}")
+        else:
+            print("  dirty join: identical settled, exactly 2 real conflicts kept both")
+
         # ---- 2. a real delete on B reaches A: exactly one file, into trash ----------------------
         await b.js("(() => { delete window.__vdisk.files['dir0/f0.bin']; return true; })()")
         r3 = await b.js(f"({SWEEP})()", aw=True) or {}
