@@ -159,6 +159,17 @@ window.__PC_TOKEN__ = '';
 })();
 </script>
 '''
+# Bake the SW cache version this bundle was built from. The in-app updater compares it against the
+# server's live sw.js (bumped on every client change), so a desktop running a stale bundle finally
+# LEARNS that a build is waiting instead of silently misbehaving until someone tells the user.
+import re as _re
+try:
+    _sw = open(os.path.join(src, 'static', 'js', 'client', 'sw.js'), encoding='utf-8').read()
+    _m = _re.search(r'pc-nostr-v(\d+)', _sw)
+    _dv = _m.group(1) if _m else '0'
+except Exception:
+    _dv = '0'
+shim = shim.replace('</script>', 'window.__PC_DESKTOP_BUILD__ = ' + _dv + ';\n</script>', 1)
 html = html.replace('</head>', shim + '</head>', 1)
 open('www/index.html', 'w', encoding='utf-8').write(html)
 print('www/index.html built (shell rendered locally, bundled mode injected)')

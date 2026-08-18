@@ -4285,8 +4285,8 @@
           window.__pcBackArmed=true; try{ toast('press back again to exit'); }catch(_){}
           setTimeout(()=>{ window.__pcBackArmed=false; }, 2000);
         }); }catch(_){} }
-        setTimeout(()=>{ try{ _checkApkUpdate(); }catch(_){} }, 4000);   // in-app: offer an APK update if the server has a newer build
-        setInterval(()=>{ _lastApkCheck = Date.now(); try{ _checkApkUpdate(); }catch(_){} }, 3600000);   // + hourly backstop so a long-open session still notices a new build
+        setTimeout(()=>{ try{ _checkApkUpdate(); _checkDesktopUpdate(); }catch(_){} }, 4000);   // in-app: offer an update if the server has a newer build
+        setInterval(()=>{ _lastApkCheck = Date.now(); try{ _checkApkUpdate(); _checkDesktopUpdate(); }catch(_){} }, 3600000);   // + hourly backstop so a long-open session still notices a new build
       }
     }
   }
@@ -21009,6 +21009,27 @@
       _installer = String((r && r.installer) || '');
     }catch(_){ }
   }
+  /* THE DESKTOP LEARNS ABOUT UPDATES TOO. Its bundle bakes the SW cache version it was built
+   * from (__PC_DESKTOP_BUILD__ — see desktop/build-www.sh); the server's live sw.js names the
+   * current one, and I bump that number on every client change — so the comparison is free, needs
+   * no endpoint and no CI plumbing. Every stale-shell disaster this week ("every time you restart
+   * signer breaks", "deleting is basically broken") was a desktop that had no way to know a build
+   * was waiting. */
+  let _desktopUpdate = false;
+  async function _checkDesktopUpdate(){
+    if(window.Capacitor || !window.__PC_API_BASE__ || _desktopUpdate) return;   // desktop shell only
+    const mine = +(window.__PC_DESKTOP_BUILD__ || 0); if(!mine) return;
+    try{
+      const r = await fetch((window.__PC_API_BASE__ || '') + '/static/js/client/sw.js', { cache: 'no-store' });
+      if(!r.ok) return;
+      const m = (await r.text()).match(/pc-nostr-v(\d+)/);
+      if(m && +m[1] > mine){
+        _desktopUpdate = true; _apkUpdate = true;   // rides the existing row/badge machinery
+        if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} }
+        else { _updBadge = true; try{ bumpNotif(); }catch(_){} try{ toast('\u2b06\ufe0f App update available \u2014 see Notifications'); }catch(_){} }
+      }
+    }catch(_){}
+  }
   const _fromZapstore = () => /zapstore/i.test(_installer);
   async function _checkApkUpdate(){
     if(!window.Capacitor || !window.__PC_API_BASE__) return;   // bundled native app only (no-op in PWA)
@@ -21062,6 +21083,11 @@
     // Bundled app update = install a new APK, not an SW reload. Open /apk (served directly by the server,
     // resumable); Capacitor routes the external URL to the system browser → Android download → install.
     if(_apkUpdate){
+      if(_desktopUpdate){
+        const u=(window.__PC_API_BASE__||'')+'/desktop/';
+        try{ (window.__PC && __PC.openExternal ? __PC.openExternal(u) : window.open(u,'_blank')); }catch(_){ try{ location.href=u; }catch(e){} }
+        try{ toast('Opening the download page \u2014 install the new build over this one'); }catch(_){} return;
+      }
       if(_fromZapstore()){
         /* Their store, their update — and the STORE APP, not its website: "mine just tries to open
          * zapstore.dev, not the actual zapstore app". The native launch opens whatever package
@@ -21125,10 +21151,11 @@
   function _updNotifHtml(id){
     if(!(_newBuild || _apkUpdate)) return '';
     const body = _updApplying ? ' <span class="muted small">applying the new version</span>'
+      : (_desktopUpdate ? ' \u2014 a new desktop build is ready<div class="muted small">tap to open the download page</div>'
       : (_apkUpdate ? (_fromZapstore()
             ? ' — a new PosterChan app version is ready<div class="muted small">tap to open Zapstore — this install updates through it</div>'
             : ' — a new PosterChan app version is ready<div class="muted small">tap to download &amp; install the update</div>')
-                    : ' — a new version of the app is ready<div class="muted small">tap to reload &amp; update</div>');
+                    : ' — a new version of the app is ready<div class="muted small">tap to reload &amp; update</div>'));
     return `<div class="notif upd-notif" id="${id}"><span class="ic">🔄</span>`
          + `<div><b>${_updApplying?'Updating…':'Update available'}</b>${body}</div></div>`;
   }
