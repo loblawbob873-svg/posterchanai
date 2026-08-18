@@ -105,6 +105,9 @@ if (isOurPage) {
     /* What the far side verifies a download against. Without it a chunked upload from this device
      * carries no content identity at all, and a corrupt transfer is written and played. */
     hashFile: (id, rel) => ipcRenderer.invoke('pc:fs:hash-file', String(id || ''), String(rel || '')),
+    // Positive proof for a deletion claim — see fsbridge.confirmGone. Absent on old builds,
+    // and syncexec treats absence as "cannot confirm", which deletes nothing.
+    confirmGone: (id, rel) => ipcRenderer.invoke('pc:fs:confirm-gone', String(id || ''), String(rel || '')),
     discardPart: (id, rel) => ipcRenderer.invoke('pc:fs:discard-part', String(id || ''), String(rel || '')),
     partSize: (id, rel) => ipcRenderer.invoke('pc:fs:part-size', String(id || ''), String(rel || '')),
     sweepParts: (id, olderThanMs) => ipcRenderer.invoke('pc:fs:sweep-parts', String(id || ''), olderThanMs),

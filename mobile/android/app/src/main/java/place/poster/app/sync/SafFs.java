@@ -124,6 +124,20 @@ public final class SafFs implements SyncIo.Files {
         return cur;
     }
 
+    /** POSITIVE PROOF OF A DELETION, or "cannot confirm". A deletion claim needs the exact path
+     * absent while its PARENT resolves and stats healthy — an unmounted volume, a revoked grant or
+     * a flaky provider all answer "cannot confirm", which the sweep treats as unknown and deletes
+     * nothing anywhere. Mirrors desktop fsbridge.confirmGone. */
+    public boolean[] confirmGone(String rel) {
+        try {
+            String parentId = resolve(dirName(rel), false);
+            if (parentId == null || statById(parentId) == null) return new boolean[]{false, false};
+            String childId = childId(parentId, baseName(rel));
+            if (childId == null) return new boolean[]{true, true};      // parent healthy, child absent
+            return new boolean[]{false, true};                          // still there
+        } catch (Exception e) { return new boolean[]{false, false}; }
+    }
+
     /** {size, mtime} for a document id, or null. */
     public long[] statById(String docId) {
         Cursor c = null;

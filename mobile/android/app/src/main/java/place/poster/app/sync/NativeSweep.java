@@ -76,6 +76,8 @@ public final class NativeSweep {
         public final List<String> downloaded = new ArrayList<String>();
         public final List<String> trashed = new ArrayList<String>();
         public final List<String> removedRemote = new ArrayList<String>();
+        /** Deletion claims held back for lack of positive proof — the card says how many and why. */
+        public final List<String> unconfirmedAbsent = new ArrayList<String>();
         public final List<Map<String, Object>> failed = new ArrayList<Map<String, Object>>();
         public int unchanged, excluded, deferred, alreadyStored, checkpoints, repaired;
         public boolean hashed = false;
@@ -91,6 +93,7 @@ public final class NativeSweep {
             m.put("downloaded", downloaded.size());
             m.put("trashed", trashed.size());
             m.put("removedRemote", removedRemote.size());
+            m.put("unconfirmedAbsent", unconfirmedAbsent.size());
             m.put("failed", failed.size());
             m.put("unchanged", (long) unchanged);
             m.put("deferred", (long) deferred);
@@ -427,6 +430,15 @@ public final class NativeSweep {
 
         for (Map<String, Object> t : plan.tombstone) {
             String path = Json.str(t.get("path"), "");
+            /* POSITIVE PROOF, mirroring the JS executor: a deletion is only announced when the
+             * exact path is confirmed absent under a healthy parent. Every way a scan fails to
+             * SEE used to become a published deletion on every device. */
+            boolean[] ev;
+            try { ev = fs.confirmGone(path); } catch (Exception e) { ev = new boolean[]{false, false}; }
+            if (!ev[0]) {
+                rep.unconfirmedAbsent.add(path);
+                continue;
+            }
             Map<String, Object> tomb = new LinkedHashMap<String, Object>();
             tomb.put("v", t.get("v"));
             tomb.put("by", device);

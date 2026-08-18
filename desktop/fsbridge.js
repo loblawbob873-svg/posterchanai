@@ -173,6 +173,25 @@ async function read(id, rel){
  * each call carries its own offset, because the alternative is an open file handle living across
  * IPC calls, and then a renderer that dies mid-transfer leaks it.
  */
+/* POSITIVE PROOF OF A DELETION, or nothing. The engine used to infer "the user deleted this"
+ * from "the scan did not list it" — and every way a scan fails to SEE (unmounted drive, permission
+ * loss, a flaky listing) became a published deletion. A tombstone now requires this answer:
+ * the exact path is ENOENT while its parent directory stats healthy. Anything else is UNKNOWN,
+ * which deletes nothing anywhere. */
+async function confirmGone(id, rel){
+  try{
+    const abs = await resolveIn(id, rel);
+    try{ await fsp.stat(abs); return { gone: false, parentAlive: true }; }
+    catch(e){
+      if(e && e.code === 'ENOENT'){
+        try{ await fsp.stat(path.dirname(abs)); return { gone: true, parentAlive: true }; }
+        catch(_){ return { gone: false, parentAlive: false }; }
+      }
+      return { gone: false, parentAlive: false };     // EACCES/EIO: could not confirm
+    }
+  }catch(_){ return { gone: false, parentAlive: false }; }
+}
+
 async function readPart(id, rel, offset, len){
   const abs = await resolveIn(id, rel);
   const fh = await fsp.open(abs, 'r');
@@ -591,5 +610,5 @@ function removeRoot(id){
 }
 
 module.exports = { init, list, addRoot, removeRoot, resolveIn, scan, sha256,
-                   readPart, writePart, writeCommit,
+                   readPart, writePart, writeCommit, confirmGone,
                    read, write, move, trash, emptyTrash, trashStat, hashPart, hashFile, discardPart, partSize, sweepParts, watch, unwatch, IGNORE };

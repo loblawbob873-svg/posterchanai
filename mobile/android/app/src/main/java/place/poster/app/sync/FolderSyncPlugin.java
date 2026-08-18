@@ -734,6 +734,24 @@ public class FolderSyncPlugin extends Plugin {
    * The scan has always hashed the streamed way. This is that, for one path.
    */
   @PluginMethod
+  public void confirmGone(PluginCall call) {
+    final String id = call.getString("id", ""), rel = call.getString("rel", "");
+    getBridge().execute(() -> {
+      try {
+        boolean[] r = fs(id).confirmGone(rel);
+        JSObject ret = new JSObject();
+        ret.put("gone", r[0]);
+        ret.put("parentAlive", r[1]);
+        call.resolve(ret);
+      } catch (Exception e) {
+        JSObject ret = new JSObject();
+        ret.put("gone", false); ret.put("parentAlive", false);
+        call.resolve(ret);
+      }
+    });
+  }
+
+  @PluginMethod
   public void hashFile(PluginCall call) {
     final String id = call.getString("id", ""), rel = call.getString("rel", "");
     getBridge().execute(() -> {

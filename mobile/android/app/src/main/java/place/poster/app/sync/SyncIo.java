@@ -31,6 +31,8 @@ public final class SyncIo {
         String hashPart(String rel);
         long[] commitPart(String rel, long when) throws Exception;
         String trash(String rel, long when) throws Exception;
+        /** Positive proof for a deletion claim: {gone, parentAlive}. See SafFs.confirmGone. */
+        boolean[] confirmGone(String rel);
     }
 
     /** The node, and the encrypted store behind it. */

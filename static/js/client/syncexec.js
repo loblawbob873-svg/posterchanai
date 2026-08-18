@@ -485,8 +485,24 @@
       });
 
     // Deletions this device is announcing, and the agreements that need no bytes.
+    /* A DELETION CLAIM NEEDS POSITIVE PROOF, never inference from a listing. The engine plans a
+     * tombstone when the scan did not see a file the journal knows — but every way a scan fails to
+     * SEE (an unmounted drive, a revoked grant, a flaky provider answering an empty listing) used
+     * to become a published deletion on every device. Before anything is announced, the exact path
+     * is probed: ENOENT with a healthy parent is a deletion; anything else is UNKNOWN, which
+     * deletes nothing anywhere and says so on the card. A build whose fs cannot answer confirms
+     * nothing — the safe direction for a stale shell. */
     for(const t of plan.tombstone){
       if(stopping()) break;
+      let ev = null;
+      try{ ev = fs.confirmGone ? await fs.confirmGone(o.id, t.path) : null; }catch(_){ ev = null; }
+      if(!ev || ev.gone !== true){
+        (report.unconfirmedAbsent = report.unconfirmedAbsent || []).push({ path: t.path,
+          why: !ev ? 'this build cannot confirm deletions'
+             : ev.parentAlive === false ? 'its folder could not be read'
+             : 'the file is still there' });
+        continue;
+      }
       record(t.path, { v: t.v, by: me, deletedAt: now }, null);
       report.removedRemote.push(t.path);
     }

@@ -141,6 +141,12 @@
      * on a folder with 1,927 conflicts the app died on the first. Absent on an older APK, where the
      * engine falls back to reading, bounded to what this platform can actually hold. */
     hashFile: (id, rel) => P.hashFile({ id, rel }).then(r => (r && r.sha) || ''),
+    /* Positive proof for a deletion claim. An APK too old to answer returns "cannot confirm",
+     * which deletes nothing — the safe direction for a stale build. */
+    confirmGone: (id, rel) => P.confirmGone
+      ? P.confirmGone({ id, rel }).then(r => ({ gone: !!(r && r.gone), parentAlive: !!(r && r.parentAlive) }),
+                                        () => ({ gone: false, parentAlive: false }))
+      : Promise.resolve({ gone: false, parentAlive: false }),
     /* Slice I/O — what lets a file bigger than this process can hold move at all. Whole-file read()
      * puts the file in the plugin, again across the bridge as base64, and again in the WebView,
      * which is then asked to encrypt it: a WebView has far less headroom than a desktop and simply

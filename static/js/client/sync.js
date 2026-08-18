@@ -1541,6 +1541,10 @@
      * step", about paths this sweep never saw. */
     const _unr = (rep.unreadable || []).length;
     if(_unr) bits.push(_unr + ' path' + (_unr === 1 ? '' : 's') + ' couldn\u2019t be read on this device \u2014 left alone');
+    /* A deletion claim the sweep could not PROVE — the file was missing from the listing but its
+     * absence could not be positively confirmed. Nothing is deleted anywhere on an unproven claim. */
+    const _unc = (rep.unconfirmedAbsent || []).length;
+    if(_unc) bits.push(_unc + ' deletion' + (_unc === 1 ? '' : 's') + ' held \u2014 couldn\u2019t be confirmed on disk, so nothing was deleted');
     // Only when it matters: a sweep that peaked over a gigabyte of JS heap names the number and the
     // phase, which is what turns the next out-of-memory report into a diagnosis.
     if((rep.peakHeapMB || 0) > 1024) bits.push('peak memory ' + rep.peakHeapMB + ' MB during ' + (rep.peakHeapPhase || '?'));
@@ -1895,6 +1899,8 @@
     const p = rep.plan || {};
     const unf = grp('Can\u2019t be fetched \u2014 the store doesn\u2019t have the bytes',
                     rep.unfetchable || [], a => a.path + ' \u2014 ' + a.why);
+    const unc = grp('Deletions held \u2014 absence couldn\u2019t be confirmed on disk',
+                    rep.unconfirmedAbsent || [], a => a.path + ' \u2014 ' + a.why);
     if(rep.dryRun){
       return '<div class="sync-details">'
         + grp('Would upload', p.upload, a => a.path + ' — ' + a.why)
@@ -1917,7 +1923,7 @@
         + '</div>';
     }
     return '<div class="sync-details">'
-      + unf
+      + unf + unc
       + grp('Failed', rep.failed, a => a.path + ' — ' + a.what + ': ' + a.error)
       + grp('Skipped', rep.skipped, a => a.path + ' — ' + a.why)
       + grp('Conflicts kept', rep.conflicted, a => a.path + ' → ' + a.keptAs)
