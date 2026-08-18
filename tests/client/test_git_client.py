@@ -140,9 +140,35 @@ class TheContractWithAppJsTests(unittest.TestCase):
         cls.app = _src(APP)
 
     def test_open_repo_can_set_the_view(self):
+        """RUN, never grep: a `set VIEW` existed on window.__PC for a whole evening while git.js
+        bound `const S = dep.state` — a DIFFERENT object, still getter-only — and the grep version
+        of this test stayed green while every repo stayed unopenable. The shipped `state:` facade is
+        extracted and the assignment git.js performs is performed on it, in strict mode."""
         self.assertIn("S.VIEW='repo'", self.git.replace(" ", ""))
-        self.assertIn("set VIEW(", self.app,
-                      "app.js exposes VIEW with no setter, so openRepo throws on its first line")
+        self.assertIn("const S = dep.state", self.git,
+                      "git.js re-bound its surface — repoint this test at whatever it binds now")
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("no node on this node")
+        js = """
+        const src = require('fs').readFileSync(%s,'utf8');
+        const at = src.indexOf('state: {');
+        if(at < 0){ console.error('no state facade'); process.exit(1); }
+        const open = src.indexOf('{', at);
+        let d=0, i=open;
+        while(i < src.length){ if(src[i]==='{')d++; else if(src[i]==='}'){d--; if(!d)break;} i++; }
+        const lit = src.slice(open, i+1);
+        const got = new Function("'use strict'; let VIEW='home', CFG={}, ME=null, GUEST=false, " +
+          "LOGO=''; const state = " + lit + "; state.VIEW='repo'; return state.VIEW;")();
+        if(got !== 'repo'){ console.error('facade rejected the write: ' + got); process.exit(1); }
+        console.log('ok');
+        """ % __import__("json").dumps(APP)
+        r = subprocess.run([node, "-e", js], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0,
+                         "openRepo's S.VIEW= throws on the object git.js actually receives:\n"
+                         + r.stderr[-1500:])
 
     def test_every_helper_git_js_borrows_from_app_js_exists(self):
         """git.js reaches into the shared surface for a dozen things. One rename there and the repo

@@ -7643,7 +7643,13 @@
     if(_gitMod) return _gitMod;
     if(!window.PCGitFactory) throw new Error('git.js did not load');
     return (_gitMod = window.PCGitFactory({
+      /* BOTH HALVES, ON THIS OBJECT. git.js binds `const S = dep.state` — THIS literal, not
+       * window.__PC — so a setter added to the main export fixed nothing: openRepo kept throwing
+       * "Cannot set property VIEW ... only a getter" from the one object it can actually reach.
+       * The stack trace named this line's neighbourhood from the start (app.js:7656) and was read
+       * as a stale console instead of as the answer. */
       state: { get CFG(){ return CFG; }, get ME(){ return ME; }, get VIEW(){ return VIEW; },
+               set VIEW(v){ VIEW = v; },
                get GUEST(){ return GUEST; }, get LOGO(){ return LOGO; } },
       $, $$, NT, _ISSUES_REPO, _blossomDenied, _clearNav, _dedupAddr, _fmtBytes, _guestPrompt,
       _mdUrl, _navUrl, _serverOrigin, _webLink, closeModal, copyValue, decorateProfiles, enc,
