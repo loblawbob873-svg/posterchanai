@@ -230,7 +230,9 @@ class StarTests(unittest.TestCase):
         at = self.git.index("function toggleStar(")
         seg = self.git[at:at + 1400]
         self.assertIn("r.ok===false", seg)
-        self.assertIn("if(on) _stars.delete(addr); else _stars.add(addr);", seg)
+        self.assertIn("if(on) _starsMine.delete(addr); else _starsMine.add(addr);", seg)
+        self.assertIn("_stars=new Set([..._starsMine, ..._starsBk]);", seg,
+                      "the rollback fixes our set but leaves the union stale on screen")
 
     def test_gitworkshop_bookmarks_count_as_stars_and_are_never_written(self):
         """Measured on the live relay: gitworkshop bookmarks repos in the STANDARD kind-10003 list.
