@@ -251,8 +251,28 @@
       if(typeof Relay === 'undefined' || !Relay.query) return;
       let evs = [];
       try{ if(Relay.ready) await Relay.ready(6000); }catch(_){}
+      /* YOUR OWN EVENTS ARE ASKED FOR BY NAME, never left to the firehose. A bare
+       * {kinds, limit:500} answers with the 500 NEWEST calendar events on the relay — so the
+       * moment the network carries more than 500, the user's own appointments (and their
+       * follows') are exactly what gets crowded out: "I see nostr events in the calendar, but
+       * not mine". An authors filter has its own answer budget, so their events always land;
+       * the merge below dedups whatever both filters return. */
+      let mine = [];
+      try{
+        const me = (PC.me && PC.me() || {}).pubkey || null;
+        if(me){
+          let follows = [];
+          try{
+            const l = await Relay.query([{ authors: [me], kinds: [3], limit: 1 }], 6000);
+            const c = (l || []).sort((a, b) => b.created_at - a.created_at)[0];
+            follows = ((c && c.tags) || []).filter(t => t[0] === 'p' && t[1]).map(t => t[1]).slice(0, 900);
+          }catch(_){}
+          mine = await Relay.query([{ kinds: [31922, 31923], authors: [me, ...follows], limit: 500 }], 8000) || [];
+        }
+      }catch(_){ mine = []; }
       try{ evs = await Relay.query([{ kinds: [31922, 31923], limit: 500 }], 8000) || []; }
       catch(_){ evs = []; }
+      evs = mine.concat(evs);
       const best = {};                       // replaceable: latest per (kind, author, d)
       for(const ev of evs){
         const p2 = _n52parse(ev); if(!p2) continue;

@@ -20,7 +20,7 @@ def _lift(names):
     src = open(CAL, encoding="utf-8").read()
     out = []
     for n in names:
-        m = re.search(r"\n    (?:function %s|const %s = )" % (re.escape(n), re.escape(n)), src)
+        m = re.search(r"\n    (?:(?:async )?function %s|const %s = )" % (re.escape(n), re.escape(n)), src)
         assert m, "%s moved in calendar.js" % n
         start = m.start() + 1
         i = src.index("{", m.end() - 1)
@@ -109,6 +109,53 @@ class WiringTests(unittest.TestCase):
         self.assertIn("PC.publish(31923", body)
         for t in ("['title'", "['start'", "['end'", "['d'"):
             self.assertIn(t, body)
+
+    def test_your_own_and_your_follows_events_are_asked_for_by_name(self):
+        """Reported: "I see nostr events in the calendar, but not from my npub". A bare
+        {kinds, limit:500} answers with the relay's 500 NEWEST calendar events, so a busy network
+        crowds the user's own appointments out of their own calendar. loadNostr is RUN against a
+        stub relay whose firehose answer does NOT include the user's event — it must still land,
+        via the authors filter."""
+        js = """
+        let _n52evs = null, _n52at = 0;
+        const S = { rev: 0 };
+        const inView = () => false, paint = () => {};
+        const PC = { me: () => ({ pubkey: 'me'.padEnd(64,'0') }) };
+        const ME = PC.me().pubkey, FRIEND = 'f'.repeat(64);
+        const mkEv = (pk, d) => ({ kind: 31923, pubkey: pk, created_at: 100,
+          tags: [['d', d], ['title', 'ev-' + d], ['start', '1750000000']] });
+        const asked = [];
+        const Relay = {
+          ready: async () => {},
+          query: async (fils) => {
+            asked.push(fils);
+            const f = fils[0];
+            if(f.kinds && f.kinds[0] === 3)
+              return [{ kind: 3, created_at: 5, tags: [['p', FRIEND]] }];
+            if(f.authors) return [mkEv(ME, 'mine'), mkEv(FRIEND, 'theirs')];
+            return Array.from({ length: 3 }, (_, i) => mkEv('s' + i, 'noise' + i));
+          },
+        };
+        %s
+        (async () => {
+          await loadNostr();
+          const authorFil = asked.flat().find(f => f.authors && f.kinds && f.kinds.includes(31923));
+          process.stdout.write(JSON.stringify({
+            askedByName: !!authorFil,
+            hasMe: !!(authorFil && authorFil.authors.includes(ME)),
+            hasFriend: !!(authorFil && authorFil.authors.includes(FRIEND)),
+            mineLanded: (_n52evs || []).some(e => e.pk === ME),
+            friendLanded: (_n52evs || []).some(e => e.pk === FRIEND),
+          }));
+        })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+        """ % _lift(["_n52parse", "loadNostr"])
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        out = json.loads(r.stdout)
+        self.assertTrue(out["askedByName"], "no authors filter was sent at all")
+        self.assertTrue(out["hasMe"] and out["hasFriend"], out)
+        self.assertTrue(out["mineLanded"], "the user's own event was left to the firehose")
+        self.assertTrue(out["friendLanded"], out)
 
     def test_the_kinds_survive_the_relays_cleaners(self):
         store = open(os.path.join(ROOT, "app", "services", "nostr_relay", "store.py"),
