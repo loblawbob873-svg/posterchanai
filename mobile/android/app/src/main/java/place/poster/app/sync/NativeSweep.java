@@ -540,6 +540,15 @@ public final class NativeSweep {
         if (size > CHUNK_ABOVE) {
             List<Object> chunks = new ArrayList<Object>();
             boolean allExisted = true;
+            /* THE CHECKSUM MUST CERTIFY THE CHUNKS. The scan's csum (when a rehashing sweep made
+             * one) is minutes old by the time the last chunk is read, and a file edited inside that
+             * window stores chunks of a TORN file under a clean checksum — every downloader then
+             * fails verification for ever while this device's journal says all is well. So the
+             * plaintext is digested AS IT IS STORED (free — the bytes are in hand), the scan's csum
+             * is checked against that digest, and a mismatch records nothing. */
+            java.security.MessageDigest streamDg;
+            try { streamDg = java.security.MessageDigest.getInstance("SHA-256"); }
+            catch (Exception e) { throw new java.io.IOException("no SHA-256: " + e.getMessage()); }
             for (long off = 0; off < size; off += CHUNK_BYTES) {
                 int want = (int) Math.min(CHUNK_BYTES, size - off);
                 /* A CHUNK IS EXACTLY THE BYTES THAT WERE ASKED FOR, OR IT IS A FAILURE. A short read
@@ -554,6 +563,7 @@ public final class NativeSweep {
                     throw new java.io.IOException("short read at " + off + ": wanted " + want
                                                   + ", got " + plain.length);
                 }
+                streamDg.update(plain);
                 byte[] blob = SyncCrypto.encrypt(mk, plain);
                 String sha = SyncCrypto.sha256hex(blob);
                 if (net.blobExists(sha)) { chunks.add(sha); }
@@ -583,8 +593,15 @@ public final class NativeSweep {
              * time produces a list with nothing in common — so a `csum` is what lets the two agree. It
              * is only here when this was a rehashing sweep; an incremental one leaves it out, exactly
              * as the browser does. */
+            String streamed = place.poster.app.signer.Nostr.hex(streamDg.digest());
             String big = Json.str(meta.get("csum"), "");
-            if (!big.isEmpty()) entry.put("csum", big);
+            if (!big.isEmpty() && !big.equals(streamed)) {
+                throw new java.io.IOException("the file changed between the scan and the upload — "
+                        + "nothing was recorded; it will be picked up next sweep");
+            }
+            /* The streamed digest certifies exactly the stored bytes, so it stands in when the scan
+             * did not hash — strictly better than publishing no csum at all. */
+            entry.put("csum", big.isEmpty() ? streamed : big);
         } else {
             /* A WHOLE-FILE READ IS EXACTLY THE FILE, OR IT IS A FAILURE — the rule the chunked
              * branch above has always had, on the path that did not.

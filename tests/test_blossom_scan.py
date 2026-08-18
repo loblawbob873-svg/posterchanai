@@ -21,6 +21,7 @@ The rules that make the scan safe to act on, each tested here:
 import asyncio
 import os
 import sys
+import shutil
 import tempfile
 import unittest
 from unittest import mock
@@ -361,6 +362,66 @@ class ForgetMissingTests(unittest.TestCase):
             self.assertNotIn(danger, src, "the repair touches storage: %s" % danger)
 
 
+class RowsThatCannotBeAskedTests(unittest.TestCase):
+    """A ROW knows where its own bytes went. The CONFIG only knows where the next upload would go.
+
+    Measured on this deployment: 76,775 rows saying `storage=proxy` under a node whose backend is
+    now `local`, so there is no storage server to ask and every one of them scores `unknown`. The
+    scan was right to refuse a verdict and said nothing at all about why — a screen reading "76,775
+    could not be checked" beside "Everything the database claims is there" is two sentences that
+    cannot both be acted on.
+    """
+
+    def setUp(self):
+        self.rows = [_Row("a" * 64, "blossom/aa/" + "a" * 64, storage="proxy"),
+                     _Row("b" * 64, "blossom/bb/" + "b" * 64, storage="proxy")]
+        # The shape that produced it: proxy rows, no proxy. The blob directory is real and readable
+        # — this is not the unmounted-disk case, it is a node that moved backends.
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.cfg = {"backend": "local", "storage_url": "", "blob_dir": self.dir, "cache_mb": 0}
+
+    def _scan(self):
+        with mock.patch.object(blossom_service, "_cfg", lambda db: self.cfg):
+            return _run(blossom_service.scan_store(_DB(self.rows)))
+
+    def test_this_is_not_the_unreadable_store_case(self):
+        """Which is the guard that would otherwise make this test pass for the wrong reason: an
+        absent blob directory short-circuits the whole scan before a single row is looked at."""
+        self.assertFalse(self._scan()["unreadable_store"])
+
+    def test_they_are_never_reported_as_missing(self):
+        out = self._scan()
+        self.assertEqual(out["missing"], [], "rows nothing could be asked about were called lost")
+        self.assertEqual(out["unknown"], 2)
+
+    def test_the_scan_says_why_it_could_not_ask(self):
+        out = self._scan()
+        self.assertIn("storage proxy", out["cannot"])
+        self.assertIn("2 row", out["cannot"])
+
+    def test_a_normal_scan_carries_no_such_warning(self):
+        self.rows = [_Row("a" * 64, "blossom/aa/" + "a" * 64, storage="proxy")]
+        self.cfg = dict(self.cfg, backend="proxy", storage_url="http://store.example")
+
+        class _Resp:
+            status_code = 200
+            content = b""
+
+        class _Client:
+            async def head(self, *_a, **_k):
+                return _Resp()
+
+            async def get(self, *_a, **_k):
+                return _Resp()
+
+        with mock.patch.object(blossom_service, "_cfg", lambda db: self.cfg), \
+                mock.patch.object(blossom_service, "_client", lambda: _Client()), \
+                mock.patch.object(blossom_service, "_proxy_headers", lambda: {}):
+            out = _run(blossom_service.scan_store(_DB(self.rows)))
+        self.assertEqual(out["cannot"], "")
+
+
 class TheButtonTests(unittest.TestCase):
     """It is reachable, it asks before it deletes, and it acts on the scan it just ran."""
 
@@ -399,6 +460,16 @@ class TheButtonTests(unittest.TestCase):
     def test_unknown_answers_are_shown_as_unknown_not_as_loss(self):
         seg = self.js[self.js.index("async function scan()"):]
         self.assertIn("Not counted as missing", seg)
+
+    def test_the_reason_nothing_could_be_asked_reaches_the_screen(self):
+        seg = self.js[self.js.index("async function scan()"):]
+        self.assertIn("s.cannot", seg, "the scan explains why it could not ask and nothing shows it")
+
+    def test_it_does_not_call_a_store_it_could_not_read_healthy(self):
+        """"Everything the database claims is there" next to "76,775 could not be checked" is a
+        contradiction, and the reassuring half is the one people act on."""
+        seg = self.js[self.js.index("async function scan()"):]
+        self.assertIn("s.checked > s.unknown", seg)
 
 
 if __name__ == "__main__":

@@ -56,6 +56,84 @@ BLANK = {"uploaded": [], "downloaded": [], "trashed": [], "conflicted": [], "fai
          "skipped": [], "removedRemote": [], "unchanged": 0}
 
 
+class TheStopIsLatchedTests(unittest.TestCase):
+    """Pause, then Start, inside one scan — the un-latch that turned a partial scan into deletions.
+
+    The caller's `shouldStop` is a Set the Start button clears, and a hashing first scan runs for
+    minutes. If the sweep re-reads the signal after the scan bailed out early, the partial disk it
+    is now holding says every unscanned file was deleted locally. RUN with a flapping signal: the
+    sweep must halt, not continue."""
+
+    def test_a_stop_once_seen_is_permanent_for_the_sweep(self):
+        import json
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("no node on this node")
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        js = """
+        require(%s); const X = require(%s);
+        (async () => {
+          let calls = 0;
+          // true exactly once, mid-scan — then false for ever (the Start press).
+          const flap = () => (++calls === 2);
+          const fs = {
+            scanPage: async (id, so, off, n) => {
+              // two pages; the stop flips true between them
+              if(off === 0) return { files: { 'a.txt': {size:1, mtime:1} }, done: false };
+              return { files: { 'b.txt': {size:1, mtime:1} }, done: true };
+            },
+            trash: async () => { throw new Error('must not delete anything'); },
+          };
+          const io = {
+            index: async () => ({ 'a.txt': {v:1, by:'x', sha:'s', size:1, mtime:1, local:{size:1,mtime:1}},
+                                  'b.txt': {v:1, by:'x', sha:'t', size:1, mtime:1, local:{size:1,mtime:1}} }),
+            views: async () => ({ views: { x: { 'a.txt': {v:1, by:'x', sha:'s', size:1, mtime:1},
+                                                'b.txt': {v:1, by:'x', sha:'t', size:1, mtime:1} } }, missing: 0 }),
+            saveIndex: async () => {}, publish: async () => {},
+          };
+          const rep = await X.sweep(fs, io, { id:'f', key:'k', device:'me', shouldStop: flap });
+          process.stdout.write(JSON.stringify({ stopped: !!rep.stopped,
+            tomb: (rep.removedRemote||[]).length, trash: (rep.trashed||[]).length }));
+        })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+        """ % (json.dumps(os.path.join(root, "static", "js", "client", "foldersync.js")),
+               json.dumps(os.path.join(root, "static", "js", "client", "syncexec.js")))
+        r = subprocess.run([node, "-e", js], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        out = json.loads(r.stdout)
+        self.assertTrue(out["stopped"], "the sweep carried on after seeing a stop: %r" % out)
+        self.assertEqual(out["tomb"], 0, "a partial scan published deletions")
+        self.assertEqual(out["trash"], 0)
+
+
+class UnfetchableIsNeverInStepTests(unittest.TestCase):
+    """"Would download 200" from Preview over "in step · nothing to sync" from the sweep.
+
+    The sweep skipped remembered-gone copies without failing anything, so `bits` stayed empty and
+    the card printed the single most reassuring sentence it has — about a folder with paths nothing
+    can fetch. And the preview counted those same paths as ordinary changes, promising work the
+    sweep had already declined."""
+
+    def test_the_sweep_line_names_them(self):
+        line = summarise(dict(BLANK, unfetchable=[{"path": "a", "why": "gone"}] * 3))
+        self.assertNotIn("in step", line)
+        self.assertIn("3", line)
+        self.assertIn("store", line)
+
+    def test_the_preview_names_its_share(self):
+        line = summarise(dict(BLANK, dryRun=True, plannedGone=2,
+                              plan={"download": [1, 2], "upload": [], "deleteLocal": [],
+                                    "deleteRemote": [], "conflicts": []}))
+        self.assertIn("2 of them cannot be fetched", line)
+
+    def test_a_clean_preview_says_nothing_about_it(self):
+        line = summarise(dict(BLANK, dryRun=True, plannedGone=0,
+                              plan={"download": [1], "upload": [], "deleteLocal": [],
+                                    "deleteRemote": [], "conflicts": []}))
+        self.assertNotIn("cannot be fetched", line)
+
+
 class StoppedSweepTests(unittest.TestCase):
     def test_a_halted_sweep_is_never_reported_as_in_step(self):
         line = summarise(dict(BLANK, stopped=True))
@@ -71,7 +149,9 @@ class StoppedSweepTests(unittest.TestCase):
         """The guard must not swallow the ordinary answer — that is the one people read most."""
         line = summarise(dict(BLANK, unchanged=4200))
         self.assertIn("in step", line)
-        self.assertIn("4200 files checked", line)
+        # "paths", not "files": the count includes tombstones — deletions both sides already agree
+        # on — so calling them files made a card read "5,556 files" above "6,159 files checked".
+        self.assertIn("4200 path", line)
 
     def test_a_finished_working_sweep_is_unchanged(self):
         line = summarise(dict(BLANK, downloaded=["a"], uploaded=["b", "c"]))

@@ -136,7 +136,9 @@ public final class SyncReconcile {
     public static boolean viewChanged(Map<String, Object> remote, Map<String, Object> idx) {
         if (remote == null) return false;
         long vr = versionOf(remote), vi = versionOf(idx);
-        if (vr != 0 || vi != 0) return vr != vi;
+        // Strictly ahead, never merely different: a journal ahead of the merge is OURS TO PUBLISH.
+        // Read as remote news it fetched old bytes back over an edit (see the JS engine's comment).
+        if (vr != 0 || vi != 0) return vr > vi;
         if (idx == null) return true;
         return !SyncDiff.same(remote, idx);
     }
@@ -154,6 +156,7 @@ public final class SyncReconcile {
         public final List<Map<String, Object>> keepBoth = new ArrayList<Map<String, Object>>();
         public final List<Map<String, Object>> settle = new ArrayList<Map<String, Object>>();
         public int unchanged = 0;
+        public int settledGone = 0;   // deletions both sides already agree on — never "kept files"
         public int excluded = 0;
 
         public Map<String, Object> toMap() {
@@ -200,7 +203,13 @@ public final class SyncReconcile {
             /* Two other devices changed this at the same time. Both sets of bytes are stored and both
              * claims are content-addressed, so every device can make the identical repair without
              * asking anyone — which is what stops three devices each picking a different winner. */
-            if (rival != null && SyncDiff.live(R) && SyncDiff.live(rival)) {
+            /* Gated exactly like the JS engine (see its comment): only a device holding a local
+             * copy that is not already the winner, and whose journal has not already resolved this,
+             * keeps both. Ungated, an already-resolved device re-resolved on every sweep while the
+             * loser stayed offline, and a device with no local copy failed the move for ever. */
+            if (rival != null && SyncDiff.live(R) && SyncDiff.live(rival)
+                    && L != null && !SyncDiff.same(L, R)
+                    && !(idx != null && SyncDiff.same(idx, R) && !diskChanged(L, idx))) {
                 plan.keepBoth.add(act("path", path, "v", versionOf(R), "entry", R, "rival", rival,
                         "keepAs", SyncDiff.conflictPath(path, str(m.rivalBy.get(path)),
                                 stampOf(rival) != 0 ? stampOf(rival) : now),
@@ -211,7 +220,11 @@ public final class SyncReconcile {
             boolean here = diskChanged(L, idx);
             boolean there = viewChanged(R, idx);
 
-            if (!here && !there) { plan.unchanged++; continue; }
+            if (!here && !there) {
+                plan.unchanged++;
+                if (R != null && !SyncDiff.live(R)) plan.settledGone++;
+                continue;
+            }
 
             if (there && !here) {
                 if (SyncDiff.live(R)) {
@@ -280,7 +293,9 @@ public final class SyncReconcile {
         for (Map<String, Object> s : p.settle) {
             if ("same content both sides".equals(str(s.get("why")))) settled++;
         }
-        int keep = p.unchanged + p.fetch.size() + p.send.size() + p.keepBoth.size() + settled;
+        // Live survivors only: agreed tombstones are ballast that would eat the guard (see the JS
+        // engine's comment — 50 live files beside 10,000 old deletions trashed all 50, guard silent).
+        int keep = p.unchanged - p.settledGone + p.fetch.size() + p.send.size() + p.keepBoth.size() + settled;
 
         if (missingViews > 0) {
             if (!p.trash.isEmpty()) out.add(act("kind", "partialViews", "n", (long) p.trash.size()));
@@ -308,6 +323,7 @@ public final class SyncReconcile {
     public static Plan apply(Plan p, List<Map<String, Object>> verdicts) {
         Plan out = new Plan();
         out.unchanged = p.unchanged;
+        out.settledGone = p.settledGone;
         out.excluded = p.excluded;
         boolean noTrash = false, noTomb = false, noRes = false;
         for (Map<String, Object> v : verdicts) {

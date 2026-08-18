@@ -4157,7 +4157,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
    minmax(0,1fr) lets the columns shrink instead, and the labels ellipsis rather than overflow.
    Every button is filled: Reply cyan (primary), Delete red (destructive), the rest a solid neutral,
    so the row reads as one control strip instead of two filled buttons among four outlines. */
-.mail-actions{flex:0 0 auto;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));
+.mail-actions{flex:0 0 auto;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));
   gap:6px;padding:10px 18px;border-bottom:1px solid var(--line);align-items:stretch}
 .mail-actions .btn{min-height:36px;min-width:0;justify-content:center;padding:7px 6px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
@@ -4166,7 +4166,11 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .mail-actions .btn-cyan{background:linear-gradient(135deg,#0bb6cf,var(--cyan));border:none;color:#04222a}
 .mail-actions .btn-red{background:linear-gradient(135deg,#ff3366,#ff5a7d);border:none;color:#fff}
 /* Narrow pane: two rows of three rather than six slivers nothing can be read in. */
-@media(max-width:1500px){ .mail-actions{grid-template-columns:repeat(3,minmax(0,1fr))} }
+@media(max-width:1500px){ .mail-actions{grid-template-columns:repeat(4,minmax(0,1fr))} }
+/* the ✨ Summarize result: model text, so it arrives as plain lines — keep them */
+.mail-ai-summary{white-space:pre-wrap;overflow-wrap:anywhere;max-height:60vh;overflow-y:auto;
+  font-size:14px;line-height:1.5;background:var(--bg-2,rgba(255,255,255,.04));
+  border:1px solid var(--line,rgba(255,255,255,.08));border-radius:10px;padding:12px}
 
 /* The bulk actions are the same family of control, so they get the same fill. */
 .mail-bulk-act .btn{background:color-mix(in srgb, var(--neon) 16%, var(--panel2));
@@ -4219,7 +4223,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
   .mail-read.has-open{display:flex;position:fixed;inset:0;z-index:46;background:var(--bg);padding-bottom:calc(62px + env(safe-area-inset-bottom))}
   .mail-html{height:auto;min-height:60dvh}
   .mail-back{display:inline-flex}
-  .mail-actions{padding:8px 10px;gap:5px;grid-template-columns:repeat(3,minmax(0,1fr))}
+  .mail-actions{padding:8px 10px;gap:5px;grid-template-columns:repeat(4,minmax(0,1fr))}
   .mail-actions .btn{min-height:40px;font-size:12.5px;padding:7px 4px}
   .mail-read-hd{padding:12px 12px 8px}
   .mr-subj{font-size:16px}

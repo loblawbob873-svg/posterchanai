@@ -81,6 +81,20 @@ class DriveCheckTests(unittest.TestCase):
         self.assertIn("not named by this index", self.body)
         self.assertIn("Nothing to do", self.body)
 
+    def test_it_names_the_server_it_asked(self):
+        """`mediaServer()` is ONE current server and an index entry keeps no host of its own. An
+        account that was ever pointed elsewhere has entries whose bytes are on the OLD host, and both
+        the listing and the HEAD then answer 404 about a file that is perfectly safe. Naming the
+        server is the only thing on the screen that makes that possible to spot."""
+        self.assertIn("checked against", self.body)
+        self.assertIn("mediaServer()", self.body)
+
+    def test_a_doubted_file_is_reported_with_something_lookupable(self):
+        """A name cannot be looked up anywhere — encrypted uploads never send the plaintext name to
+        the server — so a report of names alone cannot be checked by anybody, including the person
+        who wrote the check."""
+        self.assertIn("x.sha.slice(0, 16)", self.body)
+
     def test_the_missing_list_is_not_dumped_whole_onto_the_screen(self):
         """A drive that has lost a thousand files must still produce a readable answer."""
         self.assertIn("reallyGone.slice(0, 12)", self.body)
@@ -109,9 +123,9 @@ class DriveCheckRepairGuardTests(unittest.TestCase):
     def test_every_candidate_is_confirmed_against_the_server_itself(self):
         """One listing is one opinion. A HEAD per doubted entry is the second one, and an unknown
         answer counts as PRESENT."""
-        self.assertIn("_blobAlreadyStored(x.sha)", self.body)
-        self.assertIn("catch(_){ there = true; }", self.body,
-                      "a failed HEAD counts as missing — a blip would then look like data loss")
+        self.assertIn("_blobPresent(x.sha)", self.body)
+        self.assertIn("there === false", self.body,
+                      "anything other than a definite 'not there' is treated as loss")
         self.assertIn("reallyGone", self.body)
 
     def test_the_button_offers_only_what_was_confirmed(self):
@@ -137,3 +151,50 @@ class DriveCheckRepairGuardTests(unittest.TestCase):
         repair = self.body[self.body.index("fx-ck-clear"):]
         self.assertNotIn("your index on the server is unchanged", repair)
         self.assertIn("will retry", repair)
+
+
+class TheProbeTests(unittest.TestCase):
+    """"Is it there?" and "may I skip this upload?" are different questions.
+
+    `_blobAlreadyStored` answers the second, and deliberately says NO for a blob that is present but
+    carries an expiry stamp — re-uploading is what clears the stamp. Used as evidence of loss it
+    reports files that are sitting on the server as gone, and this drives a repair that removes index
+    entries on every device for ninety days. Reported from a real drive: 497 "missing" files with
+    ordinary names.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        with open(APP, encoding="utf-8") as fh:
+            cls.src = fh.read()
+        at = cls.src.index("async function driveCheck(btn){")
+        cls.body = cls.src[at:cls.src.index("\n  /* Does the server already hold", at)]
+
+    def test_the_check_does_not_use_the_upload_shortcut_as_evidence(self):
+        self.assertNotIn("_blobAlreadyStored", self.body,
+                         "it judges loss with the question that means 'may I skip this upload'")
+        self.assertIn("_blobPresent(x.sha)", self.body)
+
+    def test_the_probe_distinguishes_absent_from_unanswerable(self):
+        at = self.src.index("async function _blobPresent(sha){")
+        p = self.src[at:self.src.index("\n  }", at)]
+        self.assertIn("r.status === 404 || r.status === 410", p)
+        self.assertIn("return null", p)
+        self.assertIn("r.status === 200 || r.status === 206", p)
+
+    def test_a_doubted_but_present_file_never_renders_an_empty_warning(self):
+        """The listing doubts 500 entries; the HEADs find every one present. The old gate rendered
+        "0 entries whose stored copy is gone:" over an empty list — this screen's own way of crying
+        wolf — and skipped "Everything checks out" for a drive that had just checked out."""
+        self.assertIn("vindicated", self.body)
+        self.assertIn("reallyGone.length || unconfirmed", self.body,
+                      "the warning is gated on what the listing doubted, not on what was confirmed")
+        self.assertIn("!reallyGone.length && !unconfirmed && !unsure && !undecryptable.length",
+                      self.body,
+                      "'everything checks out' is claimed over entries nothing could answer for")
+
+    def test_an_unanswerable_probe_is_reported_and_not_offered_for_deletion(self):
+        self.assertIn("unsure++", self.body)
+        self.assertIn("could not be checked a second time", self.body)
+        # …and only the confirmed ones reach the button.
+        self.assertIn("reallyGone.length ?", self.body)

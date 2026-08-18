@@ -1215,13 +1215,17 @@ setTimeout(() => {
             if (s.unreadable_store) {
                 lines.push('<div style="color:var(--danger)">⚠ the storage directory could not be read at all — nothing here is a verdict about your files. Check the path and any mount, then scan again.</div>');
             }
+            if (s.cannot) {
+                lines.push(`<div style="color:var(--warning,#e6a700)">⚠ ${s.cannot}</div>`);
+            }
             if (s.unknown) {
                 lines.push(`<div>${s.unknown} could not be checked — the store did not answer. Not counted as missing.</div>`);
             }
             if (s.orphans) {
                 lines.push(`<div>${s.orphans} file(s) (${fmt(s.orphan_bytes)}) in storage with no row. Left alone — a half-finished upload looks the same.</div>`);
             }
-            if (!s.missing.length && !(s.corrupt || []).length) lines.push('<div>Everything the database claims is there.</div>');
+            // "nothing was found missing" and "nothing could be asked" are not the same sentence.
+            if (!s.missing.length && !(s.corrupt || []).length && s.checked > s.unknown) lines.push('<div>Everything the database claims is there.</div>');
             // Never offered when the store itself could not be read: every row then looks missing.
             if (s.missing.length && !s.unreadable_store) {
                 lines.push(`<div style="margin-top:8px"><button type="button" class="btn btn-danger" id="bl_scan_fix">Drop ${s.missing.length} row(s) whose bytes are gone</button></div>`);

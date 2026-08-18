@@ -75,16 +75,74 @@ T('the same version with the same bytes is not a conflict', (ck) => {
 
 /* ---- 2. concurrent edits reach the same answer on every device ------------------------------- */
 
-T('every device resolves a concurrent edit identically', (ck) => {
-  const views = { laptop: { 'a.txt': file(5, 'laptop', 'AAA') },
-                  phone:  { 'a.txt': file(5, 'phone',  'BBB') } };
-  const seen = new Set();
-  for(const me of ['laptop', 'phone', 'tablet']){
-    const p = plan({ views, device: me, disk: {}, index: {} });
-    ck(p.keepBoth.length === 1, me + ' did not keep both copies');
-    seen.add(p.keepBoth[0].path + ' -> ' + p.keepBoth[0].keepAs);
-  }
-  ck(seen.size === 1, 'the devices disagreed about the outcome: ' + [...seen].join(' | '));
+T('every device plays its own part in a concurrent edit, and the parts agree', (ck) => {
+  /* This case used to demand keepBoth from EVERY device, including one with an empty disk — which
+   * is the bug, not the rule: "keep both" on a device with nothing to keep told the executor to
+   * move a local file that does not exist, and that throw was the desktop "Failed" loop. The real
+   * property: whoever holds a copy that is not the winner preserves it under the SAME conflict
+   * name; whoever holds the winner settles; whoever holds nothing plainly fetches. */
+  const A = file(5, 'laptop', 'AAA'), B = file(5, 'phone', 'BBB');
+  const views = { laptop: { 'a.txt': A }, phone: { 'a.txt': B } };
+  // 'phone' > 'laptop', stamps equal → B wins on the id tiebreak; laptop's A is the rival.
+
+  const loser = plan({ views, device: 'laptop',
+                       disk: { 'a.txt': onDisk('AAA') }, index: { 'a.txt': applied(A) } });
+  ck(loser.keepBoth.length === 1, 'the device holding the losing copy did not keep both');
+
+  const stale = plan({ views, device: 'desktop',
+                       disk: { 'a.txt': onDisk('CCC') },
+                       index: { 'a.txt': applied(file(4, 'desktop', 'CCC')) } });
+  ck(stale.keepBoth.length === 1, 'a device holding a third copy did not keep both');
+  ck(stale.keepBoth[0].keepAs === loser.keepBoth[0].keepAs,
+     'two devices named the conflict copy differently: '
+     + stale.keepBoth[0].keepAs + ' vs ' + loser.keepBoth[0].keepAs);
+
+  const winner = plan({ views, device: 'phone',
+                        disk: { 'a.txt': onDisk('BBB') }, index: { 'a.txt': applied(B) } });
+  ck(winner.keepBoth.length === 0 && winner.unchanged === 1,
+     'the device already holding the winner re-resolved the conflict');
+
+  const empty = plan({ views, device: 'tablet', disk: {}, index: {} });
+  ck(empty.keepBoth.length === 0 && empty.fetch.length === 1,
+     'a device with nothing local was told to keep a copy it does not have');
+});
+
+T('a resolved conflict stays resolved while the loser is offline', (ck) => {
+  /* The rival persists in the merge for as long as the losing device stays offline — days, for a
+   * phone — and this device sweeps many times inside that window. Before the gate it re-fetched
+   * the winner and re-ran the rename on every one of those sweeps, and the desktop's rename
+   * OVERWRITES: sweep two destroyed the conflict copy sweep one had preserved. */
+  const A = file(5, 'laptop', 'AAA'), B = file(5, 'phone', 'BBB');
+  const views = { laptop: { 'a.txt': A }, phone: { 'a.txt': B } };
+  const p = plan({ views, device: 'desktop',
+                   disk: { 'a.txt': onDisk('BBB') }, index: { 'a.txt': applied(B) } });
+  ck(p.keepBoth.length === 0, 'an already-resolved conflict was resolved again');
+  ck(p.unchanged === 1, 'the settled path was not read as settled');
+});
+
+T('a journal ahead of the merge is published, never fetched backwards', (ck) => {
+  /* A sweep paused after recording an upload — or a publish that failed — leaves this device
+   * knowing v2 while its own published view still says v1. Read as "the folder changed", that
+   * difference fetched the OLD bytes back over the edit (a silent revert), and refetched files the
+   * user had deliberately deleted. */
+  const oldEntry = file(1, 'me', 'OLD');
+  const views = { me: { 'p.jpg': oldEntry } };
+  const edited = plan({ views, device: 'me',
+                        disk: { 'p.jpg': onDisk('NEW', { size: 12, mtime: 3000 }) },
+                        index: { 'p.jpg': applied(file(2, 'me', 'NEW', { size: 12, mtime: 3000 }),
+                                                  { size: 12, mtime: 3000, csum: 'NEW' }) } });
+  ck(edited.fetch.length === 0, 'the old bytes were fetched back over the edit');
+  ck(edited.trash.length === 0 && edited.unchanged === 1, 'the edit did not settle');
+
+  const deleted = plan({ views, device: 'me', disk: {},
+                         index: { 'p.jpg': tomb(2, 'me') } });
+  ck(deleted.fetch.length === 0, 'a file the user deleted was fetched back');
+
+  // …and a genuinely newer remote entry is still fetched.
+  const behind = plan({ views: { you: { 'p.jpg': file(3, 'you', 'X') } }, device: 'me',
+                        disk: { 'p.jpg': onDisk('OLD') },
+                        index: { 'p.jpg': applied(oldEntry) } });
+  ck(behind.fetch.length === 1, 'a real remote change stopped being fetched');
 });
 
 /* ---- 3. no single view can empty the folder --------------------------------------------------- */
@@ -233,6 +291,39 @@ T('an exclusion hides a path from all three sides and deletes nothing', (ck) => 
   ck(p.excluded === 1, 'the exclusion did not drop the path');
   ck(p.trash.length === 0 && p.tombstone.length === 0, 'an exclusion proposed a deletion');
   ck(p.fetch.length === 1, 'the exclusion swallowed an unrelated file');
+});
+
+T('agreed tombstones are not ballast for the mass-delete guard', (ck) => {
+  /* Found in review, demonstrated before the fix: `keep` counted every settled path, and a working
+   * folder accumulates agreed deletions for years — so 50 live files beside 10,000 old tombstones
+   * could ALL be trashed with the guard silent, "more than survives" being true of the ballast. */
+  const views = { other: {} }, disk = {}, index = {};
+  for(let i = 0; i < 200; i++){
+    views.other['old' + i] = tomb(2, 'other');
+    index['old' + i] = tomb(2, 'other');
+  }
+  for(let i = 0; i < 30; i++){
+    views.other['keep' + i] = tomb(3, 'other');
+    disk['keep' + i] = onDisk('c' + i);
+    index['keep' + i] = applied(file(2, 'other', 'c' + i));
+  }
+  const p = plan({ views, disk, index });
+  ck(p.trash.length === 30, 'the scenario stopped proposing the deletions: ' + p.trash.length);
+  const v = E.check(p, {});
+  ck(v.some(x => x.kind === 'massTrash'),
+     'a sweep trashing every live file passed the guard on tombstone ballast');
+});
+
+T('the settled count separates files from deletions on record', (ck) => {
+  /* "Pictures has 5,556 files but it checked 6,159?" — the gap is tombstones both sides already
+   * agree on. The breakdown is what the status line prints, so it is measured here, on the engine,
+   * where the numbers are made. */
+  const views = { x: { 'a.jpg': file(1, 'x', 'A'), 'gone.jpg': tomb(2, 'x') } };
+  const p = plan({ views, disk: { 'a.jpg': onDisk('A') },
+                   index: { 'a.jpg': applied(file(1, 'x', 'A')), 'gone.jpg': tomb(2, 'x') } });
+  ck(p.unchanged === 2, 'settled paths: ' + p.unchanged);
+  ck(p.settledGone === 1, 'deletions on record: ' + p.settledGone);
+  ck(p.unchanged - p.settledGone === 1, 'files = paths - deletions must hold');
 });
 
 if(fail.length){ console.log('FAIL\n  ' + fail.join('\n  ')); process.exit(1); }

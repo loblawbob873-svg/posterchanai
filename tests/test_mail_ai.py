@@ -1,0 +1,174 @@
+"""The ✨ AI menu on an open email: Summarize, AI reply, Add to Budget.
+
+The rule every entry obeys: THE MODEL ONLY EVER PRODUCES TEXT THE USER THEN REVIEWS. A summary is
+read, a reply draft opens in the composer with Send untouched, a bill parse opens Budget's editable
+review modal. Nothing in this feature sends mail, files a bill, or acts on a message by itself —
+and these tests are what keeps that a property rather than a phase.
+
+Three layers: the /api/mail/ai endpoint RUN with the model stubbed; the bill pipeline RUN with a
+text attachment (an email is a bill that never needed OCR — same pipeline, same prompt); and the
+client wiring pinned structurally, because the row/menu split is exactly the kind of thing a
+refactor flattens back into seven buttons.
+"""
+import asyncio
+import os
+import unittest
+from unittest import mock
+
+os.environ.setdefault("POSTERCHANAI_SKIP_DB", "1")
+
+from fastapi import HTTPException  # noqa: E402
+
+from app.routers import mail as M  # noqa: E402
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+class _FakeChat:
+    def __init__(self, answer="", boom=False):
+        self.answer, self.boom, self.calls = answer, boom, []
+
+    async def chat(self, msgs):
+        self.calls.append(msgs)
+        if self.boom:
+            raise RuntimeError("model down")
+        return self.answer
+
+
+def _run(req, chat):
+    class _CS:
+        def __init__(self, db, user=None):
+            self.chat_service = chat
+    with mock.patch("app.services.command_service.CommandService", _CS):
+        return asyncio.run(M.mail_ai(req, db=None, current_user=object()))
+
+
+class EndpointTests(unittest.TestCase):
+    def test_summarize_returns_the_models_text(self):
+        chat = _FakeChat("• a bill\n• due friday")
+        out = _run(M.MailAiReq(mode="summarize", text="Subject: x\n\nhello"), chat)
+        self.assertEqual(out["content"], "• a bill\n• due friday")
+        self.assertEqual(len(chat.calls), 1)
+
+    def test_reply_carries_the_instruction_and_the_email(self):
+        chat = _FakeChat("No thank you.")
+        out = _run(M.MailAiReq(mode="reply", text="Subject: offer\n\nbuy now",
+                               instruction="politely decline"), chat)
+        self.assertEqual(out["content"], "No thank you.")
+        user_msg = chat.calls[0][-1]["content"]
+        self.assertIn("politely decline", user_msg)
+        self.assertIn("buy now", user_msg)
+
+    def test_a_reply_with_no_instruction_is_refused(self):
+        with self.assertRaises(HTTPException) as c:
+            _run(M.MailAiReq(mode="reply", text="hi"), _FakeChat("x"))
+        self.assertEqual(c.exception.status_code, 400)
+
+    def test_an_unknown_mode_is_refused(self):
+        with self.assertRaises(HTTPException) as c:
+            _run(M.MailAiReq(mode="delete-everything", text="hi"), _FakeChat("x"))
+        self.assertEqual(c.exception.status_code, 400)
+
+    def test_an_empty_message_is_refused_before_the_model_is_asked(self):
+        chat = _FakeChat("x")
+        with self.assertRaises(HTTPException):
+            _run(M.MailAiReq(mode="summarize", text="   "), chat)
+        self.assertEqual(chat.calls, [], "the model was asked about an empty message")
+
+    def test_a_dead_model_is_a_502_not_a_traceback(self):
+        with self.assertRaises(HTTPException) as c:
+            _run(M.MailAiReq(mode="summarize", text="hi"), _FakeChat(boom=True))
+        self.assertEqual(c.exception.status_code, 502)
+
+    def test_the_prompt_never_asks_the_model_to_act(self):
+        """The system prompts describe producing text. If someone later wires tools into this
+        endpoint, this is the line that asks them to look up."""
+        chat = _FakeChat("ok")
+        _run(M.MailAiReq(mode="reply", text="hi", instruction="say hi"), chat)
+        import re
+        sys_msg = chat.calls[0][0]["content"].lower()
+        for word in ("send", "delete", "file"):
+            self.assertIsNone(re.search(r"\b%s\b" % word, sys_msg),
+                              "the reply prompt speaks of %r" % word)
+
+
+class BillFromTextTests(unittest.TestCase):
+    """An email is a bill that never needed OCR: a text attachment feeds the same extraction."""
+
+    def _cs(self, answer):
+        from app.services.command_service import CommandService
+        cs = CommandService.__new__(CommandService)
+        cs.user = type("U", (), {"id": 1})()
+        cs.db = None
+        cs.chat_service = _FakeChat(answer)
+        return cs
+
+    def test_a_text_attachment_reaches_the_extraction(self):
+        cs = self._cs('{"vendor": "Water Co", "amount": 43.10, "due_date": "2026-09-01"}')
+        out = asyncio.run(cs._bill_command(
+            "", attachments=[("email.txt", b"Subject: bill\n\nWater Co total $43.10 due Sep 1", "text/plain")]))
+        self.assertEqual(out["type"], "bill", out)
+        self.assertEqual(out["vendor"], "Water Co")
+        self.assertEqual(out["amount"], 43.10)
+
+    def test_the_email_text_is_what_the_model_reads(self):
+        cs = self._cs('{"vendor": "V", "amount": 1, "due_date": null}')
+        asyncio.run(cs._bill_command(
+            "", attachments=[("email.txt", b"pay the piper", "text/plain")]))
+        self.assertIn("pay the piper", cs.chat_service.calls[0][-1]["content"])
+
+    def test_no_attachment_still_asks_for_one(self):
+        cs = self._cs("")
+        out = asyncio.run(cs._bill_command("", attachments=None))
+        self.assertEqual(out["type"], "text")
+        self.assertIn("Attach", out["content"])
+
+
+class ClientWiringTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8") as fh:
+            cls.app = fh.read()
+
+    def test_the_row_has_one_ai_button_and_the_actions_live_in_the_menu(self):
+        """The row is a grid; every action added AS A BUTTON costs a phone a column. The mobile
+        check counts 7 buttons, so an eighth fails there — this pins the other half: the three AI
+        actions live behind the one ✨ entry."""
+        self.assertIn('data-act="ai"', self.app)
+        self.assertNotIn('data-act="bill"', self.app, "Add to Bills grew back into a row button")
+        at = self.app.index("if(act==='ai')")
+        menu = self.app[at:at + 900]
+        for entry in ("Summarize this email", "AI reply", "Add to Budget"):
+            self.assertIn(entry, menu, "the ✨ menu lost its '%s' entry" % entry)
+
+    def test_the_reply_draft_lands_in_the_composer_not_in_an_outbox(self):
+        at = self.app.index("async aiReply(msg")
+        body = self.app[at:at + 1600]
+        self.assertIn("this.compose({ mode:'reply'", body)
+        self.assertNotIn("/send", body, "the AI reply path sends mail by itself")
+
+    def test_compose_honours_the_drafted_body_only_in_reply_modes(self):
+        self.assertIn("if(opts.body) body=String(opts.body);", self.app)
+
+    def test_html_mail_is_reduced_with_domparser_not_the_iframe(self):
+        at = self.app.index("_msgText(msg){")
+        body = self.app[at:at + 900]
+        self.assertIn("DOMParser", body)
+        self.assertNotIn("contentDocument", body,
+                         "the sandboxed mail iframe has no reachable document; reading it returns "
+                         "nothing and every HTML mail would summarize as empty")
+
+    def test_the_bill_path_rides_the_same_scan_endpoint(self):
+        at = self.app.index("async addToBills(msg){")
+        body = self.app[at:at + 1400]
+        self.assertIn("/api/budget/scan", body)
+        self.assertIn("email.txt", body)
+        self.assertIn("reviewParsed", body, "the parse skips Budget's editable review")
+
+    def test_budget_exports_the_review_modal(self):
+        with open(os.path.join(ROOT, "static", "js", "client", "budget.js"), encoding="utf-8") as fh:
+            self.assertIn("reviewParsed", fh.read())
+
+
+if __name__ == "__main__":
+    unittest.main()

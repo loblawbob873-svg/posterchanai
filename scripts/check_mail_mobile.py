@@ -501,11 +501,12 @@ async def drive(url):
                         problems.append((label, "horizontal-overflow",
                                          "the reading pane is wider than the screen"))
                     a = op.get("acts")
-                    # Reply, Forward and ⋯ — everything else is in the overflow menu, so a narrow
-                    # pane never wraps or clips.
-                    if not a or a["n"] != 6:
+                    # Reply, Reply all, Forward, ✨ AI (the menu holding Summarize / AI reply /
+                    # Add to Budget), Unread, Move, Delete. New AI actions join the MENU, never the
+                    # row — the row is a grid, and every extra button costs a phone a column.
+                    if not a or a["n"] != 7:
                         problems.append((label, "actions-broken",
-                                         f"the message actions row has {a and a['n']} buttons, want 6"))
+                                         f"the message actions row has {a and a['n']} buttons, want 7"))
                     else:
                         # One row. Six buttons wrapping into a ragged block is what "not displaying
                         # good" looked like; a pane too narrow for them scrolls sideways instead.

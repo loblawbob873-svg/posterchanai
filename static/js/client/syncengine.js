@@ -139,7 +139,13 @@
   function viewChanged(R, idx){
     if(!R) return false;                       // nobody said anything about this path
     const vr = versionOf(R), vi = versionOf(idx);
-    if(vr || vi) return vr !== vi;
+    /* STRICTLY AHEAD, not merely different. The journal can legitimately be AHEAD of the merge —
+     * a sweep paused after recording an upload, a publish that failed, a crash between the
+     * checkpoint and the final publish all leave this device knowing v2 while its published view
+     * still says v1. Read as "the folder changed", that difference FETCHED THE OLD BYTES BACK OVER
+     * THE EDIT — a silent revert — and refetched files the user had deliberately deleted. What the
+     * journal knows and the folder does not is OURS TO PUBLISH, never theirs to teach us. */
+    if(vr || vi) return vr > vi;
     if(!idx) return true;                      // an entry we have never applied is news
     return !same(R, idx);
   }
@@ -156,7 +162,13 @@
     const now = num(o.now);
 
     const plan = { fetch:[], send:[], trash:[], tombstone:[], keepBoth:[], settle:[],
-                   unchanged:0, excluded:0 };
+                   unchanged:0, excluded:0,
+                   /* …and how many of those settled paths are DELETIONS everyone already agrees on.
+                    * Display only, and it exists because the total on its own is unreadable: a
+                    * folder card says "5,556 files" while the sweep says "6,159 checked", and the
+                    * gap is 603 tombstones — paths on record, with no file behind them and nothing
+                    * to do. Two numbers that cannot both be right is how that reads without this. */
+                   settledGone:0 };
     const isExcluded = excluder(o.excludes || []);
     const paths = new Set([...Object.keys(disk), ...Object.keys(global), ...Object.keys(index)]);
 
@@ -174,7 +186,25 @@
        * carry out the identical repair without asking anyone: the winner keeps the name, the loser
        * is written beside it under a conflict name. Deterministic, so three devices do not each
        * pick a different winner and then argue about it for ever. */
-      if(rival && live(R) && live(rival.entry)){
+      /* …BUT ONLY FOR A DEVICE WITH SOMETHING AT STAKE. A rival persists in the merge for as
+       * long as the losing device stays offline — days, for a phone — and every device sweeps many
+       * times inside that window. Ungated, this branch fired on every one of those sweeps:
+       *
+       *   - a device that had ALREADY RESOLVED (journal holds the winner, disk matches) re-fetched
+       *     the winner and re-ran the rename — and the desktop's rename OVERWRITES, so the second
+       *     sweep destroyed the conflict copy the first one had preserved ("non stop conflicts,
+       *     tidying not doing shit");
+       *   - a device holding NEITHER copy was told to move a local file it does not have, which
+       *     throws on both platforms, failing the conflict on every sweep for ever (the desktop
+       *     "Failed" loop).
+       *
+       * So: a local file must exist (a device with nothing fetches the winner like any download —
+       * the LOSER preserves its own copy when it resolves), it must not already BE the winner
+       * (settle handles that), and a journal that already applied the winner over an unchanged disk
+       * means the work is done. */
+      if(rival && live(R) && live(rival.entry)
+         && L && !same(L, R)
+         && !(idx && same(idx, R) && !diskChanged(L, idx))){
         plan.keepBoth.push({ path, v: versionOf(R), entry: R, rival: rival.entry,
                              keepAs: conflictPath(path, rival.by, stampOf(rival.entry) || now),
                              why: 'two devices changed this at the same time — both copies kept' });
@@ -184,7 +214,7 @@
       const here = diskChanged(L, idx);
       const there = viewChanged(R, idx);
 
-      if(!here && !there){ plan.unchanged++; continue; }
+      if(!here && !there){ plan.unchanged++; if(R && !live(R)) plan.settledGone++; continue; }
 
       /* ---- the folder moved and this device did not: apply it. */
       if(there && !here){
@@ -255,7 +285,13 @@
     const c = ctx || {}, p = plan || {}, out = [];
 
     const settled = p.settle.filter(s => s.why === 'same content both sides').length;
-    const keep = num(p.unchanged) + p.fetch.length + p.send.length + p.keepBoth.length + settled;
+    /* LIVE survivors only. `unchanged` includes deletions both sides already agree on, and counting
+     * those as "kept files" is ballast that eats the guard: a working folder accumulates tombstones
+     * for years (603 on a real Pictures pair), and with enough of them "more than survives" is true
+     * of a sweep that trashes every live file the folder has. Measured before the fix: 50 live files
+     * + 10,000 agreed tombstones → trash all 50, guard silent. */
+    const keep = num(p.unchanged) - num(p.settledGone)
+               + p.fetch.length + p.send.length + p.keepBoth.length + settled;
 
     /* A VIEW THAT COULD NOT BE READ IS NOT A DEVICE WITH NOTHING. It is a device that did not
      * answer, and the difference is every file it holds: read as empty, its files are absent from

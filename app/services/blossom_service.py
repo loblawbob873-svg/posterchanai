@@ -929,7 +929,7 @@ async def scan_store(db: Session, *, limit: int = 0, deep: bool = False) -> dict
     cfg = _cfg(db)
     out = {"backend": cfg["backend"], "rows": 0, "checked": 0, "bytes": 0,
            "missing": [], "corrupt": [], "unknown": 0, "orphans": 0, "orphan_bytes": 0,
-           "deep": bool(deep), "truncated": False, "unreadable_store": False}
+           "deep": bool(deep), "truncated": False, "unreadable_store": False, "cannot": ""}
 
     out["rows"] = db.query(func.count()).select_from(BlossomBlob).scalar() or 0
 
@@ -953,13 +953,21 @@ async def scan_store(db: Session, *, limit: int = 0, deep: bool = False) -> dict
 
     seen = set()
     n = 0
+    unconfigured = 0
     for b in rows:
         seen.add(b.sha256)
         out["checked"] += 1
         out["bytes"] += int(b.size or 0)
         if b.storage == "proxy":
             if not cfg["storage_url"]:
+                # A ROW knows where its own bytes went; the CONFIG only knows where the next upload
+                # would go. A node that was moved from a storage proxy to local disk keeps every old
+                # row saying `proxy`, and with no proxy configured there is nothing to ask — which
+                # is not "these files are fine" and is certainly not "these files are gone". Measured
+                # on this deployment: 76,775 proxy rows under a `local` backend, every one of them
+                # scoring `unknown` with no word on the screen as to why.
                 out["unknown"] += 1
+                unconfigured += 1
             else:
                 state = await _probe_proxy(cfg, b.path)
                 if state == "gone":
@@ -991,6 +999,10 @@ async def scan_store(db: Session, *, limit: int = 0, deep: bool = False) -> dict
         n += 1
         if n % 200 == 0:
             await asyncio.sleep(0)          # let the node keep serving while this runs
+
+    if unconfigured:
+        out["cannot"] = (f"{unconfigured} row(s) say their bytes live on a storage proxy, and no "
+                         f"storage server is configured on this node. They were not checked.")
 
     # Bytes with no row: only answerable for a local backend, and only when every row was looked at.
     # With a limit, `seen` covers one page while the walk covers the whole tree, so every unscanned

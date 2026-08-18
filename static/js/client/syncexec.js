@@ -62,8 +62,18 @@
     const key = o.key || o.id;
     const me = o.device || 'this device';
     const now = o.now || now0();
-    const stopping = () => { try{ return typeof o.shouldStop === 'function' && !!o.shouldStop(); }
-                             catch(_){ return false; } };
+    /* LATCHED FOR THE LIFE OF THE SWEEP. The caller's signal is a Set the Start button clears —
+     * and pressing Pause then Start inside one scan (minutes, on a hashing first sweep) used to
+     * un-latch it mid-flight: the scan had already returned a PARTIAL disk, the next check saw
+     * false, and every unscanned file read as "deleted locally". A sweep that has seen a stop is
+     * halting, whatever the button does next; Start begins a fresh sweep with fresh state. */
+    let _stopSeen = false;
+    const stopping = () => {
+      if(_stopSeen) return true;
+      try{ _stopSeen = typeof o.shouldStop === 'function' && !!o.shouldStop(); }
+      catch(_){ _stopSeen = false; }
+      return _stopSeen;
+    };
     const tick = (p) => { try{ if(typeof o.onProgress === 'function') o.onProgress(p); }catch(_){} };
     /* RENEW THE CPU LEASE WHILE THERE IS STILL WORK.
      *
@@ -83,7 +93,7 @@
     const step = (phase, path, i, n) => { _keepAwake(); tick({ phase, path, i, n }); };
 
     const report = { uploaded:[], downloaded:[], trashed:[], conflicted:[], removedRemote:[],
-                     failed:[], skipped:[], unchanged:0, excluded:0, refused:[], device: me,
+                     failed:[], skipped:[], unchanged:0, settledGone:0, excluded:0, refused:[], device: me,
                      dryRun: !!o.dryRun, ok: true };
 
     /* 1. What this device has already applied. A journal that cannot be read is not an empty
@@ -208,6 +218,7 @@
     }
     report.plan = plan;
     report.unchanged = plan.unchanged;
+    report.settledGone = plan.settledGone || 0;
     report.excluded = plan.excluded;
 
     const verdicts = E.check(plan, { global: merged.global, missingViews: missing,
@@ -223,9 +234,6 @@
     }
     plan = E.apply(plan, verdicts, allowed);
 
-    if(o.dryRun) return report;
-
-    /* 5. Do it. The journal is the record of what has landed, and it is what makes this resumable. */
     /* Which copies this device has already failed to fetch — supplied by the caller, which persists
      * it. Read here, above every loop that fetches, because the conflict path needs it as much as
      * the download path does. */
@@ -239,16 +247,32 @@
      * standing there asking again is the clearest possible signal to try. Older entries were a bare
      * string; they are read as permanent, which is what they were. */
     const GONE_FOR = 6 * 3600 * 1000;
-    const skipId = (v) => {
+    const skipId = (v, raw) => {
       if(!v) return '';
       if(typeof v === 'string') return v;
-      if(o.manual) return '';
+      if(o.manual && !raw) return '';
       if(v.why === 'gone' && (now0() - (v.at || 0)) > GONE_FOR) return '';
       return v.id || '';
     };
+
+    if(o.dryRun){
+      /* WHAT THE PREVIEW PROMISES, THE SWEEP MUST BE WILLING TO DO. A planned download whose bytes
+       * the store has already answered 404 for is one the sweep will (rightly) decline — and a
+       * preview that counts it as an ordinary change writes a cheque the sweep then quietly
+       * declines to cash: "Would download 200" over a sweep that ends "in step". Counted with the
+       * RAW memory (a preview is a look, not the pressed-button retry a manual sweep is). */
+      report.plannedGone = plan.fetch.concat(plan.keepBoth).filter(d => {
+        const id = idOf(d.entry);
+        return id && skipId(skipFetch[d.path], true) === id;
+      }).length;
+      return report;
+    }
+
+    /* 5. Do it. The journal is the record of what has landed, and it is what makes this resumable. */
     const journal = new Journal(io, key, index, o);
     const mine = {};                                  // what THIS device will publish
     for(const p in index) mine[p] = strip(index[p]);
+    journal.beforeSave = () => publish(io, key, mine, report);
 
     const record = (path, entry, local) => {
       const next = Object.assign({}, entry);
@@ -448,14 +472,20 @@
      * restore it the next time a file happened to change: until then its paths are missing from the
      * merge, and a path nobody claims is a path no joining device can fetch. The cost of being wrong
      * here is one document write. */
-    const wasPublished = Object.keys((views[me] || {})).length;
-    if(!journal.dirty && wasPublished >= Object.keys(mine).length && wasPublished > 0){
-      report.published = 0;                              // nothing to say, and nothing missing
+    /* STRUCTURAL, NOT A COUNT. "Same number of paths" cannot see an EDIT — a sweep that uploaded
+     * a changed file, checkpointed, and arrived here with a clean journal used to skip the publish
+     * on the strength of matching counts, and the edit was never announced. Entry for entry: the
+     * version and the content have to match what the relay already holds, or we publish. */
+    step('saving');
+    if(journal.dirty){
+      await journal.flush();                             // publishes first, then saves — one unit
+    } else if(!viewEquals(mine, views[me] || {})){
+      await publish(io, key, mine, report);              // nothing new applied, but the relay is behind
     } else {
-      step('saving');
-      await publish(io, key, mine, report);
+      report.published = report.published || 0;          // nothing to say, and nothing missing
     }
     await journal.flush();
+    if(journal.checkpointError) report.checkpointError = journal.checkpointError;
 
     if(stopping()) report.stopped = true;
     /* AN UNRESOLVED PATH IS NOT A CLEAN SWEEP.
@@ -471,6 +501,19 @@
   /* ---- pieces ---------------------------------------------------------------------------------- */
 
   const msg = (e) => (e && e.message) || String(e);
+
+  /** Entry for entry: does what we would publish match what the relay already holds? */
+  function viewEquals(a, b){
+    const ka = Object.keys(a), kb = Object.keys(b);
+    if(ka.length !== kb.length) return false;
+    for(const p of ka){
+      const x = a[p], y = b[p];
+      if(!y) return false;
+      if(E.versionOf(x) !== E.versionOf(y)) return false;
+      if(!P.same(x, y)) return false;
+    }
+    return true;
+  }
   const strip = (e) => { const c = Object.assign({}, e); delete c.local; return c; };
 
   function failed(report, path, what, e){
@@ -619,6 +662,21 @@
        * chunk IS one upload — reading `fs.chunkBytes` here ignored the clamp entirely, so a node with
        * a small limit chunked at the right threshold and then sent pieces it would still reject.
        * Every large file fails while small ones sail through, which is the confusing half. */
+      /* THE CHECKSUM MUST CERTIFY THE CHUNKS, and they used to be taken at different moments.
+       *
+       * The chunks are read over minutes; the csum came from the scan (minutes earlier) or from
+       * hashing the file AFTER the last chunk (minutes later). A file edited anywhere inside that
+       * window published chunks of a TORN file under a clean checksum of the final one — and then
+       * every device that downloads it fails its checksum for ever, while the uploader's own journal
+       * says all is well, because its local file really does hash to the published csum. Documents
+       * are the folder people edit, which is where it was reported.
+       *
+       * So the file is hashed on BOTH sides of the chunk reads. Equal means it sat still for the
+       * whole window and the csum certifies what was stored; different means the store holds a torn
+       * copy, so nothing is recorded and the next sweep takes the file fresh. The scan's own hash
+       * (when it ran) serves as the before-side for free. */
+      const canHash = typeof fs.hashFile === 'function';
+      const before = (u.stat && u.stat.csum) || (canHash ? await fs.hashFile(o.id, path) : undefined);
       const cs = (o.chunkBytes || 0) || (fs.chunkBytes || 0) || undefined;
       const r = await io.putParts((off, len) => fs.readPart(o.id, path, off, len), size,
                                   (doneB, totalB) => { if(onPercent && totalB)
@@ -626,8 +684,16 @@
                                   cs);
       entry.chunks = (r && (r.chunks || r.parts)) || [];
       entry.cs = (r && r.cs) || cs || 0;
-      entry.csum = (u.stat && u.stat.csum) ||
-                   (typeof fs.hashFile === 'function' ? await fs.hashFile(o.id, path) : undefined);
+      if(canHash && before){
+        const after = await fs.hashFile(o.id, path);
+        if(after !== before){
+          throw new Error('the file changed while it was being uploaded — nothing was recorded; '
+                          + 'it will be picked up next sweep');
+        }
+        entry.csum = after;
+      } else {
+        entry.csum = before;
+      }
       if(!entry.csum) delete entry.csum;
       return addressed(entry, path);
     }
@@ -687,19 +753,33 @@
    * sync start from the beginning. In batches, an interruption costs at most the last few files —
    * and redoing one is nearly free: an upload whose bytes the server already has is skipped, and a
    * download already on disk hashes equal and settles. */
+  /* THE VIEW GOES FIRST, ALWAYS — the rule the Android Journal already had and this one did not.
+   *
+   * A journal persisted ahead of the published view is a device that believes in an agreement no
+   * other device has seen, and the next sweep reads its own stale view as "the folder changed":
+   * that fetched old bytes back over an edit and resurrected deliberate deletions. So every save of
+   * the journal publishes the view in the same breath, view first — a crash between the two leaves
+   * the VIEW ahead, which is safe (the next sweep settles it by content). `beforeSave` is that
+   * publish; the sweep wires it in before the first byte moves.
+   *
+   * A failed CHECKPOINT is not a failed sweep — the work is real either way, so `maybe` records the
+   * error and carries on; only the final `flush` throws. */
   function Journal(io, key, index, o){
     this.io = io; this.key = key; this.index = index; this.o = o;
     this.dirty = false; this.since = 0; this.at = now0();
+    this.beforeSave = null; this.checkpointError = null;
   }
   Journal.prototype.touch = function(){ this.dirty = true; this.since++; };
   Journal.prototype.maybe = async function(){
     if(!this.dirty) return;
     if(this.since < SAVE_EVERY && (now0() - this.at) < SAVE_MS) return;
-    await this.flush();
+    try{ await this.flush(); }
+    catch(e){ this.checkpointError = msg(e); this.at = now0(); }
   };
   Journal.prototype.flush = async function(){
     if(!this.dirty) return;
     this.since = 0; this.at = now0();
+    if(this.beforeSave) await this.beforeSave();
     await this.io.saveIndex(this.key, this.index);
     this.dirty = false;
   };

@@ -737,6 +737,27 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   folder drops it from all three inputs so it can never be deleted anywhere; a refusal suppresses ONE
   BUCKET, never the sweep (a guard that aborts everything is the same bug with its sign flipped —
   that is what stopped the contacts sweep syncing at all).
+  **FOUR RULES FOUND BROKEN IN THE 2026-08-18 ADVERSARIAL REVIEW, each demonstrated against the
+  shipped engine before fixing, each now pinned in `engine_sim.js`/`test_stopped_sweep.py`:**
+  (1) *the rival branch is GATED* — only a device holding a local copy that is not the winner, and
+  whose journal has not already resolved it, keeps both. Ungated it re-resolved on EVERY sweep while
+  the loser stayed offline (re-downloading the winner and — desktop rename OVERWRITES — destroying
+  the conflict copy the first sweep preserved), and told a device with NO local copy to move a file
+  it does not have, which throws on both platforms: that was the desktop "Failed" loop.
+  (2) *a journal AHEAD of the merge is never remote news* — `viewChanged` is `vr > vi`, not
+  `vr !== vi`. A paused sweep or failed publish leaves this device knowing v2 while its published
+  view says v1; read as "the folder changed" it fetched the OLD bytes back over the edit (silent
+  revert) and resurrected deliberate deletions.
+  (3) *every journal save publishes the view FIRST, in the same breath* (`Journal.beforeSave` —
+  the discipline NativeSweep's Java Journal already had), and the end-of-sweep publish decision is
+  STRUCTURAL (`viewEquals`), never a path count — counts cannot see an edit, so a >20s sweep of
+  edited files used to end without publishing at all.
+  (4) *the stop signal is LATCHED for the life of the sweep* — Pause then Start inside one
+  minutes-long scan un-latched `shouldStop`, and the partial disk the scan had already returned then
+  read every unscanned file as "deleted locally".
+  Also from that review: `check()`'s `keep` counts LIVE survivors only — `unchanged` includes agreed
+  tombstones, and that ballast let a sweep trash every live file in a folder with a long deletion
+  history while the mass-delete guard watched (measured: 50 live + 10,000 tombstones, guard silent).
   **Guards, all in one `check()` the executor cannot bypass:** never trash more than survives the
   sweep (floor 20), the same pointing outwards for tombstones, mass-resurrect as an ABSOLUTE floor
   (a restore makes everything look edited, so resurrections arrive beside thousands of ordinary
@@ -753,6 +774,23 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   never fetched again (keyed on the copy's IDENTITY, so it unblocks by itself when the holder
   republishes). Past ~45 KB a view's paths move into an encrypted blob with a pointer — NIP-44 refuses
   a plaintext over 65535 bytes, which is about 376 files.
+  **A THIN JOURNAL IS NOT AN EMPTY FOLDER, AND THAT DISTINCTION IS A CONFLICT STORM.** A device whose
+  journal was lost (a reinstall, a cleared app, a first sweep against a folder that already holds the
+  files) has the bytes on disk and no record of them, so size+mtime says "edited here" for every path
+  at once and every one becomes a conflict copy — measured on a real phone: 1,803, then 2,322. So when
+  the journal knows nothing, or knows less than half of what the merge shows, the scan HASHES
+  (`thin` → `scanOpts.hash`, reported as `report.hashed`): identical bytes then settle instead of
+  conflicting, at the cost of one full read of the folder exactly once. Two nearby rules from the same
+  report: a conflict FETCHES the incoming copy before renaming the local one (renaming first and
+  404ing left the path empty and re-conflicted on the next sweep, for ever), and an incoming copy
+  nothing can fetch is skipped and counted (`report.unfetchable`) rather than half-applied.
+  **A 404 IS FORGOTTEN AFTER SIX HOURS, NOT FOR EVER.** A copy the store does not have is remembered
+  so a sweep does not re-ask 11,113 times in ten minutes — but the bytes are content-addressed, so
+  another device republishing them makes the same id valid again; a permanent record would refuse a
+  file that is now perfectly fetchable. The record is `{id, why:'gone', at}` and a MANUAL sweep clears
+  it outright. **"Send them again" is an explicit `o.resend`**, not a cleared journal: clearing the
+  journal settles as "same content both sides" and uploads nothing, which is a button that reports
+  success and does nothing.
   **Check my files** (`EXEC.verify`) is read-only: it re-hashes every local file against the merged
   record, asks the store whether the bytes behind each entry are still there, and reports which
   devices disagree. Repair can only PULL — a deep *sweep* cannot fix corruption, because re-hashing
@@ -777,13 +815,30 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   tombstone, never a removed key. Deleting is refused while any device is unreadable, because the
   count the confirmation quotes comes from the merged folder.
   Tests: `tests/client/engine_sim.js` (merge determinism, concurrency, the whole state table, every
-  guard), `tests/client/exec_sim.js` (20 end-to-end scenarios named after the reports that produced
+  guard), `tests/client/exec_sim.js` (37 end-to-end scenarios named after the reports that produced
   them — three-host convergence, an unreadable device, an emptied store, a lost folder handle, a
   reinstall, an interrupted sweep, corruption on both transfer paths, a lost own-document,
   6,000 files), `tests/client/test_fs_bridge.py` (the real desktop bridge against real files),
   `tests/client/sync_store_sim.js` (the NIP-44 ceiling), `tests/client/test_folder_sync.py` (the rules
   and the battery policy), `tests/client/sync_tick_sim.js` (screen-off ticking). See
   `docs/FOLDER_SYNC.md`.
+- **Files → Blossom has a drive check, and Admin → Blossom has a STORE scan** — the two halves of
+  "does the drive hold what it says it holds", asked from the two ends. The client one
+  (`driveCheck`) compares the encrypted index against a FRESH server listing; the admin one
+  (`blossom_service.scan_store`, `POST /api/admin/blossom/scan`) compares the blob TABLE against the
+  bytes, optionally re-hashing (`deep`). Both obey the same three rules, and each one has already been
+  the difference between a report and a wipe: **"the store said no" and "the store could not be asked"
+  are different answers** (a rate limiter, a refusal, an unmounted disk, a proxy row on a node with no
+  proxy configured — all `unknown`, never `missing`); **the repair keeps more than it drops** (floor
+  20, and it asks first); and **a second opinion confirms every candidate**. That last one is not
+  theoretical: the client asked `_blobAlreadyStored`, whose actual question is *"may I skip this
+  upload?"* — it deliberately answers NO for a blob that is present but carries an expiry stamp,
+  because re-uploading is what clears the stamp. Used as evidence of loss it reported 497 files with
+  ordinary names as gone from a real drive, and that list drives a repair that TOMBSTONES index
+  entries on every device for ninety days. It is `_blobPresent` now (HEAD; 200/206 → there, 404/410 →
+  gone, anything else → unknown, and unknown is never offered for deletion). Orphan bytes are
+  REPORTED, never deleted — folder sync, music and every other feature keep their own bookkeeping and
+  none of it is in that index. `tests/client/test_drive_check.py`, `tests/test_blossom_scan.py`.
 - **The nostr-only Docker image downloads NO model weights.** `DOWNLOAD_MODEL` /
   `DOWNLOAD_DEPTH_MODEL` / `DOWNLOAD_U2NET_MODEL` are `ENV …=1` in the Dockerfile's **shared** final
   stage, so they are on in EVERY image — including `GPU=nostr`, which installs
@@ -914,6 +969,13 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   pipeline and one prompt; the client shows the parse in EDITABLE fields (OCR mangles decimal points
   far more often than names) and only then writes the row. Camera and file are two separate inputs —
   `capture=` jumps straight to the camera, which is wrong when you wanted a file you already have.
+  **Mail rides the same pipeline**: the ✨ AI menu on an open email (Summarize / AI reply / Add to
+  Budget, `app/routers/mail.py:/ai` + the `/api/budget/scan` text path — `_bill_command` accepts
+  `text/plain` attachments, an email being a bill that never needed OCR). The model only ever
+  produces text the user reviews: a summary is read, a reply draft opens IN THE COMPOSER unsent, a
+  bill parse opens Budget's editable review (`PCBudget.reviewParsed`). The actions row is a GRID and
+  `check_mail_mobile.py` pins its button count — new AI actions join the MENU, never the row.
+  `tests/test_mail_ai.py`.
   Retired commands (`budget`/`bills`/`pay`/`addbill`/`finance`) are kept in `RETIRED_COMMANDS`, matched
   by `parse_command` AND short-circuited in `execute_command` (Telegram never calls `parse_command`),
   so they answer "it moved to Discover → Budget" instead of falling through to the LLM, which would

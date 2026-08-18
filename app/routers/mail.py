@@ -23,6 +23,66 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/mail", tags=["mail"])
 
 
+from pydantic import BaseModel
+
+
+class MailAiReq(BaseModel):
+    mode: str                    # 'summarize' | 'reply'
+    text: str                    # the email, as plain text (subject/from/date headers + body)
+    instruction: str | None = None   # reply mode: how the user wants it answered
+
+
+@router.post("/ai")
+async def mail_ai(req: MailAiReq, db: Session = Depends(get_db),
+                  current_user: User = Depends(get_current_user)):
+    """The ✨ AI menu on an open email: summarize it, or draft a reply to it.
+
+    THE MODEL ONLY EVER PRODUCES TEXT THE USER THEN REVIEWS. A summary is displayed; a reply draft
+    lands in the composer with the Send button untouched — nothing here sends mail, files bills, or
+    acts on the message. (The third menu entry, Add to Budget, is /api/budget/scan — the same
+    pipeline as "Add Bill with AI", fed the email as text.)
+
+    Thin on purpose, like budget_scan: the model plumbing is CommandService's chat_service, which
+    already knows about the LB, the proxy and per-user access."""
+    text = (req.text or "").strip()[:16000]
+    if not text:
+        raise HTTPException(status_code=400, detail="empty message")
+    mode = (req.mode or "").strip().lower()
+    if mode not in ("summarize", "reply"):
+        raise HTTPException(status_code=400, detail="mode must be summarize or reply")
+    from app.services.command_service import CommandService
+    cs = CommandService(db, user=current_user)
+    if mode == "summarize":
+        msgs = [
+            {"role": "system", "content": (
+                "Summarize this email in a few short plain-text bullet points. Lead with what it "
+                "is and what, if anything, the reader must DO — name any amounts, dates and "
+                "deadlines exactly as written. No preamble, no markdown headings.")},
+            {"role": "user", "content": text},
+        ]
+    else:
+        instr = (req.instruction or "").strip()[:1000]
+        if not instr:
+            raise HTTPException(status_code=400, detail="say how to reply")
+        msgs = [
+            {"role": "system", "content": (
+                "Draft a reply to this email, following the user's instruction. Output ONLY the "
+                "reply body as plain text — no subject line, no quoted original, no signature "
+                "placeholders like [Your Name], no commentary. Match the sender's language and a "
+                "normal email register unless the instruction says otherwise.")},
+            {"role": "user", "content": "Instruction: " + instr + "\n\nThe email to reply to:\n" + text},
+        ]
+    try:
+        out = await cs.chat_service.chat(msgs) or ""
+    except Exception as e:
+        logger.warning("[MAIL] ai %s failed: %s", mode, e)
+        raise HTTPException(status_code=502, detail="the model did not answer")
+    out = out.strip()
+    if not out:
+        raise HTTPException(status_code=502, detail="the model did not answer")
+    return {"ok": True, "content": out}
+
+
 @router.get("/attachment/{account_hint}/{uid}/{index}")
 async def download_attachment(
     account_hint: str,

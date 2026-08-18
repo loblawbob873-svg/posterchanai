@@ -330,3 +330,34 @@ def test_the_more_sheet_offers_every_view_the_sidebar_does():
     assert not missing, (
         f"these views are in the sidebar but not in the ☰ More sheet, so they cannot be opened on a "
         f"phone: {missing}")
+
+
+def test_every_view_a_sub_module_sets_can_actually_be_set():
+    """`VIEW` was exposed read-only while git.js assigned to it.
+
+    In a strict module that is a TypeError, not a silent no-op — so `openRepo` died on its first
+    line and every repo in Discover → Git was unopenable, with nothing but the generic "something
+    went wrong" to show for it. A getter-only export and an assigning caller is a shape a grep can
+    catch, so it is caught here.
+    """
+    import os
+    import re
+
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    client = os.path.join(root, "static", "js", "client")
+    app = open(os.path.join(client, "app.js"), encoding="utf-8").read()
+
+    writers = []
+    for name in sorted(os.listdir(client)):
+        if not name.endswith(".js") or name == "app.js":
+            continue
+        src = open(os.path.join(client, name), encoding="utf-8").read()
+        for m in re.finditer(r"\bS\.([A-Z][A-Za-z0-9_]*)\s*=[^=]", src):
+            writers.append((name, m.group(1)))
+
+    for mod, prop in writers:
+        has_get = ("get %s()" % prop) in app
+        has_set = ("set %s(" % prop) in app
+        assert not has_get or has_set, (
+            "%s assigns S.%s, which app.js exposes with a getter and no setter — that throws in a "
+            "strict module and kills the caller on that line" % (mod, prop))

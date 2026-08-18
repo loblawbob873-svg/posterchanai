@@ -1,0 +1,173 @@
+"""Discover → Git, on the client side — the half nothing tested.
+
+The git HOST has five test files (push auth, browse/edit, serve, proxy, an end-to-end push). The
+BROWSER half had none, and that is the half that kept breaking: the last failure was `openRepo`
+assigning `S.VIEW`, which app.js exposes with a getter and no setter, so in a strict module the
+function threw on its FIRST line and every repo in the list was unopenable. Nothing said so beyond a
+generic "something went wrong" toast.
+
+Two kinds of test here, and the split is deliberate:
+
+  * the pure helpers are RUN under node against real kind-30617 events — repo identity, the naddr
+    used as a shareable URL, ownership, which host a repo lives on, the clone-URL cleanup;
+  * the contract between git.js and app.js is pinned structurally, because that is the shape the
+    real failure took: a caller and an export that disagree about whether a property can be written.
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import unittest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CLIENT = os.path.join(ROOT, "static", "js", "client")
+GIT = os.path.join(CLIENT, "git.js")
+APP = os.path.join(CLIENT, "app.js")
+NODE = shutil.which("node") or shutil.which("nodejs")
+
+
+def _src(p):
+    with open(p, encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _lift(names):
+    """Take named helpers out of git.js's IIFE so they can be run.
+
+    Lifted rather than reimplemented: a paraphrase of `_repoNaddr` in a test proves only that the
+    paraphrase works, and this file exists because the shipped code was wrong.
+    """
+    src = _src(GIT)
+    out = []
+    for n in names:
+        m = re.search(r"\n  (?:async )?function %s\(" % re.escape(n), src)
+        assert m, "%s moved in git.js — re-point this test" % n
+        start = m.start() + 1
+        i = src.index("{", m.end() - 1)
+        depth = 0
+        while i < len(src):
+            if src[i] == "{":
+                depth += 1
+            elif src[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        out.append(src[start:i + 1])
+    return "\n".join(out)
+
+
+@unittest.skipIf(not NODE, "no node on this node")
+class RepoIdentityTests(unittest.TestCase):
+    """A repo is a kind-30617; everything the list draws comes off its tags."""
+
+    def _run(self, body, extra=""):
+        # The two things the lifted helpers reach for: the shared surface (`S.ME` decides ownership,
+        # including via a `maintainers` tag) and the profile cache the search haystack folds in.
+        js = """
+        const S = { ME: { pubkey: 'a'.repeat(64) } };
+        const profOf = () => ({});
+        %s
+        %s
+        """ % (_lift(["_repoTag", "_repoAddr", "_repoIsMine", "_repoHostname", "_repoHaystack"])
+               + "\n" + extra, body)
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        return json.loads(r.stdout or "null")
+
+    def _ev(self, **kw):
+        tags = [["d", kw.get("d", "myrepo")]]
+        if kw.get("name"):
+            tags.append(["name", kw["name"]])
+        for c in kw.get("clone", []):
+            tags.append(["clone", c])
+        for w in kw.get("web", []):
+            tags.append(["web", w])
+        return {"kind": 30617, "pubkey": kw.get("pubkey", "a" * 64), "tags": tags,
+                "content": kw.get("content", "")}
+
+    def test_the_address_is_the_coordinate_the_network_uses(self):
+        """`30617:<pubkey>:<d>` — everything that refers to a repo (issues, patches, state) keys on
+        it, so a change here silently detaches a repo from all of its own events."""
+        ev = self._ev(d="admintools")
+        got = self._run("process.stdout.write(JSON.stringify(_repoAddr(%s)))" % json.dumps(ev))
+        self.assertEqual(got, "30617:" + "a" * 64 + ":admintools")
+
+    def test_a_repo_with_no_name_still_has_an_identity(self):
+        ev = self._ev(d="admintools")
+        got = self._run("process.stdout.write(JSON.stringify("
+                        "[_repoTag(%s,'name'), _repoTag(%s,'d')]))" % (json.dumps(ev), json.dumps(ev)))
+        self.assertEqual(got, ["", "admintools"])
+
+    def test_mine_is_decided_by_the_key_not_by_the_name(self):
+        mine = self._ev(pubkey="a" * 64)
+        theirs = self._ev(pubkey="b" * 64)
+        got = self._run("process.stdout.write(JSON.stringify("
+                        "[_repoIsMine(%s), _repoIsMine(%s)]))" % (json.dumps(mine), json.dumps(theirs)))
+        self.assertEqual(got, [True, False])
+
+    def test_the_host_comes_from_the_clone_url(self):
+        ev = self._ev(clone=["https://poster.place/git/npub1abc/admintools.git"])
+        got = self._run("process.stdout.write(JSON.stringify(_repoHostname(%s)))" % json.dumps(ev))
+        self.assertIn("poster.place", got or "")
+
+    def test_a_repo_with_no_clone_url_does_not_throw(self):
+        """A malformed or half-published repo must not take the whole list down with it — the list is
+        drawn from whatever the relay returns, which is not something this client controls."""
+        ev = self._ev()
+        got = self._run("process.stdout.write(JSON.stringify(_repoHostname(%s) || ''))" % json.dumps(ev))
+        self.assertEqual(got, "")
+
+    def test_search_matches_a_repo_by_name_and_by_identifier(self):
+        ev = self._ev(d="admintools", name="Admin Tools")
+        hay = self._run("process.stdout.write(JSON.stringify(_repoHaystack(%s)))" % json.dumps(ev))
+        self.assertIn("admintools", hay.lower())
+        self.assertIn("admin tools", hay.lower())
+
+
+class TheContractWithAppJsTests(unittest.TestCase):
+    """The shape the last failure took: a caller and an export that disagree.
+
+    `openRepo` assigns `S.VIEW`. app.js exposed `VIEW` with a getter only, so the assignment threw —
+    in a strict module that is a TypeError, and it killed the function on its first line. Every repo
+    was unopenable and the only symptom was the generic error toast.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.git = _src(GIT)
+        cls.app = _src(APP)
+
+    def test_open_repo_can_set_the_view(self):
+        self.assertIn("S.VIEW='repo'", self.git.replace(" ", ""))
+        self.assertIn("set VIEW(", self.app,
+                      "app.js exposes VIEW with no setter, so openRepo throws on its first line")
+
+    def test_every_helper_git_js_borrows_from_app_js_exists(self):
+        """git.js reaches into the shared surface for a dozen things. One rename there and the repo
+        view dies at runtime with nothing to point at."""
+        used = set(re.findall(r"\bS\.([a-zA-Z_][A-Za-z0-9_]*)\b", self.git))
+        # Anything the export object defines, in any of the forms it uses.
+        for name in sorted(used):
+            defined = (
+                re.search(r"[,{]\s*%s\s*[,:(]" % re.escape(name), self.app)
+                or re.search(r"\b(?:get|set)\s+%s\s*\(" % re.escape(name), self.app)
+                or re.search(r"\b%s\s*[:=]" % re.escape(name), self.app)
+            )
+            self.assertTrue(defined, "git.js uses S.%s and app.js does not define it" % name)
+
+    def test_the_repo_view_is_not_a_nav_destination(self):
+        """It sets VIEW directly and does its own nav clearing precisely because `repo` is not in the
+        sidebar — routing it through switchView would fight the line after it."""
+        at = self.git.index("function openRepo(")
+        body = self.git[at:at + 800]
+        self.assertIn("_clearNav()", body)
+        self.assertNotIn("switchView('repo')", body)
+
+
+class GitJsParsesTests(unittest.TestCase):
+    @unittest.skipIf(not NODE, "no node on this node")
+    def test_it_parses(self):
+        r = subprocess.run([NODE, "--check", GIT], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])

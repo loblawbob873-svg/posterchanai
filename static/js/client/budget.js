@@ -74,6 +74,10 @@
         await load();
         return addBill(String(vendor||'').trim(), Number(amount)||0, false, true);
       },
+      // The editable check-before-save modal, for callers OUTSIDE this view — Mail's "Add to Bills"
+      // hands its parse here. Safe from any view: the write path repaints through the VIEW guard, so
+      // it cannot draw the budget over whatever screen invoked it.
+      reviewParsed(d){ return confirmParsed(d || {}); },
     };
   }
 
@@ -613,7 +617,7 @@
       <label class="fld">Name<input class="input" id="bg-an" value="${enc(String(d.vendor||''))}"></label>
       <label class="fld">Amount<input class="input" id="bg-aa" inputmode="decimal" value="${enc(amt.toFixed(2))}"></label>
       <label class="bg-chk" style="margin:4px 0 10px"><input type="checkbox" id="bg-arec" checked> Recurring (comes back every month)</label>
-      ${d.due?`<div class="muted small">Due ${enc(String(d.due))} — a reminder will be set.</div>`:''}
+      ${d.due?`<div class="muted small">Due ${enc(String(d.due))}. (Reminders come with the chat \u0060bill\u0060 flow — this writes only the budget row.)</div>`:''}
       <button class="btn btn-cyan full" id="bg-aok">Add to budget</button>`, root=>{
       root.querySelector('#bg-aok').onclick=async()=>{
         const n=(root.querySelector('#bg-an').value||'').trim();

@@ -1490,7 +1490,12 @@
        * details(). Folding it into one number told someone their phone had hundreds of conflicts
        * when a real sweep would have settled every one of them without making a copy. */
       return n + ' change' + (n>1?'s':'') + ' to make'
-             + (c ? ' (' + c + ' of them only if the bytes really differ)' : '');
+             + (c ? ' (' + c + ' of them only if the bytes really differ)' : '')
+             /* Or the preview promises downloads the sweep will decline — the store has already
+              * said it does not hold those bytes, and only the device that has the files can fix
+              * that (by sending them again). */
+             + (rep.plannedGone ? ' \u2014 ' + rep.plannedGone + ' of them cannot be fetched right now: '
+                + 'the store does not have the bytes' : '');
     }
     /* A SWEEP THAT WAS STOPPED DID NOT FIND A FOLDER IN STEP — it never finished looking.
      *
@@ -1514,6 +1519,11 @@
     if(rep.conflicted.length) bits.push(rep.conflicted.length + ' conflict' + (rep.conflicted.length>1?'s':''));
     if(rep.failed.length) bits.push(rep.failed.length + ' failed');
     if(rep.skipped.length) bits.push(rep.skipped.length + ' skipped');
+    /* These were silently absent: the sweep skipped them, nothing failed, bits stayed empty and the
+     * card said "in step" about a folder with paths nothing can fetch. The store does not have the
+     * bytes; only the device that has the files can put them back. */
+    const _unf = (rep.unfetchable || []).length;
+    if(_unf) bits.push(_unf + ' can\u2019t be fetched \u2014 the store doesn\u2019t have those bytes');
     // Said out loud, because "900 up" for files that were never sent is how a working first sweep
     // gets mistaken for the resync bug it is recovering from.
     if(rep.alreadyStored) bits.push(rep.alreadyStored + ' already stored');
@@ -1578,9 +1588,23 @@
      * all three snapshots and can never be deleted by anyone — so it belongs on the line, not
      * instead of it. */
     const _exc = rep.excluded ? ' · ' + rep.excluded + ' excluded' : '';
-    if(!bits.length) return (rep.unchanged
-      ? ('in step · nothing to sync (' + rep.unchanged + ' file' + (rep.unchanged === 1 ? '' : 's') + ' checked)')
-      : 'in step · nothing to sync') + _exc;
+    /* PATHS, NOT FILES. `unchanged` counts everything the sweep had to decide about and found
+     * settled — which includes tombstones: a deletion both sides already agree on is a path that
+     * needs nothing. Calling those "files" is why a folder could read "5,556 files" on its card and
+     * "6,159 files checked" on the line underneath, which reads as a contradiction and sent somebody
+     * looking for a bug that was not there. */
+    if(!bits.length){
+      if(!rep.unchanged) return 'in step · nothing to sync' + _exc;
+      const gone = +rep.settledGone || 0;
+      /* THE ARITHMETIC, ON SCREEN. "6,159 checked" beside a card reading "5,556 files" is two
+       * numbers that cannot both be right, and the missing term is the one nobody can guess. */
+      const how = gone
+        ? (' (' + (rep.unchanged - gone) + ' file' + ((rep.unchanged - gone) === 1 ? '' : 's')
+           + ' + ' + gone + ' deletion' + (gone === 1 ? '' : 's') + ' on record = '
+           + rep.unchanged + ' paths checked)')
+        : (' (' + rep.unchanged + ' path' + (rep.unchanged === 1 ? '' : 's') + ' checked)');
+      return 'in step · nothing to sync' + how + _exc;
+    }
     return bits.join(' · ') + _exc;
   }
   /* ---- WATCHING THE OTHER ENGINE --------------------------------------------------------------
@@ -1849,6 +1873,8 @@
       return '<div class="sync-grp"><b>' + PC.enc(label) + '</b><ul>' + shown + more + '</ul></div>';
     };
     const p = rep.plan || {};
+    const unf = grp('Can\u2019t be fetched \u2014 the store doesn\u2019t have the bytes',
+                    rep.unfetchable || [], a => a.path + ' \u2014 ' + a.why);
     if(rep.dryRun){
       return '<div class="sync-details">'
         + grp('Would upload', p.upload, a => a.path + ' — ' + a.why)
@@ -1871,6 +1897,7 @@
         + '</div>';
     }
     return '<div class="sync-details">'
+      + unf
       + grp('Failed', rep.failed, a => a.path + ' — ' + a.what + ': ' + a.error)
       + grp('Skipped', rep.skipped, a => a.path + ' — ' + a.why)
       + grp('Conflicts kept', rep.conflicted, a => a.path + ' → ' + a.keptAs)

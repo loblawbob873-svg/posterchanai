@@ -16541,6 +16541,38 @@
    * flat map of full paths, so the folders are implied by them and have to be re-derived here; a
    * directory's size and date are the sum and the newest of what is inside it, which is what a file
    * manager shows and what makes the columns meaningful on a folder row. */
+  /* EVERY LIVE PATH UNDER `dir`, AT ANY DEPTH — what a search actually means.
+   *
+   * `_syncEntries` answers "what is IN this folder", which is right for browsing and wrong for
+   * searching: a synced folder files thousands of paths into a tree, and a search that only looks at
+   * the current directory answers "no results" for a file that is plainly there. Reported exactly
+   * that way — searching a folder root for "conflict" while the copies sat in sub-folders.
+   *
+   * Each hit carries the directory it lives in, because a result you cannot locate is half an
+   * answer. */
+  function _syncSearch(paths, dir, match){
+    const pre = dir ? dir + '/' : '';
+    const out = [];
+    for(const p in paths){
+      const e = paths[p];
+      if(!e || e.deletedAt) continue;
+      if(pre && p.indexOf(pre) !== 0) continue;
+      const rest = p.slice(pre.length);
+      /* THE TRASH IS EXCLUDED AT ANY DEPTH, not just at the top.
+       *
+       * Browsing only ever looks one level down, so checking the first segment is enough there. A
+       * SEARCH walks the whole subtree, and `.pc-trash/<date>/…` holds the deleted copies — offering
+       * them as results makes a deleted file look present, and re-adding one from there is exactly
+       * how a deletion gets undone. */
+      if(!rest || ('/' + rest + '/').indexOf('/.pc-trash/') >= 0) continue;
+      const cut = rest.lastIndexOf('/');
+      const name = cut < 0 ? rest : rest.slice(cut + 1);
+      if(!match(name)) continue;
+      out.push({ path: p, name, where: cut < 0 ? '' : rest.slice(0, cut),
+                 size: +e.size || 0, mtime: +e.mtime || 0, sha: e.sha, chunks: e.chunks });
+    }
+    return out;
+  }
   function _syncEntries(paths, dir){
     const pre = dir ? dir + '/' : '';
     const dirs = new Map(), files = [];
@@ -16586,6 +16618,26 @@
    * READ-ONLY. The one action it offers is clearing INDEX entries whose bytes are gone, which
    * deletes nothing from the server — there is nothing there to delete.
    */
+  /* IS THIS BLOB THERE? — asked properly, which `_blobAlreadyStored` does NOT do.
+   *
+   * That one answers a different question: "may I skip this upload?" — and it deliberately says NO
+   * for a blob that is present but carries an expiry stamp, because re-uploading is what clears the
+   * stamp. Correct for an upload, and completely wrong as evidence of loss: used here it reports a
+   * file that is sitting on the server as gone, and this drives a repair that removes index entries
+   * on every device for ninety days.
+   *
+   * Three answers, and the middle one is why this exists: `true` there, `false` NOT there, `null` I
+   * could not ask. A rate limiter, a 500, a redirect and a dead socket are all `null`.
+   */
+  async function _blobPresent(sha){
+    try{
+      const r = await fetch(mediaServer() + '/' + sha, { method:'HEAD', cache:'no-store' });
+      if(r && (r.status === 200 || r.status === 206)) return true;
+      if(r && (r.status === 404 || r.status === 410)) return false;
+      return null;
+    }catch(_){ return null; }
+  }
+
   async function driveCheck(btn){
     const was = btn ? btn.textContent : '';
     if(btn){ btn.disabled = true; btn.textContent = 'checking…'; }
@@ -16623,23 +16675,59 @@
        * A HEAD per candidate is the second opinion, and it is bounded: only the entries the listing
        * already doubts are asked about, and an unknown answer counts as PRESENT. */
       const reallyGone = [];
+      let unsure = 0;
       for(const x of missing.slice(0, 500)){
-        let there = true;
-        try{ there = await _blobAlreadyStored(x.sha); }catch(_){ there = true; }
-        if(!there) reallyGone.push(x);
+        const there = await _blobPresent(x.sha);
+        if(there === false) reallyGone.push(x);
+        else if(there === null) unsure++;
       }
       const unconfirmed = missing.length - Math.min(missing.length, 500);
 
       let otherBytes = 0, otherN = 0;
       for(const b of list) if(!named.has(b.sha256)){ otherN++; otherBytes += (b.size || 0); }
 
+      /* WHICH SERVER THIS VERDICT IS ABOUT — the missing half of every number below it.
+       *
+       * `mediaServer()` is ONE current server and the index keeps no per-entry host, so an account
+       * that has ever been pointed somewhere else has entries whose bytes are on the OLD host. Both
+       * the listing and the HEAD then answer 404 while the file is perfectly safe where it was
+       * uploaded, and the report reads as data loss. Naming the server is what makes that possible
+       * to notice, and it costs one line. */
       const lines = [`<div><b>${Object.keys(files).length}</b> file(s) in your index · `
-                     + `<b>${have.size}</b> stored on the server</div>`];
-      if(missing.length){
-        lines.push(`<div class="nt-warn">⚠ <b>${reallyGone.length}</b> file(s) the server no longer has`
+                     + `<b>${have.size}</b> stored on the server</div>`,
+                     `<div class="dim small">checked against <code>${enc(mediaServer())}</code></div>`];
+      if(unsure){
+        lines.push(`<div>${unsure} could not be checked a second time — the server did not answer. `
+          + `Left alone.</div>`);
+      }
+      /* Gated on what the SECOND opinion confirmed, not on what the listing doubted. A listing
+       * that doubts 500 entries the HEADs then all find present is a listing having a bad minute —
+       * rendering "0 entries whose stored copy is gone" over an empty list would be this screen's
+       * own version of crying wolf. Say instead that the two answers disagreed. */
+      const vindicated = Math.min(missing.length, 500) - reallyGone.length - unsure;
+      if(vindicated > 0 && !reallyGone.length){
+        lines.push(`<div>${vindicated} entr${vindicated === 1 ? 'y was' : 'ies were'} doubted by the `
+          + `server's listing but found present when asked directly. Nothing to do.</div>`);
+      }
+      if(reallyGone.length || unconfirmed){
+        /* SAY WHAT WAS MEASURED, WHICH IS NOT "YOUR FILES ARE GONE".
+         *
+         * The index is a set of POINTERS at a stored copy. This check asked the server about those
+         * pointers, and nothing else — it has never looked at a disk. "497 file(s) the server no
+         * longer has" was read, entirely reasonably, as a report about the files themselves, on a
+         * drive whose owner could see every one of them sitting on their desktop. The stored copy
+         * going away is what actually happened (clearing the store does exactly this, and only the
+         * synced folders are re-uploaded afterwards), and the entry that outlives it is a name
+         * pointing at nothing. */
+        lines.push(`<div class="nt-warn">⚠ <b>${reallyGone.length}</b> entr${reallyGone.length === 1 ? 'y' : 'ies'}`
+          + ` whose stored copy is no longer on this server`
           + (unconfirmed ? ` (${unconfirmed} more not checked individually)` : '') + `:`
-          + `<div class="muted small">${reallyGone.slice(0, 12).map(x => enc(x.name)).join(', ')}`
-          + (reallyGone.length > 12 ? ` and ${reallyGone.length - 12} more` : '') + `</div></div>`);
+          + `<div class="muted small">${reallyGone.slice(0, 12).map(x => enc(x.name) + ' <code>' + enc(x.sha.slice(0, 16)) + '</code>').join('<br>')}`
+          + (reallyGone.length > 12 ? ` and ${reallyGone.length - 12} more` : '')
+          + `</div><div class="muted small" style="margin-top:6px">This is about the copy stored `
+          + `here, not about your devices — the files themselves may well still be on them. `
+          + `Bytes are addressed by content, so an entry comes back to life by itself if the same `
+          + `file is uploaded again from anywhere.</div></div>`);
       }
       if(undecryptable.length){
         lines.push(`<div class="nt-warn">⚠ <b>${undecryptable.length}</b> encrypted file(s) this `
@@ -16650,7 +16738,11 @@
           + `but not named by this index — folder sync, its records and the music library keep their `
           + `own, and they all live here. Nothing to do.</div>`);
       }
-      if(!missing.length && !undecryptable.length) lines.push('<div>Everything checks out.</div>');
+      /* "nothing was found missing" and "nothing could be asked" are not the same sentence —
+       * the same rule the admin store scan follows. `unsure` entries were doubted by the listing
+       * and the HEAD got no answer, so a clean bill of health over them would be a guess. */
+      if(!reallyGone.length && !unconfirmed && !unsure && !undecryptable.length)
+        lines.push('<div>Everything checks out.</div>');
 
       modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Drive check</h3>`
         + lines.join('')
@@ -16753,13 +16845,34 @@
     const r = await fetch(mediaServer() + '/' + sha);
     if(!r.ok) throw new Error('blob ' + String(sha).slice(0,8) + ' unavailable (' + r.status + ')');
     const bytes = new Uint8Array(await r.arrayBuffer());
+    /* WHAT ARRIVED, BEFORE WHAT IT MEANS. AES-GCM answers one word — OperationError — for two
+     * completely different failures: bytes that arrived damaged (a proxy stream cut short, a bad
+     * hop) and bytes that are perfect but sealed with a key this device does not hold. The store is
+     * content-addressed, so one hash settles it: a mismatch is a TRANSFER problem and must say so
+     * (and must never be remembered against the copy — the copy is fine); a match that still fails
+     * to decrypt is a KEY problem, which retrying the network cannot fix. Reported as a bunch of
+     * bare "OperationError"s on a laptop, which is neither sentence. */
+    const got = await sha256hex(bytes.buffer);
+    if(got !== sha){
+      throw new Error('the server answered with damaged or partial bytes for '
+                      + String(sha).slice(0,8) + ' (' + bytes.length + ' bytes hashing to '
+                      + got.slice(0,8) + ') — a transfer problem, this will be retried');
+    }
     try{
       return await _masterDecrypt(await FilesIdx._ensureMK(), bytes);
     }catch(e){
       // AES-GCM rejects the WHOLE message when the key is wrong, so this is not a damaged file —
       // it is the wrong key. Ask the drive index what the account's key actually is, and try once more.
-      if(!await _refreshDriveKey()) throw e;
-      return await _masterDecrypt(await FilesIdx._ensureMK(), bytes);
+      if(!await _refreshDriveKey()){
+        throw new Error('this device\u2019s drive key does not open ' + String(sha).slice(0,8)
+                        + ' \u2014 the bytes are intact but were sealed with a different key');
+      }
+      try{ return await _masterDecrypt(await FilesIdx._ensureMK(), bytes); }
+      catch(_){
+        throw new Error('this device\u2019s drive key does not open ' + String(sha).slice(0,8)
+                        + ' \u2014 the bytes are intact but were sealed with a different key'
+                        + ' (the account\u2019s current key was re-read and does not open it either)');
+      }
     }
   }
   /* The file's bytes, whole or in pieces, as a Blob.
@@ -17078,15 +17191,20 @@
      * the same client-side name match the Blossom grid does. Sub-folders drop out of a query for the
      * same reason files leave their folder: you are looking for a file, not a place. */
     const _q = _filesQ.trim();
-    const items = _q ? files.filter(f => _fxMatch(f.name)) : dirs.concat(files);
+    // A query searches the whole subtree, not just the directory you happen to be standing in.
+    const items = _q ? _syncSearch(paths, _syncPath, _fxMatch).sort(cmp) : dirs.concat(files);
     if(!items.length){
-      grid.innerHTML = '<div class="empty">'+(_syncPath?('“'+enc(_syncPath)+'” is empty.'):('Nothing in “'+enc(_syncRoot)+'” yet — sync a device and it appears here.'))+'</div>';
+      grid.innerHTML = '<div class="empty">' + (_q
+        ? ('Nothing under ' + (_syncPath ? '“'+enc(_syncPath)+'”' : '“'+enc(_syncRoot)+'”')
+           + ' matches “' + enc(_q) + '” — including sub-folders.')
+        : (_syncPath?('“'+enc(_syncPath)+'” is empty.'):('Nothing in “'+enc(_syncRoot)+'” yet — sync a device and it appears here.'))) + '</div>';
       return;
     }
     const rowFor = (it) => {
       const ext = it.dir ? '' : ((String(it.name).match(/\.([A-Za-z0-9]{1,8})$/)||[])[1]||'').toLowerCase();
       const icon = it.dir ? '📁' : _fxIcon(ext, '');
-      const type = it.dir ? (it.n + ' item' + (it.n===1?'':'s')) : _fxType(ext);
+      const type = it.dir ? (it.n + ' item' + (it.n===1?'':'s'))
+                : (it.where ? (_fxType(ext) + ' · in ' + it.where) : _fxType(ext));
       const canThumb = !it.dir && it.sha && _THUMB_EXT.test(ext) && (it.size||0) <= _THUMB_MAX;
       // The FULL path is what an edit needs — a manifest has no folders, only paths — and a directory
       // row has none of its own, so it is rebuilt from where we are standing.
@@ -21428,6 +21546,7 @@
           <button class="btn btn-cyan small" data-act="reply">↩ Reply</button>
           <button class="btn small" data-act="replyall">↩↩ Reply all</button>
           <button class="btn small" data-act="forward">↪ Forward</button>
+          <button class="btn small" data-act="ai" title="Summarize, draft a reply, or add this email to your budget">✨ AI ▾</button>
           <button class="btn small" data-act="unread">● Unread</button>
           <button class="btn small" data-act="move">🗄 Move ▾</button>
           <button class="btn btn-red small" data-act="delete">🗑 Delete</button>
@@ -21443,6 +21562,77 @@
       $$('.mm-sender',pane).forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); this.senderCard(b.dataset.from, b.dataset.name); });
       $$('[data-act]',pane).forEach(b=> b.onclick=()=>this.action(b.dataset.act, target, target.folder||folder, target.account||acct));
 
+    },
+    /* The open message as plain text, headers first — what every AI action reads. HTML mail is
+     * reduced with DOMParser, never by reading the rendered iframe: that frame is sandboxed WITHOUT
+     * allow-same-origin (it is somebody else's page), so its document is unreachable from here, and
+     * DOMParser parses without executing anything. */
+    _msgText(msg){
+      let body = String(msg.body_text || '');
+      if(!body.trim() && msg.body_html){
+        try{ body = new DOMParser().parseFromString(String(msg.body_html), 'text/html').body.innerText || ''; }
+        catch(_){ body = String(msg.body_html).replace(/<[^>]+>/g, ' '); }
+      }
+      if(!body.trim()) return '';
+      return 'Subject: ' + (msg.subject || '') + '\nFrom: ' + (msg.from || msg.from_email || '')
+           + '\nDate: ' + (msg.ts ? new Date(msg.ts * 1000).toISOString().slice(0, 10) : '')
+           + '\n\n' + body.slice(0, 16000);
+    },
+    // window.__PC.authFetch's exact shape, called locally — inside app.js there is no `PC` binding.
+    async _aiPost(url, payload){
+      await ensureAiSession();
+      const isForm = (typeof FormData !== 'undefined') && (payload instanceof FormData);
+      const r = await fetch(url, { method:'POST', body: isForm ? payload : JSON.stringify(payload),
+                                   credentials:'include',
+                                   headers: Object.assign(isForm ? {} : {'Content-Type':'application/json'},
+                                                          _aiToken ? {'Authorization':'Bearer '+_aiToken} : {}) });
+      if(!r.ok){
+        let why=''; try{ why=((await r.json())||{}).detail||''; }catch(_){}
+        throw new Error(r.status===401||r.status===403 ? 'your account can\u2019t use AI features'
+                        : (why || 'the request failed'));
+      }
+      return r.json();
+    },
+    async aiSummarize(msg){
+      const text = this._msgText(msg);
+      if(!text){ toast('this message has no text to read'); return; }
+      toast('summarizing\u2026');
+      try{
+        const d = await this._aiPost('/api/mail/ai', { mode:'summarize', text });
+        modal(`<h3>\ud83d\udcdd Summary</h3>
+          <div class="mail-ai-summary">${enc(String(d.content||''))}</div>
+          <div class="row" style="margin-top:10px"><button class="btn btn-ghost small" id="ma-copy">\ud83d\udccb Copy</button></div>`,
+          root => { const c=$('#ma-copy',root); if(c) c.onclick=()=>copyValue(String(d.content||'')); });
+      }catch(err){ toast((err && err.message) || 'that didn\u2019t work'); }
+    },
+    async aiReply(msg, folder, acct){
+      const instr = await uiPrompt('How should it reply?\n\nE.g. \u201cpolitely decline\u201d, '
+        + '\u201csay yes, ask for the invoice as PDF\u201d, \u201cshort thank-you\u201d.', { ok:'Draft it' });
+      if(instr === null) return;
+      if(!String(instr).trim()){ toast('say how to reply'); return; }
+      const text = this._msgText(msg);
+      if(!text){ toast('this message has no text to read'); return; }
+      toast('drafting\u2026');
+      try{
+        const d = await this._aiPost('/api/mail/ai', { mode:'reply', text, instruction: String(instr).trim() });
+        /* Into the COMPOSER, never sent: the draft lands where every reply lands, with To/Subject
+         * prefilled by the ordinary reply path and Send exactly one deliberate click away. */
+        this.compose({ mode:'reply', msg, folder, acct, body: String(d.content||'') });
+      }catch(err){ toast((err && err.message) || 'that didn\u2019t work'); }
+    },
+    async addToBills(msg){
+      toast('reading the bill\u2026');
+      try{
+        const text = this._msgText(msg);
+        if(!text){ toast('this message has no text to read'); return; }
+        const fd = new FormData();
+        fd.append('file', new File([text], 'email.txt', { type: 'text/plain' }));
+        const d = await this._aiPost('/api/budget/scan', fd);
+        // type:'text' carries the REASON it couldn't pin the fields down — show that, not a shrug.
+        if(!d || d.type !== 'bill'){ toast((d && d.content) || 'couldn\u2019t read a bill out of this email'); return; }
+        if(!window.PCBudget){ toast('budget module not loaded'); return; }
+        window.PCBudget.reviewParsed(d);
+      }catch(err){ toast((err && err.message) || 'that didn\u2019t work'); }
     },
     /* WHO SENT THIS. A mail header is `Some Name <someone@example.com>` rendered as one string, and
      * the address — the part that says who it actually is — was only visible when the display name
@@ -21489,6 +21679,30 @@
     async action(act, msg, folder, acct){
       acct=acct||this.acct; const uid=msg.uid;
       if(act==='reply'||act==='replyall'||act==='forward') return this.compose({mode:act, msg, folder, acct});
+      /* "ADD TO BILLS" — the email IS the bill, so it rides the exact pipeline "Add Bill with AI"
+       * uses (/api/budget/scan → CommandService._bill_command → PCBudget's editable review modal),
+       * with the OCR step skipped because the words already are words. The write still happens in
+       * the CLIENT and still behind the review — the budget doc is encrypted to the user's own key
+       * and an unreviewed amount is the one error that silently corrupts the totals.
+       *
+       * HTML mail is reduced with DOMParser, never by reading the rendered iframe: that frame is
+       * sandboxed WITHOUT allow-same-origin (deliberately — it is somebody else's page), so its
+       * document is unreachable from here, and DOMParser parses without ever executing anything. */
+      if(act==='ai'){
+        /* One ✨ menu, not a button per action — the row is a grid and every new action would cost
+         * it a column on a phone. Same sheet the Move menu uses, so it is already right on both
+         * desktop and mobile. Every entry ENDS IN THE USER'S HANDS: a summary is read, a reply
+         * draft opens in the composer unsent, a bill parse opens Budget's editable review. */
+        const pick = await _pickOne('\u2728 AI', [
+          { v:'sum',  l:'\ud83d\udcdd Summarize this email' },
+          { v:'reply', l:'\u21a9\ufe0f AI reply\u2026' },
+          { v:'bill', l:'\ud83d\udcb8 Add to Budget' },
+        ]);
+        if(pick==='sum') return this.aiSummarize(msg);
+        if(pick==='reply') return this.aiReply(msg, folder, acct);
+        if(pick==='bill') return this.addToBills(msg);
+        return;
+      }
       if(act==='unread'){ try{ await this.api('/mark-read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:acct,folder,uid,read:false})}); }catch(_){}; toast('marked unread'); this.loadList(); return; }
       /* MOVE — the folder picker Archive is one entry of.
        *
@@ -21532,7 +21746,7 @@
     compose(opts){
       opts=opts||{}; const m=opts.msg; let to='', cc='', subj='', body='', draftUid=null;
       const self=this, atts=[];
-      if(opts.mode==='reply'||opts.mode==='replyall'){ subj=/^re:/i.test(m.subject||'')?m.subject:('Re: '+(m.subject||'')); to=m.from_email||m.from||''; if(opts.mode==='replyall'&&m.to) cc=m.to; }
+      if(opts.mode==='reply'||opts.mode==='replyall'){ subj=/^re:/i.test(m.subject||'')?m.subject:('Re: '+(m.subject||'')); to=m.from_email||m.from||''; if(opts.mode==='replyall'&&m.to) cc=m.to; if(opts.body) body=String(opts.body); }
       else if(opts.to) to=String(opts.to);      // "Write to them", from the sender card
       else if(opts.mode==='forward'){ subj=/^fwd:/i.test(m.subject||'')?m.subject:('Fwd: '+(m.subject||'')); body=`\n\n---------- Forwarded ----------\nFrom: ${m.from||''}\nSubject: ${m.subject||''}\n\n${m.body_text||''}`; }
       else if(opts.mode==='draft'){ const dr=opts.draft||{}; to=dr.to||''; cc=dr.cc||''; subj=(dr.subject==='(no subject)'?'':(dr.subject||'')); body=dr.body_text||''; draftUid=dr.uid||null;
@@ -30716,6 +30930,16 @@
     }),
     mdToHtml, uploadEncFile, encFileUrl, deleteBlobQuiet, filesIdx: () => FilesIdx,
     get ME(){ return ME; }, get CFG(){ return CFG; }, get VIEW(){ return VIEW; },
+    /* …AND A SETTER, because a sub-module opening a view of its own has to be able to say so.
+     *
+     * `VIEW` was exposed read-only, and git.js's openRepo begins by assigning it — which in a strict
+     * module is a TypeError, not a silent no-op, so the function died on its first line and every
+     * repo in Discover → Git was unopenable. The only trace was the generic "something went wrong".
+     *
+     * Deliberately a bare assignment rather than switchView: a sub-view like `repo` is not a nav
+     * destination, and the caller does its own nav clearing, title and URL on the very next line —
+     * switchView here would fight it. */
+    set VIEW(v){ VIEW = v; },
   };
 
   document.addEventListener('DOMContentLoaded', boot);

@@ -72,8 +72,16 @@ class _BillMixin:
             return {"type": "text", "content": "\n".join(out)}
 
         # ---- read step: OCR the attachment, extract the fields, preview ----
+        # A TEXT attachment is a bill that never needed OCR — an email, mostly ("Add to Bills" in
+        # Mail sends the open message here as text/plain). Same pipeline, same prompt, same preview;
+        # the only difference is that the words arrive already being words.
         from app.services.media_service import is_image, is_pdf
-        if not attachments or not any(is_image(fn, ct) or is_pdf(fn, ct) for fn, _d, ct in attachments):
+
+        def _is_text(fn: str, ct: str) -> bool:
+            return (ct or "").lower().startswith("text/") or (fn or "").lower().endswith(".txt")
+
+        if not attachments or not any(is_image(fn, ct) or is_pdf(fn, ct) or _is_text(fn, ct)
+                                      for fn, _d, ct in attachments):
             return {"type": "text", "content": "Attach a photo or PDF of a bill, then send `bill`."}
         import base64 as _b64
         import io as _io
@@ -100,6 +108,13 @@ class _BillMixin:
 
         parts = []
         for fn, data, ct in attachments:
+            if _is_text(fn, ct):
+                try:
+                    parts.append(data.decode("utf-8", "replace")
+                                 if isinstance(data, (bytes, bytearray)) else str(data))
+                except Exception:
+                    pass
+                continue
             try:
                 b64 = _b64.b64encode(data).decode() if isinstance(data, (bytes, bytearray)) else data
             except Exception:
