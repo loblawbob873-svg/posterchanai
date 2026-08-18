@@ -120,9 +120,11 @@
     let views, missing = 0;
     try{
       const got = await io.views(key);
+      var got0 = got;
       views = (got && got.views) || {};
       missing = (got && got.missing) || 0;
       report.cannot = (got && got.cannot) || [];
+      report.badElsewhere = (got && got.bad && got.bad.length) || 0;
     }catch(e){
       throw new Error('could not read what your devices have — nothing has been changed. ('
                       + msg(e) + ')');
@@ -230,8 +232,30 @@
      *
      * So it is said outright. Only paths this device actually holds, and the version goes past
      * whatever the folder shows so the entry is not immediately outvoted. */
-    if(o.resend && o.resend.length && !o.dryRun){
-      const want = new Set(o.resend);
+    /* HEAL WHAT OTHERS REFUSE. Any entry of OURS whose current identity a sibling's view marks
+     * checksum-bad, while our local file still hashes to the journal's csum, is re-sent — the
+     * fresh upload carries a new identity, so every puller's remembered refusal expires by
+     * itself. Verified BEFORE sending: re-seeding a copy that is also bad here helps nobody. */
+    let _heal = [];
+    { const badIds = new Set((got0 && got0.bad) || []);
+      if(badIds.size && !o.dryRun){
+        const _idOfE = (e) => (e && (e.csum || e.sha || (e.chunks && e.chunks.join(',')))) || '';
+        for(const p in index){
+          const e = index[p]; if(!e || e.deletedAt || !disk[p]) continue;
+          const id = _idOfE(e); if(!id || !badIds.has(id)) continue;
+          try{
+            if(e.csum && typeof fs.hashFile === 'function'){
+              const h = await fs.hashFile(o.id, p);
+              if(h !== e.csum){ (report.badHere = report.badHere || []).push(p); continue; }
+            }
+            _heal.push(p);
+          }catch(_){}
+        }
+        if(_heal.length) (report.reseeding = _heal.slice());
+      } }
+    const _resend = (o.resend || []).concat(_heal);
+    if(_resend.length && !o.dryRun){
+      const want = new Set(_resend);
       const already = new Set(plan.send.map(u => u.path));
       const extra = [];
       for(const p of want){

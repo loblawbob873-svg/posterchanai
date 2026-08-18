@@ -716,11 +716,29 @@
         try{ const v = await _openDoc(j.legacy); if(Object.keys(v).length) views['(shared)'] = v; }
         catch(e){ missing++; }
       }
-      return { views, missing, cannot, sealedIds };
+      /* Union of every device's refused-copy identities — the holder-side half of the signal. */
+      const bad = [];
+      for(const dev of Object.keys(raw)){
+        const b = raw[dev] && raw[dev].bad;
+        if(Array.isArray(b)) for(const id of b.slice(0, 64)) bad.push(String(id));
+      }
+      return { views, missing, cannot, sealedIds, bad };
     },
     /** Publish OUR view. One writer, so this is a write and nothing else. */
     async publish(key, entries){
       const doc = await _sealDoc(entries);
+      /* THE BAD-COPY SIGNAL. A checksum failure is known only to the PULLER, while the fix — send
+       * the bytes again — belongs to the device still holding the good file, which sees nothing
+       * wrong ("every device is complaining about this" while the desktop settles clean). The
+       * identities this device refuses ride its view; holders re-seed on their next sweep, the
+       * re-upload changes the identity, and the record clears itself. Plaintext by choice: they
+       * are content hashes the store already exposes. */
+      try{
+        const bf = _badFetch(key);
+        const ids = [...new Set(Object.values(bf)
+          .filter(r => r && r.why === 'checksum' && r.id).map(r => String(r.id)))].slice(0, 64);
+        if(ids.length) doc.bad = ids;
+      }catch(_){}
       await store._post({ folder: key, device: deviceId(), manifest: doc, force: true });
     },
     /* RETIRE ONE DEVICE'S RECORD — the escape hatch for the rule above.
