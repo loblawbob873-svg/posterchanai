@@ -300,11 +300,12 @@ async def drive(url):
         # divergent bytes must conflict EXACTLY once each, and old conflict-named debris syncs as
         # ordinary files. "i readded pictures on phone and it instantly has 373 conflicts" — if
         # identical bytes conflict, this fails loudly here instead of on somebody's phone.
-        await b.js("""(() => {
+        await b.js("""(async () => {
           const D = window.__vdisk;
-          // wipe journal + folder rows to simulate a fresh install that kept its files
+          // a REAL re-add: the journal is cleared through the same API the remove flow uses; the
+          // device id stays (that is what a phone keeps across remove-and-re-add)
+          await window.PCSync.docs.saveIndex('E2EPair', {});
           const me = window.__PC.me().pubkey;
-          for(const k of Object.keys(localStorage)) if(k.indexOf('pc_sync') === 0 || k.indexOf('pcsync') === 0) localStorage.removeItem(k);
           localStorage.setItem('pc_sync_folders_' + me, JSON.stringify([
             { id: 'vdisk', key: 'E2EPair', dir: '/vdisk', name: 'E2EPair',
               excludes: [], prefs: {}, lastSyncAt: 0, lastFullScanAt: 0 }]));
