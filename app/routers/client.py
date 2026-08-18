@@ -4523,6 +4523,7 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
             logger.warning("[client] files-index: cannot read current index, refusing to write: %s", e)
             return JSONResponse({"ok": False, "error": "index unavailable, not saved"}, status_code=503)
 
+        mk_kept = None
         # THE DRIVE KEY IS FIRST-WRITER-WINS, FOREVER. Two fresh devices can both pull an empty
         # index, both mint a master key, and both save — last-writer-wins on `mk` re-keyed the
         # whole account under whichever device saved LAST, while the other had already sealed
@@ -4537,6 +4538,7 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
             logger.warning("[client] files-index: KEPT the account's existing drive key for %s "
                            "(a save tried to replace it)", pk[:12])
             data.index["mk"] = prev["mk"]
+            mk_kept = prev["mk"]
 
         drop = _files_index_collapse(prev, data.index)
         if drop and not data.force:
