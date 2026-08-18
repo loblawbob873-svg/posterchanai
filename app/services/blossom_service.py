@@ -31,6 +31,7 @@ import time
 import base64
 
 import httpx
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -857,6 +858,239 @@ async def read_blob(db: Session, blob: BlossomBlob):
             f.close()
 
     return _file_stream(), mime, blob.size
+
+
+async def _probe_local(path: str) -> str:
+    """"there" | "gone" | "unknown" for a file on this machine.
+
+    `os.path.isfile` answers False for a stale NFS handle, an unmounted volume, a permissions
+    problem and a path with a typo in it — and this drives a repair that deletes rows. Only ENOENT
+    is "gone"; every other errno is "I could not look". The proxy branch has always been careful
+    about this and the local one was not: with `blossom_storage_path` on an external mount that
+    happened not to be up, every row would have come back missing and the panel would have offered
+    to drop the entire blob table while the bytes sat safely on the unmounted disk.
+    """
+    def _look():
+        try:
+            st = os.stat(path)
+            return "there" if os.path.isfile(path) or st else "gone"
+        except FileNotFoundError:
+            return "gone"
+        except OSError:
+            return "unknown"
+    return await asyncio.to_thread(_look)
+
+
+async def _probe_proxy(cfg: dict, rel_path: str) -> str:
+    """Same three answers, over HTTP. Presence is asked with a one-byte Range, never a whole GET:
+    a storage server that does not answer HEAD would otherwise make a shallow scan re-download the
+    entire store, buffering each blob into memory as it went."""
+    from urllib.parse import quote
+    url = (f"{cfg['storage_url'].rstrip('/')}/api/storage/view-file"
+           f"?username={_PROXY_USER}&file_path={quote(rel_path)}&download=1")
+    try:
+        r = await _client().head(url, headers=_proxy_headers())
+        if r.status_code in (405, 501):
+            h = dict(_proxy_headers())
+            h["Range"] = "bytes=0-0"
+            r = await _client().get(url, headers=h)
+        if r.status_code in (200, 206):
+            return "there"
+        if r.status_code in (404, 410):
+            return "gone"
+        return "unknown"
+    except Exception:
+        return "unknown"
+
+
+async def scan_store(db: Session, *, limit: int = 0, deep: bool = False) -> dict:
+    """Does this node actually hold what its database says it holds?
+
+    THE QUESTION NOTHING COULD ANSWER. A blob row and the bytes behind it are two different things
+    in two different places — a row in Postgres, a file on a disk that may be another machine — and
+    nothing ever compared them. When they disagreed the symptom appeared on somebody's phone, as a
+    download that fails on every sweep for ever, because a client is told the file exists and cannot
+    tell "gone" from "not yet". Finding out meant reading an access log and hand-querying the
+    database.
+
+    Three answers, and the difference between them is the whole safety of this feature:
+
+      · `missing`   the store said NO. Every client that asks gets a 404 and cannot repair itself.
+      · `unknown`   the store could not be asked — a refusal, a timeout, a rate limiter, an
+                    unmounted disk. NEVER counted as missing: this drives a repair that deletes
+                    rows, and thousands of sequential probes make rate limiting the expected case.
+      · `orphans`   bytes with no row. Reported, never deleted — a half-finished upload looks
+                    exactly the same, and only a local backend can even be asked.
+
+    Read-only. `deep` re-reads each blob and compares it to the sha it is stored under, which is the
+    only check that catches bytes that rotted rather than vanished; it is opt-in because it reads
+    the whole store.
+    """
+    cfg = _cfg(db)
+    out = {"backend": cfg["backend"], "rows": 0, "checked": 0, "bytes": 0,
+           "missing": [], "corrupt": [], "unknown": 0, "orphans": 0, "orphan_bytes": 0,
+           "deep": bool(deep), "truncated": False, "unreadable_store": False}
+
+    out["rows"] = db.query(func.count()).select_from(BlossomBlob).scalar() or 0
+
+    # A local backend whose directory is not there at all is not a store full of missing files — it
+    # is a store nobody can read, and saying otherwise is how an unmounted disk becomes a mass delete.
+    if cfg["backend"] != "proxy":
+        base = cfg.get("blob_dir") or ""
+        if not base or not await asyncio.to_thread(os.path.isdir, base):
+            out["unreadable_store"] = True
+            out["unknown"] = out["rows"]
+            return out
+
+    q = db.query(BlossomBlob).order_by(BlossomBlob.created_at.desc())
+    if limit:
+        q = q.limit(limit)
+        if out["rows"] > limit:
+            out["truncated"] = True
+    # Streamed rather than materialised: `all()` on a media node with hundreds of thousands of blobs
+    # is hundreds of megabytes of ORM objects in the one worker that also serves every request.
+    rows = q.yield_per(500) if hasattr(q, "yield_per") else q.all()
+
+    seen = set()
+    n = 0
+    for b in rows:
+        seen.add(b.sha256)
+        out["checked"] += 1
+        out["bytes"] += int(b.size or 0)
+        if b.storage == "proxy":
+            if not cfg["storage_url"]:
+                out["unknown"] += 1
+            else:
+                state = await _probe_proxy(cfg, b.path)
+                if state == "gone":
+                    out["missing"].append(b.sha256)
+                elif state == "unknown":
+                    out["unknown"] += 1
+                elif deep:
+                    try:
+                        got = await _hash_proxy(cfg, b.path)
+                        if got is None:
+                            out["unknown"] += 1
+                        elif got != b.sha256:
+                            out["corrupt"].append(b.sha256)
+                    except Exception:
+                        out["unknown"] += 1
+        else:
+            state = await _probe_local(b.path)
+            if state == "gone":
+                out["missing"].append(b.sha256)
+            elif state == "unknown":
+                out["unknown"] += 1
+            elif deep:
+                try:
+                    got = await asyncio.to_thread(compute_sha256_file, b.path)
+                    if got != b.sha256:
+                        out["corrupt"].append(b.sha256)
+                except Exception:
+                    out["unknown"] += 1
+        n += 1
+        if n % 200 == 0:
+            await asyncio.sleep(0)          # let the node keep serving while this runs
+
+    # Bytes with no row: only answerable for a local backend, and only when every row was looked at.
+    # With a limit, `seen` covers one page while the walk covers the whole tree, so every unscanned
+    # row's file would be reported as an orphan — a number that reads as "delete these" about bytes
+    # that are perfectly accounted for.
+    if cfg["backend"] != "proxy" and cfg.get("blob_dir") and not out["truncated"]:
+        base = cfg["blob_dir"]
+
+        def _walk():
+            found, size = 0, 0
+            for root, _dirs, files in os.walk(base):
+                for name in files:
+                    if name in seen:
+                        continue
+                    if len(name) == 64 and all(c in "0123456789abcdef" for c in name):
+                        found += 1
+                        try:
+                            size += os.path.getsize(os.path.join(root, name))
+                        except OSError:
+                            pass
+            return found, size
+
+        out["orphans"], out["orphan_bytes"] = await asyncio.to_thread(_walk)
+    return out
+
+
+async def _hash_proxy(cfg: dict, rel_path: str):
+    """The sha of a stored blob, streamed. Never `r.content`: a multi-gigabyte video read in one
+    piece is the node's memory, and this walks the whole store."""
+    from urllib.parse import quote
+    url = (f"{cfg['storage_url'].rstrip('/')}/api/storage/view-file"
+           f"?username={_PROXY_USER}&file_path={quote(rel_path)}&download=1")
+    h = hashlib.sha256()
+    async with _client().stream("GET", url, headers=_proxy_headers()) as r:
+        if r.status_code != 200:
+            return None
+        async for chunk in r.aiter_bytes(1 << 20):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+async def forget_missing(db: Session, shas: list) -> dict:
+    """Drop rows whose bytes this node does not have — after asking the store again, one at a time.
+
+    Nothing is deleted from storage: that is what "missing" means. What the row IS, though, is the
+    only record of the sha → path → owner mapping, so dropping one takes the file out of the drive
+    listing, Notes' attachments and the music library. That makes this a delete, and it gets the
+    rules every other bulk delete in this codebase has.
+
+    RE-PROBED, and the asymmetry is the point: a second look answering "gone" tells us nothing new,
+    but one answering "there" is proof we must NOT delete. It costs one request per row being
+    dropped, which is the cheapest possible insurance against a scan that ran while a mount was
+    down, a prefix was being moved, or a re-upload was in flight.
+    """
+    out = {"removed": 0, "kept": 0, "unknown": 0, "refused": ""}
+    want = [s for s in (shas or []) if isinstance(s, str) and len(s) == 64]
+    if not want:
+        return out
+
+    total = db.query(func.count()).select_from(BlossomBlob).scalar() or 0
+    # A SHORT LIST IS A DELETE ORDER — the rule the folder sync and the phone book both use. If most
+    # of the store looks missing, the store is unreachable, not empty.
+    if len(want) >= 20 and total and len(want) > total / 2:
+        out["refused"] = (f"refusing to drop {len(want)} of {total} rows — that is most of the "
+                          f"store, which reads as an unreachable store rather than lost bytes")
+        logger.warning("[blossom] forget_missing REFUSED: %s", out["refused"])
+        return out
+
+    cfg = _cfg(db)
+    doomed = []
+    for sha in want:
+        row = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha).first()
+        if not row:
+            continue
+        state = (await _probe_proxy(cfg, row.path)) if row.storage == "proxy" \
+            else (await _probe_local(row.path))
+        if state == "there":
+            out["kept"] += 1
+            continue
+        if state == "unknown":
+            out["unknown"] += 1
+            continue
+        doomed.append(sha)
+
+    # Batched, and committed once: forty thousand single deletes hold a write transaction open for
+    # the whole run, which is the long-transaction failure this codebase has already been bitten by.
+    for i in range(0, len(doomed), 500):
+        chunk = doomed[i:i + 500]
+        db.query(BlossomBlob).filter(BlossomBlob.sha256.in_(chunk)).delete(synchronize_session=False)
+        out["removed"] += len(chunk)
+    if out["removed"]:
+        db.commit()
+        # AFTER the commit: dropping the cached metadata before it can be re-poisoned by a GET that
+        # re-queries the still-visible row under MVCC. drop_meta says so itself.
+        for sha in doomed:
+            drop_meta(sha)
+            _cache_drop(sha)
+        logger.info("[blossom] forget_missing dropped %d row(s): %s", out["removed"],
+                    ",".join(x[:12] for x in doomed[:20]))
+    return out
 
 
 async def read_full(db: Session, blob: BlossomBlob) -> bytes | None:

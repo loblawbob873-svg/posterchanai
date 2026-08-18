@@ -154,3 +154,44 @@ class RefusalWordingTests(unittest.TestCase):
     def test_deletions_held_back_from_the_others_are_reported_too(self):
         line = self.line({"refusedRemoteDelete": {"kind": "partialViewsOut", "n": 12}})
         self.assertIn("did not publish 12 deletions", line)
+
+
+class VerifyRepairsTests(unittest.TestCase):
+    """Two different faults, two opposite repairs, and getting them the wrong way round loses data.
+
+    A file whose LOCAL bytes are damaged is repaired by fetching a fresh copy. A file whose bytes the
+    STORE no longer has, on a device that still holds it, is repaired by sending it again — fetching
+    there is not a repair, it is the failure. Measured on a real folder: entries naming blobs that
+    existed on neither node, so every other device planned a download, got a 404 and reported a
+    failure on every sweep, while the device holding the file saw nothing wrong at all.
+    """
+
+    def setUp(self):
+        self.src = open(SYNC, encoding="utf-8").read()
+        at = self.src.index("async function verifyFolder(f){")
+        self.body = self.src[at:self.src.index("\n  function ", at)]
+
+    def test_bytes_the_store_lost_are_sent_again_not_fetched(self):
+        send = self.body.index("const gone = (v.missingBytes || [])")
+        fetch = self.body.index("const bad = v.corrupt.map(")
+        self.assertLess(send, fetch, "the re-upload repair runs after the re-download one")
+        self.assertIn("swept(f, { manual: true, resend: gone });", self.body[send:fetch],
+                      "the repair edits the journal instead of asking for a send — which settles "
+                      "as 'same content both sides' and uploads nothing")
+
+    def test_it_only_offers_that_for_files_this_device_still_has(self):
+        """A path missing HERE and missing from the store cannot be sent by this device."""
+        self.assertIn("const here = new Set(v.missingHere || []);", self.body)
+        self.assertIn("filter(p => !here.has(p))", self.body)
+
+    def test_it_asks_first_and_says_nothing_is_deleted(self):
+        seg = self.body[self.body.index("const gone = (v.missingBytes || [])"):]
+        self.assertIn("uiConfirm", seg)
+        self.assertIn("Nothing is deleted", seg)
+
+    def test_the_three_controls_do_not_all_say_check(self):
+        """Preview / Deep check / Verify — reported as "why is there Check and Check my files?"."""
+        self.assertIn(">Preview</button>", self.src)
+        self.assertIn(">Verify</button>", self.src)
+        self.assertNotIn(">Check</button>", self.src)
+        self.assertNotIn("Check my files", self.src)

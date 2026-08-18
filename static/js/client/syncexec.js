@@ -128,10 +128,45 @@
       }catch(_){}
     }
 
+    /* AN EMPTY JOURNAL FORCES A HASH. THIS IS NOT AN OPTIMISATION, IT IS THE WHOLE ANSWER.
+     *
+     * With no journal, every path looks changed on BOTH sides at once — the device has files and
+     * has applied nothing — so the reconciler falls through to "did they end up the same anyway?",
+     * and that question is answered by content when there is a checksum and by size+mtime when there
+     * is not. An ordinary sweep does not hash.
+     *
+     * On a phone, size+mtime CANNOT match: SAF assigns its own last-modified to everything it
+     * writes, so a file the phone downloaded yesterday has a timestamp no other device ever saw.
+     * Every path therefore reads as "edited on both" and the sweep makes a conflict copy of the
+     * entire folder — reported as "phone is now downloading 1803 conflicts".
+     *
+     * So a device with nothing applied pays for one full hash and settles the folder by content,
+     * which is what the native sweep has always done (`firstEver` in NativeSweep) and what the page
+     * half was missing. It is expensive once; a conflict copy of every file is expensive for ever.
+     */
+    /* HOW MUCH OF THIS FOLDER CAN THE JOURNAL ACTUALLY ANSWER FOR?
+     *
+     * "Empty" was too narrow. The journal is written in batches and the settle entries — the bulk of
+     * what a device that already holds the folder records — land at the very end, so a first sweep
+     * interrupted anywhere (the renderer killed, a stop pressed, a failed write) leaves a handful of
+     * entries behind. The next sweep then sees a non-empty journal, does not hash, and every
+     * remaining path is "edited on both" again: the conflict storm returns by the back door.
+     *
+     * So the test is COVERAGE, not emptiness. Below half, this device cannot answer for its own
+     * folder and must settle it by content.
+     *
+     * A dry run hashes too, or Preview and the sweep disagree by the whole folder — on precisely the
+     * device this exists for. */
+    const known = Object.keys(index).length;
+    const seen = Object.keys(merged.global).length;
+    const thin = known === 0 || (seen > 0 && known < seen / 2);
+    const scanOpts = thin ? Object.assign({}, o, { hash: true }) : o;
+    if(thin) report.hashed = true;
+
     /* 3. The disk, a page at a time. */
     step('scanning');
     let disk;
-    try{ disk = await scan(fs, o, stopping); }
+    try{ disk = await scan(fs, scanOpts, stopping); }
     catch(e){ throw new Error('could not read the folder on this device — nothing has been changed. ('
                               + msg(e) + ')'); }
     if(stopping()) return halt(report);
@@ -140,6 +175,37 @@
     /* 4. Decide, check, and let a person answer for anything that is theirs to answer. */
     let plan = E.reconcile({ disk, global: merged.global, rivals: merged.rivals, by: merged.by,
                              index, device: me, now, excludes: o.excludes || [] });
+
+    /* PATHS THE CALLER DEMANDS BE SENT AGAIN.
+     *
+     * "The store lost these bytes and this device still has the file" cannot be expressed by editing
+     * the journal: with the entry gone both sides read as changed, the reconciler asks whether they
+     * are the same anyway, the checksums match — because it IS the same file — and it settles. The
+     * repair reported "3 queued to send again" and sent nothing, which is the worst possible
+     * outcome for a repair.
+     *
+     * So it is said outright. Only paths this device actually holds, and the version goes past
+     * whatever the folder shows so the entry is not immediately outvoted. */
+    if(o.resend && o.resend.length && !o.dryRun){
+      const want = new Set(o.resend);
+      const already = new Set(plan.send.map(u => u.path));
+      const extra = [];
+      for(const p of want){
+        if(already.has(p) || !disk[p]) continue;
+        extra.push({ path: p, v: E.bump(merged.global[p], index[p]), stat: disk[p],
+                     why: 'sending again — the store no longer has these bytes' });
+      }
+      if(extra.length){
+        const drop = new Set(extra.map(x => x.path));
+        plan = Object.assign({}, plan, {
+          send: plan.send.concat(extra),
+          settle: plan.settle.filter(x => !drop.has(x.path)),
+          fetch: plan.fetch.filter(x => !drop.has(x.path)),
+          keepBoth: plan.keepBoth.filter(x => !drop.has(x.path)),
+        });
+        report.resent = extra.length;
+      }
+    }
     report.plan = plan;
     report.unchanged = plan.unchanged;
     report.excluded = plan.excluded;
@@ -160,6 +226,26 @@
     if(o.dryRun) return report;
 
     /* 5. Do it. The journal is the record of what has landed, and it is what makes this resumable. */
+    /* Which copies this device has already failed to fetch — supplied by the caller, which persists
+     * it. Read here, above every loop that fetches, because the conflict path needs it as much as
+     * the download path does. */
+    const skipFetch = o.skipFetch || {};
+    const idOf = (e) => (e && (e.csum || e.sha || (e.chunks && e.chunks.join(',')))) || '';
+    /* What a remembered failure still applies to.
+     *
+     * `checksum` is for ever — the same bytes always hash the same way. `gone` is a 404 and EXPIRES,
+     * because content-addressed bytes that come back come back under the same identity, so an
+     * unexpiring block would make one bad minute permanent. A pressed button clears both: somebody
+     * standing there asking again is the clearest possible signal to try. Older entries were a bare
+     * string; they are read as permanent, which is what they were. */
+    const GONE_FOR = 6 * 3600 * 1000;
+    const skipId = (v) => {
+      if(!v) return '';
+      if(typeof v === 'string') return v;
+      if(o.manual) return '';
+      if(v.why === 'gone' && (now0() - (v.at || 0)) > GONE_FOR) return '';
+      return v.id || '';
+    };
     const journal = new Journal(io, key, index, o);
     const mine = {};                                  // what THIS device will publish
     for(const p in index) mine[p] = strip(index[p]);
@@ -187,10 +273,31 @@
       await journal.maybe();
     }
 
-    // Conflicts: rename ours, then take the incoming copy under the real name.
+    // Conflicts: fetch the incoming copy, then rename ours out of its way.
     let ci = 0;
     for(const c of plan.keepBoth){
       if(stopping()) return await halt(report, journal);
+      /* A CONFLICT AGAINST BYTES THAT DO NOT EXIST IS NOT A CONFLICT — it is one copy, and it is
+       * the one on this disk.
+       *
+       * Two sides disagree, so both are kept: that rule assumes the incoming side can actually be
+       * fetched. When it cannot — the store does not have those bytes, or this device has already
+       * failed to verify that exact copy — resolving it "keeps both" by renaming the local file out
+       * of the way and then failing to write anything in its place. The path is now missing, so the
+       * next sweep reads it as new elsewhere, fetches nothing again, and the sweep after that makes
+       * ANOTHER conflict copy. Measured: 1,803 conflicts, then 2,322, climbing every sweep, with
+       * 11,000 failed fetches in ten minutes.
+       *
+       * So an unfetchable incoming copy leaves the local file exactly where it is and says so. The
+       * moment somebody publishes bytes that exist, it settles normally. */
+      const cid = (c.entry && (c.entry.csum || c.entry.sha
+                  || (c.entry.chunks && c.entry.chunks.join(',')))) || '';
+      if(cid && skipId(skipFetch[c.path]) === cid){
+        report.unfetchable = report.unfetchable || [];
+        report.unfetchable.push({ path: c.path, why: 'the incoming copy cannot be fetched, so your '
+                                  + 'copy was left exactly as it is' });
+        continue;
+      }
       step('conflict', c.path, ++ci, plan.keepBoth.length);
       try{
         /* FETCH FIRST, RENAME SECOND. Both orders are recoverable and only one is quiet.
@@ -205,11 +312,25 @@
         record(c.path, Object.assign({}, c.entry), { size: st.size, mtime: st.mtime,
                                                      csum: c.entry.csum });
         report.conflicted.push({ path: c.path, keptAs: c.keepAs });
-      }catch(e){ failed(report, c.path, 'conflict', e); }
+      }catch(e){
+        /* Remembered exactly as a download failure is, and for the same reason: a copy that cannot
+         * be fetched must not be attempted again every sweep — and here each attempt used to cost a
+         * renamed file as well as a round trip. */
+        const why = msg(e);
+        if(cid && /checksum mismatch/.test(why)){
+          report.badFetch = report.badFetch || {};
+          report.badFetch[c.path] = { id: cid, why: 'checksum' };
+        } else if(cid && /unavailable \(404\)/.test(why)){
+          report.badFetch = report.badFetch || {};
+          report.badFetch[c.path] = { id: cid, why: 'gone', at: now0() };
+        }
+        failed(report, c.path, 'conflict', e);
+      }
       await journal.maybe();
     }
 
-    /* A COPY THAT HAS ALREADY FAILED ITS CHECKSUM IS NOT WORTH FETCHING AGAIN, EVER.
+    /* (declared above the conflict loop, which consults it too) A COPY THAT HAS ALREADY FAILED ITS
+     * CHECKSUM IS NOT WORTH FETCHING AGAIN, EVER.
      *
      * The bytes are content-addressed, so reassembling them is deterministic: the same stored copy
      * produces the same wrong hash every time. Retrying it is an infinite loop that moves real bytes
@@ -220,8 +341,6 @@
      * publishes a different one: nothing to clear, no state to go stale. DROPPING THE ENTRY WOULD BE
      * THE OBVIOUS REPAIR AND IS A CATASTROPHE — the device that HAS the file would read the gap as
      * "deleted elsewhere" and trash its only good copy. */
-    const skipFetch = o.skipFetch || {};
-    const idOf = (e) => (e && (e.csum || e.sha || (e.chunks && e.chunks.join(',')))) || '';
     // Downloads.
     await transfers(plan.fetch, o, stopping, journal, LANES,
       (d) => !!(d.entry && d.entry.chunks && d.entry.chunks.length)
@@ -238,7 +357,7 @@
                                     + 'it again from the device that has it' });
           return;
         }
-        const badId = skipFetch[d.path] || '';
+        const badId = skipId(skipFetch[d.path]);
         if(badId && badId === idOf(d.entry)){
           report.unfetchable = report.unfetchable || [];
           report.unfetchable.push({ path: d.path, why: 'the copy in the store fails its checksum — '
@@ -253,10 +372,34 @@
                                                        csum: d.entry.csum });
           report.downloaded.push(d.path);
         }catch(e){
-          // …and REMEMBER it, so the next sweep does not spend the same bytes on the same failure.
-          if(/checksum mismatch/.test(msg(e))){
+          /* …and REMEMBER it, so the next sweep does not spend the same bytes on the same failure.
+           *
+           * TWO WAYS A COPY CAN BE UNUSABLE, and both are properties of the COPY rather than of the
+           * moment: bytes that fail their checksum, and bytes the store does not have. The second
+           * was retried on every sweep for ever — 243 failures a sweep, on a folder where nothing
+           * was wrong except that those blobs are gone — because a 404 read as an ordinary error.
+           *
+           * Keyed on the copy's identity either way, so it clears itself the moment somebody
+           * publishes a different one; and a 5xx or a dead socket is NOT remembered, because those
+           * really are about the moment. */
+          /* TWO KINDS OF UNUSABLE COPY, AND ONLY ONE OF THEM IS PERMANENT.
+           *
+           * A checksum failure is deterministic: the same stored bytes produce the same wrong hash
+           * for ever, and the block lifts by itself when somebody publishes a DIFFERENT copy —
+           * different bytes, different identity.
+           *
+           * A 404 is not like that at all. Blobs are content-addressed, so bytes restored by any
+           * route — a re-upload, another device adding the same file, a backup — come back under the
+           * SAME identity, and a block keyed on identity would never lift: one bad minute from a
+           * media server would strand that path for ever. So it is remembered with a clock, and
+           * expires. */
+          const why = msg(e);
+          if(/checksum mismatch/.test(why)){
             report.badFetch = report.badFetch || {};
-            report.badFetch[d.path] = idOf(d.entry);
+            report.badFetch[d.path] = { id: idOf(d.entry), why: 'checksum' };
+          } else if(/unavailable \(404\)/.test(why)){
+            report.badFetch = report.badFetch || {};
+            report.badFetch[d.path] = { id: idOf(d.entry), why: 'gone', at: now0() };
           }
           failed(report, d.path, 'download', e);
         }
@@ -315,7 +458,13 @@
     await journal.flush();
 
     if(stopping()) report.stopped = true;
-    report.ok = report.failed.length === 0;
+    /* AN UNRESOLVED PATH IS NOT A CLEAN SWEEP.
+     *
+     * A skipped conflict adds nothing to `failed`, so the sweep reported success, the card said "in
+     * step", and the caller stamped the clock — while a divergence sat unresolved AND the locally
+     * edited copy went unpublished. Silence about that is exactly the shape this feature keeps
+     * getting wrong. */
+    report.ok = report.failed.length === 0 && !(report.unfetchable || []).length;
     return report;
   }
 
@@ -611,9 +760,13 @@
         const ids = e.chunks && e.chunks.length ? e.chunks : (e.sha ? [e.sha] : []);
         tick({ phase: 'checking the store', path: p, i: ++j, n: want.length });
         for(const id of ids){
-          let there = false;
-          try{ there = await io.hasBlob(id); }catch(_){ there = true; }   // unknown is not missing
-          if(!there){ out.missingBytes.push(p); break; }
+          let there = null;
+          try{ there = await io.hasBlob(id); }catch(_){ there = null; }
+          // `null` is "I could not ask" — never "missing". This list drives a repair that publishes
+          // deletions, and a rate limiter answering 429 a thousand times in a row is the expected
+          // case here, not the exotic one.
+          if(there === false){ out.missingBytes.push(p); break; }
+          if(there === null){ out.unverified.push(p); break; }
         }
       }
     }

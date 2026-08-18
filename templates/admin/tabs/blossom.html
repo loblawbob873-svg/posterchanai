@@ -84,6 +84,23 @@
     </fieldset>
 
     <fieldset>
+        <legend>Check the store</legend>
+        <p class="muted small">Does this node actually hold what its database says it holds? A blob
+        row and the bytes behind it live in two different places and nothing else compares them —
+        when they disagree, the symptom lands on a client as a download that fails on every attempt,
+        with no way for it to tell "gone" from "not yet". This is read-only.</p>
+        <div class="form-group">
+            <label><input type="checkbox" id="bl_scan_deep"> Deep — re-hash every file
+                <small>(catches bytes that changed rather than vanished; much slower)</small></label>
+        </div>
+        <div class="row" style="gap:8px;align-items:center">
+            <button type="button" class="btn" id="bl_scan_btn">Scan the store</button>
+            <span id="bl_scan_status" class="muted small"></span>
+        </div>
+        <div id="bl_scan_out" class="muted small" style="margin-top:8px"></div>
+    </fieldset>
+
+    <fieldset>
         <legend>Nostr client — GIF picker</legend>
         <div class="form-group">
             <label for="giphy_api_key">Giphy API key <small>(easiest)</small></label>

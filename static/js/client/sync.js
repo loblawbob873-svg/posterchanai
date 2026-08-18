@@ -700,9 +700,19 @@
     blobSha: store.blobSha,
     chunkShas: store.chunkShas,
     /** Does the store still hold these bytes? For the consistency check; unknown is never "missing". */
+    /* THREE ANSWERS, NOT TWO. `true` it is there, `false` it is NOT there, `null` I could not ask.
+     *
+     * This drives a repair that publishes deletions, and a HEAD returns plenty of things that are
+     * not an answer: 429 from a rate limiter (this asks thousands of times in a row, so that is the
+     * expected case, not the exotic one), 500, 403, a redirect. Reading any of those as "missing"
+     * turns one bad server minute into a folder-wide tombstone. */
     async hasBlob(sha){
-      const r = await fetch(PC.mediaServer() + '/' + sha, { method:'HEAD', cache:'no-store' });
-      return !!(r && r.ok);
+      try{
+        const r = await fetch(PC.mediaServer() + '/' + sha, { method:'HEAD', cache:'no-store' });
+        if(r && r.ok) return true;
+        if(r && (r.status === 404 || r.status === 410)) return false;
+        return null;
+      }catch(_){ return null; }
     },
   };
 
@@ -1018,6 +1028,16 @@
       return { removed: all.length, live, tombstones: all.length - live, devices,
                verified: left === 0 };
     },
+    /* REMOVE A NAMED SET OF PATHS. Not `remove`, which takes one path and everything under it and
+     * re-counts to protect against a screen left open — this is handed an exact list that something
+     * has already established cannot be fetched by anyone, so re-deriving it would only give it a
+     * chance to be wrong. */
+    async removeMany(key, paths){
+      const want = (paths || []).slice();
+      if(!want.length) return { removed: 0 };
+      const r = await _mutate(key, api => { for(const p of want) api.drop(p); });
+      return { removed: r.removed };
+    },
     async remove(key, path, expect){
       return _mutate(key, api => {
         const list = _liveUnder(api.paths, path);
@@ -1322,6 +1342,8 @@
           excludes: f.excludes || [], maxBytes: await maxBytes(),
           shouldStop: () => stopping.has(f.id),
           manual: !!o.manual,
+          // Paths a repair has established the store no longer holds; see the executor.
+          resend: o.resend || null,
           /* WHICH COPIES THIS DEVICE HAS ALREADY FAILED TO VERIFY, so a bad one in the store is not
            * re-fetched on every sweep for ever — measured, two videos looping all evening. Keyed on
            * the copy's identity, so a re-upload from the other device clears it with no action from
@@ -1640,11 +1662,12 @@
     if(v.checked) bits.push(v.checked + ' verified');
     if(v.corrupt.length) bits.push(v.corrupt.length + ' damaged here');
     if(v.missingHere.length) bits.push(v.missingHere.length + ' missing here');
-    if(v.missingBytes.length) bits.push(v.missingBytes.length + ' the store no longer holds');
     if(v.extra.length) bits.push(v.extra.length + ' here only');
     if(v.unverified.length) bits.push(v.unverified.length + ' could not be checked');
     if((v.unaddressed || []).length) bits.push((v.unaddressed || []).length
       + ' with no stored copy recorded');
+    if((v.missingBytes || []).length) bits.push((v.missingBytes || []).length
+      + ' the store no longer holds');
     if(v.disagree.length) bits.push(v.disagree.length + ' your devices disagree about');
     if(v.missingViews) bits.push(v.missingViews + ' device(s) unreadable');
     setStatus(f.id, bits.length ? bits.join(' · ') : 'everything checks out', null, true);
@@ -1662,6 +1685,77 @@
       if(!ok) continue;
       try{ await docs.retire(keyOf(f), dev); PC.toast('retired ' + dev); }
       catch(e){ PC.toast('could not retire that record: ' + ((e && e.message) || e)); }
+    }
+
+    /* BYTES THE STORE NO LONGER HAS, ON A DEVICE THAT STILL HAS THE FILE, ARE REPAIRED BY SENDING
+     * THEM AGAIN — never by fetching, which is what "repair" means for a damaged local copy and is
+     * the exact opposite of what this case needs.
+     *
+     * Measured on a real folder: the record named files whose blobs existed on NEITHER node. Every
+     * other device then plans a download, gets a 404 and reports a failure, on every sweep, while
+     * the device holding the file sees nothing wrong — its copy is fine and its journal says it is
+     * published. Clearing this device's journal entry for those paths is what makes the next sweep
+     * see them as new here and upload them again. */
+    if(running.has(f.id)){
+      setStatus(f.id, 'a sweep is running — press Stop, then repair', null, true);
+      return;
+    }
+    const here = new Set(v.missingHere || []);
+    const gone = (v.missingBytes || []).filter(p => !here.has(p));
+    if(gone.length){
+      const ok = await PC.uiConfirm('“' + keyOf(f) + '” — the store no longer has the bytes for '
+        + gone.length + ' file' + (gone.length === 1 ? '' : 's') + ' this device still holds.\n\n'
+        + 'Send them again? Nothing is deleted and nothing is overwritten — the copies here are the '
+        + 'good ones, and your other devices cannot fetch them until they are back in the store.');
+      if(ok){
+        /* SAID OUTRIGHT, not implied by editing the journal. Clearing the journal entry does NOT
+         * make the next sweep upload: both sides then read as changed, the reconciler asks whether
+         * they are the same anyway, the checksums match — because it is the same file — and it
+         * settles. That repair reported "queued to send again" and sent nothing. */
+        setStatus(f.id, 'sending ' + gone.length + ' file' + (gone.length === 1 ? '' : 's')
+                  + ' again…', null, true);
+        swept(f, { manual: true, resend: gone });
+        return;
+      }
+    }
+
+    /* AND THE WAY OUT: entries nobody can fetch and nobody can supply.
+     *
+     * A path whose bytes the store does not have AND which is not on this device cannot be repaired
+     * by anyone — every device plans a download, gets a 404 and reports a failure, on every sweep,
+     * for ever. Reported as "243 failures on desktop despite being the source we started with", and
+     * there was no way out of it: deleting the local file changes nothing, because the RECORD is
+     * what names them.
+     *
+     * Removing them is safe in the one way that matters: there are no bytes anywhere to lose. It is
+     * a tombstone like any other deletion, so the other devices apply it once and stop asking. */
+    const phantom = (v.missingBytes || []).filter(p => here.has(p));
+    if(phantom.length){
+      /* THE SAME RULE AS EVERY OTHER BULK DELETE HERE, and it is not a formality: this publishes
+       * TOMBSTONES, and a device that still has the file will move its copy into `.pc-trash` when it
+       * reads them. That is the whole point — the record is unusable — but it is a deletion, and the
+       * first version of this dialog said "nothing is deleted", which is false in precisely the case
+       * the feature exists for. */
+      const keeping = Object.keys(v.checkedPaths || {}).length
+        || ((v.checked || 0) + (v.unverified || []).length);
+      if(phantom.length >= 20 && phantom.length > keeping){
+        setStatus(f.id, 'not offering to remove ' + phantom.length + ' entries — that is more than '
+                  + 'this folder keeps, so the store is more likely unreachable than empty',
+                  null, true);
+      } else {
+      const ok = await PC.uiConfirm('“' + keyOf(f) + '” — ' + phantom.length + ' file'
+        + (phantom.length === 1 ? '' : 's') + ' cannot be fetched: the store does not have the bytes '
+        + 'and this device does not have the file.\n\nRemove them from the folder?\n\nThis '
+        + 'publishes a deletion. If another device still has one of these files, it will move its '
+        + 'copy into .pc-trash — recoverable there, but do this on the device that has the files '
+        + 'first if you want them kept (Verify → send them again).');
+      if(ok){
+        try{
+          const r = await edit.removeMany(keyOf(f), phantom);
+          PC.toast('removed ' + r.removed + ' unfetchable entr' + (r.removed === 1 ? 'y' : 'ies'));
+        }catch(e){ PC.toast('could not remove those: ' + ((e && e.message) || e)); }
+      }
+      }
     }
 
     const bad = v.corrupt.map(c => c.path);
@@ -2047,12 +2141,12 @@
           <span class="muted small">Nothing has been uploaded. Add anything you want left out below —
           a folder name covers everything inside it — then press Start. You can change it later.</span></div>` : ''}
         <div class="sync-actions">
-          <button class="btn btn-ghost small sync-dry">Check</button>
+          <button class="btn btn-ghost small sync-dry" title="What this sweep would change, without changing anything.">Preview</button>
           ${pr.paused ? '<button class="btn btn-neon small sync-start">Start syncing ▶</button>'
                       : '<button class="btn btn-neon small sync-now">Sync now</button>'}
           ${pr.paused ? '' : '<button class="btn btn-ghost small sync-pause" title="Stop this folder syncing until you press Start. Nothing is deleted and nothing is undone.">Pause</button>'}
           <button class="btn btn-ghost small sync-deep" title="Re-read and re-hash every file. Slow on a big folder — for a file edited in place without changing its size or timestamp.">Deep check</button>
-          <button class="btn btn-ghost small sync-verify" title="Read every file on this device and check it against what your devices agree the folder holds. Changes nothing.">Check my files</button>
+          <button class="btn btn-ghost small sync-verify" title="Read every file on this device and check it against what your devices agree the folder holds. Changes nothing.">Verify</button>
           <button class="btn btn-ghost small sync-tidy">Tidy up conflict copies</button>
           <button class="btn btn-ghost small sync-trash">Empty trash</button>
           ${(FS() && FS().tickStats) ? '<button class="btn btn-ghost small sync-bg" title="What this phone measured about background syncing: alarms scheduled, alarms that fired, and ticks that reached the app.">Background details</button>' : ''}

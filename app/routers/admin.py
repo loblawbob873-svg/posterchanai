@@ -1490,6 +1490,65 @@ async def get_transcode_status(
     return status
 
 
+@router.post("/blossom/scan")
+async def blossom_scan(
+    payload: dict | None = None,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Does this node hold what its database says it holds?
+
+    A blob row and the bytes behind it live in two different places, and nothing ever compared them.
+    When they disagree the symptom lands on somebody's phone — a download that 404s on every sweep,
+    for ever, with no way for the client to tell the difference between "gone" and "not yet" — and
+    finding out meant reading the access log and hand-querying the database.
+
+    Read-only. `deep` re-hashes every file against the sha it is stored under, which is the only way
+    to catch bytes that rotted rather than vanished, and is much slower.
+    """
+    from app.services import blossom_service
+    body = payload or {}
+    try:
+        # Clamped: a negative LIMIT is a driver error, which comes back as a 500 carrying the raw
+        # message and leaves the request's transaction aborted.
+        want = int(body.get("limit") or 0)
+        out = await blossom_service.scan_store(db, limit=max(0, min(want, 500000)),
+                                               deep=bool(body.get("deep")))
+    except Exception as e:
+        logger.error("blossom scan failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+    logger.info("[admin] blossom scan: %d checked, %d missing, %d unknown, %d orphans",
+                out.get("checked", 0), len(out.get("missing", [])), out.get("unknown", 0),
+                out.get("orphans", 0))
+    return {"ok": True, "scan": out}
+
+
+@router.post("/blossom/forget-missing")
+async def blossom_forget_missing(
+    payload: dict,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Drop rows whose bytes this node does not have.
+
+    Nothing is deleted from storage — that is what "missing" means. It stops the node claiming to
+    hold something it does not, which is what makes a client's own repair possible: while the row is
+    there, every device is told the file exists and cannot do anything about it.
+
+    The list is passed in explicitly from a scan the admin just ran, never re-derived here: a fresh
+    probe could answer differently in the seconds in between, and this deletes rows.
+    """
+    from app.services import blossom_service
+    shas = [s for s in (payload.get("shas") or []) if isinstance(s, str) and len(s) == 64]
+    if not shas:
+        return {"ok": True, "removed": 0, "kept": 0, "unknown": 0}
+    out = await blossom_service.forget_missing(db, shas)
+    logger.info("[admin] blossom forget-missing: dropped %d, kept %d (still there), %d unanswered%s",
+                out.get("removed", 0), out.get("kept", 0), out.get("unknown", 0),
+                (" — REFUSED: " + out["refused"]) if out.get("refused") else "")
+    return dict({"ok": True}, **out)
+
+
 @router.post("/run-logs")
 async def run_logs_scheduler(
     db: Session = Depends(get_db),

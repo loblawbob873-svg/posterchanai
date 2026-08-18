@@ -96,6 +96,7 @@ function cloud(){
     corruptCipher(h){ ciphers.set(h, Buffer.from('rubbish that is long enough to look like a chunk')); },
     down: new Set(),                     // devices whose document cannot be read right now
     put(b){ const h = sha(b); blobs.set(h, Buffer.from(b)); return h; },
+    putRaw(h, b){ blobs.set(h, Buffer.from(b)); },
     get(h){ return blobs.get(h); },
     has(h){ return blobs.has(h); },
     corrupt(h){ blobs.set(h, Buffer.from('rubbish')); },
@@ -119,7 +120,11 @@ function device(name, sky, opts){
       const k = o.scanEmpty ? [] : Object.keys(disk).sort();
       const end = Math.min(k.length, off + lim), files = {};
       for(let i = off; i < end; i++){
-        files[k[i]] = Object.assign({}, stat(k[i]), o.hashed ? { csum: sha(disk[k[i]]) } : {});
+        // Honours the SCAN's request, as both real adapters do: `so.hash` is how the sweep asks for
+        // content identity, and a fake that ignored it could not show the difference between a
+        // hashing sweep and one that trusts size and mtime.
+        const wantHash = !!(so && so.hash) || !!o.hashed;
+        files[k[i]] = Object.assign({}, stat(k[i]), wantHash ? { csum: sha(disk[k[i]]) } : {});
       }
       return { files, skipped: [], total: k.length, done: end >= k.length };
     },
@@ -339,9 +344,13 @@ scenario('a reinstall lost the journal — it fetches what it lacks and duplicat
   const sky = cloud();
   const A = device('laptop', sky, { disk: photos(200) });
   await A.sweep();
-  const half = {}; let i = 0;
-  for(const p in A.disk){ if(i++ < 100) half[p] = A.disk[p]; }
-  const B = device('phone', sky, { disk: half });            // no index at all
+  const half = {}; const mt = {}; let i = 0;
+  for(const p in A.disk){ if(i++ < 100){ half[p] = A.disk[p]; mt[p] = 424242; } }
+  /* AND ITS TIMESTAMPS ARE ITS OWN. This fixture used to give the phone the laptop's mtimes, so
+   * size+mtime matched and the folder settled — which is not what a phone looks like: SAF stamps
+   * its own last-modified on everything it writes, so nothing it holds can match by timestamp. The
+   * test passed for a reason that does not hold on the device it is about. */
+  const B = device('phone', sky, { disk: half, mtimes: mt });   // no index at all
   const r = await B.sweep();
   t.eq(identical(A.disk, B.disk), null, 'the reinstalled device did not converge');
   t.eq(B.st.trashed.length, 0, 'a reinstall trashed files');
@@ -499,7 +508,8 @@ scenario('a copy that fails its checksum is not fetched again for ever', async (
   const B = device('phone', sky, {});
   const r1 = await B.sweep();
   t.ok(!!(r1.badFetch && r1.badFetch[victim]), 'the failed copy was not remembered');
-  t.eq(r1.badFetch[victim], id, 'it was remembered by something other than the copy\u2019s identity');
+  t.eq(r1.badFetch[victim].id, id, 'it was remembered by something other than the copy\u2019s identity');
+  t.eq(r1.badFetch[victim].why, 'checksum', 'a checksum failure was recorded as something that expires');
   // The next sweep is told what failed, exactly as the client persists it — and must not spend the
   // bytes again. Reported as two videos failing on every sweep, all evening.
   const B2 = device('phone', sky, { disk: B.disk, index: B.st.index });
@@ -715,6 +725,176 @@ scenario('a sweep that loses the network resumes rather than starting over', asy
   t.ok(r2.downloaded.length <= 60 - r1.downloaded.length + EXEC.LANES,
        're-fetched files it already had: ' + r2.downloaded.length + ' for '
        + (60 - r1.downloaded.length) + ' outstanding');
+});
+
+scenario('a phone that already holds the files does not conflict every one of them', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(40) });
+  await A.sweep();
+  /* The phone HAS the folder — it synced before — but its journal is gone: a reinstall, cleared
+   * storage, or simply a device joining a pair whose files it already has. And on Android the file
+   * timestamps are whatever SAF assigned when it wrote them, which no other device has ever seen.
+   *
+   * Both sides then look changed for every path at once, and if the answer comes from size+mtime it
+   * is "edited on both" — a conflict copy of the entire folder. Reported as "phone is now
+   * downloading 1803 conflicts". */
+  const mt = {};
+  for(const p in A.disk) mt[p] = 777777;                    // SAF's own idea of last-modified
+  const B = device('phone', sky, { disk: Object.assign({}, A.disk), mtimes: mt });
+  const r = await B.sweep();
+  t.eq(r.conflicted.length, 0, 'it made ' + r.conflicted.length + ' conflict copies of files it already had');
+  t.eq(r.downloaded.length, 0, 're-downloaded ' + r.downloaded.length + ' files it already had');
+  t.eq(r.uploaded.length, 0, 're-uploaded ' + r.uploaded.length + ' files that were already stored');
+  t.ok(r.hashed === true, 'it settled the folder without hashing — the next device will conflict');
+  t.eq(B.st.moved.length, 0, 'it renamed files aside');
+});
+
+scenario('a conflict against bytes that do not exist does not multiply every sweep', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(30) });
+  await A.sweep();
+  const B = device('phone', sky, {});
+  await B.sweep();
+
+  /* Both sides change the same files, so every one of them is a genuine conflict — and then the
+   * store loses the incoming bytes. THE LOOP: resolving a conflict renames the local file out of
+   * the way and writes the incoming copy in its place, so a fetch that fails leaves the path empty;
+   * the next sweep reads it as new elsewhere, fails again, and the sweep after that makes ANOTHER
+   * conflict copy. Measured on a real folder: 1,803 conflicts, then 2,322, climbing every sweep,
+   * with eleven thousand failed fetches in ten minutes. */
+  const paths = Object.keys(A.disk).slice(0, 10);
+  const mtA = {}, mtB = {};
+  for(const p of paths){
+    A.disk[p] = Buffer.from('laptop version of ' + p);
+    B.disk[p] = Buffer.from('phone version of ' + p);
+    mtA[p] = 5000; mtB[p] = 6000;
+  }
+  const A2 = device('laptop', sky, { disk: A.disk, index: A.st.index, mtimes: mtA });
+  await A2.sweep();
+  for(const p of paths) sky.forget(sky.docs.laptop[p].sha);     // the store loses the incoming bytes
+
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index, mtimes: mtB });
+  const r1 = await B2.sweep();
+  t.eq(B2.st.moved.length, 0, 'it renamed ' + B2.st.moved.length + ' files out of the way with '
+       + 'nothing to put in their place');
+  for(const p of paths) t.ok(!!B2.disk[p], 'the local copy of ' + p + ' disappeared');
+  t.ok(!!r1.badFetch && Object.keys(r1.badFetch).length === 10, 'the dead copies were not remembered');
+  for(const p of Object.keys(r1.badFetch)){
+    t.eq(r1.badFetch[p].why, 'gone', 'a missing blob was remembered as permanent rather than expiring');
+    t.ok(!!r1.badFetch[p].at, 'a missing blob was remembered without a clock, so it can never lift');
+  }
+
+  // The next sweep must not try again, and must not make a second copy of anything.
+  const B3 = device('phone', sky, { disk: B2.disk, index: B2.st.index, mtimes: mtB });
+  const r2 = await B3.sweep({ skipFetch: r1.badFetch });
+  t.eq(r2.failed.length, 0, 'it chased the missing bytes again: ' + JSON.stringify(r2.failed.slice(0,2)));
+  t.eq(B3.st.moved.length, 0, 'it renamed files aside on the retry');
+  t.eq((r2.unfetchable || []).length, 10, 'it did not report why those paths cannot settle');
+  t.eq(Object.keys(B3.disk).length, 30, 'the folder grew or shrank: ' + Object.keys(B3.disk).length);
+});
+
+scenario('a 404 is forgotten in time, and by a pressed button', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(4) });
+  await A.sweep();
+  const victim = Object.keys(A.disk)[0];
+  const sha = sky.docs.laptop[victim].sha;
+  const bytes = sky.get(sha);
+  sky.forget(sha);
+
+  const B = device('phone', sky, {});
+  const r1 = await B.sweep();
+  t.ok(!!r1.badFetch[victim], 'the missing copy was not remembered');
+
+  /* THE BYTES COME BACK — and blobs are content-addressed, so they come back under the SAME
+   * identity. A block keyed on identity alone could never lift: one bad minute from a media server
+   * would strand that path for ever, and neither a re-upload nor a restore could rescue it. */
+  sky.putRaw(sha, bytes);
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index });
+  const r2 = await B2.sweep({ manual: true, skipFetch: r1.badFetch });
+  t.eq(r2.downloaded.length, 1, 'a pressed button did not retry a copy that is back');
+  t.eq((r2.unfetchable || []).length, 0, 'it still refused to look');
+
+  // …and an automatic sweep forgets it once the record is old enough.
+  const B3 = device('phone', sky, {});
+  const old = {}; old[victim] = { id: r1.badFetch[victim].id, why: 'gone', at: 1 };
+  const r3 = await B3.sweep({ skipFetch: old });
+  t.eq(r3.downloaded.length, 4, 'a stale 404 record still blocks an automatic sweep');
+});
+
+scenario('a checksum failure is NOT forgotten with time', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(3) });
+  await A.sweep();
+  const victim = Object.keys(A.disk)[0];
+  sky.corrupt(sky.docs.laptop[victim].sha);
+  const B = device('phone', sky, {});
+  const r1 = await B.sweep();
+  t.eq(r1.badFetch[victim].why, 'checksum', 'a corrupt copy was recorded as something that expires');
+  const stale = {}; stale[victim] = { id: r1.badFetch[victim].id, why: 'checksum', at: 1 };
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index });
+  const r2 = await B2.sweep({ skipFetch: stale });
+  t.eq(r2.failed.length, 0, 'it fetched the known-corrupt copy again after time passed');
+});
+
+scenario('an interrupted first sweep does not bring the conflict storm back', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(30) });
+  await A.sweep();
+  /* The phone holds the folder with SAF timestamps and its journal covers almost none of it —
+   * exactly what an interrupted first sweep leaves behind, because the settle entries are recorded
+   * at the very end. "Empty journal" was too narrow a test: this is the back door the storm came
+   * through. */
+  const mt = {}; for(const p in A.disk) mt[p] = 777777;
+  const partial = {};
+  const first = Object.keys(A.disk)[0];
+  partial[first] = Object.assign({}, sky.docs.laptop[first],
+                                 { local: { size: A.disk[first].length, mtime: 777777 } });
+  const B = device('phone', sky, { disk: Object.assign({}, A.disk), mtimes: mt, index: partial });
+  const r = await B.sweep();
+  t.eq(r.conflicted.length, 0, 'it made ' + r.conflicted.length + ' conflict copies');
+  t.ok(r.hashed === true, 'it did not hash, so the folder cannot settle by content');
+});
+
+scenario('"send them again" actually sends them', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(5) });
+  await A.sweep();
+  const paths = Object.keys(A.disk).slice(0, 3);
+  for(const p of paths) sky.forget(sky.docs.laptop[p].sha);   // the store loses the bytes
+
+  /* Clearing the journal does NOT make the next sweep upload: both sides then read as changed, the
+   * reconciler asks whether they are the same anyway, the checksums match — because it IS the same
+   * file — and it settles. The first version of this repair reported "3 queued to send again" and
+   * sent nothing at all. */
+  const A2 = device('laptop', sky, { disk: A.disk, index: A.st.index });
+  const r = await A2.sweep({ manual: true, resend: paths });
+  t.eq(r.uploaded.length, 3, 'it uploaded ' + r.uploaded.length + ' of the 3 asked for');
+  t.eq(r.resent, 3, 'the resend was not recorded');
+  for(const p of paths){
+    const e = sky.docs.laptop[p];
+    t.ok(!!e && sky.has(e.sha), 'the bytes for ' + p + ' are still not in the store');
+  }
+  // …and another device can now fetch them.
+  const C = device('tablet', sky, {});
+  const r2 = await C.sweep();
+  t.eq(r2.failed.length, 0, 'a joining device still cannot fetch them: ' + JSON.stringify(r2.failed));
+  t.eq(identical(A2.disk, C.disk), null, 'the folders do not match');
+});
+
+scenario('a sweep that could not settle a path does not call itself clean', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(6) });
+  await A.sweep();
+  const victim = Object.keys(A.disk)[0];
+  sky.forget(sky.docs.laptop[victim].sha);
+  const B = device('phone', sky, {});
+  const r1 = await B.sweep();
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index });
+  const r2 = await B2.sweep({ skipFetch: r1.badFetch });
+  t.eq((r2.unfetchable || []).length, 1, 'the unresolved path was not reported');
+  t.ok(!r2.ok, 'it reported a clean sweep while a path could not be settled — the card then says '
+       + '"in step" and the scheduler stamps the clock');
 });
 
 scenario('the scale that killed the desktop: 6,000 files, checked and quiet the second time', async (t) => {

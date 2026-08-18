@@ -1162,3 +1162,116 @@ setTimeout(() => {
     if((e.ctrlKey||e.metaKey)&&!e.altKey&&(e.key==='f'||e.key==='F')){ e.preventDefault(); e.stopPropagation(); open(); }
   }, true);
 })();
+
+/* ---- Blossom: does this node hold what it says it holds? -------------------------------------
+ *
+ * A blob row and the bytes behind it are two different things in two different places — a row in
+ * Postgres, a file on a disk that may be another machine — and nothing compared them. When they
+ * disagreed the symptom appeared on somebody's phone, as a download that fails on every sweep for
+ * ever, and finding out meant reading the access log and hand-querying the database.
+ *
+ * THE REPAIR ONLY EVER DROPS ROWS. There is nothing in storage to delete — that is what "missing"
+ * means — and dropping the row is what lets a client stop being told the file exists. It is offered
+ * with the exact list the scan just produced, never a fresh probe: a second look can answer
+ * differently in the seconds in between, and this deletes rows.
+ */
+(function () {
+    const $id = (x) => document.getElementById(x);
+    let lastScan = null;
+
+    function fmt(n) {
+        if (!n) return '0 B';
+        const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let i = 0, v = n;
+        while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+        return v.toFixed(v < 10 && i ? 1 : 0) + ' ' + u[i];
+    }
+
+    async function scan() {
+        const btn = $id('bl_scan_btn'), out = $id('bl_scan_out'), st = $id('bl_scan_status');
+        if (!btn) return;
+        btn.disabled = true;
+        st.textContent = 'scanning…';
+        out.innerHTML = '';
+        try {
+            const r = await csrfFetch('/api/admin/blossom/scan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ deep: !!($id('bl_scan_deep') || {}).checked })
+            });
+            const j = await r.json();
+            if (!r.ok || !j.ok) throw new Error((j && j.detail) || ('HTTP ' + r.status));
+            lastScan = j.scan;
+            const s = j.scan;
+            const lines = [
+                `<div><b>${s.checked}</b> of <b>${s.rows}</b> row(s) checked · <b>${fmt(s.bytes)}</b> accounted for · backend <code>${s.backend}</code>${s.truncated ? ' · truncated' : ''}</div>`
+            ];
+            if (s.missing.length) {
+                lines.push(`<div style="color:var(--danger)">⚠ <b>${s.missing.length}</b> row(s) whose bytes are NOT in storage. Clients are told these files exist and can never fetch them.</div>`);
+            }
+            if ((s.corrupt || []).length) {
+                lines.push(`<div style="color:var(--danger)">⚠ <b>${s.corrupt.length}</b> file(s) whose bytes do not match the hash they are stored under.</div>`);
+            }
+            if (s.unreadable_store) {
+                lines.push('<div style="color:var(--danger)">⚠ the storage directory could not be read at all — nothing here is a verdict about your files. Check the path and any mount, then scan again.</div>');
+            }
+            if (s.unknown) {
+                lines.push(`<div>${s.unknown} could not be checked — the store did not answer. Not counted as missing.</div>`);
+            }
+            if (s.orphans) {
+                lines.push(`<div>${s.orphans} file(s) (${fmt(s.orphan_bytes)}) in storage with no row. Left alone — a half-finished upload looks the same.</div>`);
+            }
+            if (!s.missing.length && !(s.corrupt || []).length) lines.push('<div>Everything the database claims is there.</div>');
+            // Never offered when the store itself could not be read: every row then looks missing.
+            if (s.missing.length && !s.unreadable_store) {
+                lines.push(`<div style="margin-top:8px"><button type="button" class="btn btn-danger" id="bl_scan_fix">Drop ${s.missing.length} row(s) whose bytes are gone</button></div>`);
+            }
+            out.innerHTML = lines.join('');
+            st.textContent = '';
+            const fix = $id('bl_scan_fix');
+            if (fix) fix.onclick = forget;
+        } catch (e) {
+            st.textContent = '';
+            out.innerHTML = '<div style="color:var(--danger)">could not scan: ' + (e.message || e) + '</div>';
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    async function forget() {
+        if (!lastScan || !lastScan.missing.length) return;
+        const n = lastScan.missing.length;
+        if (!confirm('Drop ' + n + ' row(s) whose bytes this node does not have?\n\n'
+                     + 'Nothing is deleted from storage — there is nothing there to delete. It stops '
+                     + 'this node claiming to hold files it does not, so clients can stop retrying '
+                     + 'them.')) return;
+        const fix = $id('bl_scan_fix'), out = $id('bl_scan_out');
+        fix.disabled = true;
+        try {
+            const r = await csrfFetch('/api/admin/blossom/forget-missing', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ shas: lastScan.missing })
+            });
+            const j = await r.json();
+            if (!r.ok || !j.ok) throw new Error((j && j.detail) || ('HTTP ' + r.status));
+            /* What actually happened, not what was asked. The repair asks the store again about
+             * every row before dropping it, so some of them come back present — a scan that ran
+             * while a mount was down, a prefix being moved, a re-upload in flight. Saying "dropped
+             * N" when it kept some of them is the kind of small lie that costs an afternoon. */
+            const bits = ['Dropped ' + j.removed + ' row(s).'];
+            if (j.kept) bits.push(j.kept + ' turned out to be there and were left alone.');
+            if (j.unknown) bits.push(j.unknown + ' could not be checked again and were left alone.');
+            if (j.refused) bits.push('Refused: ' + j.refused);
+            out.innerHTML = '<div>' + bits.join(' ') + ' Run the scan again to confirm.</div>';
+            lastScan = null;
+        } catch (e) {
+            out.innerHTML = '<div style="color:var(--danger)">could not drop those: ' + (e.message || e) + '</div>';
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        const b = $id('bl_scan_btn');
+        if (b) b.onclick = scan;
+    });
+})();
