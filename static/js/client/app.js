@@ -21917,10 +21917,20 @@
       this.root=root; root.innerHTML='<div class="mail-loading"><div class="spinner"></div></div>';
       try{ const a=await this.api('/accounts'); this.accounts=a.accounts||[]; }catch(_){ this.accounts=[]; }
       if(!this.accounts.length){
+        /* The nostr-mail expectation gap, answered where it forms: "Mobile still asking me to set
+         * up an email — I just want to use nmail." An email ACCOUNT is nostr-mail's transport; the
+         * Nostr key is only the lock, so there is no version of this that works without one — and
+         * the person asking usually wants encrypted messaging WITHOUT email, which this app already
+         * has under Messages. Say both here rather than leaving them to be guessed. */
         root.innerHTML=`<div class="mail-empty"><div class="me-ico">📧</div><h3>Email</h3>
-          <p class="muted">No mail accounts yet. Add IMAP/SMTP accounts in <b>Settings → Mail</b>, then they sync here as an encrypted Nostr mailbox.</p>
-          <button class="btn btn-neon" id="mail-go-settings">Open Settings → Mail</button></div>`;
+          <p class="muted">No mail accounts yet. Add your IMAP/SMTP account in <b>Settings → Mail</b>, then it syncs here as an encrypted Nostr mailbox.</p>
+          <p class="muted small">\ud83d\udd10 <b>Nostr-encrypted email (nostr-mail)</b> also lives here: your email account carries the message, your Nostr key locks the body \u2014 so it needs the account. Just want encrypted messaging with other Nostr users, no email involved? That\u2019s <b>Messages</b>, already built in.</p>
+          <div class="row" style="gap:8px;justify-content:center">
+            <button class="btn btn-neon" id="mail-go-settings">Open Settings \u2192 Mail</button>
+            <button class="btn btn-ghost" id="mail-go-dms">Open Messages</button>
+          </div></div>`;
         const b=$('#mail-go-settings',root); if(b) b.onclick=()=>switchView('settings');
+        const d=$('#mail-go-dms',root); if(d) d.onclick=()=>switchView('messages');
         return;
       }
       if(!this.acct || (this.acct !== '__all' && !this.accounts.some(a=>a.email===this.acct))){
