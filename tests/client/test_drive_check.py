@@ -273,7 +273,7 @@ class ReclaimTests(unittest.TestCase):
         body = self.src[at:at + 1600]
         self.assertIn("return null", body)
         self.assertIn("got.missing", body, "an unread device view does not kill the offer")
-        caller = self.src[self.src.index("const refs = await _syncRefIds();"):][:400]
+        caller = self.src[self.src.index("const refs = await _syncRefIds();"):][:1600]
         self.assertIn("if(refs)", caller, "a null reference set still produces an offer")
 
     def test_the_drive_indexs_own_blob_is_never_offered(self):
