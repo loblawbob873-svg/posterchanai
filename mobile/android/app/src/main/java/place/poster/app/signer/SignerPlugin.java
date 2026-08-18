@@ -59,6 +59,22 @@ public class SignerPlugin extends Plugin {
         o.put("fastEcdh", Native.ecdhActive());
         o.put("fastWhy", Native.why);
         o.put("batteryExempt", batteryExempt());
+        /* The per-app tally the pairings screen reads. When the SERVICE owns steady state the
+         * page's own counters see nothing, so the phone's numbers are the only ones that can name
+         * a paired app stuck in a request loop. Handler-thread state read here off-thread is a
+         * benign race: a stale count, never a torn map (copied entry by entry). */
+        JSObject apps = new JSObject();
+        try {
+            for (java.util.Map.Entry<String, long[]> e
+                    : new java.util.HashMap<>(SignerRelayService.perApp).entrySet()) {
+                JSObject a = new JSObject();
+                a.put("n", e.getValue()[0]);
+                a.put("dup", e.getValue()[1]);
+                a.put("lastM", SignerRelayService.perAppMethod.get(e.getKey()));
+                apps.put(e.getKey(), a);
+            }
+        } catch (Throwable ignored) { }
+        o.put("perApp", apps);
         call.resolve(o);
     }
 

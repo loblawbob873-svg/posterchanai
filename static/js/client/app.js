@@ -26762,6 +26762,25 @@
     const box = $('#set-signer-apps'); if(!box) return;
     const apps = (window.Nip46Signer ? Nip46Signer.list() : (typeof Nip46Signer !== 'undefined' ? Nip46Signer.list() : []));
     if(ME.mode !== 'local'){ box.innerHTML = ''; return; }
+    /* When the NATIVE service owns steady state, the page's own tally sees nothing — the phone's
+     * numbers are the only ones that can name a paired app stuck in a loop. Fetched once per
+     * repaint, merged by pk, repainted when it lands (throttled: status() is a Keystore read). */
+    if(Nip46Signer.nativeOn && !_renderSignerApps._busy
+       && Date.now() - (_renderSignerApps._at || 0) > 5000){
+      _renderSignerApps._busy = true;
+      (async () => {
+        try{
+          const pl = _capPlugin('Signer', 'status');
+          const st = pl && await pl.status();
+          if(st && st.perApp){ _renderSignerApps._native = st.perApp; _renderSignerApps._at = Date.now(); }
+        }catch(_){}
+        _renderSignerApps._busy = false;
+        // repaint with the merged numbers; the _at stamp above stops this from re-fetching
+        if(_renderSignerApps._native) try{ _renderSignerApps(); }catch(_){}
+      })();
+    }
+    const nat = _renderSignerApps._native || {};
+    apps.forEach(a => { if(!a.stats && nat[a.pk]) a.stats = nat[a.pk]; });
 
     box.innerHTML = (apps.length
         ? '<div style="margin:6px 0 4px"><b>Signed in with this device</b></div>'

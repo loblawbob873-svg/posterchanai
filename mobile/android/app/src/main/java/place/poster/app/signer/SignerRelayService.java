@@ -478,6 +478,15 @@ public class SignerRelayService extends Service {
 
     // ---- the request loop -----------------------------------------------------------------------
 
+    /* PER-APP TALLY — which paired app is asking, how often, and how often it REPEATS itself.
+     * A device stuck re-asking the same decrypt every ~20s (measured on the relay for hours) is
+     * invisible from here one request at a time; these are what let the pairings screen name it.
+     * STATIC, like MusicPlugin's counters, so a service the OS recycled still answers for the
+     * process's lifetime. Written only on the owner thread (the handler.post below). */
+    static final java.util.Map<String, long[]> perApp = new java.util.HashMap<>();      // pk -> {n, dup}
+    static final java.util.Map<String, String> perAppFp = new java.util.HashMap<>();    // pk -> last fingerprint
+    static final java.util.Map<String, String> perAppMethod = new java.util.HashMap<>();
+
     private void recv(String url, String raw) {
         JSONArray m;
         try { m = new JSONArray(raw); } catch (Throwable t) { return; }
@@ -555,11 +564,20 @@ public class SignerRelayService extends Service {
             // panel reads — those are what tell a phone that answered from one that only tried.
             final boolean ok = sent;
             final String enc = learned[0];
+            final String fp = method + "|" + params.length() + "|"
+                    + params.toString().substring(0, Math.min(64, params.toString().length()));
+            final String methodF = method;
             handler.post(() -> {
                 if (enc != null) sref.enc = enc;
                 sref.last = System.currentTimeMillis() / 1000;
                 lastRequestAt = sref.last;
                 if (ok) requestsAnswered++;
+                long[] t = perApp.get(peer);
+                if (t == null) { t = new long[]{0, 0}; perApp.put(peer, t); }
+                t[0]++;
+                if (fp.equals(perAppFp.get(peer))) t[1]++;
+                perAppFp.put(peer, fp);
+                perAppMethod.put(peer, methodF);
                 note();
             });
         });
