@@ -131,6 +131,12 @@ function device(name, sky, opts){
     read: async (id, r) => new Uint8Array(disk[r]),
     readPart: async (id, r, off, len) => new Uint8Array(disk[r].subarray(off, off + len)),
     hashFile: async (id, r) => sha(disk[r] || Buffer.alloc(0)),
+    /* Honest, like both real adapters: a path removed from `disk` is provably gone under a healthy
+     * parent; a folder that cannot be read (scanFails) can prove nothing; and a LYING listing
+     * (scanEmpty with files still on disk) answers "still there" — which is exactly the case the
+     * probe exists to catch. */
+    confirmGone: async (id, r) => o.scanFails ? { gone: false, parentAlive: false }
+                                              : { gone: !(r in disk), parentAlive: true },
     writePart: async (id, r, off, bytes) => {
       const b = Buffer.from(bytes), cur = st.parts[r] || Buffer.alloc(0);
       const next = Buffer.alloc(Math.max(cur.length, off + b.length));
