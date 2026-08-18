@@ -57,10 +57,20 @@ class TestFolderSync(unittest.TestCase):
         like on disk when it was applied (the old engine compared the local scan against `base`
         directly, which is the same comparison).
         """
+        # Every PUBLISHED live entry carries a storage address in reality — that is what makes it
+        # fetchable — and the engine now treats an address-less live record as a half-finished
+        # upload to re-send. These fixtures predate the field, so the translator supplies it
+        # (derived from content, as the real one is) rather than every rule table row growing one.
+        def _addr(e):
+            e = dict(e)
+            if not e.get("deletedAt") and "sha" not in e:
+                e["sha"] = "b_" + str(e.get("csum", e.get("mtime", "x")))
+            return e
+        remote = {k: _addr(v) for k, v in (remote or {}).items()}
         index = {}
         for path, e in (base or {}).items():
             local_stat = {k: e[k] for k in ("size", "mtime", "csum") if k in e}
-            index[path] = dict(e, local=local_stat)
+            index[path] = dict(_addr(e), local=local_stat)
         js = (
             "const path=require('path');"
             "require(%s);"
@@ -206,7 +216,7 @@ class TestFolderSync(unittest.TestCase):
     def test_advance_makes_the_next_run_a_no_op(self):
         """Folding a completed plan back into `base` is what stops a sync looping — re-uploading
         what it just downloaded, forever."""
-        entry = {"csum": "A", "size": 10, "mtime": 1000}
+        entry = {"csum": "A", "sha": "b_A", "size": 10, "mtime": 1000}
         js = ("const S=require(%s); const E=require(%s);"
               "const base=S.advance({base:{}, done:{'a.txt':%s}, now:%d});"
               "const idx={'a.txt': Object.assign({}, base['a.txt'], {local:%s})};"

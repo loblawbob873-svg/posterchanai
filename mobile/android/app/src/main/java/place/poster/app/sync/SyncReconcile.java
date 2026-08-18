@@ -217,6 +217,18 @@ public final class SyncReconcile {
                 continue;
             }
 
+            /* AN ADDRESS-LESS RECORD, HELD HERE, IS A SEND — mirrors the JS engine (see its
+             * comment): an entry published without sha/chunks strands every other device on
+             * "does not say where this file is stored" while the holder settles it as unchanged. */
+            if (L != null && SyncDiff.live(R)
+                    && !(R.get("sha") instanceof String && !((String) R.get("sha")).isEmpty())
+                    && !(R.get("chunks") instanceof java.util.List
+                         && !((java.util.List<?>) R.get("chunks")).isEmpty())) {
+                plan.send.add(act("path", path, "v", bump(R, idx), "stat", L,
+                        "why", "the shared record names no storage — re-publishing from this copy"));
+                continue;
+            }
+
             boolean here = diskChanged(L, idx);
             boolean there = viewChanged(R, idx);
 

@@ -211,6 +211,18 @@
         continue;
       }
 
+      /* AN ADDRESS-LESS RECORD, HELD HERE, IS A SEND. An entry can be published with no sha and
+       * no chunks (an upload that died between the entry and its bytes), and every OTHER device
+       * then reports "the shared record does not say where this file is stored" for ever — while
+       * the device with the file settles it as unchanged, because its journal honestly says it
+       * applied. Whoever holds a local copy re-publishes it, address included; a device without
+       * one keeps reporting, which is all it can do. */
+      if(L && live(R) && !R.sha && !(R.chunks && R.chunks.length)){
+        plan.send.push({ path, v: bump(R, idx), stat: L,
+                         why: 'the shared record names no storage — re-publishing from this copy' });
+        continue;
+      }
+
       const here = diskChanged(L, idx);
       const there = viewChanged(R, idx);
 
