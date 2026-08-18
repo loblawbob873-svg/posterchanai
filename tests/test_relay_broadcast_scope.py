@@ -325,3 +325,30 @@ class ReplaceableTieBreak(unittest.TestCase):
         from app.services.nostr_relay.outbox import Outbox
         self.assertEqual(inspect.signature(Outbox.__init__).parameters["label"].default, "outbox")
         self.assertIn("%s queue full", inspect.getsource(Outbox.enqueue))
+
+
+class RefusalsAreLogged(unittest.TestCase):
+    """Every refused direct write says so in the journal. A refusal reaches the CLIENT as OK-false,
+    but a browser (gitworkshop starring a repo) rarely surfaces it — a member's write vanishing
+    looked identical to the client never sending it, and finding out took an afternoon of relay
+    archaeology. One INFO line per refusal is the difference."""
+
+    def test_refuse_sends_ok_false_and_logs(self):
+        import logging
+        from app.services.nostr_relay import server as srv
+        sent = []
+        obj = srv.RelayServer.__new__(srv.RelayServer)
+        obj._send = lambda conn, msg: sent.append(msg)
+        with self.assertLogs(srv.logger, level=logging.INFO) as logs:
+            obj._refuse(None, "e1", {"kind": 30003, "pubkey": "ab" * 32},
+                        "blocked: sender not in web of trust")
+        self.assertEqual(sent, [["OK", "e1", False, "blocked: sender not in web of trust"]])
+        self.assertTrue(any("refused kind=30003" in ln and "web of trust" in ln
+                            for ln in logs.output), logs.output)
+
+    def test_every_ok_false_goes_through_refuse(self):
+        import inspect
+        from app.services.nostr_relay import server as srv
+        src = inspect.getsource(srv.RelayServer._on_event)
+        self.assertNotIn('["OK", eid, False', src,
+                         "a refusal bypasses _refuse — it will vanish silently again")

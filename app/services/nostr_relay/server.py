@@ -342,6 +342,19 @@ class RelayServer:
         self._bridge_nip05: dict = {}
         self._bridge_pubkeys: set = set()   # puppet pubkeys (values of _bridge_nip05) — DM inbox set
 
+    def _refuse(self, conn, eid, ev, why) -> None:
+        """Answer OK-false AND say so in the log. Every refusal used to be silent server-side —
+        the client sees the reason, but a browser (gitworkshop starring a repo, a phone app) rarely
+        surfaces it, so a member's write vanishing looked identical to the client never sending it.
+        One INFO line per refused write is what turns that from archaeology into a grep; direct
+        writes are low-volume, so this cannot flood the journal."""
+        try:
+            logger.info("[nostr-relay] refused kind=%s from %s…: %s",
+                        (ev or {}).get("kind"), str((ev or {}).get("pubkey", ""))[:12], why)
+        except Exception:
+            pass
+        self._send(conn, ["OK", eid, False, why])
+
     def _send(self, conn, obj) -> None:
         """Enqueue a message to a client WITHOUT blocking — a slow consumer must never stall the
         firehose/fanout or other clients. On a full queue an EVENT is dropped (re-pullable) and a
@@ -761,19 +774,19 @@ class RelayServer:
             return
         eid = ev.get("id", "")
         if not verify_event(ev):
-            self._send(conn, ["OK", eid, False, "invalid: bad id or signature"])
+            self._refuse(conn, eid, ev, "invalid: bad id or signature")
             return
         kind = int(ev.get("kind", 1))
         # Reject EMPTY text notes (kind-1 with blank/whitespace-only content) — pure spam/noise with
         # nothing to render. Other kinds legitimately have empty content (kind-3 follows, kind-6 reposts,
         # kind-7 reactions, kind-5 deletes), so this is scoped to kind 1 only.
         if kind == 1 and not (ev.get("content") or "").strip():
-            self._send(conn, ["OK", eid, False, "invalid: empty note"])
+            self._refuse(conn, eid, ev, "invalid: empty note")
             return
         # NIP-40: reject an event already past its expiration (don't store or relay it).
         exp = _event_expiration(ev)
         if exp is not None and exp <= int(time.time()):
-            self._send(conn, ["OK", eid, False, "invalid: event expired"])
+            self._refuse(conn, eid, ev, "invalid: event expired")
             return
         # Reject far-future events (bad client clock): a stored future created_at freezes replaceable
         # updates for that pubkey/kind + evades age retention. Send a distinct 'invalid' (NOT the retryable
@@ -781,7 +794,7 @@ class RelayServer:
         # guard still covers the sync/firehose path, where a plain False is harmless.)
         try:
             if int(ev.get("created_at", 0)) > int(time.time()) + 900:
-                self._send(conn, ["OK", eid, False, "invalid: created_at too far in the future"])
+                self._refuse(conn, eid, ev, "invalid: created_at too far in the future")
                 return
         except (ValueError, TypeError):
             pass
@@ -795,7 +808,7 @@ class RelayServer:
         # the relay (admin / web "Block author") must reject + (on purge) remove its events exactly
         # like a native author — otherwise the puppet exemption below would let it right back in.
         if _is_puppet and self.gate.is_blocked(ev.get("pubkey", "")):
-            self._send(conn, ["OK", eid, False, "blocked: author blocked"])
+            self._refuse(conn, eid, ev, "blocked: author blocked")
             return
         _br = self.cfg.get("blocked_relays")
         if not _is_puppet and _br and reveals_blocked_bridge(ev, _br):
@@ -803,14 +816,14 @@ class RelayServer:
                 self.gate.mark_bridged_identity(ev.get("pubkey", ""))   # kind-0 nip05 → block even members
             else:
                 self.gate.mark_bridged(ev.get("pubkey", ""))
-            self._send(conn, ["OK", eid, False, "blocked: bridged relay not accepted"])
+            self._refuse(conn, eid, ev, "blocked: bridged relay not accepted")
             return
         # Opt-in "block bridged posts": drop any NIP-48 proxy (fediverse/Bluesky-bridged) event,
         # whatever bridge relayed it. Operators / registered local users are exempt (their own
         # cross-posts are first-party data, never dropped); so are our own bridge puppets.
         if self.cfg.get("block_bridged") and is_bridged_post(ev) and not _is_puppet \
                 and not self.gate.is_operator(ev.get("pubkey", "")):
-            self._send(conn, ["OK", eid, False, "blocked: bridged (proxy) content not accepted"])
+            self._refuse(conn, eid, ev, "blocked: bridged (proxy) content not accepted")
             return
         # WoT publishing gate — skippable. When wot_enabled is off (e.g. a processing node whose
         # relay is internal/localhost-bound and shouldn't run the trust graph), every author is
@@ -821,7 +834,7 @@ class RelayServer:
             # our web-of-trust members DM each other THROUGH this relay) OR accept it as an
             # operator's inbox (a DM addressed to one of our own users).
             if _wot and not (self.gate.is_member(ev.get("pubkey", "")) or self._dm_for_operator(ev)):
-                self._send(conn, ["OK", eid, False, "blocked: sender not in web of trust"])
+                self._refuse(conn, eid, ev, "blocked: sender not in web of trust")
                 return
         elif kind in (13, 1059):
             # Gift-wrap / seal (NIP-59 / NIP-17): the outer author is a random throwaway key, so the
@@ -831,14 +844,14 @@ class RelayServer:
             # the same routing relays rely on.
             if _wot and not (any(len(t) >= 2 and t[0] == "p" and self.gate.is_member(t[1]) for t in ev.get("tags", []))
                     or self._dm_for_operator(ev) or self._dm_for_puppet(ev)):
-                self._send(conn, ["OK", eid, False, "blocked: zap/DM not for a web-of-trust member"])
+                self._refuse(conn, eid, ev, "blocked: zap/DM not for a web-of-trust member")
                 return
         elif kind == 9735:
             # NIP-57 zap receipt — authored by the zapper SERVICE (lnurl provider), not the zapper,
             # so the WoT gate can't apply to its author. Accept when it concerns (p-tags) a WoT
             # member, so members' zaps are stored + counted.
             if _wot and not any(len(t) >= 2 and t[0] == "p" and self.gate.is_member(t[1]) for t in ev.get("tags", [])):
-                self._send(conn, ["OK", eid, False, "blocked: zap not for a web-of-trust member"])
+                self._refuse(conn, eid, ev, "blocked: zap not for a web-of-trust member")
                 return
         elif ev.get("pubkey", "") in self.cfg.get("dvm_allowed", ()) and (
                 kind in self.cfg.get("dvm_req_kinds", ()) or kind in self.cfg.get("dvm_res_kinds", ())):
@@ -889,7 +902,7 @@ class RelayServer:
             # recipient-routing DMs/zaps use, so calls work for our users regardless of the peer's WoT status.
             if _wot and not (self.gate.is_member(ev.get("pubkey", "")) or self._dm_for_operator(ev)
                     or any(len(t) >= 2 and t[0] == "p" and self.gate.is_member(t[1]) for t in ev.get("tags", []))):
-                self._send(conn, ["OK", eid, False, "blocked: call not for a web-of-trust member"])
+                self._refuse(conn, eid, ev, "blocked: call not for a web-of-trust member")
                 return
             # Tally who's in a call for the live activity ticker: both the caller and each p-tagged peer.
             _t = time.time()
@@ -915,7 +928,7 @@ class RelayServer:
             # nobody is subscribed for is dropped by the fan-out, exactly as for the other ephemeral
             # transports above (NIP-46 signer traffic, call signaling).
             if not any(len(t) >= 2 and t[0] == "i" and t[1] for t in ev.get("tags", [])):
-                self._send(conn, ["OK", eid, False, "invalid: webxdc realtime needs an app identifier"])
+                self._refuse(conn, eid, ev, "invalid: webxdc realtime needs an app identifier")
                 return
         elif kind in (30617, 30618):
             # NIP-34 git repo ANNOUNCEMENT (30617) + repo STATE (30618) are PUBLIC, browsable Discover
@@ -934,10 +947,10 @@ class RelayServer:
             # announcement, not by who hosts it), without opening an unbounded spam firehose. Private
             # repos have no 30617, so they're never matched (no title/content leak). Signature verified above.
             if _wot and not await self._collab_for_known_repo(ev):
-                self._send(conn, ["OK", eid, False, "blocked: git patch/issue references an unknown repo"])
+                self._refuse(conn, eid, ev, "blocked: git patch/issue references an unknown repo")
                 return
         elif _wot and not self.gate.is_member(ev.get("pubkey", "")):
-            self._send(conn, ["OK", eid, False, "blocked: not in web of trust"])
+            self._refuse(conn, eid, ev, "blocked: not in web of trust")
             return
         if kind == 1:
             content = ev.get("content", "")
@@ -945,13 +958,11 @@ class RelayServer:
             if blocked:
                 lang = blocked_language(content, blocked)
                 if lang:
-                    self._send(conn, ["OK", eid, False,
-                                                f"blocked: language '{lang}' not accepted"])
+                    self._refuse(conn, eid, ev, f"blocked: language '{lang}' not accepted")
                     return
             words = self.cfg.get("blocked_words")
             if words and blocked_word(content, words):
-                self._send(conn, ["OK", eid, False,
-                                            "blocked: contains filtered text"])
+                self._refuse(conn, eid, ev, "blocked: contains filtered text")
                 return
         # NIP-01 ephemeral events (20000-29999): deliver to subscribers but NEVER persist.
         # WoT/lang gating above still applies; we just skip storage + the upstream blaster.
@@ -993,7 +1004,7 @@ class RelayServer:
             # the publisher RETRIES instead of trusting a false OK. Sending OK=true here regardless was
             # how a mirrored fediverse reply that failed to store still made the bridge record a delivered
             # row → the personal plane then skipped re-delivery → the user silently missed the reply.
-            self._send(conn, ["OK", eid, False, "error: not stored, retry"])
+            self._refuse(conn, eid, ev, "error: not stored, retry")
             return
         self._send(conn, ["OK", eid, True, ""])
         if True:
