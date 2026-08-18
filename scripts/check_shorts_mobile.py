@@ -149,6 +149,27 @@ async def drive(url):
                 problems.append("tapping a tile never opened the player")
             if (out.get("cards") or 0) < 2:
                 problems.append(f"player drew {out.get('cards')} cards")
+            # the way BACK: the ‹ All shorts button must return to the grid — visible and on top
+            bk = await js("""(() => {
+              const b = document.querySelector('#shorts-wrap .short-back');
+              if (!b) return { there: false };
+              const r = b.getBoundingClientRect(), cs = getComputedStyle(b);
+              const hit = document.elementFromPoint(r.left + r.width/2, r.top + r.height/2);
+              return { there: true, visible: r.width > 0 && +cs.opacity > 0.5,
+                       clickable: !!(hit && (hit === b || b.contains(hit))),
+                       top: r.top };
+            })()""") or {}
+            print("  back-btn:", json.dumps(bk))
+            if not bk.get("there"):
+                problems.append("no way back to the grid — the back button is missing")
+            elif not bk.get("visible") or not bk.get("clickable"):
+                problems.append(f"the back button renders but cannot be pressed ({json.dumps(bk)})")
+            else:
+                await js("document.querySelector('#shorts-wrap .short-back').click()")
+                await asyncio.sleep(1.0)
+                g2 = await js(f"({GRID})()") or {}
+                if not g2.get("grid"):
+                    problems.append("pressing ‹ All shorts did not return to the grid")
             if (out.get("videos") or 0) > 1:
                 problems.append(f"{out['videos']} <video> elements mounted — one decoder per card "
                                 "is how a shorts feed kills a WebView")

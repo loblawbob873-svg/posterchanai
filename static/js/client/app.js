@@ -4274,6 +4274,11 @@
           // and the results (which are the thing you were working through) gone.
           if(window.PCWebSearch && PCWebSearch.readerOpen && PCWebSearch.readerOpen()){ try{ PCWebSearch.closeReader(); }catch(_){} return; }
           if(window.PCVault && PCVault.drawerOpen && PCVault.drawerOpen()){ try{ PCVault.closeDrawer(); }catch(_){} return; }
+          // Shorts' full-screen player is a sub-screen of the grid, same as the reader above: Back
+          // returns to browsing, not out of Shorts with the grid (the thing being browsed) gone.
+          if(VIEW==='shorts' && _shortsAt>=0 && document.getElementById('shorts-wrap')){
+            try{ const b=document.querySelector('#shorts-wrap .short-back'); if(b){ b.click(); return; } }catch(_){}
+          }
           const mini=document.getElementById('mini-player'); if(mini && mini.classList.contains('on')){ try{ closeMini(); }catch(_){} return; }
           if(typeof VIEW!=='undefined' && VIEW && VIEW!=='home'){ try{ history.back(); }catch(_){ switchView(_startTimeline()); } return; }
           if(window.__pcBackArmed){ try{ _App.exitApp && _App.exitApp(); }catch(_){} return; }             // second tap at home → exit
