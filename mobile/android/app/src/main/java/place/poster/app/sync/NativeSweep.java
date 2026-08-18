@@ -440,6 +440,12 @@ public final class NativeSweep {
                 continue;
             }
             Map<String, Object> tomb = new LinkedHashMap<String, Object>();
+            // The tombstone keeps the file's address — mirrors the JS executor: it is what makes
+            // "Restore on every device" possible after the fact.
+            Map<String, Object> prev = index.get(path);
+            if (prev != null)
+                for (String k : new String[]{"sha", "csum", "size", "mtime", "chunks", "cs", "ps"})
+                    if (prev.get(k) != null) tomb.put(k, prev.get(k));
             tomb.put("v", t.get("v"));
             tomb.put("by", device);
             tomb.put("deletedAt", now);

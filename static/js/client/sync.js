@@ -1081,6 +1081,27 @@
       const r = await _mutate(key, api => { for(const p of want) api.drop(p); });
       return { removed: r.removed };
     },
+    /* \u267b RESTORE ON EVERY DEVICE — the account-wide undo. A tombstone that kept its address
+     * (the executors retain sha/chunks on delete now) is republished LIVE at a bumped version;
+     * every device fetches the bytes from the store on its next sweep. Entries whose address was
+     * never kept (old-era tombstones) are counted out loud rather than silently skipped. */
+    async restoreMany(key, paths){
+      const want = (paths || []).slice();
+      if(!want.length) return { restored: 0, unaddressed: 0 };
+      let restored = 0, unaddressed = 0;
+      await _mutate(key, api => {
+        for(const p of want){
+          const e = api.paths[p];
+          if(!e || !e.deletedAt) continue;
+          if(!e.sha && !(e.chunks && e.chunks.length)){ unaddressed++; continue; }
+          const live = {};
+          for(const k of ['sha','csum','size','mtime','chunks','cs','ps'])
+            if(e[k] !== undefined) live[k] = e[k];
+          api.put(p, live); restored++;
+        }
+      });
+      return { restored, unaddressed };
+    },
     async remove(key, path, expect){
       return _mutate(key, api => {
         const list = _liveUnder(api.paths, path);
@@ -1385,6 +1406,19 @@
           excludes: f.excludes || [], maxBytes: await maxBytes(),
           shouldStop: () => stopping.has(f.id),
           manual: !!o.manual,
+          /* THE CARD NARRATES THE SWEEP. The executor has ticked {phase, path, i, n} all along and
+           * nothing listened — so a first sweep hashing 17,000 files sat behind a bare "syncing…"
+           * for many minutes, indistinguishable from a hang. Throttled: a tick per file at disk
+           * speed would out-paint the work. */
+          onProgress: (pp) => {
+            const t = Date.now();
+            if(t - (_progAt.get(f.id) || 0) < 400) return;
+            _progAt.set(f.id, t);
+            let line = String((pp && pp.phase) || 'working') + '\u2026';
+            if(pp && pp.i) line += ' ' + pp.i + (pp.n ? ' / ' + pp.n : '');
+            if(pp && pp.path) line += ' \u2014 ' + String(pp.path).split('/').pop().slice(0, 40);
+            setStatus(f.id, line, null, true);
+          },
           // Paths a repair has established the store no longer holds; see the executor.
           resend: o.resend || null,
           /* WHICH COPIES THIS DEVICE HAS ALREADY FAILED TO VERIFY, so a bad one in the store is not

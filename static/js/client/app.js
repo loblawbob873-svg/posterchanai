@@ -18164,20 +18164,32 @@
         <div class="meta"><span class="fname" title="${enc(it.name)}">${enc(fileLabel(it.name, ext, it.size))}</span>${act?`<span class="fc-acts">${act}</span>`:''}</div></div>`;
     };
     const fileItems = items.filter(it => !it.dir);
+    /* THE SAME BAR THE DRIVE USES — one selection grammar for all of Files. The synced view had
+     * its own Select/Done mode toggle with unicode glyphs beside the drive's persistent
+     * Select-all / Select-none / count / actions bar, and two grammars for one screen reads as
+     * broken ("the select button is inconsistent with the entire blossom UI"). Same classes, same
+     * order, same icons; only the delete's LABEL differs, because here it means every device. */
+    const _ssAll = fileItems.length && fileItems.every(it => _syncSel.has((_syncPath?_syncPath+'/':'')+it.name));
     const selbar = canEdit ? `<div class="sync-selbar">
-        <button class="btn btn-ghost small" id="ss-toggle">${_syncSelOn ? '\u2715 Done' : '\u2611 Select'}</button>
-        ${_syncSelOn ? `<button class="btn btn-ghost small" id="ss-all">Select all shown (${fileItems.length})</button>
-          <span class="muted small" id="ss-count">${_syncSel.size} selected</span>
-          <button class="btn btn-red small" id="ss-del"${_syncSel.size ? '' : ' disabled'}>\ud83d\uddd1 Delete on every device</button>` : ''}
+        <button class="btn btn-ghost small" id="ss-all">${_ssAll?'\u2611':'\u2610'} Select all${fileItems.length?' ('+fileItems.length+')':''}</button>
+        <button class="btn btn-ghost small" id="ss-none"${_syncSel.size?'':' disabled'}><svg class="ic b-ic" aria-hidden="true"><use href="#i-close"></use></svg>Select none</button>
+        <span class="muted small" id="ss-count" style="margin:0 4px">${_syncSel.size?_syncSel.size+' selected':'none selected'}</span>
+        <button class="btn btn-neon small" id="ss-del"${_syncSel.size ? '' : ' disabled'} style="color:var(--danger)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete on every device</button>
       </div>` : '';
     grid.innerHTML = selbar + (details ? _fxColsHTML(false) : '') + items.map(rowFor).join('');
     if(details) _fxBindCols(grid);
+    /* selmode follows the DRIVE's grammar: having a selection IS the mode — no toggle. */
+    _syncSelOn = _syncSel.size > 0;
     if(_syncSelOn) grid.classList.add('selmode'); else grid.classList.remove('selmode');
     {
-      const tog = $('#ss-toggle', grid);
-      if(tog) tog.onclick = () => { _syncSelOn = !_syncSelOn; _syncSel.clear(); renderBlossom(); };
       const all = $('#ss-all', grid);
-      if(all) all.onclick = () => { fileItems.forEach(it => _syncSel.add(it.path)); renderBlossom(); };
+      if(all) all.onclick = () => {
+        const allIn = fileItems.length && fileItems.every(it => _syncSel.has(it.path));
+        if(allIn) fileItems.forEach(it => _syncSel.delete(it.path));
+        else fileItems.forEach(it => _syncSel.add(it.path));
+        renderBlossom(); };
+      const none = $('#ss-none', grid);
+      if(none) none.onclick = () => { _syncSel.clear(); renderBlossom(); };
       const del = $('#ss-del', grid);
       if(del) del.onclick = async () => {
         const doomed = [..._syncSel];

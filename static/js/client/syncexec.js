@@ -511,7 +511,15 @@
              : 'the file is still there' });
         continue;
       }
-      record(t.path, { v: t.v, by: me, deletedAt: now }, null);
+      /* THE TOMBSTONE KEEPS THE FILE'S ADDRESS. A dead entry that forgets its sha is a deletion
+       * nobody can undo account-wide — the store still holds the bytes, but nothing remembers
+       * which bytes. ~100 bytes per tombstone buys "Restore on every device" for as long as the
+       * record lives. */
+      const _prev = index[t.path] || (merged.global || {})[t.path] || {};
+      const _keep = {};
+      for(const k of ['sha','csum','size','mtime','chunks','cs','ps'])
+        if(_prev[k] !== undefined) _keep[k] = _prev[k];
+      record(t.path, Object.assign(_keep, { v: t.v, by: me, deletedAt: now }), null);
       report.removedRemote.push(t.path);
     }
     for(const s of plan.settle){
@@ -623,6 +631,11 @@
       for(const p in files) disk[p] = compact(files[p]);
       note(page);
       off += n;
+      /* SAY WHERE IT IS. A first sweep after a restore hashes every file — many minutes of disk
+       * work behind a status that read only "syncing\u2026", which is indistinguishable from a hang
+       * ("been stuck there for a while now, can't tell wtf is going on"). One line per page. */
+      try{ if(o.onProgress) o.onProgress({ phase: so.hash ? 'reading every file (first sweep)' : 'scanning',
+                                           i: off }); }catch(_){}
       if(!n || !page || page.done) break;
     }
     return { disk, unread };
