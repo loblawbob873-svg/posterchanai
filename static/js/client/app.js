@@ -471,14 +471,19 @@
       // Gated off for this install → there is nothing here to decide. Our own hiding uses NAV_OFF,
       // so a row the user turned off is still listed (it has to be, to turn it back on).
       if(btn.classList.contains('hidden')) return;
-      // Never offered, so never listed — see the banner: a switch that cannot move is not a setting.
-      if(NAV_LOCKED.has(key)) return;
+      const locked = NAV_LOCKED.has(key);   // orderable but never hideable — Settings is the way back
       const group = key.indexOf('group:') === 0;
       if(group && btn.closest('.nav-group') && btn.closest('.nav-group').classList.contains('hidden')) return;
       seen.add(key);
       out.push({ key, label: _navLabel(btn) || key, group, sub: btn.classList.contains('sub'),
-                 off: off.has(key) });
+                 locked, off: !locked && off.has(key) });
     });
+    /* Report a Bug is the one movable thing that is NOT a nav row — it lives with the app links in
+     * the sidebar footer. Listed here so it can be ORDERED into the nav ('__bug' — the same key the
+     * ☰ sheet uses); applyNavOrder relocates the real button when the order names it. */
+    if(document.getElementById('rb-report') && !seen.has('__bug')){
+      out.push({ key: '__bug', label: 'Report a Bug', group: false, sub: false, locked: true, off: false });
+    }
     return out;
   }
   /* THE ORDER, LIKE THE HIDES: decisions, not the list. Only keys the user has arranged are
@@ -510,8 +515,15 @@
         else if(el.classList.contains('nav-group')){
           const hd = el.querySelector('.nav-grouphd'); key = hd ? _navKey(hd) : '';
         }
+        else if(el.id === 'rb-report') key = '__bug';
         if(key) units.push({ el, key });
       });
+      /* Report a Bug starts life in the sidebar FOOTER; the first time an order names it, the real
+       * button moves into the nav and dresses as a row. Not ordered = untouched where it was born. */
+      if(order.indexOf('__bug') >= 0 && !units.some(u => u.key === '__bug')){
+        const rb = document.getElementById('rb-report');
+        if(rb){ rb.classList.add('nav-item'); nav.appendChild(rb); units.push({ el: rb, key: '__bug' }); }
+      }
       if(units.length < 2) return;
       const at = (k) => { const i = order.indexOf(k); return i < 0 ? order.length : i; };
       const sorted = units.map((u, i) => ({ u, k: at(u.key) * 1000 + i }))
@@ -552,9 +564,17 @@
     while(out.length < 4) out.push(_MNAV_DEFAULT[out.length]);
     return out.slice(0, 4);
   }
-  /** Everything a bar slot may hold: the sidebar's plain view rows (this install's, gated). */
+  /** Everything a bar slot may hold: the three timelines FIRST, then the sidebar's view rows.
+   *
+   * The timelines are explicit because two of them are not sidebar rows at all — Home and Trending
+   * are tabs on the timeline itself — so a picker built from the sidebar alone could never offer
+   * Home, and the slot that HELD 'home' rendered whatever option came first, which read as the
+   * setting being broken ("Home is not a selectable item"). */
   function mobileNavChoices(){
-    const out = [], seen = new Set();
+    const out = [{ v:'home', label:'Home', icon:'#i-home' },
+                 { v:'global', label:'Social', icon:'#i-globe' },
+                 { v:'trending', label:'Trending', icon:'#i-globe' }];
+    const seen = new Set(out.map(c => c.v));
     document.querySelectorAll('.sidebar .nav .nav-item[data-view]').forEach(btn => {
       const v = btn.dataset.view;
       if(!v || seen.has(v) || btn.classList.contains('hidden')) return;
@@ -696,14 +716,17 @@
       <div class="muted small">The four view buttons beside Compose and \u2630 More. Compose and More stay put \u2014 one is the point, the other is the way back.</div>
       <div id="mnav-slots">${mobileNavList().map((v,i)=>`
         <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><span class="muted small" style="width:52px">Slot ${i+1}</span>
-          <select class="input" data-mnavslot="${i}">${mobileNavChoices().map(c=>`<option value="${enc(c.v)}"${c.v===v?' selected':''}>${enc(c.label)}</option>`).join('')}</select>
+          <select class="input" data-mnavslot="${i}">${(() => { const cs = mobileNavChoices();
+            if(!cs.some(c => c.v === v)) cs.push({ v, label: v + ' (this install doesn\u2019t list it)' });
+            return cs.map(c=>`<option value="${enc(c.v)}"${c.v===v?' selected':''}>${enc(c.label)}</option>`).join(''); })()}</select>
         </label>`).join('')}</div>
       <div class="search-section-title" style="margin-top:14px">Sidebar rows</div>
       <div class="nav-hide-list" id="nav-hide-list">${rows.map(r=>`
-        <label class="fld nav-hide-row${r.sub?' sub':''}${r.group?' grp':''}" data-navrow="${enc(r.key)}" style="flex-direction:row;justify-content:space-between;align-items:center;gap:8px">
+        <label class="fld nav-hide-row${r.sub?' sub':''}${r.group?' grp':''}" data-navrow="${enc(r.key)}" style="flex-direction:row;align-items:center;gap:8px">
+          ${r.sub?'<span class="nav-ord"></span>':`<span class="nav-ord"><button type="button" class="mini" data-ordup="${enc(r.key)}" title="Move up">\u25b2</button><button type="button" class="mini" data-orddown="${enc(r.key)}" title="Move down">\u25bc</button></span>`}
           <span style="flex:1;min-width:0">${enc(r.label)}${r.group?' <span class="muted small">(whole group)</span>':''}</span>
-          ${r.sub?'':`<span class="nav-ord"><button type="button" class="mini" data-ordup="${enc(r.key)}" title="Move up">\u25b2</button><button type="button" class="mini" data-orddown="${enc(r.key)}" title="Move down">\u25bc</button></span>`}
-          <label class="switch"><input type="checkbox" data-navkey="${enc(r.key)}"${r.off?'':' checked'}><span class="slider"></span></label>
+          ${r.locked?'<span class="muted small" title="Always shown — it is how you get back here">\ud83d\udd12</span>'
+                    :`<label class="switch"><input type="checkbox" data-navkey="${enc(r.key)}"${r.off?'':' checked'}><span class="slider"></span></label>`}
         </label>${r.key === 'global' ? (() => { const off = tlHiddenSet(); return [['home','Home timeline'],['global','Nostrverse timeline'],['trending','Trending timeline']]
           .map(([t,l]) => `
         <label class="fld nav-hide-row sub" style="flex-direction:row;justify-content:space-between;align-items:center;gap:8px">

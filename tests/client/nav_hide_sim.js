@@ -117,6 +117,8 @@ global.document = {
     return null;
   },
   createComment(){ return { _comment: true }; },
+  // The footer's Report-a-Bug button: absent from the stub sidebar unless a case plants one.
+  getElementById(id){ return (global.__els && global.__els[id]) || null; },
 };
 // The container operations applyNavOrder performs on the stub nav.
 NAV.insertBefore = function(el, anchor){
@@ -224,6 +226,7 @@ if(opt.tlHide){
   out.tlSaved = store.tlHidden === undefined ? null : store.tlHidden;
 }
 if(opt.mobileNav){
+  out.mobileNavChoices = mobileNavChoices().map(c => c.v);
   setMobileNav(opt.mobileNav);
   out.mobileNavSaved = store.mobileNav || null;
   out.mobileNavList = mobileNavList();

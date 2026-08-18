@@ -7985,3 +7985,10 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 .sync-selbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 2px 10px}
 .files-grid.selmode .file-card,.files-grid.selmode .fx-row{cursor:pointer}
 .files-grid.selmode .selrow{outline:2px solid var(--cyan,#0bc);outline-offset:-2px;border-radius:8px}
+
+/* The reorder handles in Settings → Sidebar: a fixed-width column on the LEFT, like every list
+ * with a grip — mid-row arrows between label and switch read as clutter ("ugly as hell"). */
+.nav-ord{display:inline-flex;gap:2px;width:52px;flex:0 0 52px;justify-content:flex-start}
+.nav-ord .mini{background:none;border:1px solid var(--line,rgba(255,255,255,.15));border-radius:6px;
+  color:var(--muted);cursor:pointer;font-size:10px;line-height:1;padding:4px 6px}
+.nav-ord .mini:hover{color:var(--cyan,#0ff);border-color:var(--cyan,#0ff)}

@@ -233,8 +233,16 @@ class HidingTests(unittest.TestCase):
 class EditorTests(unittest.TestCase):
 
     def test_the_editor_offers_every_row_the_sidebar_has(self):
+        """A SWITCH for every hideable row; a 🔒 (still orderable, still listed) for the locked
+        ones — Settings is the way back to this screen, so hiding it is not a setting, but the user
+        may still put it at the top ("I can't reorder Settings")."""
         r = run(editor={})
-        self.assertEqual(set(r["editorKeys"]), {row["key"] for row in r["rows"]})
+        hideable = {row["key"] for row in r["rows"] if not row.get("locked")}
+        self.assertEqual(set(r["editorKeys"]), hideable)
+        locked = {row["key"] for row in r["rows"] if row.get("locked")}
+        for k in locked:
+            self.assertIn('data-navrow="%s"' % k, r["html"], "%s lost its row (and its arrows)" % k)
+            self.assertNotIn('data-navkey="%s"' % k, r["html"], "%s grew a switch it must not have" % k)
 
     def test_a_row_this_node_cannot_show_keeps_its_stored_setting(self):
         """THE ONE THAT LOSES OTHER DEVICES' CHOICES. The row list is per node and per shell version;
@@ -487,3 +495,21 @@ class TimelineTabTests(unittest.TestCase):
         elsewhere, and the reader must still answer with somewhere to stand."""
         out = run(settings={"tlHidden": ["home", "global", "trending"]}, tlHide=["home"])
         self.assertNotIn("global", out["tlHidden"])
+
+
+class MobileNavChoiceTests(unittest.TestCase):
+    """Home and Trending are tabs, not sidebar rows — a picker built from the sidebar alone could
+    never offer Home, which read as "Home is not a selectable item". The timelines are explicit."""
+
+    def test_the_timelines_are_always_offered(self):
+        # A sidebar WITHOUT home/trending rows — the real shape (Home is a tab).
+        S = [{"cls": "nav-item", "view": "global", "label": "Social"},
+             {"cls": "nav-item", "view": "notes", "label": "Notes"}]
+        out = run(sidebar=S, mobileNav=["home", "global", "trending", "notes"])
+        for v in ("home", "global", "trending", "notes"):
+            self.assertIn(v, out["mobileNavChoices"], "%s is not a selectable item" % v)
+
+    def test_social_is_not_listed_twice(self):
+        S = [{"cls": "nav-item", "view": "global", "label": "Social"}]
+        out = run(sidebar=S, mobileNav=["home", "global", "trending", "notes"])
+        self.assertEqual(out["mobileNavChoices"].count("global"), 1)
