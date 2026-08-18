@@ -74,12 +74,15 @@ window.PCGitFactory = function(dep){
   async function _loadStars(){
     if(!S.ME || !S.ME.pubkey) return;
     try{
-      const evs=await Relay.query([{ kinds:[30003], authors:[S.ME.pubkey], '#d':[STARS_D], limit:5 },
+      const evs=await Relay.query([{ kinds:[30003], authors:[S.ME.pubkey], '#d':[STARS_D, 'git-repo-bookmark'], limit:10 },
                                    { kinds:[10003], authors:[S.ME.pubkey], limit:5 }]);
-      const pick=(kind)=> (evs||[]).filter(e=>e.kind===kind).sort((a,b)=>b.created_at-a.created_at)[0];
+      const pick=(kind,d)=> (evs||[]).filter(e=>e.kind===kind && (d===undefined || (((e.tags||[]).find(t=>t[0]==='d')||[])[1]||'')===d))
+                                     .sort((a,b)=>b.created_at-a.created_at)[0];
       const coords=(ev)=> ev?(ev.tags||[]).filter(t=>t[0]==='a'&&/^30617:/.test(t[1]||'')).map(t=>t[1]):[];
-      _starsMine=new Set(coords(pick(30003)));
-      _starsBk=new Set(coords(pick(10003)));
+      _starsMine=new Set(coords(pick(30003, STARS_D)));
+      /* Foreign, read-only sources: the standard bookmarks list, and gitworkshop's own set —
+       * measured off the tester's write relay: kind 30003, d:'git-repo-bookmark'. */
+      _starsBk=new Set([...coords(pick(10003, undefined)), ...coords(pick(30003, 'git-repo-bookmark'))]);
       _stars=new Set([..._starsMine, ..._starsBk]);
     }catch(_){ /* _stars stays as it was — possibly null, which keeps the buttons read-only */ }
   }

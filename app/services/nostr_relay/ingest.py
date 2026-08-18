@@ -247,6 +247,29 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
     stored = await _backfill_filter(store, server, upstream,
                                     {"authors": [pubkey], "kinds": kinds},
                                     require_author=pubkey, **common)
+    # THE MEMBER'S OWN WRITE RELAYS ARE WHERE THEIR HISTORY ACTUALLY LIVES, and the configured
+    # upstream set routinely doesn't overlap them. Measured on a real member: six 30617 repo
+    # announcements and their gitworkshop star list sat on nostr21.com — in their kind-10002, not in
+    # our upstreams — so every backfill "succeeded" (557 events) and still came back without the
+    # things they were missing. The first pass has just stored their 10002 (it's in `kinds`), so
+    # follow it: same filter, their relays, minus the ones already asked. Clearnet wss only — an
+    # .onion needs a transport this pass can't assume — and capped, because a 10002 is
+    # member-authored input.
+    try:
+        own = await store.query([{"authors": [pubkey], "kinds": [10002], "limit": 1}])
+        theirs = [t[1].strip().rstrip("/") for t in (own[0].get("tags", []) if own else [])
+                  if len(t) > 1 and t[0] == "r" and t[1].startswith("wss://")
+                  and ".onion" not in t[1]]
+        asked = {u.strip().rstrip("/") for u in _relay.normalize_relays(upstream)}
+        theirs = [u for u in theirs if u not in asked][:4]
+        if theirs:
+            logger.info("[nostr-relay] backfill following %s…'s own relays: %s",
+                        pubkey[:12], ", ".join(theirs))
+            stored += await _backfill_filter(store, server, theirs,
+                                             {"authors": [pubkey], "kinds": kinds},
+                                             require_author=pubkey, **common)
+    except Exception as e:
+        logger.warning("[nostr-relay] own-relay backfill failed: %s", e)
     # Private messages addressed to the user (gift-wrap author is random → match by #p, any author).
     stored += await _backfill_filter(store, server, upstream,
                                      {"#p": [pubkey], "kinds": [1059, 4]},

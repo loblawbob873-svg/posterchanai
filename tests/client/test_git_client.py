@@ -214,11 +214,13 @@ class StarTests(unittest.TestCase):
         seg = self.git[at:at + 2400]
         self.assertIn("30003", seg)
         self.assertIn("30617:", seg)
-        self.assertIn("['d',STARS_D]", seg.replace('"', "'"))
+        self.assertIn("'#d':[STARS_D", seg.replace('"', "'"))
+        self.assertIn("pick(30003, STARS_D)", seg,
+                      "our own set is no longer selected by its d tag")
 
     def test_a_failed_read_keeps_the_buttons_read_only(self):
         at = self.git.index("async function _loadStars()")
-        seg = self.git[at:at + 900]
+        seg = self.git[at:at + 1700]
         self.assertIn("catch(_){", seg)
         self.assertNotIn("_stars=new Set()", seg.split("catch")[1],
                          "a failed read minted an empty list — the follows-wipe, for stars")
@@ -249,6 +251,24 @@ class StarTests(unittest.TestCase):
         self.assertNotIn("publish(10003", tseg, "we wrote into the user's general bookmarks list")
         self.assertIn("remove it there", tseg,
                       "unstarring a foreign bookmark silently fails instead of saying whose it is")
+
+    def test_gitworkshops_own_30003_set_joins_the_union_read_only(self):
+        """Measured on the tester's write relay (nostr21.com, 2026-08-18): gitworkshop's stars are
+        kind 30003 with d:'git-repo-bookmark' — four 30617 coordinates sat in it while the app
+        showed none of them. It joins the FOREIGN half of the union (_starsBk), so it renders as
+        starred and is never written: our writes go only to our own d (STARS_D), because writing a
+        foreign set is one failed read away from wiping it."""
+        at = self.git.index("async function _loadStars()")
+        seg = self.git[at:at + 1600]
+        self.assertIn("'git-repo-bookmark'", seg)
+        # it must be read into the FOREIGN set, not ours
+        bk = seg[seg.index("_starsBk="):seg.index("_stars=new Set([")]
+        self.assertIn("git-repo-bookmark", bk)
+        self.assertIn("_starsMine=new Set(coords(pick(30003, STARS_D)));", seg,
+                      "our own set stopped being selected by OUR d tag alone")
+        at2 = self.git.index("function toggleStar(")
+        self.assertNotIn("git-repo-bookmark", self.git[at2:at2 + 2000],
+                         "a write path touched gitworkshop's own set")
 
     def test_the_relay_syncs_the_bookmark_kinds_in(self):
         import os
