@@ -71,14 +71,22 @@ async def mail_ai(req: MailAiReq, db: Session = Depends(get_db),
         # re-proven on three instruction shapes (short thanks / polite decline / yes-plus-question)
         # before this landed. The fence marks the email as quoted material, not text to extend.
         msgs = [
+            # …and the instruction is what the reply should CONVEY, never text to paste: the
+            # first fix stopped the model echoing the EMAIL, and then "Thanks!" as an instruction
+            # came back as literally "Thanks!" — the parrot one level up. Demanding a natural
+            # response that refers to what the sender wrote is what turned it into "Thanks! That's
+            # very helpful. Have a great weekend!" (probed live on content-shaped, directive-shaped
+            # and nonsense instructions before landing).
             {"role": "system", "content": (
-                "You write email replies. You never repeat or continue the original email. You "
-                "output only the body of the NEW reply, as plain text: no subject line, no "
-                "quoting, no [Your Name] placeholders, no commentary. Match the sender's language "
-                "unless the instruction says otherwise.")},
+                "You write email replies. Rules: never repeat or continue the original email; "
+                "never paste the instruction into the reply — it only says what the reply should "
+                "CONVEY; the reply is a complete, natural response that refers to what the sender "
+                "actually wrote (at least one full sentence). Output only the body of the NEW "
+                "reply, plain text: no subject line, no quoting, no [Your Name] placeholders, no "
+                "commentary. Match the sender's language unless the instruction says otherwise.")},
             {"role": "user", "content": "An email I received:\n<<<EMAIL\n" + text
-                + "\nEMAIL\n\nWrite my reply to it. How I want to reply: " + instr
-                + ".\n\nMy reply:"},
+                + "\nEMAIL\n\nWrite my reply. What it should convey: " + instr
+                + "\n\nMy reply (a natural response to what the sender wrote):"},
         ]
     try:
         out = await cs.chat_service.chat(msgs) or ""

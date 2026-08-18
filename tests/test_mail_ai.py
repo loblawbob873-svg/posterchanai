@@ -65,6 +65,17 @@ class EndpointTests(unittest.TestCase):
                         "the instruction drifted back above the email — the parrot returns")
         self.assertIn("<<<EMAIL", user_msg, "the email lost its fence")
 
+    def test_the_instruction_is_marked_as_conveyance_not_content(self):
+        """"Thanks!" as the instruction came back as literally "Thanks!" — the parrot one level up
+        from echoing the email. The prompt marks the instruction as what to CONVEY and demands a
+        response that refers to what the sender wrote."""
+        chat = _FakeChat("ok")
+        _run(M.MailAiReq(mode="reply", text="hi there", instruction="Thanks!"), chat)
+        sys_msg = chat.calls[0][0]["content"]
+        self.assertIn("CONVEY", sys_msg)
+        self.assertIn("refers to what the sender actually wrote", sys_msg)
+        self.assertIn("What it should convey:", chat.calls[0][-1]["content"])
+
     def test_a_reply_with_no_instruction_is_refused(self):
         with self.assertRaises(HTTPException) as c:
             _run(M.MailAiReq(mode="reply", text="hi"), _FakeChat("x"))
