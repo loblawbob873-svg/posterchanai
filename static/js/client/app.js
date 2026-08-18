@@ -17843,7 +17843,7 @@
     if(!_syncRoot || !window.pcFs || !window.pcFs.listTrash) return '';
     const S = window.PCSync;
     const row = S && S.folders ? (S.folders() || []).find(f => (f.key || f.name) === _syncRoot) : null;
-    if(!row) return '';
+    if(!row) return `<div class="fx-trash"><div class="muted small" style="padding:6px 2px">\ud83d\uddd1 This device doesn\u2019t sync \u201c${enc(_syncRoot)}\u201d, so it has no local trash to show \u2014 each device\u2019s trash lives on that device.</div></div>`;
     if(!_fxTrash || _fxTrash.key !== _syncRoot){
       _fxTrash = { key: _syncRoot, days: null };
       (async () => {
@@ -17859,7 +17859,14 @@
     }
     const days = _fxTrash.days || {};
     const keys = Object.keys(days).sort().reverse();
-    if(!keys.length) return '';
+    /* AN EMPTY TRASH SAYS SO. Hidden-because-empty and hidden-because-broken are identical from
+     * the outside ("where the fuck is the trash folder") — the block always renders inside a
+     * synced folder on a device that can see the disk; emptiness is a stated fact, not silence. */
+    if(!keys.length) return `<div class="fx-trash">
+      <button class="fx-trash-hd">\ud83d\uddd1 Trash on this device
+        <span class="fx-n">0</span></button>
+      <div class="fx-trash-body"><div class="muted small">Empty \u2014 nothing sync moved aside is waiting here. Files you restored are back in place.</div></div>
+    </div>`;
     const total = keys.reduce((a, k) => a + days[k], 0);
     /* A SUBORDINATE block, not more chips: dates are not folders and must not dress like them.
      * Collapsed by default — the trash is a safety net, not a destination. */
