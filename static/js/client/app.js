@@ -13237,7 +13237,7 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['__music','music','Music'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__accounts','user','Switch account'],['settings','gear','Settings'],
+    const items=[['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['__music','music','Music'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['settings','gear','Settings'],
       // Same button, same rule as the sidebar's: a guest is offered a way IN, not a second way out.
       (GUEST ? ['__login','user','Log in'] : ['logout','logout','Logout'])]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
@@ -13275,7 +13275,11 @@
          * name nobody would guess held their songs. Opens the LIBRARY (renderMusicApp), not
          * openMusic's immediate shuffle — the nav button's job is to take you there, and
          * deciding what plays is the user's. */
-        if(v==='__music'){ closeModal(); renderMusicApp(); return; } if(v==='__files'){ closeModal(); filesMenu(); return; } if(v==='__golive'){ closeModal(); _goLive(); return; } if(v==='__accounts'){ closeModal(); accountMenu(); return; } closeModal();
+        if(v==='__music'){ closeModal(); renderMusicApp(); return; } if(v==='__files'){ closeModal(); filesMenu(); return; } if(v==='__golive'){ closeModal(); _goLive(); return; } if(v==='__accounts'){ closeModal(); accountMenu(); return; }
+        /* Report a Bug: the sidebar button's own click, not a copy of its logic — one issue
+         * composer, one repo-resolution path, and a phone that can finally reach it. The sidebar
+         * element exists on mobile (CSS hides it), so its handler is always there to borrow. */
+        if(v==='__bug'){ closeModal(); const rb=$('#rb-report'); if(rb) rb.click(); else toast('bug reporting isn\u2019t available in this build'); return; } closeModal();
         if(v==='__login') _leaveGuest();
         else if(v==='logout') logout();
         // A guest has no profile to open — asking for one is asking to sign in.

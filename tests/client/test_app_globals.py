@@ -361,3 +361,19 @@ def test_every_view_a_sub_module_sets_can_actually_be_set():
         assert not has_get or has_set, (
             "%s assigns S.%s, which app.js exposes with a getter and no setter — that throws in a "
             "strict module and kills the caller on that line" % (mod, prop))
+
+
+def test_report_a_bug_is_reachable_from_a_phone():
+    """The 🐛 button lives in the sidebar, which a phone never shows — so filing a bug from the
+    device where most bugs are noticed meant a desktop trip. The ☰ More sheet entry borrows the
+    sidebar button's OWN click (one composer, one repo-resolution path), and this pins both halves:
+    the entry exists, and the dispatch reaches #rb-report rather than growing a second composer."""
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    app = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+    at = app.index("function moreMenu(")
+    body = app[at:app.index("function filesMenu(", at)]
+    assert "'__bug','bug','Report a Bug'" in body.replace('"', "'"), "the More sheet lost the entry"
+    assert "rb-report" in body, "the sheet grew its own composer instead of borrowing the sidebar's"
+    html = open(os.path.join(root, "templates", "client.html"), encoding="utf-8").read()
+    assert 'id="rb-report"' in html, "the sidebar button the sheet borrows is gone"
