@@ -476,6 +476,28 @@ class GroupPickerTests(unittest.TestCase):
                 self.assertNotIn(k, offered, "a group header offered to move into a group")
 
 
+class MovedOutTakesTheGroupsPlace(unittest.TestCase):
+    """"I tried to put git outside the discover and it doesnt show" — a key absent from a saved
+    order is appended after everything known, i.e. the very bottom of the sidebar, below the fold.
+    A row moved to top level must slot in right after its former group instead (the rule the
+    desktop icons already follow)."""
+    S = SidebarOrderTests.S
+
+    def test_the_moved_key_joins_the_order_after_its_group(self):
+        out = run(sidebar=self.S, order=["home", "group:files", "notes"],
+                  groupMove={"blossom": ""})
+        saved = out.get("navOrderSaved") or []
+        self.assertIn("blossom", saved, "the moved-out key never joined the explicit order — it "
+                                        "renders at the very bottom of the sidebar")
+        self.assertEqual(saved.index("blossom"), saved.index("group:files") + 1,
+                         "it joined the order but not at its group's slot")
+
+    def test_no_explicit_order_stores_none(self):
+        out = run(sidebar=self.S, groupMove={"blossom": ""})
+        self.assertFalse(out.get("navOrderSaved"),
+                         "a group move invented an order pref the user never made")
+
+
 class MobileNavPrefTests(unittest.TestCase):
     S = SidebarOrderTests.S
 

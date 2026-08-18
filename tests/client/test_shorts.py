@@ -85,14 +85,14 @@ class ParserTests(unittest.TestCase):
 
 class RendererDiscipline(unittest.TestCase):
     def _seg(self):
-        a = APP.index("async function renderShorts()")
+        a = APP.index("function _shortsPlayer(")
         return APP[a:a + 5200]
 
     def test_videos_mount_lazily_and_unmount_off_screen(self):
         seg = self._seg()
         self.assertIn("IntersectionObserver", seg)
         self.assertIn("removeAttribute('src')", seg, "an off-screen card keeps its decoder")
-        tpl = seg[seg.index("wrap.innerHTML = vids.map"):seg.index("decorateProfiles()")]
+        tpl = seg[seg.index("host.innerHTML ="):seg.index("decorateProfiles()")]
         self.assertNotIn("<video", tpl,
                          "videos are in the initial HTML — 60 decoders on first paint")
 
@@ -102,9 +102,22 @@ class RendererDiscipline(unittest.TestCase):
         self.assertIn("playsInline", seg)
 
     def test_addressable_dedup_and_the_kinds(self):
-        seg = self._seg()
+        a = APP.index("async function renderShorts()")
+        seg = APP[a:a + 2600]
         self.assertIn("kinds:[34236,22]", seg.replace('"', "'"))
         self.assertIn("e.kind+':'+e.pubkey+':'", seg, "no coordinate dedup — an edited short doubles")
+
+    def test_the_grid_is_the_front_door(self):
+        """"only 1 video at a time? bad UI" — browsing shows MANY (poster tiles, duration badges);
+        the full-screen player is where a tap lands, starting at that short."""
+        a = APP.index("async function renderShorts()")
+        seg = APP[a:a + 2600]
+        self.assertIn("_shortsGrid(host)", seg)
+        g = APP.index("function _shortsGrid(")
+        gseg = APP[g:g + 1800]
+        self.assertIn("short-tile", gseg)
+        self.assertIn("short-dur", gseg, "no duration badge on the tiles")
+        self.assertIn("_shortsPlayer(host, _shortsAt)", gseg)
 
     def test_the_view_is_wired_into_nav_sheet_and_dispatch(self):
         self.assertIn("if (VIEW==='shorts') return renderShorts();", APP)

@@ -720,9 +720,26 @@
   }
   function setNavGroupOf(key, group){
     const cur = navGroupOf();
+    const wasIn = cur[key] || (_navItemByKey(key) && (()=>{ const g=_navItemByKey(key).closest('.nav-group');
+      const h=g && g.querySelector('.nav-grouphd'); return h ? _navKey(h) : ''; })()) || '';
     if(group === undefined || group === null) delete cur[key]; else cur[key] = group;
     ClientSettings.set('navGroupOf', cur);
     _prefTouched.add('navGroupOf');
+    /* A ROW MOVED OUT TAKES ITS GROUP'S PLACE, never the end of the nav. A key absent from the
+     * saved order is appended after everything known — the very bottom of the sidebar — so "I put
+     * Git outside Discover and it doesn't show" was Git sitting below the fold. Same rule the
+     * desktop icons already follow (a dissolved folder's survivor takes the folder's slot). Only
+     * when an explicit order exists; with none, the DOM insert after the group already reads right. */
+    if(group === '' && wasIn){
+      const ord = navOrderList();
+      if(ord.length && ord.indexOf(key) < 0){
+        const at = ord.indexOf(wasIn);
+        if(at >= 0) ord.splice(at + 1, 0, key); else ord.push(key);
+        ClientSettings.set('navOrder', ord);
+        _prefTouched.add('navOrder');
+        saveClientPrefsNostr({ navOrder: ord });
+      }
+    }
     applyNavGroups(); applyNavOrder();
     return saveClientPrefsNostr({ navGroupOf: cur });
   }
@@ -15762,10 +15779,12 @@
   }
   let _shortsMuted = true;   // mobile autoplay only works muted; one 🔊 tap unmutes the whole feed
   let _shortsIO = null;
+  let _shortsAt = -1;        // -1 = the browse grid; an index = the full-screen player on that short
+  let _shortsList = [];
   async function renderShorts(){
     const feed=$('#feed');
-    feed.innerHTML='<div class="shorts-wrap" id="shorts-wrap"><div class="spinner"></div></div>';
-    let evs=[]; try{ evs=await Relay.query([{kinds:[34236,22], limit:80}]); }catch(_){}
+    feed.innerHTML='<div class="shorts-host" id="shorts-host"><div class="spinner"></div></div>';
+    let evs=[]; try{ evs=await Relay.query([{kinds:[34236,22], limit:120}]); }catch(_){}
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     if(VIEW!=='shorts') return;
     const seen=new Set(); const vids=[];
@@ -15775,17 +15794,40 @@
       // 34236 is addressable: dedup on the coordinate so an edited short doesn't appear twice.
       const key=e.kind+':'+e.pubkey+':'+String((((e.tags||[]).find(t=>t[0]==='d'))||[])[1]||e.id);
       if(seen.has(key)) continue; seen.add(key);
-      vids.push(s); if(vids.length>=60) break;
+      vids.push(s); if(vids.length>=100) break;
     }
-    const wrap=$('#shorts-wrap'); if(!wrap) return;
+    _shortsList=vids;
+    if(_shortsAt>=vids.length) _shortsAt=-1;
+    const host=$('#shorts-host'); if(!host) return;
     if(!vids.length){
-      wrap.innerHTML='<div class="empty">No shorts have reached this relay yet. They arrive as your network posts them — from Divine and any NIP-71 client.</div>';
+      host.innerHTML='<div class="empty">No shorts have reached this relay yet. They arrive as your network posts them — from Divine and any NIP-71 client.</div>';
       return;
     }
-    wrap.innerHTML = vids.map((s,i)=>{ const p=profOf(s.e.pubkey)||{}; const nm=p.name||p.display_name||'anon';
+    if(_shortsAt<0) _shortsGrid(host); else _shortsPlayer(host, _shortsAt);
+  }
+  /* THE BROWSE GRID IS THE FRONT DOOR — "only one video at a time" is a player, not a feed. Poster
+   * tiles with duration badges, so a page shows a dozen choices; tapping one opens the full-screen
+   * player AT that short, and scrolling continues from there. */
+  function _shortsGrid(host){
+    const vids=_shortsList;
+    host.innerHTML=`<div class="shorts-grid">${vids.map((s,i)=>{ const p=profOf(s.e.pubkey)||{}; const nm=p.name||p.display_name||'anon';
+      return `<div class="short-tile" data-i="${i}">
+        ${s.poster?`<img src="${enc(s.poster)}" loading="lazy" onerror="this.remove()">`:`<div class="short-tile-blank">🎬</div>`}
+        ${s.dur?`<span class="short-dur">${s.dur>=60?Math.floor(s.dur/60)+':'+String(s.dur%60).padStart(2,'0'):'0:'+String(s.dur).padStart(2,'0')}</span>`:''}
+        <span class="short-tile-t">${enc(s.title)}</span>
+        <span class="short-tile-a"><img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">${enc(nm)}</span>
+      </div>`; }).join('')}</div>`;
+    $$('.short-tile',host).forEach(t=> t.onclick=()=>{ _shortsAt=+t.dataset.i; _shortsPlayer(host, _shortsAt); });
+  }
+  function _shortsPlayer(host, start){
+    const vids=_shortsList;
+    host.innerHTML = `<div class="shorts-wrap" id="shorts-wrap">`+vids.map((s,i)=>{ const p=profOf(s.e.pubkey)||{}; const nm=p.name||p.display_name||'anon';
       return `<div class="short-card" data-i="${i}" data-id="${s.e.id}">
         <div class="short-media">${s.poster?`<img src="${enc(s.poster)}" loading="lazy" onerror="this.remove()">`:''}</div>
-        <div class="short-top"><button class="mini short-mute" title="Sound">${_shortsMuted?'🔇':'🔊'}</button></div>
+        <div class="short-top">
+          <button class="mini short-back" title="Back to the grid">‹ All shorts</button>
+          <button class="mini short-mute" title="Sound">${_shortsMuted?'🔇':'🔊'}</button>
+        </div>
         <div class="short-overlay">
           <div class="short-auth" data-pk="${s.e.pubkey}">
             <img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><b class="name" data-prof="${s.e.pubkey}">${enc(nm)}</b>
@@ -15796,11 +15838,12 @@
           <button class="short-act short-open" title="Comments"><svg class="ic"><use href="#i-chat"></use></svg></button>
           <button class="short-act short-share" title="Copy link"><svg class="ic"><use href="#i-bookmark"></use></svg></button>
         </div>
-      </div>`; }).join('');
+      </div>`; }).join('')+`</div>`;
     decorateProfiles();
+    const wrap=$('#shorts-wrap', host);
     /* ONE DECODER AT A TIME. A <video src> IS a decoder (that lesson is paid for): only the card
      * filling the viewport holds a mounted <video>; a card scrolled fully away has its src removed
-     * and the element released, so a 60-short session never holds 60 decoders. */
+     * and the element released, so a 100-short session never holds 100 decoders. */
     try{ if(_shortsIO) _shortsIO.disconnect(); }catch(_){}
     const io=_shortsIO=new IntersectionObserver(entries=>{
       for(const x of entries){
@@ -15808,6 +15851,7 @@
         if(!s||!media) continue;
         let v=media.querySelector('video');
         if(x.isIntersecting && x.intersectionRatio>0.6){
+          _shortsAt=+card.dataset.i;   // remember where we are, so grid⇄player round-trips
           if(!v){
             v=document.createElement('video');
             v.playsInline=true; v.setAttribute('playsinline',''); v.loop=true; v.muted=_shortsMuted;
@@ -15827,8 +15871,10 @@
     $$('.short-card',wrap).forEach(c=>{
       io.observe(c);
       const id=c.dataset.id;
-      const open=()=>openThread(id);
-      const oc=c.querySelector('.short-open'); if(oc) oc.onclick=(ev)=>{ ev.stopPropagation(); open(); };
+      const oc=c.querySelector('.short-open'); if(oc) oc.onclick=(ev)=>{ ev.stopPropagation(); openThread(id); };
+      const bk=c.querySelector('.short-back'); if(bk) bk.onclick=(ev)=>{ ev.stopPropagation();
+        try{ io.disconnect(); }catch(_){}
+        _shortsAt=-1; _shortsGrid(host); };
       const sh=c.querySelector('.short-share'); if(sh) sh.onclick=(ev)=>{ ev.stopPropagation();
         const e2=vids[+c.dataset.i].e;
         let lk='';
@@ -15841,6 +15887,8 @@
         $$('.short-mute',wrap).forEach(b=>b.textContent=_shortsMuted?'🔇':'🔊');
         $$('video',wrap).forEach(vv=>vv.muted=_shortsMuted); };
     });
+    const target=$$('.short-card',wrap)[start];
+    if(target) target.scrollIntoView({ block:'start' });
   }
 
   // Files view = two tabs: Public (your built-in Blossom blobs, shareable URLs) and AI Chat

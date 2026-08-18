@@ -35,6 +35,17 @@ PLANT = r"""(() => {
   return true;
 })"""
 
+GRID = r"""(() => {
+  const grid = document.querySelector('#shorts-host .shorts-grid');
+  if (!grid) return { grid: false };
+  const tiles = [...grid.querySelectorAll('.short-tile')];
+  return { grid: true, tiles: tiles.length,
+           durs: tiles.filter(t => t.querySelector('.short-dur')).length,
+           cols: getComputedStyle(grid).gridTemplateColumns.split(' ').length,
+           videos: grid.querySelectorAll('video').length,
+           overflowX: document.documentElement.scrollWidth <= window.innerWidth + 1 };
+})"""
+
 SURVEY = r"""(() => {
   const wrap = document.getElementById('shorts-wrap');
   if (!wrap) return { wrap: false };
@@ -115,12 +126,29 @@ async def drive(url):
                 return 2
             await js("window.__PC.switchView('shorts')")
             await asyncio.sleep(2.5)
+            g = await js(f"({GRID})()") or {}
+            print("  grid:", json.dumps(g))
+            if not g.get("grid"):
+                problems.append("the browse grid never rendered — Shorts opens on nothing")
+            if (g.get("tiles") or 0) < 2:
+                problems.append(f"planted 2 shorts, grid drew {g.get('tiles')}")
+            if (g.get("cols") or 0) < 2:
+                problems.append("one tile per row on a phone — that's the bad UI this replaced")
+            if g.get("videos"):
+                problems.append("the browse grid mounted video decoders")
+            if not g.get("durs"):
+                problems.append("no duration badges on the tiles")
+            if not g.get("overflowX", True):
+                problems.append("the grid scrolls horizontally on a phone")
+            # tap the first tile → the full-screen player
+            await js("document.querySelector('#shorts-host .short-tile').click()")
+            await asyncio.sleep(1.5)
             out = await js(f"({SURVEY})()") or {}
-            print("  survey:", json.dumps(out))
+            print("  player:", json.dumps(out))
             if not out.get("wrap"):
-                problems.append("the Shorts view never rendered its wrap")
+                problems.append("tapping a tile never opened the player")
             if (out.get("cards") or 0) < 2:
-                problems.append(f"planted 2 shorts, drew {out.get('cards')}")
+                problems.append(f"player drew {out.get('cards')} cards")
             if (out.get("videos") or 0) > 1:
                 problems.append(f"{out['videos']} <video> elements mounted — one decoder per card "
                                 "is how a shorts feed kills a WebView")
@@ -142,7 +170,7 @@ async def drive(url):
         for p in problems:
             print("FAIL ", p)
         return 1
-    print("PASS  Shorts renders Divine-shaped events with one decoder at a time")
+    print("PASS  Shorts browses as a grid and plays full-screen, one decoder at a time")
     return 0
 
 

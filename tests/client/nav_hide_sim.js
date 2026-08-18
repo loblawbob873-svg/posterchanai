@@ -114,6 +114,10 @@ global.document = {
   querySelector(sel){
     if(sel === '.sidebar .nav') return NAV;
     if(sel === '.mobilenav') return null;
+    // _navItemByKey resolves a row by its data-view — setNavGroupOf's takes-its-group's-place rule
+    // walks the DOM from it, so the stub must answer or the sim silently skips that whole branch.
+    const m = sel.match(/^\.sidebar \.nav \.nav-item\[data-view="([^"]+)"\]$/);
+    if(m) return ALL.find(e => e._cls.has('nav-item') && e.dataset && e.dataset.view === m[1]) || null;
     return null;
   },
   createComment(){ return { _comment: true }; },
@@ -225,6 +229,8 @@ if(opt.groupMove){
   // proves is the DECISIONS half — the override lands in settings and publishes to the prefs doc.
   for(const [k, g] of Object.entries(opt.groupMove)) setNavGroupOf(k, g);
   out.groupOf = navGroupOf();
+  // a move OUT may edit the order too (the takes-its-group's-place rule) — re-capture it
+  out.navOrderSaved = store.navOrder === undefined ? (out.navOrderSaved || null) : store.navOrder;
 }
 if(opt.tlHide){
   setTlHidden(opt.tlHide);
