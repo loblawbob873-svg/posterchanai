@@ -67,6 +67,8 @@ public final class SafFs implements SyncIo.Files {
 
     public static boolean isNoise(String name) {
         if (TRASH.equals(name) || name.endsWith(PART)) return true;
+        // Another sync engine's bookkeeping is not content — mirrors desktop/fsbridge.js IGNORE.
+        if (".stfolder".equals(name) || ".stversions".equals(name) || ".stignore".equals(name)) return true;
         return Excludes.isTempName(name);
     }
 

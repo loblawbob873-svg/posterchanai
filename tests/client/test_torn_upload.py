@@ -80,3 +80,43 @@ class TornUploadTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(not NODE, "no node on this node")
+class UnreadableSubtreeTests(unittest.TestCase):
+    """A folder the scan could not enter leaves its files out of `disk` — and read as "deleted
+    locally" they were tombstoned to every device (measured: five files under one locked folder,
+    five tombstones, guards silent below the mass floor). Skipped paths must ride the exclusion
+    machinery: dropped from all three inputs, deletable by no one, and said on the card."""
+
+    def test_no_tombstone_is_published_for_what_could_not_be_read(self):
+        js = """
+        require(%s); const X = require(%s);
+        (async () => {
+          const entry = (i) => ({ v:1, by:'me', sha:'s'+i, csum:'c'+i, size:9, mtime:10 });
+          const idx = {}; const view = {};
+          for(let i=0;i<5;i++){ const p='Locked/f'+i+'.jpg';
+            view[p]=entry(i); idx[p]=Object.assign({}, entry(i), {local:{size:9,mtime:10,csum:'c'+i}}); }
+          let published = null;
+          const fs = { scan: async () => ({ files: { 'ok.jpg': {size:1, mtime:1} },
+                                            skipped: [{ path:'Locked', why:'EACCES' }] }) };
+          const io = {
+            index: async () => idx,
+            views: async () => ({ views: { me: view }, missing: 0 }),
+            saveIndex: async () => {},
+            publish: async (k, mine) => { published = JSON.parse(JSON.stringify(mine)); },
+            putBlob: async () => ({ sha:'oks' }), hashBytes: async () => 'okc',
+          };
+          const rep = await X.sweep(fs, io, { id:'f', key:'k', device:'me' });
+          const tombs = Object.keys(published || idx).filter(p => (published || idx)[p]
+                          && (published || idx)[p].deletedAt);
+          process.stdout.write(JSON.stringify({ tombs, removed: rep.removedRemote,
+            unreadable: (rep.unreadable||[]).length, excluded: rep.excluded }));
+        })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+        """ % (json.dumps(FOLDERSYNC), json.dumps(EXEC))
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        out = json.loads(r.stdout)
+        self.assertEqual(out["tombs"], [], "an unreadable subtree was tombstoned to every device")
+        self.assertEqual(out["removed"], [], out)
+        self.assertEqual(out["unreadable"], 1, "the report does not say what it could not read")

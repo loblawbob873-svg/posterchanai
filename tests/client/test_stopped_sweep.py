@@ -121,6 +121,24 @@ class UnfetchableIsNeverInStepTests(unittest.TestCase):
         self.assertIn("3", line)
         self.assertIn("store", line)
 
+    def test_a_404_download_is_reported_as_unfetchable_not_failed(self):
+        """"231 failed" invites pressing Sync now again, which retries all 231 and prints it again —
+        the loop someone sat inside for a day. The store not having bytes is a fact about the store;
+        `failed` is for the sweep's own errors."""
+        import re
+        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                                "static", "js", "client", "syncexec.js"), encoding="utf-8").read()
+        spots = [m.start() for m in re.finditer(re.escape("unavailable \\(404\\)/.test(why)"), src)]
+        self.assertEqual(len(spots), 2, "the 404 branch moved (conflicts + downloads)")
+        for at in spots:
+            # Only the 404 BRANCH itself: it ends at its `} else {`, where the genuine-error
+            # fallback (which rightly calls failed()) begins.
+            seg = src[at:at + 1600].split("} else {")[0]
+            self.assertIn("unfetchable", seg)
+            self.assertNotIn("failed(report,", seg, "a 404 still lands under 'failed'")
+            self.assertIn("report.ok = false", seg,
+                          "a sweep with missing bytes claims a clean pass")
+
     def test_the_preview_names_its_share(self):
         line = summarise(dict(BLANK, dryRun=True, plannedGone=2,
                               plan={"download": [1, 2], "upload": [], "deleteLocal": [],

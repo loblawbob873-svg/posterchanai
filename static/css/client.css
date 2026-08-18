@@ -7970,3 +7970,8 @@ body.popout-chat .stream-chat{
  * the one control the chat popout exists to reach. */
 body.popout-chat .scm-list{ flex:1 1 auto !important; min-height:0 !important; overflow-y:auto !important; }
 body.popout-chat .scm-input{ flex:0 0 auto !important; }
+
+/* Bulk select in a synced folder — the conflict-storm cleanup tool */
+.sync-selbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 2px 10px}
+.files-grid.selmode .file-card,.files-grid.selmode .fx-row{cursor:pointer}
+.files-grid.selmode .selrow{outline:2px solid var(--cyan,#0bc);outline-offset:-2px;border-radius:8px}

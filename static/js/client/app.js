@@ -16429,7 +16429,8 @@
     $$('.fx-crumb[data-crumb]', pane).forEach(b => b.onclick = () => {
       const to = b.dataset.crumb || '';
       if(to.charAt(0) === 's'){ const rest = to.slice(2); const cut = rest.indexOf('/');
-        _syncRoot = cut < 0 ? rest : rest.slice(0, cut); _syncPath = cut < 0 ? '' : rest.slice(cut+1); }
+        _syncRoot = cut < 0 ? rest : rest.slice(0, cut); _syncPath = cut < 0 ? '' : rest.slice(cut+1);
+        _syncSel.clear(); _syncSelOn = false; }
       else { _syncRoot = ''; _syncPath = ''; _filesFolder = to.slice(2); }
       renderBlossom();
     });
@@ -16470,6 +16471,12 @@
    * behind it. Downloads decrypt in the browser, like every other encrypted file here. */
   let _syncRoot = '';                 // the pair key being browsed ('' = the drive, not a synced folder)
   let _syncPath = '';                 // subdirectory inside it ('' = its root)
+  /* Selection for the BULK delete. Keyed on FULL paths, so ticks survive navigating and searching
+   * within the folder; cleared when the root changes or the basket is acted on. Built for the
+   * conflict-storm cleanup: search "conflict", Select all shown, one delete — the storm published
+   * hundreds of copy ENTRIES the source machine never even held, and removing them one confirm at a
+   * time is nobody's afternoon. */
+  let _syncSel = new Set(), _syncSelOn = false;
   let _syncPairs = null;              // [{key,n,updated_at}] · null = not asked yet · 'error' = asked and failed
   const _syncManifests = new Map();   // pair key -> {at, paths:{path:{sha,size,mtime,deletedAt}}}
   const _SYNC_TTL = 60000;   // how long a decrypted manifest is reused while walking its subfolders
@@ -16629,6 +16636,54 @@
    * Three answers, and the middle one is why this exists: `true` there, `false` NOT there, `null` I
    * could not ask. A rate limiter, a 500, a redirect and a dead socket are all `null`.
    */
+  /* WHICH OWNED BYTES BELONG TO NOTHING — the set a storage reclaim may touch.
+   *
+   * Deleting a synced folder clears its RECORDS and leaks every BYTE: the blobs are keep-flagged
+   * (age-exempt, deliberately) and no bookkeeping names them any more. Measured: 137.5 GB owned by
+   * one account the day both its folder pairs were deleted. This is the missing other half of that
+   * delete, and it is deliberately conservative three ways: only `keep` blobs (post media is never
+   * keep, so old posts' images are structurally untouchable); only blobs the drive index does not
+   * name (music, notes attachments and drive files all live there); only blobs no synced folder
+   * references — entries, every chunk, and the sealed path-list blobs the manifests live in.
+   * PURE, so the suite runs it under node. */
+  function _reclaimableBlobs(list, indexShas, refIds){
+    const out = [];
+    for(const b of (list || [])){
+      if(!b || !b.keep || !b.sha256) continue;
+      if(indexShas.has(b.sha256)) continue;
+      if(refIds.has(b.sha256)) continue;
+      out.push(b);
+    }
+    return out;
+  }
+  /* Every blob id any synced folder still references. `null` means "could not read them all" — and
+   * a reclaim with a partial reference set is a delete order for whatever the unread folder holds,
+   * so the caller must treat null as NO. */
+  async function _syncRefIds(){
+    try{
+      const S = window.PCSync;
+      if(!S || !S.acct) return null;
+      await _loadSyncPairs();
+      const pairs = Array.isArray(_syncPairs) ? _syncPairs : null;
+      if(!pairs) return null;
+      const ids = new Set();
+      for(const p2 of pairs){
+        const got = await S.docs.views(p2.key);
+        if(!got || got.missing) return null;               // an unread device = an unknown reference
+        for(const sid of (got.sealedIds || [])) ids.add(sid);
+        for(const dev in (got.views || {})){
+          const v = got.views[dev];
+          for(const path in v){
+            const e = v[path]; if(!e) continue;
+            if(e.sha) ids.add(e.sha);
+            for(const c of (e.chunks || [])) ids.add(c);
+          }
+        }
+      }
+      return ids;
+    }catch(_){ return null; }
+  }
+
   async function _blobPresent(sha){
     try{
       const r = await fetch(mediaServer() + '/' + sha, { method:'HEAD', cache:'no-store' });
@@ -16733,10 +16788,25 @@
         lines.push(`<div class="nt-warn">⚠ <b>${undecryptable.length}</b> encrypted file(s) this `
           + `device has no key for. That is a key problem, not a storage one — the bytes are there.</div>`);
       }
+      let reclaim = [];
       if(otherN){
+        /* Can any of the unnamed bytes be RECLAIMED? Only with the complete reference picture: the
+         * drive index (already in hand) plus every synced folder's ids. A null reference set means
+         * a folder could not be fully read, and the offer simply does not appear — a reclaim that
+         * guesses is the folder-sync wipe wearing a storage hat. */
+        const refs = await _syncRefIds();
+        if(refs) reclaim = _reclaimableBlobs(list, named, refs);
+        const gb = reclaim.reduce((n, b) => n + (b.size || 0), 0);
         lines.push(`<div class="muted small">${otherN} blob(s), ${_fxBytes(otherBytes)}, are stored `
-          + `but not named by this index — folder sync, its records and the music library keep their `
-          + `own, and they all live here. Nothing to do.</div>`);
+          + `but not named by this index — folder sync and the rest of your account keep their own `
+          + `records here.` + (reclaim.length
+            ? ` <b>${reclaim.length}</b> of them (${_fxBytes(gb)}) belong to nothing any more — `
+              + `usually a deleted synced folder's leftovers.`
+            : ` Nothing to reclaim.`) + `</div>`);
+        if(reclaim.length){
+          lines.push(`<div class="row" style="margin-top:6px"><button class="btn btn-red small" `
+            + `id="fx-ck-reclaim">Reclaim ${_fxBytes(gb)} (${reclaim.length} blobs)</button></div>`);
+        }
       }
       /* "nothing was found missing" and "nothing could be asked" are not the same sentence —
        * the same rule the admin store scan follows. `unsure` entries were doubted by the listing
@@ -16748,6 +16818,25 @@
         + lines.join('')
         + (reallyGone.length ? `<div class="row" style="margin-top:12px"><button class="btn btn-red small" id="fx-ck-clear">Clear ${reallyGone.length} dead entr${reallyGone.length===1?'y':'ies'}</button></div>` : ''),
         r => {
+          const rc = $('#fx-ck-reclaim', r);
+          if(rc) rc.onclick = async () => {
+            const gb = reclaim.reduce((n, b) => n + (b.size || 0), 0);
+            if(!await uiConfirm('Delete ' + reclaim.length + ' stored blob'
+              + (reclaim.length === 1 ? '' : 's') + ' (' + _fxBytes(gb) + ')?\n\nThese bytes belong '
+              + 'to no synced folder and no file in your drive \u2014 typically what a deleted '
+              + 'synced folder left behind. Re-adding a folder later simply re-uploads what it '
+              + 'needs.', { ok:'Delete ' + _fxBytes(gb), danger:true })) return;
+            rc.disabled = true;
+            let done = 0, failedN = 0;
+            for(const b of reclaim){
+              rc.textContent = 'reclaiming\u2026 ' + (++done) + '/' + reclaim.length;
+              try{ if(!await deleteBlobQuiet(b.sha256)) failedN++; }catch(_){ failedN++; }
+            }
+            toast(failedN ? ('reclaimed ' + (reclaim.length - failedN) + ' \u2014 ' + failedN
+                             + ' could not be deleted; run the check again')
+                          : ('reclaimed ' + _fxBytes(gb)));
+            closeModal();
+          };
           const cl = $('#fx-ck-clear', r);
           if(cl) cl.onclick = async () => {
             /* A SHORT LIST IS A DELETE ORDER — the same rule the phone book and folder sync use, and
@@ -17213,7 +17302,7 @@
         : `<button class="rnsync" data-path="${enc(full)}" data-name="${enc(it.name)}" title="Rename${it.dir?' this folder everywhere':''}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg></button>`
           + `<button class="rmsync" data-path="${enc(full)}" data-name="${enc(it.name)}"${it.dir?' data-dir="1"':''} title="Delete${it.dir?' this folder':''} on every device"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>`;
       const act = (it.dir ? ''
-        : `<button class="dlsync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`
+        : `<button class="dlsync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" data-path="${enc(it.path||'')}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`
           + `<button class="keepsync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" title="Save a copy to your drive"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg></button>`)
         + edits;
       const nav = it.dir ? ` data-dir="${enc(it.name)}"` : '';
@@ -17223,8 +17312,68 @@
         <div class="file-icon"${canThumb?` data-thumb="${enc(it.sha)}"`:''}>${icon}<span>${enc(it.dir?'folder':(ext||'file'))}</span></div>
         <div class="meta"><span class="fname" title="${enc(it.name)}">${enc(fileLabel(it.name, ext, it.size))}</span>${act?`<span class="fc-acts">${act}</span>`:''}</div></div>`;
     };
-    grid.innerHTML = (details ? _fxColsHTML(false) : '') + items.map(rowFor).join('');
+    const fileItems = items.filter(it => !it.dir);
+    const selbar = canEdit ? `<div class="sync-selbar">
+        <button class="btn btn-ghost small" id="ss-toggle">${_syncSelOn ? '\u2715 Done' : '\u2611 Select'}</button>
+        ${_syncSelOn ? `<button class="btn btn-ghost small" id="ss-all">Select all shown (${fileItems.length})</button>
+          <span class="muted small" id="ss-count">${_syncSel.size} selected</span>
+          <button class="btn btn-red small" id="ss-del"${_syncSel.size ? '' : ' disabled'}>\ud83d\uddd1 Delete on every device</button>` : ''}
+      </div>` : '';
+    grid.innerHTML = selbar + (details ? _fxColsHTML(false) : '') + items.map(rowFor).join('');
     if(details) _fxBindCols(grid);
+    if(_syncSelOn) grid.classList.add('selmode'); else grid.classList.remove('selmode');
+    {
+      const tog = $('#ss-toggle', grid);
+      if(tog) tog.onclick = () => { _syncSelOn = !_syncSelOn; _syncSel.clear(); renderBlossom(); };
+      const all = $('#ss-all', grid);
+      if(all) all.onclick = () => { fileItems.forEach(it => _syncSel.add(it.path)); renderBlossom(); };
+      const del = $('#ss-del', grid);
+      if(del) del.onclick = async () => {
+        const doomed = [..._syncSel];
+        if(!doomed.length) return;
+        /* One confirmation that says the reach and the safety net; one publish for the lot. */
+        if(!await uiConfirm('Delete ' + doomed.length + ' file' + (doomed.length === 1 ? '' : 's')
+          + ' on every device that syncs \u201c' + _syncRoot + '\u201d?\n\nEach device moves its copy '
+          + 'into .pc-trash \u2014 nothing is erased outright. Entries whose bytes were never stored '
+          + 'simply stop being asked for.', { ok:'Delete ' + doomed.length, danger:true })) return;
+        del.disabled = true; del.textContent = 'deleting\u2026';
+        try{
+          const r = await PCSync.edit.removeMany(_syncRoot, doomed);
+          const n = (r && r.removed) || 0;
+          toast('marked ' + n + ' deleted \u2014 every device applies it on its next sweep');
+          _syncSel.clear(); _syncSelOn = false;
+          renderBlossom();
+        }catch(e){
+          del.disabled = false; del.textContent = '\ud83d\uddd1 Delete on every device';
+          toast('nothing was deleted: ' + ((e && e.message) || e));
+        }
+      };
+      if(_syncSelOn){
+        // Row click toggles the tick instead of downloading; the tick lives on the row class.
+        const rowsOf = (path) => $$('.dlsync', grid).filter(b => b.dataset.path === path)
+                                  .map(b => b.closest('.file-card, .fx-row'));
+        const paintSel = () => {
+          $$('.dlsync', grid).forEach(b => {
+            const row = b.closest('.file-card, .fx-row');
+            if(row) row.classList.toggle('selrow', _syncSel.has(b.dataset.path));
+          });
+          const c = $('#ss-count', grid); if(c) c.textContent = _syncSel.size + ' selected';
+          const d = $('#ss-del', grid); if(d) d.disabled = !_syncSel.size;
+        };
+        $$('.dlsync', grid).forEach(b => {
+          const row = b.closest('.file-card, .fx-row');
+          if(!row) return;
+          row.onclick = (e) => {
+            if(e.target.closest('.fc-acts') && !e.target.closest('.dlsync')) return;
+            e.preventDefault(); e.stopPropagation();
+            const p2 = b.dataset.path;
+            if(_syncSel.has(p2)) _syncSel.delete(p2); else _syncSel.add(p2);
+            paintSel();
+          };
+        });
+        paintSel();
+      }
+    }
     $$('.file-card[data-dir]', grid).forEach(c=> c.onclick=(e)=>{
       if(e.target.closest('.fc-acts')) return;
       _syncPath = _syncPath ? _syncPath + '/' + c.dataset.dir : c.dataset.dir; renderBlossom();

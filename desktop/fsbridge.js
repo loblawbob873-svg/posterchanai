@@ -35,7 +35,12 @@ const crypto = require('crypto');
 
 const TRASH_DIR = '.pc-trash';
 const IGNORE = new Set([TRASH_DIR, '.git', 'node_modules', '.DS_Store', 'Thumbs.db',
-                        '.Trash', '$RECYCLE.BIN', 'System Volume Information']);
+                        '.Trash', '$RECYCLE.BIN', 'System Volume Information',
+                        // Another sync engine's bookkeeping is not content — same rule as our own
+                        // .pc-trash. A synced .stfolder marker breaks Syncthing on the machines it
+                        // lands on, and one marker file was published without an address and then
+                        // failed every fetch on every other device.
+                        '.stfolder', '.stversions', '.stignore']);
 /* Half-written files, by the names the tools that make them use.
  *
  * This is the substitute for file locking, and it has to be, because there is nothing to lock

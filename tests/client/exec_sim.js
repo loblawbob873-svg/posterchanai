@@ -663,7 +663,13 @@ scenario('a conflict whose incoming copy never arrives leaves the local file whe
   sky.forget(sky.docs.laptop[p].sha);
   const B2 = device('phone', sky, { disk: B.disk, index: B.st.index, mtimes: { [p]: 5000 } });
   const r = await B2.sweep();
-  t.eq(r.failed.length, 1, 'a conflict whose copy is missing did not fail');
+  /* "Can't be fetched", not "failed": a 404 is a fact about the STORE, and labelling it a failure
+   * of this sweep invited pressing Sync now again — which retried every missing copy and printed
+   * the same alarm again, for ever. The safety half is unchanged: the local file stays exactly
+   * where it is, nothing is renamed, and the sweep does not claim a clean pass. */
+  t.eq(r.failed.length, 0, 'a missing stored copy was labelled a sweep failure');
+  t.eq((r.unfetchable || []).length, 1, 'a conflict whose copy is missing was not reported at all');
+  t.ok(r.ok === false, 'a sweep with an unresolved conflict claimed a clean pass');
   t.ok(!!B2.disk[p], 'the local file was renamed away and nothing replaced it');
   t.eq(B2.disk[p].toString(), 'the phone version', 'the local copy was not left intact');
   t.eq(B2.st.moved.length, 0, 'it renamed the local copy before it had anything to put in its place');

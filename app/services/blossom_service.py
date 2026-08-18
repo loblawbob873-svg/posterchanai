@@ -1374,6 +1374,12 @@ def descriptor(blob: BlossomBlob, base_url: str, name: str = "") -> dict:
     }
     if name:
         d["name"] = name          # non-standard but widely used; lets any client show a real filename
+    # Non-standard too, and load-bearing for the client's storage reclaim: `keep` marks drive and
+    # folder-sync content (age-exempt), which is exactly the class that leaks when a synced folder
+    # is deleted — its records go, its bytes stay, owned by nobody's bookkeeping. Post media is NOT
+    # keep, so a reclaim keyed on this flag can never touch the images in somebody's old posts.
+    if getattr(blob, "keep", False):
+        d["keep"] = True
     return d
 
 

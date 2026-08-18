@@ -175,16 +175,20 @@
 
     /* 3. The disk, a page at a time. */
     step('scanning');
-    let disk;
-    try{ disk = await scan(fs, scanOpts, stopping); }
+    let disk, unread;
+    try{ const got = await scan(fs, scanOpts, stopping); disk = got.disk; unread = got.unread; }
     catch(e){ throw new Error('could not read the folder on this device — nothing has been changed. ('
                               + msg(e) + ')'); }
     if(stopping()) return halt(report);
     report.scanned = Object.keys(disk).length;
+    if(unread.length) report.unreadable = unread.slice(0, 200);
 
-    /* 4. Decide, check, and let a person answer for anything that is theirs to answer. */
+    /* 4. Decide, check, and let a person answer for anything that is theirs to answer.
+     * Paths the scan could not read join the exclusions: dropped from all three inputs, so an
+     * unreadable subtree can neither be deleted here nor tombstoned to anyone. */
     let plan = E.reconcile({ disk, global: merged.global, rivals: merged.rivals, by: merged.by,
-                             index, device: me, now, excludes: o.excludes || [] });
+                             index, device: me, now,
+                             excludes: (o.excludes || []).concat(unread) });
 
     /* PATHS THE CALLER DEMANDS BE SENT AGAIN.
      *
@@ -344,11 +348,19 @@
         if(cid && /checksum mismatch/.test(why)){
           report.badFetch = report.badFetch || {};
           report.badFetch[c.path] = { id: cid, why: 'checksum' };
+          failed(report, c.path, 'conflict', e);
         } else if(cid && /unavailable \(404\)/.test(why)){
+          // The same rule as the download loop below: a 404 is a fact about the store, reported as
+          // "can't be fetched", never as this sweep failing — see the comment there.
           report.badFetch = report.badFetch || {};
           report.badFetch[c.path] = { id: cid, why: 'gone', at: now0() };
+          report.unfetchable = report.unfetchable || [];
+          report.unfetchable.push({ path: c.path, why: 'the incoming copy is not in the store — your '
+                                    + 'copy was left exactly as it is' });
+          report.ok = false;
+        } else {
+          failed(report, c.path, 'conflict', e);
         }
-        failed(report, c.path, 'conflict', e);
       }
       await journal.maybe();
     }
@@ -421,11 +433,23 @@
           if(/checksum mismatch/.test(why)){
             report.badFetch = report.badFetch || {};
             report.badFetch[d.path] = { id: idOf(d.entry), why: 'checksum' };
+            failed(report, d.path, 'download', e);
           } else if(/unavailable \(404\)/.test(why)){
+            /* A 404 IS A FACT ABOUT THE STORE, NOT A FAILURE OF THIS SWEEP — and the label decides
+             * what a person does next. "231 failed" reads as breakage and invites pressing Sync now
+             * again, which (a pressed button means try again) refetches all 231 and prints "231
+             * failed" again: a loop of despair someone sat inside for a day. "231 can't be fetched —
+             * the store doesn't have those bytes" is the truth, points at the device that can fix it
+             * (Verify, on the device that holds the files), and stops indicting the sweep. */
             report.badFetch = report.badFetch || {};
             report.badFetch[d.path] = { id: idOf(d.entry), why: 'gone', at: now0() };
+            report.unfetchable = report.unfetchable || [];
+            report.unfetchable.push({ path: d.path, why: 'the store does not have these bytes — run '
+                                      + 'Verify on the device that has this file to send it again' });
+            report.ok = false;
+          } else {
+            failed(report, d.path, 'download', e);
           }
-          failed(report, d.path, 'download', e);
         }
       });
 
@@ -538,23 +562,34 @@
    * What is kept is three numbers per path. */
   async function scan(fs, o, stopping){
     const disk = {};
+    /* WHAT THE SCAN COULD NOT READ IS NOT ABSENT — IT IS UNKNOWN, and the difference is a deleted
+     * subtree. A folder the walk could not enter (permissions, a disk hiccup, an antivirus holding
+     * it) leaves its files out of `disk`; read as "deleted locally" they are tombstoned to every
+     * device. Measured: five files under one unreadable folder → five tombstones, guards silent
+     * (below the mass floor). So the skipped paths travel with the result, and the sweep treats
+     * them exactly like exclusions: dropped from all three inputs, deletable by no one. */
+    const unread = [];
+    const note = (r) => { for(const k of (r && r.skipped) || []){
+      const p = (k && k.path) || k; if(p) unread.push(String(p)); } };
     const so = { hash: !!o.hash, excludes: o.excludes || [], maxBytes: 0 };
     if(typeof fs.scanPage !== 'function'){
       const r = await fs.scan(o.id, so);
       for(const p in (r && r.files) || {}) disk[p] = compact(r.files[p]);
-      return disk;
+      note(r);
+      return { disk, unread };
     }
     let off = 0;
     for(;;){
-      if(stopping()) return disk;
+      if(stopping()) return { disk, unread };
       const page = await fs.scanPage(o.id, so, off, SCAN_PAGE);
       const files = (page && page.files) || {};
       const n = Object.keys(files).length;
       for(const p in files) disk[p] = compact(files[p]);
+      note(page);
       off += n;
       if(!n || !page || page.done) break;
     }
-    return disk;
+    return { disk, unread };
   }
   const compact = (f) => ({ size: (f && f.size) || 0, mtime: (f && f.mtime) || 0,
                             csum: (f && (f.csum || f.sha)) || undefined });
@@ -807,7 +842,7 @@
     for(const p in merged.rivals) out.disagree.push(p);
 
     tick({ phase: 'scanning' });
-    const disk = await scan(fs, Object.assign({}, o, { hash: false }), () => false);
+    const disk = (await scan(fs, Object.assign({}, o, { hash: false }), () => false)).disk;
 
     const paths = Object.keys(merged.global).filter(p => merged.global[p] && !merged.global[p].deletedAt);
     let i = 0;

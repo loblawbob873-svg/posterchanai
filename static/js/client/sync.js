@@ -648,6 +648,13 @@
       // every deletion in the pair, and the only way out is for somebody to say "that one is gone" —
       // which they cannot do if nothing will name it.
       const cannot = Array.isArray(j && j.cannot) ? j.cannot.slice() : [];
+      // The sealed path-list blobs are REFERENCES too: a storage reclaim that cannot see them would
+      // delete the very blob a manifest's paths live in. Collected off the raw docs, before opening.
+      const sealedIds = [];
+      for(const dev of Object.keys(raw)){
+        const d0 = raw[dev];
+        if(d0 && d0.pathsSha) sealedIds.push(d0.pathsSha);
+      }
       let missing = +(j && j.unreadable) || 0;
       for(const dev of Object.keys(raw)){
         try{ views[dev] = await _openDoc(raw[dev]); }
@@ -670,10 +677,11 @@
        * versions, so its entries compare by content — which is exactly what this engine did before
        * versions existed, and it is how a pair that predates this upgrade keeps working. */
       if(j && j.legacy){
+        if(j.legacy.pathsSha) sealedIds.push(j.legacy.pathsSha);
         try{ const v = await _openDoc(j.legacy); if(Object.keys(v).length) views['(shared)'] = v; }
         catch(e){ missing++; }
       }
-      return { views, missing, cannot };
+      return { views, missing, cannot, sealedIds };
     },
     /** Publish OUR view. One writer, so this is a write and nothing else. */
     async publish(key, entries){
@@ -1524,6 +1532,10 @@
      * bytes; only the device that has the files can put them back. */
     const _unf = (rep.unfetchable || []).length;
     if(_unf) bits.push(_unf + ' can\u2019t be fetched \u2014 the store doesn\u2019t have those bytes');
+    /* An unreadable subtree is neither synced nor deleted — but silence about it reads as "in
+     * step", about paths this sweep never saw. */
+    const _unr = (rep.unreadable || []).length;
+    if(_unr) bits.push(_unr + ' path' + (_unr === 1 ? '' : 's') + ' couldn\u2019t be read on this device \u2014 left alone');
     // Said out loud, because "900 up" for files that were never sent is how a working first sweep
     // gets mistaken for the resync bug it is recovering from.
     if(rep.alreadyStored) bits.push(rep.alreadyStored + ' already stored');

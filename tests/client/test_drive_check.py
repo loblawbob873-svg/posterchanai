@@ -55,12 +55,19 @@ class DriveCheckTests(unittest.TestCase):
         self.assertIn("if(!Array.isArray(list))", self.body)
         self.assertIn("nothing was changed", self.body)
 
-    def test_it_never_offers_to_delete_a_blob(self):
-        """Folder sync, its records and the music library keep their own bookkeeping and none of it
-        is in this index, so "not named here" is not "unreferenced"."""
-        self.assertNotIn("deleteBlobQuiet", self.body)
-        self.assertNotIn("delBlob", self.body)
-        self.assertNotIn("method:'DELETE'", self.body)
+    def test_bytes_are_never_deleted_on_the_indexs_word_alone(self):
+        """"Not named here" is not "unreferenced" — folder sync and the music library keep their own
+        books. The RECLAIM may delete, but only through _reclaimableBlobs, whose set is keep-flagged
+        AND unnamed AND unreferenced by every synced folder — and only when every folder could be
+        read in full (see ReclaimTests). Outside that one handler, no deletion exists here."""
+        outside = self.body.replace(
+            self.body[self.body.index("fx-ck-reclaim', r)"):self.body.index("const cl = $('#fx-ck-clear'")], "")
+        self.assertNotIn("deleteBlobQuiet", outside)
+        self.assertNotIn("delBlob", outside)
+        self.assertNotIn("method:'DELETE'", outside)
+        # and the one handler is fed by the guarded set, nothing else
+        h = self.body[self.body.index("fx-ck-reclaim', r)"):self.body.index("const cl = $('#fx-ck-clear'")]
+        self.assertIn("reclaim", h)
 
     def test_the_only_repair_is_the_index_and_it_is_batched(self):
         repair = self.body[self.body.index("fx-ck-clear"):]
@@ -198,3 +205,72 @@ class TheProbeTests(unittest.TestCase):
         self.assertIn("could not be checked a second time", self.body)
         # …and only the confirmed ones reach the button.
         self.assertIn("reallyGone.length ?", self.body)
+
+
+class ReclaimTests(unittest.TestCase):
+    """Deleting a synced folder cleared its RECORDS and leaked every BYTE — 137.5 GB measured on the
+    day both pairs were deleted, all keep-flagged, owned by no bookkeeping. This is the missing
+    other half of that delete, and the lifecycle rule these pin: bytes must always have a way back
+    out, and the set that may be touched is provably narrow."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(APP, encoding="utf-8") as fh:
+            cls.src = fh.read()
+
+    def _run(self, list_, index, refs):
+        import json
+        import re
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("no node on this node")
+        m = re.search(r"function _reclaimableBlobs\(list, indexShas, refIds\)\{[\s\S]*?\n  \}", self.src)
+        self.assertIsNotNone(m, "_reclaimableBlobs moved in app.js")
+        js = ("const fn = %s;\n"
+              "const out = fn(%s, new Set(%s), new Set(%s));\n"
+              "process.stdout.write(JSON.stringify(out.map(b => b.sha256)));"
+              % (m.group(0).replace("function _reclaimableBlobs", "function"),
+                 json.dumps(list_), json.dumps(index), json.dumps(refs)))
+        r = subprocess.run([node, "-e", js], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        import json as j
+        return j.loads(r.stdout)
+
+    def test_only_keep_flagged_orphans_are_offered(self):
+        got = self._run(
+            [{"sha256": "aa", "size": 5, "keep": True},     # orphan, keep → reclaimable
+             {"sha256": "bb", "size": 5},                    # post media (not keep) → NEVER
+             {"sha256": "cc", "size": 5, "keep": True},     # in the drive index → no
+             {"sha256": "dd", "size": 5, "keep": True},     # referenced by a synced folder → no
+             {"sha256": "ee", "size": 5, "keep": True}],    # a sealed manifest list → no
+            ["cc"], ["dd", "ee"])
+        self.assertEqual(got, ["aa"])
+
+    def test_an_unreadable_folder_kills_the_offer_entirely(self):
+        """`_syncRefIds` answers null when any device view could not be read, and the caller treats
+        null as NO — a reclaim with a partial reference set is a delete order for whatever the
+        unread folder holds."""
+        at = self.src.index("async function _syncRefIds(")
+        body = self.src[at:at + 1600]
+        self.assertIn("return null", body)
+        self.assertIn("got.missing", body, "an unread device view does not kill the offer")
+        caller = self.src[self.src.index("const refs = await _syncRefIds();"):][:400]
+        self.assertIn("if(refs)", caller, "a null reference set still produces an offer")
+
+    def test_sealed_manifest_blobs_count_as_references(self):
+        with open(os.path.join(ROOT, "static", "js", "client", "sync.js"), encoding="utf-8") as fh:
+            sync = fh.read()
+        self.assertIn("sealedIds", sync)
+        at = self.src.index("async function _syncRefIds(")
+        self.assertIn("sealedIds", self.src[at:at + 1600],
+                      "a reclaim could delete the very blob a manifest's paths live in")
+
+    def test_it_asks_with_the_size_and_deletes_only_on_yes(self):
+        at = self.src.index("fx-ck-reclaim', r)")
+        h = self.src[at:at + 1600]
+        ask = h.index("uiConfirm")
+        do = h.index("deleteBlobQuiet")
+        self.assertLess(ask, do)
+        self.assertIn("belong ", h)

@@ -837,7 +837,11 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   ordinary names as gone from a real drive, and that list drives a repair that TOMBSTONES index
   entries on every device for ninety days. It is `_blobPresent` now (HEAD; 200/206 → there, 404/410 →
   gone, anything else → unknown, and unknown is never offered for deletion). Orphan bytes are
-  REPORTED, never deleted — folder sync, music and every other feature keep their own bookkeeping and
+  reported — and since 2026-08-18 a guarded RECLAIM exists for exactly one class: keep-flagged blobs
+  that no drive-index entry and no synced folder references (entries + chunks + sealed path-list
+  blobs; a folder that cannot be fully read kills the offer). Deleting a synced folder clears its
+  records and used to leak every byte (measured, 137.5 GB); this is that delete's other half. All
+  other orphans are still reported, never deleted — folder sync, music and every other feature keep their own bookkeeping and
   none of it is in that index. `tests/client/test_drive_check.py`, `tests/test_blossom_scan.py`.
 - **The nostr-only Docker image downloads NO model weights.** `DOWNLOAD_MODEL` /
   `DOWNLOAD_DEPTH_MODEL` / `DOWNLOAD_U2NET_MODEL` are `ENV …=1` in the Dockerfile's **shared** final
