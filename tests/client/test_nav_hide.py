@@ -519,3 +519,33 @@ class MobileNavChoiceTests(unittest.TestCase):
         S = [{"cls": "nav-item", "view": "global", "label": "Social"}]
         out = run(sidebar=S, mobileNav=["home", "global", "trending", "notes"])
         self.assertEqual(out["mobileNavChoices"].count("global"), 1)
+
+
+class GroupMembershipTests(unittest.TestCase):
+    """The desktop launcher's model on the sidebar: template groups are DEFAULTS applying only
+    where the user has no opinion; an override moves one item — "I care about Calendar, but I
+    don't want to reorder the whole group together"."""
+
+    def test_an_override_saves_and_publishes(self):
+        out = run(groupMove={"calendar": ""})
+        self.assertEqual(out["groupOf"], {"calendar": ""})
+        pub = [p for p in out["published"] if "navGroupOf" in p]
+        self.assertEqual(pub[-1]["navGroupOf"], {"calendar": ""})
+
+    def test_absent_prefs_move_nothing(self):
+        out = run(tlHide=[])
+        self.assertNotIn("groupOf", out)
+
+    def test_the_apply_half_is_structural(self):
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        app = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+        at = app.index("function applyNavGroups()")
+        body = app[at:at + 2600]
+        self.assertIn("el.classList.add('sub')", body)
+        self.assertIn("el.classList.remove('sub')", body, "moving OUT of a group keeps the sub style")
+        self.assertIn("_foldEmptyNavGroups()", body, "an emptied group leaves a corpse header")
+        # moving out places the row right after the group it left — not at the end of the nav
+        self.assertIn("insertBefore(el, grp.nextSibling)", body)
+        # …and the editor offers the way out by name
+        self.assertIn("Top level (its own row)", app)

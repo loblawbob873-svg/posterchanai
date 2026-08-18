@@ -220,6 +220,12 @@ if(opt.order){
   out.navSequence = _navSequence();
   out.navOrderSaved = store.navOrder || null;
 }
+if(opt.groupMove){
+  // setNavGroupOf: the DOM half no-ops here (the stub document builds no elements); what the sim
+  // proves is the DECISIONS half — the override lands in settings and publishes to the prefs doc.
+  for(const [k, g] of Object.entries(opt.groupMove)) setNavGroupOf(k, g);
+  out.groupOf = navGroupOf();
+}
 if(opt.tlHide){
   setTlHidden(opt.tlHide);
   out.tlHidden = [...tlHiddenSet()];

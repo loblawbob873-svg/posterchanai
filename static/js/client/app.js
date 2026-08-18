@@ -407,6 +407,7 @@
     // deployment has at all, the preference decides what to do with what is left. It folds the
     // groups on the way out, which is why there is no separate fold call here.
     applyNavHidden();
+    applyNavGroups();
     applyNavOrder();
     // Standing on a view that just went away → go somewhere that exists.
     if(solo && INSTANCE_VIEWS.has(VIEW)){ try{ switchView(_startTimeline()); }catch(_){} }
@@ -657,6 +658,84 @@
     }catch(_){}
     return saveClientPrefsNostr({ tlHidden: list });
   }
+  /* GROUP MEMBERSHIP — the desktop launcher's model, on the sidebar: the template's groups
+   * (Office, Files, Discover, Games) are DEFAULTS that apply only where the user has no opinion;
+   * an override per item moves it into another group, into a group of the user's own, or out to
+   * the top level — where it becomes an ordinary orderable row ("I care about Calendar, but I
+   * don't want to reorder the whole group together"). Absent prefs change nothing. */
+  function navGroupOf(){
+    let raw = ClientSettings.get('navGroupOf', {});
+    if(typeof raw === 'string'){ try{ raw = JSON.parse(raw); }catch(_){ raw = {}; } }
+    const out = {};
+    if(raw && typeof raw === 'object') for(const k of Object.keys(raw)){
+      const v = String(raw[k] == null ? '' : raw[k]).slice(0, 60);
+      out[String(k).slice(0, 60)] = v;
+    }
+    return out;
+  }
+  function navUserGroups(){
+    let raw = ClientSettings.get('navUserGroups', []);
+    if(typeof raw === 'string'){ try{ raw = JSON.parse(raw); }catch(_){ raw = []; } }
+    const out = [];
+    if(Array.isArray(raw)) for(const g of raw){
+      if(g && g.key && /^group:u[a-z0-9]+$/.test(String(g.key)))
+        out.push({ key: String(g.key).slice(0, 30), name: String(g.name || 'Group').slice(0, 30) });
+    }
+    return out;
+  }
+  function _navItemByKey(key){
+    if(key === '__music') return document.getElementById('nav-music');
+    if(key === '__golive') return document.getElementById('nav-golive');
+    if(key === '__bug') return document.getElementById('rb-report');
+    return document.querySelector('.sidebar .nav .nav-item[data-view="' + key + '"]');
+  }
+  function applyNavGroups(){
+    try{
+      const nav = document.querySelector('.sidebar .nav'); if(!nav) return;
+      // Custom groups exist before anything can move into them.
+      for(const g of navUserGroups()){
+        const id = g.key.slice(6);                       // 'group:uxyz' -> 'uxyz'
+        if(document.getElementById(id + '-toggle')) continue;
+        const wrap = document.createElement('div'); wrap.className = 'nav-group';
+        wrap.innerHTML = '<button class="nav-item nav-grouphd" id="' + id + '-toggle">'
+          + '<svg class="ic"><use href="#i-folder"></use></svg><span>' + enc(g.name) + '</span></button>'
+          + '<div class="nav-sub" id="' + id + '-sub"></div>';
+        nav.appendChild(wrap);
+      }
+      const moves = navGroupOf();
+      for(const key of Object.keys(moves)){
+        const el = _navItemByKey(key); if(!el) continue;
+        const want = moves[key];
+        if(want && want.indexOf('group:') === 0){
+          const sub = document.getElementById(want.slice(6) + '-sub');
+          if(sub && el.parentElement !== sub){ sub.appendChild(el); el.classList.add('sub'); }
+        }else if(!want){
+          const grp = el.closest('.nav-group');
+          if(grp){ grp.parentElement.insertBefore(el, grp.nextSibling); el.classList.remove('sub'); }
+        }
+      }
+      _foldEmptyNavGroups();
+    }catch(_){}
+    try{ window.PCOS && PCOS.navChanged && PCOS.navChanged(); }catch(_){}
+  }
+  function setNavGroupOf(key, group){
+    const cur = navGroupOf();
+    if(group === undefined || group === null) delete cur[key]; else cur[key] = group;
+    ClientSettings.set('navGroupOf', cur);
+    _prefTouched.add('navGroupOf');
+    applyNavGroups(); applyNavOrder();
+    return saveClientPrefsNostr({ navGroupOf: cur });
+  }
+  function addNavUserGroup(name){
+    const gs = navUserGroups();
+    const key = 'group:u' + Math.random().toString(36).slice(2, 8);
+    gs.push({ key, name: String(name || 'Group').slice(0, 30) });
+    ClientSettings.set('navUserGroups', gs);
+    _prefTouched.add('navUserGroups');
+    applyNavGroups();
+    saveClientPrefsNostr({ navUserGroups: gs });
+    return key;
+  }
   function navHiddenSet(){
     let raw = ClientSettings.get('navHidden', []);
     if(typeof raw === 'string'){ try{ raw = JSON.parse(raw); }catch(_){ raw = []; } }
@@ -743,6 +822,34 @@
   }
   function _wireNavHide(){
     const list = $('#nav-hide-list'); if(!list) return;
+    /* ▦ GROUP PICKER — the sheet the Move menu uses, so it is already right on both shapes. The
+     * choice is an OVERRIDE: "(top level)" is the answer to "I care about Calendar but not the
+     * rest of its group" — the row leaves the group and becomes its own orderable unit. */
+    list.addEventListener('click', async (e) => {
+      const gb = e.target.closest('[data-grpkey]'); if(!gb) return;
+      e.preventDefault(); e.stopPropagation();
+      const key = gb.dataset.grpkey;
+      const groups = [];
+      $$('.sidebar .nav .nav-grouphd').forEach(h => {
+        const k = _navKey(h); if(k) groups.push({ v: k, l: '\ud83d\udcc1 ' + (_navLabel(h) || k.slice(6)) });
+      });
+      const rows = [{ v: '__top', l: '\u2b06 Top level (its own row)' }]
+        .concat(groups)
+        .concat([{ v: '__new', l: '\u271a New group\u2026' }]);
+      const el0 = _navItemByKey(key);
+      const pick = await _pickOne('Where should \u201c' + ((el0 && _navLabel(el0)) || key) + '\u201d live?', rows);
+      if(!pick) return;
+      let dest = pick === '__top' ? '' : pick;
+      if(pick === '__new'){
+        const nm = await uiPrompt('Name the group', { ok: 'Create' });
+        if(nm === null || !String(nm).trim()) return;
+        dest = addNavUserGroup(String(nm).trim());
+      }
+      await setNavGroupOf(key, dest);
+      // The pane re-renders in place so the row appears under its new home immediately.
+      try{ const pane = document.querySelector('.us-pane[data-pane="sidebar"]');
+           if(pane){ pane.innerHTML = _navHideHtml(); _wireNavHide(); } }catch(_){}
+    });
     /* REORDER: a click moves the row's whole BLOCK — a group header carries the indented sub-rows
      * under it — then the sequence of top-level rows IS the saved order. The editor list is the
      * source of truth for the save, so what you see is exactly what you get. */
@@ -3835,6 +3942,7 @@
     // already ran this once via applyInstanceGating; it is idempotent and reads localStorage, so the
     // sidebar is tidy before the relay has answered rather than reshuffling once it does.
     applyNavHidden();
+    applyNavGroups();
     applyNavOrder();
     applyMobileNav();
     // Collapsible "Discover" group (Articles / Streams / Communities) in the sidebar.
@@ -14780,6 +14888,14 @@
       }
       // The sidebar ORDER follows the same rules as the hides directly above: absent = untouched,
       // applied on landing, and a locally-changed value wins over a late restore.
+      if(!_prefTouched.has('navGroupOf') && pr.navGroupOf && typeof pr.navGroupOf === 'object'){
+        ClientSettings.set('navGroupOf', pr.navGroupOf);
+        applyNavGroups();
+      }
+      if(!_prefTouched.has('navUserGroups') && Array.isArray(pr.navUserGroups)){
+        ClientSettings.set('navUserGroups', pr.navUserGroups);
+        applyNavGroups();
+      }
       if(!_prefTouched.has('navOrder') && Array.isArray(pr.navOrder)){
         ClientSettings.set('navOrder', pr.navOrder.map(v=>String(v==null?'':v).slice(0,60)).filter(Boolean).slice(0,200));
         applyNavOrder();
