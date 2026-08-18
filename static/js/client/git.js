@@ -59,6 +59,35 @@ window.PCGitFactory = function(dep){
   // Falls back to 'all' when you're signed out or own none, otherwise the default view is empty.
   // Sticky for the session (not persisted), so switching to 'all' survives leaving and re-entering.
   let _repoScope='mine';
+  /* ⭐ STARS — a NIP-51 bookmark set (kind 30003, d:'git-repos') of 30617 `a` coordinates, the
+   * idiomatic Nostr list any list-aware client can read. Replaceable, so the two standing rules for
+   * replaceable lists apply with no exceptions: NEVER write after a failed read (an empty read
+   * written back is the follows-wipe), and serialize writes (a chain, like Budget's). `_stars`
+   * stays null until a read SUCCEEDS — and a null set means the star buttons are read-only. */
+  const STARS_D='git-repos';
+  let _stars=null, _starChain=Promise.resolve();
+  async function _loadStars(){
+    if(!S.ME || !S.ME.pubkey) return;
+    try{
+      const evs=await Relay.query([{ kinds:[30003], authors:[S.ME.pubkey], '#d':[STARS_D], limit:5 }]);
+      const latest=(evs||[]).sort((a,b)=>b.created_at-a.created_at)[0];
+      _stars=new Set(latest?(latest.tags||[]).filter(t=>t[0]==='a'&&/^30617:/.test(t[1]||'')).map(t=>t[1]):[]);
+    }catch(_){ /* _stars stays as it was — possibly null, which keeps the buttons read-only */ }
+  }
+  function _starred(e){ return !!(_stars && _stars.has(_repoAddr(e))); }
+  function toggleStar(e){
+    if(!S.ME || !S.ME.pubkey){ _guestPrompt(); return Promise.resolve(false); }
+    if(_stars===null){ toast('still loading your starred list — try again in a second'); return Promise.resolve(false); }
+    const addr=_repoAddr(e), on=!_stars.has(addr);
+    if(on) _stars.add(addr); else _stars.delete(addr);
+    _starChain=_starChain.catch(()=>{}).then(async()=>{
+      const tags=[['d',STARS_D],['title','Git repos']].concat([..._stars].map(a=>['a',a]));
+      const r=await publish(30003, '', tags);
+      if(r && r.ok===false){ if(on) _stars.delete(addr); else _stars.add(addr);
+        toast('the relay didn\u2019t store your star — nothing changed'); }
+    });
+    return Promise.resolve(on);
+  }
   // Where a repo's code actually lives — the clone URL's host. In "All repos" this is the single most
   // useful fact about a stranger's announcement (a relay federates in repos hosted anywhere), and it's
   // what separates "I can browse this here" from "this is a pointer to someone else's server".
@@ -164,18 +193,21 @@ window.PCGitFactory = function(dep){
     // Ask for the relay's MAXIMUM (store.py clamps to 5000) rather than omitting the field: a filter
     // with no limit is read as `limit or 500`, so leaving it out is the 500 cap, not the absence of one.
     let evs=[]; try{ evs=await Relay.query([{ kinds:[30617], limit:5000 }]); }catch(_){}
+    if(_stars===null) await _loadStars();
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     if(S.VIEW!=='repos') return;
     const repos=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
     const mine=repos.filter(_repoIsMine);
     if(!mine.length) _repoScope='all';           // never open on an empty view
-    const scoped=()=>_repoScope==='mine'?mine:repos;
+    if(_repoScope==='starred' && (!_stars || !_stars.size)) _repoScope = mine.length?'mine':'all';
+    const scoped=()=>_repoScope==='mine'?mine:(_repoScope==='starred'?repos.filter(_starred):repos);
     const grid=r=>`<div class="repo-grid">${r.map(repoCard).join('')}</div>`;
     feed.innerHTML = `<div class="art-top repo-top">
         ${_gitHostBase()?`<button class="btn btn-neon small" id="repo-create"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Create repo</button>`:''}
         <button class="btn ${_gitHostBase()?'btn-ghost':'btn-neon'} small" id="repo-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Announce a repo</button>
         ${mine.length?`<div class="repo-scope" role="tablist">
           <button class="repo-sc${_repoScope==='mine'?' on':''}" data-scope="mine" role="tab">Mine</button>
+          <button class="repo-sc${_repoScope==='starred'?' on':''}" data-scope="starred" role="tab">\u2b50 Starred</button>
           <button class="repo-sc${_repoScope==='all'?' on':''}" data-scope="all" role="tab">All repos</button>
         </div>`:''}
         ${repos.length>1?`<input class="input repo-search" id="repo-q" type="search" autocomplete="off" placeholder="🔍 Search repos — name, owner, description…">`:''}
@@ -190,6 +222,13 @@ window.PCGitFactory = function(dep){
       $$('.repo-clone',feed).forEach(b=> b.onclick=ev=>{ ev.stopPropagation(); copyValue(b.dataset.clone, 'clone URL copied', 'Clone URL:'); });
       $$('.repo-share',feed).forEach(b=> b.onclick=ev=>{ ev.stopPropagation(); copyValue(b.dataset.share, 'project link copied', 'Project link:'); });
       $$('.repo-card a[href]',feed).forEach(a=> a.onclick=ev=>ev.stopPropagation());   // ↗ Open must not also open the detail
+      $$('.repo-star',feed).forEach(b=> b.onclick=async ev=>{ ev.stopPropagation();
+        const e=Store.get(b.dataset.id); if(!e) return;
+        const on=await toggleStar(e);
+        b.textContent=_starred(e)?'\u2b50':'\u2606';
+        b.title=_starred(e)?'Unstar':'Star';
+        if(_repoScope==='starred') paint();     // unstarring while looking at Starred removes the card
+      });
       $$('.repo-card',feed).forEach(c=> c.onclick=()=>{ const e=Store.get(c.dataset.id); if(e) openRepo(e); });
     };
     const q=$('#repo-q',feed);
@@ -407,7 +446,7 @@ window.PCGitFactory = function(dep){
       <div class="repo-card-desc">${desc?enc(desc.slice(0,150)):'<span class="muted">git repository</span>'}</div>
       <div class="repo-card-by"><img class="repo-card-av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'" data-prof="${e.pubkey}"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span>${
         _repoHostname(e)?`<span class="repo-host${_repoHostedHere(e)?' here':''}" title="${enc(_repoHostname(e))}">${enc(_repoHostname(e))}</span>`:''}</div>
-      <div class="repo-card-acts">${clone.length?`<button class="btn btn-ghost small repo-clone" data-clone="${enc(clone[0])}">⧉ Clone</button>`:''}${share?`<button class="btn btn-ghost small repo-share" data-share="${enc(share)}" onclick="event.stopPropagation()"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Link</button>`:''}${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Web</a>`:''}</div>
+      <div class="repo-card-acts"><button class="btn btn-ghost small repo-star" data-id="${e.id}" title="${_starred(e)?'Unstar':'Star'}">${_starred(e)?'\u2b50':'\u2606'}</button>${clone.length?`<button class="btn btn-ghost small repo-clone" data-clone="${enc(clone[0])}">⧉ Clone</button>`:''}${share?`<button class="btn btn-ghost small repo-share" data-share="${enc(share)}" onclick="event.stopPropagation()"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Link</button>`:''}${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Web</a>`:''}</div>
     </article>`;
   }
   // ---------- NIP-34 repo detail (README + issues + patches) ----------

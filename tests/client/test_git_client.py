@@ -197,3 +197,45 @@ class GitJsParsesTests(unittest.TestCase):
     def test_it_parses(self):
         r = subprocess.run([NODE, "--check", GIT], capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+
+
+class StarTests(unittest.TestCase):
+    """⭐ repos — a NIP-51 bookmark set (30003, d:'git-repos') of 30617 coordinates, filterable as
+    Mine / ⭐ Starred / All. The replaceable-list rules are load-bearing and pinned: no write after a
+    failed read (a null star set keeps the buttons read-only), writes serialized, and a refused
+    publish rolls the optimistic toggle back."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.git = _src(GIT)
+
+    def test_the_list_is_nip51_and_carries_repo_coordinates(self):
+        at = self.git.index("STARS_D")
+        seg = self.git[at:at + 2400]
+        self.assertIn("30003", seg)
+        self.assertIn("30617:", seg)
+        self.assertIn("['d',STARS_D]", seg.replace('"', "'"))
+
+    def test_a_failed_read_keeps_the_buttons_read_only(self):
+        at = self.git.index("async function _loadStars()")
+        seg = self.git[at:at + 900]
+        self.assertIn("catch(_){", seg)
+        self.assertNotIn("_stars=new Set()", seg.split("catch")[1],
+                         "a failed read minted an empty list — the follows-wipe, for stars")
+        at2 = self.git.index("function toggleStar(")
+        self.assertIn("_stars===null", self.git[at2:at2 + 600],
+                      "toggling with no successful read would publish an empty list")
+
+    def test_a_refused_publish_rolls_the_star_back(self):
+        at = self.git.index("function toggleStar(")
+        seg = self.git[at:at + 1400]
+        self.assertIn("r.ok===false", seg)
+        self.assertIn("if(on) _stars.delete(addr); else _stars.add(addr);", seg)
+
+    def test_the_scope_row_offers_starred(self):
+        self.assertIn('data-scope="starred"', self.git)
+        self.assertIn("repos.filter(_starred)", self.git)
+
+    def test_an_empty_star_list_never_strands_the_view(self):
+        self.assertIn("_repoScope==='starred' && (!_stars || !_stars.size)", self.git,
+                      "landing on an empty Starred scope shows nothing with no way out")
