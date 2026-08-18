@@ -807,3 +807,43 @@ class FilesTrashSurface(unittest.TestCase):
         self.assertIn("PCSync", seg)
         self.assertIn("data-trashrestore", self.app)
         self.assertIn("fx-trash-restoreall", self.app)
+
+
+class AccountWideRestore(unittest.TestCase):
+    """"a restore to all feature ... in Files-Blossom" — tombstones keep their address in BOTH
+    executors, restoreMany republishes them live through the guarded edit path, and Files offers
+    the block with per-file and restore-all actions."""
+
+    def setUp(self):
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.app = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+        self.sync = open(os.path.join(root, "static", "js", "client", "sync.js"), encoding="utf-8").read()
+        self.exc = open(os.path.join(root, "static", "js", "client", "syncexec.js"), encoding="utf-8").read()
+        self.java = open(os.path.join(root, "mobile", "android", "app", "src", "main", "java",
+                                      "place", "poster", "app", "sync", "NativeSweep.java"),
+                         encoding="utf-8").read()
+
+    def test_tombstones_keep_the_address_in_both_executors(self):
+        a = self.exc.index("for(const t of plan.tombstone)")
+        seg = self.exc[a:a + 1200]
+        for k in ("'sha'", "'chunks'", "'csum'"):
+            self.assertIn(k, seg, "the JS tombstone forgets %s — account-wide restore dies" % k)
+        j = self.java.index("plan.tombstone")
+        jseg = self.java[j:j + 1200]
+        self.assertIn('"sha"', jseg)
+        self.assertIn('"chunks"', jseg)
+
+    def test_restoreMany_republishes_only_addressed_tombstones(self):
+        a = self.sync.index("async restoreMany(key, paths)")
+        seg = self.sync[a:a + 1400]
+        self.assertIn("deletedAt", seg)
+        self.assertIn("unaddressed++", seg, "unrestorable entries are silently dropped")
+        self.assertIn("api.put(p, live)", seg)
+
+    def test_files_offers_the_block(self):
+        self.assertIn("_fxDeletedHTML", self.app)
+        self.assertIn("data-undelete", self.app)
+        self.assertIn("fx-del-restoreall", self.app)
+        a = self.app.index("function _fxDeletedHTML()")
+        seg = self.app[a:a + 1800]
+        self.assertIn(".pc-trash", seg, "trash-relative entries would be offered as restorable")

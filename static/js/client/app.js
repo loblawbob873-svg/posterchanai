@@ -17799,7 +17799,38 @@
         ${folders.map(f=>`<button class="folder-chip${(!_syncRoot&&_filesFolder===f)?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':(FilesIdx.isEncFolder(f)?'🔒':'📁')} ${enc(f)}</button>`).join('')}
         <button class="folder-chip newfolder" id="bl-newfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New folder</button>
         ${(!_syncRoot && _filesFolder && _filesFolder!=='Music') ? `<button class="folder-chip delfolder" id="bl-delfolder" title="Delete this folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete “${enc(_filesFolder)}”</button>` : ''}
-      </div>` + _fxSyncedHTML() + _fxTrashHTML();
+      </div>` + _fxSyncedHTML() + _fxTrashHTML() + _fxDeletedHTML();
+  }
+  /* \u267b DELETED ON EVERY DEVICE — the account-wide undo, beside the per-device trash. Entries
+   * the record marks deleted BUT whose address was retained (executors keep sha/chunks on
+   * tombstones now) can be republished live; every device then re-fetches from the store. Old-era
+   * tombstones without an address are named as unrestorable rather than hidden. */
+  let _fxDelOpen = false;
+  function _fxDeletedHTML(){
+    if(!_syncRoot) return '';
+    const m = _syncManifests.get(_syncRoot);
+    const paths = m && m.paths; if(!paths) return '';
+    const rows = [], dead = [];
+    for(const p in paths){
+      const e = paths[p];
+      if(!e || !e.deletedAt) continue;
+      if(('/' + p + '/').indexOf('/.pc-trash/') >= 0) continue;
+      if(e.sha || (e.chunks && e.chunks.length)) rows.push(p); else dead.push(p);
+    }
+    if(!rows.length && !dead.length) return '';
+    return `<div class="fx-trash">
+      <button class="fx-trash-hd" id="fx-del-toggle">\u267b Deleted on every device
+        <span class="fx-n">${rows.length}</span><span class="chev">${_fxDelOpen?'\u25be':'\u25b8'}</span></button>
+      <div class="fx-trash-body${_fxDelOpen?'':' hidden'}">
+        <div class="muted small">Files the folder marks deleted whose bytes are still in the store \u2014 restoring republishes them and every device brings them back.</div>
+        ${rows.slice(0, 50).map(p2 => `<div class="fx-trash-row"><span title="${enc(p2)}">${enc(p2.split('/').pop())}</span>
+          <span class="muted small">${enc(p2.split('/').slice(0,-1).join('/'))}</span>
+          <button class="mini" data-undelete="${enc(p2)}">\u267b Restore</button></div>`).join('')}
+        ${rows.length > 50 ? `<div class="muted small">\u2026and ${rows.length - 50} more \u2014 Restore all covers every one</div>` : ''}
+        ${rows.length > 1 ? `<button class="mini fx-trash-all" id="fx-del-restoreall">\u267b Restore all ${rows.length} everywhere</button>` : ''}
+        ${dead.length ? `<div class="muted small">${dead.length} older deletion${dead.length===1?'':'s'} kept no address and can\u2019t be restored this way \u2014 a device still holding the file restores it by re-adding.</div>` : ''}
+      </div>
+    </div>`;
   }
   /* \ud83d\uddd1 THIS DEVICE'S TRASH for the synced folder being browsed. The trash is per-device
    * by design (it never joins the shared record), so this section only appears where a filesystem
@@ -17869,7 +17900,28 @@
         const only = ((_fxTrash && _fxTrash.rows) || []).filter(x => String(x.at).split('/')[1] === d).map(x => x.at);
         go(only); });
       const all = $('#fx-trash-restoreall', r); if(all) all.onclick = () => go(null);
-      const tg = $('#fx-trash-toggle', r); if(tg) tg.onclick = () => { _fxTrashOpen = !_fxTrashOpen; renderBlossom(); }; }
+      const tg = $('#fx-trash-toggle', r); if(tg) tg.onclick = () => { _fxTrashOpen = !_fxTrashOpen; renderBlossom(); };
+      const dt = $('#fx-del-toggle', r); if(dt) dt.onclick = () => { _fxDelOpen = !_fxDelOpen; renderBlossom(); };
+      const un = async (paths) => {
+        const S2 = window.PCSync;
+        if(!S2 || !S2.edit || !S2.edit.restoreMany){ toast('this build can\u2019t restore account-wide yet'); return; }
+        if(!await uiConfirm('Restore ' + paths.length + ' file' + (paths.length===1?'':'s')
+             + ' on every device that syncs \u201c' + _syncRoot + '\u201d?\n\nEach device downloads '
+             + 'its copy back from the store on its next sweep.')) return;
+        try{
+          const r2 = await S2.edit.restoreMany(_syncRoot, paths);
+          toast('restored ' + ((r2 && r2.restored) || 0) + ' everywhere'
+                + (r2 && r2.unaddressed ? ' \u00b7 ' + r2.unaddressed + ' kept no address' : ''));
+          _syncManifests.delete(_syncRoot); renderBlossom();
+        }catch(e){ toast('nothing was restored: ' + ((e && e.message) || e)); }
+      };
+      $$('[data-undelete]', r).forEach(b => b.onclick = () => un([b.dataset.undelete]));
+      { const da = $('#fx-del-restoreall', r); if(da) da.onclick = () => {
+          const m2 = _syncManifests.get(_syncRoot); const out = [];
+          if(m2 && m2.paths) for(const p2 in m2.paths){ const e2 = m2.paths[p2];
+            if(e2 && e2.deletedAt && (e2.sha || (e2.chunks && e2.chunks.length))
+               && ('/' + p2 + '/').indexOf('/.pc-trash/') < 0) out.push(p2); }
+          if(out.length) un(out); }; } }
     $$('.fx-syncx[data-syncforget]', r).forEach(b => b.onclick = async (e) => {
       e.stopPropagation();
       const key = b.dataset.syncforget;
