@@ -265,9 +265,15 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
         if theirs:
             logger.info("[nostr-relay] backfill following %s…'s own relays: %s",
                         pubkey[:12], ", ".join(theirs))
-            stored += await _backfill_filter(store, server, theirs,
-                                             {"authors": [pubkey], "kinds": kinds},
-                                             require_author=pubkey, **common)
+            # ONE RELAY AT A TIME. _backfill_filter pages with `until = min(created_at across the
+            # page)`, and a merged page mixes relays with very different densities: one sparse
+            # relay whose newest 200 reach back to 2024 drags `until` straight past two years of
+            # the dense relay's events, and page 2 then finds "nothing older" and stops — measured
+            # as a January star list that never arrived while the recent repos did.
+            for u in theirs:
+                stored += await _backfill_filter(store, server, [u],
+                                                 {"authors": [pubkey], "kinds": kinds},
+                                                 require_author=pubkey, **common)
     except Exception as e:
         logger.warning("[nostr-relay] own-relay backfill failed: %s", e)
     # Private messages addressed to the user (gift-wrap author is random → match by #p, any author).

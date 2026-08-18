@@ -77,9 +77,10 @@ class OwnRelayPass(unittest.TestCase):
     def test_the_member_cannot_fan_us_out_to_unbounded_relays(self):
         tags = [["r", f"wss://r{i}.example.com"] for i in range(50)]
         asked = _run(tags, self.UP)
-        own = [call for call in asked if call and call[0].startswith("wss://r")]
+        own = [call for call in asked if call and ".example.com" in call[0]]
         self.assertTrue(own, "the own-relay pass never ran")
-        self.assertLessEqual(len(own[0]), 4, "a member-authored 10002 fanned out unbounded")
+        distinct = {u for call in own for u in call}
+        self.assertLessEqual(len(distinct), 4, "a member-authored 10002 fanned out unbounded")
 
     def test_a_member_with_no_relay_list_costs_nothing_and_breaks_nothing(self):
         asked = _run([], self.UP)
@@ -90,3 +91,40 @@ class OwnRelayPass(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SparseRelayPaging(unittest.TestCase):
+    """The member's relays are paged ONE AT A TIME. _backfill_filter sets the next `until` to the
+    minimum created_at of the whole page, so a merged page lets one sparse relay (five events from
+    2024) drag `until` past two years of the dense relay's history — measured as a January star
+    list that never arrived while the recent repos did."""
+
+    def test_a_sparse_relay_cannot_skip_the_dense_relays_history(self):
+        PK = "ab" * 32
+        dense_asks = []
+
+        async def fake_query(relays, filters, direct=False):
+            urls = ingest._relay.normalize_relays(relays)
+            f = filters[0]
+            until = f.get("until", 10**12)
+            out = []
+            if "wss://dense.example.com" in urls:
+                dense_asks.append(until)
+                # dense history: events at 1000, 999, … down to 500, two per page
+                top = min(until, 1000)
+                out += [{"pubkey": PK, "created_at": t, "id": "x" * 64}
+                        for t in range(top, max(top - 2, 499), -1) if t >= 500]
+            if "wss://sparse.example.com" in urls:
+                if until >= 100:
+                    out += [{"pubkey": PK, "created_at": 100, "id": "y" * 64}]
+            return out
+
+        tags = [["r", "wss://dense.example.com"], ["r", "wss://sparse.example.com"]]
+        with mock.patch.object(ingest._relay, "query", side_effect=fake_query):
+            asyncio.run(ingest.backfill_author(
+                _Store(tags), _Server(), ["wss://up.example.com"], PK,
+                pace=0, max_pages=20))
+        walked = [u for u in dense_asks if 500 < u < 995]
+        self.assertTrue(walked,
+                        "the dense relay was never asked for its mid-history — a sparse relay "
+                        "in the same merged page dragged `until` past it")
