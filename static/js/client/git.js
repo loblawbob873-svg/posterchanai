@@ -72,11 +72,13 @@ window.PCGitFactory = function(dep){
    * their bookmarks, which is the replaceable-list lesson this codebase keeps paying for. */
   let _stars=null, _starsMine=null, _starsBk=new Set(), _starChain=Promise.resolve();
   let _starsGw=new Set(), _stars10=new Set(), _gwCur=null;   // gitworkshop's set: coords, 10003-only coords, raw newest
+  let _starsRx=new Map();   // repo-star REACTIONS (gitworkshop's actual format): coord -> {id, on}
   async function _loadStars(){
     if(!S.ME || !S.ME.pubkey) return;
     try{
       const evs=await Relay.query([{ kinds:[30003], authors:[S.ME.pubkey], '#d':[STARS_D, 'git-repo-bookmark'], limit:10 },
-                                   { kinds:[10003], authors:[S.ME.pubkey], limit:5 }]);
+                                   { kinds:[10003], authors:[S.ME.pubkey], limit:5 },
+                                   { kinds:[7], authors:[S.ME.pubkey], limit:500 }]);
       const pick=(kind,d)=> (evs||[]).filter(e=>e.kind===kind && (d===undefined || (((e.tags||[]).find(t=>t[0]==='d')||[])[1]||'')===d))
                                      .sort((a,b)=>b.created_at-a.created_at)[0];
       const coords=(ev)=> ev?(ev.tags||[]).filter(t=>t[0]==='a'&&/^30617:/.test(t[1]||'')).map(t=>t[1]):[];
@@ -89,7 +91,20 @@ window.PCGitFactory = function(dep){
       _gwCur=pick(30003, 'git-repo-bookmark')||null;
       _starsGw=new Set(coords(_gwCur));
       _stars10=new Set(coords(pick(10003, undefined)));
-      _starsBk=new Set([..._stars10, ..._starsGw]);
+      /* MEASURED against the live site (2026-08-18, instrumented window.nostr): gitworkshop's Star
+       * button signs a KIND-7 REACTION a-tagging the 30617 — not a list. Three of the user's "lost"
+       * stars were sitting in the store as '+' reactions the whole time. Newest reaction per repo
+       * wins ('-' or a deletion is an unstar); the event id is kept so OUR unstar can publish the
+       * NIP-09 delete gitworkshop itself honours. */
+      _starsRx=new Map();
+      for(const ev of (evs||[]).filter(e=>e.kind===7).sort((a,b)=>a.created_at-b.created_at)){
+        for(const t of (ev.tags||[])){
+          if(t[0]!=='a' || !/^30617:/.test(t[1]||'')) continue;
+          _starsRx.set(t[1], { id: ev.id, on: (ev.content||'+') !== '-' });
+        }
+      }
+      const rxOn=[..._starsRx.entries()].filter(([,v])=>v.on).map(([a])=>a);
+      _starsBk=new Set([..._stars10, ..._starsGw, ...rxOn]);
       _stars=new Set([..._starsMine, ..._starsBk]);
     }catch(_){ /* _stars stays as it was — possibly null, which keeps the buttons read-only */ }
   }
@@ -98,7 +113,13 @@ window.PCGitFactory = function(dep){
     if(!S.ME || !S.ME.pubkey){ _guestPrompt(); return Promise.resolve(false); }
     if(_stars===null || _starsMine===null){ toast('still loading your starred list — try again in a second'); return Promise.resolve(false); }
     const addr=_repoAddr(e), on=!_stars.has(addr);
-    if(!on && !_starsMine.has(addr) && !_starsGw.has(addr) && _stars10.has(addr)){
+    if(!on){
+      // A reaction-star (gitworkshop's format, ours to delete — the user signed it): NIP-09 it.
+      const rx=_starsRx.get(addr);
+      if(rx && rx.on){ _starsRx.set(addr, { id: rx.id, on:false });
+        _starChain=_starChain.catch(()=>{}).then(()=>publish(5, 'unstarred', [['e', rx.id],['k','7']]).catch(()=>{})); }
+    }
+    if(!on && !_starsMine.has(addr) && !_starsGw.has(addr) && !(_starsRx.get(addr)||{}).on && _stars10.has(addr)){
       // A general 10003 bookmark made in another app: that list belongs to other features here, so
       // we will not write it — and therefore cannot remove from it.
       toast('this star lives in your Nostr bookmarks (made in another client) — remove it there');
@@ -106,14 +127,15 @@ window.PCGitFactory = function(dep){
     }
     if(on){ _starsMine.add(addr); _starsGw.add(addr); }
     else { _starsMine.delete(addr); _starsGw.delete(addr); }
-    _starsBk=new Set([..._stars10, ..._starsGw]);
+    const _rxOn=()=>[..._starsRx.entries()].filter(([,v])=>v.on).map(([a])=>a);
+    _starsBk=new Set([..._stars10, ..._starsGw, ..._rxOn()]);
     _stars=new Set([..._starsMine, ..._starsBk]);
     _starChain=_starChain.catch(()=>{}).then(async()=>{
       const tags=[['d',STARS_D],['title','Git repos']].concat([..._starsMine].map(a=>['a',a]));
       const r=await publish(30003, '', tags);
       if(r && r.ok===false){ if(on){ _starsMine.delete(addr); _starsGw.delete(addr); }
         else { _starsMine.add(addr); _starsGw.add(addr); }
-        _starsBk=new Set([..._stars10, ..._starsGw]);
+        _starsBk=new Set([..._stars10, ..._starsGw, ..._rxOn()]);
         _stars=new Set([..._starsMine, ..._starsBk]);
         toast('the relay didn’t store your star — nothing changed'); return; }
       /* MIRROR INTO GITWORKSHOP'S SET, read-modify-write: carry every non-a/non-d tag of the newest

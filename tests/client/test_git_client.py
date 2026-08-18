@@ -220,7 +220,7 @@ class StarTests(unittest.TestCase):
 
     def test_a_failed_read_keeps_the_buttons_read_only(self):
         at = self.git.index("async function _loadStars()")
-        seg = self.git[at:at + 1700]
+        seg = self.git[at:at + 3400]
         self.assertIn("catch(_){", seg)
         self.assertNotIn("_stars=new Set()", seg.split("catch")[1],
                          "a failed read minted an empty list — the follows-wipe, for stars")
@@ -230,7 +230,7 @@ class StarTests(unittest.TestCase):
 
     def test_a_refused_publish_rolls_the_star_back(self):
         at = self.git.index("function toggleStar(")
-        seg = self.git[at:at + 1400]
+        seg = self.git[at:at + 2600]
         self.assertIn("r.ok===false", seg)
         self.assertIn("if(on){ _starsMine.delete(addr); _starsGw.delete(addr); }", seg)
         self.assertIn("_stars=new Set([..._starsMine, ..._starsBk]);", seg,
@@ -242,7 +242,7 @@ class StarTests(unittest.TestCase):
         because a write into somebody's 10003 is one failed read away from wiping the rest of
         their bookmarks."""
         at = self.git.index("async function _loadStars()")
-        seg = self.git[at:at + 1400]
+        seg = self.git[at:at + 3400]
         self.assertIn("10003", seg)
         self.assertIn("_starsBk", seg)
         at2 = self.git.index("function toggleStar(")
@@ -268,6 +268,23 @@ class StarTests(unittest.TestCase):
         self.assertIn("t[0]!=='a'&&t[0]!=='d'", tseg, "foreign tags are not carried through")
         self.assertIn("_starsGw", tseg)
         self.assertNotIn("publish(10003", tseg, "the general bookmarks list was written")
+
+    def test_gitworkshop_stars_are_reactions_and_they_count(self):
+        """MEASURED against the live site with an instrumented window.nostr (2026-08-18): the ngit
+        Star button signs a KIND-7 REACTION a-tagging the 30617 — no list anywhere. Three of the
+        user's "lost" stars sat in the store as '+' reactions while every list-shaped read came back
+        empty. So: reactions join the read (newest per repo wins, '-' is an unstar), and OUR unstar
+        publishes the NIP-09 delete gitworkshop itself honours."""
+        at = self.git.index("async function _loadStars()")
+        seg = self.git[at:at + 3400]
+        self.assertIn("kinds:[7], authors:[S.ME.pubkey]", seg.replace('"', "'"),
+                      "the user's reactions are never read — ngit stars stay invisible")
+        self.assertIn("_starsRx", seg)
+        self.assertIn("(ev.content||'+') !== '-'", seg, "a '-' reaction counts as a star")
+        at2 = self.git.index("function toggleStar(")
+        tseg = self.git[at2:at2 + 3000]
+        self.assertIn("publish(5, ", tseg, "unstarring a reaction-star deletes nothing")
+        self.assertIn("['e', rx.id]", tseg.replace('"', "'"))
 
     def test_stars_refresh_on_every_entry_not_once_per_page(self):
         """"i starred a repo on ngit again and still does not appear" — the star was on the relay
