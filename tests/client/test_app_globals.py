@@ -394,3 +394,21 @@ def test_the_expanded_players_track_name_wraps_instead_of_clipping():
     assert "overflow-wrap:anywhere" in rule, "an unbroken filename still clips"
     # and the mini bar's one-liner survives
     assert ".mp-mini .mp-title{flex:1;min-width:60px;overflow:hidden" in css
+
+
+def test_the_terminal_is_gated_to_admins_and_the_ssh_allowlist():
+    """The API refuses everyone else on every endpoint, so showing the row to a non-admin only ever
+    produces a permission error. Boot gates on the public admin list; can_ssh in the login payload
+    reveals allowlisted non-admins; and the gate uses its OWN class — `hidden` belongs to instance
+    gating and nav-off to the user's choices, and borrowing either means fighting its owner."""
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    app = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+    assert "function applyTermGate()" in app
+    assert "gated-off" in app
+    at = app.index("function moreMenu(")
+    assert "_termAllowed()" in app[at:at + 4000], "the More sheet still offers the Terminal to everyone"
+    auth = open(os.path.join(root, "app", "routers", "auth.py"), encoding="utf-8").read()
+    assert '"can_ssh"' in auth, "the login payload cannot reveal an allowlisted non-admin"
+    css = open(os.path.join(root, "static", "css", "client.css"), encoding="utf-8").read()
+    assert ".gated-off{display:none" in css

@@ -581,7 +581,7 @@
     const seen = new Set(out.map(c => c.v));
     document.querySelectorAll('.sidebar .nav .nav-item[data-view]').forEach(btn => {
       const v = btn.dataset.view;
-      if(!v || seen.has(v) || btn.classList.contains('hidden')) return;
+      if(!v || seen.has(v) || btn.classList.contains('hidden') || btn.classList.contains('gated-off')) return;
       seen.add(v);
       const use = btn.querySelector('use');
       out.push({ v, label: _navLabel(btn) || v,
@@ -3764,6 +3764,7 @@
     if(!GUEST) checkBlossomAccess();   // learn Blossom permission (→ nostr.build if none); restoreMediaServer runs on relay-ready (hydrateUser)
     loadThemeFromServer();   // apply the user's Nostr-stored theme on login (best-effort; cache already painted)
     IS_ADMIN = Array.isArray(CFG.admin_npubs) && CFG.admin_npubs.includes(ME.npub);
+    applyTermGate();
     // Admin now lives inside User Settings (admins only) — it was moved out of the sidebar nav to save room.
     // Warm the admin session only. We DON'T preload the hidden admin iframe anymore: /admin extends
     // base.html, whose script unregisters ALL service workers for the origin — including THIS PWA's —
@@ -13535,6 +13536,7 @@
                    // one screen built specifically FOR a phone (the ctrl/esc/arrows key bar), so
                    // shipping it unreachable on one would have been the whole point missed.
                    && !(window.PC_NOSTR_ONLY && v==='terminal')    // SSH runs on the instance
+                   && !(v==='terminal' && !_termAllowed())        // …and only for admins/the allowlist
                    && !(window.PC_NOSTR_ONLY && v==='mail')        // …and so does IMAP/SMTP
                    && !(_viewNeedsInstance(v))                     // server-less bundle: nothing behind it
                    && !(v==='__golive' && CFG.stream_enabled===false)     // hide AI+Translate in Nostr-only; Go Live only where the node streams
@@ -23691,6 +23693,18 @@
     });
   }
   // ---------- AI view (the old PosterChan AI web UI, merged in as a client view) ----------
+  /* The Terminal is admins + the SSH allowlist, and its API already refuses everyone else on
+   * every endpoint — so showing the row to anyone else only ever produces a permission error.
+   * Admins gate at BOOT (public config names them); an allowlisted non-admin is revealed when the
+   * session answers can_ssh. `.gated-off` is its own class: `hidden` belongs to instance gating
+   * and NAV_OFF to the user's sidebar choices, and borrowing either means fighting its owner. */
+  function _termAllowed(){ return IS_ADMIN || !!(_aiAuth && _aiAuth.can_ssh); }
+  function applyTermGate(){
+    try{
+      const can = _termAllowed();
+      $$('.nav-item[data-view="terminal"]').forEach(b => b.classList.toggle('gated-off', !can));
+    }catch(_){}
+  }
   let _aiAuth = null;   // cached {can_ai, is_admin, username} for this session
   let _aiAuthP=null;
   let _aiToken='';      // bearer token from nostr-login; needed for the chat WS in the bundled app, where the
@@ -23715,7 +23729,7 @@
         const r = await fetch('/api/auth/nostr-login', { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ pubkey: ME.pubkey, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
         if(r && r.access_token) _setAiToken(r.access_token);
-        if(r && r.user){ _aiAuth = r.user; return _aiAuth; }   // cache only a GOOD session
+        if(r && r.user){ _aiAuth = r.user; try{ applyTermGate(); }catch(_){} return _aiAuth; }   // cache only a GOOD session
         return { can_ai:false, error:!r };                      // transient failure → not cached, retryable
       }catch(_){ return { can_ai:false, error:true }; }
       finally{ _aiAuthP=null; }

@@ -7997,3 +7997,6 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
  * when the name column is actually a column. */
 .nav-lock{display:inline-flex;width:44px;flex:0 0 44px;justify-content:center}
 
+
+/* rows a permission gate removed — its own class so hidden's and nav-off's owners never fight it */
+.gated-off{display:none !important}

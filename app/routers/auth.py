@@ -101,6 +101,14 @@ def _verify_nostr_auth(auth_b64: str, pubkey_hex: str) -> bool:
 
 
 @router.post("/nostr-login")
+def _can_ssh(db, user) -> bool:
+    try:
+        from app.services import ssh_service
+        return bool(ssh_service.is_enabled() and ssh_service.user_allowed(db, user))
+    except Exception:
+        return False
+
+
 async def nostr_login(data: NostrLogin, response: Response, request: Request, db: Session = Depends(get_db)):
     """Log in / sign up with a Nostr key (NIP-07 / Amber / nsec — signed client-side). Finds the
     user by linked npub or creates a fresh, AI-gated account, then issues the normal session cookie
@@ -203,6 +211,9 @@ async def nostr_login(data: NostrLogin, response: Response, request: Request, db
                  # Lets the client hide Go Live for accounts that can't use it, rather than showing a
                  # button whose only outcome is a permission error.
                  "can_stream": bool(user.is_admin or getattr(user, "can_stream", False)),
+                 # Same reason as can_stream: the Terminal's API refuses non-allowlisted users on
+                 # every endpoint, so showing them the row only ever produces a permission error.
+                 "can_ssh": _can_ssh(db, user),
                  "new": created},
     }
 
