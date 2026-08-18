@@ -38,6 +38,7 @@ FEATURES = {
     "git repos": [30617],
     "communities": [34550],
     "torrents": [2003, 2004],
+    "short videos — Divine writes 34236 (measured), NIP-71 current is 21/22": [21, 22, 34235, 34236],
     "calendar events + RSVPs": [31922, 31923, 31924, 31925],
 }
 

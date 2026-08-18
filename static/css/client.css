@@ -8007,3 +8007,28 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 
 /* rows a permission gate removed — its own class so hidden's and nav-off's owners never fight it */
 .gated-off{display:none !important}
+
+/* ---------- Shorts (Discover → Shorts): a vertical snap feed, one video on screen at a time ----- */
+.shorts-wrap{height:calc(100dvh - 130px);overflow-y:auto;scroll-snap-type:y mandatory;
+  border-radius:14px;background:var(--panel,#101014);-webkit-overflow-scrolling:touch}
+.short-card{position:relative;height:100%;scroll-snap-align:start;scroll-snap-stop:always;
+  background:#000;overflow:hidden;border-radius:14px;margin-bottom:10px}
+.short-media,.short-media video,.short-media img{position:absolute;inset:0;width:100%;height:100%;
+  object-fit:contain;background:#000}
+.short-top{position:absolute;top:10px;right:10px;z-index:3}
+.short-top .short-mute{background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:50%;
+  width:38px;height:38px;font-size:16px}
+.short-overlay{position:absolute;left:12px;right:64px;bottom:14px;z-index:3;color:#fff;
+  text-shadow:0 1px 3px rgba(0,0,0,.8)}
+.short-auth{display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:6px}
+.short-auth img{width:32px;height:32px;border-radius:50%;border:1.5px solid rgba(255,255,255,.85);flex:none}
+.short-auth b{color:#fff;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.short-title{font-size:14px;line-height:1.35;max-height:3.9em;overflow:hidden}
+.short-rail{position:absolute;right:10px;bottom:18px;z-index:3;display:flex;flex-direction:column;gap:12px}
+.short-act{background:rgba(0,0,0,.55);border:none;border-radius:50%;width:44px;height:44px;
+  display:flex;align-items:center;justify-content:center;color:#fff;cursor:pointer}
+.short-act .ic{width:20px;height:20px;fill:currentColor}
+/* Desktop: a centered portrait column, like every phone-shaped surface here */
+@media (min-width:1024px){ .shorts-wrap{max-width:440px;margin:0 auto;height:calc(100vh - 150px)} }
+/* Phones: full-bleed under the topbar, above the bottom bar */
+@media (max-width:700px){ .shorts-wrap{height:calc(100dvh - 118px);border-radius:10px} }

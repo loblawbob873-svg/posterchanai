@@ -246,9 +246,9 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
     #    search/blossom server lists. 30000/30001: follow sets + the legacy generic list other
     #    clients still write bookmarks into (measured on a real member's relay). 30402: listings.
     #    34550: communities. tests/test_user_data_sync_coverage.py maps each feature to its kinds.
-    kinds = kinds or [0, 1, 3, 5, 6, 7, 1063, 1068, 1111, 2003, 2004, 10000, 10001, 10002, 10003,
-                      10007, 10050, 10063, 30000, 30001, 30003, 30023, 30311, 30402, 30617, 34550,
-                      31922, 31923, 31924, 31925]
+    kinds = kinds or [0, 1, 3, 5, 6, 7, 21, 22, 1063, 1068, 1111, 2003, 2004, 10000, 10001, 10002,
+                      10003, 10007, 10050, 10063, 30000, 30001, 30003, 30023, 30311, 30402, 30617,
+                      34235, 34236, 34550, 31922, 31923, 31924, 31925]
     logger.info("[nostr-relay] sync started for %s…", pubkey[:12])
     common = dict(direct=direct, pace=pace, max_total=max_total, max_pages=max_pages)
     stored = await _backfill_filter(store, server, upstream,

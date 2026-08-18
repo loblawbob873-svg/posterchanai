@@ -5746,7 +5746,7 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', shorts:'Shorts 🎬', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
     { const tl = (v==='home'||v==='global'||v==='trending');   // the three views that carry the .tl-tabs header
@@ -5849,6 +5849,7 @@
     if (VIEW==='calls') return renderCalls();
     if (VIEW==='communities') return renderCommunities();
     if (VIEW==='pics') return renderPics();
+    if (VIEW==='shorts') return renderShorts();
     if (VIEW==='chat') return renderChatrooms();
     if (VIEW==='torrents') return renderTorrents();
     if (VIEW==='repos') return renderRepos();
@@ -13795,7 +13796,7 @@
   }
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
     const _off=navHiddenSet();
-    const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['communities','users','Communities'],['chat','chat','Chat'],['torrents','magnet','Torrents'],['repos','git','Git'],['stats','bars','Server Stats']]
+    const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['shorts','tv','Shorts'],['communities','users','Communities'],['chat','chat','Chat'],['torrents','magnet','Torrents'],['repos','git','Git'],['stats','bars','Server Stats']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='markets')     // Markets needs the AI backend (Budget is client-only, so it stays)
                    && !_off.has(v));                              // …and the user's own Settings → Sidebar choices
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-compass"></use></svg> Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}${v==='chat'?'<i id="chat-badge-m" class="badge hidden"></i>':''}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{
@@ -15731,6 +15732,115 @@
     const grid=$('#pics-grid'); if(!grid) return;
     grid.innerHTML = pics.length ? pics.map(x=>`<div class="pic-card" data-id="${x.e.id}">${_hold(`<img src="${enc(x.img)}" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()">`, x.img)}</div>`).join('') : '<div class="empty">No pics found yet.</div>';
     $$('.pic-card',grid).forEach(c=> c.onclick=()=> openThread(c.dataset.id));
+  }
+
+  // ---------- Shorts — NIP-71 short videos (Discover → Shorts) --------------------------------
+  // MEASURED, not assumed (2026-08-18, wss://relay.divine.video): Divine publishes kind 34236 (the
+  // addressable vertical-video draft) with an imeta carrying `url`, `m video/mp4`, `image` (poster),
+  // `dim 1080x1920`, plus `title`/`duration`/`t` tags. The current NIP-71 spec kind 22 (short
+  // portrait) is read too, so any client's shorts land here. Kind 21 (long-form) is deliberately
+  // out — this surface is a shorts feed, not a cinema.
+  function _shortOf(e){
+    let url='', poster='';
+    for(const t of (e.tags||[])){
+      if(t[0]!=='imeta') continue;
+      for(let i=1;i<t.length;i++){
+        const str=String(t[i]||''); const sp=str.indexOf(' ');
+        const k=sp<0?str:str.slice(0,sp), v=sp<0?'':str.slice(sp+1).trim();
+        if(k==='url'&&!url) url=v;
+        else if(k==='image'&&!poster) poster=v;
+      }
+      if(url) break;
+    }
+    if(!url){ const m=String(e.content||'').match(/https?:\/\/\S+\.(mp4|webm|mov)\b\S*/i); if(m) url=m[0]; }
+    if(!url || !/^https?:\/\//i.test(url)) return null;
+    if(poster && !/^https?:\/\//i.test(poster)) poster='';
+    const tag=n=>String((((e.tags||[]).find(t=>t[0]===n))||[])[1]||'');
+    return { e, url, poster,
+             title: tag('title') || String(e.content||'').split('\n')[0].slice(0,120),
+             dur: Math.max(0, +tag('duration')||0) };
+  }
+  let _shortsMuted = true;   // mobile autoplay only works muted; one 🔊 tap unmutes the whole feed
+  let _shortsIO = null;
+  async function renderShorts(){
+    const feed=$('#feed');
+    feed.innerHTML='<div class="shorts-wrap" id="shorts-wrap"><div class="spinner"></div></div>';
+    let evs=[]; try{ evs=await Relay.query([{kinds:[34236,22], limit:80}]); }catch(_){}
+    evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+    if(VIEW!=='shorts') return;
+    const seen=new Set(); const vids=[];
+    for(const e of evs.sort((a,b)=>b.created_at-a.created_at)){
+      if(isMutedView(e)) continue;
+      const s=_shortOf(e); if(!s) continue;
+      // 34236 is addressable: dedup on the coordinate so an edited short doesn't appear twice.
+      const key=e.kind+':'+e.pubkey+':'+String((((e.tags||[]).find(t=>t[0]==='d'))||[])[1]||e.id);
+      if(seen.has(key)) continue; seen.add(key);
+      vids.push(s); if(vids.length>=60) break;
+    }
+    const wrap=$('#shorts-wrap'); if(!wrap) return;
+    if(!vids.length){
+      wrap.innerHTML='<div class="empty">No shorts have reached this relay yet. They arrive as your network posts them — from Divine and any NIP-71 client.</div>';
+      return;
+    }
+    wrap.innerHTML = vids.map((s,i)=>{ const p=profOf(s.e.pubkey)||{}; const nm=p.name||p.display_name||'anon';
+      return `<div class="short-card" data-i="${i}" data-id="${s.e.id}">
+        <div class="short-media">${s.poster?`<img src="${enc(s.poster)}" loading="lazy" onerror="this.remove()">`:''}</div>
+        <div class="short-top"><button class="mini short-mute" title="Sound">${_shortsMuted?'🔇':'🔊'}</button></div>
+        <div class="short-overlay">
+          <div class="short-auth" data-pk="${s.e.pubkey}">
+            <img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><b class="name" data-prof="${s.e.pubkey}">${enc(nm)}</b>
+          </div>
+          <div class="short-title">${enc(s.title)}</div>
+        </div>
+        <div class="short-rail">
+          <button class="short-act short-open" title="Comments"><svg class="ic"><use href="#i-chat"></use></svg></button>
+          <button class="short-act short-share" title="Copy link"><svg class="ic"><use href="#i-bookmark"></use></svg></button>
+        </div>
+      </div>`; }).join('');
+    decorateProfiles();
+    /* ONE DECODER AT A TIME. A <video src> IS a decoder (that lesson is paid for): only the card
+     * filling the viewport holds a mounted <video>; a card scrolled fully away has its src removed
+     * and the element released, so a 60-short session never holds 60 decoders. */
+    try{ if(_shortsIO) _shortsIO.disconnect(); }catch(_){}
+    const io=_shortsIO=new IntersectionObserver(entries=>{
+      for(const x of entries){
+        const card=x.target, s=vids[+card.dataset.i], media=card.querySelector('.short-media');
+        if(!s||!media) continue;
+        let v=media.querySelector('video');
+        if(x.isIntersecting && x.intersectionRatio>0.6){
+          if(!v){
+            v=document.createElement('video');
+            v.playsInline=true; v.setAttribute('playsinline',''); v.loop=true; v.muted=_shortsMuted;
+            v.preload='auto'; if(s.poster) v.poster=s.poster;
+            v.src=s.url;
+            v.onclick=()=>{ if(v.paused) v.play().catch(()=>{}); else v.pause(); };
+            media.appendChild(v);
+          }
+          v.muted=_shortsMuted;
+          v.play().catch(()=>{});
+        }else if(v){
+          v.pause();
+          if(x.intersectionRatio===0){ try{ v.removeAttribute('src'); v.load(); }catch(_){} v.remove(); }
+        }
+      }
+    }, { root: wrap, threshold: [0, 0.6] });
+    $$('.short-card',wrap).forEach(c=>{
+      io.observe(c);
+      const id=c.dataset.id;
+      const open=()=>openThread(id);
+      const oc=c.querySelector('.short-open'); if(oc) oc.onclick=(ev)=>{ ev.stopPropagation(); open(); };
+      const sh=c.querySelector('.short-share'); if(sh) sh.onclick=(ev)=>{ ev.stopPropagation();
+        const e2=vids[+c.dataset.i].e;
+        let lk='';
+        try{ lk=_webLink(NT().nip19.naddrEncode({ identifier:String((((e2.tags||[]).find(t=>t[0]==='d'))||[])[1]||''), pubkey:e2.pubkey, kind:e2.kind })); }
+        catch(_){ try{ lk=_webLink(NT().nip19.noteEncode(e2.id)); }catch(_){} }
+        if(lk) copyValue(lk, 'link copied', 'Link:'); };
+      const au=c.querySelector('.short-auth'); if(au) au.onclick=(ev)=>{ ev.stopPropagation(); renderProfileView(au.dataset.pk); };
+      const mu=c.querySelector('.short-mute'); if(mu) mu.onclick=(ev)=>{ ev.stopPropagation();
+        _shortsMuted=!_shortsMuted;
+        $$('.short-mute',wrap).forEach(b=>b.textContent=_shortsMuted?'🔇':'🔊');
+        $$('video',wrap).forEach(vv=>vv.muted=_shortsMuted); };
+    });
   }
 
   // Files view = two tabs: Public (your built-in Blossom blobs, shareable URLs) and AI Chat

@@ -401,7 +401,7 @@ def _read_config() -> dict:
             # 10005 is the NIP-51 "public chats" join list. Each node's push watcher reads it to decide
             # whose devices to notify about a channel message, so a list published on one node has to
             # reach the others or that user gets chat pushes from one node only.
-            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,5,6,7,40,41,42,1063,1068,1111,9735,10000,10001,10002,10003,10005,10007,10050,10063,2003,2004,30000,30001,30003,30023,30311,34550,30402,30017,30018,30617,30618,1617,1621,1622,1623,1630,1631,1632,1633,31922,31923,31924,31925")
+            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,5,6,7,21,22,40,41,42,1063,1068,1111,9735,10000,10001,10002,10003,10005,10007,10050,10063,2003,2004,30000,30001,30003,30023,30311,34235,34236,34550,30402,30017,30018,30617,30618,1617,1621,1622,1623,1630,1631,1632,1633,31922,31923,31924,31925")
                              .replace(" ", "").split(",")) if k.strip().lstrip("-").isdigit()],
             "author_batch": gi("nostr_relay_author_batch", 200),
             # Politeness / anti-blast: pace upstream requests and outbox publishes so we don't
