@@ -4598,9 +4598,27 @@
     // sit under the taskbar — visible only by scrolling, which is how they got "cut off".
     drawDesktop();
     wins.forEach(w => {
-      if(!w.snap) return;
-      const css = rectOf(w.snap);
-      if(css) Object.assign(w.el.style, css);
+      if(w.snap){
+        const css = rectOf(w.snap);
+        if(css) Object.assign(w.el.style, css);
+        return;
+      }
+      /* FREE WINDOWS FOLLOW THE VIEWPORT TOO. Only snapped windows were re-laid-out, so resizing
+       * the app left every floating window at its stale pixel size — too big for a shrunken
+       * viewport (content clipped off-screen: "the Files UI does not resize with the window"), or
+       * marooned outside it entirely. Clamp size to the desk and drag the window back on-screen;
+       * a window the user sized deliberately keeps that size whenever it still fits. */
+      try{
+        const dw = desk.clientWidth, dh = desk.clientHeight;
+        if(!dw || !dh) return;
+        const r = w.el;
+        let cw = r.offsetWidth, ch = r.offsetHeight;
+        if(cw > dw){ r.style.width = Math.max(420, dw - 16) + 'px'; cw = r.offsetWidth; }
+        if(ch > dh){ r.style.height = Math.max(260, dh - 16) + 'px'; ch = r.offsetHeight; }
+        const x = r.offsetLeft, y = r.offsetTop;
+        if(x + cw > dw) r.style.left = Math.max(0, dw - cw) + 'px';
+        if(y + ch > dh) r.style.top = Math.max(0, dh - ch) + 'px';
+      }catch(_){}
     });
   }
 

@@ -334,6 +334,14 @@ async def drive(url):
                 if "different key" in f:
                     problems.append(f"{who} hit wrong-key: {f}")
     finally:
+        # Leave no trace: the throwaway's sync records are junk rows on a real relay otherwise.
+        try:
+            await a.js("""(async () => {
+              for(const k of ['E2EPair']){
+                try{ await window.PCSync.store._post({ folder: k, forgetAll: true }); }catch(_){}
+              } return true; })()""", aw=True)
+        except Exception:
+            pass
         a.stop()
         b.stop()
     if problems:
