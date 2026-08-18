@@ -463,10 +463,16 @@ class MobileNavPrefTests(unittest.TestCase):
         self.assertEqual(out["mobileNavSaved"], ["notes", "vault", "home", "messages"])
         self.assertEqual(out["mobileNavList"], ["notes", "vault", "home", "messages"])
 
-    def test_a_short_or_junk_choice_falls_back_to_the_defaults(self):
-        out = run(sidebar=self.S, mobileNav=["notes"])
-        self.assertEqual(out["mobileNavList"][0], "notes")
-        self.assertEqual(len(out["mobileNavList"]), 4, "a bar with empty slots")
+    def test_two_buttons_is_a_valid_bar(self):
+        """"Still have to select 4 when I only want 2" — an empty slot is a choice, not a gap to
+        backfill. Defaults appear only for an account that never configured the bar at all."""
+        out = run(sidebar=self.S, mobileNav=["notes", "", "home", ""])
+        self.assertEqual(out["mobileNavList"], ["notes", "", "home", ""])
+        self.assertEqual(out["mobileNavSaved"], ["notes", "", "home", ""])
+
+    def test_duplicates_collapse_but_empties_do_not(self):
+        out = run(sidebar=self.S, mobileNav=["home", "home", "", ""])
+        self.assertEqual(out["mobileNavList"], ["home", "", "", ""])
 
     def test_the_bar_choice_is_published_to_the_prefs_doc(self):
         out = run(sidebar=self.S, mobileNav=["notes", "vault", "home", "messages"])

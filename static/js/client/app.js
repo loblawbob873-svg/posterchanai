@@ -554,15 +554,19 @@
   const _MNAV_DEFAULT = ['home', 'global', 'notifications', 'messages'];
   const _MNAV_ICON = { home:'#i-home', global:'#i-globe', notifications:'#i-bell', messages:'#i-mail' };
   function mobileNavList(){
-    let raw = ClientSettings.get('mobileNav', []);
-    if(typeof raw === 'string'){ try{ raw = JSON.parse(raw); }catch(_){ raw = []; } }
+    let raw = ClientSettings.get('mobileNav', null);
+    if(typeof raw === 'string'){ try{ raw = JSON.parse(raw); }catch(_){ raw = null; } }
+    /* Never configured → the classic four. Configured → exactly what was chosen, INCLUDING empty
+     * slots ('' = none): "still have to select 4 when I only want 2" — a bar is not a form with
+     * required fields. Duplicates collapse (two Homes is one Home); empties don't (each is its own
+     * absence). Compose and ☰ More are not slots, so even an all-empty choice leaves a working bar. */
+    if(!Array.isArray(raw)) return _MNAV_DEFAULT.slice();
     const out = [];
-    if(Array.isArray(raw)) for(const k of raw){
-      const s = String(k == null ? '' : k).slice(0, 60);
-      if(s && out.indexOf(s) < 0) out.push(s);
+    for(let i = 0; i < 4; i++){
+      const s = String(raw[i] == null ? '' : raw[i]).slice(0, 60);
+      out.push((s && out.indexOf(s) >= 0) ? '' : s);
     }
-    while(out.length < 4) out.push(_MNAV_DEFAULT[out.length]);
-    return out.slice(0, 4);
+    return out;
   }
   /** Everything a bar slot may hold: the three timelines FIRST, then the sidebar's view rows.
    *
@@ -595,6 +599,8 @@
       const cur = VIEW;
       slots.forEach((btn, i) => {
         const v = choice[i];
+        if(!v){ btn.style.display = 'none'; btn.dataset.view = ''; btn.onclick = null; return; }
+        btn.style.display = '';
         const c = known[v] || { v, label: v, icon: _MNAV_ICON[v] || '#i-home' };
         const icon = _MNAV_ICON[v] || c.icon;
         // Short labels only — the bar is five columns on a 360px phone.
@@ -610,14 +616,14 @@
   }
   function setMobileNav(views){
     const list = [];
-    for(const v of (views || [])){
-      const s = String(v == null ? '' : v).slice(0, 60);
-      if(s && list.indexOf(s) < 0) list.push(s);
+    for(let i = 0; i < 4; i++){
+      const s = String((views || [])[i] == null ? '' : (views || [])[i]).slice(0, 60);
+      list.push((s && list.indexOf(s) >= 0) ? '' : s);   // duplicates collapse; empties are choices
     }
-    ClientSettings.set('mobileNav', list.slice(0, 4));
+    ClientSettings.set('mobileNav', list);
     _prefTouched.add('mobileNav');
     applyMobileNav();
-    return saveClientPrefsNostr({ mobileNav: list.slice(0, 4) });
+    return saveClientPrefsNostr({ mobileNav: list });
   }
   /* WHICH TIMELINE TABS SHOW — Home / Nostrverse / Trending, each optional, at least one always
    * kept: a tab row with nothing in it is a feed with no way in, so the guard is in the SETTER,
@@ -716,7 +722,7 @@
       <div class="muted small">The four view buttons beside Compose and \u2630 More. Compose and More stay put \u2014 one is the point, the other is the way back.</div>
       <div id="mnav-slots">${mobileNavList().map((v,i)=>`
         <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><span class="muted small" style="width:52px">Slot ${i+1}</span>
-          <select class="input" data-mnavslot="${i}">${(() => { const cs = mobileNavChoices();
+          <select class="input" data-mnavslot="${i}">${(() => { const cs = [{ v:'', label:'\u2014 none \u2014' }].concat(mobileNavChoices());
             if(!cs.some(c => c.v === v)) cs.push({ v, label: v + ' (this install doesn\u2019t list it)' });
             return cs.map(c=>`<option value="${enc(c.v)}"${c.v===v?' selected':''}>${enc(c.label)}</option>`).join(''); })()}</select>
         </label>`).join('')}</div>
@@ -14771,7 +14777,9 @@
         try{ if(['home','global','trending'].indexOf(VIEW)>=0) renderView(true); }catch(_){}
       }
       if(!_prefTouched.has('mobileNav') && Array.isArray(pr.mobileNav)){
-        ClientSettings.set('mobileNav', pr.mobileNav.map(v=>String(v==null?'':v).slice(0,60)).filter(Boolean).slice(0,4));
+        // Empties survive: '' is a chosen absence, and filtering it out would shift every slot
+        // to the left of where its owner put it.
+        ClientSettings.set('mobileNav', pr.mobileNav.map(v=>String(v==null?'':v).slice(0,60)).slice(0,4));
         applyMobileNav();
       }
       if(!_prefTouched.has('vimKeys') && typeof pr.vimKeys==='boolean') ClientSettings.set('vimKeys', pr.vimKeys);
