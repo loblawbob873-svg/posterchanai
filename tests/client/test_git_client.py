@@ -232,7 +232,7 @@ class StarTests(unittest.TestCase):
         at = self.git.index("function toggleStar(")
         seg = self.git[at:at + 1400]
         self.assertIn("r.ok===false", seg)
-        self.assertIn("if(on) _starsMine.delete(addr); else _starsMine.add(addr);", seg)
+        self.assertIn("if(on){ _starsMine.delete(addr); _starsGw.delete(addr); }", seg)
         self.assertIn("_stars=new Set([..._starsMine, ..._starsBk]);", seg,
                       "the rollback fixes our set but leaves the union stale on screen")
 
@@ -252,23 +252,22 @@ class StarTests(unittest.TestCase):
         self.assertIn("remove it there", tseg,
                       "unstarring a foreign bookmark silently fails instead of saying whose it is")
 
-    def test_gitworkshops_own_30003_set_joins_the_union_read_only(self):
-        """Measured on the tester's write relay (nostr21.com, 2026-08-18): gitworkshop's stars are
-        kind 30003 with d:'git-repo-bookmark' — four 30617 coordinates sat in it while the app
-        showed none of them. It joins the FOREIGN half of the union (_starsBk), so it renders as
-        starred and is never written: our writes go only to our own d (STARS_D), because writing a
-        foreign set is one failed read away from wiping it."""
+    def test_gitworkshops_set_is_written_with_read_modify_write_discipline(self):
+        """gitworkshop's set (30003 d:'git-repo-bookmark') is read AND written — a star made here
+        must show on the ngit site, whose own ⭐ publishes nothing unless that tab can sign. The
+        write is read-modify-write: every non-a tag of the newest version is carried, only the
+        coordinates are replaced, and a failed mirror never rolls back our own set. The general
+        10003 bookmarks list stays unwritten — it belongs to other features."""
         at = self.git.index("async function _loadStars()")
-        seg = self.git[at:at + 1600]
-        self.assertIn("'git-repo-bookmark'", seg)
-        # it must be read into the FOREIGN set, not ours
-        bk = seg[seg.index("_starsBk="):seg.index("_stars=new Set([")]
-        self.assertIn("git-repo-bookmark", bk)
-        self.assertIn("_starsMine=new Set(coords(pick(30003, STARS_D)));", seg,
-                      "our own set stopped being selected by OUR d tag alone")
+        seg = self.git[at:at + 2600]
+        self.assertIn("_gwCur=pick(30003, 'git-repo-bookmark')", seg,
+                      "the raw newest version is not kept — the mirror would drop foreign tags")
         at2 = self.git.index("function toggleStar(")
-        self.assertNotIn("git-repo-bookmark", self.git[at2:at2 + 2000],
-                         "a write path touched gitworkshop's own set")
+        tseg = self.git[at2:at2 + 3000]
+        self.assertIn("['d','git-repo-bookmark']", tseg.replace('"', "'"))
+        self.assertIn("t[0]!=='a'&&t[0]!=='d'", tseg, "foreign tags are not carried through")
+        self.assertIn("_starsGw", tseg)
+        self.assertNotIn("publish(10003", tseg, "the general bookmarks list was written")
 
     def test_stars_refresh_on_every_entry_not_once_per_page(self):
         """"i starred a repo on ngit again and still does not appear" — the star was on the relay

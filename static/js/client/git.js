@@ -71,6 +71,7 @@ window.PCGitFactory = function(dep){
    * our own set — a write into somebody's 10003 is one failed read away from wiping the rest of
    * their bookmarks, which is the replaceable-list lesson this codebase keeps paying for. */
   let _stars=null, _starsMine=null, _starsBk=new Set(), _starChain=Promise.resolve();
+  let _starsGw=new Set(), _stars10=new Set(), _gwCur=null;   // gitworkshop's set: coords, 10003-only coords, raw newest
   async function _loadStars(){
     if(!S.ME || !S.ME.pubkey) return;
     try{
@@ -80,9 +81,15 @@ window.PCGitFactory = function(dep){
                                      .sort((a,b)=>b.created_at-a.created_at)[0];
       const coords=(ev)=> ev?(ev.tags||[]).filter(t=>t[0]==='a'&&/^30617:/.test(t[1]||'')).map(t=>t[1]):[];
       _starsMine=new Set(coords(pick(30003, STARS_D)));
-      /* Foreign, read-only sources: the standard bookmarks list, and gitworkshop's own set —
-       * measured off the tester's write relay: kind 30003, d:'git-repo-bookmark'. */
-      _starsBk=new Set([...coords(pick(10003, undefined)), ...coords(pick(30003, 'git-repo-bookmark'))]);
+      /* gitworkshop's set (kind 30003, d:'git-repo-bookmark' — measured off a real write relay)
+       * is READ AND WRITTEN: stars made here must show on the ngit site too, and its site-side ⭐
+       * publishes nothing unless that tab can sign, so ours is the reliable direction. The raw
+       * newest version is kept for read-modify-write (carry its tags, edit one coordinate).
+       * Kind 10003 (general bookmarks) stays read-only — that list belongs to other features. */
+      _gwCur=pick(30003, 'git-repo-bookmark')||null;
+      _starsGw=new Set(coords(_gwCur));
+      _stars10=new Set(coords(pick(10003, undefined)));
+      _starsBk=new Set([..._stars10, ..._starsGw]);
       _stars=new Set([..._starsMine, ..._starsBk]);
     }catch(_){ /* _stars stays as it was — possibly null, which keeps the buttons read-only */ }
   }
@@ -91,19 +98,34 @@ window.PCGitFactory = function(dep){
     if(!S.ME || !S.ME.pubkey){ _guestPrompt(); return Promise.resolve(false); }
     if(_stars===null || _starsMine===null){ toast('still loading your starred list — try again in a second'); return Promise.resolve(false); }
     const addr=_repoAddr(e), on=!_stars.has(addr);
-    if(!on && !_starsMine.has(addr) && _starsBk.has(addr)){
-      // Their bookmark, made in another app: we will not write that list, so we cannot remove from it.
+    if(!on && !_starsMine.has(addr) && !_starsGw.has(addr) && _stars10.has(addr)){
+      // A general 10003 bookmark made in another app: that list belongs to other features here, so
+      // we will not write it — and therefore cannot remove from it.
       toast('this star lives in your Nostr bookmarks (made in another client) — remove it there');
       return Promise.resolve(true);
     }
-    if(on) _starsMine.add(addr); else _starsMine.delete(addr);
+    if(on){ _starsMine.add(addr); _starsGw.add(addr); }
+    else { _starsMine.delete(addr); _starsGw.delete(addr); }
+    _starsBk=new Set([..._stars10, ..._starsGw]);
     _stars=new Set([..._starsMine, ..._starsBk]);
     _starChain=_starChain.catch(()=>{}).then(async()=>{
       const tags=[['d',STARS_D],['title','Git repos']].concat([..._starsMine].map(a=>['a',a]));
       const r=await publish(30003, '', tags);
-      if(r && r.ok===false){ if(on) _starsMine.delete(addr); else _starsMine.add(addr);
+      if(r && r.ok===false){ if(on){ _starsMine.delete(addr); _starsGw.delete(addr); }
+        else { _starsMine.add(addr); _starsGw.add(addr); }
+        _starsBk=new Set([..._stars10, ..._starsGw]);
         _stars=new Set([..._starsMine, ..._starsBk]);
-        toast('the relay didn\u2019t store your star — nothing changed'); }
+        toast('the relay didn’t store your star — nothing changed'); return; }
+      /* MIRROR INTO GITWORKSHOP'S SET, read-modify-write: carry every non-a/non-d tag of the newest
+       * version we read, replace only the coordinates. Publishing a fresh list when none existed is
+       * the point (the ngit site reads it); a failed mirror keeps the star here and retries on the
+       * next toggle — never a rollback, ours is the source of truth. */
+      try{
+        const carry=(_gwCur&&_gwCur.tags||[]).filter(t=>t&&t[0]!=='a'&&t[0]!=='d'&&t[0]!=='client');
+        const gtags=[['d','git-repo-bookmark']].concat(carry).concat([..._starsGw].map(a=>['a',a]));
+        const g=await publish(30003, (_gwCur&&_gwCur.content)||'', gtags);
+        if(g && g.ok!==false) _gwCur={ content:(_gwCur&&_gwCur.content)||'', tags:gtags, created_at:Math.floor(Date.now()/1000) };
+      }catch(_){}
     });
     return Promise.resolve(on);
   }
