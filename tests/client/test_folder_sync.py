@@ -680,3 +680,21 @@ class TestConflictCandidates(unittest.TestCase):
         out = self.cand({"a/b/report.pdf": {"sha": "A", "size": 5},
                          "a/b/report (conflict from phone, 2026-08-09).pdf": {"sha": "B", "size": 5}})
         self.assertEqual([c["original"] for c in out], ["a/b/report.pdf"])
+
+
+class AddIsAGrant(unittest.TestCase):
+    """Adding a folder must not draw "Point at the folder again…" on a card that is already
+    syncing. `granted` is fetched when the screen paints; the folder picked afterwards is not in
+    that list, so the very first repaint called the brand-new folder lost — every add ("why do I
+    always have to point at the folder again! it's syncing while that button is still there")."""
+
+    def test_the_add_handler_records_the_pick_as_granted_before_painting(self):
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        src = open(os.path.join(root, "static", "js", "client", "sync.js"), encoding="utf-8").read()
+        at = src.index("const add = document.getElementById('sync-add')")
+        seg = src[at:at + 6000]
+        push = seg.index("granted.push({ id: picked.id")
+        paint = seg.index("watch(picked.id); paint();")
+        self.assertLess(push, paint,
+                        "the pick is not recorded as a grant before the repaint — the fresh card "
+                        "draws the re-link button while it syncs")

@@ -2342,6 +2342,12 @@
         if(list3.some(x => x.id === picked.id)){ PC.toast('that folder is already syncing'); return; }
         list3.push({ id: picked.id, key, dir: picked.dir, name: key,
                      excludes: [], prefs: { paused: true }, lastSyncAt: 0, lastFullScanAt: 0 });
+        /* THE PICK IS A GRANT. `granted` was fetched when the screen painted, so the folder just
+         * added is not in it, and the very first repaint drew "Point at the folder again…" on a
+         * card that was already syncing — every add, for as long as the button takes to scroll off
+         * the platform's next answer. The platform handed us this handle seconds ago; record it. */
+        if(Array.isArray(granted) && !granted.some(g => g && g.id === picked.id))
+          granted.push({ id: picked.id, dir: picked.dir });
         saveFolders(list3); rememberPair(picked.id, picked.dir, key); watch(picked.id); paint();
       }catch(e){ PC.toast('could not add: ' + ((e && e.message) || e)); }
     };
