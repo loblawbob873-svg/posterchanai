@@ -250,7 +250,9 @@ public final class NativeSweep {
             return rep;
         }
         try {
-            sweep(ctx, store, f, sec, hash, stop, rep);
+            SyncNet net = new SyncNet(store.apiBase(), store.mediaBase(), sec);
+            byte[] mk = SyncCrypto.unwrapMasterKey(sec, store.wrappedDriveKey());
+            sweep(ctx, store, f, sec, hash, stop, rep, net, mk, new SafFs(ctx, f.id));
         } catch (Throwable t) {
             rep.error = String.valueOf(t.getMessage() == null ? t : t.getMessage());
         } finally {
@@ -262,13 +264,14 @@ public final class NativeSweep {
         return rep;
     }
 
-    private static void sweep(Context ctx, SyncStore store, SyncStore.Folder f, byte[] sec,
-                              boolean hash, Stop stop, Report rep) throws Exception {
+    /** Package-private and taking its io: that is what makes a whole sweep runnable off a phone.
+     *  See SyncIo — the disk and the network used to be built in here, so this could be compiled and
+     *  read and never executed. */
+    static void sweep(Context ctx, SyncStore store, SyncStore.Folder f, byte[] sec,
+                      boolean hash, Stop stop, Report rep,
+                      SyncIo.Net net, byte[] mk, SyncIo.Files fs) throws Exception {
         final long now = System.currentTimeMillis();
         final String device = store.deviceName();
-        SyncNet net = new SyncNet(store.apiBase(), store.mediaBase(), sec);
-        byte[] mk = SyncCrypto.unwrapMasterKey(sec, store.wrappedDriveKey());
-        SafFs fs = new SafFs(ctx, f.id);
 
         /* EVERY DEVICE'S VIEW, and a device that could not be read is COUNTED rather than left out.
          * Left out, its files are absent from the merge — and absent is indistinguishable from
@@ -330,6 +333,21 @@ public final class NativeSweep {
 
         Journal j = new Journal(net, store, sec, mk, f.key, device, index,
                                 v.views.get(device), rep);
+        /* IF OUR OWN RECORD HAS GONE, PUT IT BACK — even on a sweep that changes nothing.
+         *
+         * `mine` is rebuilt from the journal, so it always holds everything this device knows. The
+         * page half does this; without it here, a phone whose document was lost or emptied would
+         * only restore it the next time a file happened to change — and until then its paths are
+         * missing from the merge, which is a path no joining device can fetch. The cost of being
+         * wrong is one document write. */
+        /* HAS OUR RECORD GONE — asked of the KEYS, not of a count.
+         *
+         * The Journal has already worked out the real answer: it seeds `mine` from the published
+         * view and copies in every path the journal holds that the view lacks. Comparing sizes misses
+         * the case where they are equal and DIFFERENT — an interrupted write, a checkpoint that
+         * landed in one store and not the other — and those paths then stay missing from the merge,
+         * which is a path no joining device can fetch. */
+        if (j.seeded()) j.markDirty();
 
         /* GIVE EVERY ENTRY A CONTENT IDENTITY WHILE WE ARE HERE.
          *
@@ -455,7 +473,7 @@ public final class NativeSweep {
      * alone and the part file is discarded rather than trashed: those are bytes we could not
      * confirm, and putting them in the safety net makes the net less trustworthy.
      */
-    private static long[] download(SyncNet net, SafFs fs, byte[] mk, String path,
+    private static long[] download(SyncIo.Net net, SyncIo.Files fs, byte[] mk, String path,
                                    Map<String, Object> R, long now) throws Exception {
         List<Object> chunks = R.get("chunks") instanceof List ? Json.arr(R.get("chunks")) : null;
         long mtime = Json.num(R.get("mtime"), 0);
@@ -513,7 +531,7 @@ public final class NativeSweep {
     }
 
     /** One file up, whole or in pieces, and the manifest entry it earns. */
-    private static Map<String, Object> upload(SyncNet net, SafFs fs, byte[] mk, String path,
+    private static Map<String, Object> upload(SyncIo.Net net, SyncIo.Files fs, byte[] mk, String path,
                                               Map<String, Object> meta, String device, long now,
                                               Report rep) throws Exception {
         long size = Json.num(meta.get("size"), 0);
@@ -539,7 +557,23 @@ public final class NativeSweep {
                 byte[] blob = SyncCrypto.encrypt(mk, plain);
                 String sha = SyncCrypto.sha256hex(blob);
                 if (net.blobExists(sha)) { chunks.add(sha); }
-                else { chunks.add(net.putBlob(blob)); allExisted = false; }
+                else {
+                    /* IT HAS TO LAND WHERE WE COMPUTED IT WOULD. The store is content-addressed, so
+                     * the address IS the hash of the bytes — and we hashed them a line ago. A
+                     * different answer means the server is holding something other than what was
+                     * sent, and recording it writes an entry pointing at bytes that are not this
+                     * chunk. Nothing notices until another device downloads it and fails its
+                     * checksum, a whole folder of uploads later. (The same check as putParts in
+                     * app.js.) */
+                    String got = net.putBlob(blob);
+                    if (!sha.equals(got)) {
+                        throw new java.io.IOException("the server stored a different chunk than the "
+                            + "one sent (" + sha.substring(0, 8) + " -> "
+                            + (got == null ? "nothing" : got.substring(0, Math.min(8, got.length()))) + ")");
+                    }
+                    chunks.add(got);
+                    allExisted = false;
+                }
             }
             if (allExisted) rep.alreadyStored++;
             entry.put("chunks", chunks);
@@ -552,11 +586,33 @@ public final class NativeSweep {
             String big = Json.str(meta.get("csum"), "");
             if (!big.isEmpty()) entry.put("csum", big);
         } else {
+            /* A WHOLE-FILE READ IS EXACTLY THE FILE, OR IT IS A FAILURE — the rule the chunked
+             * branch above has always had, on the path that did not.
+             *
+             * This is the worse half, because a truncation here is SELF-CONSISTENT: the short buffer
+             * is what gets hashed, so the entry's checksum certifies the truncation, the receiving
+             * device verifies it happily, and every check afterwards agrees. A length that disagrees
+             * with the scan is also what a file being written while the sweep reads it looks like,
+             * and the answer is the same either way: do not store it, report it, take it next
+             * sweep. */
             byte[] plain = fs.readAll(path);
+            int got = plain == null ? 0 : plain.length;
+            if (got != size) {
+                throw new java.io.IOException("read " + got + " bytes of " + size
+                    + " — the file changed while it was being read, or the read came back short; "
+                    + "it will be picked up next sweep");
+            }
             byte[] blob = SyncCrypto.encrypt(mk, plain);
             String sha = SyncCrypto.sha256hex(blob);
             if (net.blobExists(sha)) rep.alreadyStored++;
-            else net.putBlob(blob);
+            else {
+                String landed = net.putBlob(blob);
+                if (!sha.equals(landed)) {
+                    throw new java.io.IOException("the server stored a different file than the one "
+                        + "sent (" + sha.substring(0, 8) + " -> "
+                        + (landed == null ? "nothing" : landed.substring(0, Math.min(8, landed.length()))) + ")");
+                }
+            }
             entry.put("sha", sha);
             /* The csum is computed here when the scan did not hash, because it is the only thing that
              * lets ANOTHER device recognise this file as one it already has. Without it the manifest
@@ -590,7 +646,7 @@ public final class NativeSweep {
      * carries no versions, so its entries compare by content, which is what this engine did before
      * versions existed.
      */
-    static Views readViews(SyncNet net, byte[] sec, byte[] mk, String key) throws Exception {
+    static Views readViews(SyncIo.Net net, byte[] sec, byte[] mk, String key) throws Exception {
         Views out = new Views();
         Map<String, Object> answer = net.views(key);
         out.missing = (int) Json.num(answer.get("unreadable"), 0);
@@ -611,7 +667,7 @@ public final class NativeSweep {
     }
 
     /** One document's paths, decrypted — v2 pointer blob, sealed inline, or a pre-seal document. */
-    static Map<String, Map<String, Object>> openDoc(byte[] sec, byte[] mk, SyncNet net,
+    static Map<String, Map<String, Object>> openDoc(byte[] sec, byte[] mk, SyncIo.Net net,
                                                     Map<String, Object> doc) throws Exception {
         String pathsSha = Json.str(doc.get("pathsSha"), "");
         String json;
@@ -651,7 +707,7 @@ public final class NativeSweep {
      * survive several writers, and it did not: the later of two devices erased every path the other
      * had added, silently, because the blobs were still there and only the entries were gone.
      */
-    static void publishView(SyncNet net, byte[] sec, byte[] mk, String key, String device,
+    static void publishView(SyncIo.Net net, byte[] sec, byte[] mk, String key, String device,
                             Map<String, Map<String, Object>> mine) throws Exception {
         int live = 0;
         for (Map<String, Object> e : mine.values()) if (SyncDiff.live(e)) live++;
@@ -688,16 +744,17 @@ public final class NativeSweep {
      * this device believe in an agreement no other device has seen.
      */
     private static final class Journal {
-        private final SyncNet net;
+        private final SyncIo.Net net;
         private final SyncStore store;
         private final byte[] sec, mk;
         private final String key, me;
         private final Map<String, Map<String, Object>> index, mine;
         private final Report rep;
         private boolean dirty = false;
+        private boolean seededFromJournal = false;
         private int since = 0;
 
-        Journal(SyncNet net, SyncStore store, byte[] sec, byte[] mk, String key, String me,
+        Journal(SyncIo.Net net, SyncStore store, byte[] sec, byte[] mk, String key, String me,
                 Map<String, Map<String, Object>> index, Map<String, Map<String, Object>> mine,
                 Report rep) {
             this.net = net; this.store = store; this.sec = sec; this.mk = mk;
@@ -707,9 +764,15 @@ public final class NativeSweep {
             // Anything this device already knew but has never published — a journal restored from a
             // sweep that was interrupted before its first publish — belongs in our view too.
             for (Map.Entry<String, Map<String, Object>> e : index.entrySet()) {
-                if (!this.mine.containsKey(e.getKey())) this.mine.put(e.getKey(), strip(e.getValue()));
+                if (!this.mine.containsKey(e.getKey())) {
+                    this.mine.put(e.getKey(), strip(e.getValue()));
+                    seededFromJournal = true;
+                }
             }
         }
+
+        /** Did the journal know paths the published view did not? Then the view is behind. */
+        boolean seeded() { return seededFromJournal; }
 
         private static Map<String, Object> strip(Map<String, Object> e) {
             Map<String, Object> c = new LinkedHashMap<String, Object>(e);
@@ -718,6 +781,9 @@ public final class NativeSweep {
         }
 
         /** This path is now settled at `entry`, and the file here looked like `local` when it was. */
+        /** The view is behind what this device knows — publish even if nothing else changed. */
+        void markDirty() { dirty = true; }
+
         void applied(String path, Map<String, Object> entry, Map<String, Object> local) {
             Map<String, Object> keep = new LinkedHashMap<String, Object>(entry);
             if (local != null) keep.put("local", local); else keep.remove("local");

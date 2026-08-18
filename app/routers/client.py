@@ -4146,6 +4146,10 @@ class SyncManifestReq(BaseModel):
     # its own document": leave any device's copy behind and the folder returns the moment that
     # device publishes again, and the name stays unusable.
     forgetAll: bool = False
+    # Retire ONE device's record. The escape hatch for the guard above it: a device whose document
+    # cannot be read holds every deletion in the pair, for ever, and until now there was no way to
+    # say "that one is gone". Named explicitly — never inferred from a failed read.
+    forgetDevice: str | None = None
 
 
 def _sync_folder_key(folder: str, device: str | None = None) -> str | None:
@@ -4206,6 +4210,16 @@ async def sync_manifest(data: SyncManifestReq, db: Session = Depends(get_db)):
     sk = store.user_storage_seckey(db, user)
     port = int(_setting(db, "nostr_relay_port", "3052"))
 
+    if data.forgetDevice:
+        one = _sync_folder_key(data.folder, data.forgetDevice)
+        if not one:
+            return JSONResponse({"ok": False, "error": "invalid device"}, status_code=400)
+        logger.info("[client] sync-manifest: retiring %s", one)
+        if not await store.put_doc(port, sk, one, {"n": 0, "entries": 0}):
+            return JSONResponse({"ok": False, "error": "could not clear that device's record"},
+                                status_code=503)
+        return JSONResponse({"ok": True, "cleared": 1})
+
     if data.forgetAll:
         pair = _sync_folder_key(data.folder)
         try:
@@ -4243,12 +4257,15 @@ async def sync_manifest(data: SyncManifestReq, db: Session = Depends(get_db)):
             logger.warning("[client] sync-manifest: views unreadable %s: %s", pair, e)
             return JSONResponse({"ok": False, "error": "views unavailable"}, status_code=503)
         views, legacy, unreadable = {}, None, 0
+        cannot = []                           # …and WHICH, so a person can retire one that is gone
         for d_tag, (doc, at) in docs.items():
             got_pair, dev = _sync_split_key(d_tag)
             if got_pair != pair[len("pcai:sync:"):]:
                 continue                      # a different folder whose name starts the same way
             if doc is None:
                 unreadable += 1               # present, and this node could not open it
+                if dev:
+                    cannot.append(dev)
                 continue
             if dev is None:
                 legacy = doc
@@ -4257,7 +4274,7 @@ async def sync_manifest(data: SyncManifestReq, db: Session = Depends(get_db)):
         logger.info("[client] sync-manifest: views %s -> %d device(s)%s", pair, len(views),
                     " + the shared document" if legacy else "")
         return JSONResponse({"ok": True, "views": views, "legacy": legacy,
-                             "unreadable": unreadable})
+                             "unreadable": unreadable, "cannot": cannot})
 
     if data.manifest is None:
         try:

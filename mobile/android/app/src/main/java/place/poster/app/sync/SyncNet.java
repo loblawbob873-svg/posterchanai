@@ -35,7 +35,7 @@ import place.poster.app.signer.Nostr;
  * body — are checked against a real HTTP server in `tests/test_android_native_sync_net.py` instead of
  * on a device.
  */
-public final class SyncNet {
+public final class SyncNet implements SyncIo.Net {
 
     /** One JSON POST. Small, so a slow radio still answers inside it. */
     public static final int POST_TIMEOUT_MS = 20000;

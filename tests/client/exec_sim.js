@@ -637,6 +637,86 @@ scenario('small files still overlap — the whole point of the lanes', async (t)
   t.ok(B.st.peak.small > 1, 'downloads run one at a time again (peak ' + B.st.peak.small + ')');
 });
 
+scenario('a conflict whose incoming copy never arrives leaves the local file where it is', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(4) });
+  await A.sweep();
+  const B = device('phone', sky, {});
+  await B.sweep();
+  // Both edit the same file without seeing each other: a genuine conflict.
+  const p = 'DCIM/img0.jpg';
+  A.disk[p] = Buffer.from('the laptop version, which is longer');
+  B.disk[p] = Buffer.from('the phone version');
+  const A2 = device('laptop', sky, { disk: A.disk, index: A.st.index, mtimes: { [p]: 5000 } });
+  await A2.sweep();
+  // …and the store loses the incoming copy before the phone can fetch it.
+  sky.forget(sky.docs.laptop[p].sha);
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index, mtimes: { [p]: 5000 } });
+  const r = await B2.sweep();
+  t.eq(r.failed.length, 1, 'a conflict whose copy is missing did not fail');
+  t.ok(!!B2.disk[p], 'the local file was renamed away and nothing replaced it');
+  t.eq(B2.disk[p].toString(), 'the phone version', 'the local copy was not left intact');
+  t.eq(B2.st.moved.length, 0, 'it renamed the local copy before it had anything to put in its place');
+});
+
+scenario('a record that names no bytes is reported, never chased for ever', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(3) });
+  await A.sweep();
+  // A live entry with neither a sha nor a chunk list: it says the file exists and not where it is.
+  // Reported from a real folder — "Files → Blossom says this file has no stored copy" — and every
+  // device planned a download, fetched nothing and failed, on every sweep.
+  sky.docs.laptop['DCIM/orphan.mp4'] = { v: 1, by: 'laptop', size: 400, mtime: 1000 };
+  const B = device('phone', sky, {});
+  const r = await B.sweep();
+  t.eq(r.failed.length, 0, 'it tried to fetch a file with no address: ' + JSON.stringify(r.failed));
+  t.eq((r.unfetchable || []).length, 1, 'the unfetchable entry was not reported');
+  t.ok(/does not say where/.test(r.unfetchable[0].why), r.unfetchable[0].why);
+  t.eq(r.downloaded.length, 3, 'the other three files did not arrive');
+  // …and the check names it too, which is where somebody would go looking.
+  const v = await B.verify();
+  t.eq((v.unaddressed || []).length, 1, 'the consistency check did not name it');
+});
+
+scenario('an upload that finishes without an address is refused, not published', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(2) });
+  // A store that accepts the bytes and answers with nothing at all.
+  A.io.putBlob = async () => ({ sha: '' });
+  const r = await A.sweep();
+  t.eq(r.uploaded.length, 0, 'it recorded a file nothing can fetch');
+  t.eq(r.failed.length, 2, 'the failure was not reported: ' + JSON.stringify(r.failed));
+  t.ok(/without an address/.test(r.failed[0].error), r.failed[0].error);
+  t.ok(!Object.keys(sky.docs.laptop || {}).length, 'an addressless entry was published anyway');
+});
+
+scenario('a sweep that loses the network resumes rather than starting over', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(60) });
+  await A.sweep();
+  // The phone gets part of the way and the connection goes.
+  const B = device('phone', sky, {});
+  let n = 0;
+  const realGet = B.io.getBlob;
+  B.io.getBlob = async (h) => {
+    if(++n > 20) throw new Error('network error: the connection went away');
+    return realGet(h);
+  };
+  const r1 = await B.sweep();
+  t.ok(r1.downloaded.length >= 15, 'it moved almost nothing before the break: ' + r1.downloaded.length);
+  t.ok(r1.failed.length > 0, 'the break was not reported as a failure');
+  t.ok(!r1.ok, 'a sweep with failures reported itself as clean — the scheduler then waits it out');
+
+  // The network comes back. What it already moved is journalled, so the next sweep does the REST.
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index });
+  const r2 = await B2.sweep();
+  t.eq(r2.failed.length, 0, 'the retry failed: ' + JSON.stringify(r2.failed.slice(0, 2)));
+  t.eq(identical(A.disk, B2.disk), null, 'the folder did not catch up');
+  t.ok(r2.downloaded.length <= 60 - r1.downloaded.length + EXEC.LANES,
+       're-fetched files it already had: ' + r2.downloaded.length + ' for '
+       + (60 - r1.downloaded.length) + ' outstanding');
+});
+
 scenario('the scale that killed the desktop: 6,000 files, checked and quiet the second time', async (t) => {
   const N = parseInt(process.argv[2] || '6000', 10);
   const sky = cloud();

@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import tempfile
 import textwrap
+import time
 import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -582,15 +583,19 @@ class TestPartFiles(TestFsBridge):
         """They are invisible to everything — `ignored()` keeps them out of the scan, rightly — so
         nothing ever looked at them again and every interrupted download left its bytes on the disk
         for good. The age bound is what makes it safe: a part file this sweep is about to resume from
-        must survive."""
+        must survive.
+
+        The files here are created THROUGH the adapter, because that is now what makes them
+        collectable: the sweep removes only part files it recorded writing. A `.pcpart` file it did
+        not create is somebody else's and is left alone — see TestPartSweepOnlyTakesItsOwn."""
         import time
+        self.run_js("""
+            await B.writePart('r1', 'old.mp4', 0, new Uint8Array(500));
+            await B.writePart('r1', 'fresh.mp4', 0, new Uint8Array(10));
+        """)
         old = os.path.join(self.root, "old.mp4.pcpart")
-        with open(old, "wb") as fh:
-            fh.write(b"x" * 500)
         long_ago = time.time() - 5 * 86400
         os.utime(old, (long_ago, long_ago))
-        with open(os.path.join(self.root, "fresh.mp4.pcpart"), "wb") as fh:
-            fh.write(b"y" * 10)
 
         out = self.run_js("await attempt('s', () => B.sweepParts('r1', 24 * 3600000));")
         self.assertEqual(out["s"]["value"]["removed"], 1, out["s"])
@@ -598,3 +603,75 @@ class TestPartFiles(TestFsBridge):
         self.assertFalse(os.path.exists(old), "the abandoned part file survived")
         self.assertTrue(os.path.exists(os.path.join(self.root, "fresh.mp4.pcpart")),
                         "a part file a sweep may still be resuming from was collected")
+
+
+class TestPartSweepOnlyTakesItsOwn(unittest.TestCase):
+    """The part sweep walks somebody's Documents folder deleting files.
+
+    Matching on the extension alone is not good enough. A user's own `notes.pcpart` is invisible to
+    the scan — part files are ignored, exactly so a half-written download is never uploaded — which
+    means sync has never touched it, and a sweep that deletes it a day later does so with no report
+    and no copy in `.pc-trash`.
+
+    So the adapter records the part files it creates, and the sweep removes only those. A part file
+    it did not record is LEAKED, which is the correct direction: a leaked temp file is a cost, and
+    deleting somebody's file is not a cost.
+    """
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="pc-parts-")
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+
+    def _run(self, script):
+        js = textwrap.dedent("""
+            const B = require(%s);
+            B.init({ roots: [{id:'r1', dir: %s}], save(){} });
+            (async () => {
+              %s
+            })().catch(e => { process.stderr.write(String(e && e.stack || e)); process.exit(1); });
+        """) % (json.dumps(MOD), json.dumps(self.root), script)
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            raise AssertionError("node failed:\n" + r.stderr[-3000:])
+        return json.loads(r.stdout or "{}")
+
+    def test_a_users_own_pcpart_file_is_never_deleted(self):
+        mine = os.path.join(self.root, "notes.pcpart")
+        with open(mine, "w") as fh:
+            fh.write("something a person made")
+        old = time.time() - 3 * 24 * 3600
+        os.utime(mine, (old, old))
+        out = self._run("""
+          const r = await B.sweepParts('r1', 1000);
+          process.stdout.write(JSON.stringify({ removed: r.removed }));
+        """)
+        self.assertTrue(os.path.exists(mine), "the sweep deleted a file sync never touched")
+        self.assertEqual(out["removed"], 0, out)
+
+    def test_a_part_file_the_adapter_wrote_is_collected(self):
+        out = self._run("""
+          await B.writePart('r1', 'video.mp4', 0, new Uint8Array([1,2,3,4]));
+          process.stdout.write(JSON.stringify({ made: true }));
+        """)
+        part = os.path.join(self.root, "video.mp4.pcpart")
+        self.assertTrue(os.path.exists(part), out)
+        old = time.time() - 3 * 24 * 3600
+        os.utime(part, (old, old))
+        out2 = self._run("""
+          const r = await B.sweepParts('r1', 1000);
+          process.stdout.write(JSON.stringify({ removed: r.removed }));
+        """)
+        self.assertEqual(out2["removed"], 1, "an abandoned part file was left to leak")
+        self.assertFalse(os.path.exists(part))
+
+    def test_a_committed_part_file_is_forgotten(self):
+        """The register must not grow for ever, and a name that is reused later must not be
+        collectable on the strength of a record from a download that finished."""
+        self._run("""
+          await B.writePart('r1', 'doc.pdf', 0, new Uint8Array([9,9]));
+          await B.writeCommit('r1', 'doc.pdf', 0);
+          process.stdout.write('{}');
+        """)
+        reg = os.path.join(self.root, ".pc-trash", ".parts.json")
+        with open(reg) as fh:
+            self.assertEqual(json.load(fh), {}, "the register still names a part file that landed")

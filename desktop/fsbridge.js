@@ -181,10 +181,44 @@ async function readPart(id, rel, offset, len){
 /* Writes land in the SAME `.part` file `write()` uses, at an offset, and are only renamed into place
  * by writeCommit. So an interrupted download leaves a partial `.part` and never a half-written file
  * under the real name — the rule the whole-file path already follows, kept for the chunked one. */
+/* WHICH PART FILES ARE OURS.
+ *
+ * Kept inside `.pc-trash`, which this adapter already owns and the scan already ignores, so it
+ * survives a restart (the whole point of resuming a download) without putting anything new in the
+ * user's way. Best-effort throughout: a failure to record costs a leaked temp file, never a file. */
+const PARTS_LIST = '.parts.json';
+function partsFile(root){ return path.join(root.dir, '.pc-trash', PARTS_LIST); }
+async function readParts(root){
+  try{ return JSON.parse(await fsp.readFile(partsFile(root), 'utf8')) || {}; }
+  catch(_){ return {}; }
+}
+async function notePart(root, abs){
+  try{
+    const list = await readParts(root);
+    if(list[abs]) return;
+    list[abs] = Date.now();
+    await fsp.mkdir(path.dirname(partsFile(root)), { recursive: true });
+    await fsp.writeFile(partsFile(root), JSON.stringify(list));
+  }catch(_){ }
+}
+async function forgetPart(root, abs){
+  try{
+    const list = await readParts(root);
+    if(!(abs in list)) return;
+    delete list[abs];
+    await fsp.writeFile(partsFile(root), JSON.stringify(list));
+  }catch(_){ }
+}
+async function knownPart(root, abs){
+  const list = await readParts(root);
+  return Object.prototype.hasOwnProperty.call(list, abs);
+}
+
 async function writePart(id, rel, offset, bytes){
   const abs = await resolveIn(id, rel);
   await fsp.mkdir(path.dirname(abs), { recursive: true });
   const tmp = abs + PART;
+  { const root = roots.find(r => r.id === id); if(root) await notePart(root, tmp); }
   const off = Number(offset) || 0;
   const fh = await fsp.open(tmp, off === 0 ? 'w' : 'r+').catch(async (e) => {
     if(off === 0) throw e;
@@ -251,6 +285,11 @@ async function sweepParts(id, olderThanMs){
   if(!root) throw new Error('unknown sync folder');
   const base = await fsp.realpath(root.dir);
   const cutoff = Date.now() - (olderThanMs || 24 * 3600000);
+  /* Read ONCE, pruned at the end. `knownPart` re-read and re-parsed the whole register for every
+   * `.pcpart` the walk met, and nothing ever shrank it — so a folder that had synced for months
+   * carried a map of every part file it had ever made, re-parsed per candidate. */
+  const reg = await readParts(root);
+  const gone = [];
   let removed = 0, bytes = 0;
   async function walk(dir){
     let ents;
@@ -259,13 +298,37 @@ async function sweepParts(id, olderThanMs){
       const p = path.join(dir, e.name);
       if(e.isDirectory()){ if(!IGNORE.has(e.name)) await walk(p); continue; }
       if(!e.isFile() || !e.name.endsWith(PART)) continue;
+      /* OURS, NOT ANYTHING THAT HAPPENS TO END IN `.pcpart`.
+       *
+       * This walks somebody's Documents folder deleting files, so matching on the extension alone is
+       * not good enough: a user's own `notes.pcpart` is invisible to the scan (part files are
+       * ignored, exactly so a half-written download is never uploaded), which means sync has never
+       * touched it — and this would delete it a day later, with no report and no copy in .pc-trash.
+       *
+       * So the sweep only removes part files this adapter recorded creating. One it did not — from a
+       * build before the register existed, or a crash between creating and recording — is left
+       * alone. Leaking a temp file is a cost; deleting somebody's file is not a cost, it is the
+       * thing that must not happen. */
+      if(!Object.prototype.hasOwnProperty.call(reg, p)) continue;
       let st; try{ st = await fsp.stat(p); }catch(_){ continue; }
       if(st.mtimeMs >= cutoff) continue;                 // something may still be writing it
-      try{ await fsp.rm(p, { force: true, maxRetries: 3, retryDelay: 100 }); removed++; bytes += st.size; }
+      try{ await fsp.rm(p, { force: true, maxRetries: 3, retryDelay: 100 }); removed++; bytes += st.size; gone.push(p); }
       catch(_){}
     }
   }
   await walk(base);
+  /* Forget what was collected, and anything the register names that is no longer on disk — a part
+   * file that was committed by a build before the register existed, or one removed by hand. A
+   * register that only grows is the leak this exists to stop, one level up. */
+  try{
+    let changed = gone.length > 0;
+    for(const q of gone) delete reg[q];
+    for(const q of Object.keys(reg)){
+      try{ await fsp.stat(q); }
+      catch(_){ delete reg[q]; changed = true; }
+    }
+    if(changed) await fsp.writeFile(partsFile(root), JSON.stringify(reg));
+  }catch(_){ }
   return { removed, bytes };
 }
 
@@ -274,6 +337,7 @@ async function sweepParts(id, olderThanMs){
 async function discardPart(id, rel){
   const abs = await resolveIn(id, rel);
   try{ await fsp.rm(abs + PART, { force: true, maxRetries: 3, retryDelay: 100 }); }catch(_){}
+  { const root = roots.find(r => r.id === id); if(root) await forgetPart(root, abs + PART); }
   return true;
 }
 
@@ -284,6 +348,7 @@ async function writeCommit(id, rel, mtime){
   try{ await fh.sync(); }                    // the rename is only atomic if the BYTES landed first
   finally { await fh.close(); }
   await fsp.rename(tmp, abs);
+  { const root = roots.find(r => r.id === id); if(root) await forgetPart(root, tmp); }
   if(mtime) { try{ const t = new Date(mtime); await fsp.utimes(abs, t, t); }catch(_){} }
   const st = await fsp.stat(abs);
   return { size: st.size, mtime: Math.floor(st.mtimeMs) };
@@ -293,6 +358,9 @@ async function write(id, rel, bytes, mtime){
   const abs = await resolveIn(id, rel);
   await fsp.mkdir(path.dirname(abs), { recursive: true });
   const tmp = abs + PART;
+  // Registered like the chunked path's: this is the majority of receives, and without it the sweep's
+  // ownership gate skips every part file a crash between the open and the rename leaves behind.
+  { const root = roots.find(r => r.id === id); if(root) await notePart(root, tmp); }
   const fh = await fsp.open(tmp, 'w');
   try{
     await fh.write(Buffer.from(bytes));

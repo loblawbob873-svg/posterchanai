@@ -42,7 +42,7 @@ import java.util.Map;
  *   * a scan re-stats after hashing: a file still being written hashes to bytes that were never a
  *     whole file, and a corrupt copy with a valid checksum is worse than a delay.
  */
-public final class SafFs {
+public final class SafFs implements SyncIo.Files {
 
     public static final String PART = ".pcpart";
     public static final String TRASH = ".pc-trash";

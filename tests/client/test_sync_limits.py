@@ -64,12 +64,23 @@ class TestTheServerLimitIsPerUploadNotPerFile(unittest.TestCase):
             "the chunked branch must not take the lower of the server limit and the file ceiling — "
             "that is the conflation this test exists for")
 
-    def test_a_server_limit_smaller_than_a_chunk_still_binds(self):
-        """The one case where the server's number really is the file's limit: if a single chunk
-        would not fit in one request, nothing larger can be sent at all."""
+    def test_a_chunking_platform_is_no_longer_capped_by_the_servers_limit(self):
+        """It used to be, and that was the workaround this superseded.
+
+        When the node's per-upload limit was smaller than a chunk, `maxBytes` returned the node's
+        number — and `maxBytes` is what the SCAN uses to exclude files. So on a node with a small
+        upload limit every larger file was dropped before chunking was ever reached: the folder of
+        videos still never synced, now silently rather than with an error.
+
+        The fix is upstream — the CHUNK is clamped to what the node accepts (`chunkSize`) — so a
+        platform that can chunk has no file ceiling from the node at all."""
         body = src()
         i = body.index("async function maxBytes()")
-        self.assertIn("server < chunk", body[i:i + 1400])
+        window = body[i:i + 1600]
+        self.assertNotIn("server < chunk", window,
+                         "the file ceiling still borrows the node's per-upload limit, which excludes "
+                         "large files from the scan instead of chunking them")
+        self.assertIn("_maxBytes = SYNC_MAX_BYTES;", window)
 
     def test_an_unchunked_platform_is_still_capped_by_both(self):
         body = src()
@@ -106,3 +117,38 @@ class TestTheServerLimitIsPerUploadNotPerFile(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestABrokenSweepStaysDue(unittest.TestCase):
+    """A sweep that lost the network half way must not buy fifteen minutes of quiet.
+
+    `lastSyncAt` is what the battery policy measures its minimum interval from, and `_dirty` is what
+    lets a folder skip that interval. Recording both regardless meant a sweep that failed part way —
+    files still to move, failures recorded — told the scheduler it had just synced, so the next
+    automatic attempt was refused for a quarter of an hour with work plainly outstanding. On a flaky
+    link that is exactly the difference between catching up and looking stale.
+
+    A FULL scan still records itself either way: the rehash happened, whatever the transfers did.
+    """
+
+    def setUp(self):
+        self.src = src()
+        at = self.src.index("if(rep && rep.badFetch) _rememberBadFetch(")
+        self.body = self.src[at:self.src.index("setStatus(f.id, summarise(", at)]
+
+    def test_a_clean_sweep_is_what_advances_the_clock(self):
+        self.assertIn("const clean = !!(rep && rep.ok && !rep.stopped && !(rep.failed || []).length);",
+                      self.body)
+        self.assertIn("if(clean) f.lastSyncAt = Date.now();", self.body,
+                      "a failed sweep still records itself as a sync")
+
+    def test_an_incomplete_sweep_leaves_the_folder_due(self):
+        self.assertIn("f._dirty = !clean;", self.body,
+                      "a folder with work outstanding is not marked as needing another pass")
+
+    def test_a_full_rehash_still_records_itself(self):
+        self.assertIn("if(decision.mode === 'full') f.lastFullScanAt = Date.now();", self.body)
+
+    def test_coming_back_online_asks_for_a_sweep(self):
+        self.assertIn("window.addEventListener('online', () => nudge('online'));", self.src,
+                      "nothing retries when the network comes back")

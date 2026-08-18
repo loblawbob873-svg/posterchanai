@@ -16156,7 +16156,28 @@
      *
      * Counted, the batch ends when the last holder lets go, which is what every caller already
      * believes it is asking for. */
-    beginBatch(){ this._batchN = (this._batchN|0) + 1; this._batch=true; },
+    beginBatch(){
+      this._batchN = (this._batchN|0) + 1;
+      this._batch = true;
+      /* AND IT CANNOT BE HELD FOR EVER.
+       *
+       * With the old boolean, any endBatch cleared a leaked flag; counted, a beginBatch whose
+       * endBatch is skipped — an early return, a throw in a caller with no `finally` — pins the
+       * count above zero for the rest of the session. `push()` then returns without scheduling
+       * anything, so every later edit to the drive index is local-only, with no error and no retry
+       * armed: the exact silent-loss shape this file is full of warnings about.
+       *
+       * The deadline is generous (a bulk import of thousands of files is minutes) and it does not
+       * cut a batch short — it only releases one nobody is holding any more, and saves what is
+       * pending. */
+      try{ clearTimeout(this._batchGuard); }catch(_){ }
+      this._batchGuard = setTimeout(() => {
+        if(!this._batchN) return;
+        console.warn('files: a batch was never closed — releasing it and saving');
+        this._batchN = 0; this._batch = false;
+        if(this._dirty) this._save();
+      }, 10 * 60 * 1000);
+    },
     /* Answers whether the batch actually REACHED the server, so a caller can stop claiming it did.
      *
      * The batch flag is dropped AFTER the save, not before: this awaits, the save can sit on a
@@ -16168,7 +16189,10 @@
       try{ return await this._save(); }
       finally{
         this._batchN = Math.max(0, (this._batchN|0) - 1);
-        if(!this._batchN) this._batch=false;
+        if(!this._batchN){
+          this._batch = false;
+          try{ clearTimeout(this._batchGuard); }catch(_){ }
+        }
       }
     },
     folders(){ return this._norm().folders; },
@@ -16545,6 +16569,132 @@
     if(by === 'type') return it.dir ? '' : ((String(it.name).match(/\.([A-Za-z0-9]{1,8})$/) || [])[1] || '');
     return String(it.name || '').toLowerCase();
   }
+  /* ---- IS MY DRIVE ACTUALLY THERE? ------------------------------------------------------------
+   *
+   * The Files grid draws what the INDEX says you have. The server holds what is actually stored. Most
+   * of the time those agree, and when they do not, nothing says so: a file whose bytes are gone looks
+   * completely normal until the day somebody opens it.
+   *
+   * So this compares them, and reports:
+   *   · entries whose bytes the server no longer holds — the ones that will fail when opened;
+   *   · entries this device cannot decrypt, which is a KEY problem and not a storage one, and the
+   *     fix for each is the other's mistake;
+   *   · how much is stored that your index does not name — reported, never offered for deletion,
+   *     because folder sync, the manifests and the music library keep their own records and none of
+   *     them appear in this index. An "orphan" here is usually somebody else's bookkeeping.
+   *
+   * READ-ONLY. The one action it offers is clearing INDEX entries whose bytes are gone, which
+   * deletes nothing from the server — there is nothing there to delete.
+   */
+  async function driveCheck(btn){
+    const was = btn ? btn.textContent : '';
+    if(btn){ btn.disabled = true; btn.textContent = 'checking…'; }
+    try{
+      /* THE SERVER'S OWN LIST, read fresh. Not `_blobHave`, which is whatever the last screen
+       * happened to leave behind — and on the drive home that is often nothing at all, which would
+       * make this report every file in the index as missing. */
+      let list = null;
+      try{
+        const r = await fetch(mediaServer() + '/list/' + ME.pubkey, { cache:'no-store' });
+        if(r.ok) list = await r.json();
+      }catch(_){ }
+      if(!Array.isArray(list)){ toast('could not read your drive from the server — nothing was changed'); return; }
+      const have = new Set(list.map(b => b.sha256));
+      const named = new Set();
+      const files = FilesIdx._norm().files;
+      const missing = [], undecryptable = [];
+      for(const sha in files){
+        const m = files[sha] || {};
+        named.add(sha);
+        if(!have.has(sha)){ missing.push({ sha, name: m.name || sha.slice(0, 8) }); continue; }
+        /* An encrypted entry whose key this device does not have is not a missing file. Only the
+         * wrapped key is checked — reading every blob to find out would be the whole drive. */
+        if(m.enc && !FilesIdx._mkWrapped && !FilesIdx.mk) undecryptable.push(m.name || sha.slice(0, 8));
+      }
+      /* CONFIRM EACH ONE AGAINST THE SERVER ITSELF before calling it dead.
+       *
+       * `/list` is one answer from one endpoint, and this repair is not a local one: forget() writes
+       * a TOMBSTONE, which strips that sha out of any index this account pulls for the next ninety
+       * days, on every device. A list that answers `200 []` — a re-pointed instance, a node whose
+       * ownership rows were lost, a proxy with an opinion — would otherwise offer to "clear 4000
+       * dead entries" and destroy the names, folders and encrypted-folder membership of a drive
+       * whose bytes are all still there.
+       *
+       * A HEAD per candidate is the second opinion, and it is bounded: only the entries the listing
+       * already doubts are asked about, and an unknown answer counts as PRESENT. */
+      const reallyGone = [];
+      for(const x of missing.slice(0, 500)){
+        let there = true;
+        try{ there = await _blobAlreadyStored(x.sha); }catch(_){ there = true; }
+        if(!there) reallyGone.push(x);
+      }
+      const unconfirmed = missing.length - Math.min(missing.length, 500);
+
+      let otherBytes = 0, otherN = 0;
+      for(const b of list) if(!named.has(b.sha256)){ otherN++; otherBytes += (b.size || 0); }
+
+      const lines = [`<div><b>${Object.keys(files).length}</b> file(s) in your index · `
+                     + `<b>${have.size}</b> stored on the server</div>`];
+      if(missing.length){
+        lines.push(`<div class="nt-warn">⚠ <b>${reallyGone.length}</b> file(s) the server no longer has`
+          + (unconfirmed ? ` (${unconfirmed} more not checked individually)` : '') + `:`
+          + `<div class="muted small">${reallyGone.slice(0, 12).map(x => enc(x.name)).join(', ')}`
+          + (reallyGone.length > 12 ? ` and ${reallyGone.length - 12} more` : '') + `</div></div>`);
+      }
+      if(undecryptable.length){
+        lines.push(`<div class="nt-warn">⚠ <b>${undecryptable.length}</b> encrypted file(s) this `
+          + `device has no key for. That is a key problem, not a storage one — the bytes are there.</div>`);
+      }
+      if(otherN){
+        lines.push(`<div class="muted small">${otherN} blob(s), ${_fxBytes(otherBytes)}, are stored `
+          + `but not named by this index — folder sync, its records and the music library keep their `
+          + `own, and they all live here. Nothing to do.</div>`);
+      }
+      if(!missing.length && !undecryptable.length) lines.push('<div>Everything checks out.</div>');
+
+      modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Drive check</h3>`
+        + lines.join('')
+        + (reallyGone.length ? `<div class="row" style="margin-top:12px"><button class="btn btn-red small" id="fx-ck-clear">Clear ${reallyGone.length} dead entr${reallyGone.length===1?'y':'ies'}</button></div>` : ''),
+        r => {
+          const cl = $('#fx-ck-clear', r);
+          if(cl) cl.onclick = async () => {
+            /* A SHORT LIST IS A DELETE ORDER — the same rule the phone book and folder sync use, and
+             * for a stronger reason here: forget() TOMBSTONES the sha, so this is not a local tidy,
+             * it strips those entries out of every device's index for ninety days. Clearing more
+             * than survives means the drive is not missing files, the LISTING is wrong. */
+            const keep = Object.keys(FilesIdx._norm().files).length - reallyGone.length;
+            if(reallyGone.length >= 20 && reallyGone.length > keep){
+              toast('refused: that would clear ' + reallyGone.length + ' of '
+                    + (keep + reallyGone.length) + ' entries — the listing is more likely wrong '
+                    + 'than your drive');
+              return;
+            }
+            if(!await uiConfirm(`Clear ${reallyGone.length} entr${reallyGone.length===1?'y':'ies'} `
+                + `from your file list?\n\nThe bytes are already gone from the server — this only `
+                + `removes the names. It cannot be undone, and it applies to every device.`)) return;
+            cl.disabled = true;
+            /* INDEX ONLY. There is nothing on the server to delete — that is what "missing" means —
+             * so this is a bookkeeping repair, and it is batched for the same reason every other
+             * bulk edit here is: one save, not one per entry. */
+            FilesIdx.beginBatch();
+            try{ for(const x of reallyGone){ try{ FilesIdx.forget(x.sha); }catch(_){} } }
+            finally{
+              const saved = await FilesIdx.endBatch();
+              /* The entries are already out of the index and tombstoned by here, and `_retryLater`
+               * is armed — so "unchanged" would be the opposite of the truth, exactly as it was for
+               * the music delete. */
+              toast(saved ? `cleared ${reallyGone.length} dead entr${reallyGone.length===1?'y':'ies'}`
+                          : `cleared ${reallyGone.length} here — the list could not be saved yet and `
+                            + `will retry; do not reload`);
+              closeModal(); renderBlossom();
+            }
+          };
+        });
+    }catch(e){
+      toast('could not check your drive: ' + ((e && e.message) || e));
+    }finally{ if(btn){ btn.disabled = false; btn.textContent = was; } }
+  }
+
   /* Does the server already hold these exact bytes? A HEAD, so the answer costs a round trip instead
    * of the file.
    *
@@ -17077,7 +17227,8 @@
     const haveSizes = _blobSizes.size > 0;
     const used = haveSizes ? _fxBytes([..._blobSizes.values()].reduce((a,b)=>a+b, 0)) : '—';
     const usedLine = `<div class="fx-used"><b>${enc(used)}</b> stored`
-      + (_blobHave ? ` · ${_blobHave.size} file${_blobHave.size===1?'':'s'}` : ' · counting…') + `</div>`;
+      + (_blobHave ? ` · ${_blobHave.size} file${_blobHave.size===1?'':'s'}` : ' · counting…')
+      + ` <button class="btn btn-ghost small fx-check" title="Check every file in your drive against what the server actually holds. Changes nothing.">Check my drive</button></div>`;
     grid.innerHTML = '<div class="fx-home">'
       + usedLine
       + folders
@@ -17085,6 +17236,7 @@
       + '<div class="fx-home-sec">Everything</div>'
       + tile('🗂', 'All files', known ? ('at least ' + known + ' known') : 'browse the whole drive', 'data-folder=""')
       + '</div>';
+    { const cb = $('.fx-check', pane); if(cb) cb.onclick = () => driveCheck(cb); }
     $$('.fx-home-tile[data-folder]', pane).forEach(b => b.onclick = () => {
       _syncRoot=''; _syncPath=''; _filesFolder=b.dataset.folder; renderBlossom(); });
     $$('.fx-home-tile[data-synckey]', pane).forEach(b => b.onclick = () => {
@@ -18436,8 +18588,15 @@
         // leaves the names behind is not what anybody meant. One save per playlist that changes.
         try{ if(PL()) await PL().pruneTracks(doomed); }catch(_){}
         da.disabled = false; da.textContent = was;
-        toast(!saved ? 'not saved — your library on the server is unchanged'
-                     : failed ? `deleted ${doomed.length - failed}, ${failed} could not be removed`
+        /* THE BYTES ARE ALREADY GONE BY HERE, so "unchanged" would be the opposite of the truth.
+         *
+         * The loop above sent a Blossom DELETE for every track; `saved` is only about whether the
+         * LIBRARY RECORD was written back. A failed save leaves entries pointing at bytes that no
+         * longer exist — the songs are gone and the list still shows them — and telling somebody
+         * their library is untouched at that moment is how they find out days later. */
+        toast(failed ? `deleted ${doomed.length - failed}, ${failed} could not be removed`
+                     : !saved ? `deleted ${doomed.length}, but the library list could not be saved `
+                                + `— it will fix itself on the next save; do not reload yet`
                               : `deleted ${doomed.length} song${doomed.length>1?'s':''}`);
         try{ await FilesIdx.pull(); }catch(_){}
         _renderMusicList(grid, list, q, only);

@@ -62,10 +62,19 @@ class TestTheButton(unittest.TestCase):
         self.assertIn("done % 25 === 0", h)
         self.assertIn("const saved = await FilesIdx.endBatch();", h)
 
-    def test_the_verdict_comes_from_the_save_not_from_asking(self):
-        h = self.body[self.body.index("const da=$('#mus-delall',grid);"):]
-        self.assertIn("!saved ? 'not saved", h,
+    def test_it_never_says_the_library_is_unchanged_after_deleting_the_bytes(self):
+        """The loop has already sent a Blossom DELETE for every track by the time the index is
+        saved. `saved` is only about whether the LIBRARY RECORD was written back — so "your library
+        on the server is unchanged" at that moment is the opposite of the truth, and the songs are
+        gone while the list still shows them."""
+        # Scoped to the delete handler alone. The TIDY handler that follows it may legitimately say
+        # "unchanged" — it only clears index entries for bytes the server already lost.
+        h = self.body[self.body.index("const da=$('#mus-delall',grid);"):
+                      self.body.index("const td=$('#mus-tidy',grid);")]
+        self.assertIn("const saved = await FilesIdx.endBatch();", h,
                       "it reports success without checking that the library was actually saved")
+        self.assertNotIn("your library on the server is unchanged", h)
+        self.assertIn("could not be saved", h, "a failed index save is not reported at all")
 
     def test_the_confirmation_does_not_pretend_it_is_reversible(self):
         h = self.body[self.body.index("const da=$('#mus-delall',grid);"):]

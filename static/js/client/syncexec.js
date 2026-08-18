@@ -101,6 +101,7 @@
       const got = await io.views(key);
       views = (got && got.views) || {};
       missing = (got && got.missing) || 0;
+      report.cannot = (got && got.cannot) || [];
     }catch(e){
       throw new Error('could not read what your devices have — nothing has been changed. ('
                       + msg(e) + ')');
@@ -192,8 +193,15 @@
       if(stopping()) return await halt(report, journal);
       step('conflict', c.path, ++ci, plan.keepBoth.length);
       try{
-        await fs.move(o.id, c.path, c.keepAs);
-        const st = await receive(fs, io, o, c.path, c.entry, () => {});
+        /* FETCH FIRST, RENAME SECOND. Both orders are recoverable and only one is quiet.
+         *
+         * Renaming first leaves a window where the local copy sits under the conflict name and the
+         * real name holds nothing — and if the fetch then fails (a lost blob, a dropped link) that
+         * is where it stays, until somebody notices a file has vanished and a strangely-named one
+         * has appeared. Fetching first writes to the `.part` file, which is invisible to everything
+         * else, so nothing moves until there is something to put in its place. */
+        const st = await receive(fs, io, o, c.path, c.entry, () => {},
+                                 () => fs.move(o.id, c.path, c.keepAs));
         record(c.path, Object.assign({}, c.entry), { size: st.size, mtime: st.mtime,
                                                      csum: c.entry.csum });
         report.conflicted.push({ path: c.path, keptAs: c.keepAs });
@@ -219,6 +227,17 @@
       (d) => !!(d.entry && d.entry.chunks && d.entry.chunks.length)
              || ((d.entry && d.entry.size) || 0) > PARALLEL_MAX,
       async (d, i, n) => {
+        /* An entry already published without an address cannot be fetched by anybody. Reported
+         * rather than attempted, so the sweep stops failing on it every time and the card names the
+         * file — which is the only way somebody can go and fix it. */
+        const e = d.entry || {};
+        if(!e.sha && !(e.chunks && e.chunks.length)){
+          report.unfetchable = report.unfetchable || [];
+          report.unfetchable.push({ path: d.path, why: 'the shared record does not say where this '
+                                    + 'file is stored — delete it in Files → Synced folders and add '
+                                    + 'it again from the device that has it' });
+          return;
+        }
         const badId = skipFetch[d.path] || '';
         if(badId && badId === idOf(d.entry)){
           report.unfetchable = report.unfetchable || [];
@@ -380,7 +399,9 @@
    * version of the same path splices two files together, and the checksum is the only thing that
    * would catch it. Without a checksum it starts again: a slower download is not a bug, a silently
    * wrong file is. */
-  async function receive(fs, io, o, path, entry, onPercent){
+  /** `beforeCommit` runs once the bytes are safely in the part file and before it takes the name —
+   *  the one moment a conflict may move the local copy aside. */
+  async function receive(fs, io, o, path, entry, onPercent, beforeCommit){
     const chunks = entry.chunks || null;
     if(chunks && chunks.length && io.getParts && typeof fs.writePart === 'function'){
       const canVerify = !!(entry.csum && typeof fs.hashPart === 'function');
@@ -415,6 +436,7 @@
         await pull(0);
         await verifyPart(fs, o, path, entry);
       }
+      if(beforeCommit) await beforeCommit();
       return await fs.writeCommit(o.id, path, entry.mtime || 0);
     }
     if(chunks && chunks.length) throw new Error('this device cannot receive a file that large');
@@ -423,6 +445,7 @@
       const got = await io.hashBytes(bytes);
       if(got !== entry.csum) throw new Error('checksum mismatch after download — refusing to write it');
     }
+    if(beforeCommit) await beforeCommit();
     return await fs.write(o.id, path, bytes, entry.mtime || 0);
   }
 
@@ -443,7 +466,11 @@
     const path = u.path, size = (u.stat && u.stat.size) || 0;
     const entry = { v: u.v, by: me, size, mtime: (u.stat && u.stat.mtime) || 0 };
     if(size > chunkAbove(fs, o) && io.putParts && typeof fs.readPart === 'function'){
-      const cs = (fs.chunkBytes || 0) || undefined;
+      /* THE CALLER'S FIGURE FIRST. It is the platform's chunk clamped to what the NODE accepts, and a
+       * chunk IS one upload — reading `fs.chunkBytes` here ignored the clamp entirely, so a node with
+       * a small limit chunked at the right threshold and then sent pieces it would still reject.
+       * Every large file fails while small ones sail through, which is the confusing half. */
+      const cs = (o.chunkBytes || 0) || (fs.chunkBytes || 0) || undefined;
       const r = await io.putParts((off, len) => fs.readPart(o.id, path, off, len), size,
                                   (doneB, totalB) => { if(onPercent && totalB)
                                                          onPercent(Math.round(doneB / totalB * 100)); },
@@ -453,7 +480,7 @@
       entry.csum = (u.stat && u.stat.csum) ||
                    (typeof fs.hashFile === 'function' ? await fs.hashFile(o.id, path) : undefined);
       if(!entry.csum) delete entry.csum;
-      return entry;
+      return addressed(entry, path);
     }
     /* A WHOLE-FILE READ IS EXACTLY THE FILE, OR IT IS A FAILURE — the same rule `_exactPart` applies
      * to a chunk, on the path that did not have it.
@@ -478,6 +505,23 @@
     entry.sha = (put && typeof put === 'object') ? put.sha : put;
     if(put && put.existed) entry.existed = true;
     if(!entry.csum) delete entry.csum;
+    return addressed(entry, path);
+  }
+
+  /* AN ENTRY THAT NAMES NO BYTES IS NOT A FILE.
+   *
+   * A live entry with neither a `sha` nor a chunk list says "this file exists" and does not say
+   * where — so every other device plans a download, fetches nothing, and fails, for ever, while the
+   * file browser answers "this file has no stored copy". Reported exactly that way.
+   *
+   * Publishing one is the bug; this is the last place before it goes out. It is cheap, it cannot
+   * fire for a tombstone, and the alternative is a folder that can never settle. */
+  function addressed(entry, path){
+    const has = entry && (entry.sha || (entry.chunks && entry.chunks.length));
+    if(entry && !entry.deletedAt && !has){
+      throw new Error('the upload finished without an address for ' + path
+                      + ' — refusing to record a file nothing can fetch');
+    }
     return entry;
   }
 
@@ -528,6 +572,7 @@
     const got = await io.views(key);
     const views = (got && got.views) || {};
     out.missingViews = (got && got.missing) || 0;
+    out.cannot = (got && got.cannot) || [];
     const merged = E.merge(views);
     out.devices = merged.devices;
     for(const p in merged.rivals) out.disagree.push(p);
@@ -540,6 +585,11 @@
     for(const p of paths){
       const entry = merged.global[p];
       tick({ phase: 'checking', path: p, i: ++i, n: paths.length });
+      if(!entry.sha && !(entry.chunks && entry.chunks.length)){
+        out.unaddressed = out.unaddressed || [];
+        out.unaddressed.push(p);
+        continue;
+      }
       const L = disk[p];
       if(!L){ out.missingHere.push(p); continue; }
       if(L.size !== entry.size){ out.corrupt.push({ path: p, why: 'wrong size' }); continue; }

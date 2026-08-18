@@ -37,7 +37,8 @@ def _lift():
         src = fh.read()
     out = {}
     for name, pat in (
-        ("begin", r"beginBatch\(\)\{[^\n]*\n"),
+        # Multi-line now: it arms a guard so a batch nobody closes cannot be held for ever.
+        ("begin", r"beginBatch\(\)\{[\s\S]*?\n    \},"),
         ("end", r"async endBatch\(\)\{[\s\S]*?\n    \},"),
     ):
         m = re.search(pat, src)
@@ -122,3 +123,30 @@ class TestReentrantBatch(unittest.TestCase):
         self.assertEqual(out["n"], 0)
         self.assertFalse(out["batch"])
         self.assertEqual(out["saves"], 4, "saves: %d" % out["saves"])
+
+
+@unittest.skipIf(not NODE, "no node on this node")
+class TestALeakedBatchCannotBePermanent(unittest.TestCase):
+    """Counting made a leaked `beginBatch` worse than the boolean it replaced.
+
+    With a flag, any later `endBatch` cleared it. Counted, a `beginBatch` whose `endBatch` is skipped
+    — an early return, a throw in a caller with no `finally` — pins the count above zero for the rest
+    of the session, and `push()` then returns without scheduling anything. Every later edit to the
+    drive index is local-only, with no error and no retry armed.
+    """
+
+    def test_the_guard_releases_a_batch_nobody_closed(self):
+        src = open(APP, encoding="utf-8").read()
+        at = src.index("beginBatch(){")
+        body = src[at:src.index("async endBatch()", at)]
+        self.assertIn("_batchGuard", body, "a leaked batch is held for the rest of the session")
+        self.assertIn("this._batchN = 0", body, "the guard does not actually release the count")
+        self.assertIn("if(this._dirty) this._save();", body,
+                      "it releases the batch without saving what was pending")
+
+    def test_closing_the_last_batch_cancels_the_guard(self):
+        src = open(APP, encoding="utf-8").read()
+        at = src.index("async endBatch()")
+        body = src[at:src.index("folders()", at)]
+        self.assertIn("clearTimeout(this._batchGuard)", body,
+                      "a timer is left armed after every batch, for the life of the session")

@@ -644,10 +644,27 @@
       const j = await store._post({ folder: key, views: true });
       const raw = (j && j.views) || {};
       const views = {};
+      // WHICH devices could not be read, not just how many. A view that cannot be opened holds back
+      // every deletion in the pair, and the only way out is for somebody to say "that one is gone" —
+      // which they cannot do if nothing will name it.
+      const cannot = Array.isArray(j && j.cannot) ? j.cannot.slice() : [];
       let missing = +(j && j.unreadable) || 0;
       for(const dev of Object.keys(raw)){
         try{ views[dev] = await _openDoc(raw[dev]); }
-        catch(e){ missing++; console.warn('folder sync: could not open ' + dev + '\u2019s view', e); }
+        catch(e){
+          missing++;
+          /* A DEVICE THAT CANNOT BE READ AND A SERVER THAT BLINKED ARE NOT THE SAME THING, and only
+           * one of them is worth offering to retire. `_openDoc` throws for both: a media server that
+           * 502s while fetching the sealed path list, and a document this account has no key for.
+           * The first is a minute-long outage; the second is a fact about the record.
+           *
+           * Only the second joins `cannot`, because that list is what the repair screen offers to
+           * retire — and retiring a LIVE device on the strength of a blip zeroes its published
+           * record, which takes its paths out of the merge until it next sweeps. */
+          const why = String((e && e.message) || e);
+          if(/decrypt|drive key|damaged/i.test(why)) cannot.push(dev);
+          console.warn('folder sync: could not open ' + dev + '\u2019s view', e);
+        }
       }
       /* The single shared document older builds still write, read as one more view. It carries no
        * versions, so its entries compare by content — which is exactly what this engine did before
@@ -656,12 +673,22 @@
         try{ const v = await _openDoc(j.legacy); if(Object.keys(v).length) views['(shared)'] = v; }
         catch(e){ missing++; }
       }
-      return { views, missing };
+      return { views, missing, cannot };
     },
     /** Publish OUR view. One writer, so this is a write and nothing else. */
     async publish(key, entries){
       const doc = await _sealDoc(entries);
       await store._post({ folder: key, device: deviceId(), manifest: doc, force: true });
+    },
+    /* RETIRE ONE DEVICE'S RECORD — the escape hatch for the rule above.
+     *
+     * A view that cannot be read holds back every deletion in the pair, for ever and silently. That
+     * is the right default (absent from the merge is indistinguishable from deleted), but it needs a
+     * way out, or a phone that was thrown away can freeze a folder permanently. Named explicitly by
+     * a person: it is never inferred from a failed read, because a failed read is exactly what a
+     * device that is merely offline looks like. */
+    async retire(key, device){
+      await store._post({ folder: key, forgetDevice: device });
     },
     index: (key) => _loadBase(key),
     saveIndex: (key, idx) => _saveBase(key, idx),
@@ -1351,9 +1378,23 @@
           // Tell the background checker what "synced" now looks like, or its next run compares
           // against a stale signature and notifies about changes that are already up.
           try{ if(fs.markSynced) await fs.markSynced(); }catch(_){}
-          f.lastSyncAt = Date.now();
+          /* A SWEEP THAT DID NOT FINISH IS NOT A SYNC, AND MUST NOT BUY 15 MINUTES OF QUIET.
+           *
+           * `lastSyncAt` is what the policy measures the minimum interval from, and `_dirty` is what
+           * lets a folder skip that interval. Setting both regardless meant a sweep that lost the
+           * network half way — files still to move, failures recorded — told the scheduler it had
+           * just synced, so the next automatic attempt was refused for a quarter of an hour with
+           * work plainly outstanding. On a flaky link that is the difference between catching up and
+           * looking stale.
+           *
+           * So an incomplete sweep leaves the folder due: the next tick, resume or `online` event
+           * picks it straight back up, and the transfers that already landed are journalled, so it
+           * costs nothing to try again. A FULL scan still records itself either way — the rehash
+           * happened, whatever the transfers did. */
+          const clean = !!(rep && rep.ok && !rep.stopped && !(rep.failed || []).length);
+          if(clean) f.lastSyncAt = Date.now();
           if(decision.mode === 'full') f.lastFullScanAt = Date.now();
-          f._dirty = false;
+          f._dirty = !clean;
           const all = folders().map(x => x.id === f.id ? f : x); saveFolders(all);
         }
         setStatus(f.id, summarise(rep, decision), rep);
@@ -1476,8 +1517,29 @@
       + ' another device deleted — changed here since');
     if(rep.refusedResurrect) bits.unshift('did NOT republish ' + rep.refusedResurrect.n + ' file'
       + (rep.refusedResurrect.n === 1 ? '' : 's') + ' your other devices deleted');
-    if(rep.refusedTrash) bits.unshift('kept ' + rep.refusedTrash.n + ' file'
-      + (rep.refusedTrash.n === 1 ? '' : 's') + ' the others say are deleted — nothing trashed');
+    /* WHY it was refused, not just that it was. A mass delete and an unreadable device are refused
+     * by the same rule and mean opposite things: one is "your other devices really did delete these",
+     * the other is "one of your devices did not answer, so I cannot know". Printing the first
+     * sentence for the second case tells somebody their files were deleted elsewhere when nothing of
+     * the sort has happened. */
+    if(rep.refusedTrash && rep.refusedTrash.kind === 'partialViews'){
+      bits.unshift('nothing deleted — ' + (rep.refusedTrash.n) + ' file'
+        + (rep.refusedTrash.n === 1 ? '' : 's') + ' held back because a device could not be read');
+    } else if(rep.refusedTrash){
+      bits.unshift('kept ' + rep.refusedTrash.n + ' file'
+        + (rep.refusedTrash.n === 1 ? '' : 's') + ' the others say are deleted — nothing trashed');
+    }
+    if(rep.refusedRemoteDelete && rep.refusedRemoteDelete.kind === 'partialViewsOut'){
+      bits.unshift('did not publish ' + rep.refusedRemoteDelete.n + ' deletion'
+        + (rep.refusedRemoteDelete.n === 1 ? '' : 's') + ' — a device could not be read');
+    } else if(rep.refusedRemoteDelete){
+      /* The OTHER kind, which said nothing at all: this device has lost sight of most of the folder
+       * and the sweep declined to tell everyone else to delete it. That is the single most important
+       * thing a sweep can decline to do, and it was silent. */
+      bits.unshift('did NOT tell your other devices to delete ' + rep.refusedRemoteDelete.n
+        + ' file' + (rep.refusedRemoteDelete.n === 1 ? '' : 's') + ' — this device kept only '
+        + (rep.refusedRemoteDelete.keep || 0));
+    }
     /* A FINISHED SWEEP DOES NOT BORROW A REASON FROM THE POLICY. `decision.why` answers "why is this
      * running, or not" — "waiting for Wi-Fi", "on battery — changed files only", "you asked for it" —
      * and those belong on a sweep that was SKIPPED, which is where setStatus already puts them.
@@ -1581,9 +1643,26 @@
     if(v.missingBytes.length) bits.push(v.missingBytes.length + ' the store no longer holds');
     if(v.extra.length) bits.push(v.extra.length + ' here only');
     if(v.unverified.length) bits.push(v.unverified.length + ' could not be checked');
+    if((v.unaddressed || []).length) bits.push((v.unaddressed || []).length
+      + ' with no stored copy recorded');
     if(v.disagree.length) bits.push(v.disagree.length + ' your devices disagree about');
     if(v.missingViews) bits.push(v.missingViews + ' device(s) unreadable');
     setStatus(f.id, bits.length ? bits.join(' · ') : 'everything checks out', null, true);
+
+    /* A DEVICE NOBODY CAN READ IS THE ONE FAULT THAT HIDES ITSELF: it holds back every deletion in
+     * the pair, silently and for ever, and the sweep is right to let it. So this is where it gets
+     * said out loud and where somebody can decide that device is gone for good. Never inferred —
+     * a device that is merely offline reads exactly the same way from here. */
+    for(const dev of (v.cannot || [])){
+      const ok = await PC.uiConfirm('“' + keyOf(f) + '” — the record from “' + dev + '” cannot be '
+        + 'read.\n\nWhile that is true, nothing in this folder will be deleted on any device, '
+        + 'because a record that cannot be read is not the same as a device that holds nothing.\n\n'
+        + 'If that device is gone for good, retire its record. If it is only offline or its key is '
+        + 'not on this device, cancel and it will sort itself out.');
+      if(!ok) continue;
+      try{ await docs.retire(keyOf(f), dev); PC.toast('retired ' + dev); }
+      catch(e){ PC.toast('could not retire that record: ' + ((e && e.message) || e)); }
+    }
 
     const bad = v.corrupt.map(c => c.path);
     if(!bad.length) return;
@@ -1592,11 +1671,41 @@
       + 'Fetch fresh copies? The copies here move to .pc-trash first — nothing is erased, and '
       + 'nothing damaged is sent to your other devices.');
     if(!ok) return;
+    /* NOTHING IS SET ASIDE UNTIL THE REPLACEMENT IS KNOWN TO EXIST.
+     *
+     * Repair trashes the damaged copy so the next sweep fetches a fresh one — which is only a repair
+     * if there IS one. If the store has lost the bytes, this would move somebody's only copy into
+     * `.pc-trash` on the strength of a checksum that says it is damaged, which it may be in a way
+     * they would still rather have. So each one is checked first, and the ones the store cannot
+     * supply are left exactly where they are and named. */
     let done = 0;
+    const stranded = [];
     const idx = await docs.index(keyOf(f));
+    let merged = null;
+    // Guarded: this runs AFTER the person has said yes, and a blip here would throw out of the
+    // handler — leaving the status line reading the pre-repair summary and nothing set aside, with
+    // only a generic "action failed" to show for it.
+    try{ merged = S_ENGINE.merge((await docs.views(keyOf(f))).views || {}).global; }
+    catch(e){
+      setStatus(f.id, 'could not check the store before repairing — nothing was changed', null, true);
+      return;
+    }
     for(const p of bad){
+      const e = merged[p] || {};
+      const ids = (e.chunks && e.chunks.length) ? e.chunks : (e.sha ? [e.sha] : []);
+      let there = !!ids.length;
+      for(const id of ids){
+        let ok = true;
+        try{ ok = await docs.hasBlob(id); }catch(_){ ok = true; }   // unknown is never "missing"
+        if(!ok){ there = false; break; }
+      }
+      if(!there){ stranded.push(p); continue; }
       try{ await fs.trash(f.id, p, Date.now()); delete idx[p]; done++; }
-      catch(e){ console.warn('folder sync: could not set aside ' + p, e); }
+      catch(e2){ console.warn('folder sync: could not set aside ' + p, e2); }
+    }
+    if(stranded.length){
+      PC.toast(stranded.length + ' damaged file' + (stranded.length === 1 ? '' : 's')
+               + ' left alone — the store no longer has a copy to replace them with');
     }
     await docs.saveIndex(keyOf(f), idx);
     setStatus(f.id, done + ' set aside — syncing fresh copies', null, true);
@@ -1742,8 +1851,12 @@
      * server bound applies to the file only where the file IS the request — and where it is smaller
      * than a chunk, that is what it bounds instead. */
     if(chunked){
-      const chunk = (fs && fs.chunkBytes) || CHUNK_FALLBACK;
-      _maxBytes = (server > 0 && server < chunk) ? server : SYNC_MAX_BYTES;
+      /* A PLATFORM THAT CAN CHUNK HAS NO FILE CEILING FROM THE NODE, now that the chunk itself is
+       * clamped to what the node accepts (see chunkSize). It used to fall back to the server's
+       * limit whenever that was smaller than a chunk — which EXCLUDED every larger file from the
+       * scan, so on a node with a small upload limit the folder of videos still never synced, now
+       * silently rather than with an error. The clamp is the fix; this was the workaround. */
+      _maxBytes = SYNC_MAX_BYTES;
       return _maxBytes;
     }
     _maxBytes = server > 0 ? Math.min(server, SYNC_MAX_UNCHUNKED) : SYNC_MAX_UNCHUNKED;
