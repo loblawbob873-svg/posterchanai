@@ -53,7 +53,10 @@ VDISK = r"""
     read: async (id, r) => D.files[r].bytes,
     readPart: async (id, r, off, len) => D.files[r].bytes.subarray(off, off + len),
     hashFile: async (id, r) => sha(D.files[r] ? D.files[r].bytes : new Uint8Array(0)),
-    write: async (id, r, bytes, mtime) => { D.files[r] = { bytes: new Uint8Array(bytes), mtime: mtime || 1000 }; },
+    write: async (id, r, bytes, mtime) => {
+      D.files[r] = { bytes: new Uint8Array(bytes), mtime: mtime || 1000 };
+      return { size: D.files[r].bytes.length, mtime: D.files[r].mtime };   // like the desktop bridge
+    },
     writePart: async (id, r, off, bytes) => {
       const cur = (D.parts = D.parts || {})[r] || new Uint8Array(0);
       const next = new Uint8Array(Math.max(cur.length, off + bytes.length));
@@ -64,7 +67,7 @@ VDISK = r"""
     discardPart: async (id, r) => { if(D.parts) delete D.parts[r]; },
     writeCommit: async (id, r, mtime) => {
       D.files[r] = { bytes: D.parts[r], mtime: mtime || 1000 }; delete D.parts[r];
-      return [D.files[r].bytes.length, D.files[r].mtime];
+      return { size: D.files[r].bytes.length, mtime: D.files[r].mtime };   // like the desktop bridge
     },
     move: async (id, from, to) => { D.files[to] = D.files[from]; delete D.files[from]; D.moved.push([from, to]); },
     trash: async (id, r, when) => { D.trash.push(r); delete D.files[r]; return '.pc-trash/x/' + r; },
@@ -294,6 +297,7 @@ async def drive(url):
         # ---- 2. a real delete on B reaches A: exactly one file, into trash ----------------------
         await b.js("(() => { delete window.__vdisk.files['dir0/f0.bin']; return true; })()")
         r3 = await b.js(f"({SWEEP})()", aw=True) or {}
+        print("  B delete sweep:", json.dumps(r3))
         if r3.get("removedRemote") != 1:
             problems.append(f"B's deletion published {r3.get('removedRemote')} tombstones, wanted 1 "
                             f"(held={r3.get('held')})")
