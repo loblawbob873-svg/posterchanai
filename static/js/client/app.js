@@ -17120,7 +17120,19 @@
          * a folder could not be fully read, and the offer simply does not appear — a reclaim that
          * guesses is the folder-sync wipe wearing a storage hat. */
         const refs = await _syncRefIds();
-        if(refs) reclaim = _reclaimableBlobs(list, named, refs);
+        /* THE INDEX'S OWN CONTAINER IS LOAD-BEARING AND INVISIBLE. The drive index lives in an
+         * encrypted blob (`indexSha`) that is keep-flagged, named by no ledger, and deliberately
+         * hidden from the grid — i.e. it matches the reclaim set PERFECTLY, and offering it means
+         * offering the user their own drive's spine. Every index sha this session has seen is
+         * excluded; superseded ones from older sessions are genuinely reclaimable and the server
+         * TTL-stamps them anyway. */
+        if(refs){
+          try{
+            for(const sh of (FilesIdx._indexShas || [])) refs.add(sh);
+            if(FilesIdx._lastIndexSha) refs.add(FilesIdx._lastIndexSha);
+          }catch(_){}
+          reclaim = _reclaimableBlobs(list, named, refs);
+        }
         const gb = reclaim.reduce((n, b) => n + (b.size || 0), 0);
         /* THREE sentences for three truths, never one for two: an offer, a genuine nothing, and
          * "the folders could not be read so nothing is OFFERED" — which is not a verdict about the

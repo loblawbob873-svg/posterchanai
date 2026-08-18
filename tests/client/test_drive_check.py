@@ -276,6 +276,18 @@ class ReclaimTests(unittest.TestCase):
         caller = self.src[self.src.index("const refs = await _syncRefIds();"):][:400]
         self.assertIn("if(refs)", caller, "a null reference set still produces an offer")
 
+    def test_the_drive_indexs_own_blob_is_never_offered(self):
+        """The index container matches the reclaim set PERFECTLY — keep-flagged, named by no ledger,
+        hidden from the grid — and deleting it deletes the drive's spine. Every index sha the
+        session has seen joins the protected set before the reclaim is computed."""
+        at = self.src.index("const refs = await _syncRefIds();")
+        seg = self.src[at:at + 1200]
+        self.assertIn("_indexShas", seg)
+        self.assertIn("_lastIndexSha", seg)
+        ref = seg.index("_lastIndexSha")
+        call = seg.index("_reclaimableBlobs(list, named, refs)")
+        self.assertLess(ref, call, "the index shas are added AFTER the set was computed")
+
     def test_sealed_manifest_blobs_count_as_references(self):
         with open(os.path.join(ROOT, "static", "js", "client", "sync.js"), encoding="utf-8") as fh:
             sync = fh.read()
