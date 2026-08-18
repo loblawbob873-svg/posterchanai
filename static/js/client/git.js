@@ -65,25 +65,41 @@ window.PCGitFactory = function(dep){
    * written back is the follows-wipe), and serialize writes (a chain, like Budget's). `_stars`
    * stays null until a read SUCCEEDS — and a null set means the star buttons are read-only. */
   const STARS_D='git-repos';
-  let _stars=null, _starChain=Promise.resolve();
+  /* TWO SOURCES, ONE UNION — measured, not assumed: a real event on this relay shows gitworkshop
+   * writing repo bookmarks into the STANDARD NIP-51 bookmarks list (kind 10003, a-tags of 30617
+   * coordinates), while ours live in a 30003 set. Starred shows the union; WRITES only ever touch
+   * our own set — a write into somebody's 10003 is one failed read away from wiping the rest of
+   * their bookmarks, which is the replaceable-list lesson this codebase keeps paying for. */
+  let _stars=null, _starsMine=null, _starsBk=new Set(), _starChain=Promise.resolve();
   async function _loadStars(){
     if(!S.ME || !S.ME.pubkey) return;
     try{
-      const evs=await Relay.query([{ kinds:[30003], authors:[S.ME.pubkey], '#d':[STARS_D], limit:5 }]);
-      const latest=(evs||[]).sort((a,b)=>b.created_at-a.created_at)[0];
-      _stars=new Set(latest?(latest.tags||[]).filter(t=>t[0]==='a'&&/^30617:/.test(t[1]||'')).map(t=>t[1]):[]);
+      const evs=await Relay.query([{ kinds:[30003], authors:[S.ME.pubkey], '#d':[STARS_D], limit:5 },
+                                   { kinds:[10003], authors:[S.ME.pubkey], limit:5 }]);
+      const pick=(kind)=> (evs||[]).filter(e=>e.kind===kind).sort((a,b)=>b.created_at-a.created_at)[0];
+      const coords=(ev)=> ev?(ev.tags||[]).filter(t=>t[0]==='a'&&/^30617:/.test(t[1]||'')).map(t=>t[1]):[];
+      _starsMine=new Set(coords(pick(30003)));
+      _starsBk=new Set(coords(pick(10003)));
+      _stars=new Set([..._starsMine, ..._starsBk]);
     }catch(_){ /* _stars stays as it was — possibly null, which keeps the buttons read-only */ }
   }
   function _starred(e){ return !!(_stars && _stars.has(_repoAddr(e))); }
   function toggleStar(e){
     if(!S.ME || !S.ME.pubkey){ _guestPrompt(); return Promise.resolve(false); }
-    if(_stars===null){ toast('still loading your starred list — try again in a second'); return Promise.resolve(false); }
+    if(_stars===null || _starsMine===null){ toast('still loading your starred list — try again in a second'); return Promise.resolve(false); }
     const addr=_repoAddr(e), on=!_stars.has(addr);
-    if(on) _stars.add(addr); else _stars.delete(addr);
+    if(!on && !_starsMine.has(addr) && _starsBk.has(addr)){
+      // Their bookmark, made in another app: we will not write that list, so we cannot remove from it.
+      toast('this star lives in your Nostr bookmarks (made in another client) — remove it there');
+      return Promise.resolve(true);
+    }
+    if(on) _starsMine.add(addr); else _starsMine.delete(addr);
+    _stars=new Set([..._starsMine, ..._starsBk]);
     _starChain=_starChain.catch(()=>{}).then(async()=>{
-      const tags=[['d',STARS_D],['title','Git repos']].concat([..._stars].map(a=>['a',a]));
+      const tags=[['d',STARS_D],['title','Git repos']].concat([..._starsMine].map(a=>['a',a]));
       const r=await publish(30003, '', tags);
-      if(r && r.ok===false){ if(on) _stars.delete(addr); else _stars.add(addr);
+      if(r && r.ok===false){ if(on) _starsMine.delete(addr); else _starsMine.add(addr);
+        _stars=new Set([..._starsMine, ..._starsBk]);
         toast('the relay didn\u2019t store your star — nothing changed'); }
     });
     return Promise.resolve(on);

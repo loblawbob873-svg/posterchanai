@@ -232,6 +232,33 @@ class StarTests(unittest.TestCase):
         self.assertIn("r.ok===false", seg)
         self.assertIn("if(on) _stars.delete(addr); else _stars.add(addr);", seg)
 
+    def test_gitworkshop_bookmarks_count_as_stars_and_are_never_written(self):
+        """Measured on the live relay: gitworkshop bookmarks repos in the STANDARD kind-10003 list.
+        Starred is the union of that and our own 30003 set — and writes only ever touch ours,
+        because a write into somebody's 10003 is one failed read away from wiping the rest of
+        their bookmarks."""
+        at = self.git.index("async function _loadStars()")
+        seg = self.git[at:at + 1400]
+        self.assertIn("10003", seg)
+        self.assertIn("_starsBk", seg)
+        at2 = self.git.index("function toggleStar(")
+        tseg = self.git[at2:at2 + 2000]
+        self.assertIn("_starsMine", tseg)
+        self.assertNotIn("publish(10003", tseg, "we wrote into the user's general bookmarks list")
+        self.assertIn("remove it there", tseg,
+                      "unstarring a foreign bookmark silently fails instead of saying whose it is")
+
+    def test_the_relay_syncs_the_bookmark_kinds_in(self):
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        src = open(os.path.join(root, "app", "services", "nostr_relay", "thread.py"),
+                   encoding="utf-8").read()
+        m = re.search(r'nostr_relay_ingest_kinds", "([0-9,]+)"', src)
+        kinds = m.group(1).split(",")
+        for k in ("10003", "30003"):
+            self.assertIn(k, kinds,
+                          "kind %s never syncs in — stars made in other clients cannot arrive" % k)
+
     def test_the_scope_row_offers_starred(self):
         self.assertIn('data-scope="starred"', self.git)
         self.assertIn("repos.filter(_starred)", self.git)
