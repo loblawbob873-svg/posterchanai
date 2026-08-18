@@ -17725,13 +17725,17 @@
       // it is the wrong key. Ask the drive index what the account's key actually is, and try once more.
       if(!await _refreshDriveKey()){
         throw new Error('this device\u2019s drive key does not open ' + String(sha).slice(0,8)
-                        + ' \u2014 the bytes are intact but were sealed with a different key');
+                        + ' \u2014 the bytes are intact but were sealed with a different key.'
+                        + ' On the device that HAS this file, press \u201cSend them again\u201d on'
+                        + ' the folder\u2019s card \u2014 it re-uploads under the current key');
       }
       try{ return await _masterDecrypt(await FilesIdx._ensureMK(), bytes); }
       catch(_){
         throw new Error('this device\u2019s drive key does not open ' + String(sha).slice(0,8)
                         + ' \u2014 the bytes are intact but were sealed with a different key'
-                        + ' (the account\u2019s current key was re-read and does not open it either)');
+                        + ' (the account\u2019s current key was re-read and does not open it either).'
+                        + ' On the device that HAS this file, press \u201cSend them again\u201d on'
+                        + ' the folder\u2019s card \u2014 it re-uploads under the current key');
       }
     }
   }
