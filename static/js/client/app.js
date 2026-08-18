@@ -1297,6 +1297,26 @@
       if(!this.relay) this.relay = url;             // the first to open names the session's relay
       this._subId = this._subId || ('n46'+Math.random().toString(36).slice(2,8));
       this._req(ws);
+      /* EVERY OUTSTANDING REQUEST RIDES THE FRESH SOCKET. A kind-24133 is ephemeral — a request
+       * published just before the relay went down was fanned out to nobody and DESTROYED, and the
+       * two lanes recover from that at two very different speeds: interactive requests have the
+       * re-send ladder, but the bulk lane deliberately has none ("no duplicate storm"), so a bulk
+       * decrypt destroyed by a relay RESTART sat on its slot for the full 45s ceiling and then
+       * _send's retry spent more — measured 51.7s for a fresh decrypt queued behind 30 of them
+       * (scripts/check_nip46_bulk_lane.py), while sign_event answered in 4ms. That split is the
+       * report verbatim: "blossom waiting forever for signer wtf … I could post fine" — everything
+       * Blossom needs (the drive master key, manifests) is a bulk nip44_decrypt.
+       *
+       * Re-sending HERE is not a timer and not a ladder: it fires exactly when a socket reopened,
+       * which is the only moment the destroyed-copy theory is both likely and fixable. At most
+       * _cap+_capP requests are ever pending, the events are byte-identical (duplicate replies are
+       * dropped by request id), and a signer that prompts per request can at worst prompt twice for
+       * an action that would otherwise silently die. */
+      if(this._pending && this._pending.size){
+        for(const p of this._pending.values()){
+          if(p && p.signed) try{ ws.send(JSON.stringify(['EVENT', p.signed])); }catch(_){}
+        }
+      }
       ws.onerror = null;
       ws.onmessage = (e)=>this._recv(e.data);
       ws.onclose = ()=>{
@@ -1637,7 +1657,7 @@
         /* Which scheme this request went out in, kept WITH the request. Two connect probes can be
          * outstanding at once during pairing, so a bare "something was read" flag cannot say which
          * of them the signer decrypted — and that is the whole answer the probe is asking for. */
-        this._pending.set(id,{res,rej,enc});
+        this._pending.set(id,{res,rej,enc,signed});
         // To EVERY relay this session holds. The signer listens on the ones its bunker link named,
         // which is not necessarily the one that opened first — see _openAll.
         const live=this._live(); let sent=0; const sentAt=Date.now();
@@ -5652,6 +5672,16 @@
     // Deep links, a restored last-view and the keyboard can all name a view the nav no longer shows —
     // hiding the button is not the same as closing the door.
     if(_viewNeedsInstance(v)) v='global';
+    /* A HIDDEN TIMELINE IS NOT A DESTINATION. The Social button (sidebar and bottom bar) is
+     * hardcoded data-view="global", so with Nostrverse hidden and "open on Home" set, tapping
+     * Social still landed on the one feed the user had switched off — reported exactly that way.
+     * Resolve through _startTimeline(), which honours BOTH prefs, and do it here at the single
+     * entry every button, deep link and restored view comes through, after the normalisation
+     * above (which can itself name 'global'). _startTimeline never returns a hidden tab, so this
+     * cannot loop. */
+    if(_TL_TABS.indexOf(v) >= 0){
+      try{ if(tlHiddenSet().has(v)) v = _startTimeline(); }catch(_){}
+    }
     /* PosterChan OS: a feature opened from INSIDE another feature gets its OWN window rather than
      * replacing the one it was launched from. Opening 🎞️ Meme Builder on a post used to repaint the
      * Social window, destroying the timeline you were reading — on a desktop that is what a second

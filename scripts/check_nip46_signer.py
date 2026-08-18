@@ -197,7 +197,16 @@ class Bunker:
                 elif req.get("method") == "get_public_key":
                     result = self.user_pk
                 elif req.get("method") in ("nip44_encrypt", "nip04_encrypt"):
-                    result = "ct:" + str(len(req["params"][1]))
+                    # Reversible, so a decrypt round-trip is a REAL answer (check_nip46_bulk_lane
+                    # times one after a relay restart). Length-only broke nothing until a check
+                    # needed the plaintext back — and an instant "" from the fallthrough below made
+                    # that check pass vacuously in 5ms.
+                    result = "ct:" + req["params"][1]
+                elif req.get("method") in ("nip44_decrypt", "nip04_decrypt"):
+                    ct = req["params"][1]
+                    result = ct[3:] if ct.startswith("ct:") else ""
+                    if self.delay:
+                        await asyncio.sleep(self.delay)
                 elif req.get("method") == "sign_event":
                     tpl = json.loads(req["params"][0])
                     result = json.dumps(nevent.build_event(
