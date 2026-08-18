@@ -2469,6 +2469,10 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .mp-head button,#music-player.mp-mini button{background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:2px 6px}
 .mp-head button:hover{color:var(--cyan,#0ff)}
 .mp-now{padding:12px 14px 6px;font-weight:700;color:#eaf0ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* The EXPANDED player has room for the whole name: wrap to two lines before ellipsizing, and break
+ * inside a long unbroken name rather than clipping it ("the track name gets cut off" — mobile,
+ * where names are longest relative to the panel). The mini bar above keeps its single line. */
+#music-player.mp:not(.mp-mini) .mp-now{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-clamp:2;overflow-wrap:anywhere;line-height:1.3}
 .mp-seek{height:7px;margin:6px 14px;border-radius:4px;background:rgba(0,240,255,.14);cursor:pointer;overflow:hidden}
 .mp-seek-fill{height:100%;width:0;background:linear-gradient(90deg,var(--neon,#0ff),var(--magenta,#f0f));box-shadow:0 0 9px var(--cyan,#0ff)}
 .mp-time{display:flex;justify-content:space-between;padding:1px 14px;font-size:11px;color:var(--muted)}

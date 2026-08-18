@@ -377,3 +377,20 @@ def test_report_a_bug_is_reachable_from_a_phone():
     assert "rb-report" in body, "the sheet grew its own composer instead of borrowing the sidebar's"
     html = open(os.path.join(root, "templates", "client.html"), encoding="utf-8").read()
     assert 'id="rb-report"' in html, "the sidebar button the sheet borrows is gone"
+
+
+def test_the_expanded_players_track_name_wraps_instead_of_clipping():
+    """"Below the equalizer, the track name gets cut off" — .mp-now was one nowrap line with an
+    ellipsis, so on a phone (long names, narrow panel) most titles truncated. The expanded player
+    wraps to two clamped lines and breaks inside unbroken names; the mini bar keeps its single line
+    (it is a bar — that clamp is correct there)."""
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    css = open(os.path.join(root, "static", "css", "client.css"), encoding="utf-8").read()
+    at = css.index("#music-player.mp:not(.mp-mini) .mp-now")
+    rule = css[at:css.index("}", at)]
+    assert "white-space:normal" in rule
+    assert "line-clamp:2" in rule
+    assert "overflow-wrap:anywhere" in rule, "an unbroken filename still clips"
+    # and the mini bar's one-liner survives
+    assert ".mp-mini .mp-title{flex:1;min-width:60px;overflow:hidden" in css
