@@ -455,6 +455,27 @@ class SidebarOrderTests(unittest.TestCase):
         self.assertEqual(out["navSequence"][0], "group:files")
 
 
+class GroupPickerTests(unittest.TestCase):
+    """The ▦ group button must actually RENDER. The data-grpkey click handler shipped while
+    _navHideHtml drew no element carrying data-grpkey — a fully wired feature with no button,
+    reported as "the left navbar grouping thing never got fixed". A handler and its button live
+    in different functions, so each needs its own assertion."""
+    S = SidebarOrderTests.S
+
+    def test_every_movable_row_offers_the_group_picker(self):
+        out = run(sidebar=self.S)
+        html = out["html"]
+        import re as _re
+        rows = _re.findall(r'data-navrow="([^"]+)"', html)
+        movable = [k for k in rows if not k.startswith("group:") and k != "__bug"]
+        offered = set(_re.findall(r'data-grpkey="([^"]+)"', html))
+        for k in movable:
+            self.assertIn(k, offered, "row %r has no ▦ — grouping is invisible for it" % k)
+        for k in rows:
+            if k.startswith("group:"):
+                self.assertNotIn(k, offered, "a group header offered to move into a group")
+
+
 class MobileNavPrefTests(unittest.TestCase):
     S = SidebarOrderTests.S
 

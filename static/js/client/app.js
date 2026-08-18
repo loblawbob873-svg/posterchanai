@@ -812,6 +812,7 @@
           ${r.locked?'<span class="nav-lock muted small" title="Always shown — it is how you get back here">\ud83d\udd12</span>'
                     :`<label class="switch"><input type="checkbox" data-navkey="${enc(r.key)}"${r.off?'':' checked'}><span class="slider"></span></label>`}
           <span style="flex:1;min-width:0">${enc(r.label)}${r.group?' <span class="muted small">(whole group)</span>':''}</span>
+          ${r.group||r.key==='__bug'?'':`<button type="button" class="mini" data-grpkey="${enc(r.key)}" title="Move into a group (or out of one)">▦</button>`}
         </label>${r.key === 'global' ? (() => { const off = tlHiddenSet(); return [['home','Home timeline'],['global','Nostrverse timeline'],['trending','Trending timeline']]
           .map(([t,l]) => `
         <label class="fld nav-hide-row sub" style="flex-direction:row;align-items:center;gap:8px">
