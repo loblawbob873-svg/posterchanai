@@ -247,9 +247,9 @@ async def drive(url):
         _sk2 = _ussk(_db, _u)
         _db.close()
         admitted = False
-        for _try in range(12):
-            trigger_block_reload()
-            await asyncio.sleep(4)
+        trigger_block_reload()          # once — hammering it only builds a control backlog
+        for _try in range(20):
+            await asyncio.sleep(6)
             if await asyncio.get_event_loop().run_in_executor(None, lambda: asyncio.run(
                     _nstore.put_doc(3052, _sk2, "pcai:sync-check-probe", {"t": _try}, encrypt=False))):
                 admitted = True

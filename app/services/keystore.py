@@ -27,8 +27,11 @@ _LOCK = threading.RLock()
 _cache: dict | None = None
 
 
+_cache_stat = None
+
+
 def _load() -> dict:
-    global _cache
+    global _cache, _cache_stat
     # Only TRUST a cache that actually loaded the operator key. `_load()` used to cache the FIRST read for the
     # life of the process — so a transient read failure (the keyfile being atomically os.replace()'d by a
     # sibling process at that instant, an FS hiccup, or the file not yet written on a racing startup) latched
@@ -36,7 +39,19 @@ def _load() -> dict:
     # read 0 relay settings, so recording / bridge-token / every shareable setting silently fell back to
     # build-time DEFAULTS in that process (the "VODs don't save, hydrate returns 0" bug). Re-read until it loads.
     if _cache is not None and _cache.get("operator_nsec"):
-        return _cache
+        # …but a trusted cache is only trusted while the FILE hasn't moved. Three processes share
+        # this file (app, worker, relay), and a life-of-the-process cache made each one blind to
+        # keys the others minted — so each MINTED ITS OWN for the same user and overwrote the file
+        # with it. Measured end state: the relay's gate full of storage pubkeys nobody derives,
+        # every fresh account's writes refused "not in web of trust", and one user's documents
+        # sealed under different keys per process. One stat() per read is the price of three
+        # processes agreeing what a user's key is.
+        try:
+            st = os.stat(_KEYFILE)
+            if _cache_stat == (st.st_mtime_ns, st.st_size):
+                return _cache
+        except OSError:
+            return _cache
     try:
         with open(_KEYFILE, "r") as f:
             data = json.load(f)
@@ -48,6 +63,11 @@ def _load() -> dict:
     # and picks up the real key once it's there. Once the key is present, the cache is trusted (above).
     if data.get("operator_nsec"):
         _cache = data
+        try:
+            st = os.stat(_KEYFILE)
+            _cache_stat = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            _cache_stat = None
     return data
 
 
