@@ -21593,17 +21593,35 @@
       }
       return r.json();
     },
+    /* A MODAL THAT LIVES AS LONG AS THE WAIT, not a toast that outlives nothing. An AI call from
+     * mail is a signer round trip (approving on a phone takes as long as it takes) followed by a
+     * model that may have to LOAD first — the LLM deliberately unloads when idle on these nodes, so
+     * the first answer after a quiet spell can take a minute. A two-second toast in front of that
+     * reads as "nothing happened", which is exactly how it was reported. The modal shows the wait,
+     * names the slow parts, and a failure lands IN it instead of nowhere. */
+    _aiHold(title, what){
+      modal(`<h3>${title}</h3>
+        <div id="ma-hold" class="mail-ai-summary"><span class="spinner"></span> ${enc(what)}\u2026
+          <div class="muted small" style="margin-top:8px">Your signer may need to approve, and the first
+          answer after a quiet spell loads the model \u2014 this can take up to a minute.</div></div>`);
+      return {
+        fail: (err) => { const h=$('#ma-hold'); if(h) h.innerHTML =
+          '\u26a0\ufe0f ' + enc((err && err.message) || String(err) || 'that didn\u2019t work'); },
+        done: () => closeModal(),
+      };
+    },
     async aiSummarize(msg){
       const text = this._msgText(msg);
       if(!text){ toast('this message has no text to read'); return; }
-      toast('summarizing\u2026');
+      const hold = this._aiHold('\ud83d\udcdd Summary', 'reading the email');
       try{
         const d = await this._aiPost('/api/mail/ai', { mode:'summarize', text });
+        hold.done();
         modal(`<h3>\ud83d\udcdd Summary</h3>
           <div class="mail-ai-summary">${enc(String(d.content||''))}</div>
           <div class="row" style="margin-top:10px"><button class="btn btn-ghost small" id="ma-copy">\ud83d\udccb Copy</button></div>`,
           root => { const c=$('#ma-copy',root); if(c) c.onclick=()=>copyValue(String(d.content||'')); });
-      }catch(err){ toast((err && err.message) || 'that didn\u2019t work'); }
+      }catch(err){ hold.fail(err); }
     },
     async aiReply(msg, folder, acct){
       const instr = await uiPrompt('How should it reply?\n\nE.g. \u201cpolitely decline\u201d, '
@@ -21612,27 +21630,30 @@
       if(!String(instr).trim()){ toast('say how to reply'); return; }
       const text = this._msgText(msg);
       if(!text){ toast('this message has no text to read'); return; }
-      toast('drafting\u2026');
+      const hold = this._aiHold('\u21a9\ufe0f AI reply', 'drafting your reply');
       try{
         const d = await this._aiPost('/api/mail/ai', { mode:'reply', text, instruction: String(instr).trim() });
+        hold.done();
         /* Into the COMPOSER, never sent: the draft lands where every reply lands, with To/Subject
          * prefilled by the ordinary reply path and Send exactly one deliberate click away. */
         this.compose({ mode:'reply', msg, folder, acct, body: String(d.content||'') });
-      }catch(err){ toast((err && err.message) || 'that didn\u2019t work'); }
+      }catch(err){ hold.fail(err); }
     },
     async addToBills(msg){
-      toast('reading the bill\u2026');
+      const text0 = this._msgText(msg);
+      if(!text0){ toast('this message has no text to read'); return; }
+      const hold = this._aiHold('\ud83d\udcb8 Add to Budget', 'reading the bill');
       try{
-        const text = this._msgText(msg);
-        if(!text){ toast('this message has no text to read'); return; }
+        const text = text0;
         const fd = new FormData();
         fd.append('file', new File([text], 'email.txt', { type: 'text/plain' }));
         const d = await this._aiPost('/api/budget/scan', fd);
         // type:'text' carries the REASON it couldn't pin the fields down — show that, not a shrug.
-        if(!d || d.type !== 'bill'){ toast((d && d.content) || 'couldn\u2019t read a bill out of this email'); return; }
-        if(!window.PCBudget){ toast('budget module not loaded'); return; }
+        if(!d || d.type !== 'bill'){ hold.fail(new Error((d && d.content) || 'couldn\u2019t read a bill out of this email')); return; }
+        if(!window.PCBudget){ hold.fail(new Error('budget module not loaded')); return; }
+        hold.done();
         window.PCBudget.reviewParsed(d);
-      }catch(err){ toast((err && err.message) || 'that didn\u2019t work'); }
+      }catch(err){ hold.fail(err); }
     },
     /* WHO SENT THIS. A mail header is `Some Name <someone@example.com>` rendered as one string, and
      * the address — the part that says who it actually is — was only visible when the display name

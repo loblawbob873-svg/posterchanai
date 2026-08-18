@@ -158,6 +158,18 @@ class ClientWiringTests(unittest.TestCase):
                          "the sandboxed mail iframe has no reachable document; reading it returns "
                          "nothing and every HTML mail would summarize as empty")
 
+    def test_every_ai_action_shows_its_wait_and_lands_failures_somewhere(self):
+        """An AI call from mail is a signer round trip plus a possibly-cold model — up to a minute.
+        A two-second toast in front of that reads as "nothing happened" (reported: "no AI requests
+        are working"). Each action opens a holding modal before the network, and its catch writes
+        into that modal, not into the void."""
+        self.assertIn("_aiHold(", self.app)
+        for fn in ("aiSummarize", "aiReply", "addToBills"):
+            at = self.app.index(fn + "(msg")
+            body = self.app[at:at + 1600]
+            self.assertIn("_aiHold(", body, fn + " gives no feedback for the whole wait")
+            self.assertIn("hold.fail", body, fn + " loses its failure")
+
     def test_the_bill_path_rides_the_same_scan_endpoint(self):
         at = self.app.index("async addToBills(msg){")
         body = self.app[at:at + 1400]
@@ -168,6 +180,20 @@ class ClientWiringTests(unittest.TestCase):
     def test_budget_exports_the_review_modal(self):
         with open(os.path.join(ROOT, "static", "js", "client", "budget.js"), encoding="utf-8") as fh:
             self.assertIn("reviewParsed", fh.read())
+
+    def test_the_review_modal_survives_a_signer_that_does_not_answer(self):
+        """It used to closeModal() and THEN await load() — which waits on the signer to decrypt
+        the doc. A signer that never answered left a blank screen, a lost edit, and an unhandled
+        rejection: 'Add to budget never does anything'. The modal must close on SUCCESS only."""
+        with open(os.path.join(ROOT, "static", "js", "client", "budget.js"), encoding="utf-8") as fh:
+            src = fh.read()
+        at = src.index("#bg-aok")
+        body = src[at:at + 1800]
+        close = body.index("closeModal()")
+        load = body.index("await load()")
+        self.assertLess(load, close, "the modal closes before the save path has even started")
+        self.assertIn("catch", body[:close + 400], "a failed save has nowhere to land")
+        self.assertIn("nothing was written", body, "a failure does not say whether anything was saved")
 
 
 if __name__ == "__main__":

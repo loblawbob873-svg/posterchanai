@@ -624,11 +624,25 @@
         if(!n) return toast('give the bill a name');
         const a=num(root.querySelector('#bg-aa').value);
         const rec=root.querySelector('#bg-arec').checked;
-        closeModal();
-        await load();
-        // Expenses are stored NEGATIVE, matching every row that came over from the old app.
-        await addBill(n, -Math.abs(a), false, rec);
-        toast('✅ added to your budget');
+        /* THE MODAL CLOSES ON SUCCESS, NOT ON HOPE. This used to close first and then await load()
+         * — which decrypts the budget doc, i.e. WAITS ON THE SIGNER. A signer that does not answer
+         * (a remote one asleep, an approval never tapped) left the screen showing nothing at all:
+         * the rejection landed in no catch, the corrected fields were gone, and "Add to budget
+         * never does anything" was the exact report. Now the button says what it is waiting for,
+         * the edits survive a failure, and nothing is written unless the save path finishes. */
+        const btn=root.querySelector('#bg-aok');
+        btn.disabled=true; btn.textContent='waiting for your signer\u2026';
+        try{
+          await load();                          // the doc is encrypted to YOUR key — signer required
+          btn.textContent='saving\u2026';
+          // Expenses are stored NEGATIVE, matching every row that came over from the old app.
+          await addBill(n, -Math.abs(a), false, rec);
+          closeModal();
+          toast('\u2705 added to your budget');
+        }catch(e){
+          btn.disabled=false; btn.textContent='Add to budget';
+          toast('couldn\u2019t save: ' + ((e && e.message) || e) + ' \u2014 nothing was written; your edits are still here');
+        }
       };
     });
   }
