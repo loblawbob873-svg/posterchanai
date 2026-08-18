@@ -142,6 +142,15 @@ async def nostr_login(data: NostrLogin, response: Response, request: Request, db
         db.commit()
         db.refresh(user)
         created = True
+        # The relay's allow set is read from the DB at startup and on reload ONLY — a user created
+        # after that had every server-signed write (calendar, contacts, the drive index) refused
+        # "not in web of trust" until an unrelated reload happened to run. Registration is the
+        # moment the account starts existing; the relay learns about it in the same moment.
+        try:
+            from app.services.nostr_relay.thread import trigger_block_reload
+            trigger_block_reload()
+        except Exception as e:
+            logger.warning("[auth] relay reload after signup failed: %s", e)
         logger.info("[auth] Nostr signup: %s (%s)", username, npub[:16])
         # Admit the new account to the relay WoT (+ operator follow) so it can post & receive DMs
         # immediately — covers login-with-existing-key users, not just the create-identity flow.

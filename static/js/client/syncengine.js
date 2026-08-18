@@ -293,6 +293,7 @@
    */
   const FLOOR = 20;        // below this, deleting or republishing a few files is ordinary work
 
+  const MASS_CAP = 100;   // absolute per-sweep trash ceiling for unattended sweeps
   function check(plan, ctx){
     const c = ctx || {}, p = plan || {}, out = [];
 
@@ -322,6 +323,16 @@
     if(p.trash.length >= FLOOR && p.trash.length > keep){
       out.push({ kind:'massTrash', n: p.trash.length, keep,
                  why: 'this sweep would move ' + p.trash.length + ' files to the trash and keep ' + keep });
+    }
+    /* AND AN ABSOLUTE CAP, because proportional is not enough: on a 6,000-file folder "never trash
+     * more than survives" waves through hundreds — measured on a real desktop whose fresh-pair
+     * partner published deletions it had no business publishing. No unattended sweep moves more
+     * than MASS_CAP files to trash; a deliberate mass delete passes o.allowMassTrash from the
+     * confirm the UI already shows. */
+    if(!(ctx && ctx.allowMassTrash) && p.trash.length > MASS_CAP){
+      out.push({ kind:'massTrash', n: p.trash.length, keep,
+                 why: 'this sweep would move ' + p.trash.length + ' files to the trash — more than '
+                    + MASS_CAP + ' needs a deliberate delete, not an unattended sweep' });
     }
 
     // The same question pointing outwards: this device telling every other one to delete.

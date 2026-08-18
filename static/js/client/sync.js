@@ -1423,6 +1423,11 @@
            * happened, whatever the transfers did. */
           const clean = !!(rep && rep.ok && !rep.stopped && !(rep.failed || []).length);
           if(clean) f.lastSyncAt = Date.now();
+          /* The scan READING the folder is proof of the grant, whatever the transfers did — keyed
+           * separately from `clean`, because a folder mid-recovery fails transfers on every sweep
+           * and the "point at the folder again" banner kept showing over a folder being scanned
+           * every few minutes ("devices still saying point at this folder again despite syncing"). */
+          if(rep && !rep.skipped) f.lastScanOkAt = Date.now();
           if(decision.mode === 'full') f.lastFullScanAt = Date.now();
           f._dirty = !clean;
           const all = folders().map(x => x.id === f.id ? f : x); saveFolders(all);
@@ -2172,7 +2177,7 @@
        * grant — the sweep is the strongest evidence there is. */
       const _gid = u => { try{ return decodeURIComponent(String(u||'')).replace(/\/+$/,''); }
                           catch(_){ return String(u||''); } };
-      const recentlyOk = (Date.now() - (f.lastSyncAt||0)) < 900000;   // lastSyncAt is in ms
+      const recentlyOk = (Date.now() - Math.max(f.lastSyncAt||0, f.lastScanOkAt||0)) < 900000;   // ms
       const lost = Array.isArray(granted) && !granted.some(g => _gid(g.id) === _gid(f.id))
                    && !recentlyOk;
       return `<div class="sync-card" data-id="${PC.enc(f.id)}">

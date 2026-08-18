@@ -4511,6 +4511,13 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
     user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
     if not user:
+        # A READ from an unknown key is honestly empty. A WRITE from one must FAIL, loudly — the
+        # old "ok" here made a client believe its drive-key save landed when nothing was stored,
+        # which re-opens the key fork the first-writer-wins guard closed (measured by
+        # scripts/check_drive_fresh_pair.py: two cold unregistered devices still forked).
+        if data.index is not None:
+            return JSONResponse({"ok": False, "error": "no account on this server for that key"},
+                                status_code=403)
         return JSONResponse({"ok": True, "index": {}})
     sk = store.user_storage_seckey(db, user)
     port = int(_setting(db, "nostr_relay_port", "3052"))

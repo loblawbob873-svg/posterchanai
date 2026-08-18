@@ -32021,6 +32021,20 @@
      * would write a key that decrypts nothing over the real one. This reports what is known and
      * empty when nothing is, and the caller treats empty as "not yet".
      */
+    /* TEST HOOKS for scripts/check_drive_fresh_pair.py — the cross-DEVICE failure class no
+     * in-process test can see (two cold devices racing the drive-key mint burned a real fresh
+     * pair for four days). Same precedent as signerDropSockets: a thing that cannot be inspected
+     * cannot be tested. They do nothing a normal drive upload doesn't. */
+    driveColdStart: async () => { const mk = await FilesIdx._ensureMK();
+      try{ FilesIdx._dirty = true; await FilesIdx._saveOnce(); }catch(_){}
+      return !!mk; },
+    drivePull: async () => { FilesIdx._pullDone = false; FilesIdx._pullOk = false;
+      try{ await FilesIdx.pull(); }catch(_){}
+      return FilesIdx._mkWrapped || ''; },
+    driveSeal: async (text) => _u8b64(new Uint8Array(
+      await _masterEncrypt(await FilesIdx._ensureMK(), new TextEncoder().encode(String(text))))),
+    driveOpen: async (b64) => new TextDecoder().decode(
+      await _masterDecrypt(await FilesIdx._ensureMK(), _b64u8(String(b64)))),
     driveKeyWrapped: () => (FilesIdx && FilesIdx._mkWrapped) || '',
     /* WHERE THIS INSTALL'S SERVER ACTUALLY IS, in absolute form.
      *

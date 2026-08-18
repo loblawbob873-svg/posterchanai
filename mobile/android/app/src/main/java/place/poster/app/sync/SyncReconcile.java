@@ -30,6 +30,7 @@ public final class SyncReconcile {
 
     /** Below this, deleting or republishing a few files is ordinary work and is not questioned. */
     public static final int FLOOR = 20;
+ static final int MASS_CAP = 100;   // absolute per-sweep trash ceiling (see JS engine)
 
     public static long versionOf(Map<String, Object> e) {
         if (e == null) return 0L;
@@ -314,6 +315,11 @@ public final class SyncReconcile {
             if (!p.tombstone.isEmpty()) out.add(act("kind", "partialViewsOut", "n", (long) p.tombstone.size()));
         }
         if (p.trash.size() >= FLOOR && p.trash.size() > keep) {
+            out.add(act("kind", "massTrash", "n", (long) p.trash.size(), "keep", (long) keep));
+        }
+        // Absolute cap, mirroring the JS engine: proportional is not enough on a big folder —
+        // an unattended sweep never moves more than MASS_CAP files to trash.
+        if (p.trash.size() > MASS_CAP) {
             out.add(act("kind", "massTrash", "n", (long) p.trash.size(), "keep", (long) keep));
         }
         if (p.tombstone.size() >= FLOOR && p.tombstone.size() > keep) {

@@ -728,6 +728,9 @@ class LostIsNotAStringCompare(unittest.TestCase):
         self.assertIn("_gid(g.id) === _gid(f.id)", seg)
         self.assertIn("recentlyOk", seg)
         self.assertIn("f.lastSyncAt", seg)
+        self.assertIn("lastScanOkAt", seg,
+                      "the grant proof keys on a CLEAN sweep — a folder mid-recovery fails "
+                      "transfers every sweep and the banner never clears")
         self.assertIn("< 900000", seg,
                       "lastSyncAt is MILLISECONDS — a seconds comparison makes recentlyOk always "
                       "true and a genuinely revoked grant never shows the banner")
@@ -742,3 +745,33 @@ class LostIsNotAStringCompare(unittest.TestCase):
         """
         r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=30)
         self.assertEqual(r.stdout, "true", r.stderr[-500:])
+
+
+class AbsoluteTrashCap(unittest.TestCase):
+    """"no way that i should have had deleted files, many!" — proportional guards wave hundreds of
+    tombstones through on a big folder (6,000 survivors allow 5,999 trashes). No UNATTENDED sweep
+    moves more than 100 files to trash; a deliberate mass delete passes allowMassTrash."""
+
+    def _check(self, n_trash, allow=False):
+        js = """
+        const E = require(%s);
+        const plan = { fetch:[], send:[], keepBoth:[], settle:[], tombstone:[],
+                       trash: Array.from({length:%d}, (_,i)=>({path:'f'+i})),
+                       unchanged: 10000, settledGone: 0, excluded: 0 };
+        const out = E.check(plan, { views: 1, missing: 0%s });
+        process.stdout.write(JSON.stringify(out.filter(v=>v.kind==='massTrash').length));
+        """ % (json.dumps(os.path.join(REPO, "static", "js", "client", "syncengine.js")),
+               n_trash, ", allowMassTrash: true" if allow else "")
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr[-800:])
+        return json.loads(r.stdout)
+
+    def test_hundreds_of_trashes_are_refused_even_with_thousands_surviving(self):
+        self.assertGreater(self._check(500), 0,
+                           "500 unattended deletions sailed past 10,000 survivors")
+
+    def test_a_deliberate_mass_delete_still_works(self):
+        self.assertEqual(self._check(500, allow=True), 0)
+
+    def test_an_ordinary_sweep_is_untouched(self):
+        self.assertEqual(self._check(30), 0)

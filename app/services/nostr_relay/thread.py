@@ -503,6 +503,17 @@ def _collect_operator_pubkeys(db) -> list:
                         out.add(h)
                 except Exception:
                     pass
+            # The per-user STORAGE key — the author of everything the SERVER writes for this user
+            # (calendar, contacts, mail, the drive index). It was never in this set, so a fresh
+            # account's writes were refused ("not in web of trust") until something else happened to
+            # admit it — measured: a new account's drive-key save answered "relay rejected the
+            # write", which is the root of the fresh-pair key fork. Registration must be enough.
+            try:
+                from app.services.nostr_store import user_storage_seckey
+                from app.services.nostr import bip340
+                out.add(bip340.pubkey_from_seckey(user_storage_seckey(db, u)).hex())
+            except Exception:
+                pass
         for b in db.query(Bot).all():
             try:
                 cfg = json.loads(b.config or "{}")
