@@ -599,6 +599,38 @@
     applyMobileNav();
     return saveClientPrefsNostr({ mobileNav: list.slice(0, 4) });
   }
+  /* WHICH TIMELINE TABS SHOW — Home / Nostrverse / Trending, each optional, at least one always
+   * kept: a tab row with nothing in it is a feed with no way in, so the guard is in the SETTER,
+   * where no stored document, stale editor or hostile pref can route around it. */
+  const _TL_TABS = ['home', 'global', 'trending'];
+  function tlHiddenSet(){
+    let raw = ClientSettings.get('tlHidden', []);
+    if(typeof raw === 'string'){ try{ raw = JSON.parse(raw); }catch(_){ raw = []; } }
+    const out = new Set();
+    if(Array.isArray(raw)) for(const k of raw){
+      const s = String(k == null ? '' : k).slice(0, 20);
+      if(_TL_TABS.indexOf(s) >= 0) out.add(s);
+    }
+    if(out.size >= _TL_TABS.length) out.delete('global');   // a doc that hides everything keeps Nostrverse
+    return out;
+  }
+  function setTlHidden(keys){
+    const list = [];
+    for(const k of (keys || [])){
+      const s = String(k == null ? '' : k).slice(0, 20);
+      if(_TL_TABS.indexOf(s) >= 0 && list.indexOf(s) < 0) list.push(s);
+    }
+    if(list.length >= _TL_TABS.length){ toast('keep at least one timeline'); return Promise.resolve(); }
+    ClientSettings.set('tlHidden', list);
+    _prefTouched.add('tlHidden');
+    // Standing on a tab that was just hidden → step to the first visible one; else repaint the row.
+    try{
+      const off = tlHiddenSet();
+      if(off.has(VIEW)) switchView(_TL_TABS.find(t => !off.has(t)) || 'global');
+      else if(_TL_TABS.indexOf(VIEW) >= 0) renderView(true);
+    }catch(_){}
+    return saveClientPrefsNostr({ tlHidden: list });
+  }
   function navHiddenSet(){
     let raw = ClientSettings.get('navHidden', []);
     if(typeof raw === 'string'){ try{ raw = JSON.parse(raw); }catch(_){ raw = []; } }
@@ -671,7 +703,12 @@
       <div id="mnav-slots">${mobileNavList().map((v,i)=>`
         <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><span class="muted small" style="width:52px">Slot ${i+1}</span>
           <select class="input" data-mnavslot="${i}">${mobileNavChoices().map(c=>`<option value="${enc(c.v)}"${c.v===v?' selected':''}>${enc(c.label)}</option>`).join('')}</select>
-        </label>`).join('')}</div>`;
+        </label>`).join('')}</div>
+      <div class="search-section-title" style="margin-top:14px">Timelines</div>
+      <div class="muted small">Hide the Social tabs you never open. At least one stays.</div>
+      <div id="tl-hide-list">${(() => { const off = tlHiddenSet(); return [['home','Home'],['global','Nostrverse'],['trending','Trending']]
+        .map(([t,l]) => `<label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><span>${l}</span>
+          <label class="switch"><input type="checkbox" data-tltab="${t}"${off.has(t)?'':' checked'}><span class="slider"></span></label></label>`).join(''); })()}</div>`;
   }
   function _wireNavHide(){
     const list = $('#nav-hide-list'); if(!list) return;
@@ -707,6 +744,15 @@
       }
       _saveOrder();
     });
+    { const tls = $('#tl-hide-list');
+      if(tls) tls.addEventListener('change', () => {
+        const boxes = $$('input[data-tltab]', tls);
+        const want = boxes.filter(cb => !cb.checked).map(cb => cb.dataset.tltab);
+        // The setter refuses all-three; put the switch back so the editor never disagrees with it.
+        setTlHidden(want);
+        const off = tlHiddenSet();
+        boxes.forEach(cb => { cb.checked = !off.has(cb.dataset.tltab); });
+      }); }
     { const slots = $('#mnav-slots');
       if(slots) slots.addEventListener('change', () => {
         setMobileNav($$('select[data-mnavslot]', slots).map(sel => sel.value));
@@ -5676,8 +5722,11 @@
   // the relay can answer — and synced to Nostr (kind-30078 client-prefs) so it follows across devices.
   // A GUEST is always sent to Nostrverse: nobody is followed yet, so Home would be an empty screen.
   function _startTimeline(){
-    if(GUEST) return 'global';
-    return ClientSettings.get('startTimeline','global')==='home' ? 'home' : 'global';
+    const off = (typeof tlHiddenSet === 'function') ? tlHiddenSet() : new Set();
+    if(GUEST) return off.has('global') ? 'trending' : 'global';
+    const want = ClientSettings.get('startTimeline','global')==='home' ? 'home' : 'global';
+    if(!off.has(want)) return want;
+    return ['home','global','trending'].find(t => !off.has(t)) || 'global';
   }
   // True while the app is still sitting on the timeline it CHOSE at boot, i.e. the user has not
   // navigated yet. A late-arriving synced pref may move that landing view; once they've picked a view
@@ -6273,9 +6322,9 @@
         </div>
       </div>`:_guestCardHtml())
       +`<div class="tl-tabs" role="tablist">
-        <button class="tltab${VIEW==='home'?' on':''}" data-tl="home" role="tab" aria-selected="${VIEW==='home'}">Home</button>
-        <button class="tltab${VIEW==='global'?' on':''}" data-tl="global" role="tab" aria-selected="${VIEW==='global'}">Nostrverse</button>
-        <button class="tltab${VIEW==='trending'?' on':''}" data-tl="trending" role="tab" aria-selected="${VIEW==='trending'}">Trending</button>
+        ${(() => { const off = tlHiddenSet(); return [['home','Home'],['global','Nostrverse'],['trending','Trending']]
+          .filter(([t]) => !off.has(t) || VIEW === t)   // the tab you are ON always shows, or the row lies about where you are
+          .map(([t,l]) => `<button class="tltab${VIEW===t?' on':''}" data-tl="${t}" role="tab" aria-selected="${VIEW===t}">${l}</button>`).join(''); })()}
         ${VIEW==='trending' ? '' : `<button class="tltab-media${_tlMedia?' on':''}" id="tl-media-tab" title="Toggle media grid (this feed, images only)" aria-label="Toggle media grid"><svg class="ic x-ic" aria-hidden="true"><use href="#i-grid"></use></svg></button>`}
       </div>`;
   }
@@ -14662,6 +14711,10 @@
       if(!_prefTouched.has('navOrder') && Array.isArray(pr.navOrder)){
         ClientSettings.set('navOrder', pr.navOrder.map(v=>String(v==null?'':v).slice(0,60)).filter(Boolean).slice(0,200));
         applyNavOrder();
+      }
+      if(!_prefTouched.has('tlHidden') && Array.isArray(pr.tlHidden)){
+        ClientSettings.set('tlHidden', pr.tlHidden.map(v=>String(v==null?'':v).slice(0,20)).filter(Boolean).slice(0,3));
+        try{ if(['home','global','trending'].indexOf(VIEW)>=0) renderView(true); }catch(_){}
       }
       if(!_prefTouched.has('mobileNav') && Array.isArray(pr.mobileNav)){
         ClientSettings.set('mobileNav', pr.mobileNav.map(v=>String(v==null?'':v).slice(0,60)).filter(Boolean).slice(0,4));

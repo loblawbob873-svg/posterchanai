@@ -465,3 +465,25 @@ class MobileNavPrefTests(unittest.TestCase):
         pub = [p for p in out["published"] if "mobileNav" in p]
         self.assertTrue(pub, "the bar choice never reached the Nostr prefs doc")
         self.assertEqual(pub[-1]["mobileNav"], ["notes", "vault", "home", "messages"])
+
+
+class TimelineTabTests(unittest.TestCase):
+    """Hiding Social tabs, run through the shipped setter — including the guard that no document,
+    stale editor or hostile pref can hide ALL of them: a tab row with nothing in it is a feed with
+    no way in, so the refusal lives in the setter and the reader both."""
+
+    def test_hiding_saves_and_publishes(self):
+        out = run(tlHide=["trending"])
+        self.assertEqual(out["tlHidden"], ["trending"])
+        pub = [p for p in out["published"] if "tlHidden" in p]
+        self.assertEqual(pub[-1]["tlHidden"], ["trending"])
+
+    def test_all_three_is_refused_by_the_setter(self):
+        out = run(tlHide=["home", "global", "trending"])
+        self.assertIsNone(out["tlSaved"], "the setter stored a row with nothing in it")
+
+    def test_a_document_that_hides_everything_keeps_nostrverse(self):
+        """The READER's half of the guard: the setter can be routed around by a doc written
+        elsewhere, and the reader must still answer with somewhere to stand."""
+        out = run(settings={"tlHidden": ["home", "global", "trending"]}, tlHide=["home"])
+        self.assertNotIn("global", out["tlHidden"])

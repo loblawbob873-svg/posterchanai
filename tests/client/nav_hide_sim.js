@@ -132,6 +132,10 @@ NAV.removeChild = function(el){ const i = NAV.children.indexOf(el); if(i >= 0) N
 const store = Object.assign({}, opt.settings || {});
 global.ClientSettings = { get: (k, d) => (store[k] === undefined ? d : store[k]), set: (k, v) => { store[k] = v; } };
 
+global.VIEW = 'global';
+global.switchView = () => {};
+global.renderView = () => {};
+global.toast = global.toast || (() => {});
 const published = [];                       // every write that would go to pcai:client-prefs
 global.saveClientPrefsNostr = patch => { published.push(patch); return Promise.resolve(); };
 const _prefTouched = new Set();
@@ -213,6 +217,11 @@ if(opt.order){
   setNavOrder(opt.order);
   out.navSequence = _navSequence();
   out.navOrderSaved = store.navOrder || null;
+}
+if(opt.tlHide){
+  setTlHidden(opt.tlHide);
+  out.tlHidden = [...tlHiddenSet()];
+  out.tlSaved = store.tlHidden === undefined ? null : store.tlHidden;
 }
 if(opt.mobileNav){
   setMobileNav(opt.mobileNav);
