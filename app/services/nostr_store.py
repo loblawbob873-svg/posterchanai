@@ -241,12 +241,24 @@ async def put_doc(port: int, seckey: bytes, d_tag: str, data,
     # took 2s instead of ~10ms and a framed web page took 4.6s, which reads as the app hanging and
     # renders a search result as a white screen. A thread still contends for the GIL, but the
     # interpreter switches every few milliseconds, so the loop gets to answer requests in between.
-    def _seal():
+    def _seal(at=None):
         body = nip44.encrypt_self(seckey, payload) if encrypt else payload
-        return build_event(seckey, kind, body, tags=[["d", d_tag]] + (tags or []))
+        return build_event(seckey, kind, body, tags=[["d", d_tag]] + (tags or []), created_at=at)
 
     ev = await asyncio.to_thread(_seal)
     ok, msg = await _ws_publish(port, ev)
+    # THE SAME-SECOND TIE-BREAK REFUSES HALF OF RAPID UPDATES. A replaceable doc updated twice in
+    # one second ties on created_at, NIP-01 settles ties by LOWER id, and ids are random — so a
+    # journal batching several publishes per second lost ~half of them to "not stored, retry"
+    # (measured: six refusals in one second on a real account mid-sweep). The tie-break is right
+    # for cross-relay convergence and wrong as an answer to "please save my newer version", so a
+    # refused put retries with created_at bumped one second ahead — bounded, and far inside the
+    # +900s future-skew ceiling.
+    for bump in (1, 2, 3):
+        if ok or "not stored" not in str(msg or ""):
+            break
+        ev = await asyncio.to_thread(_seal, int(ev.get("created_at", 0)) + bump)
+        ok, msg = await _ws_publish(port, ev)
     if not ok:
         logger.warning("[nostr-store] put %s rejected: %s", d_tag, msg)
     return ok
