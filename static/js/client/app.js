@@ -16662,10 +16662,15 @@
   async function _syncRefIds(){
     try{
       const S = window.PCSync;
-      if(!S || !S.acct) return null;
-      await _loadSyncPairs();
-      const pairs = Array.isArray(_syncPairs) ? _syncPairs : null;
-      if(!pairs) return null;
+      if(!S || !S.acct || !S.accountFolders) return null;
+      /* FORCED AND AWAITED. `acct()` legitimately answers null while the folder list's signer
+       * round trip is still in flight ("NULL STAYS NULL" — the sidebar needed that), and the first
+       * build of this read that null as "no folders", killed the offer, and printed "Nothing to
+       * reclaim" over 137 GB of reclaimable bytes. The offer depends on this enumeration, so it
+       * waits for a fresh one and treats anything but a real list as "could not read". */
+      await S.accountFolders(true);
+      const pairs = S.acct();
+      if(!Array.isArray(pairs)) return null;
       const ids = new Set();
       for(const p2 of pairs){
         const got = await S.docs.views(p2.key);
@@ -16797,12 +16802,17 @@
         const refs = await _syncRefIds();
         if(refs) reclaim = _reclaimableBlobs(list, named, refs);
         const gb = reclaim.reduce((n, b) => n + (b.size || 0), 0);
+        /* THREE sentences for three truths, never one for two: an offer, a genuine nothing, and
+         * "the folders could not be read so nothing is OFFERED" — which is not a verdict about the
+         * bytes. Printing "Nothing to reclaim" for the third hid 137 GB behind a signer blip. */
         lines.push(`<div class="muted small">${otherN} blob(s), ${_fxBytes(otherBytes)}, are stored `
           + `but not named by this index — folder sync and the rest of your account keep their own `
           + `records here.` + (reclaim.length
             ? ` <b>${reclaim.length}</b> of them (${_fxBytes(gb)}) belong to nothing any more — `
               + `usually a deleted synced folder's leftovers.`
-            : ` Nothing to reclaim.`) + `</div>`);
+            : (refs ? ` Nothing to reclaim.`
+                    : ` Your synced folders couldn\u2019t be read just now, so nothing is offered `
+                      + `for reclaim \u2014 run the check again in a moment.`)) + `</div>`);
         if(reclaim.length){
           lines.push(`<div class="row" style="margin-top:6px"><button class="btn btn-red small" `
             + `id="fx-ck-reclaim">Reclaim ${_fxBytes(gb)} (${reclaim.length} blobs)</button></div>`);

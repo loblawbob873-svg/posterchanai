@@ -248,6 +248,23 @@ class ReclaimTests(unittest.TestCase):
             ["cc"], ["dd", "ee"])
         self.assertEqual(got, ["aa"])
 
+    def test_could_not_read_and_nothing_to_reclaim_are_different_sentences(self):
+        """"Nothing to reclaim" printed over a null reference set hid 137 GB behind a signer blip —
+        the admin-scan sin, repeated the same day it was fixed there. The third truth gets its own
+        sentence and never a verdict about the bytes."""
+        at = self.src.index("const refs = await _syncRefIds();")
+        seg = self.src[at:at + 2200]
+        self.assertIn("refs ? ", seg)
+        self.assertIn("t be read just now", seg)
+
+    def test_the_offer_waits_for_a_real_folder_list(self):
+        """acct() answers null while the signer round trip is in flight; the offer must force and
+        await the enumeration rather than read the in-flight null as "no folders"."""
+        at = self.src.index("async function _syncRefIds(")
+        body = self.src[at:at + 1400]
+        self.assertIn("accountFolders(true)", body)
+        self.assertIn("Array.isArray(pairs)", body)
+
     def test_an_unreadable_folder_kills_the_offer_entirely(self):
         """`_syncRefIds` answers null when any device view could not be read, and the caller treats
         null as NO — a reclaim with a partial reference set is a delete order for whatever the
