@@ -689,6 +689,12 @@
       for(const dev of Object.keys(raw)){
         const d0 = raw[dev];
         if(d0 && d0.pathsSha) sealedIds.push(d0.pathsSha);
+        /* The kept one-generation-back blob is REFERENCED — it is the rollback the server holds on
+         * purpose. Invisible to this collector, every device-doc's previous generation read as
+         * "belongs to nothing", so the drive check offered a fresh ~25-blob reclaim after every
+         * sweep, for ever ("Device check never ends with space to reclaim!") — and pressing it
+         * would have deleted the safety copies. */
+        if(d0 && d0.prevSha) sealedIds.push(d0.prevSha);
       }
       let missing = +(j && j.unreadable) || 0;
       for(const dev of Object.keys(raw)){

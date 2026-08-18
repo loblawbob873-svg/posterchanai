@@ -280,8 +280,22 @@ public final class NativeSweep {
          * Left out, its files are absent from the merge — and absent is indistinguishable from
          * deleted, which is the confusion that emptied a Pictures folder. */
         Views v = readViews(net, sec, mk, f.key);
-        SyncReconcile.Merged m = SyncReconcile.merge(v.views);
         Map<String, Map<String, Object>> index = store.base(f.key);
+        /* A DEVICE'S TRUTH IS ITS JOURNAL, NEVER ITS OWN STALE DOC — mirrors the page executor:
+         * after a remove-and-re-add the fetched doc is the previous life's ghost, and merging it
+         * made a device conflict with itself once per divergent path (the phone's "373 conflicts
+         * instantly"). The FETCHED doc is kept aside for the lost-document restore below. */
+        Map<String, Map<String, Object>> fetchedMine = v.views.get(device);
+        {
+            Map<String, Map<String, Object>> mineNow = new LinkedHashMap<>();
+            for (Map.Entry<String, Map<String, Object>> e : index.entrySet()) {
+                Map<String, Object> c = new LinkedHashMap<>(e.getValue());
+                c.remove("local");
+                mineNow.put(e.getKey(), c);
+            }
+            v.views.put(device, mineNow);
+        }
+        SyncReconcile.Merged m = SyncReconcile.merge(v.views);
         rep.devices = v.views.size();
         rep.missingViews = v.missing;
 
@@ -335,7 +349,7 @@ public final class NativeSweep {
         }
 
         Journal j = new Journal(net, store, sec, mk, f.key, device, index,
-                                v.views.get(device), rep);
+                                fetchedMine, rep);
         /* IF OUR OWN RECORD HAS GONE, PUT IT BACK — even on a sweep that changes nothing.
          *
          * `mine` is rebuilt from the journal, so it always holds everything this device knows. The

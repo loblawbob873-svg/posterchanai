@@ -847,3 +847,17 @@ class AccountWideRestore(unittest.TestCase):
         a = self.app.index("function _fxDeletedHTML()")
         seg = self.app[a:a + 1800]
         self.assertIn(".pc-trash", seg, "trash-relative entries would be offered as restorable")
+
+
+class ReclaimSeesTheKeptGeneration(unittest.TestCase):
+    """"Device check never ends with space to reclaim!" — the one-generation-back manifest blob
+    (prevSha, the rollback the server keeps on purpose) was invisible to the reference collector,
+    so every sweep re-offered the safety copies as reclaimable garbage."""
+
+    def test_prevSha_counts_as_referenced(self):
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        src = open(os.path.join(root, "static", "js", "client", "sync.js"), encoding="utf-8").read()
+        a = src.index("sealedIds.push(d0.pathsSha)")
+        seg = src[a:a + 800]
+        self.assertIn("d0.prevSha", seg, "the kept generation reads as garbage and the reclaim "
+                                         "offer regenerates for ever")
