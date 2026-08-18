@@ -2055,9 +2055,11 @@
         localStorage.setItem(this._key(), JSON.stringify(out));
       }catch(_){}                   // a full quota must not take down a working signer
     },
+    _stats: new Map(),   // pk -> {n, dup, lastM} — per-app request tally, this page's lifetime
     list(){
       const out = [];
-      this.sessions.forEach((v, k) => out.push(Object.assign({ pk: k }, v)));
+      this.sessions.forEach((v, k) => out.push(Object.assign({ pk: k },
+        v, { stats: this._stats.get(k) || null })));
       return out.sort((a, b) => (b.last || b.created || 0) - (a.last || a.created || 0));
     },
 
@@ -2435,6 +2437,16 @@
        * read to render "last used", so writing localStorage per request bought nothing. */
       sess.last=Math.floor(Date.now()/1000);
       if(!this._lastSaved || sess.last - this._lastSaved > 60){ this._lastSaved = sess.last; this._persist(); }
+      /* PER-APP TALLY, in memory only. A paired app stuck in a loop (measured: the same two small
+       * decrypts every ~20s, for hours) is invisible from the signer's side — every request looks
+       * legitimate one at a time. Counting per app, and counting REPEATS (same method + same
+       * params fingerprint as that app's previous ask) is what lets the pairings screen name the
+       * looping device instead of the whole signer feeling slow. */
+      { const st=this._stats.get(ev.pubkey) || { n:0, dup:0, lastM:'', _fp:'' };
+        const fp=req.method+'|'+String(JSON.stringify(req.params||[])).length+'|'+String(JSON.stringify(req.params||[])).slice(0,64);
+        if(fp === st._fp) st.dup++;
+        st._fp=fp; st.n++; st.lastM=req.method;
+        this._stats.set(ev.pubkey, st); }
       let result=null, error=null;
       if(!this._allowed(sess, req.method, req.params||[])){
         error='not permitted: '+req.method+' was not in what this app asked for';
@@ -15726,6 +15738,7 @@
   // so re-rendering after an upload/delete stays put.
   let _filesTab = 'public';
   let _filesAdminPk = null;   // when set, the Admin tab is drilled into this user's files
+  let _badmSort = null;       // the admin table's sort column/direction, kept across repaints
   /* Is this a music file? NOT `type.startsWith('audio/')` on its own: a browser's MIME guess comes
    * from the OS registry and is routinely EMPTY or generic — .opus, .m4a, .flac and anything dragged
    * out of a file manager that registers no type all arrive as '' or application/octet-stream, and
@@ -16116,25 +16129,44 @@
     if(!users.length){ pane.innerHTML='<div class="empty">No Blossom uploads on this server yet.</div>'; return; }
     const miss=users.map(u=>u.pubkey).filter(pk=>!Store.haveProfile(pk)).slice(0,300);
     if(miss.length){ try{ (await Relay.query([{authors:miss,kinds:[0],limit:miss.length}])).forEach(e=>Store.saveProfile(e)); }catch(_){} }
-    pane.innerHTML=`<div style="display:flex;gap:10px;padding:10px 4px 6px;flex-wrap:wrap">
-        <div style="flex:1;min-width:120px;background:var(--panel,#16161c);border:1px solid var(--border,#333);border-radius:12px;padding:10px 14px">
-          <div style="font-size:22px;font-weight:700;line-height:1.1;color:var(--cyan,#0ff)">${users.length}</div>
-          <div class="muted" style="font-size:12px">📊 uploader${users.length===1?'':'s'}</div>
-        </div>
-        <div style="flex:1;min-width:120px;background:var(--panel,#16161c);border:1px solid var(--border,#333);border-radius:12px;padding:10px 14px">
-          <div style="font-size:22px;font-weight:700;line-height:1.1;color:var(--cyan,#0ff)">${_fmtBytes(total)}</div>
-          <div class="muted" style="font-size:12px">💾 total stored</div>
-        </div>
-      </div>
-      <div class="muted small" style="padding:2px 6px 8px">Tap a row to review files · tap an avatar or name for their profile</div>
-      <div class="people-list">${users.map((u,i)=>{ const p=Store.profile(u.pubkey)||{}; const nm=p.name||p.display_name||(u.npub.slice(0,12)+'…');
-        return `<div class="psearch badm-row" data-i="${i}" style="cursor:pointer">
-          <img src="${enc(p.picture||LOGO)}" class="badm-prof" data-pk="${u.pubkey}" style="cursor:pointer" onerror="this.src='${LOGO}'">
-          <div class="pinfo"><b class="badm-prof" data-pk="${u.pubkey}" style="cursor:pointer">${enc(nm)}</b><div class="muted small">${enc(u.npub.slice(0,18))}… · ${u.count} file(s)</div></div>
-          <span style="align-self:center;text-align:right"><b>${_fmtBytes(u.size)}</b><br><span class="muted small">review ›</span></span>
-        </div>`; }).join('')}</div>`;
-    $$('.badm-prof',pane).forEach(el=> el.onclick=(e)=>{ e.stopPropagation(); renderProfileView(el.dataset.pk); });
-    $$('.badm-row',pane).forEach(el=> el.onclick=()=>{ _filesAdminPk=users[+el.dataset.i].pubkey; renderBlossom(); });
+    /* A TABLE, not cards — "it's listed in Cards and it's useless the way it's designed". The
+     * admin's question is comparative (who is using the space), and a comparison needs columns
+     * that sort. Same visual family as the Files explorer; the drill-in below is unchanged. */
+    _badmSort = _badmSort || { k:'size', d:-1 };
+    const draw = () => {
+      const k=_badmSort.k, d=_badmSort.d;
+      const rows=[...users].sort((x,y)=>{
+        const vx = k==='name' ? (((Store.profile(x.pubkey)||{}).name)||x.npub).toLowerCase()
+                              : (x[k]||0);
+        const vy = k==='name' ? (((Store.profile(y.pubkey)||{}).name)||y.npub).toLowerCase()
+                              : (y[k]||0);
+        return (vx<vy?-1:vx>vy?1:0)*d;
+      });
+      const arrow = c => _badmSort.k===c ? (_badmSort.d<0?' ▾':' ▴') : '';
+      pane.innerHTML=`<div class="muted small" style="padding:8px 6px 4px">${users.length} uploader${users.length===1?'':'s'} · ${_fmtBytes(total)} stored · tap a column to sort, a row to review files</div>
+        <div style="overflow-x:auto"><table class="badm-tbl" style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th data-s="name" style="text-align:left;cursor:pointer;padding:6px">User${arrow('name')}</th>
+            <th data-s="count" style="text-align:right;cursor:pointer;padding:6px">Files${arrow('count')}</th>
+            <th data-s="size" style="text-align:right;cursor:pointer;padding:6px">Stored${arrow('size')}</th>
+            <th style="padding:6px"></th>
+          </tr></thead>
+          <tbody>${rows.map(u=>{ const p2=Store.profile(u.pubkey)||{}; const nm=p2.name||p2.display_name||(u.npub.slice(0,12)+'…');
+            return `<tr class="badm-row" data-pk="${u.pubkey}" style="cursor:pointer;border-top:1px solid var(--border,#333)">
+              <td style="padding:6px;display:flex;align-items:center;gap:8px;min-width:0">
+                <img src="${enc(p2.picture||LOGO)}" class="badm-prof" data-pk="${u.pubkey}" style="width:24px;height:24px;border-radius:50%;flex:none" onerror="this.src='${LOGO}'">
+                <span style="min-width:0;overflow:hidden;text-overflow:ellipsis"><b>${enc(nm)}</b> <span class="muted small">${enc(u.npub.slice(0,14))}…</span></span></td>
+              <td style="padding:6px;text-align:right">${u.count}</td>
+              <td style="padding:6px;text-align:right"><b>${_fmtBytes(u.size)}</b></td>
+              <td style="padding:6px;text-align:right"><span class="muted small">review ›</span></td>
+            </tr>`; }).join('')}</tbody>
+        </table></div>`;
+      $$('th[data-s]',pane).forEach(th=> th.onclick=()=>{ const k2=th.dataset.s;
+        _badmSort = { k:k2, d: _badmSort.k===k2 ? -_badmSort.d : (k2==='name'?1:-1) }; draw(); });
+      $$('.badm-prof',pane).forEach(el=> el.onclick=(e)=>{ e.stopPropagation(); renderProfileView(el.dataset.pk); });
+      $$('.badm-row',pane).forEach(el=> el.onclick=()=>{ _filesAdminPk=el.dataset.pk; renderBlossom(); });
+    };
+    draw();
   }
   // Admin drill-in: a moderation grid of ONE user's public blobs from THIS node's built-in Blossom server
   // (CFG.blossom_url — the SAME store the usage overview is computed from, not the admin's own configured
@@ -26743,7 +26775,12 @@
                    * this there is no way to tell which entry belongs to which device, and "revoke"
                    * is a guess. */
                   a.created ? ' · added ' + enc(timeAgo(a.created)) + ' ago' : ''}${
-                  a.last ? ' · last used ' + enc(timeAgo(a.last)) + ' ago' : ' · never used'}</span></span>
+                  a.last ? ' · last used ' + enc(timeAgo(a.last)) + ' ago' : ' · never used'}${
+                  /* The tally that names a LOOPING app: high repeats = the same request over and
+                   * over, i.e. a device stuck re-asking. Session-lifetime numbers, so a healthy
+                   * app shows a modest count and the runaway stands out by an order of magnitude. */
+                  a.stats && a.stats.n ? ' · asked ' + enc(String(a.stats.n)) + '\u00d7 this session'
+                    + (a.stats.dup > 4 ? ' (\u26a0 ' + enc(String(a.stats.dup)) + ' repeats — this app may be stuck in a loop)' : '') : ''}</span></span>
               <button class="mini" data-revoke="${enc(a.pk)}">revoke</button></div>`).join('')
         : 'No apps are signed in with this device.')
       /* THE SECOND WAY IN, and it is not a nicety. Scanning the app's QR only works for apps that

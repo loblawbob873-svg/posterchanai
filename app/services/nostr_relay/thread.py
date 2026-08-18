@@ -1018,11 +1018,53 @@ async def _main(cfg: dict) -> None:
         # Nightly block-purge: checked hourly, fires once in the small hours (see _maybe_purge_blocks).
         asyncio.create_task(_periodic(_relay.stop_event, 3600, _maybe_purge_blocks, "block-purge")),
     ]
+    async def _maybe_refresh_lists():
+        """AUTOMATIC member-list refresh — the half of "sync my data" nobody has to press.
+
+        Smart about the network on purpose (the public relays rate-limit by IP, and damus already
+        503s us under load): at most TWO users per hourly tick, 30s apart, each costing ONE unpaged
+        query against at most 3 of that member's own relays, and a per-user stamp in relay kv so a
+        user is asked about at most once a day however often the process restarts."""
+        from . import ingest as _ingest
+        def _collect():
+            from app.database import SessionLocal
+            db = SessionLocal()
+            try:
+                return list(_collect_preserve_pubkeys(db))
+            finally:
+                db.close()
+        try:
+            pks = await asyncio.get_event_loop().run_in_executor(None, _collect)
+        except Exception as e:
+            logger.debug("[nostr-relay] list-refresh user collect failed: %s", e)
+            return
+        now = time.time()
+        done = 0
+        for pk in pks:
+            if done >= 2:
+                break
+            try:
+                last = float(await store.kv_get("lists_refresh:" + pk[:16]) or 0)
+            except (TypeError, ValueError):
+                last = 0.0
+            if now - last < 86400:
+                continue
+            # Stamp BEFORE the ask: a relay that errors must not be re-asked every hour all day.
+            await store.kv_set("lists_refresh:" + pk[:16], str(int(now)))
+            if done:
+                await asyncio.sleep(30)
+            await _ingest.refresh_member_lists(store, server, cfg["upstream"], pk,
+                                               direct=cfg["direct"])
+            done += 1
+
     if cfg["wot_enabled"]:
         # WoT rebuild — checked hourly, actually rebuilt only when a day has elapsed (staleness),
         # so it runs once a day regardless of restarts. NOT a feed mirror; just gate membership.
         # Runs even in send-only mode (the publishing gate still needs the trust set).
         tasks.append(asyncio.create_task(_periodic(_relay.stop_event, 3600, _maybe_rebuild_wot, "wot-refresh")))
+        # Member-list refresh — hourly tick, self-limiting (see _maybe_refresh_lists).
+        if not cfg["send_only"]:
+            tasks.append(asyncio.create_task(_periodic(_relay.stop_event, 3600, _maybe_refresh_lists, "list-refresh")))
         if cfg["send_only"]:
             # SEND-ONLY: the relay BROADCASTS its own events to upstream (via the outbox, started
             # above + unaffected) but pulls/stores NOTHING from upstream — so the local DB doesn't

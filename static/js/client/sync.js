@@ -2163,7 +2163,18 @@
       // A grant can be revoked in system settings, or the drive can be gone. Saying so beats
       // "unknown sync folder" on every sweep forever.
       // Only when the platform has actually answered — never while the question is in flight.
-      const lost = Array.isArray(granted) && !granted.some(g => g.id === f.id);
+      /* COMPARED NORMALISED, AND OVERRULED BY A RECENT SWEEP. Android grants are honoured by the
+       * OS semantically, but this check compared URI STRINGS — an id stored by an older build
+       * differs from today's persisted-permission string in nothing but percent-encoding, so the
+       * card said "point at the folder again" forever over a folder that was syncing on every
+       * sweep (reported from the phone and the laptop in the same afternoon). And whatever the
+       * strings say, a folder that completed a sweep minutes ago self-evidently still has its
+       * grant — the sweep is the strongest evidence there is. */
+      const _gid = u => { try{ return decodeURIComponent(String(u||'')).replace(/\/+$/,''); }
+                          catch(_){ return String(u||''); } };
+      const recentlyOk = (Date.now() - (f.lastSyncAt||0)) < 900000;   // lastSyncAt is in ms
+      const lost = Array.isArray(granted) && !granted.some(g => _gid(g.id) === _gid(f.id))
+                   && !recentlyOk;
       return `<div class="sync-card" data-id="${PC.enc(f.id)}">
         <div class="sync-head"><b>${PC.enc(keyOf(f))}</b>
           <span class="sync-n muted small">${_countOf(f)}</span>

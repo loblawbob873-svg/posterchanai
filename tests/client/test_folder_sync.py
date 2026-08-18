@@ -698,3 +698,37 @@ class AddIsAGrant(unittest.TestCase):
         self.assertLess(push, paint,
                         "the pick is not recorded as a grant before the repaint — the fresh card "
                         "draws the re-link button while it syncs")
+
+
+class LostIsNotAStringCompare(unittest.TestCase):
+    """"prompted me to point at Pictures again despite syncing" — the lost verdict compared SAF URI
+    STRINGS while the OS honours grants semantically, so an id stored by an older build (different
+    percent-encoding) read as lost forever over a folder syncing on every sweep. Two rules, pinned:
+    ids compare normalised, and a folder whose last sweep succeeded minutes ago is never lost."""
+
+    def _seg(self):
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        src = open(os.path.join(root, "static", "js", "client", "sync.js"), encoding="utf-8").read()
+        at = src.index("const _gid = u =>")
+        return src[at:at + 700]
+
+    def test_ids_compare_normalised_and_a_recent_sweep_overrules(self):
+        seg = self._seg()
+        self.assertIn("decodeURIComponent", seg)
+        self.assertIn("_gid(g.id) === _gid(f.id)", seg)
+        self.assertIn("recentlyOk", seg)
+        self.assertIn("f.lastSyncAt", seg)
+        self.assertIn("< 900000", seg,
+                      "lastSyncAt is MILLISECONDS — a seconds comparison makes recentlyOk always "
+                      "true and a genuinely revoked grant never shows the banner")
+
+    def test_the_normaliser_actually_equates_the_encodings(self):
+        js = """
+        const _gid = u => { try{ return decodeURIComponent(String(u||'')).replace(/\/+$/,''); }
+                            catch(_){ return String(u||''); } };
+        const a='content://com.android.externalstorage.documents/tree/primary%3APictures';
+        const b='content://com.android.externalstorage.documents/tree/primary:Pictures/';
+        process.stdout.write(JSON.stringify(_gid(a)===_gid(b)));
+        """
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.stdout, "true", r.stderr[-500:])

@@ -324,6 +324,50 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
     return stored
 
 
+# Replaceable list kinds a member's account state lives in — newest version is the whole answer,
+# so a refresh is ONE unpaged query, never a crawl. Deliberately excludes content kinds (1, 30023…):
+# those are histories, covered by the member sync and the full backfill.
+_MEMBER_LIST_KINDS = [0, 3, 10000, 10001, 10002, 10003, 10007, 10050, 10063,
+                      30000, 30001, 30003]
+
+
+async def refresh_member_lists(store, server, upstream, pubkey: str, *, direct: bool = False) -> int:
+    """ONE cheap pass over a member's replaceable lists, against THEIR OWN write relays.
+
+    The periodic member sync covers our upstreams; a list kept only on the member's own relays
+    (a star list written by another client, a mute list from another app) otherwise arrives only
+    when somebody presses a backfill button. This is the automatic half — and it is deliberately
+    tiny so it can run on a schedule without rate-limiting anyone: one query, no paging, their
+    relays capped at 3, and the caller spaces users out."""
+    stored = 0
+    try:
+        own = await store.query([{"authors": [pubkey], "kinds": [10002], "limit": 1}])
+        theirs = [t[1].strip().rstrip("/") for t in (own[0].get("tags", []) if own else [])
+                  if len(t) > 1 and t[0] == "r" and t[1].startswith("wss://")
+                  and ".onion" not in t[1]]
+        asked = {u.strip().rstrip("/") for u in _relay.normalize_relays(upstream)}
+        theirs = [u for u in theirs if u not in asked][:3]
+        if not theirs:
+            return 0
+        evs = await _relay.query(theirs, [{"authors": [pubkey], "kinds": _MEMBER_LIST_KINDS,
+                                           "limit": 100}], direct=direct)
+        for ev in evs or []:
+            if ev.get("pubkey") != pubkey:
+                continue
+            if not _is_evid(ev.get("id")) or not verify_event(ev):
+                continue
+            if await store.has_event(ev["id"]):
+                continue
+            if await store.add_event(ev, origin="wot"):
+                stored += 1
+                server.subs.fanout(ev, server._send)
+    except Exception as e:
+        logger.debug("[nostr-relay] list refresh failed for %s…: %s", pubkey[:12], e)
+    if stored:
+        logger.info("[nostr-relay] list refresh: %d newer list(s) for %s…", stored, pubkey[:12])
+    return stored
+
+
 async def backfill_ancestors(store, server, upstream, events, max_ancestors: int,
                              direct: bool = False, blocked=None, blocked_words=None, gate=None,
                              block_bridged=False) -> int:
