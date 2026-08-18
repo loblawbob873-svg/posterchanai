@@ -15829,7 +15829,6 @@
   async function _postShort(file, host){
     if(!file || !/^video\//.test(file.type||'')){ toast('pick a video'); return; }
     const title=await uiPrompt('Give your short a title', ''); if(title===null) return;
-    const hold=_aiHold ? null : null;
     const st=document.createElement('div'); st.className='empty'; st.textContent='Uploading your short…';
     host.prepend(st);
     try{

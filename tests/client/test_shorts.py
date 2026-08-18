@@ -168,3 +168,16 @@ class PostingTests(unittest.TestCase):
         seg = APP[g:g + 2600]
         self.assertIn("short-post", seg)
         self.assertIn('accept="video/*"', seg)
+
+    def test_no_phantom_bindings_in_the_post_path(self):
+        """Shipped broken once: a stray `_aiHold` (a name from another module) threw ReferenceError
+        on the first click of Post — reported as "action failed when uploading". Every name the
+        function reaches for must exist in app.js."""
+        a = APP.index("async function _postShort(")
+        seg = APP[a:a + 3600]
+        self.assertNotIn("_aiHold", seg)
+        import re as _re
+        for name in set(_re.findall(r"(?<![.\w])(_[a-zA-Z]\w+)\s*\(", seg)):
+            self.assertTrue(("function " + name) in APP or (name + " =") in APP
+                            or (name + "=") in APP,
+                            "%s is called in _postShort but defined nowhere in app.js" % name)
