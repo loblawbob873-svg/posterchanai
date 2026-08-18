@@ -6409,8 +6409,17 @@
      * button), and a restored auto-draft opens it on arrival for the same reason. */
     { const cmp=$('#tl-cmp',box)||box.closest&&box.closest('.tl-cmp')||$('#tl-cmp');
       if(cmp && ta){
-        const openState=()=>cmp.classList.toggle('cmp-open', document.activeElement===ta || !!(ta.value&&ta.value.trim()));
-        ta.addEventListener('focus', ()=>cmp.classList.add('cmp-open'));
+        /* COLLAPSING MUST CLEAR THE INLINE HEIGHT. grow() writes `style.height` with a 54px floor,
+         * and an inline style beats any CSS collapse — reported precisely: "you're just hiding
+         * them, the feeds didn't move up". Collapsed, the inline height goes and the stylesheet's
+         * compact row wins; opened, the box re-grows to its text. */
+        const openState=()=>{
+          const on = document.activeElement===ta || !!(ta.value&&ta.value.trim());
+          cmp.classList.toggle('cmp-open', on);
+          if(!on) ta.style.height='';
+          else{ try{ ta.style.height='auto'; ta.style.height=Math.min(Math.max(ta.scrollHeight,54),560)+'px'; }catch(_){} }
+        };
+        ta.addEventListener('focus', ()=>{ cmp.classList.add('cmp-open'); });
         ta.addEventListener('blur', ()=>setTimeout(openState, 150));   // let a tool-button tap land first
         ta.addEventListener('input', openState);
         setTimeout(openState, 0);                                       // the restored draft case

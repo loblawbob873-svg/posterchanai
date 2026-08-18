@@ -1112,7 +1112,12 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
  * draft) and folds away otherwise, returning its height to the posts. Desktop never collapses. */
 @media(max-width:700px){
   .tl-cmp:not(.cmp-open) .tl-cmp-tools{display:none}
-  .tl-cmp:not(.cmp-open) .tl-cmp-ta{min-height:38px}
+  /* The COMPACT row, for real: the inline grow() height is cleared by the collapse handler (an
+   * inline style beats all of this), the box drops to one line, the avatar shrinks, and the row's
+   * padding halves — ~130px of header becomes ~56px of "How was your weekend?". */
+  .tl-cmp:not(.cmp-open) .tl-cmp-ta{min-height:34px;height:34px;font-size:15px;padding:6px 0}
+  .tl-cmp:not(.cmp-open){padding:8px 16px}
+  .tl-cmp:not(.cmp-open) .tl-cmp-av{width:34px;height:34px}
 }
 /* Borderless icon buttons (📎 / ＋): the .btn outline boxed each one in and made the row look like a
    toolbar. Bigger hit area too — these were .btn.small, which is a text-button size, not an icon one. */
