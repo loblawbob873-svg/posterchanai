@@ -122,3 +122,26 @@ class WiringTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RelayIngestTests(unittest.TestCase):
+    """The relay must PULL the calendar kinds, not merely accept them: a member's events are usually
+    published from another calendar app to other relays, and without 3192x in the sync lists
+    "Calendar isn't showing my nostr events" is structural — the events exist and never arrive."""
+
+    def test_the_firehose_default_carries_the_calendar_kinds(self):
+        src = open(os.path.join(ROOT, "app", "services", "nostr_relay", "thread.py"),
+                   encoding="utf-8").read()
+        m = re.search(r'nostr_relay_ingest_kinds", "([0-9,]+)"', src)
+        self.assertIsNotNone(m)
+        kinds = m.group(1).split(",")
+        for k in ("31922", "31923", "31925"):
+            self.assertIn(k, kinds, "kind %s is never synced in from upstream" % k)
+
+    def test_the_member_backfill_carries_them_too(self):
+        src = open(os.path.join(ROOT, "app", "services", "nostr_relay", "ingest.py"),
+                   encoding="utf-8").read()
+        m = re.search(r"kinds = kinds or \[([^\]]+)\]", src)
+        self.assertIsNotNone(m)
+        for k in ("31922", "31923"):
+            self.assertIn(k, m.group(1), "a new member's existing events are never backfilled")

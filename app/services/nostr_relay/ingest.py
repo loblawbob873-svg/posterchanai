@@ -235,7 +235,11 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
     # profile, notes, contacts, reposts, reactions, comments, relay list, long-form articles,
     # NIP-53 live events (30311, Streams), NIP-35 torrents (2003/2004), NIP-34 repos (30617) — so a
     # follow / WoT refresh pulls a torrent-poster's FULL back-catalog, not just recent firehose hits.
-    kinds = kinds or [0, 1, 3, 6, 7, 1111, 2003, 2004, 10002, 10050, 30023, 30311, 30617]
+    # 3192x: NIP-52 calendar events + RSVPs. A member's events are usually published from ANOTHER
+    # calendar app to OTHER relays — without these kinds here and in ingest_kinds, "Calendar isn't
+    # showing my nostr events (or my follows')" is structural: the events exist and never arrive.
+    kinds = kinds or [0, 1, 3, 6, 7, 1111, 2003, 2004, 10002, 10050, 30023, 30311, 30617,
+                      31922, 31923, 31924, 31925]
     logger.info("[nostr-relay] sync started for %s…", pubkey[:12])
     common = dict(direct=direct, pace=pace, max_total=max_total, max_pages=max_pages)
     stored = await _backfill_filter(store, server, upstream,
