@@ -675,3 +675,4 @@ def test_the_widget_touch_targets_stay_big_enough():
         block = block[:block.index("/>")]
         m = re.search(r'android:layout_width="(\d+)dp"', block)
         assert m and int(m.group(1)) >= 44, f"{wid} is smaller than 44dp"
+

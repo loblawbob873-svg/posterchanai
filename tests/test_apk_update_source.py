@@ -1,0 +1,43 @@
+"""Where an APK update sends you depends on who installed the APK.
+
+A Zapstore install and the CI /apk are signed with DIFFERENT KEYS, so the sideload download can
+never install over a Zapstore copy — Android refuses the signature. The old row sent every user to
+/apk regardless: a Zapstore user tapped Update, a browser opened, a download ran, and the install
+failed at the end. The native half answers who installed this build; the client sends Zapstore
+installs to Zapstore and everyone else down the direct path that actually works for them.
+"""
+import os
+import unittest
+
+class InstallerSourceTests(unittest.TestCase):
+    """A Zapstore install updates THROUGH Zapstore — the store verifies the signature and tracks
+    versions, and sideloading /apk over it orphans the install from its store. The native half
+    answers who installed the APK; the client branches the update row and the tap on it."""
+
+    def test_the_plugin_answers_who_installed_the_apk(self):
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        src = open(os.path.join(root, "mobile", "android", "app", "src", "main", "java",
+                                "place", "poster", "app", "share", "ShareTargetPlugin.java"),
+                   encoding="utf-8").read()
+        self.assertIn("public void installer(PluginCall call)", src)
+        self.assertIn("getInstallSourceInfo", src, "API 30+ path missing")
+        self.assertIn("getInstallerPackageName", src, "the pre-30 fallback is missing")
+        self.assertIn('out.put("installer", who == null ? "" : who)', src,
+                      "an unknown installer must answer '' — which keeps the direct-download path")
+
+    def test_the_client_branches_on_zapstore(self):
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        app = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+        at = app.index("function applyUpdate()")
+        body = app[at:at + 1600]
+        self.assertIn("_fromZapstore()", body)
+        self.assertIn("zapstore.dev", body)
+        # …and the sideload path survives for everyone else.
+        self.assertIn("'/apk'", body)
+        self.assertIn("tap to open Zapstore", app, "the update row does not say where the tap goes")
+
+
+if __name__ == "__main__":
+    unittest.main()

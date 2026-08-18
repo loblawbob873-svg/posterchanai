@@ -20412,9 +20412,23 @@
   // and, when it's newer than the build baked into this bundle (__PC_APP_BUILD__), surface the SAME
   // "Update available" row — but applyUpdate downloads the new APK instead of reloading the SW.
   let _apkUpdate=false, _lastApkCheck=0;
+  /* WHO INSTALLED THIS BUILD. A Zapstore install must update THROUGH Zapstore — it verifies the
+   * signature and tracks versions; sideloading /apk over it orphans the install from its store.
+   * Asked once, natively; '' = sideload/unknown, which keeps today's direct-download path. */
+  let _installer = '';
+  async function _learnInstaller(){
+    try{
+      const P = window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.ShareTarget;
+      if(!P || !P.installer) return;
+      const r = await P.installer();
+      _installer = String((r && r.installer) || '');
+    }catch(_){ }
+  }
+  const _fromZapstore = () => /zapstore/i.test(_installer);
   async function _checkApkUpdate(){
     if(!window.Capacitor || !window.__PC_API_BASE__) return;   // bundled native app only (no-op in PWA)
     if(_apkUpdate) return;                                      // already found one — the row/badge is up
+    if(!_installer) await _learnInstaller();
     const mine=+(window.__PC_APP_BUILD__||0); if(!mine) return;
     let latest=0;
     // One retry: this often runs seconds after a cold start / resume, when the radio is still waking and the
@@ -20462,7 +20476,14 @@
   function applyUpdate(){
     // Bundled app update = install a new APK, not an SW reload. Open /apk (served directly by the server,
     // resumable); Capacitor routes the external URL to the system browser → Android download → install.
-    if(_apkUpdate){ const u=(window.__PC_API_BASE__||'')+'/apk';
+    if(_apkUpdate){
+      if(_fromZapstore()){
+        /* Their store, their update: open Zapstore itself (the app if launchable, its site as the
+         * fallback) rather than sideloading a download over a store-managed install. */
+        try{ window.open('https://zapstore.dev', '_blank'); }catch(_){ try{ location.href='https://zapstore.dev'; }catch(e){} }
+        try{ toast('Update it from Zapstore — this install came from there'); }catch(_){} return;
+      }
+      const u=(window.__PC_API_BASE__||'')+'/apk';
       try{ window.open(u,'_blank'); }catch(_){ try{ location.href=u; }catch(e){} }
       try{ toast('Downloading the app update…'); }catch(_){} return; }
     if(_updApplying) return;   // one tap only
@@ -20511,7 +20532,9 @@
   function _updNotifHtml(id){
     if(!(_newBuild || _apkUpdate)) return '';
     const body = _updApplying ? ' <span class="muted small">applying the new version</span>'
-      : (_apkUpdate ? ' — a new PosterChan app version is ready<div class="muted small">tap to download &amp; install the update</div>'
+      : (_apkUpdate ? (_fromZapstore()
+            ? ' — a new PosterChan app version is ready<div class="muted small">tap to open Zapstore — this install updates through it</div>'
+            : ' — a new PosterChan app version is ready<div class="muted small">tap to download &amp; install the update</div>')
                     : ' — a new version of the app is ready<div class="muted small">tap to reload &amp; update</div>');
     return `<div class="notif upd-notif" id="${id}"><span class="ic">🔄</span>`
          + `<div><b>${_updApplying?'Updating…':'Update available'}</b>${body}</div></div>`;

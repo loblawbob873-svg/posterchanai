@@ -26,6 +26,26 @@ public class ShareTargetPlugin extends Plugin {
 
   private static final String AI_ALIAS = "place.poster.app.ShareToAi";
 
+  /** Who installed this APK — "" when Android will not say (sideload, old API, hardened ROM).
+   *  The updater branches on it: an install that came from a STORE should update through that
+   *  store (it verifies the signature and tracks versions), not by sideloading over itself. */
+  @PluginMethod
+  public void installer(PluginCall call) {
+    String who = "";
+    try {
+      android.content.pm.PackageManager pm = getContext().getPackageManager();
+      String pkg = getContext().getPackageName();
+      if (android.os.Build.VERSION.SDK_INT >= 30) {
+        who = pm.getInstallSourceInfo(pkg).getInstallingPackageName();
+      } else {
+        who = pm.getInstallerPackageName(pkg);
+      }
+    } catch (Throwable ignored) { }
+    com.getcapacitor.JSObject out = new com.getcapacitor.JSObject();
+    out.put("installer", who == null ? "" : who);
+    call.resolve(out);
+  }
+
   @PluginMethod
   public void getTarget(PluginCall call) {
     String cls = "";
