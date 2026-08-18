@@ -50,7 +50,10 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(out["content"], "• a bill\n• due friday")
         self.assertEqual(len(chat.calls), 1)
 
-    def test_reply_carries_the_instruction_and_the_email(self):
+    def test_reply_carries_the_email_first_and_the_instruction_last(self):
+        """Order is the fix, not a style: instruction-first made the recency-biased local model
+        CONTINUE the email — a payroll summary came back verbatim as "the reply". The email is
+        fenced as quoted material and the instruction lands last, next to an explicit cue."""
         chat = _FakeChat("No thank you.")
         out = _run(M.MailAiReq(mode="reply", text="Subject: offer\n\nbuy now",
                                instruction="politely decline"), chat)
@@ -58,6 +61,9 @@ class EndpointTests(unittest.TestCase):
         user_msg = chat.calls[0][-1]["content"]
         self.assertIn("politely decline", user_msg)
         self.assertIn("buy now", user_msg)
+        self.assertLess(user_msg.index("buy now"), user_msg.index("politely decline"),
+                        "the instruction drifted back above the email — the parrot returns")
+        self.assertIn("<<<EMAIL", user_msg, "the email lost its fence")
 
     def test_a_reply_with_no_instruction_is_refused(self):
         with self.assertRaises(HTTPException) as c:

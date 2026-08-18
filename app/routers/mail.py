@@ -64,13 +64,21 @@ async def mail_ai(req: MailAiReq, db: Session = Depends(get_db),
         instr = (req.instruction or "").strip()[:1000]
         if not instr:
             raise HTTPException(status_code=400, detail="say how to reply")
+        # EMAIL FIRST, INSTRUCTION LAST, and an explicit cue to begin. The first shape put the
+        # instruction at the top and the email underneath — and the local model, recency-biased,
+        # CONTINUED the email instead of replying to it: a payroll summary came back verbatim as
+        # "the reply", subject line and all. Reproduced against the live model, then reworked and
+        # re-proven on three instruction shapes (short thanks / polite decline / yes-plus-question)
+        # before this landed. The fence marks the email as quoted material, not text to extend.
         msgs = [
             {"role": "system", "content": (
-                "Draft a reply to this email, following the user's instruction. Output ONLY the "
-                "reply body as plain text — no subject line, no quoted original, no signature "
-                "placeholders like [Your Name], no commentary. Match the sender's language and a "
-                "normal email register unless the instruction says otherwise.")},
-            {"role": "user", "content": "Instruction: " + instr + "\n\nThe email to reply to:\n" + text},
+                "You write email replies. You never repeat or continue the original email. You "
+                "output only the body of the NEW reply, as plain text: no subject line, no "
+                "quoting, no [Your Name] placeholders, no commentary. Match the sender's language "
+                "unless the instruction says otherwise.")},
+            {"role": "user", "content": "An email I received:\n<<<EMAIL\n" + text
+                + "\nEMAIL\n\nWrite my reply to it. How I want to reply: " + instr
+                + ".\n\nMy reply:"},
         ]
     try:
         out = await cs.chat_service.chat(msgs) or ""
