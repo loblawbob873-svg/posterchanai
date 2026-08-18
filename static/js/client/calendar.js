@@ -224,6 +224,7 @@
                                  if(on && _n52evs === null){ _n52evs = []; loadNostr(); }
                                  S.rev++; paint(); };
     let _n52evs = null;          // parsed events, or null = never loaded
+    let _n52at = 0;              // when they were fetched — the network moves while a tab stays open
     function _n52parse(ev){
       const tag = (n) => (((ev.tags || []).find(t => t[0] === n) || [])[1] || '');
       const d = tag('d'); if(!d) return null;
@@ -258,6 +259,7 @@
         if(!best[p2.uid] || best[p2.uid].created_at < p2.created_at) best[p2.uid] = p2;
       }
       _n52evs = Object.values(best);
+      _n52at = Date.now();
       S.rev++;
       if(inView()) paint();
     }
@@ -524,8 +526,12 @@
       S.loading = true; S.error = '';
       paint();
       // The Nostr layer rides its own socket and its own clock: fired here, drawn when it lands,
-      // never blocking the personal calendar it sits beside. Once per session unless refreshed.
-      if(_n52evs === null && nostrOn()){ _n52evs = []; loadNostr(); }
+      // never blocking the personal calendar it sits beside. Refreshed when stale — an event
+      // published after this tab opened must not need a reload to exist.
+      if(nostrOn() && (_n52evs === null || Date.now() - _n52at > 10 * 60000)){
+        if(_n52evs === null) _n52evs = [];
+        loadNostr();
+      }
       try{
         S.sync = await api('/api/calendar/config');
         // The config call reaching the server IS the proof that it is reachable, so this is the
