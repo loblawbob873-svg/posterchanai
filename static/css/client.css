@@ -8062,3 +8062,9 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 .fx-trash-row{display:flex;align-items:center;gap:10px;padding:4px 2px;font-size:13px}
 .fx-trash-row .mini{margin-left:auto}
 .fx-trash-all{margin-top:6px}
+
+/* The synced view's selection bar is injected INSIDE the file grid, and a grid treats any child
+ * as a tile — so the bar was squeezed into a column at the same level as the folder cards,
+ * bleeding into them. It is a toolbar: it spans the whole row, always. Same for the details
+ * header when it rides inside the grid. */
+.files-grid .sync-selbar, .files-grid .fx-cols{grid-column:1 / -1}
