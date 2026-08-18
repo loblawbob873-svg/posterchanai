@@ -2212,6 +2212,7 @@
           <button class="btn btn-ghost small sync-deep" title="Re-read and re-hash every file. Slow on a big folder — for a file edited in place without changing its size or timestamp.">Deep check</button>
           <button class="btn btn-ghost small sync-verify" title="Read every file on this device and check it against what your devices agree the folder holds. Changes nothing.">Verify</button>
           <button class="btn btn-ghost small sync-tidy">Tidy up conflict copies</button>
+          <button class="btn btn-ghost small sync-restore hidden">\u267b Restore from trash</button>
           <button class="btn btn-ghost small sync-trash">Empty trash</button>
           ${(FS() && FS().tickStats) ? '<button class="btn btn-ghost small sync-bg" title="What this phone measured about background syncing: alarms scheduled, alarms that fired, and ticks that reached the app.">Background details</button>' : ''}
           <button class="btn btn-ghost small danger sync-forget">Stop syncing</button>
@@ -2446,6 +2447,48 @@
             PC.toast('“' + key + '” is connected again — its exclusions and name are unchanged');
           }catch(e){ PC.toast('could not reconnect: ' + ((e && e.message) || e)); }
         }; }
+      /* \u267b RESTORE FROM TRASH. Everything a sweep ever "deleted" is sitting intact under
+       * .pc-trash mirroring the folder's own structure, and telling somebody to go move it back in
+       * a file manager is not a feature. Enumerated by the bridge, moved back by the ordinary
+       * move(), NEVER overwriting: a path that exists again is skipped and its trash copy left in
+       * place. The button names its count before it does anything. */
+      { const rb = card.querySelector('.sync-restore');
+        if(rb){
+          (async () => {
+            try{ const rows = FS().listTrash ? await FS().listTrash(id) : [];
+              if(rows && rows.length){ rb.textContent = '\u267b Restore ' + rows.length + ' file'
+                    + (rows.length === 1 ? '' : 's') + ' from trash';
+                rb.classList.remove('hidden'); } }catch(_){}
+          })();
+          rb.onclick = async () => {
+            const fs2 = FS(); if(!fs2 || !fs2.listTrash) return;
+            let rows = [];
+            try{ rows = await fs2.listTrash(id) || []; }catch(_){}
+            if(!rows.length){ PC.toast('the trash is empty'); return; }
+            if(!await PC.uiConfirm('Put ' + rows.length + ' file' + (rows.length === 1 ? '' : 's')
+                 + ' back where they came from?\n\nNothing is overwritten: a file that already '
+                 + 'exists again is skipped and its trash copy stays put.')) return;
+            rb.disabled = true;
+            let done = 0, skipped = 0, failed = 0;
+            for(const r of rows){
+              try{
+                let free = true;
+                /* Free = provably absent, OR its parent directory is gone entirely (trash() prunes
+                 * emptied dirs, and move() recreates them) — a missing parent cannot be hiding a
+                 * file to overwrite. Only a CONFIRMED still-there skips. */
+                try{ const ev = fs2.confirmGone ? await fs2.confirmGone(id, r.to) : null;
+                     free = !!(ev && (ev.gone === true || ev.parentAlive === false)); }catch(_){ free = false; }
+                if(!free){ skipped++; continue; }
+                await fs2.move(id, r.at, r.to); done++;
+              }catch(_){ failed++; }
+              if((done + skipped + failed) % 50 === 0)
+                setStatus(id, 'restoring\u2026 ' + (done + skipped + failed) + ' / ' + rows.length);
+            }
+            PC.toast('restored ' + done + (skipped ? ' \u00b7 ' + skipped + ' already back in place' : '')
+                     + (failed ? ' \u00b7 ' + failed + ' failed' : ''));
+            rb.disabled = false; paint();
+          };
+        } }
       card.querySelector('.sync-tidy').onclick = async () => {
         const f = get(); if(!f) return;
         setStatus(f.id, 'looking for redundant copies…');

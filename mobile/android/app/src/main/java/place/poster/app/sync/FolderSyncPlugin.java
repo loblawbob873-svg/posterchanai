@@ -734,6 +734,23 @@ public class FolderSyncPlugin extends Plugin {
    * The scan has always hashed the streamed way. This is that, for one path.
    */
   @PluginMethod
+  public void listTrash(PluginCall call) {
+    final String id = call.getString("id", "");
+    getBridge().execute(() -> {
+      try {
+        JSArray rows = new JSArray();
+        for (String[] r : fs(id).listTrash()) {
+          JSObject o = new JSObject();
+          o.put("at", r[0]); o.put("to", r[1]);
+          rows.put(o);
+        }
+        JSObject ret = new JSObject(); ret.put("rows", rows);
+        call.resolve(ret);
+      } catch (Exception e) { call.reject("list trash failed: " + e.getMessage()); }
+    });
+  }
+
+  @PluginMethod
   public void confirmGone(PluginCall call) {
     final String id = call.getString("id", ""), rel = call.getString("rel", "");
     getBridge().execute(() -> {

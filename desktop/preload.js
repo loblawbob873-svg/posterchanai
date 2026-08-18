@@ -108,6 +108,7 @@ if (isOurPage) {
     // Positive proof for a deletion claim — see fsbridge.confirmGone. Absent on old builds,
     // and syncexec treats absence as "cannot confirm", which deletes nothing.
     confirmGone: (id, rel) => ipcRenderer.invoke('pc:fs:confirm-gone', String(id || ''), String(rel || '')),
+    listTrash: (id) => ipcRenderer.invoke('pc:fs:list-trash', String(id || '')),
     discardPart: (id, rel) => ipcRenderer.invoke('pc:fs:discard-part', String(id || ''), String(rel || '')),
     partSize: (id, rel) => ipcRenderer.invoke('pc:fs:part-size', String(id || ''), String(rel || '')),
     sweepParts: (id, olderThanMs) => ipcRenderer.invoke('pc:fs:sweep-parts', String(id || ''), olderThanMs),

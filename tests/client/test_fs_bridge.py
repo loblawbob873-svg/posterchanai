@@ -675,3 +675,63 @@ class TestPartSweepOnlyTakesItsOwn(unittest.TestCase):
         reg = os.path.join(self.root, ".pc-trash", ".parts.json")
         with open(reg) as fh:
             self.assertEqual(json.load(fh), {}, "the register still names a part file that landed")
+
+
+@unittest.skipIf(not NODE, "no node on this node")
+class TestTrashRestore(TestFsBridge):
+    """"we need a restore button" — the bridge enumerates the trash, the client moves files back
+    over the ordinary move(), and nothing is ever overwritten. Real files, real trash."""
+
+    def test_listTrash_names_every_file_with_its_way_home(self):
+        os.makedirs(os.path.join(self.root, "sub"))
+        with open(os.path.join(self.root, "sub", "a.txt"), "w") as fh:
+            fh.write("hello")
+        out = self.run_js("""
+            await attempt('trash', () => B.trash('r1', 'sub/a.txt', Date.parse('2026-08-18')));
+            await attempt('list', () => B.listTrash('r1'));
+        """)
+        self.assertTrue(out["list"]["ok"], out)
+        rows = out["list"]["value"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["to"], "sub/a.txt")
+        self.assertTrue(rows[0]["at"].startswith(".pc-trash/2026-08-18/"), rows[0])
+
+    def test_the_restore_round_trip_and_never_overwrite(self):
+        os.makedirs(os.path.join(self.root, "sub"))
+        with open(os.path.join(self.root, "sub", "a.txt"), "w") as fh:
+            fh.write("original")
+        out = self.run_js("""
+            await attempt('trash', () => B.trash('r1', 'sub/a.txt', Date.parse('2026-08-18')));
+            await attempt('list', () => B.listTrash('r1'));
+            const row = (await B.listTrash('r1'))[0];
+            // the exact sequence the button runs: the way home is free when the path is provably
+            // gone OR its parent was pruned with it (move() recreates directories)
+            await attempt('free', async () => { const ev = await B.confirmGone('r1', row.to);
+              return ev.gone === true || ev.parentAlive === false; });
+            await attempt('back', () => B.move('r1', row.at, row.to));
+            await attempt('read', async () => new TextDecoder().decode(await B.read('r1', 'sub/a.txt')));
+            await attempt('empty', () => B.listTrash('r1'));
+        """)
+        self.assertTrue(out["free"]["value"], "the freed path did not read as free")
+        self.assertEqual(out["read"]["value"], "original")
+        self.assertEqual(out["empty"]["value"], [], "the restored file still shows in the trash")
+
+    def test_a_reoccupied_path_reads_as_not_free(self):
+        """The button's skip rule: a file that exists again must NOT be overwritten by its old
+        trash copy — confirmGone answers gone:false and the restore leaves both alone."""
+        os.makedirs(os.path.join(self.root, "sub"))
+        with open(os.path.join(self.root, "sub", "a.txt"), "w") as fh:
+            fh.write("old")
+        out1 = self.run_js("""
+            await attempt('trash', () => B.trash('r1', 'sub/a.txt', Date.parse('2026-08-18')));
+        """)
+        os.makedirs(os.path.join(self.root, "sub"), exist_ok=True)   # trash() pruned the emptied dir
+        with open(os.path.join(self.root, "sub", "a.txt"), "w") as fh:
+            fh.write("NEW CONTENT")
+        out = self.run_js("""
+            const row = (await B.listTrash('r1'))[0];
+            await attempt('free', () => B.confirmGone('r1', row.to));
+            await attempt('still', () => B.listTrash('r1'));
+        """)
+        self.assertFalse(out["free"]["value"]["gone"], "an existing file read as free to overwrite")
+        self.assertEqual(len(out["still"]["value"]), 1, "the trash copy went somewhere")

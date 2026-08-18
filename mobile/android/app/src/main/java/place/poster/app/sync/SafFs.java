@@ -46,6 +46,7 @@ public final class SafFs implements SyncIo.Files {
 
     public static final String PART = ".pcpart";
     public static final String TRASH = ".pc-trash";
+    public static final String PARTS_LIST = ".parts.json";   // desktop's resume registry name, skipped on both platforms
 
     static final String[] COLS = {
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
@@ -122,6 +123,36 @@ public final class SafFs implements SyncIo.Files {
             cur = next;
         }
         return cur;
+    }
+
+    /** Everything currently in the trash: rows of {at, to} — `at` inside .pc-trash, `to` the
+     * original relative path (day segment stripped). Enumeration only; the restore itself runs in
+     * the client over the ordinary move(), shared with the desktop. */
+    public java.util.List<String[]> listTrash() {
+        java.util.List<String[]> out = new java.util.ArrayList<>();
+        String base = resolve(TRASH, false);
+        if (base != null) walkTrash(base, "", out);
+        return out;
+    }
+
+    private void walkTrash(String dirId, String rel, java.util.List<String[]> out) {
+        Cursor c = null;
+        try {
+            c = cr.query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, dirId), COLS,
+                         null, null, null);
+            if (c == null) return;
+            while (c.moveToNext()) {
+                String id = c.getString(0), name = c.getString(1), mime = c.getString(2);
+                if (name == null || name.equals(PARTS_LIST) || name.endsWith(PART)) continue;
+                String r = rel.isEmpty() ? name : rel + "/" + name;
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) walkTrash(id, r, out);
+                else {
+                    int cut = r.indexOf('/');
+                    if (cut > 0) out.add(new String[]{TRASH + "/" + r, r.substring(cut + 1)});
+                }
+            }
+        } catch (Exception ignored) {
+        } finally { if (c != null) c.close(); }
     }
 
     /** POSITIVE PROOF OF A DELETION, or "cannot confirm". A deletion claim needs the exact path

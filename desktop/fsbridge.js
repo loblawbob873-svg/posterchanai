@@ -556,6 +556,29 @@ async function emptyTrash(id, olderThanDays){
 
 /* What is sitting in the trash right now, so the confirmation can state the cost rather than guess
  * it. Read-only; the caller decides. */
+/* Everything currently in the trash, as [{at, to}] — `at` the path inside .pc-trash, `to` where it
+ * came from (the day segment stripped). The RESTORE lives in the client over the ordinary move(),
+ * so both platforms share one restore and the bridge only enumerates. */
+async function listTrash(id){
+  const base = await resolveIn(id, '.pc-trash');
+  const out = [];
+  async function walk(abs, rel){
+    let ents = [];
+    try{ ents = await fsp.readdir(abs, { withFileTypes: true }); }catch(_){ return; }
+    for(const e of ents){
+      if(e.name === PARTS_LIST) continue;
+      const r = rel ? rel + '/' + e.name : e.name;
+      if(e.isDirectory()) await walk(path.join(abs, e.name), r);
+      else if(e.isFile() && !e.name.endsWith(PART)){
+        const cut = r.indexOf('/');
+        if(cut > 0) out.push({ at: '.pc-trash/' + r, to: r.slice(cut + 1) });
+      }
+    }
+  }
+  await walk(base, '');
+  return out;
+}
+
 async function trashStat(id){
   const base = await resolveIn(id, '.pc-trash');
   const out = await trashSize(base);
@@ -610,5 +633,5 @@ function removeRoot(id){
 }
 
 module.exports = { init, list, addRoot, removeRoot, resolveIn, scan, sha256,
-                   readPart, writePart, writeCommit, confirmGone,
+                   readPart, writePart, writeCommit, confirmGone, listTrash,
                    read, write, move, trash, emptyTrash, trashStat, hashPart, hashFile, discardPart, partSize, sweepParts, watch, unwatch, IGNORE };

@@ -143,6 +143,9 @@
     hashFile: (id, rel) => P.hashFile({ id, rel }).then(r => (r && r.sha) || ''),
     /* Positive proof for a deletion claim. An APK too old to answer returns "cannot confirm",
      * which deletes nothing — the safe direction for a stale build. */
+    listTrash: (id) => P.listTrash
+      ? P.listTrash({ id }).then(r => (r && r.rows) || [], () => [])
+      : Promise.resolve([]),
     confirmGone: (id, rel) => P.confirmGone
       ? P.confirmGone({ id, rel }).then(r => ({ gone: !!(r && r.gone), parentAlive: !!(r && r.parentAlive) }),
                                         () => ({ gone: false, parentAlive: false }))
