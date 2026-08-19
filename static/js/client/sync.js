@@ -567,7 +567,13 @@
     return [...new Uint8Array(h)].slice(0, 12).map(b => b.toString(16).padStart(2, '0')).join('');
   }
   async function _statePost(body){
-    const auth = await PC.signAuth('sync-state');
+    /* THE SIGNER IS AN AWAIT LIKE ANY OTHER, and it was the one with no ceiling. A remote signer
+     * that never answers (a sleeping phone, a dropped NIP-46 relay) left the sweep inside this
+     * line for ever: the card said "syncing", the folder held its slot, the queue starved — and
+     * nothing anywhere named the signer. Thirty seconds, then the truth. */
+    const auth = await _bounded(PC.signAuth('sync-state'), 'signer', 30000)
+      .catch(e => { throw new Error('the signer did not answer — check the signer connection on '
+                                    + 'this device (' + ((e && e.message) || e) + ')'); });
     let ctl = null, timer = null;
     try{ ctl = new AbortController(); }catch(_){ ctl = null; }
     if(ctl) timer = setTimeout(() => { try{ ctl.abort(); }catch(_){} }, _POST_TIMEOUT_MS);
