@@ -867,3 +867,39 @@ class ReclaimSeesEveryReference(unittest.TestCase):
                       "reclaiming a tombstone's bytes turns every Restore button into a 404")
         self.assertNotIn("deletedAt) continue", seg,
                          "tombstoned records are being skipped — their addresses are live references")
+
+
+class OneSweepAtATime(unittest.TestCase):
+    """"windows app ran out of memory" — Documents' upload lanes and Pictures' hashing first pass
+    ran side by side in one renderer. The per-transfer backpressure bounds ONE sweep; nothing
+    bounded two. A second folder queues, says so on its card, and starts by itself the moment the
+    active sweep settles — it is never silently dropped."""
+
+    def setUp(self):
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.sync = open(os.path.join(root, "static", "js", "client", "sync.js"),
+                         encoding="utf-8").read()
+
+    def test_a_second_folder_queues_instead_of_stacking(self):
+        at = self.sync.index("ONE FOLDER'S REAL SWEEP AT A TIME")
+        seg = self.sync[at:at + 1600]
+        self.assertIn("running.size > 0", seg)
+        self.assertIn("_syncQueue.set(f.id", seg)
+        self.assertIn("waiting for", seg, "a queued folder must say so, or it reads as broken")
+
+    def test_the_queue_is_drained_on_settle_never_dropped(self):
+        self.assertIn("_drainSyncQueue();", self.sync)
+        fin = self.sync.index("_drainSyncQueue();")
+        # It lives in the sweep's finally, so a THROWN sweep still starts the next folder.
+        seg = self.sync[max(0, fin - 900):fin]
+        self.assertIn("finally", seg)
+
+    def test_previews_are_exempt(self):
+        at = self.sync.index("ONE FOLDER'S REAL SWEEP AT A TIME")
+        seg = self.sync[at:at + 1600]
+        self.assertIn("!o.dryRun && running.size", seg,
+                      "a Preview must not queue behind an hours-long seed")
+
+
+if __name__ == "__main__":
+    unittest.main()

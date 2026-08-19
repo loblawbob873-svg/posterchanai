@@ -1218,6 +1218,15 @@
    * half-applied state, which is the one input the engine is not designed for. */
   let granted = null;                 // what the PLATFORM says this device can reach
   const running = new Map();          // id -> promise
+  /* Folders that asked to sweep while another folder held the page — drained on settle. */
+  const _syncQueue = new Map();       // id -> {f, o}
+  function _drainSyncQueue(){
+    if(running.size > 0 || !_syncQueue.size) return;
+    const next = [..._syncQueue.values()][0];
+    _syncQueue.delete(next.f.id);
+    /* Through swept(), so a throw lands on the card instead of nowhere. */
+    setTimeout(() => { try{ swept(next.f, next.o); }catch(_){} }, 250);
+  }
   // Folders asked to stop. Read by the sweep between files, so Pause takes effect on the run that is
   // actually happening rather than the one after it.
   const stopping = new Set();
@@ -1298,6 +1307,23 @@
      * — the flag can only be a leftover from a sweep that has already ended. It does not un-pause
      * the folder; Sync now is one run, not a policy change. */
     if(o.manual && !o.dryRun) stopping.delete(f.id);
+
+    /* ONE FOLDER'S REAL SWEEP AT A TIME, PER PAGE. Documents' upload lanes and Pictures' hashing
+     * first pass ran side by side in one renderer, each holding plaintext + ciphertext + request
+     * bodies — and the window died of it ("windows app ran out of memory"). The per-transfer
+     * backpressure bounds ONE sweep; nothing bounded two. So a second folder WAITS, visibly, and
+     * is started the moment the active one settles — never dropped: `_syncQueue` is drained from
+     * the running sweep's finally. Previews are exempt (they move nothing), and so is a folder
+     * already mid-sweep (that is the `running` guard above). */
+    if(!o.dryRun && running.size > 0){
+      _syncQueue.set(f.id, { f, o });
+      const busyWith = [...running.keys()][0];
+      const who = (folders().find(x => x.id === busyWith) || {}).key || 'another folder';
+      setStatus(f.id, 'waiting for “' + who + '” to finish — one folder syncs at a '
+                + 'time so the app keeps its memory', null, true);
+      return { skipped: true, why: 'queued behind ' + who };
+    }
+    _syncQueue.delete(f.id);
 
     const fs = FS();
     if(!fs) throw new Error('this device has no filesystem access');
@@ -1511,6 +1537,7 @@
         if(_wakeTimer){ clearInterval(_wakeTimer); _wakeTimer = null; }
         if(_claimed && _wake && _wake.releaseSweep){ try{ await _wake.releaseSweep(keyOf(f)); }catch(_){} }
         if(!o.dryRun && _wake && _wake.wakeEnd){ try{ await _wake.wakeEnd(); }catch(_){} }
+        _drainSyncQueue();
       }
     })();
     running.set(f.id, job);
