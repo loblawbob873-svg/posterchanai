@@ -17417,10 +17417,19 @@
    * PURE, so the suite runs it under node. */
   function _reclaimableBlobs(list, indexShas, refIds){
     const out = [];
+    /* TOO FRESH TO JUDGE IS NOT AN ORPHAN. A first seed uploads bytes continuously and publishes
+     * their records in checkpoints, so at any instant a few hundred blobs exist whose records are
+     * seconds away — and a drive check run mid-seed read exactly that gap as "belongs to nothing"
+     * (measured: 34 in-flight uploads offered for deletion DURING the folder's first sync). An
+     * orphan is only an orphan once it has been unreferenced for longer than any sweep can run. */
+    const FRESH_MS = 24 * 3600 * 1000;
+    const now = Date.now();
     for(const b of (list || [])){
       if(!b || !b.keep || !b.sha256) continue;
       if(indexShas.has(b.sha256)) continue;
       if(refIds.has(b.sha256)) continue;
+      const up = (+b.uploaded || 0) * 1000;
+      if(up && (now - up) < FRESH_MS){ out.fresh = (out.fresh || 0) + 1; continue; }
       out.push(b);
     }
     return out;
@@ -17590,7 +17599,10 @@
          * bytes. Printing "Nothing to reclaim" for the third hid 137 GB behind a signer blip. */
         lines.push(`<div class="muted small">${otherN} blob(s), ${_fxBytes(otherBytes)}, are stored `
           + `but not named by this index — folder sync and the rest of your account keep their own `
-          + `records here.` + (reclaim.length
+          + `records here.`
+          + (reclaim.fresh ? ` ${reclaim.fresh} arrived within the last day and are too fresh to `
+              + `judge — a sync may still be publishing their records.` : ``)
+          + (reclaim.length
             ? ` <b>${reclaim.length}</b> of them (${_fxBytes(gb)}) belong to nothing any more — `
               + `usually a deleted synced folder's leftovers.`
             : (refs ? ` Nothing to reclaim.`

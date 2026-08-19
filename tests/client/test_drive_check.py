@@ -277,6 +277,16 @@ class ReclaimTests(unittest.TestCase):
         caller = self.src[self.src.index("const refs = await _syncRefIds();"):][:1600]
         self.assertIn("if(refs)", caller, "a null reference set still produces an offer")
 
+    def test_fresh_blobs_are_never_offered(self):
+        """A drive check run during a folder's first seed read the gap between "bytes uploaded"
+        and "record published" as 'belongs to nothing' — and offered a running sync's own uploads
+        for deletion. Anything younger than a day is too fresh to judge."""
+        at = self.src.index("function _reclaimableBlobs(")
+        body = self.src[at:at + 1800]
+        self.assertIn("FRESH_MS", body)
+        self.assertIn("b.uploaded", body)
+        self.assertIn("continue", body)
+
     def test_the_drive_indexs_own_blob_is_never_offered(self):
         """The index container matches the reclaim set PERFECTLY — keep-flagged, named by no ledger,
         hidden from the grid — and deleting it deletes the drive's spine. Every index sha the
