@@ -35,7 +35,8 @@ STUB = r"""
   window.pcFs = {
     chunkBytes: 4*1024*1024,
     list: async () => [{ id:'vdisk', dir:'/vdisk' }],
-    scanPage: async () => ({ files:{}, skipped:[], total:0, done:true }),
+    scanPage: async (id, so, off) => (off ? { files:{}, done:true }
+      : { files:{ 'a.txt': { size:3, mtime:1000, csum:'aa' } }, skipped:[], total:1, done:true }),
     listTrash: async () => [{ at:'.pc-trash/x/a.txt', to:'a.txt' }],
     trashStat: async () => ({ files:1, bytes:1 }),
     emptyTrash: async () => 0,
@@ -86,7 +87,14 @@ OPEN = r"""(async () => {
     }catch(e){ window.__sweepErr = String((e && e.message) || e); }
     await new Promise(r=>setTimeout(r, 3000));
   }
-  await new Promise(r=>setTimeout(r,400));
+  /* The store chip is deliberately ASYNC — the paint kicks the listing and repaints when it lands,
+     because a screen that awaits a request is the failure this codebase keeps paying for. So the
+     check waits for it rather than sampling once and calling it missing. Bounded: a listing that
+     genuinely cannot be read is a real state, and the caller reports it as a note. */
+  for(let i = 0; i < 30; i++){
+    if(document.querySelectorAll('.sync-counts span').length >= 3) break;
+    await new Promise(r=>setTimeout(r, 500));
+  }
   return !!document.querySelector('.sync-card');
 })"""
 
@@ -199,7 +207,8 @@ async def drive(url):
         return 2
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from app.services.nostr import bech32 as _b32
-    nsec = _b32.encode("nsec", bytes.fromhex(secrets.token_hex(32)))
+    _sk = bytes.fromhex(secrets.token_hex(32))
+    nsec = _b32.encode("nsec", _sk)
     t = Tab(PORT, PROF)
     problems = []
     try:
@@ -218,6 +227,24 @@ async def drive(url):
         if not reg:
             print("SKIP  could not register the throwaway account")
             return 2
+        # The store chip counts what Blossom holds, and a fresh account cannot list blobs until it
+        # has the upload privilege — without this the chip is present or absent depending on the
+        # weather, which makes the check unable to say anything about it. Granted directly: this
+        # runs on the node, and the privilege gate is its own feature, not what is under test.
+        try:
+            from app.database import SessionLocal
+            from app.models import User
+            from app.services.nostr import bip340 as _b340
+            from app.services.nostr import nostr_service as _ns
+            db = SessionLocal()
+            u = db.query(User).filter(User.nostr_npub == _ns.npub_of(
+                _b340.pubkey_from_seckey(_sk).hex())).first()
+            if u:
+                u.can_blossom = True
+                db.commit()
+            db.close()
+        except Exception as e:
+            print("  note: could not grant upload privilege (%s) — the store chip may not appear" % e)
         if not await t.js(f"({OPEN})()", aw=True):
             print("SKIP  the sync card never drew")
             return 2
@@ -279,6 +306,11 @@ async def drive(url):
                 problems.append(f"no local count on the card: {c}")
             if not any("in the folder" in x for x in c):
                 problems.append(f"no shared count on the card: {c}")
+            # The store chip is the third number and the only one that says whether the BYTES exist.
+            # It needs a reachable media server, so its absence is reported rather than failed —
+            # "could not ask" has never been allowed to read as "missing" anywhere in this feature.
+            if not any("in the store" in x for x in c):
+                print("  note: no store chip — the media server did not answer a listing")
             if not any(x.split()[0].replace(",", "").isdigit() for x in c):
                 problems.append(f"a count chip carries no number: {c}")
 

@@ -1999,6 +1999,66 @@
     // Fallback stays on screen until the first answer lands, so nothing flickers through blank.
     if(fallback) setStatus(id, fallback, null, true);
   }
+  /* HOW MANY OF THESE FILES THE STORE ACTUALLY HOLDS — the third number, and the one the other two
+   * cannot imply. "N here" is this disk, "N in the folder" is what the devices agreed; neither says
+   * whether the BYTES are on the server, and that is the difference between a folder that can be
+   * restored to a new device and one that only looks like it can. Asked for as "the counter for
+   * local files so we can compare what is on the blossom server".
+   *
+   * ONE REQUEST, not one per file: the store lists every blob this account has, and the records are
+   * already in hand, so it is a set intersection. A record whose chunks are all present counts as
+   * held; one missing chunk is one file that cannot be fetched, which is exactly how a "complete"
+   * folder turns out not to be.
+   *
+   * "COULD NOT ASK" IS NEVER "MISSING". A listing that fails, times out or comes back as anything
+   * other than an array answers null and the chip stays away — the same rule the drive check and the
+   * admin store scan already hold, and for the same reason: this number is read as evidence. */
+  const _storeSeen = new Map();          // pair key -> {at, ok, missing}
+  const _STORE_TTL = 60000;
+  async function _storeCount(f, force){
+    const key = keyOf(f);
+    const hit = _storeSeen.get(key);
+    if(!force && hit && (Date.now() - hit.at) < _STORE_TTL) return hit;
+    let list = null;
+    try{
+      const server = (PC.mediaServer && PC.mediaServer()) || '';
+      const me = PC.me && PC.me();
+      if(!server || !me || !me.pubkey) return null;
+      const r = await _bounded(fetch(server + '/list/' + me.pubkey, { cache: 'no-store' }),
+                               'store listing', 30000);
+      if(r.ok) list = await r.json();
+    }catch(_){ list = null; }
+    if(!Array.isArray(list)) return null;
+    const have = new Set(list.map(b => b && b.sha256).filter(Boolean));
+    let st;
+    try{ st = await stateS.load(key); }catch(_){ return null; }
+    let ok = 0, missing = 0;
+    for(const p in st.state){
+      const e = st.state[p];
+      if(!e || e.deletedAt) continue;
+      const ids = (e.chunks && e.chunks.length) ? e.chunks : (e.sha ? [e.sha] : []);
+      if(!ids.length){ missing++; continue; }
+      if(ids.every(id => have.has(id))) ok++; else missing++;
+    }
+    const out = { at: Date.now(), ok, missing };
+    _storeSeen.set(key, out);
+    return out;
+  }
+  /* Kicked from the paint, never awaited by it — a screen that waits on the network is the failure
+   * this codebase keeps paying for. Repaints once when the answer lands. */
+  function _storeAsk(f){
+    const key = keyOf(f);
+    const hit = _storeSeen.get(key);
+    if(hit && (Date.now() - hit.at) < _STORE_TTL) return hit;
+    if(_storeSeen.get('~asking:' + key)) return hit || null;
+    _storeSeen.set('~asking:' + key, true);
+    _storeCount(f).then(() => {}).catch(() => {}).then(() => {
+      _storeSeen.delete('~asking:' + key);
+      if(PC.VIEW === 'sync') paint();
+    });
+    return hit || null;
+  }
+
   /* The last background sweep's own report, read once per visit. A phone sweeps with the screen
    * off and cannot ask anybody anything, so its refusals sit here until the app is opened — which
    * is precisely when they have to be readable. */
@@ -2602,11 +2662,13 @@
           : PC.enc(st.text || 'not synced yet')}</div>
         ${lost ? '<div class="sync-actions"><button class="btn btn-neon small sync-relink">Point at the folder again…</button></div>' : ''}
         ${nat ? `<div class="sync-new"><b>Waiting for you.</b> <span class="muted small">${PC.enc(nat)}</span></div>` : ''}
-        ${(st.report && st.report.shared != null) ? `<div class="sync-counts muted small">
+        ${(st.report && st.report.shared != null) ? (() => { const _s = _storeAsk(f); return `<div class="sync-counts muted small">
           <span title="Files this device holds in the folder right now">${_num(st.report.here)} here</span>
           <span title="Files your devices agree the folder contains">${_num(st.report.shared)} in the folder</span>
+          ${_s ? `<span title="Files whose encrypted bytes are on the Blossom server — what a new device could actually fetch">${_num(_s.ok)} in the store</span>` : ''}
+          ${(_s && _s.missing) ? `<span class="warn" title="The folder names these files but the store does not hold all of their bytes — no device can fetch them until whoever still has the file sends it again (Check files → send again)">${_num(_s.missing)} not in the store</span>` : ''}
           ${st.report.sharedGone ? `<span title="Deleted files the folder still remembers, so any device can undo them">${_num(st.report.sharedGone)} deleted</span>` : ''}
-        </div>` : ''}
+        </div>`; })() : ''}
         ${details(st.report)}
         <label class="sync-ex"><span class="muted small">Don't sync these (one per line — a folder name covers everything inside it)</span>
           <textarea class="input sync-ex-ta" rows="2" placeholder="Old&#10;*.tmp">${PC.enc((f.excludes||[]).join('\n'))}</textarea></label>

@@ -529,6 +529,56 @@ class BigFilesCanActuallyLand(unittest.TestCase):
                       "it must stay a single call when the sizes already agree")
 
 
+class StoreCountIsEvidence(unittest.TestCase):
+    """"the counter for local files so we can compare what is on the blossom server."
+
+    Three numbers, and the third is the only one that says whether the BYTES exist: "N here" is this
+    disk, "N in the folder" is what the devices agreed, and neither implies that a new device could
+    actually fetch anything. This is the difference between a folder that can be restored and one
+    that only looks like it can.
+
+    The rule it must not break is the one this feature has broken before, twice (the drive check's
+    upload-shortcut probe called 497 present files lost; the admin scan had to learn the same): a
+    listing that could not be READ is not a listing of nothing."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(CLIENT, "sync.js"), encoding="utf-8") as fh:
+            cls.sync = fh.read()
+
+    def _seg(self):
+        i = self.sync.index("async function _storeCount(")
+        return self.sync[i:i + 1800]
+
+    def test_an_unreadable_listing_counts_nothing_as_missing(self):
+        seg = self._seg()
+        self.assertIn("if(!Array.isArray(list)) return null;", seg,
+                      "anything other than a real listing must answer null, not an empty set — an "
+                      "empty set makes every file in the folder look absent from the store")
+        self.assertIn("catch(_){ list = null; }", seg)
+        self.assertIn("catch(_){ return null; }", seg,
+                      "a record set that could not be read must not be counted either")
+
+    def test_a_file_needs_every_chunk_to_count_as_held(self):
+        seg = self._seg()
+        self.assertIn("ids.every(id => have.has(id))", seg,
+                      "one missing chunk is one file nobody can fetch; counting it as held is how a "
+                      "'complete' folder turns out not to be")
+        self.assertIn("if(!ids.length){ missing++; continue; }", seg,
+                      "a record naming no storage at all is not held")
+
+    def test_tombstones_are_not_counted_as_files(self):
+        self.assertIn("if(!e || e.deletedAt) continue;", self._seg(),
+                      "folding deletions in is what made 8,132 tombstones read as 8,132 files")
+
+    def test_the_paint_never_waits_on_the_network(self):
+        """A screen that awaits a request is the failure this codebase keeps paying for."""
+        i = self.sync.index("function _storeAsk(")
+        seg = self.sync[i:i + 700]
+        self.assertNotIn("await ", seg, "_storeAsk must kick the request, not await it")
+        self.assertIn("paint()", seg, "…and repaint once the answer lands")
+
+
 class CheckDoesNotWedgeThePage(unittest.TestCase):
     """The check reads every file and asks about every record — and it must give the page its
     thread back while it does, or Android kills the renderer and the UI reloads mid-operation."""

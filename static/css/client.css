@@ -8120,3 +8120,6 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
    whole point of showing them together. */
 .sync-counts{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 4px}
 .sync-counts span{padding:2px 8px;border-radius:999px;background:var(--panel2);border:1px solid var(--line)}
+/* Bytes the folder names and the store does not hold: nothing can fetch these, so the chip is not
+   the same colour as the ones that are simply counts. */
+.sync-counts span.warn{color:var(--danger);border-color:rgba(255,107,139,.5)}
