@@ -438,6 +438,9 @@
         report.unfetchable = report.unfetchable || [];
         report.unfetchable.push({ path: c.path, why: 'the incoming copy cannot be fetched, so your '
                                   + 'copy was left exactly as it is' });
+        /* A REMEMBERED failure still flags: skipping the retry saves bandwidth, but the holder
+         * must keep hearing about the record until it is actually repaired. */
+        flagQueue.push({ path: c.path, id: cid });
         continue;
       }
       /* A CONFLICT OVER IDENTICAL BYTES IS NOT A CONFLICT. An unhashed scan compares size+mtime,
@@ -524,6 +527,7 @@
           report.unfetchable = report.unfetchable || [];
           report.unfetchable.push({ path: d.path, why: 'the copy in the store fails its checksum — '
                                     + 'the device that has this file will send it again' });
+          flagQueue.push({ path: d.path, id: badId });   // the holder keeps hearing until it is fixed
           return;
         }
         /* A DOWNLOAD OF BYTES YOU ALREADY HOLD IS AN ADOPTION, NOT A TRANSFER. A record whose
