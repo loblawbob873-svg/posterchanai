@@ -1075,7 +1075,13 @@
       const cache = await this._cache(key);
       const flag = [];
       for(const it of items || []){
-        try{ flag.push({ d: await _pathD(it.path), bad: String(it.id || '') }); }catch(_){}
+        /* THE HASH THE DOWNLOADER MEASURED RIDES ALONG, after a bar. It is what lets the holder
+         * tell "my copy is damaged" from "the checksum I published is wrong" — two readings with
+         * opposite repairs, and until now it had nothing to decide with. An address is hex and never
+         * contains a bar, so an older device reading this simply fails its equality check and does
+         * nothing, which is the safe direction. */
+        try{ flag.push({ d: await _pathD(it.path),
+                         bad: String(it.id || '') + (it.got ? '|' + String(it.got) : '') }); }catch(_){}
       }
       // Chunked under the server's batch cap — a report larger than the cap used to silently
       // truncate, which is a repair list with the tail torn off.
@@ -1872,7 +1878,7 @@
                * it — and requiring a person to press Verify for the second kind is how a
                * mid-seed reclaim became an afternoon of manual recovery. */
               if(_r && _r.id && (_r.why === 'checksum' || _r.why === 'gone'))
-                _fl.push({ path: _p, id: _r.id });
+                _fl.push({ path: _p, id: _r.id, got: _r.got });
             }
             if(_fl.length){ try{ await stateS.flag(keyOf(f), _fl); }catch(_){} }
           }

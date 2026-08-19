@@ -303,15 +303,70 @@
      * bad here helps nobody, and is counted as `badHere` so the card can say which device really
      * lost the file. */
     let _heal = [];
-    { const flagged = (got0 && got0.flagged) || {};
+    /* A flag value is `<address>` on an older device and `<address>|<hash the downloader measured>`
+     * now. Split rather than parsed: an address is hex and never contains a bar. */
+    const seenHash = {};
+    { const flagged0 = (got0 && got0.flagged) || {};
+      const flagged = {};
+      for(const p in flagged0){
+        const raw = String(flagged0[p] || '');
+        const bar = raw.indexOf('|');
+        if(bar < 0){ flagged[p] = raw; continue; }
+        flagged[p] = raw.slice(0, bar);
+        seenHash[p] = raw.slice(bar + 1);
+      }
       if(!o.dryRun){
         for(const p in flagged){
           const e = index[p]; if(!e || e.deletedAt || !disk[p]) continue;
           if(idOf(e) !== flagged[p]) continue;          // already re-sent under a new address
           try{
+            /* A LOCAL COPY THAT DISAGREES WITH ITS OWN JOURNAL IS RE-SENT, NOT REFUSED — and this
+             * used to be a dead end that no button could get out of.
+             *
+             * The rule was "my file does not match what I published, so my file is damaged; do not
+             * spread it". That reads one of two possibilities and calls it the only one. The other
+             * is that the CHECKSUM I published is wrong — which is a thing that really happened:
+             * Android's digest stopped at a zero-length read and published the hash of a prefix.
+             * After that build is fixed the holder hashes its file correctly, finds it disagrees
+             * with the number it published, and declares its own perfectly good file bad. The
+             * record stays flagged, nothing re-sends, and every other device refuses the file for
+             * ever — the fix making the symptom permanent.
+             *
+             * Weigh what is actually known at this point. Another device already proved the STORE's
+             * bytes hash to something other than this checksum (that is why the record is flagged),
+             * and this device now finds its own bytes hash to something other than it too. Two
+             * independent readings disagree with the checksum; the checksum is the odd one out. And
+             * the alternative on offer is not "keep the good stored copy" — no device can use the
+             * stored copy, it fails verification everywhere. Re-sending replaces a record nobody can
+             * use with one that describes a real file that hashes.
+             *
+             * It is still SAID, because the other reading is possible: the path is reported under
+             * `badHere` either way, now meaning "this device's copy did not match, and it was
+             * re-sent under a fresh checksum" rather than "this device is out". */
             if(e.csum && typeof fs.hashFile === 'function'){
               const h = await fs.hashFile(o.id, p);
-              if(h !== e.csum){ (report.badHere = report.badHere || []).push(p); continue; }
+              if(h && h !== e.csum){
+                /* MY COPY DISAGREES WITH WHAT I PUBLISHED. Two readings, opposite repairs:
+                 *   - my file is damaged        → re-seeding it spreads the damage
+                 *   - the checksum I published is wrong → refusing leaves the file unfetchable
+                 *     everywhere, for ever
+                 * The flag carries the hash the DOWNLOADER measured from the store, which decides
+                 * it: if my bytes hash to the same thing the store's bytes hashed to, two
+                 * independent devices agree about the content and only the recorded checksum is the
+                 * odd one out — so it is re-sent, and the fresh upload records a checksum that
+                 * describes what is really there. That case is real: Android's digest stopped at a
+                 * zero-length read and published the hash of a prefix, and once that build is fixed
+                 * the holder would otherwise declare its own perfectly good file bad and strand the
+                 * file on every device.
+                 * If they differ, the copies really are different and this one is not evidence of
+                 * anything — refuse, and say so.
+                 * An OLD flag carries no hash at all, and stays conservative. */
+                if(!(seenHash[p] && seenHash[p] === h)){
+                  (report.badHere = report.badHere || []).push(p);
+                  continue;
+                }
+                (report.staleChecksum = report.staleChecksum || []).push(p);
+              }
             }
             _heal.push(p);
           }catch(_){}
@@ -681,7 +736,8 @@
         const why = msg(e);
         if(cid && /checksum mismatch/.test(why)){
           report.badFetch = report.badFetch || {};
-          report.badFetch[c.path] = { id: cid, why: 'checksum', v: E.versionOf(c.entry) };
+          report.badFetch[c.path] = { id: cid, why: 'checksum', got: e && e.got,
+                                      v: E.versionOf(c.entry) };
           failed(report, c.path, 'conflict', e);
         } else if(cid && /unavailable \(404\)/.test(why)){
           report.badFetch = report.badFetch || {};
@@ -794,8 +850,9 @@
             failed(report, d.path, 'download', e);
           } else if(/checksum mismatch/.test(why)){
             report.badFetch = report.badFetch || {};
-            report.badFetch[d.path] = { id: idOf(d.entry), why: 'checksum', v: E.versionOf(d.entry) };
-            flagQueue.push({ path: d.path, id: idOf(d.entry) });
+            report.badFetch[d.path] = { id: idOf(d.entry), why: 'checksum', got: e && e.got,
+                                        v: E.versionOf(d.entry) };
+            flagQueue.push({ path: d.path, id: idOf(d.entry), got: e && e.got });
             failed(report, d.path, 'download', e);
           } else if(/unavailable \(404\)/.test(why)){
             report.badFetch = report.badFetch || {};
@@ -937,9 +994,30 @@
    * on this device (refetching gets the same bytes; that is what a content address means), so the
    * sentence names the device that can fix it. The prefix is what `badFetch` and the conflict loop
    * match on, so it stays first and stays stable. */
-  const BAD_COPY = 'checksum mismatch after download — refusing to write it. The stored copy is '
-                 + 'damaged, so fetching it again gets the same bytes; the fix is on the device that '
-                 + 'still has this file — it re-sends by itself, or press Verify there';
+  /* "THE STORED COPY IS DAMAGED" WAS THE ONE EXPLANATION THIS CANNOT BE, and it sent people to the
+   * wrong repair for as long as it was there.
+   *
+   * Every blob is checked against its own content address BEFORE it is decrypted (`_syncBlobBytes`
+   * hashes what arrived and refuses a mismatch), and the seal is AES-GCM, which rejects the whole
+   * message if a byte moved. So bytes that reach this point are provably the bytes that were
+   * uploaded. If the file they assemble into disagrees with the record's checksum, the thing that is
+   * wrong is the CHECKSUM — a number some device computed once and published — not the storage.
+   *
+   * And there was a way to compute it wrong: Android's digest looped `while (read(buf) > 0)`, and a
+   * DocumentsProvider serves a file over a pipe, where a zero-length read is ordinary and is not the
+   * end. It hashed a PREFIX and published that. Every other device then fetched the file perfectly,
+   * checked it against a checksum describing its first few megabytes, and refused it — for ever,
+   * while being told the store was damaged and that re-fetching was pointless. Both halves of that
+   * were wrong: the store is fine, and the repair is a re-send from a device on a build whose hash
+   * is right.
+   *
+   * The prefix is what `badFetch` and the conflict loop match on, so it stays first and stays
+   * stable. */
+  const BAD_COPY = 'checksum mismatch after download — refusing to write it. The bytes in the store '
+                 + 'are intact (every piece was checked against its own address on the way in), so '
+                 + 'what disagrees is the checksum recorded WITH them. Fix it from a device that '
+                 + 'still holds this file: Check files there, and choose that its copy is correct — '
+                 + 'that re-sends the bytes and records a fresh checksum for everybody';
   const STOPPED = 'stopped by the user — will pick up exactly here next sweep';
   const isStop = (e) => msg(e).indexOf('stopped by the user') === 0;
 
@@ -1215,7 +1293,9 @@
     let got = null, asked = true;
     try{ got = await fs.hashPart(o.id, path); }catch(_){ asked = false; }
     if(!asked || !got){ const e = new Error(UNVERIFIED); e.unverified = true; throw e; }
-    if(got !== entry.csum) throw new Error(BAD_COPY);
+    /* THE HASH WE MEASURED TRAVELS WITH THE FAILURE. Without it the holder is asked "is your copy
+     * bad, or was your checksum wrong?" and has nothing to answer with — see the heal path. */
+    if(got !== entry.csum){ const e = new Error(BAD_COPY); e.got = got; throw e; }
   }
 
   /* An upload, and the record the other devices will read.

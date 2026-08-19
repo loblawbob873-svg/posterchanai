@@ -167,3 +167,33 @@ def test_tl_parked_still_identifies_a_parked_timeline():
     body = body[:body.index("\n  function ")]
     assert "getElementById('tl-notes')" in body and "window.PCOS" in body, \
         "the parked test must stay 'the timeline DOM exists while VIEW names another window'"
+
+
+def test_a_flush_needs_a_scroll_a_person_did():
+    """Reported on Android: with the "new posts" button turned off, scroll down, lock the screen,
+    unlock — and the app is back at the top of the timeline.
+
+    `onFeedScroll` flushes the buffered posts whenever `scrollTop` is near the top, and there is one
+    moment when that reading lies: the page coming back from backgrounded. Android restores the
+    WebView's scroll offset AFTER layout, so an unlock fires a scroll event while the offset still
+    reads 0 — indistinguishable from somebody scrolling up — and the flush inserts the whole buffer
+    above where they were reading.
+
+    The buffer being large is what makes it violent, and it is largest with the button turned off:
+    with the button there you drain the queue by tapping it, and without it the queue grows to its
+    300 cap. That is why it was reported the day that switch existed rather than when this was
+    written."""
+    src = APP_JS
+    fn = src[src.index("function onFeedScroll(){"):]
+    fn = fn[:fn.index("\n  }")]
+    assert "_flushPending()" in fn, "re-point this test — the flush moved out of the scroll handler"
+    assert "document.hidden" in fn, \
+        "the scroll handler flushes while the page is hidden — a backgrounded tab has no reader"
+    assert "_cameBack" in fn, \
+        "a scroll event fired while the view is being restored still counts as somebody scrolling, "\
+        "so unlocking the phone throws the reading position away"
+
+
+def test_coming_back_is_actually_recorded():
+    """The guard above is only worth anything if something sets the timestamp."""
+    assert "visibilitychange" in APP_JS and "_cameBack = Date.now()" in APP_JS

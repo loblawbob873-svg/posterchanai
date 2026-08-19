@@ -7036,11 +7036,36 @@
   // (keeping a healthy one alive) and reconnects ONLY if the ping goes unanswered — so, unlike a
   // reviveStale _lastRx-age check, it never tears down a merely-quiet-but-healthy socket. Throttled once/5s.
   function _reviveOnInteract(){ if(Date.now()-_lastRevive < 5000) return; _lastRevive=Date.now(); try{ Relay.pokeAlive(); }catch(_){} }
+  /* WHEN THE PAGE CAME BACK. A scroll event fired while the view is being restored is not somebody
+   * scrolling, and `scrollTop` read in that moment is not where they are. */
+  let _cameBack = 0;
+  const _noteCameBack = () => { _cameBack = Date.now(); };
+  try{
+    document.addEventListener('visibilitychange', () => { if(!document.hidden) _noteCameBack(); });
+    window.addEventListener('pageshow', _noteCameBack);
+  }catch(_){}
+
   function onFeedScroll(){
     const feed=$('#feed'); if(!feed) return;
     if(VIEW==='home'||VIEW==='global') _reviveOnInteract();
-    // scrolled back near the top → show the buffered live posts and clear the pill
-    if(AUTO_NEW_POSTS && (VIEW==='home'||VIEW==='global') && _livePending.length && feed.scrollTop <= _LIVE_READ_PX) _flushPending();
+    /* SCROLLED BACK NEAR THE TOP → show the buffered live posts. "Near the top" is a reading of
+     * `scrollTop`, and there is one moment when that reading lies: the page coming back from
+     * backgrounded. Android restores the WebView's scroll offset AFTER layout, so an unlock fires a
+     * scroll event while the offset still reads 0 — which looks exactly like somebody scrolling up
+     * to the top, and the flush then inserts the whole buffer above where they were reading. What
+     * they see is the app jumping to the top of the timeline every time they unlock the phone.
+     *
+     * The buffer being large is what makes it violent, and it is largest with the "new posts" button
+     * turned off: with the button there you drain the queue by tapping it, and without it the queue
+     * simply grows to its 300 cap. That is why it was reported straight after that switch existed
+     * rather than when this was written.
+     *
+     * So a flush needs a scroll that a PERSON did: the page must be visible, and not have just come
+     * back. Nothing is lost by waiting — the posts stay buffered, and the next real scroll to the
+     * top shows them. */
+    const settled = !document.hidden && (Date.now() - _cameBack) > 1200;
+    if(settled && AUTO_NEW_POSTS && (VIEW==='home'||VIEW==='global') && _livePending.length
+       && feed.scrollTop <= _LIVE_READ_PX) _flushPending();
     if(feed.scrollTop + feed.clientHeight < feed.scrollHeight - 700) return;   // not near the bottom yet
     if(VIEW==='home'||VIEW==='global') loadOlderTimeline();
     else if(VIEW==='trending') loadMoreTrending();

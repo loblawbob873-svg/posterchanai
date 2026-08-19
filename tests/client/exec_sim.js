@@ -122,7 +122,9 @@ function cloud(){
                   entry: JSON.parse(JSON.stringify(entry)) };
       return 'ok';
     },
-    flagRec(p, id){ const r = recs[p]; if(r && r.era === era && !r.t) r.bad = String(id); },
+    flagRec(p, id, got){ const r = recs[p];
+      // `<address>` from an older device, `<address>|<hash the downloader measured>` now.
+      if(r && r.era === era && !r.t) r.bad = String(id) + (got ? '|' + String(got) : ''); },
     putCipher(h, b){ ciphers.set(h, Buffer.from(b)); },
     getCipher(h){ return ciphers.get(h); },
     hasCipher(h){ return ciphers.has(h); },
@@ -233,7 +235,7 @@ function device(name, sky, opts){
       }
       return out;
     },
-    async flagBad(key, items){ for(const it of items || []) sky.flagRec(it.path, it.id); },
+    async flagBad(key, items){ for(const it of items || []) sky.flagRec(it.path, it.id, it.got); },
     index: async () => { if(o.indexFails) throw new Error('IndexedDB: UnknownError');
                          return JSON.parse(JSON.stringify(st.index)); },
     saveIndex: async (k, idx) => { st.saves++; st.index = JSON.parse(JSON.stringify(idx)); },
@@ -1159,6 +1161,64 @@ scenario('a holder whose own copy is ALSO bad re-seeds nothing and says so', asy
   const r = await A2.sweep();
   t.eq((r.reseeding || []).length, 0, 'it re-seeded a copy it could not verify');
   t.ok((r.badHere || []).indexOf(victim) !== -1, 'the rot on this device was not named');
+});
+
+/* THE CHECKSUM WAS WRONG, NOT THE FILE — and refusing to re-send made it permanent.
+ *
+ * Android's digest looped `while (read(buf) > 0)`, and a DocumentsProvider serves a file over a
+ * pipe where a zero-length read is ordinary and is not the end. It published the hash of a PREFIX.
+ * Every other device then fetched the file perfectly, checked it against that number, and refused
+ * it. Reported as four receipts that would not download, with the app insisting the stored copy was
+ * damaged — while every chunk had verified against its own content address on the way in.
+ *
+ * Fixing the digest is not enough on its own, and that is what this scenario is really about: the
+ * holder now hashes its file CORRECTLY, finds it disagrees with the number it published, and under
+ * the old rule declares its own perfectly good file bad and re-seeds nothing. The fix would have
+ * made the symptom permanent. The flag carries the hash the downloader measured, so the holder can
+ * see that the store's bytes and its own bytes agree with each other and only the record's checksum
+ * is the odd one out.
+ */
+scenario('a checksum published wrong is corrected by the holder, not treated as rot', async (t) => {
+  const sky = cloud();
+  const A = device('phone', sky, { disk: photos(4) });
+  await A.sweep();
+  const victim = Object.keys(sky.folder())[0];
+  const real = require('crypto').createHash('sha256').update(A.disk[victim]).digest('hex');
+  // What a truncated digest published: a hash of the first few bytes, recorded as the whole file's.
+  const prefix = require('crypto').createHash('sha256')
+                   .update(A.disk[victim].subarray(0, 8)).digest('hex');
+  sky.entry(victim).csum = prefix;
+  // A downloader fetched it, every chunk verified against its address, and the file hashed to
+  // `real` — which is not what the record says. That is the flag, and it carries what it measured.
+  sky.flagRec(victim, sky.entry(victim).sha, real);
+  const A2 = device('phone', sky, { disk: A.disk, index: A.st.index });
+  A2.st.index[victim].csum = prefix;                 // the journal remembers the wrong number too
+  const r = await A2.sweep();
+  t.ok((r.reseeding || []).indexOf(victim) !== -1,
+       'the holder refused to re-send a file whose bytes it and the store agree about — those four '
+       + 'receipts stay unfetchable on every device for ever');
+  t.ok((r.staleChecksum || []).indexOf(victim) !== -1, 'it did not say WHY it re-sent');
+  t.eq(sky.entry(victim).csum, real, 'the record still carries the wrong checksum');
+  const B = device('laptop', sky);
+  const rb = await B.sweep();
+  t.eq(rb.failed.length, 0, 'the file still will not download: ' + JSON.stringify(rb.failed));
+  t.eq(identical(A2.disk, B.disk), null, 'the corrected file did not reach the other device');
+});
+
+/* And the other reading of the same evidence, which must still be refused: the holder's bytes hash
+ * to something DIFFERENT from what the downloader measured, so the two copies really are different
+ * and this one is not evidence of anything. */
+scenario('a holder whose bytes disagree with the store as well is still refused', async (t) => {
+  const sky = cloud();
+  const A = device('desktop', sky, { disk: photos(4) });
+  await A.sweep();
+  const victim = Object.keys(sky.folder())[0];
+  sky.flagRec(victim, sky.entry(victim).sha, 'what-the-downloader-saw');
+  A.disk[victim] = Buffer.from('something else entirely');
+  const A2 = device('desktop', sky, { disk: A.disk, index: A.st.index });
+  const r = await A2.sweep();
+  t.eq((r.reseeding || []).length, 0, 'it re-seeded a copy nothing agrees with');
+  t.ok((r.badHere || []).indexOf(victim) !== -1, 'the divergence on this device was not named');
 });
 
 scenario('pause cuts into a big DOWNLOAD too, and the part file resumes it', async (t) => {

@@ -1,0 +1,1085 @@
+#!/usr/bin/bash
+########################
+# What this script is:
+#
+# An automatic installer for Gentoo Stable with the following features:
+# 1. KDE with SystemD
+# 2. Full Disk Encryption
+# 3. Automatic BTRFS Snapshots at Boot
+# 4. The ability to build a custom and deployable image onto any machine
+# 5. Easily create a bootable USB drive
+# 6. Automatic Partitioning
+# 7. Ability to backup or restore OS to and from a remote machine via SSH
+#
+# INSTRUCTIONS
+#
+# For new disk installs, initialize the disk to setup partitions from the main menu.
+#
+# Before running the install, ensure that you have Internet access.
+#
+# Please be sure to change USER,USER_PASSWORD, DISK_PASSWORD, and ROOT_PASSWORD strings in this file
+#
+# To install a new OS to a disk, run gentoo.sh and choose option 5 from the main menu
+#
+########################
+#Configure this section
+########################
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Cyberpunk color codes
+COLOR_CYAN="\033[1;36m"; COLOR_MAGENTA="\033[1;35m"; COLOR_YELLOW="\033[1;33m"
+COLOR_GREEN="\033[1;32m"; COLOR_RESET="\033[0m"; COLOR_BOLD="\033[1;97m"
+TARGET='/tmp/install'
+mkdir $TARGET
+######################################
+echo
+HARD_DISK=$2
+######################################
+USER="verita84"
+USER_PASSWORD="123456"
+ROOT_PASSWORD="123456"
+WIRELESS_PASSWORD='123456'
+SSID='123456'
+WIRELESS_INTERFACE='wlan0'
+COMPRESSION='compress=zstd:10'
+#Full Disk Encryption Settings
+AUTO_DECRYPT='True'
+DISK_PASSWORD='123456'
+##############################
+REPO_CHOICE="local"
+#Overrided Swap File Size
+#SWAP_SIZE='1G'
+#
+SERVICES+=(sshd systemd-timesyncd libvirtd smartd cups NetworkManager boot-snapshot.timer)
+MAKEOPTS="-j$(cat /proc/cpuinfo | grep -i processor | grep -vi 'model' | wc -l)"
+ROOT_PARTITION_SIZE="30GB"
+FEATURES="-pid-sandbox getbinpkg -binpkg-request-signature"
+EMERGE_DEFAULT_OPTS="--jobs 5 --getbinpkg "
+#USEFLAG CONFIGURATION
+USE_FLAGS=" flatpak dracut -webp -ladspa npm introspection lame systemd-boot dist-kernel luks cryptsetup kernel-install boot opus theora vpx kernel-install systemd firmware btrfs networkmanager"
+VIDEO_CARDS="intel amdgpu radeon radeonsi"
+#
+#PACKAGE CONFIGURATION
+BASE_PACKAGES="net-print/cups-filters net-misc/networkmanager net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower media-libs/gexiv2 mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/neovim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu"
+DESKTOP_APPS=" media-sound/elisa kde-apps/kcalc media-video/obs-studio media-video/vlc kde-apps/kdenlive app-editors/vscodium kde-apps/dolphin kde-apps/konsole firefox-bin net-im/telegram-desktop-bin media-fonts/noto media-fonts/noto-emoji app-emulation/virt-manager net-wireless/bluez sys-power/power-profiles-daemon kde-plasma/discover media-fonts/fontawesome kde-plasma/plasma-meta "
+SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -kms -pipewire" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server" "gui-wm/sway X" "mail-mta/postfix sasl")
+FLATPAK_PACKAGES="com.valvesoftware.Steam com.vscodium.codium org.kde.konsole com.brave.Browser org.mozilla.Thunderbird net.cozic.joplin_desktop io.github.martchus.syncthingtray im.riot.Riot org.telegram.desktop org.kde.krita org.remmina.Remmina org.onlyoffice.desktopeditors org.kde.kdenlive org.kde.kcalc com.obsproject.Studio com.bitwarden.desktop org.vinegarhq.Sober org.videolan.VLC org.kde.dolphin"
+#
+# ── PosterChanOS ────────────────────────────────────────────────────────────────────────────────
+# The shell is the PosterChan desktop itself, so there is no second desktop environment to install.
+# A browser and a Steam game have to appear on that desktop, and those two rule out every embedding
+# trick between them: a browser could be reparented into our window, but a GAME cannot — reparenting
+# costs the direct-rendering path, Vulkan surfaces do not survive it, and a screencast adds a copy
+# per frame to the one workload that cannot afford one. So the arrangement is the ordinary one: a
+# compositor owns the screen, both are ordinary clients, and PosterChan decides where they go. They
+# are "inside PosterChan" because PosterChan IS the desktop.
+#
+# sway rather than a compositor of our own: wlroots-based, mature, and it ships XWayland, which is
+# how Steam and most games get on screen at all. PosterChan drives it over its JSON IPC (desktop/wm.js).
+#
+# What is deliberately NOT here: plasma-meta and every kde-app, virt-manager, obs, kdenlive, vscodium,
+# telegram, elisa, discover — and flatpak, whose only real customer was Steam, which portage builds
+# natively. That is most of a Plasma desktop's disk and nearly all of its build time.
+# SCREEN CAPTURE IS THE PART THAT NEEDS PLANNING, not the part that comes for free. On X11 anything
+# could read the screen, which is why it worked without anyone thinking about it; Wayland has no such
+# call by design, so a recorder gets frames through the ScreenCast PORTAL over PipeWire. That is
+# three packages that must all be present and agree — the portal front end, the wlroots BACK end
+# (there is no generic one; the front end alone answers "no such capture" and OBS shows a screen
+# capture source that lists nothing), and OBS built with the pipewire USE flag. Missing any one of
+# them fails at the moment somebody presses record, which is the worst possible moment to find out.
+POSTERCHANOS_PACKAGES="gui-wm/sway x11-base/xwayland gui-apps/foot gui-apps/wl-clipboard \
+media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media-fonts/noto-emoji \
+www-client/firefox-bin games-util/gamescope \
+sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr media-video/obs-studio"
+
+PACKAGES="$BASE_PACKAGES $DESKTOP_APPS"
+if [[ "${POSTERCHANOS:-n}" = *y* ]]; then
+	PACKAGES="$BASE_PACKAGES $POSTERCHANOS_PACKAGES"
+	FLATPAK_PACKAGES=""
+fi
+TMPFS_SIZE="32G"
+CPU_TYPE="x86-64-v3"
+BUILD_SERVER="n"
+BUILD_SERVER_ADDRESS="nas.lan"
+BUILD_PATH="/raid/gentoo-desktop.lan"
+RSYNC_EXCLUDES=" --exclude=-/var/lib/containers --exclude=/var/lib/containerd --exclude=/var/lib/docker --exclude=/var/lib/flatpak --exclude=/home --exclude=/var/lib/pleroma/uploads --exclude=/var/lib/distfiles --exclude=/var/lib/owncloud --exclude=/etc/disk --exclude=/etc/mtab --exclude=/swap --exclude=@swap --exclude=/mnt --exclude=/snapshots --exclude=/backup --exclude=/raid --exclude=/var/tmp/* --exclude=/tmp/* --exclude=/var/lib/libvirt/* --exclude=/var/cache --exclude=/var/notmpfs --exclude=/var/lib/systemd/coredump/* --exclude=/var/cache/* --exclude=/.snapshots/* --exclude=/sys/* --exclude=/dev/* --exclude=/proc/*"
+#Add Masked Packages to the Array
+MASKED_PACKAGES+=(www-apps/jellyfin-bin app-admin/vaultwarden dev-util/nvidia-cuda-toolkit www-apps/radicale www-apps/vaultwarden-web www-apps/radicale net-misc/owncloud-client net-libs/libre-graph-api-cpp-qt-client media-video/obs-studio net-misc/sunshine dev-util/sh net-misc/moonlight app-admin/bitwarden-desktop-bin net-im/element-desktop-bin net-misc/nyx net-libs/stem sys-libs/libudev-compat dev-libs/nss dev-libs/libappindicator media-video/ffmpeg games-util/game-device-udev-rules games-util/steam-launcher net-im/telegram-desktop-bin)
+
+fixSound() {
+	/usr/bin/systemctl --user disable --now pulseaudio.socket pulseaudio.service
+	/usr/bin/systemctl --user enable --now pipewire-pulse.socket wireplumber.service
+	/usr/bin/systemctl --user enable --now pipewire.service
+}
+
+gentooRepo() {
+	echo
+	clear
+	mkdir -p $TARGET/etc/portage/repos.conf/
+	echo -e "\033[1;36m◆ CONFIGURING REPOS ◆\033[0m"
+
+	echo "[gentoo]" >$TARGET/etc/portage/repos.conf/gentoo-mirror.conf
+	echo "location = /var/db/repos/gentoo" >>$TARGET/etc/portage/repos.conf/gentoo-mirror.conf
+	echo "sync-type = rsync" >>$TARGET/etc/portage/repos.conf/gentoo-mirror.conf
+	echo "sync-uri = rsync://gentoo-repo.lan/gentoo-portage" >>$TARGET/etc/portage/repos.conf/gentoo-mirror.conf
+
+	mkdir -p $TARGET/etc/portage/binrepos.conf
+	echo "[binhost]" >$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
+	echo "priority = 9999" >>$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
+	echo "sync-type = webrsync" >>$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
+	echo "sync-uri = https://gentoo.poster.place/releases/amd64/binpackages/23.0/x86-64/" >>$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
+
+	echo "GENTOO_MIRRORS=\"http://gentoo.poster.place\"" >>$TARGET/etc/portage/make.conf
+}
+
+snapshots() {
+	DATE=$(date +%Y-%m-%d-%H-%M)
+	YESTERDAY=$(date +%Y-%m-%d -d "5 days ago")
+	partitionDetection
+	echo
+	echo -e "\033[1;35m◆ CREATING SNAPSHOTS... ◆\033[0m"
+	echo
+	CURRENT_ROOT=$(cat /proc/cmdline | cut -d '@' -f2 | cut -d ' ' -f1)
+	if [[ "$CURRENT_ROOT" == *"snapshot"* ]]; then
+		echo -e "\033[1;33mAlready booted in Previous\033[0m"
+	else
+		echo -e "\033[1;33mRemoving Snapshots older than 5 days\033[0m"
+		sudo /usr/bin/btrfs sub del /.snapshots/snapshot-*
+		sudo rm -f /boot/loader/entries/snapshot-*
+		sudo /usr/bin/btrfs sub snapshot / /.snapshots/snapshot-$DATE
+		BOOT_FILES=$(sudo bootctl | grep "Current Entry" | cut -d " " -f3)
+		sudo cp -f /boot/loader/entries/$BOOT_FILES /boot/loader/entries/snapshot-$DATE.conf
+		sudo sed -i "s/@$ROOT_NAME/@.snapshots\/snapshot-$DATE/i" /boot/loader/entries/snapshot-$DATE.conf
+	fi
+}
+
+partitionDetection() {
+	clear
+	if [ -f "/etc/disk" ]; then
+		echo -e "\033[1;33mReading from /etc/disk\033[0m"
+		HARD_DISK=$(cat /etc/disk | head -1)
+		ROOT_NAME=$(cat /etc/disk | tail -2 | head -1)
+	fi
+
+	if [ -f "/tmp/disk" ]; then
+		echo -e "\033[1;33mReading from /tmp/disk\033[0m"
+		HARD_DISK=$(cat /tmp/disk | head -1)
+		ROOT_NAME=$(cat /tmp/disk | tail -2 | head -1)
+	fi
+
+	EFI=$(blkid | grep $HARD_DISK | sort | cut -d ":" -f1 | head -1 | tail -1)
+	BTRFS=$(blkid | grep $HARD_DISK | sort | cut -d ":" -f1 | head -2 | tail -1)
+	ROOT_MAPPER_NAME="/dev/mapper/luks-$(/sbin/blkid -s UUID -o value ${BTRFS})"
+
+	echo
+	echo
+	echo -e "\033[1;33m◆ DEVICE DETECTION ◆\033[0m"
+	echo
+	echo -e "\033[1;33mHard Disk: $HARD_DISK\033[0m"
+	echo -e "\033[1;33mBTRFS Mapper Name: $ROOT_MAPPER_NAME\033[0m"
+	echo -e "\033[1;33mBTRFS Encrypted Volume: $BTRFS\033[0m"
+	echo -e "\033[1;33mBTRFS Subvolume: $ROOT_NAME\033[0m"
+	echo -e "\033[1;35m--------------------------------------------\033[0m"
+	echo
+}
+
+partitionDetection
+
+decryptBoot() {
+	KEYFILE='keyfile.key'
+	echo
+	echo -e "\033[1;33m◆ SETTING LUKS KEYFILE ◆\033[0m"
+
+	echo
+	echo -e "\033[1;33mClearing Old Keys\033[0m"
+	echo
+	for i in 1 2 3 4 5 6; do
+		printf "$DISK_PASSWORD" | cryptsetup luksKillSlot $1 $i
+	done
+	dd if=/dev/urandom of=/boot/$KEYFILE bs=1024 count=4
+	chown root:root /boot/$KEYFILE
+	chmod 0400 /boot/$KEYFILE
+	echo
+	echo -e "\033[1;33mAdding new key......\033[0m"
+	echo
+	printf "$DISK_PASSWORD" | cryptsetup luksAddKey $1 /boot/$KEYFILE
+	echo "install_items+=\" /boot/unlock.sh /boot/$KEYFILE \"" >>/etc/dracut.conf
+	echo "omit_drivers+=\" nouveau \"" >>/etc/dracut.conf
+
+	sed -i "s/none/\/boot\/$KEYFILE/" /etc/crypttab
+	echo "#!/bin/bash" >/boot/unlock.sh
+	echo "systemd-cryptsetup attach $(echo $ROOT_MAPPER_NAME | grep luks | cut -d '/' -f4)  UUID=$(/sbin/blkid -s UUID -o value ${BTRFS}) /boot/$KEYFILE " >>/boot/unlock.sh
+	chmod +x /boot/unlock.sh
+}
+
+autoLogin() {
+	echo -e "\033[1;33mRemoved for now\033[0m"
+	#GETTY_DIR="$TARGET/etc/systemd/system/getty@tty1.service.d"
+	#GETTY="$GETTY_DIR/override.conf"
+	#mkdir -p $GETTY_DIR
+	#echo "[Service]" >$GETTY
+	#echo "ExecStart=" >>$GETTY
+	#echo "ExecStart=-/sbin/agetty --autologin $USER --noclear %I /usr/bin/bash" >>$GETTY
+}
+
+systemMounts() {
+	echo
+	echo -e "\033[1;32m◆ CHECKING FOR BTRFS PARTITION ◆\033[0m"
+
+	if [[ -e "$BTRFS" ]]; then
+		partitions
+		echo -e "\033[1;33mBTRFS device found\033[0m"
+		echo
+		echo -e "\033[1;33mMounting Boot,EFI,HOME\033[0m"
+		echo
+		mount $ROOT_MAPPER_NAME $TARGET
+		btrfs_filesytem
+		mkdir -p $TARGET/boot/EFI
+		mount $EFI $TARGET/boot
+		mkdir -p $TARGET/swap
+		#CONFIGURE DATA DIRS (HOME)
+		mkdir $TARGET/home
+		mkdir $TARGET/.snapshots
+		mount -o subvol=@home $ROOT_MAPPER_NAME $TARGET/home
+		mount -o subvol=@swap $ROOT_MAPPER_NAME $TARGET/swap
+		mkdir $TARGET/home/$USER
+
+		mkdir $TARGET/run
+		mkdir $TARGET/dev
+		mkdir $TARGET/proc
+		mkdir $TARGET/sys
+		mkdir -p $TARGET/var/tmp/portage
+
+		mount --types proc /proc $TARGET/proc
+		mount --rbind /sys $TARGET/sys
+		mount --make-rslave $TARGET/sys
+		mount --rbind /dev $TARGET/dev
+		mount --make-rslave $TARGET/dev
+		mount --bind /run $TARGET/run
+		mount --make-slave $TARGET/run
+		mount -t efivarfs none $TARGET/sys/firmware/efi/efivars
+		mount -t tmpfs -o size=$TMPFS_SIZE tmpfs $TARGET/var/tmp/portage
+	else
+		echo
+		echo -e "\033[1;33mSystem Mounts: Aborting Install, $BTRFS not found!\033[0m"
+		echo
+		echo
+		exit 1
+	fi
+}
+
+unmaskPackages() {
+
+	mkdir -p /etc/portage/package.use
+	for i in "${SPECIAL_PACKAGE_USE[@]}"; do
+		NAME=$(echo $i | cut -d ' ' -f1)
+		FILE_NAME=$(echo $NAME | cut -d '/' -f2 | cut -d ' ' -f1)
+		ARGS=$(echo $i | cut -d ' ' -f2-50)
+		echo "$NAME $ARGS"> /etc/portage/package.use/$FILE_NAME
+	done
+
+	for i in "${MASKED_PACKAGES[@]}"; do
+		echo "$i ~amd64" >>/etc/portage/package.accept_keywords
+	done
+
+}
+
+updateOS() {
+    /usr/bin/emerge --sync
+    #/usr/bin/emerge -uDN @world --autounmask-write
+	#/usr/sbin/etc-update -q --automode -5
+	/usr/bin/emerge -uDN @world
+    /usr/bin/emerge -c
+    bootloader
+}
+
+configurePortage() {
+	echo "COMMON_FLAGS=\"-march=$CPU_TYPE -O2 -pipe\"" >$TARGET/etc/portage/make.conf
+	echo 'CFLAGS="${COMMON_FLAGS}"' >>$TARGET/etc/portage/make.conf
+	echo 'CXXFLAGS="${COMMON_FLAGS}"' >>$TARGET/etc/portage/make.conf
+	echo 'FCFLAGS="${COMMON_FLAGS}"' >>$TARGET/etc/portage/make.conf
+	echo 'FFLAGS="${COMMON_FLAGS}"' >>$TARGET/etc/portage/make.conf
+	echo "LC_MESSAGES=C.utf8" >>$TARGET/etc/portage/make.conf
+
+	echo 'ACCEPT_KEYWORDS="amd64"' >>$TARGET/etc/portage/make.conf
+	echo "FEATURES=\"$FEATURES\"" >>$TARGET/etc/portage/make.conf
+	echo "EMERGE_DEFAULT_OPTS=\"$EMERGE_DEFAULT_OPTS\"" >>$TARGET/etc/portage/make.conf
+	echo "L10N=\"en en-US\"" >>$TARGET/etc/portage/make.conf
+	mkdir -p $TARGET/var/tmp/portage
+	mkdir -p $TARGET/etc/portage/env
+
+	echo 'EXTRA_ECONF="--disable-bootstrap"' >$TARGET/etc/portage/env/gcc.conf
+	echo 'PORTAGE_TMPDIR="/var/notmpfs"' >$TARGET/etc/portage/env/notmpfs.conf
+	echo "sys-devel/gcc gcc.conf" >$TARGET/etc/portage/package.env
+	echo "sys-devel/llvm gcc.conf" >>$TARGET/etc/portage/package.env
+
+	clear
+
+	if [[ $REPO_CHOICE = *local* ]]; then
+		gentooRepo
+	fi
+
+	chroot $TARGET /usr/bin/emerge --sync
+
+	echo "USE=\"$USE_FLAGS\"" >>$TARGET/etc/portage/make.conf
+
+	echo "MAKEOPTS=\"$MAKEOPTS\"" >>$TARGET/etc/portage/make.conf
+
+	echo
+	echo
+	echo
+	echo -e "\033[1;36m◆ CONFIGURING PROFILES ◆\033[0m"
+	echo
+	echo
+	echo
+	GENTOO_PROFILE=$(chroot $TARGET /usr/bin/eselect profile list | grep -i 'plasma' | grep systemd | grep -i stable | head -1 | cut -d '[' -f2 | cut -d ']' -f1)
+	chroot $TARGET /usr/bin/eselect profile set $GENTOO_PROFILE
+
+	mkdir -p $TARGET/etc/portage/package.license
+	echo "*/*  *" >$TARGET/etc/portage/package.license/license
+	rm -rf $TARGET/etc/portage/package.accept_keywords
+	mkdir -p $TARGET/etc/portage/package.mask
+	echo "dev-lang/rust" >$TARGET/etc/portage/package.mask/rust
+
+	echo
+	echo -e "\033[1;33mConfiguring Binary Package GPG keys\033[0m"
+	echo
+	chroot $TARGET /usr/bin/getuto
+}
+
+buildGentoo() {
+
+	echo -e "\033[1;92m◆ INSTALL BASE SYSTEM ◆\033[0m"
+	echo
+	echo
+
+	echo
+	echo
+	echo
+	echo -e "\033[1;36m[Building Base System]\033[0m"
+	echo
+	echo
+	chroot $TARGET /usr/bin/emerge --update --deep --newuse @world --autounmask-write
+	chroot $TARGET etc-update -q --automode -5
+	chroot $TARGET /usr/bin/emerge --update --deep --newuse @world
+	locale
+
+	chroot $TARGET /usr/sbin/systemd-machine-id-setup
+
+	echo
+	echo
+	echo
+	echo -e "\033[1;36m[Installing Kernel]\033[0m"
+	echo
+	echo
+	chroot $TARGET mkdir -p /etc/kernel/install.d
+	chroot $TARGET touch /etc/kernel/install.d/05-check-chroot.install
+	chroot $TARGET /usr/bin/emerge dracut sys-kernel/gentoo-kernel-bin sys-kernel/linux-firmware --autounmask-write
+	chroot $TARGET etc-update -q --automode -5
+	chroot $TARGET /usr/bin/emerge dracut sys-kernel/gentoo-kernel-bin sys-kernel/linux-firmware
+	chroot $TARGET /usr/bin/eselect kernel set 1
+
+	echo
+	echo
+	echo
+	echo -e "\033[1;36m[Installing Packages]\033[0m"
+	echo
+	echo
+	cp -f gentoo.sh $TARGET/usr/bin/gentoo.sh
+	chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh install-packages
+	echo
+	echo
+	echo -e "\033[1;36m[Configuring Accounts and post-setup tasks]\033[0m"
+	echo
+	echo
+	finalizeInstall
+}
+
+finalizeInstall() {
+	echo 'bash /usr/bin/gentoo.sh bootloader' >>$TARGET/setup.sh
+	echo 'bash /usr/bin/gentoo.sh accounts' >>$TARGET/setup.sh
+	echo 'bash /usr/bin/gentoo.sh services' >>$TARGET/setup.sh
+	echo "chown -R $USER:$USER /home/$USER" >>$TARGET/setup.sh
+	chroot $TARGET /usr/bin/systemctl enable sddm
+	chmod +x $TARGET/usr/bin/gentoo.sh
+	chmod +x $TARGET/setup.sh
+	cp -f /tmp/disk $TARGET/etc/disk
+	chroot $TARGET /setup.sh
+	rm -f $TARGET/setup.sh
+	echo
+	echo -e "\033[1;33mGentoo Installation Complete!\033[0m"
+	echo
+	echo
+}
+
+installPackages() {
+	unmaskPackages
+	/usr/bin/emerge -uDN $PACKAGES --autounmask-write
+	/usr/sbin/etc-update -q --automode -5
+	/usr/bin/emerge -uDN $PACKAGES
+}
+
+installFlatpaks() {
+	/usr/bin/flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+	/usr/bin/flatpak install -y $FLATPAK_PACKAGES
+}
+
+btrfsTweaks() {
+	DISABLE_COW=("/var/lib/postgresql" "/var/lib/mysql" "/var/lib/libvirt")
+
+	for i in "${DISABLE_COW[@]}"; do
+		chattr -R +C $i
+	done
+}
+
+liveOSrestore() {
+	clear
+	SCRIPT=$(pwd)
+	INSTALL_TYPE=$(mount | grep ' / ')
+	partitions
+	systemMounts
+	clear
+
+	echo -e "\033[1;36m[Transferring Currenting Running OS from $LIVE_OS_DM to $HARD_DISK ]\033[0m"
+	echo
+
+	if [[ $BUILD_SERVER = *y* ]]; then
+		read -p 'BTRFS Backup Volume Name: ' -e -i "/raid/gentoo-desktop.lan" BUILD_PATH
+		sudo rsync -avz --delete --rsync-path='sudo rsync' -e ssh $USER@$BUILD_SERVER_ADDRESS:/$BUILD_PATH/ $RSYNC_EXCLUDES $TARGET/
+	else
+		sudo rsync -avz --delete --rsync-path='sudo rsync' / $RSYNC_EXCLUDES $TARGET/
+		sudo rsync -avz --delete --rsync-path='sudo rsync' /boot/ $TARGET/boot/
+	fi
+
+	fstab
+	cp -f $SCRIPT/gentoo.sh $TARGET/usr/bin/
+	cp -f /tmp/disk $TARGET/etc/
+
+	finalizeInstall
+	cd
+}
+
+backupOS() {
+	clear
+	echo
+	echo -e "\033[1;36m[Backup OS to Build Server via Rsync]\033[0m"
+	echo
+	clear
+	read -p 'BTRFS Backup Destination: ' -e -i "/raid/gentoo-desktop.lan" BUILD_PATH
+	sudo rsync -avz --delete --rsync-path='sudo rsync' -e ssh / $RSYNC_EXCLUDES $USER@$BUILD_SERVER_ADDRESS:$BUILD_PATH/
+}
+
+btrfs_filesytem() {
+	btrfs sub create $TARGET/@$ROOT_NAME
+	btrfs sub create $TARGET/@.snapshots
+	btrfs sub create $TARGET/@libvirt
+	btrfs sub create $TARGET/@home
+	btrfs sub create $TARGET/@root
+	btrfs sub create $TARGET/@swap
+	if [ -z "${SWAP_SIZE}" ]; then
+		btrfs filesystem mkswapfile --size "$(free -m | awk '{print $2}' | tail -2 | head -1)m" $TARGET/@swap/swap
+	else
+		btrfs filesystem mkswapfile --size "$SWAP_SIZE" $TARGET/@swap/swap
+	fi
+	echo
+	echo -e "\033[1;33mBinding BTRFS Root\033[0m"
+	echo
+	umount $TARGET
+	mount -o $COMPRESSION,subvol=@$ROOT_NAME $ROOT_MAPPER_NAME $TARGET
+}
+
+services() {
+	echo "[Unit]" >/etc/systemd/system/powertop.service
+	echo "Description=Powertop tunings" >>/etc/systemd/system/powertop.service
+	echo "[Service]" >>/etc/systemd/system/powertop.service
+	echo "Type=oneshot" >>/etc/systemd/system/powertop.service
+	echo "ExecStartPre=/usr/bin/cpupower frequency-set -d 400mhz -u 1.5ghz -g powersave" >>/etc/systemd/system/powertop.service
+	echo "ExecStart=/usr/sbin/powertop --auto-tune" >>/etc/systemd/system/powertop.service
+	echo "[Install]" >>/etc/systemd/system/powertop.service
+	echo "WantedBy=multi-user.target" >>/etc/systemd/system/powertop.service
+
+	echo "[Service]" > /etc/systemd/system/boot-snapshot.service
+	echo "ExecStart=/usr/bin/gentoo.sh snapshot" >> /etc/systemd/system/boot-snapshot.service
+	echo "User=verita84"  >> /etc/systemd/system/boot-snapshot.service
+	echo "Group=verita84"  >> /etc/systemd/system/boot-snapshot.service
+	echo "SyslogIdentifier=boot-snapshot"  >> /etc/systemd/system/boot-snapshot.service
+	echo "[Install]"  >> /etc/systemd/system/boot-snapshot.service
+	echo "WantedBy=default.target"  >> /etc/systemd/system/boot-snapshot.service
+
+    echo "[Unit]" > /etc/systemd/system/boot-snapshot.timer     
+	echo "Description=Boot Snapshots" >> /etc/systemd/system/boot-snapshot.timer
+	echo "[Timer]" >> /etc/systemd/system/boot-snapshot.timer
+	echo "OnBootSec=0" >> /etc/systemd/system/boot-snapshot.timer
+	echo "Unit=boot-snapshot.service" >> /etc/systemd/system/boot-snapshot.timer
+	echo "[Install]" >> /etc/systemd/system/boot-snapshot.timer
+	echo "WantedBy=default.target" >> /etc/systemd/system/boot-snapshot.timer
+
+	for i in "${SERVICES[@]}"; do
+		systemctl enable $i
+	done
+}
+
+posterchanShell() {
+	# PosterChan as the SHELL: sway starts, and the only thing it launches is the PosterChan desktop
+	# app, fullscreen on the background layer. Everything else the person opens — a browser, a game,
+	# a terminal — is an ordinary client that PosterChan places over its own desktop through the IPC.
+	echo -e "\033[1;33m◆ POSTERCHAN SHELL ◆\033[0m"
+	mkdir -p /etc/sway
+	cat >/etc/sway/config <<-'SWAY'
+	# PosterChanOS — the shell owns the screen; PosterChan decides what goes where.
+	set $mod Mod4
+
+	# The desktop itself. Not a layer-shell surface: Electron cannot make one, and a fullscreen
+	# window at the bottom of the stack is the same thing from the person's side, with the whole
+	# client working unmodified in a browser and the APK as well.
+	exec_always --no-startup-id posterchan --shell
+
+	# Windows are PLACED by PosterChan over its IPC, so the compositor must not lay them out itself.
+	# A tiled window ignores position and size — the desktop would move things and nothing would
+	# happen, silently.
+	for_window [app_id="posterchan"] fullscreen enable, border none
+	for_window [app_id="^(?!posterchan).*"] floating enable
+	for_window [class=".*"] floating enable
+
+	# THE COMPOSITOR DRAWS NO CHROME, because PosterChan draws it. Left on, sway's own borders and
+	# title bars would sit on top of the PosterChan desktop — two window styles on one screen, and
+	# the native one wearing the wrong font. PosterChan already knows the rectangle it assigned each
+	# window, so it renders its title bar and border AROUND that rectangle and insets the native
+	# window inside it; the frame is never covered, so drags and window buttons land on the same
+	# os.js code that moves an HTML window. One style for Notes and for Firefox.
+	default_border none
+	default_floating_border none
+	titlebar_padding 0
+	gaps inner 0
+	gaps outer 0
+
+	# Nothing draws over the desktop uninvited — no compositor wallpaper, no status bar. PosterChan
+	# is the wallpaper and the taskbar.
+	output * bg #000000 solid_color
+	seat * hide_cursor 0
+
+	# The one binding that is not PosterChan's to take: a way out when the shell is not running.
+	bindsym $mod+Shift+e exec swaynag -t warning -m 'Exit PosterChanOS?' -B 'Yes' 'swaymsg exit'
+	bindsym $mod+Return exec foot
+
+	# A game gets the screen to itself and nothing above it.
+	for_window [class="^steam_app_.*"] fullscreen enable, inhibit_idle fullscreen
+	SWAY
+
+	# The ScreenCast portal picks its backend by the DESKTOP NAME, and answers "no such capture" for
+	# a name it has no backend for — which is what OBS shows as a screen capture source that lists
+	# nothing to capture. sway's own session sets this, but the portal is started by systemd --user
+	# and can come up before it, so it is stated here as well.
+	mkdir -p /etc/xdg/xdg-desktop-portal
+	printf '[preferred]\ndefault=wlr;gtk\norg.freedesktop.impl.portal.ScreenCast=wlr\norg.freedesktop.impl.portal.Screenshot=wlr\n' \
+		>/etc/xdg/xdg-desktop-portal/sway-portals.conf
+
+	# Autologin straight into the shell. A display manager is another package, another theme and
+	# another thing between the power button and the desktop.
+	GETTY_DIR="/etc/systemd/system/getty@tty1.service.d"
+	mkdir -p $GETTY_DIR
+	printf '[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin %s --noclear %%I $TERM\n' \
+		"$USER" >$GETTY_DIR/override.conf
+
+	# ...and start sway from the login shell on tty1 only, so a second console is still a console.
+	cat >/home/$USER/.bash_profile <<-'PROFILE'
+	[[ -f ~/.bashrc ]] && . ~/.bashrc
+	if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
+		export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway MOZ_ENABLE_WAYLAND=1
+		exec sway
+	fi
+	PROFILE
+	chown $USER:$USER /home/$USER/.bash_profile
+}
+
+installSteam() {
+	eselect repository enable steam-overlay
+	emerge --sync steam-overlay
+	emerge -uDN games-util/steam-launcher app-emulation/wine-vanilla --autounmask-write
+	etc-update -q --automode -5
+	emerge -uDN @world
+	emerge -uDN games-util/steam-launcher app-emulation/wine-vanilla
+}
+
+locale() {
+	echo "ln -sf /usr/share/zoneinfo/US/Mountain /etc/localtime" >>$TARGET/setup.sh
+	echo "hwclock --systohc" >>$TARGET/setup.sh
+	echo "en_US.UTF-8 UTF-8" >$TARGET/etc/locale.gen
+	echo "locale-gen" >>$TARGET/setup.sh
+}
+
+fstab() {
+	mkdir $TARGET/etc
+	echo "UUID=$(/sbin/blkid -s UUID -o value $EFI)  /boot vfat defaults,fmask=0077,dmask=0077 0 1" >$TARGET/etc/fstab
+	echo "UUID=$(/sbin/blkid -s UUID -o value $ROOT_MAPPER_NAME) / btrfs noatime,nodiratime,autodefrag,$COMPRESSION,subvol=@$ROOT_NAME 0 1" >>$TARGET/etc/fstab
+	echo "UUID=$(/sbin/blkid -s UUID -o value $ROOT_MAPPER_NAME) /.snapshots btrfs noatime,nodiratime,autodefrag,$COMPRESSION,subvol=@.snapshots 0 1" >>$TARGET/etc/fstab
+	echo "UUID=$(/sbin/blkid -s UUID -o value $ROOT_MAPPER_NAME) /var/lib/libvirt btrfs noatime,nodiratime,autodefrag,$COMPRESSION,subvol=@libvirt 0 1" >>$TARGET/etc/fstab
+	echo "tmpfs /tmp tmpfs defaults,size=32G 0 0" >>$TARGET/etc/fstab
+	echo "tmpfs /var/tmp tmpfs defaults,size=32G,mode=1777 0 0" >>$TARGET/etc/fstab
+	echo "tmpfs /var/lib/systemd/coredump tmpfs defaults,size=5G 0 0" >>$TARGET/etc/fstab
+	echo "UUID=$(/sbin/blkid -s UUID -o value $ROOT_MAPPER_NAME) /home btrfs noatime,nodiratime,autodefrag,$COMPRESSION,subvol=@home 0 1" >>$TARGET/etc/fstab
+	echo "UUID=$(/sbin/blkid -s UUID -o value $ROOT_MAPPER_NAME) /root btrfs noatime,nodiratime,autodefrag,$COMPRESSION,subvol=@root 0 1" >>$TARGET/etc/fstab
+	echo "UUID=$(/sbin/blkid -s UUID -o value $ROOT_MAPPER_NAME) /swap btrfs subvol=@swap 0 1" >>$TARGET/etc/fstab
+	echo "/swap/swap none swap defaults 0 0" >>$TARGET/etc/fstab
+}
+
+accounts() {
+	echo
+	echo -e "\033[1;33mSet Password for $USER\033[0m"
+	useradd -m -d /home/$USER -s /bin/bash $USER
+	echo "$USER:$USER_PASSWORD" | chpasswd
+	gpasswd -a $USER wheel
+	gpasswd -a $USER network
+	gpasswd -a $USER video
+	gpasswd -a $USER libvirt
+	gpasswd -a $USER netdev
+	gpasswd -a $USER adm
+	gpasswd -a $USER video
+	gpasswd -a $USER lp
+	gpasswd -a $USER lpadmin
+	echo "$USER ALL=(ALL) NOPASSWD: ALL" >/etc/sudoers
+	echo "root ALL=(ALL) ALL" >>/etc/sudoers
+	echo
+	echo -e "\033[1;33mSetting ROOT Password:\033[0m"
+	echo "root:$ROOT_PASSWORD" | chpasswd
+	echo -e "\033[1;33mDisabling ROOT Account:\033[0m"
+	/usr/bin/passwd -dl root
+	/usr/bin/hostnamectl set-hostname $ROOT_NAME
+	sed -i 's/#Storage=persistent/Storage=volatile/i' /etc/systemd/journald.conf
+	sed -i 's/#ForwardToSyslog=no/ForwardToSyslog=no/i' /etc/systemd/journald.conf
+}
+
+btrfs-tweaks() {
+	DISABLE_COW=("/var/lib/docker" "/volumes" "/var/lib/mysql" "/var/lib/libvirt")
+
+	for i in "${DISABLE_COW[@]}"; do
+		chattr -R +C $i
+	done
+}
+
+initializeDisk() {
+	clear
+	echo
+	echo -e "\033[1;36m[Gentoo Installer - Initialize Device]\033[0m"
+	echo
+	read -p 'Proceed with Wiping the disk? (y/n): ' -i "local" choice
+	if [[ $choice = *y* ]]; then
+		parted /dev/$HARD_DISK mklabel gpt
+		parted -a optimal /dev/$HARD_DISK mkpart primary fat32 1MiB 2024MiB
+		parted -a optimal /dev/$HARD_DISK set 1 esp on
+		parted -a optimal /dev/$HARD_DISK mkpart P2 ext3 2024MiB 100%
+
+		partitionDetection
+		printf "$DISK_PASSWORD\n$DISK_PASSWORD" | cryptsetup luksFormat ${BTRFS}
+		printf "$DISK_PASSWORD" | cryptsetup open ${BTRFS} $(echo $ROOT_MAPPER_NAME | sed 's/\/dev\/mapper\///')
+
+		echo
+		echo -e "\033[1;33mFormatting.....\033[0m"
+		echo -e "\033[1;33mmkfs.btrfs $ROOT_MAPPER_NAME -f\033[0m"
+		echo y | mkfs.btrfs $ROOT_MAPPER_NAME -f
+		echo
+		echo -e "\033[1;33mFormatting $EFI\033[0m"
+		echo
+		echo y | mkfs.vfat $EFI
+
+		echo -e "\033[1;33mInitialize Complete. Please reboot your machine to avoid any issues\033[0m"
+		echo
+		cryptsetup close $ROOT_MAPPER_NAME
+		rm -f /tmp/disk
+	fi
+}
+
+wifi() {
+	iwctl --passphrase $WIRELESS_PASSWORD station $WIRELESS_INTERFACE connect $SSID
+}
+
+show-help() {
+	clear
+	echo
+	echo -e "\033[1;92m◆ gentoo.sh arguments ◆\033[0m"
+	echo
+	echo -e "\033[1;33m./gentoo.sh wifi\033[0m"
+	echo -e "\033[1;36m[./gentoo.sh bootloader [disk] [ROOT_NAME] [ROOT_MAPPER_NAME]\033[0m"
+	echo -e "\033[1;33m./gentoo.sh initialize\033[0m"
+	echo -e "\033[1;36m[./gentoo.sh tar [device name] [location]\033[0m"
+	echo -e "\033[1;33m./gentoo.sh snapshot\033[0m"
+	echo -e "\033[1;33m./gentoo.sh reomve-snapshot\033[0m"
+	echo -e "\033[1;33m./gentoo.sh btrfs-tweaks\033[0m"
+	echo
+}
+
+tweaks() {
+	clear
+	echo
+	echo -e "\033[1;36m[Gentoo Installer System Tweaks]\033[0m"
+	echo
+	echo -e "\033[1;36m[1] Chroot into existing OS\033[0m"
+	echo -e "\033[1;36m[2] Enable/Disable Disk Password at Boot\033[0m"
+	echo -e "\033[1;36m[3] Compile the Kernel\033[0m"
+	echo -e "\033[1;36m[4] Upgrade gentoo.sh\033[0m"
+	echo -e "\033[1;36m[5] Fix Audio\033[0m"
+	echo
+	read -p 'Your Choice: ' choice
+	if [[ $choice = 1 ]]; then
+		setDevices
+		systemMounts
+		/usr/bin/chroot $TARGET /bin/bash
+	elif [[ $choice = 2 ]]; then
+		clear
+		echo -e "\033[1;36m[Password Protection at Boot]\033[0m"
+		echo
+		echo
+		partitionDetection
+		read -p 'Unlock Disk without password at boot time? ' -e -i "y" pass_change
+		if [[ $pass_change = *n* ]]; then
+			AUTO_DECRYPT="False"
+			bootloader
+		else
+			AUTO_DECRYPT="True"
+			bootloader
+		fi
+	elif [[ $choice = 3 ]]; then
+		compile-kernel
+	elif [[ $choice = 4 ]]; then
+		rm -f gentoo.sh
+		rm -f repos.conf
+		rm -f gentoobinhost.conf
+		rm -f /tmp/latest-stage3-amd64-desktop-systemd.txt
+		#wget https://git.poster.place/verita84/arch/raw/branch/main/gentoo.sh
+		scp verita84@nas.lan:~/configs/scripts/gentoo.sh .
+	elif [[ $choice = 5 ]]; then
+		fixSound
+	else
+		tweaks
+	fi
+}
+
+download-setup() {
+	clear
+	echo -e "\033[1;36m[Choose Deployment Type]\033[0m"
+	echo
+	echo
+	setDevices
+
+	if [[ $REPO_CHOICE = *local* ]]; then
+		STAGE3_URL="https://gentoo.poster.place/releases/amd64/autobuilds/current-stage3-amd64-systemd/$(
+			curl -q https://gentoo.poster.place/releases/amd64/autobuilds/current-stage3-amd64-systemd/ | grep -i stage3-amd64-systemd | grep -Ev 'CONTENTS|DIGESTS|sha|.asc' | grep ".tar.xz" | cut -d '>' -f2 | cut -d '<' -f1
+		)"
+	else
+		STAGE3_URL=$(curl https://www.gentoo.org/downloads/ | grep -i stage3-amd64-systemd | head -1 | cut -d '"' -f2-3 | cut -d '"' -f1)
+	fi
+
+	STAGE3_FILE="/tmp/stage3.tar.xz"
+	if [ -f "$STAGE3_FILE" ]; then
+		echo
+		echo -e "\033[1;33mStage 3 already downloaded.....\033[0m"
+		echo
+	else
+		wget -O /tmp/stage3.tar.xz "$STAGE3_URL"
+	fi
+
+	if [ -f "$STAGE3_FILE" ]; then
+		echo
+		echo
+		echo -e "\033[1;33mExtracting Tar File..........\033[0m"
+		echo
+		echo
+		systemMounts
+		echo
+		echo -e "\033[1;33mExtracting $STAGE3_FILE\033[0m"
+		echo
+		tar xf $STAGE3_FILE -C $TARGET/
+		fstab
+		cp -f /etc/resolv.conf $TARGET/etc/
+		configurePortage
+		cp -f gentoo.sh $TARGET/usr/bin/
+	fi
+}
+
+menu() {
+	clear
+	echo
+	echo -e "\033[1;36m═══════════════════════════════════════════════════════\033[0m"
+	echo -e "\033[1;97m  ⚡ POSTER.PLACE GENTOO CYBERPUNK INSTALLER ⚡\033[0m"
+	echo -e "\033[1;36m═══════════════════════════════════════════════════════\033[0m"
+	echo
+	echo -e "\033[1;36m[1] ▶ Setup Disk\033[0m"
+	echo -e "\033[1;35m[2] ▶ Download Gentoo Installation Files\033[0m"
+	echo -e "\033[1;33m[3] ▶ Install Gentoo, LOL\033[0m"
+	echo -e "\033[1;32m[4] ▶ Reinstall Bootloader\033[0m"
+	echo -e "\033[1;36m[5] ▶ Initialize Disk\033[0m"
+	echo
+	echo -e "\033[1;35m═══════════════════════════════════════════════════════\033[0m"
+	echo -e "\033[1;35m            ◆ POSTINSTALL / TROUBLESHOOTING ◆\033[0m"
+	echo -e "\033[1;35m═══════════════════════════════════════════════════════\033[0m"
+	echo
+	echo -e "\033[1;33m[6] ▶ Backup/Restore Live OS\033[0m"
+	echo -e "\033[1;32m[7] ▶ Backup OS to Build Server\033[0m"
+	echo -e "\033[1;36m[8] ▶ Tools and Tweaks\033[0m"
+	echo
+	read -p 'Your Choice: ' choice
+
+	if [[ $choice = 1 ]]; then
+		setDevices
+		read -p "Press enter key to Continue"
+		menu
+	elif [[ $choice = 2 ]]; then
+		echo
+		echo -e "\033[1;36m[Repository Choice]\033[0m"
+		echo
+		echo -e "\033[1;33mDo you want to use your local repo or the official Gentoo Repo?\033[0m"
+		echo
+		read -p 'local or remote:' -e -i "local" REPO_CHOICE
+		download-setup
+		read -p "Press enter key to Continue"
+		menu
+	elif [[ $choice = 3 ]]; then
+		setDevices
+		buildGentoo
+		read -p "Press enter key to Continue"
+		menu
+	elif [[ $choice = 4 ]]; then
+		bootloader
+	elif [[ $choice = 5 ]]; then
+		clear
+		echo -e "\033[1;36m[Initialize Disk]\033[0m"
+		echo
+		echo
+		setDevices
+		partitionDetection
+		initializeDisk
+		read -p "Press enter key to Continue"
+		menu
+	elif [[ $choice = 6 ]]; then
+		clear
+		setDevices
+		read -p 'Are you restoring from a build server? ' -e -i "n" QUESTION_BUILD_SERVER
+		if [[ $QUESTION_BUILD_SERVER = *y* ]]; then
+			BUILD_SERVER="y"
+		fi
+	
+		liveOSrestore "$HARD_DISK" $ROOT_MAPPER_NAME "none" "none" "$ROOT_NAME"
+
+	elif [[ $choice = 7 ]]; then
+		clear
+		backupOS
+	elif [[ $choice = 8 ]]; then
+		tweaks
+	else
+		menu
+	fi
+}
+
+partitions() {
+	echo
+	echo -e "\033[1;35m◆ SETTING UP PARTITIONS ◆\033[0m"
+	printf "$DISK_PASSWORD" | cryptsetup open ${BTRFS} $(echo $ROOT_MAPPER_NAME | sed 's/\/dev\/mapper\///')
+
+	if [[ -e "$ROOT_MAPPER_NAME" ]]; then
+		fstab
+	else
+		echo
+		echo -e "\033[1;33mPartitions: Aborting Install, $ROOT_MAPPER_NAME not found!\033[0m"
+		echo
+		echo
+		exit 1
+	fi
+
+}
+
+setDevices() {
+	if [ -f "/tmp/disk" ]; then
+		HARD_DISK=$(cat /tmp/disk | head -1)
+		ROOT_NAME=$(cat /tmp/disk | tail -2 | head -1)
+		SWAP_CHOICE=$(cat /tmp/disk | tail -1 | head -1)
+		partitionDetection
+		echo
+		echo -e "\033[1;33mConfiguration Settings:\033[0m"
+		echo
+		echo -e "\033[1;33mDisk: $HARD_DISK\033[0m"
+		echo -e "\033[1;33mRoot Name: $ROOT_NAME\033[0m"
+		echo -e "\033[1;33mRoot Mapper Name: $ROOT_MAPPER_NAME\033[0m"
+		echo -e "\033[1;33mSwap Choice: $SWAP_CHOICE\033[0m"
+		echo
+		echo
+	else
+		i=0
+		while [ $i != "n" ]; do
+			clear
+			echo
+			echo -e "\033[1;33mDisks and Partitions:\033[0m"
+			echo
+			cat /proc/partitions
+			echo
+			echo -e "\033[1;33mErase the line and press enter to skip to the next detected disk\033[0m"
+			echo
+			i=$(expr $i + 1)
+			read -p 'Disk Device to Use: ' -e -i $(lsblk | grep -i disk | grep -Evi 'swap|zram|dm-0' | cut -d ' ' -f1 | head -$i | tail -1) device
+			if [[ ! -z $device ]]; then
+				i="n"
+			fi
+		done
+
+		read -p 'BTRFS Root Volume name:  ' -e -i "gentoo" root_name
+		read -p 'LUKS Device Mapper Name:  ' -e -i "root" device_mapper_name
+
+		HARD_DISK=$device
+		echo $HARD_DISK >/tmp/disk
+		echo $root_name >>/tmp/disk
+		echo $device_mapper_name >>/tmp/disk
+		setDevices
+	fi
+	partitionDetection
+}
+
+hibernation() {
+	echo "[Sleep]" >/etc/systemd/sleep.conf
+	echo "AllowSuspend=yes" >>/etc/systemd/sleep.conf
+	echo "AllowHibernation=yes" >>/etc/systemd/sleep.conf
+	echo "AllowSuspendThenHibernate=yes" >>/etc/systemd/sleep.conf
+	echo "HibernateState=disk" >>/etc/systemd/sleep.conf
+	echo "HibernateMode=platform" >>/etc/systemd/sleep.conf
+	echo "HibernateDelaySec=500" >>/etc/systemd/sleep.conf
+	echo "HandleLidSwitch=suspend-then-hibernate" >>/etc/systemd/logind.conf
+	echo "HandleLidSwitchExternalPower=suspend-then-hibernate" >>/etc/systemd/logind.conf
+	unlink /usr/lib/systemd/system/systemd-suspend.service
+}
+
+bootloader() {
+	chmod -R 740 /boot/EFI
+	rm -rf /boot/loader/entries/*
+	if [ -f "/etc/disk" ]; then
+		partitionDetection
+		echo
+		echo -e "\033[1;33mInstalling Bootloader...................\033[0m"
+		sleep 3
+		echo
+		bootctl install
+		MACHINE_ID=$(cat /etc/machine-id)
+		KERNEL="kernel-$(ls /boot/$MACHINE_ID | grep gentoo | tail -1)"
+		KERNEL_VERSION=$(echo $KERNEL | cut -d '-' -f2-5)
+		LOADER_FILE="/boot/loader/entries/$MACHINE_ID-$KERNEL_VERSION.conf"
+		PREVIOUS_LOADER_FILE="/boot/loader/entries/previous.conf"
+		OFFSET=$(btrfs inspect-internal map-swapfile /swap/swap -r)
+		UUID=$(/usr/bin/findmnt -no UUID -T /swap/swap | head -1)
+
+		KERNEL_COMMAND_LINE="options quiet splash usbcore.quirks=0bda:8156,0bda:8153 rd.luks.key=/boot/keyfile.key mitigations=off resume=UUID=$UUID resume_offset=$OFFSET  root=UUID=$(/sbin/blkid -s UUID -o value $ROOT_MAPPER_NAME) rootflags=subvol=@$ROOT_NAME rw "
+		rm -f /etc/crypttab
+		echo >/etc/dracut.conf
+		mkdir -p /boot/$MACHINE_ID/$KERNEL_VERSION
+
+		KERNEL_COMMAND_LINE="$KERNEL_COMMAND_LINE: rd.luks.uuid=$(/sbin/blkid -s UUID -o value ${BTRFS})"
+        dracut_modules=" crypt systemd-cryptsetup dm rootfs-block "
+        echo "add_dracutmodules+=\" $dracut_modules \"" >> /etc/dracut.conf  
+		echo "kernel_cmdline+=\" $KERNEL_COMMAND_LINE \" " >>/etc/dracut.conf
+
+		echo "$(echo $ROOT_MAPPER_NAME | sed 's/\/dev\/mapper\///') UUID=$(/sbin/blkid -s UUID -o value ${BTRFS})  none luks" >/etc/crypttab
+
+		if [ "$AUTO_DECRYPT" == "True" ]; then
+			decryptBoot "$BTRFS"
+		fi
+
+        echo -e "\033[1;33mDeleting old Kernel Modules\033[0m"
+        echo
+        cd /usr/lib/modules
+        ls /usr/lib/modules | grep -Evi $KERNEL_VERSION | xargs rm -r
+		dracut --regenerate-all -f
+		mkdir -p /boot/$MACHINE_ID/$KERNEL_VERSION
+		plymouth-set-default-theme solar
+
+		echo -e "\033[1;33mMachineID=$MACHINE_ID\033[0m"
+		echo -e "\033[1;33mKERNEL: $KERNEL\033[0m"
+		echo -e "\033[1;33mKERNEL_VERSION: $KERNEL_VERSION\033[0m"
+		echo -e "\033[1;33mRoot_Name: $ROOT_NAME\033[0m"
+		echo -e "\033[1;33mBTRFS: $BTRFS\033[0m"
+		echo -e "\033[1;33mUEFI Kernel: $KERNEL_VERSION\033[0m"
+		echo -e "\033[1;33mSWAP UUID=$UUID\033[0m"
+		echo -e "\033[1;33mOFFSET=$OFFSET\033[0m"
+		echo "default $MACHINE_ID-*" >/boot/loader/loader.conf
+		echo "timeout 1" >>/boot/loader/loader.conf
+
+		echo
+		echo
+		echo
+
+		#Generate Main Boot Entry
+		echo "title Current" >$LOADER_FILE
+		echo "version $KERNEL_VERSION" >>$LOADER_FILE
+		echo "options $KERNEL_COMMAND_LINE " >>$LOADER_FILE
+		echo "machine-id $MACHINE_ID" >>$LOADER_FILE
+		echo "linux /$MACHINE_ID/$KERNEL_VERSION/linux" >>$LOADER_FILE
+		echo "initrd /$MACHINE_ID/$KERNEL_VERSION/initrd" >>$LOADER_FILE
+	else
+		echo -e "\033[1;33mError, Missing /etc/disk\033[0m"
+		exit 1
+	fi
+}
+
+compile-kernel() {
+	cd /usr/src/linux
+	time make -j50 CC="distcc gcc"
+	make -j50 CC="distcc gcc" modules_install
+	make install
+}
+
+fixBase() {
+	sudo emerge libudev libcap glibc go sys-apps/acl sys-apps/util-linux
+
+}
+
+fix-build-boot() {
+	ssh $USER@$BUILD_SERVER_ADDRESS "sudo gentoo.sh fstab"
+	ssh $USER@$BUILD_SERVER_ADDRESS "sudo gentoo.sh bootloader"
+	ssh $USER@$BUILD_SERVER_ADDRESS "sudo reboot"
+}
+
+if [ "$1" = "services" ]; then
+	services
+elif [ "$1" = "upgrade-system" ]; then
+	upgrade-system
+elif [ "$1" = "fstab" ]; then
+	partitionDetection
+	export TARGET=/
+	fstab
+elif [ "$1" = "upgrade" ]; then
+    updateOS
+elif [ "$1" = "wifi" ]; then
+	wifi
+elif [ "$1" = "accounts" ]; then
+	accounts
+elif [ "$1" = "hibernate" ]; then
+	hibernateSetup
+elif [ "$1" = "bootloader" ]; then
+	bootloader
+elif [ "$1" = "snapshot" ]; then
+	snapshots
+elif [ "$1" = "steam" ]; then
+	installSteam
+elif [ "$1" = "install-packages" ]; then
+	installPackages
+elif [ "$1" = "btrfs-tweaks" ]; then
+	btrfsTweaks
+elif [ "$1" = "install-flatpaks" ]; then
+	installFlatpaks
+elif [ "$1" = "compile-kernel" ]; then
+	compile-kernel
+elif [ "$1" = "repo" ]; then
+	gentooRepo
+elif [ "$1" = "remove-snapshot" ]; then
+	remove-snapshots
+elif [ "$1" = "fix-base" ]; then
+	fixBase
+elif [ "$1" = "fix-build-boot" ]; then
+	fix-build-boot
+elif [ "$1" = "portage" ]; then
+	export TARGET=/
+	configurePortage
+	unmaskPackages
+elif [ "$1" = "fstab" ]; then
+	setDevices
+	TARGET=/
+	fstab
+elif [ "$1" = "help" ]; then
+	show-help
+else
+	menu
+fi
