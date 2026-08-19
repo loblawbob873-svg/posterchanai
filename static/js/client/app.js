@@ -17501,7 +17501,10 @@
 
   async function _blobPresent(sha){
     try{
-      const r = await fetch(mediaServer() + '/' + sha, { method:'HEAD', cache:'no-store' });
+      // The same cache-buster as _blobAlreadyStored, for the same reason: a proxy that caches an
+      // immutable 200 turns a deleted blob into a phantom the drive check then vouches for.
+      const r = await fetch(mediaServer() + '/' + sha + '?probe=' + Date.now(),
+                            { method:'HEAD', cache:'no-store' });
       if(r && (r.status === 200 || r.status === 206)) return true;
       if(r && (r.status === 404 || r.status === 410)) return false;
       return null;
@@ -17740,7 +17743,14 @@
   const _SYNC_CHUNK = 16 * 1024 * 1024;
   async function _blobAlreadyStored(sha){
     try{
-      const r = await fetch(mediaServer() + '/' + sha, { method:'HEAD', cache:'no-store' });
+      /* THE PROBE MUST OUTRUN EVERY CACHE, and `cache:'no-store'` only speaks to the browser's. A
+       * proxy in front of the store caches these content-addressed URLs as immutable — correct for
+       * bytes that exist, and a LIE once they are deleted: after the store was wiped, the cache
+       * answered 200 for 1,475 blobs that were gone, the seed skipped uploading them, and every
+       * other device then hit "the store does not have these bytes". A unique query string makes
+       * every cache miss; only the store itself may answer an existence question. */
+      const r = await fetch(mediaServer() + '/' + sha + '?probe=' + Date.now(),
+                            { method:'HEAD', cache:'no-store' });
       if(!r || !r.ok) return false;
       /* PRESENT IS NOT ENOUGH — it must not be on its way out. Skipping the upload also skips the
        * server's save path, and that save is what clears an expiry when a blob becomes referenced

@@ -840,7 +840,10 @@
      * turns one bad server minute into a folder-wide tombstone. */
     async hasBlob(sha){
       try{
-        const r = await fetch(PC.mediaServer() + '/' + sha, { method:'HEAD', cache:'no-store' });
+        // Cache-busted: a proxy caching these immutable URLs answered 200 for deleted blobs, and
+        // this feeds a repair — a cached lie here becomes a wrong verdict about somebody's bytes.
+        const r = await fetch(PC.mediaServer() + '/' + sha + '?probe=' + Date.now(),
+                              { method:'HEAD', cache:'no-store' });
         if(r && r.ok) return true;
         if(r && (r.status === 404 || r.status === 410)) return false;
         return null;
